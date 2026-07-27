@@ -47,6 +47,8 @@ use crate::engines::router::EngineRouter;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClient;
+// T059/R-cache-002：高级缓存服务（scrape_worker 读写抓取结果缓存）
+use crate::infrastructure::oxcache::CacheService;
 // T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::regex_cache::RegexCache;
@@ -128,6 +130,11 @@ pub struct CrawlRsState {
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
     /// Regex cache for performance optimization
     pub regex_cache: Arc<RegexCache>,
+    /// 高级缓存服务（T059/R-cache-002）
+    ///
+    /// 由 `InfrastructureModule` 从 `InfrastructureComponents.cache_service` 注入，
+    /// 用于 `scrape_worker` 读写抓取结果缓存。所有 worker 共享同一实例。
+    pub cache_service: Arc<dyn CacheService>,
     /// Audit service
     pub audit_service: Arc<dyn AuditServiceTrait>,
     /// Webhook worker
@@ -200,6 +207,7 @@ impl CrawlRsState {
             llm_service: services.llm_service.clone(),
             extraction_service: services.extraction_service.clone(),
             regex_cache: services.regex_cache.clone(),
+            cache_service: infra.cache_service.clone(),
             audit_service: services.audit_service.clone(),
             #[cfg(feature = "webhook")]
             webhook_worker: services.webhook_worker.clone(),
@@ -259,6 +267,10 @@ pub trait CrawlRsStateExt {
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait>;
     /// Get regex cache
     fn regex_cache(&self) -> Arc<RegexCache>;
+    /// Get cache service
+    ///
+    /// T059/R-cache-002：供 `WorkerManagerDeps` 注入 `scrape_worker`。
+    fn cache_service(&self) -> Arc<dyn CacheService>;
     /// Get database pool (dbnexus DbPool)
     fn db_pool(&self) -> Arc<DbPool>;
     /// Get tasks backlog repository
@@ -364,6 +376,10 @@ impl CrawlRsStateExt for CrawlRsState {
 
     fn regex_cache(&self) -> Arc<RegexCache> {
         self.regex_cache.clone()
+    }
+
+    fn cache_service(&self) -> Arc<dyn CacheService> {
+        self.cache_service.clone()
     }
 
     fn db_pool(&self) -> Arc<DbPool> {
@@ -488,6 +504,10 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
 
     fn regex_cache(&self) -> Arc<RegexCache> {
         self.as_ref().regex_cache()
+    }
+
+    fn cache_service(&self) -> Arc<dyn CacheService> {
+        self.as_ref().cache_service()
     }
 
     fn db_pool(&self) -> Arc<DbPool> {

@@ -20,7 +20,7 @@ use super::patterns::{
     TIER3_ANY_TAG, TIER3_MIN_SIGNALS, TIER3_NO_BODY, TIER3_SCRIPT_BLOCK,
     TIER3_SCRIPT_HEAVY_BYTES, TIER3_SCRIPT_HEAVY_VISIBLE_MAX, TIER3_VISIBLE_TEXT_MIN,
 };
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use regex::Regex;
 use reqwest::header::HeaderMap;
 
@@ -93,7 +93,11 @@ fn strip_scripts_and_styles(body: &str) -> String {
 }
 
 /// Tier1 检测：扫描 body（含大页 strip 后深扫）返回命中的 `(tech, reason)` 元组
-fn tier1_match(body: &str) -> Option<(AntiBotTech, String)> {
+///
+/// 性能审查 MEDIUM-3 修复：`stripped_cache` 由 [`classify`] 顶层传入，
+/// 跨 tier1_match / Step 5 / tier3_signals 共享同一份 `strip_scripts_and_styles` 结果。
+/// 原实现对大页 + Tier1 未命中 + Tier3 路径会重复 strip 2 次（每次 ~1-5ms / 100KB）。
+fn tier1_match(body: &str, stripped_cache: &OnceCell<String>) -> Option<(AntiBotTech, String)> {
     // 直接扫描
     for (re, tech) in TIER1_REGEXES.iter() {
         if re.is_match(body) {
@@ -102,9 +106,9 @@ fn tier1_match(body: &str) -> Option<(AntiBotTech, String)> {
     }
     // 大页：strip script/style 后深扫
     if body.len() > TIER2_BODY_SIZE_LIMIT {
-        let stripped = strip_scripts_and_styles(body);
+        let stripped = stripped_cache.get_or_init(|| strip_scripts_and_styles(body));
         for (re, tech) in TIER1_REGEXES.iter() {
-            if re.is_match(&stripped) {
+            if re.is_match(stripped) {
                 return Some((*tech, tier1_reason(*tech)));
             }
         }
@@ -133,12 +137,15 @@ fn tier1_reason(tech: AntiBotTech) -> String {
 ///
 /// 可见文本统计需先剥离 `<script>`/`<style>` 块，否则脚本内容会被计入
 /// 可见文本，使"脚本重无内容"信号失效。
-fn tier3_signals(body: &str) -> (usize, Vec<&'static str>) {
+///
+/// 性能审查 MEDIUM-3 修复：`stripped_cache` 由 [`classify`] 顶层传入，
+/// 复用 tier1_match / Step 5 已计算的 stripped 结果（若已计算），避免重复 strip。
+fn tier3_signals(body: &str, stripped_cache: &OnceCell<String>) -> (usize, Vec<&'static str>) {
     let mut signals: Vec<&'static str> = Vec::new();
 
-    // 先剥离 script/style 块再统计可见文本
-    let stripped_of_scripts = strip_scripts_and_styles(body);
-    let stripped = TIER3_ANY_TAG.replace_all(&stripped_of_scripts, "");
+    // 先剥离 script/style 块再统计可见文本（复用 cache）
+    let stripped_of_scripts = stripped_cache.get_or_init(|| strip_scripts_and_styles(body));
+    let stripped = TIER3_ANY_TAG.replace_all(stripped_of_scripts, "");
 
     // 信号 1：无 `<body>` 标签
     if !TIER3_NO_BODY.is_match(body) {
@@ -168,6 +175,16 @@ fn tier3_signals(body: &str) -> (usize, Vec<&'static str>) {
 /// 实现与 crawl4ai `antibot_detector.py` 对齐：先看状态码与 data-HTML，再依次走 Tier1 →
 /// Tier2 → Tier3，并在大页场景下 strip script/style 后深扫。
 pub fn classify(status: u16, body: &str, headers: &HeaderMap, _url: &str) -> Option<Detection> {
+    // 性能审查 MEDIUM-3 修复：strip_scripts_and_styles 结果缓存
+    //
+    // 原实现对大页 + Tier1 未命中 + Tier3 路径会重复调用 strip_scripts_and_styles
+    // 2-3 次（tier1_match 内 + Step 5 near-empty 检测 + tier3_signals 内），每次
+    // 对 100KB+ 大页耗时 ~1-5ms。OnceCell 单次填充，多次借用，零重复 strip。
+    //
+    // 单次 classify 调用是单线程，无需 Sync；用 once_cell::sync::OnceCell 以兼容
+    // 后续若将 classify 改为 Send 上下文（OnceCell<String> 是 Sync）。
+    let stripped_cache: OnceCell<String> = OnceCell::new();
+
     // Step 0：data-HTML（JSON/XML）直接跳过避免误报
     if looks_like_data(body, headers) {
         return None;
@@ -183,7 +200,7 @@ pub fn classify(status: u16, body: &str, headers: &HeaderMap, _url: &str) -> Opt
     }
 
     // Step 2：Tier1 命中（任意状态码，含大页 strip 深扫）
-    if let Some((tech, hint)) = tier1_match(body) {
+    if let Some((tech, hint)) = tier1_match(body, &stripped_cache) {
         let needs_browser = matches!(
             tech,
             AntiBotTech::Cloudflare
@@ -235,10 +252,13 @@ pub fn classify(status: u16, body: &str, headers: &HeaderMap, _url: &str) -> Opt
     //
     // 双条件：body 整体字节少 AND 剥离 script/style + tag 后可见文本也少。
     // 仅凭 body.len() 会让短小但内容充实的正常页（~100 字可见文本）被误判。
+    //
+    // 性能审查 MEDIUM-3 修复：复用 stripped_cache，与 tier1_match / tier3_signals
+    // 共享同一份 stripped 结果（若已计算则零成本复用）。
     if (200..300).contains(&status) {
         if body.len() < NEAR_EMPTY_BODY_LEN {
-            let stripped_of_scripts = strip_scripts_and_styles(body);
-            let stripped = TIER3_ANY_TAG.replace_all(&stripped_of_scripts, "");
+            let stripped_of_scripts = stripped_cache.get_or_init(|| strip_scripts_and_styles(body));
+            let stripped = TIER3_ANY_TAG.replace_all(stripped_of_scripts, "");
             if stripped.trim().len() < TIER3_VISIBLE_TEXT_MIN {
                 return Some(Detection::new(
                     AntiBotTech::StructuralBlock,
@@ -249,7 +269,7 @@ pub fn classify(status: u16, body: &str, headers: &HeaderMap, _url: &str) -> Opt
         }
 
         // Step 6：Tier3 结构完整性（多信号打分）
-        let (count, signals) = tier3_signals(body);
+        let (count, signals) = tier3_signals(body, &stripped_cache);
         if count >= TIER3_MIN_SIGNALS {
             return Some(Detection::new(
                 AntiBotTech::StructuralBlock,

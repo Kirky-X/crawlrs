@@ -493,6 +493,7 @@ impl SmartSearchEngine {
                 block_ads: false,
                 block_media: false,
                 session_id: None,
+                cache_mode: None,
             },
         }
     }

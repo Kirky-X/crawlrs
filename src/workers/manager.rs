@@ -11,6 +11,7 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::domain::services::team_semaphore::TeamSemaphore;
+use crate::infrastructure::oxcache::CacheService;
 use crate::queue::task_queue::TaskQueue;
 // T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
@@ -71,6 +72,11 @@ pub struct WorkerManager {
     /// 所有 worker 共享同一实例，最大化 Bloom 预筛效果。
     /// `RwLock` 因为 Bloom insert 需 `&mut self`，contains 只需 `&self`。
     deduplicator: Arc<parking_lot::RwLock<crate::utils::dedup::Deduplicator>>,
+    /// 高级缓存服务（T059/R-cache-002）
+    ///
+    /// 由 `WorkerManagerDeps` 从 `InfrastructureComponents.cache_service` 注入，
+    /// 所有 worker 共享同一实例，用于 `process_scrape_task` 读写抓取结果缓存。
+    cache_service: Arc<dyn CacheService>,
 }
 
 /// Worker Manager Dependencies
@@ -91,6 +97,8 @@ pub struct WorkerManagerDeps {
     pub extraction_service:
         Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
     pub regex_cache: RegexCache,
+    /// 高级缓存服务（T059/R-cache-002）
+    pub cache_service: Arc<dyn CacheService>,
 }
 
 /// Worker Manager Configuration
@@ -154,6 +162,8 @@ impl WorkerManager {
             deduplicator: Arc::new(parking_lot::RwLock::new(
                 crate::utils::dedup::Deduplicator::new(),
             )),
+            // T059/R-cache-002：所有 worker 共享 CacheService 实例
+            cache_service: deps.cache_service,
         }
     }
 
@@ -210,6 +220,7 @@ impl WorkerManager {
                 self.default_concurrency_limit,
                 self.extraction_service.clone(),
                 self.regex_cache.clone(),
+                self.cache_service.clone(),
                 #[cfg(feature = "metrics")]
                 self.memory_scheduler.clone(),
             )
@@ -972,6 +983,51 @@ mod tests {
             regex_cache: RegexCache::new(Arc::new(
                 crate::infrastructure::oxcache::RegexCacheType::new(),
             )),
+            cache_service: Arc::new(NoopCacheService) as Arc<dyn CacheService>,
+        }
+    }
+
+    /// Noop CacheService for testing（T059/R-cache-002）
+    ///
+    /// 所有操作返回 Ok(None)/Ok(())，不实际存储数据。
+    /// 用于 `WorkerManagerDeps` 构造时满足 `cache_service` 字段类型要求。
+    struct NoopCacheService;
+
+    #[async_trait::async_trait]
+    impl CacheService for NoopCacheService {
+        fn get(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn set(
+            &self,
+            _key: &str,
+            _value: &str,
+            _ttl_seconds: u64,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn exists(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+        {
+            Box::pin(async { Ok(false) })
         }
     }
 

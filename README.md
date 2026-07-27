@@ -375,6 +375,7 @@ crawlrs 使用 confers 管理配置，支持 TOML 文件和 `CRAWLRS__` 前缀�
 | `[llm]` | LLM 抽取 | `api_key`, `model`, `api_base_url` |
 | `[workers]` | Worker 池 | `count`（`"auto"` 或数字） |
 | `[engines.flaresolverr]` | FlareSolverr | `enabled`, `url`, `timeout_seconds` |
+| `[timeouts.engines]` | 引擎超时 + MRT | `default_timeout_seconds`, `playwright_timeout_seconds`, `flaresolverr_timeout_seconds`, `fetch_seconds`（HTTP MRT）, `tls_seconds`（TLS MRT）, `cdp_seconds`（CDP MRT） |
 | `[logging]` | 日志输出 | `[logging.console]`, `[logging.file]` (path/max_file_size/file_count) |
 | `[trusted_proxies]` | 可信代理 | `enabled`, `proxies`（CIDR 列表） |
 

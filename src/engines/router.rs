@@ -853,8 +853,23 @@ impl EngineRouter {
             };
 
             let engine_start = Instant::now();
-            match engine.scrape(&attempt_request).await {
-                Ok(response) => {
+
+            // T062（design.md §14）：瀑布式 MRT 超时包裹
+            //
+            // 单引擎调用以 `min(remaining, engine.max_response_time())` 包裹：
+            // - `remaining` = 请求整体剩余时间（request.timeout - 已耗时）
+            // - `mrt` = 引擎级最大响应时间（engine.max_response_time()）
+            //
+            // 取 min 确保：
+            // 1. remaining < mrt：请求整体超时优先（不浪费 MRT 配额）
+            // 2. mrt < remaining：超 MRT 即切下一引擎（瀑布式 fallback）
+            //
+            // race_mode 路径不受影响（保留作为可选模式，在 route_race_mode 中独立处理）。
+            let engine_mrt = engine.max_response_time();
+            let effective_timeout = std::cmp::min(remaining, engine_mrt);
+
+            match tokio::time::timeout(effective_timeout, engine.scrape(&attempt_request)).await {
+                Ok(Ok(response)) => {
                     let response_time = engine_start.elapsed();
 
                     // T013（R-antibot-003）：引擎返回"成功"响应后，检查是否为反爬挑战页。
@@ -948,7 +963,7 @@ impl EngineRouter {
 
                     return Ok(response);
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     let response_time = engine_start.elapsed();
                     self.update_engine_stats(engine_name, false, response_time);
 
@@ -989,6 +1004,69 @@ impl EngineRouter {
                         engine_name, e
                     );
                     return Err(e);
+                }
+                Err(_elapsed) => {
+                    // T062：MRT 瀑布式超时——`tokio::time::timeout` 在 effective_timeout 后
+                    // 取消 engine.scrape() future，进入此分支。
+                    //
+                    // 架构审查 MEDIUM-2 修复：根据 effective_timeout 的来源区分两种语义：
+                    // - `effective_timeout == remaining`（remaining <= engine_mrt）：
+                    //   请求整体超时（剩余时间耗尽），返回 `EngineError::Timeout`。
+                    //   此时即使切下一引擎也无力回天，由上层 route_sequential 循环下轮
+                    //   的 `remaining.is_zero()` 检查兜底（L776）。
+                    // - `effective_timeout == engine_mrt`（engine_mrt < remaining）：
+                    //   真正的引擎 MRT 超时，返回 `EngineError::EngineMrtExceeded`，
+                    //   router 触发瀑布式 fallback 切下一引擎继续。
+                    //
+                    // 边界情况 `remaining == engine_mrt`：按 Timeout 处理（保守语义，
+                    // 避免误认为仍有剩余时间可 fallback）。
+                    let response_time = engine_start.elapsed();
+                    self.update_engine_stats(engine_name, false, response_time);
+
+                    // 判断本次超时来源（边界 == 走 Timeout 分支）
+                    let is_overall_timeout = effective_timeout <= remaining;
+                    let timeout_err = if is_overall_timeout {
+                        // remaining 耗尽（remaining <= engine_mrt）→ 请求整体超时
+                        warn!(
+                            "Request overall timeout (remaining={:?} <= mrt={:?}); \
+                             engine={} cancelled at effective_timeout={:?}",
+                            remaining, engine_mrt, engine_name, effective_timeout
+                        );
+                        EngineError::Timeout(effective_timeout)
+                    } else {
+                        // engine_mrt < remaining → 引擎级 MRT 超时
+                        let mrt_err = EngineError::EngineMrtExceeded {
+                            engine: engine_name.to_string(),
+                            mrt: effective_timeout,
+                        };
+                        warn!(
+                            "Engine {} exceeded MRT (effective_timeout={:?}, mrt={:?}, remaining={:?}); \
+                             waterfall fallback to next engine",
+                            engine_name, effective_timeout, engine_mrt, remaining
+                        );
+                        mrt_err
+                    };
+
+                    self.metrics
+                        .record_engine_failure(engine_name, &timeout_err.to_string());
+
+                    self.circuit_breaker.record_failure(engine_name);
+
+                    let reason = timeout_err.retry_reason();
+                    tracker.record(reason);
+                    last_reason = Some(reason);
+
+                    if self.should_stop_after_retry_check(
+                        &tracker,
+                        reason,
+                        total_attempts,
+                        max_retries,
+                    ) {
+                        return Err(timeout_err);
+                    }
+
+                    last_error = Some(timeout_err);
+                    continue;
                 }
             }
         }
@@ -2814,6 +2892,286 @@ mod tests {
             }
             other => panic!("Expected Timeout, got {:?}", other),
         }
+    }
+
+    // === T062: MRT 瀑布式超时测试（red → green） ===
+    //
+    // design.md §14 / T062：router 顺序 fallback 路径用 `min(remaining, engine.mrt())`
+    // 包裹单引擎调用，超 MRT 即切下一引擎（瀑布式），不切整体失败。
+    // race_mode 路径不受影响（保留作为可选模式）。
+
+    /// T062 red：engine1 的 scrape() 耗时超过其 MRT → router 应通过 tokio::time::timeout
+    /// 在 MRT 时刻取消 engine1，记录 Timeout 失败，瀑布式切到 engine2 → engine2 立即成功。
+    ///
+    /// 未实现 T062 时：engine1 直接 sleep 500ms 后返回 Ok，engine2 永远不会被调用，
+    /// 总耗时 ~500ms，测试失败（断言 engine2_called=true 与 elapsed<400ms）。
+    #[tokio::test]
+    async fn test_route_mrt_waterfall_first_engine_exceeds_mrt_falls_to_second() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Instant;
+
+        let engine1_called = Arc::new(AtomicBool::new(false));
+        let engine2_called = Arc::new(AtomicBool::new(false));
+
+        /// MRT 短但 scrape 耗时长的引擎（用于触发 MRT 超时）
+        struct MrtSlowEngine {
+            mrt: Duration,
+            sleep_dur: Duration,
+            called: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl ScraperEngine for MrtSlowEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.called.store(true, Ordering::SeqCst);
+                // 模拟引擎处理耗时超过 MRT
+                tokio::time::sleep(self.sleep_dur).await;
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body><h1>Slow Engine Response</h1><p>This is the slow engine response with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: self.sleep_dur.as_millis() as u64,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100 // 高分 → 优先被选中
+            }
+            fn name(&self) -> &'static str {
+                "mrt-slow"
+            }
+            fn max_response_time(&self) -> Duration {
+                self.mrt
+            }
+        }
+
+        /// 立即返回成功的引擎（作为 fallback 目标）
+        struct FastEngine {
+            called: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl ScraperEngine for FastEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.called.store(true, Ordering::SeqCst);
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body><h1>Fast Engine Response</h1><p>This is the fast engine response with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 1,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                90 // 较低分 → 作为 fallback
+            }
+            fn name(&self) -> &'static str {
+                "fast"
+            }
+        }
+
+        // engine1: MRT=50ms, scrape sleeps 500ms（远超 MRT）
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MrtSlowEngine {
+            mrt: Duration::from_millis(50),
+            sleep_dur: Duration::from_millis(500),
+            called: engine1_called.clone(),
+        });
+        // engine2: 立即返回成功
+        let e2: Arc<dyn ScraperEngine> = Arc::new(FastEngine {
+            called: engine2_called.clone(),
+        });
+
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        // 允许至少 2 次引擎尝试（瀑布式 fallback）
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(5);
+        // 关闭 race_mode 与特征过滤，确保走顺序 fallback 路径
+        router.set_race_mode_enabled(false);
+
+        let request = make_request();
+        let start = Instant::now();
+        let result = router.route(&request).await;
+        let elapsed = start.elapsed();
+
+        // 断言 1：最终成功（通过 engine2）
+        assert!(result.is_ok(), "route should succeed via engine2 fallback");
+        let resp = result.unwrap();
+        assert_eq!(
+            resp.content, "<html><body><h1>Fast Engine Response</h1><p>This is the fast engine response with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>",
+            "response should come from fast engine (waterfall fallback)"
+        );
+
+        // 断言 2：engine1 被调用（首次尝试）
+        assert!(
+            engine1_called.load(Ordering::SeqCst),
+            "engine1 should have been called (first attempt)"
+        );
+        // 断言 3：engine2 也被调用（MRT 超时后瀑布式切换）
+        assert!(
+            engine2_called.load(Ordering::SeqCst),
+            "engine2 should have been called after engine1 exceeded MRT (waterfall)"
+        );
+
+        // 断言 4：总耗时应远小于 engine1 的 500ms sleep
+        // （MRT=50ms + engine2 ~1ms + 开销，应 < 400ms）
+        assert!(
+            elapsed < Duration::from_millis(400),
+            "should not wait for engine1's full 500ms sleep; elapsed={:?}",
+            elapsed
+        );
+    }
+
+    /// T062 red：engine 在其 MRT 内完成 → router 不应误超时，直接返回成功。
+    ///
+    /// 这是一个回归保护测试：确保 MRT 包裹不会破坏正常行为。
+    /// 即使未实现 T062，此测试也应通过（因为 engine1 直接返回 Ok）。
+    #[tokio::test]
+    async fn test_route_mrt_engine_within_mrt_succeeds_normally() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let engine1_called = Arc::new(AtomicBool::new(false));
+
+        struct MrtOkEngine {
+            mrt: Duration,
+            sleep_dur: Duration,
+            called: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl ScraperEngine for MrtOkEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.called.store(true, Ordering::SeqCst);
+                tokio::time::sleep(self.sleep_dur).await;
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body><h1>Real Content Page</h1><p>This is a real page with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: self.sleep_dur.as_millis() as u64,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "mrt-ok"
+            }
+            fn max_response_time(&self) -> Duration {
+                self.mrt
+            }
+        }
+
+        // engine1: MRT=1s, scrape sleeps 50ms（在 MRT 内）
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MrtOkEngine {
+            mrt: Duration::from_secs(1),
+            sleep_dur: Duration::from_millis(50),
+            called: engine1_called.clone(),
+        });
+
+        let mut router = EngineRouter::new(vec![e1]);
+        router.set_race_mode_enabled(false);
+
+        let request = make_request();
+        let result = router.route(&request).await;
+
+        assert!(result.is_ok(), "engine within MRT should succeed");
+        let resp = result.unwrap();
+        assert_eq!(resp.content, "<html><body><h1>Real Content Page</h1><p>This is a real page with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>");
+        assert!(
+            engine1_called.load(Ordering::SeqCst),
+            "engine1 should have been called"
+        );
+    }
+
+    /// T062 red：当 remaining < mrt 时，router 应使用 remaining 作为超时
+    /// （即请求整体超时优先于单引擎 MRT）。
+    ///
+    /// 场景：request.timeout=80ms, engine.mrt=10s
+    /// engine1 sleep 200ms → 应在 ~80ms 时被取消（remaining 耗尽），返回 Timeout。
+    #[tokio::test]
+    async fn test_route_mrt_uses_min_remaining_when_remaining_less_than_mrt() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let engine1_calls = Arc::new(AtomicU32::new(0));
+
+        struct LongMrtSlowEngine {
+            mrt: Duration,
+            sleep_dur: Duration,
+            calls: Arc<AtomicU32>,
+        }
+        #[async_trait]
+        impl ScraperEngine for LongMrtSlowEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(self.sleep_dur).await;
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "should-not-reach-here".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 0,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "long-mrt-slow"
+            }
+            fn max_response_time(&self) -> Duration {
+                self.mrt
+            }
+        }
+
+        // engine1: MRT=10s（很长），但 request.timeout=80ms（很短）
+        // engine1 sleep 200ms → 应在 ~80ms 时被 remaining 超时取消
+        let e1: Arc<dyn ScraperEngine> = Arc::new(LongMrtSlowEngine {
+            mrt: Duration::from_secs(10),
+            sleep_dur: Duration::from_millis(200),
+            calls: engine1_calls.clone(),
+        });
+
+        let mut router = EngineRouter::new(vec![e1]);
+        router.set_max_engine_attempts(1);
+        router.set_max_retries(1);
+        router.set_race_mode_enabled(false);
+
+        let mut request = make_request();
+        request.timeout = Duration::from_millis(80);
+
+        let start = std::time::Instant::now();
+        let result = router.route(&request).await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "should fail with Timeout");
+        match result.unwrap_err() {
+            EngineError::Timeout(_) => {}
+            other => panic!("Expected Timeout, got {:?}", other),
+        }
+        // 总耗时应 ~80ms（remaining 耗尽），不是 200ms（engine sleep）或 10s（MRT）
+        assert!(
+            elapsed < Duration::from_millis(180),
+            "should timeout at ~80ms (remaining); elapsed={:?}",
+            elapsed
+        );
+        assert_eq!(
+            engine1_calls.load(Ordering::SeqCst),
+            1,
+            "engine1 should be called exactly once"
+        );
     }
 
     // === route_race_mode remaining=0 branch (line 796-798) ===

@@ -8,6 +8,11 @@
 /// 提供后台任务处理和工作器管理功能
 /// 包括任务执行、工作器生命周期管理和并发控制
 pub mod backlog_worker;
+/// 抓取缓存工具集（H-4 职责拆分 / HIGH-2 SRP 拆分）
+///
+/// 从 ScrapeWorker 抽取的 cache key 生成、URL 日志脱敏、敏感响应头过滤、
+/// borrowed 序列化结构体（性能 HIGH-1）等纯函数。
+pub mod cache_utils;
 /// 请求合并协调器（H-4 职责拆分）
 ///
 /// 从 ScrapeWorker 抽取的同 URL 并发请求 single-flight 协调逻辑。

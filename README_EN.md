@@ -375,6 +375,7 @@ crawlrs uses confers for configuration management, supporting TOML files and `CR
 | `[llm]` | LLM extraction | `api_key`, `model`, `api_base_url` |
 | `[workers]` | Worker pool | `count` (`"auto"` or number) |
 | `[engines.flaresolverr]` | FlareSolverr | `enabled`, `url`, `timeout_seconds` |
+| `[timeouts.engines]` | Engine timeouts + MRT | `default_timeout_seconds`, `playwright_timeout_seconds`, `flaresolverr_timeout_seconds`, `fetch_seconds` (HTTP MRT), `tls_seconds` (TLS MRT), `cdp_seconds` (CDP MRT) |
 | `[logging]` | Log output | `[logging.console]`, `[logging.file]` (path/max_file_size/file_count) |
 | `[trusted_proxies]` | Trusted proxies | `enabled`, `proxies` (CIDR list) |
 

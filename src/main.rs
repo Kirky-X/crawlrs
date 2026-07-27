@@ -151,6 +151,7 @@ mod app {
             http_client,
             extraction_service: app_state.extraction_service(),
             regex_cache: (*app_state.regex_cache()).clone(),
+            cache_service: app_state.cache_service(),
         };
 
         let config = WorkerManagerConfig {

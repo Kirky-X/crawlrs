@@ -14,8 +14,10 @@
 use crate::engines::health_monitor::{AggregateHealthStatus, EngineHealthMonitor};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use crate::engines::validators::validate_url;
+use crate::common::CacheMode;
 use crate::utils::retry::RetryReason;
 use log::warn;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -149,6 +151,13 @@ pub struct ScrapeOptions {
     /// 调用方在需要粘性会话（同一会话固定走同一代理）时设置。
     /// `None` 时按 `ProxyStrategy::RoundRobin` 走 `ProxyProvider::next`。
     pub session_id: Option<String>,
+    /// 缓存模式（T058/R-cache-002，design.md §13）
+    ///
+    /// 控制本次抓取的缓存读写行为。`None`（默认）等价于 `Some(CacheMode::Enabled)`，
+    /// 由 `scrape_worker` 在读写 `CacheService` 前经 `CacheContext` 门控。
+    ///
+    /// 5 种模式详见 [`crate::common::CacheMode`]。
+    pub cache_mode: Option<CacheMode>,
 }
 
 impl Default for ScrapeOptions {
@@ -171,6 +180,7 @@ impl Default for ScrapeOptions {
             block_ads: false,
             block_media: false,
             session_id: None,
+            cache_mode: None,
         }
     }
 }
@@ -342,6 +352,15 @@ impl ScrapeOptionsBuilder {
     pub fn build(self) -> ScrapeOptions {
         self.0
     }
+
+    /// 设置缓存模式（T058/R-cache-002，design.md §13）
+    ///
+    /// `None`（默认）等价于 `Some(CacheMode::Enabled)`。
+    /// 详见 [`crate::common::CacheMode`]。
+    pub fn cache_mode(mut self, mode: impl Into<Option<CacheMode>>) -> Self {
+        self.0.cache_mode = mode.into();
+        self
+    }
 }
 
 /// Page action to perform during scraping.
@@ -394,7 +413,11 @@ impl Default for ScreenshotConfig {
 /// Unified response structure for scraping operations.
 ///
 /// This is the canonical response type returned by EngineClient.
-#[derive(Debug, Clone)]
+///
+/// T059/R-cache-002：实现 `Serialize`/`Deserialize` 以支持 `scrape_worker`
+/// 缓存门控——抓取成功后序列化为 JSON 字符串写入 `CacheService`，
+/// 读缓存命中时反序列化还原为 `ScrapeResponse` 直返，跳过实际抓取。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeResponse {
     /// HTTP status code
     pub status_code: u16,
@@ -592,12 +615,11 @@ impl ScrapeRequest {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HttpMethod {
-    #[default]
-    Get,
-    Post,
-}
+// HttpMethod 已提升至 `common::http_method`（CRITICAL-1 修复：消除
+// 原 `infrastructure::oxcache::cache_mode`（现已提升至 `common::cache_mode`）对 `engines` 层的反向依赖）。
+// 此处 `pub use` 重新导出，保持与 `ScrapeRequest` / `ScrapeOptions` 等
+// 引擎类型的协同导入路径（符合代码库既有 `pub use crate::...` 惯例）。
+pub use crate::common::HttpMethod;
 
 /// Convert from internal ScrapeResponse to public format
 impl InternalScrapeResponse {
@@ -668,6 +690,21 @@ pub enum EngineError {
     #[error("Request expired")]
     Expired,
 
+    /// 引擎级 MRT 超时（架构审查 MEDIUM-2 修复，design.md §14 / T062）
+    ///
+    /// 区别于 `Timeout`（请求整体超时），此变体表示单引擎在 MRT（Maximum Response Time）
+    /// 内未完成，router 触发瀑布式 fallback 切换到下一引擎。
+    ///
+    /// 可重试：`is_retryable()=true`，`retry_reason()=Transient`（同引擎可重试，
+    /// 但 router 会优先切下一引擎而非重试同引擎）。
+    #[error("Engine {engine} exceeded MRT of {mrt:?}")]
+    EngineMrtExceeded {
+        /// 引擎名称
+        engine: String,
+        /// 实际使用的 MRT（即 `effective_timeout = min(remaining, engine_mrt)`）
+        mrt: Duration,
+    },
+
     /// Other error
     #[error("Other error: {0}")]
     Other(String),
@@ -712,6 +749,8 @@ impl EngineError {
             Self::AllEnginesFailed(_) => false,
             Self::Expired => false,
             Self::Other(_) => false,
+            // 引擎级 MRT 超时：可重试（router 优先切下一引擎，而非重试同引擎）
+            Self::EngineMrtExceeded { .. } => true,
         }
     }
 
@@ -739,7 +778,8 @@ impl EngineError {
             | Self::Internal(_)
             | Self::AllEnginesFailed(_)
             | Self::Expired
-            | Self::Other(_) => RetryReason::Transient,
+            | Self::Other(_)
+            | Self::EngineMrtExceeded { .. } => RetryReason::Transient,
         }
     }
 }
@@ -774,6 +814,32 @@ pub trait ScraperEngine: Send + Sync {
     /// for anti-fingerprinting purposes.
     fn supports_tls_fingerprint(&self) -> bool {
         false
+    }
+
+    /// 引擎级最大响应时间（MRT, Maximum Response Time）—— design.md §14 / T060。
+    ///
+    /// 用于 router 顺序 fallback 路径瀑布式超时：单引擎调用以
+    /// `min(remaining_timeout, engine.max_response_time())` 包裹，
+    /// 超 MRT 即切下一引擎（不切整体失败）。race 模式不受影响。
+    ///
+    /// # 默认实现
+    ///
+    /// 返回 30 秒（与 `EngineTimeoutSettings::default_timeout_seconds` 默认值一致）。
+    /// 各引擎按类型覆写为更精确的 MRT：
+    /// - HTTP fetch 引擎（reqwest）：5 秒（`fetch_seconds`）
+    /// - CDP/浏览器引擎（playwright / flaresolverr_cdp / flaresolverr_full）：30 秒（`cdp_seconds`）
+    /// - TLS 指纹引擎（flaresolverr_tls）：15 秒（`tls_seconds`）
+    ///
+    /// # 注入
+    ///
+    /// 引擎构造时应从 `EngineTimeoutSettings` 注入对应字段，避免硬编码
+    /// （参考 `ReqwestEngine::new_with_timeout` 模式）。
+    ///
+    /// 架构审查 MEDIUM-1 修复：删除 `DEFAULT_ENGINE_MRT` 常量，默认实现直接返回
+    /// `Duration::from_secs(30)`，避免与 `EngineTimeoutSettings::default_timeout_seconds`
+    /// 形成隐式耦合（注释承诺"保持一致"但代码无引用关系）。
+    fn max_response_time(&self) -> Duration {
+        Duration::from_secs(30)
     }
 }
 
@@ -975,6 +1041,9 @@ fn convert_error(e: EngineError) -> EngineError {
         EngineError::NoEnginesAvailable => EngineError::NoEnginesAvailable,
         EngineError::InvalidUrl(msg) => EngineError::InvalidUrl(msg),
         EngineError::Internal(msg) => EngineError::Internal(msg),
+        EngineError::EngineMrtExceeded { engine, mrt } => {
+            EngineError::EngineMrtExceeded { engine, mrt }
+        }
     }
 }
 

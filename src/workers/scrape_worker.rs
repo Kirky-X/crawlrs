@@ -37,15 +37,20 @@ use crate::utils::regex_cache::RegexCache;
 // T053/R-frontier-001：URL 分层去重器（Bloom 预筛 + DB 保权威）
 use crate::utils::dedup::{DedupResult, Deduplicator};
 
+use crate::common::HttpMethod;
 use crate::engines::engine_client::{
-    EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
+    EngineClient, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
     ScreenshotConfig, ScrollDirection,
 };
+use crate::common::{CacheContext, CacheMode};
+use crate::infrastructure::oxcache::CacheService;
 use crate::presentation::helpers::ssrf::is_internal_url;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 // H-4 职责拆分：请求合并协调器（替代原 request_coalescer 字段 + try_coalesce 方法）
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
+// HIGH-2 SRP 拆分：cache key 生成、URL 脱敏、敏感头过滤、borrowed 序列化
+use crate::workers::cache_utils::{self, redact_url_for_log, SanitizedScrapeResponse};
 // H-4 职责拆分：Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
 #[cfg(feature = "markdown")]
 use crate::workers::markdown_post_processor::MarkdownPostProcessor;
@@ -114,6 +119,13 @@ pub struct ScrapeWorker {
     /// `RwLock` 因为 `extract_and_queue_links` 是 `&self`，但 bloom insert 需 `&mut`。
     /// `Arc` 是为后续支持跨 worker 共享（当前每 worker 独立实例）。
     deduplicator: Arc<parking_lot::RwLock<Deduplicator>>,
+    /// 高级缓存服务（T059/R-cache-002）
+    ///
+    /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
+    /// 所有 worker 共享同一实例。`process_scrape_task` 在读写缓存前经
+    /// `CacheContext` 门控：`is_cacheable() && should_read()` 查缓存命中直返，
+    /// `is_cacheable() && should_write()` 抓取成功后写回。
+    cache_service: Arc<dyn CacheService>,
 }
 
 impl std::fmt::Debug for ScrapeWorker {
@@ -132,6 +144,8 @@ impl ScrapeWorker {
     /// `coalesce_coordinator` 由 `WorkerManager` 从 `repository` +
     /// `result_repository` + `request_coalescer` 构造注入，
     /// 所有 worker 共享同一实例（T035/R-runtime-002 + H-4 职责拆分）。
+    /// `cache_service` 由 `WorkerManager` 从 `InfrastructureComponents.cache_service`
+    /// 注入，所有 worker 共享同一实例（T059/R-cache-002）。
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         repository: Arc<dyn TaskRepository>,
@@ -148,6 +162,7 @@ impl ScrapeWorker {
         default_concurrency_limit: usize,
         extraction_service: Arc<dyn ExtractionServiceTrait>,
         regex_cache: RegexCache,
+        cache_service: Arc<dyn CacheService>,
         #[cfg(feature = "metrics")] memory_scheduler: Arc<MemoryScheduler>,
     ) -> Self {
         // 根据任务类型选择合适的重试策略
@@ -181,6 +196,7 @@ impl ScrapeWorker {
             // T053/R-frontier-001：默认每 worker 独立 Deduplicator
             // 后续可由 WorkerManager 通过 Builder 注入共享实例优化 DB 查询量
             deduplicator: Arc::new(parking_lot::RwLock::new(Deduplicator::new())),
+            cache_service,
         }
     }
 
@@ -422,7 +438,81 @@ impl ScrapeWorker {
         // 由 `TeamSemaphore` 封装——Fixed 模式 noop；Adaptive 模式调用
         // `AIMDController::record_*` 并经 `AdaptiveSemaphore::set_target` 推入新 target。
         // guard 在 match 块作用域结束时 Drop，确保先广播给等待方再释放。
-        let response = self.engine_client.scrape(&scrape_request).await;
+
+        // T059/R-cache-002：高级缓存模式门控
+        //
+        // 构造 `CacheContext`，按 `cache_mode` 决定读写行为：
+        // - 读缓存：`is_cacheable() && should_read()` → 查缓存，命中直返跳过 `engine_client.scrape()`
+        // - 写缓存：`is_cacheable() && should_write()` 且抓取成功 → 序列化写回
+        //
+        // `cache_mode=None`（默认）等价于 `Enabled`（`unwrap_or_default()`）。
+        // 不可缓存的请求（data:/blob:/POST）跳过整个缓存流程。
+        let cache_ctx = CacheContext {
+            url: scrape_request.url.clone(),
+            method: scrape_request.options.method,
+            mode: scrape_request.options.cache_mode.unwrap_or_default(),
+        };
+
+        // HIGH-1 改进：cache key 纳入 ScrapeOptions 影响字段（headers/needs_js/session_id）
+        //
+        // 由 `cache_utils::generate_scrape_cache_key` 统一生成，读/写共用同一 key。
+        // 旧实现仅 `scrape:{method}:{url}` 会导致同 URL 不同 options 的缓存串扰
+        // （如 needs_js=true 拿到渲染后 DOM 与 needs_js=false 拿到原始 HTML 共享缓存）。
+        let cache_key = cache_utils::generate_scrape_cache_key(&cache_ctx, &scrape_request.options);
+
+        // 读缓存门控
+        let cached_response = if cache_ctx.is_cacheable() && cache_ctx.should_read() {
+            match self.try_read_scrape_cache(&cache_ctx, &cache_key).await {
+                Ok(Some(cached)) => {
+                    // 性能审查 LOW-1：debug 禁用时跳过 redact_url_for_log 调用（~1μs）
+                    // log crate 的 debug! 宏本身已 lazy format_args，但函数参数在宏调用前已求值，
+                    // 需 log_enabled! 守卫才能避免 redact_url_for_log 的 Url::parse + String 分配。
+                    if log::log_enabled!(log::Level::Debug) {
+                        debug!(
+                            "Cache hit, returning cached response url={} mode={:?}",
+                            redact_url_for_log(&cache_ctx.url),
+                            cache_ctx.mode
+                        );
+                    }
+                    Some(cached)
+                }
+                Ok(None) => None,
+                Err(e) => {
+                    // 规则12：缓存读失败不吞，记录后降级为 miss（不阻塞抓取）
+                    // T062 安全审查 MEDIUM-2：日志使用脱敏 URL，防止 query 参数泄露
+                    warn!(
+                        "Cache read failed, falling back to scrape url={} error={}",
+                        redact_url_for_log(&cache_ctx.url),
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let response = match cached_response {
+            Some(cached) => Ok(cached),
+            None => {
+                let resp = self.engine_client.scrape(&scrape_request).await;
+                // 写缓存门控：仅抓取成功且 should_write() 时写回
+                if let Ok(ref r) = resp {
+                    if cache_ctx.is_cacheable() && cache_ctx.should_write() {
+                        if let Err(e) = self.try_write_scrape_cache(&cache_ctx, &cache_key, r).await {
+                            // 规则12：缓存写失败不吞，记录但不影响抓取结果
+                            // T062 安全审查 MEDIUM-2：日志使用脱敏 URL
+                            warn!(
+                                "Cache write failed url={} error={}",
+                                redact_url_for_log(&cache_ctx.url),
+                                e
+                            );
+                        }
+                    }
+                }
+                resp
+            }
+        };
 
         match response {
             Ok(response) => {
@@ -483,6 +573,86 @@ impl ScrapeWorker {
                 Ok(())
             }
         }
+    }
+
+    // T059/R-cache-002：缓存读写辅助方法
+    //
+    // 这两个方法封装 `CacheService` 的调用细节（key 生成、序列化、TTL），
+    // `process_scrape_task` 仅负责门控决策（是否调用它们）。
+    // 失败时不阻塞抓取流程——调用方已处理错误降级（规则12：失败显性化）。
+
+    /// 读抓取结果缓存（T059/R-cache-002）
+    ///
+    /// 由调用方先用 [`cache_utils::generate_scrape_cache_key`] 计算 cache key
+    /// （纳入 ScrapeOptions 影响字段，HIGH-1 改进），传入本方法查 `CacheService`。
+    ///
+    /// 返回 `Ok(None)` 表示缓存未命中；`Ok(Some)` 表示命中；`Err` 表示缓存故障。
+    ///
+    /// T062 安全审查 MEDIUM-2：日志使用脱敏 URL（key 含完整 URL，可能含 query 参数中的 token）。
+    async fn try_read_scrape_cache(
+        &self,
+        ctx: &CacheContext,
+        key: &str,
+    ) -> Result<Option<ScrapeResponse>> {
+        match self.cache_service.get(key).await {
+            Ok(Some(json)) => match serde_json::from_str::<ScrapeResponse>(&json) {
+                Ok(resp) => Ok(Some(resp)),
+                Err(e) => {
+                    // 反序列化失败：缓存数据损坏，记录后视为 miss（不阻塞抓取）
+                    // T062 安全审查 MEDIUM-2：日志输出脱敏 URL 而非完整 key（key 含 URL）
+                    warn!(
+                        "Cache deserialize failed, treating as miss url={} error={}",
+                        redact_url_for_log(&ctx.url),
+                        e
+                    );
+                    Ok(None)
+                }
+            },
+            Ok(None) => Ok(None),
+            Err(e) => Err(anyhow::anyhow!("cache get failed: {}", e)),
+        }
+    }
+
+    /// 写抓取结果缓存（T059/R-cache-002）
+    ///
+    /// 由调用方先用 [`cache_utils::generate_scrape_cache_key`] 计算 cache key 传入。
+    /// 序列化 `ScrapeResponse` → JSON → 写入 `CacheService`（带 TTL）。
+    /// TTL 从 `settings.cache.types.search.ttl_seconds` 读取（默认 300s，
+    /// 由 `CacheTypeSettings::ttl_seconds` 的 `#[config(default = 300)]` 保证非零）。
+    ///
+    /// T062 安全审查 LOW-2：序列化时通过 [`SanitizedScrapeResponse`] 自定义 Serialize
+    /// 跳过敏感响应头（Set-Cookie、Authorization 等），防止凭证泄露到缓存（CWE-200）。
+    ///
+    /// 性能 HIGH-1：原实现 `response.clone()` 完整克隆 ScrapeResponse（含 content
+    /// 可能数 MB、screenshot 可能 100KB+），仅用于过滤 headers 后序列化。改为
+    /// [`SanitizedScrapeResponse::from_response`] 借用原 response，零克隆序列化。
+    ///
+    /// T062 安全审查 MEDIUM-2：日志使用脱敏 URL（key 含完整 URL）。
+    async fn try_write_scrape_cache(
+        &self,
+        ctx: &CacheContext,
+        key: &str,
+        response: &ScrapeResponse,
+    ) -> Result<()> {
+        // 性能 HIGH-1：借用序列化，避免克隆整个 ScrapeResponse
+        let sanitized = SanitizedScrapeResponse::from_response(response);
+        let json = serde_json::to_string(&sanitized)
+            .context("Failed to serialize ScrapeResponse for cache")?;
+        let ttl = self.settings.cache.types.search.ttl_seconds;
+        self.cache_service
+            .set(key, &json, ttl)
+            .await
+            .map_err(|e| anyhow::anyhow!("cache set failed: {}", e))?;
+        // 性能审查 LOW-1：debug 禁用时跳过 redact_url_for_log 调用（~1μs）
+        if log::log_enabled!(log::Level::Debug) {
+            debug!(
+                "Cache written url={} ttl={}s mode={:?}",
+                redact_url_for_log(&ctx.url),
+                ttl,
+                ctx.mode
+            );
+        }
+        Ok(())
     }
 
     // H-4 职责拆分：`try_coalesce` 方法已迁移至 `CoalesceCoordinator`（独立组件）。
@@ -612,6 +782,7 @@ impl ScrapeWorker {
             block_ads: false,
             block_media: false,
             session_id: None,
+            cache_mode: None,
             })
     }
 
@@ -816,6 +987,7 @@ impl ScrapeWorker {
             block_ads: false,
             block_media: false,
             session_id: None,
+            cache_mode: None,
             })
     }
 
@@ -1715,6 +1887,18 @@ impl ScrapeWorker {
                 block_ads: false,
                 block_media: false,
                 session_id: None,
+                // T058/R-cache-002：cache_mode 桥接（bypass_cache 优先级处理）
+                //
+                // bypass_cache=Some(true) 覆盖 cache_mode 为 Bypass（应急绕过读，正常写回）。
+                // 其余情况按 cache_mode 走；两者皆 None 时等价于 Enabled（默认）。
+                cache_mode: {
+                    let bypass = options.and_then(|o| o.bypass_cache).unwrap_or(false);
+                    if bypass {
+                        Some(CacheMode::Bypass)
+                    } else {
+                        options.and_then(|o| o.cache_mode)
+                    }
+                },
             },
         })
     }
@@ -1757,6 +1941,10 @@ pub struct ScrapeWorkerBuilder {
     ///
     /// 不设置时使用 `Deduplicator::new()`（默认配置：保留 query，1M 容量）
     deduplicator: Option<Arc<parking_lot::RwLock<Deduplicator>>>,
+    /// 高级缓存服务（T059/R-cache-002，必需）
+    ///
+    /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入。
+    cache_service: Option<Arc<dyn CacheService>>,
 }
 
 impl Default for ScrapeWorkerBuilder {
@@ -1778,6 +1966,7 @@ impl Default for ScrapeWorkerBuilder {
             #[cfg(feature = "metrics")]
             memory_scheduler: None,
             deduplicator: None,
+            cache_service: None,
         }
     }
 }
@@ -1878,6 +2067,15 @@ impl ScrapeWorkerBuilder {
         self
     }
 
+    /// 设置高级缓存服务（T059/R-cache-002，必需）
+    ///
+    /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
+    /// 用于 `process_scrape_task` 读写抓取结果缓存。
+    pub fn with_cache_service(mut self, cache_service: Arc<dyn CacheService>) -> Self {
+        self.cache_service = Some(cache_service);
+        self
+    }
+
     /// 设置内存感知调度器（T019/R-runtime-001，metrics 特性启用时必需）
     #[cfg(feature = "metrics")]
     pub fn with_memory_scheduler(mut self, memory_scheduler: Arc<MemoryScheduler>) -> Self {
@@ -1922,6 +2120,7 @@ impl ScrapeWorkerBuilder {
             .extraction_service
             .ok_or("extraction_service is required")?;
         let regex_cache = self.regex_cache.ok_or("regex_cache is required")?;
+        let cache_service = self.cache_service.ok_or("cache_service is required")?;
         #[cfg(feature = "metrics")]
         let memory_scheduler = self
             .memory_scheduler
@@ -1950,6 +2149,7 @@ impl ScrapeWorkerBuilder {
             self.default_concurrency_limit,
             extraction_service,
             regex_cache,
+            cache_service,
             #[cfg(feature = "metrics")]
             memory_scheduler,
         )
@@ -1962,7 +2162,96 @@ mod tests {
     use super::*;
     use crate::engines::EngineError;
     use crate::infrastructure::oxcache::RegexCacheType;
+    use crate::workers::cache_utils::{filter_sensitive_headers, generate_scrape_cache_key};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Mutex;
     use std::time::Duration;
+
+    // ========== T059/R-cache-002: MockCacheService ==========
+
+    /// 可观测的 MockCacheService 用于 T059 缓存门控测试
+    ///
+    /// - `data`：内存存储，可预填充模拟 cache hit
+    /// - `get_count`/`set_count`：原子计数器，验证读/写行为
+    struct MockCacheService {
+        data: Mutex<HashMap<String, String>>,
+        get_count: AtomicU64,
+        set_count: AtomicU64,
+    }
+
+    impl MockCacheService {
+        fn new() -> Self {
+            Self {
+                data: Mutex::new(HashMap::new()),
+                get_count: AtomicU64::new(0),
+                set_count: AtomicU64::new(0),
+            }
+        }
+
+        fn with_entry(key: &str, value: &str) -> Self {
+            let s = Self::new();
+            s.data
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            s
+        }
+
+        fn get_count(&self) -> u64 {
+            self.get_count.load(Ordering::Relaxed)
+        }
+
+        fn set_count(&self) -> u64 {
+            self.set_count.load(Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CacheService for MockCacheService {
+        fn get(
+            &self,
+            key: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<String>>> + Send + '_>> {
+            self.get_count.fetch_add(1, Ordering::Relaxed);
+            let data = self.data.lock().unwrap().get(key).cloned();
+            Box::pin(async move { Ok(data) })
+        }
+
+        fn set(
+            &self,
+            key: &str,
+            value: &str,
+            _ttl_seconds: u64,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+            self.set_count.fetch_add(1, Ordering::Relaxed);
+            // R-cache-002 修复：必须真正写入 data，否则写后读测试（test_try_write_scrape_cache_key_matches_read_key）
+            // 会因 miss 失败。原实现以 `_key`/`_value` 命名导致数据被丢弃，违反规则 12（失败显性化）。
+            // `_ttl_seconds` 保留下划线前缀：内存 mock 无过期语义，TTL 不影响读写一致性验证。
+            self.data
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete(
+            &self,
+            key: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+            self.data.lock().unwrap().remove(key);
+            Box::pin(async { Ok(()) })
+        }
+
+        fn exists(
+            &self,
+            key: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + '_>> {
+            let exists = self.data.lock().unwrap().contains_key(key);
+            Box::pin(async move { Ok(exists) })
+        }
+    }
 
     // ========== Helper functions ==========
 
@@ -2071,6 +2360,163 @@ mod tests {
         let regex = result.expect("valid pattern should produce a Regex");
         assert!(regex.is_match("123"));
         assert!(!regex.is_match("abc"));
+    }
+
+    // ========== T062 安全审查 MEDIUM-2: redact_url_for_log tests ==========
+
+    #[test]
+    fn test_redact_url_for_log_strips_query_params() {
+        // query 参数中的 token/api_key 必须被移除
+        let url = "https://example.com/api?token=secret&api_key=key123";
+        let redacted = redact_url_for_log(url);
+        assert_eq!(redacted, "https://example.com/api");
+        assert!(
+            !redacted.contains("secret"),
+            "token value must not appear in log"
+        );
+        assert!(
+            !redacted.contains("key123"),
+            "api_key value must not appear in log"
+        );
+    }
+
+    #[test]
+    fn test_redact_url_for_log_strips_fragment() {
+        let url = "https://example.com/page#section";
+        let redacted = redact_url_for_log(url);
+        assert_eq!(redacted, "https://example.com/page");
+        assert!(!redacted.contains("section"));
+    }
+
+    #[test]
+    fn test_redact_url_for_log_preserves_path() {
+        let url = "https://example.com/deep/nested/path";
+        let redacted = redact_url_for_log(url);
+        assert_eq!(redacted, url);
+    }
+
+    #[test]
+    fn test_redact_url_for_log_preserves_port() {
+        let url = "http://localhost:8080/api";
+        let redacted = redact_url_for_log(url);
+        assert_eq!(redacted, url);
+    }
+
+    #[test]
+    fn test_redact_url_for_log_invalid_url_returns_placeholder() {
+        // 非法 URL 返回占位符，绝不原样返回可能含凭证的输入
+        let redacted = redact_url_for_log("not a url at all");
+        assert_eq!(redacted, "[invalid-url]");
+    }
+
+    #[test]
+    fn test_redact_url_for_log_truncates_long_urls() {
+        // 超长 URL 截断到 200 字符 + "..."
+        let long_path = "a".repeat(300);
+        let url = format!("https://example.com/{}", long_path);
+        let redacted = redact_url_for_log(&url);
+        assert!(
+            redacted.ends_with("..."),
+            "truncated URL should end with '...': {}",
+            redacted
+        );
+        // 截断后总长度应 <= 203（200 + "..."）
+        assert!(
+            redacted.len() <= 203,
+            "redacted length {} should be <= 203",
+            redacted.len()
+        );
+    }
+
+    #[test]
+    fn test_redact_url_for_log_empty_query_only() {
+        // 仅 query 无 path
+        let url = "https://example.com?token=secret";
+        let redacted = redact_url_for_log(url);
+        assert_eq!(redacted, "https://example.com/");
+        assert!(!redacted.contains("secret"));
+    }
+
+    // ========== T062 安全审查 LOW-2: filter_sensitive_headers tests ==========
+    // 性能审查 MEDIUM-1：函数改为原地修改 (&mut HashMap)，测试同步更新
+
+    #[test]
+    fn test_filter_sensitive_headers_removes_set_cookie() {
+        let mut headers = HashMap::new();
+        headers.insert("Set-Cookie".to_string(), "session=abc123".to_string());
+        headers.insert("Content-Type".to_string(), "text/html".to_string());
+        filter_sensitive_headers(&mut headers);
+        assert!(!headers.contains_key("Set-Cookie"));
+        assert!(headers.contains_key("Content-Type"));
+    }
+
+    #[test]
+    fn test_filter_sensitive_headers_removes_authorization() {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer token123".to_string());
+        headers.insert("X-Custom".to_string(), "value".to_string());
+        filter_sensitive_headers(&mut headers);
+        assert!(!headers.contains_key("Authorization"));
+        assert!(headers.contains_key("X-Custom"));
+    }
+
+    #[test]
+    fn test_filter_sensitive_headers_case_insensitive() {
+        // HTTP header 名称大小写不敏感
+        let mut headers = HashMap::new();
+        headers.insert("set-cookie".to_string(), "v1".to_string());
+        headers.insert("SET-COOKIE".to_string(), "v2".to_string());
+        headers.insert("Set-Cookie".to_string(), "v3".to_string());
+        filter_sensitive_headers(&mut headers);
+        assert!(
+            !headers.contains_key("set-cookie"),
+            "lowercase set-cookie should be filtered"
+        );
+        assert!(
+            !headers.contains_key("SET-COOKIE"),
+            "uppercase SET-COOKIE should be filtered"
+        );
+        assert!(
+            !headers.contains_key("Set-Cookie"),
+            "mixed-case Set-Cookie should be filtered"
+        );
+    }
+
+    #[test]
+    fn test_filter_sensitive_headers_removes_all_sensitive() {
+        let mut headers = HashMap::new();
+        headers.insert("Set-Cookie".to_string(), "v".to_string());
+        headers.insert("Cookie".to_string(), "v".to_string());
+        headers.insert("Authorization".to_string(), "v".to_string());
+        headers.insert("Proxy-Authorization".to_string(), "v".to_string());
+        headers.insert("WWW-Authenticate".to_string(), "v".to_string());
+        headers.insert("X-Api-Key".to_string(), "v".to_string());
+        headers.insert("X-Auth-Token".to_string(), "v".to_string());
+        headers.insert("X-Session-Id".to_string(), "v".to_string());
+        filter_sensitive_headers(&mut headers);
+        assert!(headers.is_empty(), "all sensitive headers should be removed");
+    }
+
+    #[test]
+    fn test_filter_sensitive_headers_preserves_non_sensitive() {
+        let mut headers = HashMap::new();
+        headers.insert("Content-Type".to_string(), "text/html".to_string());
+        headers.insert("Content-Length".to_string(), "1234".to_string());
+        headers.insert("Cache-Control".to_string(), "no-cache".to_string());
+        headers.insert("ETag".to_string(), "abc".to_string());
+        filter_sensitive_headers(&mut headers);
+        assert_eq!(headers.len(), 4);
+        assert!(headers.contains_key("Content-Type"));
+        assert!(headers.contains_key("Content-Length"));
+        assert!(headers.contains_key("Cache-Control"));
+        assert!(headers.contains_key("ETag"));
+    }
+
+    #[test]
+    fn test_filter_sensitive_headers_empty_input() {
+        let mut headers: HashMap<String, String> = HashMap::new();
+        filter_sensitive_headers(&mut headers);
+        assert!(headers.is_empty());
     }
 
     #[tokio::test]
@@ -3180,6 +3626,48 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
+        )
+    }
+
+    /// T059/R-cache-002：构造使用指定 MockCacheService 的 worker
+    ///
+    /// 返回 (worker, cache_arc) —— 调用方通过 cache_arc.get_count()/set_count()
+    /// 验证缓存读/写行为，或通过 cache_arc 预填充数据模拟 cache hit。
+    async fn build_mock_worker_with_cache(
+        cache: Arc<MockCacheService>,
+    ) -> ScrapeWorker {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings for mock worker");
+        let settings_arc = Arc::new(settings.clone());
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
+
+        ScrapeWorker::new(
+            task_repo,
+            result_repo,
+            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            engine_client,
+            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            team_semaphore,
+            coalesce_coordinator,
+            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+            settings_arc,
+            10,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            regex_cache,
+            cache as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         )
@@ -3221,6 +3709,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         );
@@ -4476,7 +4965,8 @@ mod tests {
             .with_extraction_service(
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
-            .with_regex_cache(regex_cache);
+            .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>);
         #[cfg(feature = "metrics")]
         let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
         let worker = builder.build();
@@ -4513,6 +5003,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -4544,6 +5035,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -4577,6 +5069,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -4610,6 +5103,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -4642,6 +5136,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -4674,6 +5169,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -4706,6 +5202,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -4737,6 +5234,7 @@ mod tests {
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -4803,6 +5301,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .with_default_concurrency_limit(100);
         #[cfg(feature = "metrics")]
         let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
@@ -4841,8 +5340,8 @@ mod tests {
             crate::config::settings::ProxyStrategy::RoundRobin,
             None,
             &settings.engines,
-            // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
-            settings.timeouts.engines.default_timeout_seconds,
+            // T061：注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
+            &settings.timeouts.engines,
         );
         let services = init_services(
             &infra,
@@ -4875,6 +5374,7 @@ mod tests {
             settings.concurrency.default_team_limit as usize,
             services.extraction_service.clone(),
             (*services.regex_cache).clone(),
+            infra.cache_service.clone(),
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         );
@@ -5015,8 +5515,8 @@ mod tests {
             crate::config::settings::ProxyStrategy::RoundRobin,
             None,
             &settings.engines,
-            // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
-            settings.timeouts.engines.default_timeout_seconds,
+            // T061：注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
+            &settings.timeouts.engines,
         );
         let services = init_services(
             &infra,
@@ -5047,7 +5547,8 @@ mod tests {
                 .with_settings(settings_arc)
                 .with_default_concurrency_limit(settings.concurrency.default_team_limit as usize)
                 .with_extraction_service(services.extraction_service.clone())
-                .with_regex_cache((*services.regex_cache).clone());
+                .with_regex_cache((*services.regex_cache).clone())
+                .with_cache_service(infra.cache_service.clone());
         #[cfg(feature = "metrics")]
         let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
         let worker = builder
@@ -5218,6 +5719,7 @@ mod tests {
             10,
             Arc::new(MockExtractionServiceWithTokens) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         )
@@ -6153,6 +6655,9 @@ mod tests {
                     EngineError::RequestFailed(s) => EngineError::RequestFailed(s.clone()),
                     EngineError::Other(s) => EngineError::Other(s.clone()),
                     EngineError::Internal(s) => EngineError::Internal(s.clone()),
+                    EngineError::EngineMrtExceeded { engine, mrt } => {
+                        EngineError::EngineMrtExceeded { engine: engine.clone(), mrt: *mrt }
+                    }
                 }),
             }
         }
@@ -6252,6 +6757,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         )
@@ -6289,6 +6795,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         )
@@ -6384,6 +6891,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         );
@@ -6461,6 +6969,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             memory_scheduler,
         );
 
@@ -6574,6 +7083,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             memory_scheduler,
         );
 
@@ -6932,6 +7442,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -6963,6 +7474,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -6996,6 +7508,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -7156,6 +7669,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         );
@@ -7217,6 +7731,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         );
@@ -7276,6 +7791,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         );
@@ -7329,6 +7845,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         );
@@ -7469,6 +7986,7 @@ mod tests {
             10,
             extraction_service,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         )
@@ -7579,6 +8097,7 @@ mod tests {
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         );
@@ -8435,5 +8954,244 @@ mod tests {
         assert!(!worker.should_crawl("https://example.com/admin/users", &config));
         assert!(!worker.should_crawl("https://example.com/internal/debug", &config));
         assert!(worker.should_crawl("https://example.com/public/page", &config));
+    }
+
+    // =========================================================================
+    // T059/R-cache-002: 高级缓存模式门控测试
+    // =========================================================================
+
+    // --- generate_scrape_cache_key ---
+
+    #[test]
+    fn test_generate_scrape_cache_key_format() {
+        let ctx = CacheContext {
+            url: "https://example.com".to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+        assert!(key.starts_with("scrape:"));
+        assert!(key.contains("https://example.com"));
+    }
+
+    #[test]
+    fn test_generate_scrape_cache_key_different_methods_produce_different_keys() {
+        let url = "https://example.com/api";
+        let get_key = generate_scrape_cache_key(
+            &CacheContext { url: url.to_string(), method: HttpMethod::Get, mode: CacheMode::Enabled },
+            &ScrapeOptions::default(),
+        );
+        let post_key = generate_scrape_cache_key(
+            &CacheContext { url: url.to_string(), method: HttpMethod::Post, mode: CacheMode::Enabled },
+            &ScrapeOptions::default(),
+        );
+        assert_ne!(get_key, post_key, "GET and POST must have different cache keys");
+    }
+
+    #[test]
+    fn test_generate_scrape_cache_key_different_urls_produce_different_keys() {
+        let key1 = generate_scrape_cache_key(
+            &CacheContext { url: "https://a.com".to_string(), method: HttpMethod::Get, mode: CacheMode::Enabled },
+            &ScrapeOptions::default(),
+        );
+        let key2 = generate_scrape_cache_key(
+            &CacheContext { url: "https://b.com".to_string(), method: HttpMethod::Get, mode: CacheMode::Enabled },
+            &ScrapeOptions::default(),
+        );
+        assert_ne!(key1, key2);
+    }
+
+    // --- try_read_scrape_cache ---
+
+    #[tokio::test]
+    async fn test_try_read_scrape_cache_miss_returns_none() {
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let ctx = CacheContext {
+            url: "https://example.com".to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+
+        let result = worker.try_read_scrape_cache(&ctx, &key).await;
+        assert!(result.is_ok(), "read should succeed even on miss");
+        assert!(result.unwrap().is_none(), "empty cache should return None");
+        assert_eq!(cache.get_count(), 1, "get should be called once");
+    }
+
+    #[tokio::test]
+    async fn test_try_read_scrape_cache_hit_returns_response() {
+        let url = "https://example.com";
+        let ctx = CacheContext {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::ReadOnly,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+        let cached_response = ScrapeResponse::new(200, "cached content", "text/html");
+        let cached_json = serde_json::to_string(&cached_response).expect("serialize failed");
+
+        let cache = Arc::new(MockCacheService::with_entry(&key, &cached_json));
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let result = worker.try_read_scrape_cache(&ctx, &key).await;
+        assert!(result.is_ok(), "read should succeed on hit");
+        let resp = result.unwrap().expect("should have cached response");
+        assert_eq!(resp.status_code, 200);
+        assert_eq!(resp.content, "cached content");
+        assert_eq!(cache.get_count(), 1, "get should be called once");
+    }
+
+    #[tokio::test]
+    async fn test_try_read_scrape_cache_corrupt_data_returns_none() {
+        let url = "https://example.com";
+        let ctx = CacheContext {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+        // 存入损坏的 JSON（不是有效的 ScrapeResponse）
+        let cache = Arc::new(MockCacheService::with_entry(&key, "{invalid json}"));
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let result = worker.try_read_scrape_cache(&ctx, &key).await;
+        assert!(result.is_ok(), "corrupt cache should not error, degrade to miss");
+        assert!(result.unwrap().is_none(), "corrupt data should be treated as miss");
+        assert_eq!(cache.get_count(), 1, "get should still be called once");
+    }
+
+    // --- try_write_scrape_cache ---
+
+    #[tokio::test]
+    async fn test_try_write_scrape_cache_writes_serialized_response() {
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let ctx = CacheContext {
+            url: "https://example.com/page".to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+
+        let response = ScrapeResponse::new(200, "fresh content", "text/html");
+        let result = worker.try_write_scrape_cache(&ctx, &key, &response).await;
+        assert!(result.is_ok(), "write should succeed");
+        assert_eq!(cache.set_count(), 1, "set should be called once");
+    }
+
+    #[tokio::test]
+    async fn test_try_write_scrape_cache_key_matches_read_key() {
+        let url = "https://example.com/sync";
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        // 写缓存（Bypass 模式：should_read=false, should_write=true，合并原 WriteOnly 语义）
+        let ctx = CacheContext {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::Bypass,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+        let response = ScrapeResponse::new(200, "written", "text/html");
+        worker.try_write_scrape_cache(&ctx, &key, &response).await.unwrap();
+        assert_eq!(cache.set_count(), 1);
+
+        // 读缓存应命中（同一个 key）
+        let result = worker.try_read_scrape_cache(&ctx, &key).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap().expect("should hit after write");
+        assert_eq!(resp.content, "written");
+    }
+
+    // --- process_scrape_task 门控行为（通过 MockCacheService 计数器验证）---
+
+    /// 辅助：构造带 cache_mode 的 Task payload
+    fn make_task_with_cache_mode(url: &str, mode: Option<CacheMode>) -> Task {
+        let options = match mode {
+            Some(m) => serde_json::json!({ "cache_mode": m }),
+            None => serde_json::json!({}),
+        };
+        let payload = serde_json::json!({
+            "url": url,
+            "options": options,
+        });
+        make_task(payload)
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_disabled_mode_no_cache_read_or_write() {
+        // Disabled 模式：should_read=false, should_write=false
+        // → 不读缓存（get_count=0），不写缓存（set_count=0）
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let task = make_task_with_cache_mode("https://example.com", Some(CacheMode::Disabled));
+        let _ = worker.process_scrape_task(task).await;
+
+        assert_eq!(cache.get_count(), 0, "Disabled mode should not read cache");
+        assert_eq!(cache.set_count(), 0, "Disabled mode should not write cache");
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_bypass_mode_no_read_but_attempt_write() {
+        // Bypass 模式：should_read=false, should_write=true
+        // → 不读缓存（get_count=0）
+        // → 抓取失败（engine_client 无引擎），不写缓存（set_count=0）
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let task = make_task_with_cache_mode("https://example.com", Some(CacheMode::Bypass));
+        let _ = worker.process_scrape_task(task).await;
+
+        assert_eq!(cache.get_count(), 0, "Bypass mode should not read cache");
+        assert_eq!(cache.set_count(), 0, "Bypass mode should not write on scrape failure");
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_read_only_mode_reads_cache_no_write() {
+        // ReadOnly 模式：should_read=true, should_write=false
+        // → 读缓存（get_count=1），缓存未命中
+        // → 抓取失败（engine_client 无引擎），不写缓存（set_count=0）
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let task = make_task_with_cache_mode("https://example.com", Some(CacheMode::ReadOnly));
+        let _ = worker.process_scrape_task(task).await;
+
+        assert_eq!(cache.get_count(), 1, "ReadOnly mode should read cache");
+        assert_eq!(cache.set_count(), 0, "ReadOnly mode should not write cache");
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_enabled_mode_reads_cache_no_write_on_failure() {
+        // Enabled 模式：should_read=true, should_write=true
+        // → 读缓存（get_count=1），缓存未命中
+        // → 抓取失败（engine_client 无引擎），不写缓存（set_count=0）
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let task = make_task_with_cache_mode("https://example.com", Some(CacheMode::Enabled));
+        let _ = worker.process_scrape_task(task).await;
+
+        assert_eq!(cache.get_count(), 1, "Enabled mode should read cache");
+        assert_eq!(cache.set_count(), 0, "Enabled mode should not write on scrape failure");
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_default_mode_reads_cache() {
+        // cache_mode=None（默认）→ 等价于 Enabled
+        // → 读缓存（get_count=1）
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let task = make_task_with_cache_mode("https://example.com", None);
+        let _ = worker.process_scrape_task(task).await;
+
+        assert_eq!(cache.get_count(), 1, "Default (Enabled) mode should read cache");
+        assert_eq!(cache.set_count(), 0, "Should not write on scrape failure");
     }
 }

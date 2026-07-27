@@ -12,6 +12,7 @@ use crate::infrastructure::security::env_var_security::{EnvVarSecurityMonitor, E
 use anyhow::Result;
 use confers::{ConfigBuilder, EnvSource};
 use log::{debug, error, info, warn};
+use validator::Validate;
 
 /// Load application configuration from the standard settings file and environment.
 ///
@@ -19,6 +20,15 @@ use log::{debug, error, info, warn};
 /// environment variables prefixed by `CRAWLRS__` (nested via `__`).
 /// Note: confers 0.4's `load_sync()` only applies field-level defaults and env
 /// vars; it no longer auto-discovers config files (breaking change from 0.2.2).
+///
+/// # 安全验证（T062 安全审查 CRITICAL-1 修复）
+///
+/// confers 0.4 `#[config(validate)]` 集成的是 `garde::Validate`，而 `Settings` 用的是
+/// `validator::Validate`，两者不兼容——`#[validate(range(...))]` 等注解不会被
+/// confers 自动触发。本函数在 `build()` 后显式调用 `Settings::validate()`，
+/// 覆盖所有 `#[validate(...)]` 注解（EngineTimeoutSettings 的 range、TaskQueryRequestDto
+/// 的 range 等），防止环境变量注入 `CRAWLRS__TIMEOUTS__ENGINES__DEFAULT_TIMEOUT_SECONDS=0`
+/// 绕过校验触发 DoS（CWE-400 + CWE-20 + 配置注入）。
 pub fn load_settings() -> Result<Settings> {
     let settings = ConfigBuilder::<Settings>::new()
         .file("config/default.toml")
@@ -27,7 +37,14 @@ pub fn load_settings() -> Result<Settings> {
         ))
         .build()
         .map_err(|e| anyhow::anyhow!("Configuration load failed: {}", e))?;
-    info!("Configuration loaded successfully from config sources");
+
+    // T062 安全审查 CRITICAL-1 修复：显式调用 validator::Validate::validate()
+    // 防止环境变量绕过 #[validate(range(min = 1, max = 600))] 等约束
+    settings
+        .validate()
+        .map_err(|e| anyhow::anyhow!("Configuration validation failed: {}", e))?;
+
+    info!("Configuration loaded and validated successfully from config sources");
     Ok(settings)
 }
 
@@ -47,9 +64,15 @@ pub fn load_settings() -> Result<Settings> {
 /// Returns `Ok(())` if validation passes, or an error with details about
 /// the security issue.
 pub fn validate_security(_settings: &Settings, _is_production: bool) -> Result<()> {
-    // Validation is now handled by confers automatically via #[config(validate)]
-    // This function can be used for additional production-specific checks if needed
-    debug!("Security validation configured via confers library");
+    // 安全审查 H-1 修复说明：
+    //
+    // 原注释"Validation is now handled by confers automatically via #[config(validate)]"
+    // 是错误的——confers 0.4 集成的是 `garde::Validate`，而 `Settings` 用的是
+    // `validator::Validate`，两者不兼容。`validator::Validate::validate` 已在
+    // `load_settings()` 中显式调用（覆盖所有 `#[validate(...)]` 注解）。
+    //
+    // 此函数保留为生产环境特定检查的扩展点（如密钥强度、JWT 长度等业务规则）。
+    debug!("Security validation configured via validator::Validate in load_settings()");
     Ok(())
 }
 

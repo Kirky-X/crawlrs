@@ -5,6 +5,7 @@
 
 //! Scrape request DTO with input validation
 
+use crate::common::CacheMode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use validator::Validate;
@@ -58,7 +59,7 @@ pub struct ScrapeRequestDto {
     pub sync_wait_ms: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ScrapeOptionsDto {
     /// 自定义HTTP请求头
@@ -83,6 +84,44 @@ pub struct ScrapeOptionsDto {
     pub needs_tls_fingerprint: Option<bool>,
     /// 是否使用Fire Engine (CDP)
     pub use_fire_engine: Option<bool>,
+    /// 缓存模式（T058/R-cache-002，design.md §13）
+    ///
+    /// 控制本次抓取的缓存读写行为。`None`（默认）等价于 `Some(CacheMode::Enabled)`。
+    /// 详见 [`crate::common::CacheMode`]。
+    ///
+    /// 与 `bypass_cache` 的优先级：`bypass_cache=Some(true)` 覆盖 `cache_mode` 为
+    /// `Some(CacheMode::Bypass)`（应急绕过读，正常写回）。
+    pub cache_mode: Option<CacheMode>,
+    /// 应急绕过缓存读（T058/R-cache-002，design.md §13）
+    ///
+    /// `Some(true)` → 等价于 `cache_mode=Some(CacheMode::Bypass)`（跳过读，正常写回），
+    /// 用于运行时不信任缓存脏数据的应急场景。`Some(false)` 或 `None` → 忽略，按 `cache_mode` 走。
+    ///
+    /// 详见 [`crate::common::CacheMode::Bypass`]。
+    pub bypass_cache: Option<bool>,
+}
+
+impl ScrapeOptionsDto {
+    /// 计算 `cache_mode` 与 `bypass_cache` 桥接后的有效缓存模式（架构审查 HIGH-3 修复）
+    ///
+    /// 优先级：`bypass_cache=Some(true)` 覆盖 `cache_mode` 为 `Bypass`；
+    /// 其余情况按 `cache_mode` 走；两者皆 `None` 时返回 `None`（等价于 `Enabled`）。
+    ///
+    /// # 返回
+    ///
+    /// - `Some(CacheMode::Bypass)`：`bypass_cache=Some(true)`，或 `cache_mode=Some(Bypass)`
+    /// - `Some(mode)`：`bypass_cache!=Some(true)` 且 `cache_mode=Some(mode)`
+    /// - `None`：两者皆 `None`，由调用方 `unwrap_or_default()` 解析为 `Enabled`
+    ///
+    /// 此方法消除原 `create_scrape.rs` + `scrape_worker.rs` 中的重复桥接逻辑（DRY 修复）。
+    #[must_use]
+    pub fn effective_cache_mode(&self) -> Option<CacheMode> {
+        if self.bypass_cache.unwrap_or(false) {
+            Some(CacheMode::Bypass)
+        } else {
+            self.cache_mode
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

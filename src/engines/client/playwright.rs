@@ -27,6 +27,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// PlaywrightEngine 默认 MRT（30 秒，对应 `EngineTimeoutSettings::cdp_seconds`）。
+///
+/// design.md §14 / T060：CDP/浏览器引擎涉及完整浏览器启动 + JS 渲染，
+/// 30 秒覆盖绝大多数页面（含 network idle 等待）。生产环境应通过
+/// [`PlaywrightEngine::with_mrt`] 从 `Settings.timeouts.engines.cdp_seconds` 注入。
+const DEFAULT_PLAYWRIGHT_MRT_SECONDS: u64 = 30;
+
 /// PERF-C2 修复：默认网络空闲等待时间（毫秒）
 ///
 /// 原为固定 5 秒 `tokio::time::sleep(Duration::from_secs(5))`，无条件阻塞每次浏览器引擎请求。
@@ -322,22 +329,45 @@ pub struct PlaywrightEngine {
     pool: Option<BrowserPool>,
     /// UA 池（R-identity-001）：每次请求从池中选取一致的 UA + viewport
     ua_pool: UaPool,
+    /// 单引擎最大响应时间（MRT，design.md §14 / T060）。
+    ///
+    /// router 顺序 fallback 路径用 `min(remaining, mrt)` 包裹单引擎调用，
+    /// 超 MRT 即切下一引擎。注入自 `Settings.timeouts.engines.cdp_seconds`（默认 30 秒）。
+    mrt: Duration,
 }
 
 impl PlaywrightEngine {
     /// 创建新的 Playwright 引擎（使用全局浏览器池）
     pub fn new() -> Self {
+        Self::with_mrt(Duration::from_secs(DEFAULT_PLAYWRIGHT_MRT_SECONDS))
+    }
+
+    /// 创建带 MRT 配置的 Playwright 引擎（T060/T061）。
+    ///
+    /// 生产环境应从 `settings.timeouts.engines.cdp_seconds` 注入 `mrt`。
+    #[must_use]
+    pub fn with_mrt(mrt: Duration) -> Self {
         Self {
             pool: None,
             ua_pool: UaPool::default(),
+            mrt,
         }
     }
 
     /// 创建带有自定义浏览器池的 Playwright 引擎
     pub fn with_pool(pool: BrowserPool) -> Self {
+        Self::with_pool_and_mrt(pool, Duration::from_secs(DEFAULT_PLAYWRIGHT_MRT_SECONDS))
+    }
+
+    /// 创建带有自定义浏览器池 + MRT 配置的 Playwright 引擎（T060/T061）。
+    ///
+    /// 生产环境应从 `settings.timeouts.engines.cdp_seconds` 注入 `mrt`。
+    #[must_use]
+    pub fn with_pool_and_mrt(pool: BrowserPool, mrt: Duration) -> Self {
         Self {
             pool: Some(pool),
             ua_pool: UaPool::default(),
+            mrt,
         }
     }
 
@@ -345,6 +375,14 @@ impl PlaywrightEngine {
     #[must_use]
     pub fn ua_pool(&self) -> &UaPool {
         &self.ua_pool
+    }
+
+    /// 获取引擎级 MRT（用于测试验证 T060）。
+    ///
+    /// 返回构造时注入的 `mrt`（默认 30 秒，对应 `cdp_seconds`）。
+    #[must_use]
+    pub fn mrt(&self) -> Duration {
+        self.mrt
     }
 
     /// 获取或创建浏览器池
@@ -767,6 +805,14 @@ impl ScraperEngine for PlaywrightEngine {
     fn supports_tls_fingerprint(&self) -> bool {
         false
     }
+
+    /// T060：覆写 MRT，返回构造时注入的 `mrt`（默认 30 秒）。
+    ///
+    /// router 顺序 fallback 路径用 `min(remaining, self.mrt)` 包裹单引擎调用，
+    /// 超 MRT 即切下一引擎（瀑布式）。
+    fn max_response_time(&self) -> Duration {
+        self.mrt
+    }
 }
 
 #[cfg(test)]
@@ -799,6 +845,7 @@ mod tests {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
         assert_eq!(engine.support_score(&request_js), 100);
 
@@ -821,6 +868,7 @@ mod tests {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
         assert_eq!(engine.support_score(&request_screenshot), 100);
 
@@ -843,6 +891,7 @@ mod tests {
             sync_wait_ms: 0,
             block_ads: false,
             block_media: false,
+            session_id: None,
             };
         assert_eq!(engine.support_score(&request_basic), 10);
     }

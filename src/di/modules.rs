@@ -365,8 +365,8 @@ impl AsyncAutoBuilder for EngineModule {
                 settings.proxy.strategy,
                 proxy_url,
                 &settings.engines,
-                // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
-                settings.timeouts.engines.default_timeout_seconds,
+                // T061：注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
+                &settings.timeouts.engines,
             );
             Ok(engines)
         })

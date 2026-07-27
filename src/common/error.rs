@@ -452,6 +452,14 @@ impl From<crate::engines::engine_client::EngineError> for CrawlRsError {
             }
             crate::engines::engine_client::EngineError::Other(msg) => CrawlRsError::Engine(msg),
             crate::engines::engine_client::EngineError::Internal(msg) => CrawlRsError::Engine(msg),
+            // 引擎级 MRT 超时（架构审查 MEDIUM-2）：映射到 Timeout，
+            // 错误信息携带 engine 名字 + mrt 时长，便于调用方定位瀑布式 fallback 失败点
+            crate::engines::engine_client::EngineError::EngineMrtExceeded { engine, mrt } => {
+                CrawlRsError::Timeout(format!(
+                    "Engine {} exceeded MRT of {:?} (waterfall fallback exhausted)",
+                    engine, mrt
+                ))
+            }
         }
     }
 }

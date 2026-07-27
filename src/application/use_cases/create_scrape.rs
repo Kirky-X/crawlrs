@@ -14,9 +14,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::application::dto::scrape_request::{
-    ScrapeActionDto, ScrapeOptionsDto, ScrapeRequestDto,
-};
+use crate::application::dto::scrape_request::{ScrapeActionDto, ScrapeRequestDto};
 use crate::domain::models::DomainError;
 use crate::engines::engine_client::{
     EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
@@ -75,19 +73,19 @@ impl CreateScrapeUseCase {
     }
 
     fn map_dto_to_request(&self, dto: ScrapeRequestDto) -> Result<ScrapeRequest, DomainError> {
-        let options = dto.options.unwrap_or(ScrapeOptionsDto {
-            headers: None,
-            wait_for: None,
-            timeout: None,
-            js_rendering: None,
-            screenshot: None,
-            screenshot_options: None,
-            mobile: None,
-            proxy: None,
-            skip_tls_verification: None,
-            needs_tls_fingerprint: None,
-            use_fire_engine: None,
-        });
+        let options = dto.options.unwrap_or_default();
+
+        // T058/R-cache-002：bypass_cache 优先级处理
+        //
+        // 架构审查 HIGH-3 修复：抽取为 `ScrapeOptionsDto::effective_cache_mode()`
+        // 消除 `create_scrape.rs` + `scrape_worker.rs` 中的重复桥接逻辑（DRY）。
+        //
+        // 必须在任何部分 move 之前调用（Rust E0382）：后续 `options.screenshot_options.map`
+        // 会 move 出 `screenshot_options` 字段，导致 `options` 不可再被借用。
+        //
+        // bypass_cache=Some(true) 覆盖 cache_mode 为 Bypass（应急绕过读，正常写回），
+        // 用于运行时不信任缓存脏数据的应急场景。其余情况按 cache_mode 走。
+        let cache_mode = options.effective_cache_mode();
 
         let headers = self.parse_headers(options.headers)?;
 
@@ -116,6 +114,7 @@ impl CreateScrapeUseCase {
             block_ads: false,
             block_media: false,
             session_id: None,
+            cache_mode,
         };
 
         Ok(ScrapeRequest::new(dto.url).with_options(scrape_options))
@@ -213,12 +212,22 @@ fn map_engine_error(engine_error: crate::engines::engine_client::EngineError) ->
             DomainError::EngineError("Engine request expired".to_string())
         }
         crate::engines::engine_client::EngineError::Other(msg) => DomainError::EngineError(msg),
+        // 引擎级 MRT 超时（架构审查 MEDIUM-2）：映射到 TimeoutError，
+        // 错误信息携带 engine 名字 + mrt 时长，便于调用方定位瀑布式 fallback 失败点
+        crate::engines::engine_client::EngineError::EngineMrtExceeded { engine, mrt } => {
+            DomainError::TimeoutError(format!(
+                "Engine {} exceeded MRT of {:?} (waterfall fallback exhausted)",
+                engine, mrt
+            ))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::dto::scrape_request::ScrapeOptionsDto;
+    use crate::common::CacheMode;
     use crate::engines::engine_client::{EngineError, PageAction, ScrollDirection};
     use std::sync::Arc;
 
@@ -304,6 +313,7 @@ mod tests {
                 skip_tls_verification: Some(true),
                 needs_tls_fingerprint: Some(true),
                 use_fire_engine: Some(true),
+                ..Default::default()
             }),
             metadata: None,
             sync_wait_ms: Some(500),
@@ -326,6 +336,148 @@ mod tests {
             request.options.headers.get("X-Custom").map(|v| v.as_str()),
             Some("value")
         );
+    }
+
+    // ===== T058/R-cache-002: cache_mode / bypass_cache 桥接测试 =====
+
+    #[test]
+    fn test_map_dto_to_request_cache_mode_none_defaults_to_none() {
+        // cache_mode=None（默认）→ ScrapeOptions.cache_mode=None
+        // （None 等价于 Enabled，由 scrape_worker 层 CacheContext 解析）
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto = ScrapeRequestDto {
+            url: "https://example.com".to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            actions: None,
+            options: Some(ScrapeOptionsDto {
+                ..Default::default()
+            }),
+            metadata: None,
+            sync_wait_ms: None,
+        };
+
+        let request = use_case
+            .map_dto_to_request(dto)
+            .expect("dto should map successfully");
+
+        assert_eq!(request.options.cache_mode, None);
+    }
+
+    #[test]
+    fn test_map_dto_to_request_cache_mode_passed_through() {
+        // cache_mode=Some(ReadOnly) → ScrapeOptions.cache_mode=Some(ReadOnly)
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto = ScrapeRequestDto {
+            url: "https://example.com".to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            actions: None,
+            options: Some(ScrapeOptionsDto {
+                cache_mode: Some(CacheMode::ReadOnly),
+                ..Default::default()
+            }),
+            metadata: None,
+            sync_wait_ms: None,
+        };
+
+        let request = use_case
+            .map_dto_to_request(dto)
+            .expect("dto should map successfully");
+
+        assert_eq!(request.options.cache_mode, Some(CacheMode::ReadOnly));
+    }
+
+    #[test]
+    fn test_map_dto_to_request_bypass_cache_true_overrides_to_bypass() {
+        // bypass_cache=Some(true) 覆盖 cache_mode 为 Bypass（即使 cache_mode 显式设为 ReadOnly）
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto = ScrapeRequestDto {
+            url: "https://example.com".to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            actions: None,
+            options: Some(ScrapeOptionsDto {
+                cache_mode: Some(CacheMode::ReadOnly),
+                bypass_cache: Some(true),
+                ..Default::default()
+            }),
+            metadata: None,
+            sync_wait_ms: None,
+        };
+
+        let request = use_case
+            .map_dto_to_request(dto)
+            .expect("dto should map successfully");
+
+        // bypass_cache 优先级覆盖
+        assert_eq!(request.options.cache_mode, Some(CacheMode::Bypass));
+    }
+
+    #[test]
+    fn test_map_dto_to_request_bypass_cache_false_does_not_override() {
+        // bypass_cache=Some(false) 不覆盖，按 cache_mode 走
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto = ScrapeRequestDto {
+            url: "https://example.com".to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            actions: None,
+            options: Some(ScrapeOptionsDto {
+                cache_mode: Some(CacheMode::ReadOnly),
+                bypass_cache: Some(false),
+                ..Default::default()
+            }),
+            metadata: None,
+            sync_wait_ms: None,
+        };
+
+        let request = use_case
+            .map_dto_to_request(dto)
+            .expect("dto should map successfully");
+
+        // bypass_cache=false 不覆盖，cache_mode 保持 ReadOnly
+        assert_eq!(request.options.cache_mode, Some(CacheMode::ReadOnly));
+    }
+
+    #[test]
+    fn test_map_dto_to_request_bypass_cache_none_ignored() {
+        // bypass_cache=None（未设置）→ 忽略，按 cache_mode 走
+        // 架构审查 CRITICAL-1 修复：WriteOnly 已删除，统一用 Bypass
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto = ScrapeRequestDto {
+            url: "https://example.com".to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            actions: None,
+            options: Some(ScrapeOptionsDto {
+                cache_mode: Some(CacheMode::Bypass),
+                ..Default::default()
+            }),
+            metadata: None,
+            sync_wait_ms: None,
+        };
+
+        let request = use_case
+            .map_dto_to_request(dto)
+            .expect("dto should map successfully");
+
+        assert_eq!(request.options.cache_mode, Some(CacheMode::Bypass));
     }
 
     #[test]
@@ -358,6 +510,7 @@ mod tests {
                 skip_tls_verification: None,
                 needs_tls_fingerprint: None,
                 use_fire_engine: None,
+                ..Default::default()
             }),
             metadata: None,
             sync_wait_ms: None,
@@ -408,6 +561,7 @@ mod tests {
                 skip_tls_verification: None,
                 needs_tls_fingerprint: None,
                 use_fire_engine: None,
+                ..Default::default()
             }),
             metadata: None,
             sync_wait_ms: None,
@@ -761,6 +915,7 @@ mod tests {
                 skip_tls_verification: None,
                 needs_tls_fingerprint: None,
                 use_fire_engine: None,
+                ..Default::default()
             }),
             metadata: None,
             sync_wait_ms: None,

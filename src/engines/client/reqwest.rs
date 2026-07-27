@@ -25,6 +25,13 @@ const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
 /// 默认代理策略（无 settings 注入时使用）
 const DEFAULT_PROXY_STRATEGY: ProxyStrategy = ProxyStrategy::RoundRobin;
 
+/// ReqwestEngine 默认 MRT（5 秒，对应 `EngineTimeoutSettings::fetch_seconds`）。
+///
+/// design.md §14 / T060：HTTP fetch 引擎比浏览器引擎快，5 秒已足够覆盖正常请求；
+/// 超时即切下一引擎（瀑布式）。生产环境应通过 [`ReqwestEngine::new_with_mrt`] 等
+/// 构造函数从 `Settings.timeouts.engines.fetch_seconds` 注入，避免硬编码。
+const DEFAULT_REQWEST_MRT_SECONDS: u64 = 5;
+
 /// 抓取引擎
 ///
 /// 基于reqwest实现的基本HTTP抓取引擎
@@ -47,6 +54,11 @@ pub struct ReqwestEngine {
     /// 引擎级请求超时（秒），用于 build_custom_client 构造临时 client（proxy/skip_tls 路径）
     /// 注入自 Settings.timeouts.engines.default_timeout_seconds（架构 MEDIUM：避免硬编码 30 秒）
     timeout_seconds: u64,
+    /// 单引擎最大响应时间（MRT，design.md §14 / T060）。
+    ///
+    /// router 顺序 fallback 路径用 `min(remaining, mrt)` 包裹单引擎调用，
+    /// 超 MRT 即切下一引擎。注入自 `Settings.timeouts.engines.fetch_seconds`（默认 5 秒）。
+    mrt: Duration,
     /// UA 池（R-identity-001）：每次请求从池中选取一致的 UA + Accept-Language + sec-ch-ua
     ua_pool: UaPool,
     /// 代理 client 缓存（性能审查 HIGH-1 修复）
@@ -78,11 +90,30 @@ impl ReqwestEngine {
     /// 生产环境调用点应从 `settings.timeouts.engines.default_timeout_seconds` 注入超时，
     /// 避免硬编码 30 秒（架构 MEDIUM 2）。
     pub fn new_with_timeout(http_client: Arc<reqwest::Client>, timeout_seconds: u64) -> Self {
+        Self::new_with_timeout_and_mrt(
+            http_client,
+            timeout_seconds,
+            Duration::from_secs(DEFAULT_REQWEST_MRT_SECONDS),
+        )
+    }
+
+    /// 创建带超时 + MRT 配置的 ReqwestEngine 实例（无代理提供者，T060/T061）。
+    ///
+    /// 生产环境应从：
+    /// - `settings.timeouts.engines.default_timeout_seconds` 注入 `timeout_seconds`
+    /// - `settings.timeouts.engines.fetch_seconds` 注入 `mrt`
+    #[must_use]
+    pub fn new_with_timeout_and_mrt(
+        http_client: Arc<reqwest::Client>,
+        timeout_seconds: u64,
+        mrt: Duration,
+    ) -> Self {
         Self {
             http_client,
             proxy_provider: None,
             proxy_strategy: DEFAULT_PROXY_STRATEGY,
             timeout_seconds,
+            mrt,
             ua_pool: UaPool::default(),
             proxy_client_cache: DashMap::new(),
         }
@@ -118,11 +149,35 @@ impl ReqwestEngine {
         proxy_strategy: ProxyStrategy,
         timeout_seconds: u64,
     ) -> Self {
+        Self::with_provider_strategy_timeout_and_mrt(
+            http_client,
+            proxy_provider,
+            proxy_strategy,
+            timeout_seconds,
+            Duration::from_secs(DEFAULT_REQWEST_MRT_SECONDS),
+        )
+    }
+
+    /// 创建带代理提供者 + 策略 + 超时 + MRT 配置的 ReqwestEngine 实例（T060/T061）。
+    ///
+    /// 生产环境调用点应从：
+    /// - `settings.proxy.strategy` 注入 `proxy_strategy`
+    /// - `settings.timeouts.engines.default_timeout_seconds` 注入 `timeout_seconds`
+    /// - `settings.timeouts.engines.fetch_seconds` 注入 `mrt`
+    #[must_use]
+    pub fn with_provider_strategy_timeout_and_mrt(
+        http_client: Arc<reqwest::Client>,
+        proxy_provider: Arc<dyn ProxyProvider>,
+        proxy_strategy: ProxyStrategy,
+        timeout_seconds: u64,
+        mrt: Duration,
+    ) -> Self {
         Self {
             http_client,
             proxy_provider: Some(proxy_provider),
             proxy_strategy,
             timeout_seconds,
+            mrt,
             ua_pool: UaPool::default(),
             proxy_client_cache: DashMap::new(),
         }
@@ -144,6 +199,14 @@ impl ReqwestEngine {
     #[must_use]
     pub fn proxy_strategy(&self) -> ProxyStrategy {
         self.proxy_strategy
+    }
+
+    /// 获取引擎级 MRT（用于测试验证 T060）。
+    ///
+    /// 返回构造时注入的 `mrt`（默认 5 秒，对应 `fetch_seconds`）。
+    #[must_use]
+    pub fn mrt(&self) -> Duration {
+        self.mrt
     }
 
     /// 构建自定义 reqwest::Client（统一处理 proxy + skip_tls）
@@ -545,6 +608,14 @@ impl ScraperEngine for ReqwestEngine {
     /// 引擎名称
     fn name(&self) -> &'static str {
         "reqwest"
+    }
+
+    /// T060：覆写 MRT，返回构造时注入的 `mrt`（默认 5 秒）。
+    ///
+    /// router 顺序 fallback 路径用 `min(remaining, self.mrt)` 包裹单引擎调用，
+    /// 超 MRT 即切下一引擎（瀑布式）。
+    fn max_response_time(&self) -> Duration {
+        self.mrt
     }
 }
 

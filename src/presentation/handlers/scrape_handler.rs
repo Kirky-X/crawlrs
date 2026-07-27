@@ -706,6 +706,7 @@ mod tests {
             skip_tls_verification: None,
             needs_tls_fingerprint: None,
             use_fire_engine: None,
+            ..Default::default()
         };
         let json = serde_json::to_string(&dto).unwrap();
         let deserialized: crate::application::dto::scrape_request::ScrapeOptionsDto =

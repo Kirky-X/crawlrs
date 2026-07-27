@@ -210,6 +210,13 @@ backlog_interval_seconds = 30
 default_timeout_seconds = 30
 playwright_timeout_seconds = 30
 flaresolverr_timeout_seconds = 30
+# T061/R-runtime-004：单引擎最大响应时间（MRT），router 顺序 fallback 路径按 min(remaining, mrt) 包裹
+# HTTP fetch 引擎（reqwest）MRT，默认 5 秒
+fetch_seconds = 5
+# TLS 指纹引擎（flaresolverr_tls）MRT，默认 15 秒
+tls_seconds = 15
+# CDP/浏览器引擎（playwright / flaresolverr_cdp / flaresolverr_full）MRT，默认 30 秒
+cdp_seconds = 30
 
 [timeouts.retry]
 initial_backoff_seconds = 1
