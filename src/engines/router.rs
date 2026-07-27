@@ -14,6 +14,7 @@ use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use crate::engines::validators::validate_url;
+use crate::utils::hedge::HedgeController;
 use crate::utils::retry::{RetryDirective, RetryReason, RetryTracker};
 use crate::utils::ua_pool::UaPool;
 use dashmap::DashMap;
@@ -281,6 +282,11 @@ pub struct EngineRouter {
     /// UaPool 内部全 `&'static str`，构造后只读，可安全跨线程共享（Send+Sync 自动派生）。
     /// 用 `Arc` 是因为 `EngineRouter` 本身可能被 Clone 共享。
     ua_pool: Arc<UaPool>,
+    /// Hedge 控制器（design.md §17，T070/R-runtime-004）
+    ///
+    /// 记录 race 胜出引擎延迟，估算 P84 阈值，供未来顺序路径决策是否发送副本请求。
+    /// `HedgeController` 内部全 `Atomic*`，无锁线程安全，可直接共享无需 `Arc`。
+    hedge_controller: HedgeController,
 }
 
 impl EngineRouter {
@@ -312,6 +318,7 @@ impl EngineRouter {
             race_mode_enabled: false,      // 默认禁用并发竞速模式
             dynamic_threshold_factor: 1.0, // 默认动态阈值因子
             ua_pool: Arc::new(UaPool::new()), // 性能审查 H-1：构造一次共享
+            hedge_controller: HedgeController::with_defaults(), // T070：默认参数
         }
     }
 
@@ -349,6 +356,7 @@ impl EngineRouter {
             race_mode_enabled: false,
             dynamic_threshold_factor: 1.0,
             ua_pool: Arc::new(UaPool::new()), // 性能审查 H-1：构造一次共享
+            hedge_controller: HedgeController::with_defaults(), // T070：默认参数
         }
     }
 
@@ -384,6 +392,16 @@ impl EngineRouter {
     /// 获取路由层指标
     pub fn metrics(&self) -> &Arc<RouterMetrics> {
         &self.metrics
+    }
+
+    /// 获取 Hedge 控制器引用（design.md §17，T070）
+    ///
+    /// 返回 `&HedgeController`，外部可读取 P84 阈值、样本数等观测值，
+    /// 也可调用 `should_hedge` 决策是否发起副本（未来顺序路径用）。
+    /// `record_latency` / `reset` 已限定为 `pub(crate)`，外部无法篡改状态
+    /// （架构审查 M-1：接口隔离修复）。
+    pub fn hedge_controller(&self) -> &HedgeController {
+        &self.hedge_controller
     }
 
     /// 选择最优引擎
@@ -850,6 +868,7 @@ impl EngineRouter {
                 block_ads: request.block_ads,
                 block_media: request.block_media,
                 session_id: request.session_id.clone(),
+                wait_for: request.wait_for.clone(),
             };
 
             let engine_start = Instant::now();
@@ -1134,6 +1153,7 @@ impl EngineRouter {
                 block_ads: request.block_ads,
                 block_media: request.block_media,
                 session_id: request.session_id.clone(),
+                wait_for: request.wait_for.clone(),
             };
 
             let race_future: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
@@ -1166,6 +1186,10 @@ impl EngineRouter {
                         self.metrics
                             .record_engine_latency(&engine_name, response_time);
                         self.metrics.record_engine_success(&engine_name);
+
+                        // T070/§17：记录胜出引擎延迟到 Hedge 控制器，
+                        // 为未来顺序路径提供 P84 阈值估算（接入 race 路径为可选增强）
+                        self.hedge_controller.record_latency(response_time);
 
                         info!(
                             "Race mode: {} won in {:?}, total time: {:?}",
@@ -1526,6 +1550,7 @@ mod tests {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
         let result = router.route(&request).await;
 
@@ -1605,6 +1630,7 @@ mod tests {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             }
     }
 
@@ -2452,6 +2478,81 @@ mod tests {
         assert!(response.content.starts_with("from-"));
     }
 
+    /// T070/§17：验证 race 胜出后延迟被记录到 hedge_controller
+    #[tokio::test]
+    async fn test_route_race_mode_records_hedge_latency() {
+        struct FastEngine {
+            name: &'static str,
+            delay_ms: u64,
+        }
+        #[async_trait]
+        impl ScraperEngine for FastEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: format!("from-{}", self.name),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: self.delay_ms,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+        let e1: Arc<dyn ScraperEngine> = Arc::new(FastEngine {
+            name: "slow",
+            delay_ms: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(FastEngine {
+            name: "fast",
+            delay_ms: 5,
+        });
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_race_mode_enabled(true);
+
+        // 初始：hedge 样本为 0
+        assert_eq!(router.hedge_controller().sample_count(), 0);
+
+        // 多次 race 胜出 fast（5ms）
+        let request = make_request();
+        for _ in 0..12 {
+            let _ = router.route(&request).await.unwrap();
+        }
+
+        // 12 次 race 后：hedge 样本数应 ≥ DEFAULT_MIN_SAMPLES（10）
+        let controller = router.hedge_controller();
+        assert!(
+            controller.sample_count() >= 10,
+            "hedge should have >= 10 samples, got {}",
+            controller.sample_count()
+        );
+
+        // P84 阈值应可用（fast 5ms + slow 100ms 但 race 总是 fast 胜）
+        let threshold = controller
+            .p84_threshold()
+            .expect("P84 threshold should be available");
+        // fast 总是胜出，延迟应近 5ms（容忍调度抖动）
+        let threshold_ms = threshold.as_secs_f64() * 1000.0;
+        assert!(
+            threshold_ms < 50.0,
+            "P84 should be near fast engine latency, got {threshold_ms}ms"
+        );
+
+        // 已耗时大于阈值：should_hedge 应为 true
+        assert!(router.hedge_controller().should_hedge(Duration::from_millis(100)));
+        // 已耗时小于阈值：should_hedge 应为 false
+        assert!(!router.hedge_controller().should_hedge(Duration::from_micros(1)));
+    }
+
     #[tokio::test]
     async fn test_route_race_mode_all_fail() {
         // 测试竞速模式：所有引擎都失败时返回错误
@@ -2752,6 +2853,7 @@ mod tests {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
 
         // The low-score engine should be filtered out, leaving no candidates
@@ -3476,6 +3578,7 @@ mod tests_impl {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
         let result = router.aggregate(&request).await;
 
@@ -3530,6 +3633,7 @@ mod tests_impl {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
         let result = router.aggregate(&request).await;
 
@@ -3647,6 +3751,7 @@ mod tests_impl {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
 
         let result = router.route(&request).await;
@@ -3770,6 +3875,7 @@ mod tests_impl {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
 
         let result = router.route(&request).await;
@@ -3897,6 +4003,7 @@ mod tests_impl {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
 
         let result = router.route(&request).await;
@@ -4026,6 +4133,7 @@ mod tests_impl {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
 
         let result = router.route(&request).await;
@@ -4169,6 +4277,7 @@ mod tests_impl {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
 
         let result = router.route(&request).await;
@@ -4338,6 +4447,7 @@ mod tests_impl {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
         };
 
         let result = router.route(&request).await;
@@ -4484,6 +4594,7 @@ mod tests_impl {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
 
         let result = router.route(&request).await;

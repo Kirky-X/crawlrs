@@ -31,6 +31,12 @@ pub mod js_inject;
 #[cfg(feature = "engine-playwright")]
 pub mod intercept;
 
+// 页面加载后等待策略（T069，R-jsrender-004）— 由 `engine-playwright` feature 门控
+// 依赖 chromiumoxide::Page；WaitFor 枚举本身在 engine_client.rs（非 feature-gated），
+// 此模块仅包含 `impl WaitFor::wait` 方法实现。
+#[cfg(feature = "engine-playwright")]
+pub mod wait;
+
 // Shared validation utilities for SSRF protection
 pub mod shared;
 
@@ -40,7 +46,7 @@ pub mod traits;
 
 pub use engine_client::{
     EngineClient, EngineError, EngineHealthStatus, PageAction, ScrapeOptions, ScrapeRequest,
-    ScrapeResponse, ScreenshotConfig, ScrollDirection,
+    ScrapeResponse, ScreenshotConfig, ScrollDirection, WaitFor,
 };
 
 pub use engine_client::ScraperEngine;

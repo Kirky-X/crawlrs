@@ -8,6 +8,10 @@
 /// Additive Increase / Multiplicative Decrease 拥塞控制算法，动态调整并发上限。
 pub mod adaptive_concurrency;
 pub mod backoff;
+/// Hedge 请求副本控制器（design.md §17，T070/R-runtime-004）
+///
+/// EMA + 方差估 P84 延迟阈值，超阈值时建议发送副本请求降尾延迟。
+pub mod hedge;
 pub mod crawl_text_integration;
 /// 请求合并 Coalesce（design.md §7，T034/R-runtime-002）
 ///

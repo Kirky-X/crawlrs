@@ -796,6 +796,7 @@ impl ScrapeWorker {
             block_media: false,
             session_id: None,
             cache_mode: None,
+            wait_for: None,
             })
     }
 
@@ -1001,6 +1002,7 @@ impl ScrapeWorker {
             block_media: false,
             session_id: None,
             cache_mode: None,
+            wait_for: None,
             })
     }
 
@@ -1880,6 +1882,7 @@ impl ScrapeWorker {
                         options.and_then(|o| o.cache_mode)
                     }
                 },
+                wait_for: None,
             },
         })
     }

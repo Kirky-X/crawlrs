@@ -34,17 +34,12 @@ use std::time::{Duration, Instant};
 /// [`PlaywrightEngine::with_mrt`] 从 `Settings.timeouts.engines.cdp_seconds` 注入。
 const DEFAULT_PLAYWRIGHT_MRT_SECONDS: u64 = 30;
 
-/// PERF-C2 修复：默认网络空闲等待时间（毫秒）
+/// `WaitFor::wait` 的超时上限（T069，R-jsrender-004）
 ///
-/// 原为固定 5 秒 `tokio::time::sleep(Duration::from_secs(5))`，无条件阻塞每次浏览器引擎请求。
-/// 现降为 1 秒默认值，调用方可通过 `ScrapeOptions.sync_wait_ms` 显式覆盖（取 max）。
-///
-/// 设计权衡：
-/// - 完全删除 sleep 会导致 JS-heavy 页面（如 SPA）在 `page.goto` load 事件触发时
-///   尚未完成 hydration，content 取到空壳
-/// - 1 秒是经验值，覆盖 90% 页面的 network idle 需求
-/// - Stage 3 T060-T062 将引入 CDP `Page.loadEventFired` + MRT 超时彻底替代
-const DEFAULT_NETWORK_IDLE_WAIT_MS: u64 = 1000;
+/// `Selector` / `DomStable` 模式轮询直到满足条件，需要一个上限防止无限阻塞。
+/// 取 `min(request.timeout, WAIT_TIMEOUT_CAP)` 确保不会用尽整个请求超时预算，
+/// 为后续操作（screenshot 等）留出时间。`NetworkIdle` 模式只 sleep 500ms，不受此限制。
+const WAIT_TIMEOUT_CAP: Duration = Duration::from_secs(10);
 
 /// Playwright context for browser operations
 ///
@@ -450,19 +445,16 @@ impl ScraperEngine for PlaywrightEngine {
 
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
-            // 从池中获取浏览器实例
-            let browser_instance = pool.acquire().await?;
-            let browser = browser_instance.browser();
+            // T068 / R-jsrender-004：从池中获取 Browser + Page
+            // Page 优先从 TabPool 复用（LIFO），池空时调用 browser.new_page
+            let pooled_page = pool.acquire_page().await?;
+            // Page 是 Arc-based，clone 廉价；pooled_page 持有原始 Page 用于归还
+            let page: chromiumoxide::page::Page = pooled_page.page().clone();
 
-            // Create new page and navigate
-            let page: chromiumoxide::page::Page = browser
-                .new_page("about:blank")
-                .await
-                .map_err(|e| EngineError::BrowserError(e.to_string()))?;
-
-            // Note: Page is intentionally not closed here to allow for reuse.
-            // Browser will be closed when application shuts down.
-            // In case of errors, the Page will be dropped automatically.
+            // Note: Page 在 pooled_page drop 时自动归还到 TabPool
+            // （TabPool::release 导航到 about:blank 清理状态后压栈复用）。
+            // Browser 也在 pooled_page drop 时归还到 BrowserPool。
+            // 错误路径下 Page 可能不可用，TabPool::release 会 drop 它（关闭 tab）。
 
             // R-identity-001: 从 UaPool 取一致的 UA + viewport profile
             // 替换原固定移动 UA 分支；mobile 和 desktop 都从池中取 profile
@@ -652,19 +644,16 @@ impl ScraperEngine for PlaywrightEngine {
                 }
             }
 
-            // PERF-C2 修复：网络空闲等待
+            // T069 / R-jsrender-004：页面加载后等待策略（替代原 sync_wait_ms 固定 sleep）
             //
-            // 原为 L510 固定 `tokio::time::sleep(Duration::from_secs(5))`，无条件 5 秒阻塞。
-            // 现合并到 sync_wait_ms 单一入口，取 max(DEFAULT_NETWORK_IDLE_WAIT_MS, sync_wait_ms)：
-            // - 调用方未显式设置（sync_wait_ms=0）：使用默认 1 秒（性能提升 5x）
-            // - 调用方显式设置 > 1 秒：使用调用方值（向后兼容）
-            // - 调用方显式设置 = 0 想跳过等待：仍用默认 1 秒（避免 SPA 页面取空壳）
-            //   若未来需要"零等待"语义，可引入 sync_wait_ms = -1 表示跳过默认
-            let effective_wait_ms = std::cmp::max(
-                DEFAULT_NETWORK_IDLE_WAIT_MS,
-                request.sync_wait_ms as u64,
-            );
-            tokio::time::sleep(Duration::from_millis(effective_wait_ms)).await;
+            // `request.wait_for` 由调用方通过 `ScrapeOptions.wait_for` 设置；
+            // `None` 时使用 `WaitFor::NetworkIdle`（与原默认等待语义一致，sleep 500ms）。
+            //
+            // 满足条件立即返回，超时返回 `EngineError::BrowserError`。
+            // `sync_wait_ms` 不再在 Playwright 引擎中使用（保留供 FlareSolverr 等非浏览器引擎）。
+            let wait_strategy = request.wait_for.clone().unwrap_or_default();
+            let wait_timeout = request.timeout.min(WAIT_TIMEOUT_CAP);
+            wait_strategy.wait(&page, wait_timeout).await?;
 
             // Get final URL after navigation (handles redirects)
             let _final_url: String = page
@@ -753,11 +742,10 @@ impl ScraperEngine for PlaywrightEngine {
                 screenshot = Some(BASE64.encode(screenshot_bytes));
             }
 
-            // 关闭页面（但保留浏览器实例供复用）
-            let _ = page.close().await;
-
-            // 浏览器实例会在 browser_instance drop 时自动归还到池中
-            // 如果需要手动归还，可以调用 browser_instance.release().await
+            // T068：不调用 page.close()，让 pooled_page drop 时归还 Page 到 TabPool
+            // （TabPool::release 会导航到 about:blank 清理状态后压栈复用）
+            // Browser 也在 pooled_page drop 时归还到 BrowserPool
+            drop(pooled_page);
 
             Ok(InternalScrapeResponse {
                 status_code,
@@ -846,6 +834,7 @@ mod tests {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
         assert_eq!(engine.support_score(&request_js), 100);
 
@@ -869,6 +858,7 @@ mod tests {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
         assert_eq!(engine.support_score(&request_screenshot), 100);
 
@@ -892,6 +882,7 @@ mod tests {
             block_ads: false,
             block_media: false,
             session_id: None,
+            wait_for: None,
             };
         assert_eq!(engine.support_score(&request_basic), 10);
     }

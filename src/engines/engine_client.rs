@@ -105,6 +105,52 @@ pub fn validate_session_id(session_id: &str) -> bool {
     session_id.bytes().all(|b| (0x20..=0x7E).contains(&b))
 }
 
+/// 页面加载后等待策略（T069，R-jsrender-004）
+///
+/// 三种模式：
+/// - [`WaitFor::NetworkIdle`]：等待网络空闲（无新请求持续 500ms）
+/// - [`WaitFor::Selector(String)`]：等待指定 CSS selector 出现在 DOM 中
+/// - [`WaitFor::DomStable(Duration)`]：等待 DOM 稳定（无变化持续指定时长）
+///
+/// # 设计动机
+///
+/// 原有 `sync_wait_ms` 是固定 sleep，无论页面是否就绪都阻塞相同时间。
+/// `WaitFor` 提供条件式等待：满足条件立即返回，超时返回错误，避免无谓阻塞。
+/// 在 Playwright 引擎中替代 `sync_wait_ms` 的固定 sleep 逻辑。
+///
+/// # 实现
+///
+/// 枚举本身不依赖 `chromiumoxide`，可被非浏览器引擎代码持有。
+/// `wait` 方法的实现在 `engines/wait.rs`（`engine-playwright` feature 门控），
+/// 依赖 `chromiumoxide::Page`。
+///
+/// # 安全性
+///
+/// `Selector` 模式对 selector 字符串做 JS 字符串转义，防注入（CWE-94）。
+/// `DomStable` 的 `stable_duration` 上限 60s，防恶意调用方设置过长导致 DoS。
+#[derive(Debug, Clone, PartialEq)]
+pub enum WaitFor {
+    /// 等待网络空闲（无新请求持续 500ms）
+    ///
+    /// chromiumoxide 的 `goto` 已等待 load 事件，此处额外等待确保异步请求完成。
+    NetworkIdle,
+    /// 等待指定 CSS selector 出现在 DOM 中
+    ///
+    /// selector 字符串会在 JS 中转义，防注入。
+    Selector(String),
+    /// 等待 DOM 稳定（无变化持续指定时长）
+    ///
+    /// 通过轮询 `document.body.innerHTML.length` 比较，若连续 `stable_duration`
+    /// 内长度不变则视为稳定。`stable_duration` 上限 60s。
+    DomStable(Duration),
+}
+
+impl Default for WaitFor {
+    fn default() -> Self {
+        Self::NetworkIdle
+    }
+}
+
 /// Optional configuration for scrape operations.
 #[derive(Debug, Clone)]
 pub struct ScrapeOptions {
@@ -158,6 +204,16 @@ pub struct ScrapeOptions {
     ///
     /// 5 种模式详见 [`crate::common::CacheMode`]。
     pub cache_mode: Option<CacheMode>,
+    /// 页面加载后等待策略（T069，R-jsrender-004，design.md §17）
+    ///
+    /// 仅浏览器引擎（Playwright）生效。`None`（默认）时 Playwright 使用
+    /// [`WaitFor::NetworkIdle`]（与原 `sync_wait_ms` 默认 1 秒等待语义一致）。
+    ///
+    /// 设置后**替代** Playwright 中基于 `sync_wait_ms` 的固定 sleep 逻辑：
+    /// 满足条件立即返回，超时返回 `EngineError::BrowserError`。
+    ///
+    /// `sync_wait_ms` 字段保留供非浏览器引擎（如 FlareSolverr）使用。
+    pub wait_for: Option<WaitFor>,
 }
 
 impl Default for ScrapeOptions {
@@ -181,6 +237,7 @@ impl Default for ScrapeOptions {
             block_media: false,
             session_id: None,
             cache_mode: None,
+            wait_for: None,
         }
     }
 }
@@ -361,6 +418,16 @@ impl ScrapeOptionsBuilder {
         self.0.cache_mode = mode.into();
         self
     }
+
+    /// 设置页面加载后等待策略（T069，R-jsrender-004，design.md §17）
+    ///
+    /// 仅浏览器引擎（Playwright）生效。`None` 时使用 [`WaitFor::NetworkIdle`]。
+    /// 详见 [`WaitFor`]。
+    #[must_use]
+    pub fn wait_for(mut self, wait: impl Into<Option<WaitFor>>) -> Self {
+        self.0.wait_for = wait.into();
+        self
+    }
 }
 
 /// Page action to perform during scraping.
@@ -495,6 +562,11 @@ pub struct InternalScrapeRequest {
     ///
     /// 通过 `ScrapeRequest::to_internal` 从 `ScrapeOptions.session_id` 桥接而来。
     pub session_id: Option<String>,
+    /// 页面加载后等待策略（T069，R-jsrender-004，design.md §17）
+    ///
+    /// 通过 `ScrapeRequest::to_internal` 从 `ScrapeOptions.wait_for` 桥接而来。
+    /// 仅浏览器引擎（Playwright）消费；`None` 时 Playwright 使用 [`WaitFor::NetworkIdle`]。
+    pub wait_for: Option<WaitFor>,
 }
 
 /// Internal screenshot configuration
@@ -611,6 +683,7 @@ impl ScrapeRequest {
             block_ads: options.block_ads,
             block_media: options.block_media,
             session_id,
+            wait_for: options.wait_for.clone(),
         }
     }
 }

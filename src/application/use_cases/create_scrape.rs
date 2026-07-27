@@ -115,6 +115,7 @@ impl CreateScrapeUseCase {
             block_media: false,
             session_id: None,
             cache_mode,
+            wait_for: None,
         };
 
         Ok(ScrapeRequest::new(dto.url).with_options(scrape_options))
