@@ -284,11 +284,7 @@ impl FlareSolverrEngine {
     /// 生产环境应从 `settings.timeouts.engines.cdp_seconds` 注入 `mrt`（Full 模式属 CDP 类）。
     /// URL 必须为 http/https 协议，否则使用默认占位符（避免 SSRF 风险）。
     #[must_use]
-    pub fn with_url_and_mrt(
-        client: Arc<Client>,
-        url: impl Into<String>,
-        mrt: Duration,
-    ) -> Self {
+    pub fn with_url_and_mrt(client: Arc<Client>, url: impl Into<String>, mrt: Duration) -> Self {
         let validated = validate_flaresolverr_url(&url.into())
             .unwrap_or_else(|_| "http://localhost:8191".to_string());
         let config = FlareSolverrConfig {
@@ -394,7 +390,9 @@ impl FlareSolverrEngine {
     /// - `Tls`：15 秒
     #[must_use]
     pub fn mrt(&self) -> Duration {
-        self.config.mrt.unwrap_or_else(|| self.config.mode.default_mrt())
+        self.config
+            .mrt
+            .unwrap_or_else(|| self.config.mode.default_mrt())
     }
 
     /// Get the API URL for FlareSolverr

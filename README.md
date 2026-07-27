@@ -85,6 +85,16 @@
 | **chromiumoxide** | JavaScript 密集的 SPA、交互 | 🐢 较慢 | 💳 较高 |
 | **FlareSolverr** | 反爬虫保护网站（Full/Cdp/Tls 三种模式） | 🚀 可变 | 💎 可变 |
 
+### ⚡ 引擎性能优化（0.2.0）
+
+| 特性 | 描述 | 任务 |
+|------|------|------|
+| **TabPool** | Chrome CDP Tab 池复用（DashMap + AtomicUsize LIFO 栈），消除 50-200ms tab 创建开销 | T068 |
+| **WaitFor 策略** | 条件式等待（NetworkIdle/Selector/DomStable）替代固定 sleep，页面就绪即返回 | T069 |
+| **Hedge 控制器** | EMA + 方差估算 P84 延迟阈值，race 模式胜出延迟记录，未来用于慢请求副本触发 | T070 |
+
+> **详细架构:** [ARCHITECTURE.md → 引擎性能优化](docs/ARCHITECTURE.md#hedge-请求副本控制器)
+
 ### 🔎 统一搜索
 
 | 能力 | 描述 |

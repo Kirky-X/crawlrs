@@ -568,8 +568,7 @@ mod tests {
             assert!(
                 !p.mobile,
                 "desktop profile #{} has mobile=true (UA: {})",
-                i,
-                p.ua
+                i, p.ua
             );
         }
     }
@@ -613,8 +612,7 @@ mod tests {
             assert!(
                 p.mobile,
                 "mobile profile #{} has mobile=false (UA: {})",
-                i,
-                p.ua
+                i, p.ua
             );
         }
     }
@@ -646,8 +644,7 @@ mod tests {
             assert!(
                 has_marker,
                 "mobile profile #{} UA lacks mobile marker: {}",
-                i,
-                p.ua
+                i, p.ua
             );
         }
     }
@@ -657,9 +654,10 @@ mod tests {
     #[test]
     fn test_desktop_pool_covers_all_major_browsers() {
         let pool = UaPool::new();
-        let has_chrome = pool.desktop.iter().any(|p| {
-            p.ua.contains("Chrome") && !p.ua.contains("Edg") && !p.ua.contains("CriOS")
-        });
+        let has_chrome = pool
+            .desktop
+            .iter()
+            .any(|p| p.ua.contains("Chrome") && !p.ua.contains("Edg") && !p.ua.contains("CriOS"));
         let has_firefox = pool.desktop.iter().any(|p| p.ua.contains("Firefox"));
         let has_safari = pool
             .desktop
@@ -675,10 +673,14 @@ mod tests {
     #[test]
     fn test_mobile_pool_covers_all_major_browsers() {
         let pool = UaPool::new();
-        let has_chrome = pool.mobile.iter().any(|p| {
-            (p.ua.contains("Chrome") || p.ua.contains("CriOS")) && !p.ua.contains("Edg")
-        });
-        let has_firefox = pool.mobile.iter().any(|p| p.ua.contains("FxiOS") || p.ua.contains("Firefox"));
+        let has_chrome = pool
+            .mobile
+            .iter()
+            .any(|p| (p.ua.contains("Chrome") || p.ua.contains("CriOS")) && !p.ua.contains("Edg"));
+        let has_firefox = pool
+            .mobile
+            .iter()
+            .any(|p| p.ua.contains("FxiOS") || p.ua.contains("Firefox"));
         let has_safari = pool
             .mobile
             .iter()
@@ -830,10 +832,7 @@ mod tests {
         let p1 = pool.pick_seeded(seed, false);
         let p2 = pool.pick_seeded(seed, false);
         let p3 = pool.pick_seeded(seed, false);
-        assert_eq!(
-            p1.ua, p2.ua,
-            "same seed must return same profile (desktop)"
-        );
+        assert_eq!(p1.ua, p2.ua, "same seed must return same profile (desktop)");
         assert_eq!(
             p2.ua, p3.ua,
             "same seed must return same profile (desktop, third call)"

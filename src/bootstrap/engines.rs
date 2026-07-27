@@ -15,10 +15,10 @@ use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::engine_client::ScraperEngine;
 use crate::engines::provider::ProxyProvider;
-use crate::engines::router::EngineRouter;
-use std::sync::Arc;
 #[cfg(test)]
 use crate::engines::proxy_pool::ProxyPool;
+use crate::engines::router::EngineRouter;
+use std::sync::Arc;
 
 /// All engine-related components.
 #[derive(Clone)]

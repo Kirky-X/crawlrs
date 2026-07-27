@@ -64,7 +64,10 @@ pub static TIER1_PATTERNS: &[(&str, AntiBotTech)] = &[
     (r"(?i)just a moment[\.\.\.]", AntiBotTech::Cloudflare),
     (r"(?i)__cf_bm", AntiBotTech::Cloudflare),
     (r"(?i)cf-ray[:\s]", AntiBotTech::Cloudflare),
-    (r"(?i)cloudflare[\s\-_]?browser[\s\-_]?check", AntiBotTech::Cloudflare),
+    (
+        r"(?i)cloudflare[\s\-_]?browser[\s\-_]?check",
+        AntiBotTech::Cloudflare,
+    ),
     // --- Akamai ---
     (r"(?i)reference\s*#(\d+)", AntiBotTech::Akamai),
     (r"(?i)akamai_bmbl", AntiBotTech::Akamai),
@@ -161,8 +164,9 @@ pub static TIER3_NO_BODY: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?is)<body\b").expect("antibot tier3 no-body regex"));
 
 /// Tier3-2：HTML `<script>` 块（用于统计脚本字节占比）
-pub static TIER3_SCRIPT_BLOCK: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?is)<script\b[^>]*>.*?</script>").expect("antibot tier3 script-block"));
+pub static TIER3_SCRIPT_BLOCK: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)<script\b[^>]*>.*?</script>").expect("antibot tier3 script-block")
+});
 
 /// Tier3-3：所有 HTML 标签（用于剥离后统计可见文本长度）
 pub static TIER3_ANY_TAG: Lazy<Regex> =

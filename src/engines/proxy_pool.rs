@@ -65,7 +65,10 @@ impl std::fmt::Debug for ProxyEntry {
         f.debug_struct("ProxyEntry")
             .field("url", &redact_proxy_url(&self.url))
             .field("healthy", &self.healthy.load(Ordering::Acquire))
-            .field("cooldown_until", &self.cooldown_until.load(Ordering::Acquire))
+            .field(
+                "cooldown_until",
+                &self.cooldown_until.load(Ordering::Acquire),
+            )
             .field("category", &self.category)
             .finish()
     }
@@ -216,8 +219,7 @@ impl ProxyPool {
 
         // 1. 快速路径：只读检查现有绑定是否有效
         if let Some(binding) = self.sticky.get(session_id) {
-            if binding.expires_at > Instant::now()
-                && self.entries[binding.entry_idx].is_available()
+            if binding.expires_at > Instant::now() && self.entries[binding.entry_idx].is_available()
             {
                 return Some(self.entries[binding.entry_idx].url.clone());
             }
@@ -326,6 +328,7 @@ impl ProxyPool {
     /// 修复后用 `count()` + `nth()` 替代 `collect()`，零堆分配：
     /// - 第一遍 `count()` 仅计数（迭代器内部不分配）
     /// - 第二遍 `nth(target)` 直接跳到第 `target` 个候选
+    ///
     /// entries 通常 < 100，两遍扫描的成本可接受。
     fn rr_pick(&self, category: ProxyCategory) -> Option<usize> {
         // 第一遍：统计候选数（category 匹配 + 未冷却）
@@ -499,7 +502,10 @@ mod tests {
         let url2 = pool.sticky("session-1").unwrap();
         let url3 = pool.sticky("session-1").unwrap();
         let url4 = pool.sticky("session-1").unwrap();
-        assert_eq!(url1, url2, "same session_id should return same url within TTL");
+        assert_eq!(
+            url1, url2,
+            "same session_id should return same url within TTL"
+        );
         assert_eq!(url2, url3, "sticky must be stable across multiple calls");
         assert_eq!(url3, url4, "sticky must be stable across multiple calls");
         // 验证返回的 URL 确实在池中（不是凭空生成）
@@ -520,8 +526,10 @@ mod tests {
     #[test]
     fn sticky_reselects_after_ttl_expiry() {
         // TTL = 1ms：立即过期
-        let pool =
-            make_pool_with_ttl(vec!["http://a:8080", "http://b:8080"], Duration::from_millis(1));
+        let pool = make_pool_with_ttl(
+            vec!["http://a:8080", "http://b:8080"],
+            Duration::from_millis(1),
+        );
         let _url1 = pool.sticky("session-1").unwrap();
         // TTL 已过期，重选应该返回有效 URL（不 panic，不 None）
         thread::sleep(Duration::from_millis(5));
@@ -546,7 +554,10 @@ mod tests {
         pool.mark_failure(&url1);
         // url1 在冷却中，sticky 应该重选另一个
         let url2 = pool.sticky("session-1").unwrap();
-        assert_ne!(url1, url2, "sticky should reselect when binding is in cooldown");
+        assert_ne!(
+            url1, url2,
+            "sticky should reselect when binding is in cooldown"
+        );
         // L5 修复：验证重选的代理未在冷却中（即与 mark_failure 的代理不同）
         assert!(
             url2 == "http://a:8080" || url2 == "http://b:8080",
@@ -743,7 +754,9 @@ mod tests {
         }
         // 所有线程应成功完成（不 panic，无 data race）
         for handle in handles {
-            handle.join().expect("thread should not panic under concurrent access");
+            handle
+                .join()
+                .expect("thread should not panic under concurrent access");
         }
     }
 
@@ -806,8 +819,7 @@ mod tests {
     fn sticky_capacity_limit_evicts_expired_entries() {
         // LOW-1 修复：sticky 表超容量时清理过期绑定
         let pool = std::sync::Arc::new(
-            make_pool(vec!["http://a:8080", "http://b:8080"])
-                .with_sticky_max_capacity(3),
+            make_pool(vec!["http://a:8080", "http://b:8080"]).with_sticky_max_capacity(3),
         );
         // 插入 3 个绑定（达到容量上限）
         pool.sticky("session-1").unwrap();
@@ -844,8 +856,7 @@ mod tests {
     fn sticky_capacity_limit_degrades_gracefully_when_all_valid() {
         // LOW-1 修复：超容量且所有绑定都有效（未过期）时，降级返回代理 URL 但不绑定
         let pool = std::sync::Arc::new(
-            make_pool(vec!["http://a:8080", "http://b:8080"])
-                .with_sticky_max_capacity(2),
+            make_pool(vec!["http://a:8080", "http://b:8080"]).with_sticky_max_capacity(2),
         );
         // 插入 2 个绑定（达到容量上限）
         pool.sticky("session-1").unwrap();
@@ -881,8 +892,7 @@ mod tests {
     fn sticky_capacity_limit_still_returns_valid_binding_for_existing_session() {
         // LOW-1 修复：超容量时，已有有效绑定的 session 仍应正常命中（不受容量限制影响）
         let pool = std::sync::Arc::new(
-            make_pool(vec!["http://a:8080", "http://b:8080"])
-                .with_sticky_max_capacity(1),
+            make_pool(vec!["http://a:8080", "http://b:8080"]).with_sticky_max_capacity(1),
         );
         // 插入 1 个绑定（达到容量上限）
         let url1 = pool.sticky("session-1").unwrap();
@@ -922,7 +932,12 @@ mod tests {
         // 其余线程在 entry 锁内复用。
         let pool = std::sync::Arc::new(
             make_pool_with_ttl(
-                vec!["http://a:8080", "http://b:8080", "http://c:8080", "http://d:8080"],
+                vec![
+                    "http://a:8080",
+                    "http://b:8080",
+                    "http://c:8080",
+                    "http://d:8080",
+                ],
                 Duration::from_millis(1),
             )
             .with_sticky_max_capacity(100),

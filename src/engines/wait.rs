@@ -72,11 +72,13 @@ impl WaitFor {
     /// Selector：轮询 `document.querySelector(selector)` 直到非 null 或超时
     ///
     /// selector 字符串通过 `escape_js_string` 转义，防 JS 注入。
-    async fn wait_selector(page: &Page, selector: &str, timeout: Duration) -> Result<(), EngineError> {
+    async fn wait_selector(
+        page: &Page,
+        selector: &str,
+        timeout: Duration,
+    ) -> Result<(), EngineError> {
         let escaped = escape_js_string(selector);
-        let check_expr = format!(
-            "() => document.querySelector({escaped}) !== null"
-        );
+        let check_expr = format!("() => document.querySelector({escaped}) !== null");
         let deadline = Instant::now() + timeout;
         loop {
             if Instant::now() >= deadline {

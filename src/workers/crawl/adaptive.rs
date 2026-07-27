@@ -143,10 +143,8 @@ impl AdaptiveStrategy {
     pub fn evaluate(context: &AdaptiveContext) -> StrategyResult {
         let confidence = Self::compute_confidence(&context.crawled_urls, &context.keywords);
         let coverage = Self::compute_coverage(&context.crawled_urls, &context.keywords);
-        let saturation = Self::compute_saturation(
-            context.total_links_discovered,
-            context.new_links_discovered,
-        );
+        let saturation =
+            Self::compute_saturation(context.total_links_discovered, context.new_links_discovered);
         StrategyResult {
             confidence,
             coverage,
@@ -165,10 +163,7 @@ impl AdaptiveStrategy {
         }
         let scorer = KeywordRelevanceScorer::new();
         let scoring_ctx = ScoringContext::new().with_keywords(keywords.to_vec());
-        let sum: f32 = urls
-            .iter()
-            .map(|url| scorer.score(url, &scoring_ctx))
-            .sum();
+        let sum: f32 = urls.iter().map(|url| scorer.score(url, &scoring_ctx)).sum();
         sum / urls.len() as f32
     }
 
@@ -253,10 +248,16 @@ impl StopReason {
             Self::MaxPagesReached { crawled, max } => {
                 format!("max pages reached ({crawled}/{max})")
             }
-            Self::ConfidenceReached { confidence, threshold } => {
+            Self::ConfidenceReached {
+                confidence,
+                threshold,
+            } => {
                 format!("confidence threshold reached ({confidence:.3} >= {threshold:.3})")
             }
-            Self::SaturationReached { saturation, threshold } => {
+            Self::SaturationReached {
+                saturation,
+                threshold,
+            } => {
                 format!("saturation threshold reached ({saturation:.3} < {threshold:.3})")
             }
             Self::NoPendingLinks => "no pending links".to_string(),
@@ -434,16 +435,15 @@ mod tests {
 
     #[test]
     fn adaptive_confidence_empty_urls_returns_zero() {
-        let ctx = AdaptiveContext::new()
-            .with_keywords(vec!["rust".to_string()]);
+        let ctx = AdaptiveContext::new().with_keywords(vec!["rust".to_string()]);
         let result = AdaptiveStrategy::evaluate(&ctx);
         assert_eq!(result.confidence, 0.0);
     }
 
     #[test]
     fn adaptive_confidence_empty_keywords_returns_neutral() {
-        let ctx = AdaptiveContext::new()
-            .with_crawled_urls(vec!["https://example.com/page".to_string()]);
+        let ctx =
+            AdaptiveContext::new().with_crawled_urls(vec!["https://example.com/page".to_string()]);
         let result = AdaptiveStrategy::evaluate(&ctx);
         // 空关键词 → KeywordRelevanceScorer 返回 0.5
         assert!((result.confidence - 0.5).abs() < 1e-6);
@@ -478,9 +478,7 @@ mod tests {
     #[test]
     fn adaptive_coverage_all_keywords_found() {
         let ctx = AdaptiveContext::new()
-            .with_crawled_urls(vec![
-                "https://example.com/rust-crawler".to_string(),
-            ])
+            .with_crawled_urls(vec!["https://example.com/rust-crawler".to_string()])
             .with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
         let result = AdaptiveStrategy::evaluate(&ctx);
         assert!((result.coverage - 1.0).abs() < 1e-6);
@@ -489,9 +487,7 @@ mod tests {
     #[test]
     fn adaptive_coverage_partial_keywords_found() {
         let ctx = AdaptiveContext::new()
-            .with_crawled_urls(vec![
-                "https://example.com/rust-guide".to_string(),
-            ])
+            .with_crawled_urls(vec!["https://example.com/rust-guide".to_string()])
             .with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
         let result = AdaptiveStrategy::evaluate(&ctx);
         // rust 命中, crawler 未命中 → 0.5
@@ -500,8 +496,8 @@ mod tests {
 
     #[test]
     fn adaptive_coverage_empty_keywords_returns_zero() {
-        let ctx = AdaptiveContext::new()
-            .with_crawled_urls(vec!["https://example.com/page".to_string()]);
+        let ctx =
+            AdaptiveContext::new().with_crawled_urls(vec!["https://example.com/page".to_string()]);
         let result = AdaptiveStrategy::evaluate(&ctx);
         assert_eq!(result.coverage, 0.0);
     }
@@ -568,9 +564,7 @@ mod tests {
     #[test]
     fn stop_condition_empty_never_stops() {
         let condition = StopCondition::new();
-        let stats = CrawlStats::new()
-            .with_pages(1000)
-            .with_pending(0);
+        let stats = CrawlStats::new().with_pages(1000).with_pending(0);
         // 空条件但 pending=0 → NoPendingLinks
         assert_eq!(
             condition.should_stop(&stats),
@@ -581,18 +575,14 @@ mod tests {
     #[test]
     fn stop_condition_empty_with_pending_never_stops() {
         let condition = StopCondition::new();
-        let stats = CrawlStats::new()
-            .with_pages(1000)
-            .with_pending(10);
+        let stats = CrawlStats::new().with_pages(1000).with_pending(10);
         assert!(condition.should_stop(&stats).is_none());
     }
 
     #[test]
     fn stop_condition_no_pending_links() {
         let condition = StopCondition::new().with_max_pages(100);
-        let stats = CrawlStats::new()
-            .with_pages(10)
-            .with_pending(0);
+        let stats = CrawlStats::new().with_pages(10).with_pending(0);
         assert_eq!(
             condition.should_stop(&stats),
             Some(StopReason::NoPendingLinks)
@@ -602,9 +592,7 @@ mod tests {
     #[test]
     fn stop_condition_max_pages_reached() {
         let condition = StopCondition::new().with_max_pages(50);
-        let stats = CrawlStats::new()
-            .with_pages(50)
-            .with_pending(10);
+        let stats = CrawlStats::new().with_pages(50).with_pending(10);
         assert_eq!(
             condition.should_stop(&stats),
             Some(StopReason::MaxPagesReached {
@@ -617,9 +605,7 @@ mod tests {
     #[test]
     fn stop_condition_max_pages_not_reached() {
         let condition = StopCondition::new().with_max_pages(50);
-        let stats = CrawlStats::new()
-            .with_pages(49)
-            .with_pending(10);
+        let stats = CrawlStats::new().with_pages(49).with_pending(10);
         assert!(condition.should_stop(&stats).is_none());
     }
 
@@ -744,9 +730,9 @@ mod tests {
             .with_pages(10)
             .with_pending(10)
             .with_result(StrategyResult {
-                confidence: 0.9,    // 满足
+                confidence: 0.9, // 满足
                 coverage: 0.5,
-                saturation: 0.05,   // 也满足
+                saturation: 0.05, // 也满足
             });
         assert_eq!(
             condition.should_stop(&stats),
@@ -777,14 +763,23 @@ mod tests {
 
     #[test]
     fn stop_reason_description() {
-        let r1 = StopReason::MaxPagesReached { crawled: 100, max: 100 };
+        let r1 = StopReason::MaxPagesReached {
+            crawled: 100,
+            max: 100,
+        };
         assert!(r1.description().contains("100"));
 
-        let r2 = StopReason::ConfidenceReached { confidence: 0.85, threshold: 0.8 };
+        let r2 = StopReason::ConfidenceReached {
+            confidence: 0.85,
+            threshold: 0.8,
+        };
         assert!(r2.description().contains("0.850"));
         assert!(r2.description().contains("0.800"));
 
-        let r3 = StopReason::SaturationReached { saturation: 0.05, threshold: 0.1 };
+        let r3 = StopReason::SaturationReached {
+            saturation: 0.05,
+            threshold: 0.1,
+        };
         assert!(r3.description().contains("0.050"));
 
         let r4 = StopReason::NoPendingLinks;

@@ -128,14 +128,13 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
         .or_else(|_| std::env::var("APP_ENVIRONMENT"))
         .unwrap_or_else(|_| "development".to_string());
     let env_lower = env.to_lowercase();
-    let is_test = env_lower == "test"
-        || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
+    let is_test =
+        env_lower == "test" || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
     let is_dev = env_lower == "development" || env_lower == "dev" || is_test;
 
     // SSRF 防护禁用开关风险告警（R-sec-002）
     // 仅在非 test/development 环境下告警；开发/测试场景允许禁用以方便调试
-    if std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok()
-        && !is_dev
+    if std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok() && !is_dev
     {
         warn!(
             "⚠️ SSRF 保护已通过 CRAWLRS_DISABLE_SSRF_PROTECTION 禁用！\

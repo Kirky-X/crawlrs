@@ -219,17 +219,12 @@ impl AuthSettings {
 /// 决定调用方在 ProxyPool 上的默认行为：
 /// - `RoundRobin`：每次请求调用 `ProxyPool::next(category)` 取下一个
 /// - `Sticky`：按 `session_id` 调用 `ProxyPool::sticky(session_id)` 锁定同一代理
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyStrategy {
+    #[default]
     RoundRobin,
     Sticky,
-}
-
-impl Default for ProxyStrategy {
-    fn default() -> Self {
-        Self::RoundRobin
-    }
 }
 
 /// HTTP代理配置设置
@@ -985,7 +980,10 @@ mod tests {
             cooldown_seconds: 30,
         };
         let debug_str = format!("{:?}", settings);
-        assert!(debug_str.contains("***REDACTED***"), "urls must be redacted in Debug");
+        assert!(
+            debug_str.contains("***REDACTED***"),
+            "urls must be redacted in Debug"
+        );
         assert!(
             !debug_str.contains("secret:password"),
             "credentials must not leak to Debug"
@@ -1040,7 +1038,10 @@ mod tests {
         let s: ProxySettings = serde_json::from_str(json).expect("deserialize round_robin");
         assert_eq!(s.strategy, ProxyStrategy::RoundRobin);
         let back = serde_json::to_string(&s).expect("serialize");
-        assert!(back.contains("\"round_robin\""), "serialized should be snake_case: {back}");
+        assert!(
+            back.contains("\"round_robin\""),
+            "serialized should be snake_case: {back}"
+        );
 
         // Sticky ↔ "sticky"
         let json = r#"{"urls":[],"strategy":"sticky","enabled":false}"#;

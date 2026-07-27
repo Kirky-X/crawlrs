@@ -36,7 +36,8 @@ static GOOGLE_PARSER: Lazy<HtmlParser> = Lazy::new(|| {
 });
 
 /// Bing 风格 parser 全局单例（性能 PERF-05）
-static BING_PARSER: Lazy<HtmlParser> = Lazy::new(|| HtmlParser::new(vec!["li.b_algo"], "h2", "a[href]", vec!["p"]));
+static BING_PARSER: Lazy<HtmlParser> =
+    Lazy::new(|| HtmlParser::new(vec!["li.b_algo"], "h2", "a[href]", vec!["p"]));
 
 /// Baidu 风格 parser 全局单例（性能 PERF-05）
 static BAIDU_PARSER: Lazy<HtmlParser> = Lazy::new(|| {
@@ -96,22 +97,22 @@ impl HtmlParser {
     ///
     /// 替代原 `for_google()` 构造函数，返回 `&'static Self` 避免重复构造。
     pub fn google() -> &'static Self {
-        &*GOOGLE_PARSER
+        &GOOGLE_PARSER
     }
 
     /// 获取 Bing 风格 parser 全局单例（性能 PERF-05）
     pub fn bing() -> &'static Self {
-        &*BING_PARSER
+        &BING_PARSER
     }
 
     /// 获取 Baidu 风格 parser 全局单例（性能 PERF-05）
     pub fn baidu() -> &'static Self {
-        &*BAIDU_PARSER
+        &BAIDU_PARSER
     }
 
     /// 获取 Sogou 风格 parser 全局单例（性能 PERF-05）
     pub fn sogou() -> &'static Self {
-        &*SOGOU_PARSER
+        &SOGOU_PARSER
     }
 
     /// Parse HTML content and extract search results

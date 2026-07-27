@@ -40,7 +40,7 @@ use axum::{
 };
 use chrono::Utc;
 use once_cell::sync::Lazy;
-use sea_orm::ActiveValue;
+use sea_orm::{ActiveValue, EntityTrait};
 use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -82,7 +82,7 @@ fn resolve_test_db_url() -> Option<String> {
 ///
 /// `AuthSettings.jwt_secret` 字段是 `pub(crate)`，外部测试无法直接赋值，
 /// 故走环境变量路径（与生产部署一致，符合规则8 惯例优先）。
-fn make_test_settings() -> crawlrs::Settings {
+fn make_test_settings() -> crawlrs::config::Settings {
     // 设置环境变量供 confers 读取（幂等，重复设置不报错）
     std::env::set_var("CRAWLRS__AUTH__JWT_SECRET", TEST_JWT_SECRET);
     crawlrs::bootstrap::config::load_settings().expect("Failed to load settings")

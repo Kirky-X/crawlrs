@@ -117,16 +117,16 @@ pub const AD_DOMAIN_BLACKLIST: &[&str] = &[
     // Scorecard Research (comScore)
     "scorecardresearch.com",
     // Major Ad Exchanges
-    "adnxs.com",           // AppNexus / Xandr
+    "adnxs.com", // AppNexus / Xandr
     "taboola.com",
     "outbrain.com",
     "criteo.com",
     "rubiconproject.com",
     "pubmatic.com",
     "openx.net",
-    "casalemedia.com",     // Index Exchange
+    "casalemedia.com", // Index Exchange
     "agkn.com",
-    "bluekai.com",         // Oracle Data Cloud
+    "bluekai.com", // Oracle Data Cloud
     "adform.net",
     "yieldmo.com",
     "moatads.com",
@@ -148,11 +148,8 @@ pub const AD_DOMAIN_BLACKLIST: &[&str] = &[
 ///
 /// H-3 重构后基于领域枚举 [`ResourceKind`]，与 CDP 解耦。
 /// 拦截策略：Image / Media / Font。
-pub const MEDIA_RESOURCE_KINDS: &[ResourceKind] = &[
-    ResourceKind::Image,
-    ResourceKind::Media,
-    ResourceKind::Font,
-];
+pub const MEDIA_RESOURCE_KINDS: &[ResourceKind] =
+    &[ResourceKind::Image, ResourceKind::Media, ResourceKind::Font];
 
 /// 请求拦截控制器（design.md §6，R-jsrender-003）
 ///
@@ -461,28 +458,19 @@ mod tests {
     fn should_block_normal_url_passes() {
         let ctrl = InterceptController::new(true, false);
         assert!(!ctrl.should_block("https://example.com/index.html", None));
-        assert!(!ctrl.should_block(
-            "https://example.com/image.png",
-            Some(ResourceKind::Image)
-        ));
+        assert!(!ctrl.should_block("https://example.com/image.png", Some(ResourceKind::Image)));
     }
 
     #[test]
     fn should_block_media_image_request_when_block_media() {
         let ctrl = InterceptController::new(false, true);
-        assert!(ctrl.should_block(
-            "https://example.com/image.png",
-            Some(ResourceKind::Image)
-        ));
+        assert!(ctrl.should_block("https://example.com/image.png", Some(ResourceKind::Image)));
     }
 
     #[test]
     fn should_block_media_disabled_passes_image() {
         let ctrl = InterceptController::new(false, false);
-        assert!(!ctrl.should_block(
-            "https://example.com/image.png",
-            Some(ResourceKind::Image)
-        ));
+        assert!(!ctrl.should_block("https://example.com/image.png", Some(ResourceKind::Image)));
     }
 
     #[test]
@@ -492,20 +480,14 @@ mod tests {
         // 广告命中
         assert!(ctrl.should_block("https://doubleclick.net/x", None));
         // 媒体命中（URL 不在黑名单但资源类型是 Image）
-        assert!(ctrl.should_block(
-            "https://example.com/banner.png",
-            Some(ResourceKind::Image)
-        ));
+        assert!(ctrl.should_block("https://example.com/banner.png", Some(ResourceKind::Image)));
     }
 
     #[test]
     fn should_block_disabled_passes_everything() {
         let ctrl = InterceptController::new(false, false);
         assert!(!ctrl.should_block("https://doubleclick.net/x", None));
-        assert!(!ctrl.should_block(
-            "https://example.com/image.png",
-            Some(ResourceKind::Image)
-        ));
+        assert!(!ctrl.should_block("https://example.com/image.png", Some(ResourceKind::Image)));
     }
 
     #[test]
@@ -598,7 +580,11 @@ mod tests {
         let cloned = ctrl.clone();
         assert!(cloned.block_ads);
         assert!(cloned.block_media);
-        assert_eq!(cloned.intercepted_count(), 0, "cloned controller must reset count");
+        assert_eq!(
+            cloned.intercepted_count(),
+            0,
+            "cloned controller must reset count"
+        );
     }
 
     // === BLOCK_REASON ===
@@ -658,15 +644,9 @@ mod tests {
             Some(ResourceKind::Document)
         ));
         // 业务脚本放行
-        assert!(!ctrl.should_block(
-            "https://example.com/app.js",
-            Some(ResourceKind::Script)
-        ));
+        assert!(!ctrl.should_block("https://example.com/app.js", Some(ResourceKind::Script)));
         // 业务 XHR 放行
-        assert!(!ctrl.should_block(
-            "https://api.example.com/v1/users",
-            Some(ResourceKind::Xhr)
-        ));
+        assert!(!ctrl.should_block("https://api.example.com/v1/users", Some(ResourceKind::Xhr)));
     }
 
     #[test]
@@ -675,10 +655,7 @@ mod tests {
         // 这是预期的代价：减少带宽，但可能影响内容抓取
         // 用户应根据抓取目标决定是否启用 block_media
         let ctrl = InterceptController::new(false, true);
-        assert!(ctrl.should_block(
-            "https://example.com/product.png",
-            Some(ResourceKind::Image)
-        ));
+        assert!(ctrl.should_block("https://example.com/product.png", Some(ResourceKind::Image)));
     }
 
     // === H-3: From<ResourceType> for ResourceKind 适配器测试 ===
@@ -686,9 +663,18 @@ mod tests {
     #[test]
     fn from_resource_type_maps_known_variants() {
         // 已知 CDP ResourceType 必须无损映射到对应领域变体
-        assert_eq!(ResourceKind::from(ResourceType::Document), ResourceKind::Document);
-        assert_eq!(ResourceKind::from(ResourceType::Script), ResourceKind::Script);
-        assert_eq!(ResourceKind::from(ResourceType::Stylesheet), ResourceKind::Stylesheet);
+        assert_eq!(
+            ResourceKind::from(ResourceType::Document),
+            ResourceKind::Document
+        );
+        assert_eq!(
+            ResourceKind::from(ResourceType::Script),
+            ResourceKind::Script
+        );
+        assert_eq!(
+            ResourceKind::from(ResourceType::Stylesheet),
+            ResourceKind::Stylesheet
+        );
         assert_eq!(ResourceKind::from(ResourceType::Image), ResourceKind::Image);
         assert_eq!(ResourceKind::from(ResourceType::Media), ResourceKind::Media);
         assert_eq!(ResourceKind::from(ResourceType::Font), ResourceKind::Font);

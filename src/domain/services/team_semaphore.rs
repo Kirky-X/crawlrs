@@ -66,12 +66,7 @@ impl AdaptiveParams {
     ) -> Self {
         // 委托给 AIMDController::with_params 的校验逻辑（避免重复实现）
         // 若校验通过，AIMDController 也会用相同参数构造
-        let _ = AIMDController::with_params(
-            initial,
-            min_limit,
-            max_limit,
-            increase_threshold,
-        );
+        let _ = AIMDController::with_params(initial, min_limit, max_limit, increase_threshold);
         let clamped = initial.clamp(min_limit, max_limit);
         Self {
             initial: clamped,
@@ -150,7 +145,11 @@ impl TeamHandle {
     fn record_success(&self) -> usize {
         match self {
             TeamHandle::Fixed(sem) => sem.available_permits(),
-            TeamHandle::Adaptive { controller, adaptive, .. } => {
+            TeamHandle::Adaptive {
+                controller,
+                adaptive,
+                ..
+            } => {
                 let new_target = controller.record_success();
                 adaptive.set_target(new_target);
                 new_target
@@ -162,7 +161,11 @@ impl TeamHandle {
     fn record_failure(&self) -> usize {
         match self {
             TeamHandle::Fixed(sem) => sem.available_permits(),
-            TeamHandle::Adaptive { controller, adaptive, .. } => {
+            TeamHandle::Adaptive {
+                controller,
+                adaptive,
+                ..
+            } => {
                 let new_target = controller.record_failure();
                 adaptive.set_target(new_target);
                 new_target
@@ -452,7 +455,10 @@ impl TeamSemaphore {
         let entry = self.semaphores.get(&team_id)?;
         let handle = match entry.value() {
             TeamEntry::Fixed(sem) => TeamHandle::Fixed(Arc::clone(sem)),
-            TeamEntry::Adaptive { adaptive, controller } => TeamHandle::Adaptive {
+            TeamEntry::Adaptive {
+                adaptive,
+                controller,
+            } => TeamHandle::Adaptive {
                 adaptive: Arc::clone(adaptive),
                 controller: Arc::clone(controller),
             },
@@ -495,7 +501,10 @@ impl TeamSemaphore {
                 // 已存在：克隆内部 Arc，返回 handle（drop o 释放 shard 锁）
                 let handle = match o.get() {
                     TeamEntry::Fixed(sem) => TeamHandle::Fixed(Arc::clone(sem)),
-                    TeamEntry::Adaptive { adaptive, controller } => TeamHandle::Adaptive {
+                    TeamEntry::Adaptive {
+                        adaptive,
+                        controller,
+                    } => TeamHandle::Adaptive {
                         adaptive: Arc::clone(adaptive),
                         controller: Arc::clone(controller),
                     },
@@ -526,7 +535,10 @@ impl TeamSemaphore {
                 // 插入前先克隆出 handle（避免再次 lookup）
                 let handle = match &new_entry {
                     TeamEntry::Fixed(sem) => TeamHandle::Fixed(Arc::clone(sem)),
-                    TeamEntry::Adaptive { adaptive, controller } => TeamHandle::Adaptive {
+                    TeamEntry::Adaptive {
+                        adaptive,
+                        controller,
+                    } => TeamHandle::Adaptive {
                         adaptive: Arc::clone(adaptive),
                         controller: Arc::clone(controller),
                     },
@@ -714,7 +726,10 @@ mod tests {
                 .expect("first acquire should succeed");
         }
         let result = tokio::time::timeout(Duration::from_millis(200), sem.acquire(team_id)).await;
-        assert!(result.is_ok(), "acquire should succeed after permit is dropped");
+        assert!(
+            result.is_ok(),
+            "acquire should succeed after permit is dropped"
+        );
         assert!(result.unwrap().is_ok());
     }
 
@@ -728,7 +743,10 @@ mod tests {
             .await
             .expect("team A acquire should succeed");
         let result = tokio::time::timeout(Duration::from_millis(200), sem.acquire(team_b)).await;
-        assert!(result.is_ok(), "team B acquire should not be blocked by team A");
+        assert!(
+            result.is_ok(),
+            "team B acquire should not be blocked by team A"
+        );
         assert!(result.unwrap().is_ok());
     }
 
@@ -943,7 +961,10 @@ mod tests {
         // 1 次成功 → target +1 = 3
         sem.record_success(team_id);
         let p3 = sem.try_acquire(team_id);
-        assert!(p3.is_some(), "should be able to acquire after target increase");
+        assert!(
+            p3.is_some(),
+            "should be able to acquire after target increase"
+        );
         assert!(sem.try_acquire(team_id).is_none());
 
         drop(p1);
@@ -1029,7 +1050,10 @@ mod tests {
         // 1 次成功 → target=2，新许可可获取
         sem.record_success(team_id);
         let p2 = sem.try_acquire(team_id);
-        assert!(p2.is_some(), "target increase should make new permit available");
+        assert!(
+            p2.is_some(),
+            "target increase should make new permit available"
+        );
     }
 
     /// Adaptive 模式下初次 acquire 之前的 record_success 也应工作

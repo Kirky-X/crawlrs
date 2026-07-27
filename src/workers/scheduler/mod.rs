@@ -12,10 +12,10 @@
 //! `infrastructure::observability::metrics` 模块），故仅在 `metrics` 启用时编译；
 //! [`priority_queue`] 是纯数据结构，无外部依赖，始终可用。
 
-pub mod priority_queue;
 #[cfg(feature = "metrics")]
 pub mod memory_scheduler;
+pub mod priority_queue;
 
-pub use priority_queue::{PriorityQueue, ScheduledTask};
 #[cfg(feature = "metrics")]
 pub use memory_scheduler::{Admission, MemoryScheduler, MemoryState};
+pub use priority_queue::{PriorityQueue, ScheduledTask};

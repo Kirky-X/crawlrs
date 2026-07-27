@@ -84,8 +84,8 @@ impl UrlNormalizer {
         }
 
         // 解析（base = None，无法解析相对路径）
-        let parsed = Url::parse(trimmed)
-            .map_err(|e| UrlError::InvalidUrl(format!("parse failed: {e}")))?;
+        let parsed =
+            Url::parse(trimmed).map_err(|e| UrlError::InvalidUrl(format!("parse failed: {e}")))?;
 
         // 仅接受 http/https
         if !matches!(parsed.scheme(), "http" | "https") {
@@ -251,8 +251,7 @@ impl UrlNormalizer {
 
         // 已是 /xxx/index.html 时，去除 index.html 也作为变体
         for suffix in ["/index.html", "/index.htm", "/index.php"] {
-            if path.ends_with(suffix) {
-                let stripped = &path[..path.len() - suffix.len()];
+            if let Some(stripped) = path.strip_suffix(suffix) {
                 let stripped = if stripped.is_empty() { "/" } else { stripped };
                 variants.push(stripped.to_string());
             } else {
@@ -326,13 +325,19 @@ mod tests {
     #[test]
     fn test_normalize_preserves_root_slash() {
         let n = UrlNormalizer::new(false);
-        assert_eq!(n.normalize("https://example.com/").unwrap(), "https://example.com/");
+        assert_eq!(
+            n.normalize("https://example.com/").unwrap(),
+            "https://example.com/"
+        );
     }
 
     #[test]
     fn test_normalize_no_path_implicit_root() {
         let n = UrlNormalizer::new(false);
-        assert_eq!(n.normalize("https://example.com").unwrap(), "https://example.com/");
+        assert_eq!(
+            n.normalize("https://example.com").unwrap(),
+            "https://example.com/"
+        );
     }
 
     #[test]
@@ -369,7 +374,9 @@ mod tests {
     #[test]
     fn test_normalize_equivalent_urls_to_same_string() {
         let n = UrlNormalizer::new(false);
-        let a = n.normalize("HTTPS://Example.COM/Path/?b=2&a=1#frag").unwrap();
+        let a = n
+            .normalize("HTTPS://Example.COM/Path/?b=2&a=1#frag")
+            .unwrap();
         let b = n.normalize("https://example.com/Path?a=1&b=2").unwrap();
         assert_eq!(a, b);
     }
@@ -457,7 +464,9 @@ mod tests {
     #[test]
     fn test_normalize_idempotent() {
         let n = UrlNormalizer::new(false);
-        let once = n.normalize("HTTPS://Example.COM/Path/?b=2&a=1#frag").unwrap();
+        let once = n
+            .normalize("HTTPS://Example.COM/Path/?b=2&a=1#frag")
+            .unwrap();
         let twice = n.normalize(&once).unwrap();
         assert_eq!(once, twice);
     }
@@ -517,7 +526,9 @@ mod tests {
         let perms = n.permutations("https://example.com/path/index.html");
         // 应包含去除 index.html 后的变体
         assert!(
-            perms.iter().any(|u| u == "https://example.com/path" || u == "https://example.com/path/"),
+            perms
+                .iter()
+                .any(|u| u == "https://example.com/path" || u == "https://example.com/path/"),
             "missing stripped index.html variant, got: {:?}",
             perms
         );
@@ -529,7 +540,9 @@ mod tests {
         let perms = n.permutations("https://www.example.com/path");
         // 应包含去 www 后的变体
         assert!(
-            perms.iter().any(|u| u.contains("://example.com/path") && !u.contains("www.")),
+            perms
+                .iter()
+                .any(|u| u.contains("://example.com/path") && !u.contains("www.")),
             "missing non-www variant"
         );
     }
@@ -575,7 +588,11 @@ mod tests {
         // 至少 2 schemes × 2 hosts = 4 个基础变体
         let n = UrlNormalizer::new(false);
         let perms = n.permutations("https://example.com/path");
-        assert!(perms.len() >= 4, "expected >= 4 variants, got: {}", perms.len());
+        assert!(
+            perms.len() >= 4,
+            "expected >= 4 variants, got: {}",
+            perms.len()
+        );
     }
 
     // ========== UrlNormalizer construction ==========
@@ -593,7 +610,9 @@ mod tests {
     fn test_clone_copy() {
         let n1 = UrlNormalizer::new(true);
         let n2 = n1; // Copy
-        assert_eq!(n1.normalize("https://example.com/path?a=1").unwrap(),
-            n2.normalize("https://example.com/path?a=1").unwrap());
+        assert_eq!(
+            n1.normalize("https://example.com/path?a=1").unwrap(),
+            n2.normalize("https://example.com/path?a=1").unwrap()
+        );
     }
 }

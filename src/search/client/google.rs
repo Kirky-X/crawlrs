@@ -23,9 +23,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-use super::shared_utils::{build_query_string, escape_html_text};
 #[cfg(test)]
 use super::shared_utils::safe_parse_selector;
+use super::shared_utils::{build_query_string, escape_html_text};
 
 /// Google CONSENT cookie 值（绕过 EU 同意重定向）
 ///
@@ -245,7 +245,7 @@ impl GoogleSearchEngine {
             let elements: Vec<_> = document.select(selector).collect();
             if !elements.is_empty() {
                 for element in elements {
-                    if let Some(result) = self.extract_google_result(&element, &ctx) {
+                    if let Some(result) = self.extract_google_result(&element, ctx) {
                         results.push(result);
                         if results.len() >= 20 {
                             break;

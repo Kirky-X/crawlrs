@@ -76,7 +76,10 @@ impl Deduplicator {
         for v in &variants {
             // 任一变体在 Bloom 中阳性 → 可能已存在
             if !self.interner.definitely_absent(v) {
-                return Ok(DedupResult::MaybeExisting { normalized, variants });
+                return Ok(DedupResult::MaybeExisting {
+                    normalized,
+                    variants,
+                });
             }
         }
 
@@ -228,7 +231,11 @@ mod tests {
         let mut d = Deduplicator::new();
         d.insert("https://example.com/path");
         let result = d.check("https://example.com/path").unwrap();
-        if let DedupResult::MaybeExisting { normalized, variants } = result {
+        if let DedupResult::MaybeExisting {
+            normalized,
+            variants,
+        } = result
+        {
             assert_eq!(normalized, "https://example.com/path");
             // variants 至少包含 normalized 本身
             assert!(variants.contains(&normalized));

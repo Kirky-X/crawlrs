@@ -122,9 +122,8 @@ impl SmartSearchEngine {
     /// `GoogleSearchEngine`，节省 `Arc<RwLock<ArcIdCache>>` + 23 字符
     /// 随机 ID 生成 + `Utc::now()` 系统调用。
     fn google_engine(&self) -> &GoogleSearchEngine {
-        self.google_engine.get_or_init(|| {
-            GoogleSearchEngine::new(self.engine_client.clone())
-        })
+        self.google_engine
+            .get_or_init(|| GoogleSearchEngine::new(self.engine_client.clone()))
     }
 
     /// 获取 Bing client 引擎实例（缓存，首次调用时构造）
@@ -134,9 +133,8 @@ impl SmartSearchEngine {
     /// （PERF-05 已迁移至 `HtmlParser::bing()` 全局单例），但 `new` 仍
     /// 涉及 `Arc<EngineClient>` clone，缓存避免该开销。
     fn bing_engine(&self) -> &BingSearchEngine {
-        self.bing_engine.get_or_init(|| {
-            BingSearchEngine::new(self.engine_client.clone())
-        })
+        self.bing_engine
+            .get_or_init(|| BingSearchEngine::new(self.engine_client.clone()))
     }
 
     /// 获取 Baidu client 引擎实例（缓存，首次调用时构造）
@@ -146,18 +144,16 @@ impl SmartSearchEngine {
     /// （PERF-05 已迁移至 `HtmlParser::baidu()` 全局单例），但 `new` 仍
     /// 涉及 `Arc<EngineClient>` clone，缓存避免该开销。
     fn baidu_engine(&self) -> &BaiduSearchEngine {
-        self.baidu_engine.get_or_init(|| {
-            BaiduSearchEngine::new(self.engine_client.clone())
-        })
+        self.baidu_engine
+            .get_or_init(|| BaiduSearchEngine::new(self.engine_client.clone()))
     }
 
     /// 获取 Sogou client 引擎实例（缓存，首次调用时构造）
     ///
     /// 性能 PERF-02：与 Google/Bing/Baidu 一致，缓存实例避免重复构造。
     fn sogou_engine(&self) -> &SogouSearchEngine {
-        self.sogou_engine.get_or_init(|| {
-            SogouSearchEngine::new(self.engine_client.clone())
-        })
+        self.sogou_engine
+            .get_or_init(|| SogouSearchEngine::new(self.engine_client.clone()))
     }
 
     /// 检查速率限制
@@ -2749,13 +2745,18 @@ mod tests_ext {
         // near-empty 检测）但 < 1000 bytes 时，仍由 smart_search 的
         // InsufficientContent 路径拦截。
         let visible_text = "a".repeat(250);
-        let html = format!(
-            "<html><body><p>{}</p></body></html>",
-            visible_text
-        );
+        let html = format!("<html><body><p>{}</p></body></html>", visible_text);
         // 确保 > 200 bytes（绕过 antibot near-empty 检测）但 < 1000 bytes（触发 InsufficientContent）
-        assert!(html.len() > 200, "html should exceed antibot threshold, got {}", html.len());
-        assert!(html.len() < 1000, "html should be below InsufficientContent threshold, got {}", html.len());
+        assert!(
+            html.len() > 200,
+            "html should exceed antibot threshold, got {}",
+            html.len()
+        );
+        assert!(
+            html.len() < 1000,
+            "html should be below InsufficientContent threshold, got {}",
+            html.len()
+        );
 
         let config = create_test_config();
         let engine = create_engine_with_mock(MockScrapeBehavior::Success(html), config);
@@ -2890,10 +2891,7 @@ mod tests_ext {
     /// - `description`：smart 端将空字符串转为 `None`，client 端保留空字符串。
     ///   比较时归一化：smart 端 `None` ↔ client 端空字符串。
     /// - `engine` / `score`：不在等价性范围（smart 端附加逻辑）。
-    fn assert_smart_client_parity(
-        client_items: &[ResponseItem],
-        smart_results: &[SearchResult],
-    ) {
+    fn assert_smart_client_parity(client_items: &[ResponseItem], smart_results: &[SearchResult]) {
         assert_eq!(
             client_items.len(),
             smart_results.len(),
@@ -3007,14 +3005,14 @@ mod tests_ext {
         let smart_result = engine.parse_bing_results("");
 
         assert!(client_result.is_err(), "client 端空 HTML 应返回错误");
-        assert!(smart_result.is_err(), "smart 端空 HTML 应返回错误（委托 client）");
+        assert!(
+            smart_result.is_err(),
+            "smart 端空 HTML 应返回错误（委托 client）"
+        );
         // 错误类型应一致（均为 Parse）
         match (client_result.unwrap_err(), smart_result.unwrap_err()) {
             (SearchError::Parse(_), SearchError::Parse(_)) => {}
-            (c, s) => panic!(
-                "空 HTML 错误类型不一致: client={:?}, smart={:?}",
-                c, s
-            ),
+            (c, s) => panic!("空 HTML 错误类型不一致: client={:?}, smart={:?}", c, s),
         }
     }
 

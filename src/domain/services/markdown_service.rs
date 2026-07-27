@@ -118,10 +118,7 @@ mod tests {
         let svc = HtmdMarkdownService::new();
         let html = r#"<html><body><a href="https://example.com">Example</a></body></html>"#;
         let md = svc.to_markdown(html, false).expect("convert ok");
-        assert!(
-            md.contains("Example"),
-            "expected link text, got: {md}"
-        );
+        assert!(md.contains("Example"), "expected link text, got: {md}");
         assert!(
             md.contains("https://example.com"),
             "expected link URL, got: {md}"
@@ -144,7 +141,9 @@ mod tests {
     #[test]
     fn returns_empty_string_for_empty_html() {
         let svc = HtmdMarkdownService::new();
-        let md = svc.to_markdown("", false).expect("empty html should not error");
+        let md = svc
+            .to_markdown("", false)
+            .expect("empty html should not error");
         assert!(md.is_empty(), "expected empty markdown, got: {md}");
     }
 
@@ -189,7 +188,9 @@ mod tests {
     fn trait_object_dispatch_works() {
         let svc: Box<dyn MarkdownServiceTrait> = Box::new(HtmdMarkdownService::new());
         let html = "<html><body><h2>Sub</h2></body></html>";
-        let md = svc.to_markdown(html, false).expect("trait object convert ok");
+        let md = svc
+            .to_markdown(html, false)
+            .expect("trait object convert ok");
         assert!(
             md.contains("Sub"),
             "expected text via trait object, got: {md}"

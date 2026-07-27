@@ -153,7 +153,10 @@ mod tests {
         // 2^100 远超 u64 范围，saturating_pow 应 cap 到 u64::MAX
         let d = backoff_delay(100, 100, 60_000);
         let ms = d.as_millis() as u64;
-        assert!(ms <= 60_000, "overflow case: delay must be capped at max_ms");
+        assert!(
+            ms <= 60_000,
+            "overflow case: delay must be capped at max_ms"
+        );
     }
 
     /// base_ms=0 时返回零延迟（边界）
@@ -171,7 +174,12 @@ mod tests {
         for _ in 0..500 {
             let d = backoff_delay(0, base_ms, max_ms);
             let ms = d.as_millis() as u64;
-            assert!(ms <= base_ms, "attempt=0 delay {} exceeds base {}", ms, base_ms);
+            assert!(
+                ms <= base_ms,
+                "attempt=0 delay {} exceeds base {}",
+                ms,
+                base_ms
+            );
         }
     }
 

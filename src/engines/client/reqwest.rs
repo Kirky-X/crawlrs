@@ -141,6 +141,7 @@ impl ReqwestEngine {
     /// 生产环境调用点应从：
     /// - `settings.proxy.strategy` 注入 `proxy_strategy`
     /// - `settings.timeouts.engines.default_timeout_seconds` 注入超时
+    ///
     /// 避免硬编码（架构 MEDIUM 2）。
     #[must_use]
     pub fn with_provider_strategy_and_timeout(
@@ -247,40 +248,42 @@ impl ReqwestEngine {
         let effective_proxy = proxy_url.map(|s| s.trim()).filter(|s| !s.is_empty());
 
         match effective_proxy {
-            Some(url) => match reqwest::Proxy::http(url) {
-                Ok(proxy) => match builder.proxy(proxy).build() {
-                    Ok(client) => {
-                        // 安全：代理 URL 可能含 user:pass@host 凭据，日志输出必须脱敏
-                        // （CWE-532 防护，T056 安全审查 CRITICAL-1 修复）
-                        log::debug!(
-                            "Using HTTP proxy: {} (skip_tls={}, timeout={}s)",
-                            redact_proxy_url(url),
-                            skip_tls,
-                            timeout_seconds
-                        );
-                        (client, false)
-                    }
-                    Err(e) => {
-                        // M4 修复：warn → error（规则12：失败必须显性化）
-                        // 安全：url 脱敏后输出（CWE-532 防护）
-                        error!(
+            Some(url) => {
+                match reqwest::Proxy::http(url) {
+                    Ok(proxy) => match builder.proxy(proxy).build() {
+                        Ok(client) => {
+                            // 安全：代理 URL 可能含 user:pass@host 凭据，日志输出必须脱敏
+                            // （CWE-532 防护，T056 安全审查 CRITICAL-1 修复）
+                            log::debug!(
+                                "Using HTTP proxy: {} (skip_tls={}, timeout={}s)",
+                                redact_proxy_url(url),
+                                skip_tls,
+                                timeout_seconds
+                            );
+                            (client, false)
+                        }
+                        Err(e) => {
+                            // M4 修复：warn → error（规则12：失败必须显性化）
+                            // 安全：url 脱敏后输出（CWE-532 防护）
+                            error!(
                             "Failed to build proxy client (url={}, skip_tls={}, timeout={}s): {}, \
                              falling back to injected http_client",
                             redact_proxy_url(url), skip_tls, timeout_seconds, e
                         );
-                        ((**fallback).clone(), true)
-                    }
-                },
-                Err(e) => {
-                    // M4 修复：warn → error
-                    // 安全：url 脱敏后输出（CWE-532 防护）
-                    error!(
+                            ((**fallback).clone(), true)
+                        }
+                    },
+                    Err(e) => {
+                        // M4 修复：warn → error
+                        // 安全：url 脱敏后输出（CWE-532 防护）
+                        error!(
                         "Failed to configure HTTP proxy (url={}): {}, falling back to injected http_client",
                         redact_proxy_url(url), e
                     );
-                    ((**fallback).clone(), true)
+                        ((**fallback).clone(), true)
+                    }
                 }
-            },
+            }
             None => match builder.build() {
                 Ok(client) => {
                     if skip_tls {
@@ -332,15 +335,15 @@ impl ReqwestEngine {
                 "skip_tls_verification=true: TLS certificate validation disabled for this request"
             );
             let proxy_url = proxy.as_ref().map(|s| s.as_str());
-            let (client, is_fallback) = Self::build_custom_client(
-                proxy_url,
-                true,
-                &self.http_client,
-                self.timeout_seconds,
-            );
+            let (client, is_fallback) =
+                Self::build_custom_client(proxy_url, true, &self.http_client, self.timeout_seconds);
             let used = proxy.as_ref().and_then(|s| {
                 let t = s.trim();
-                if t.is_empty() { None } else { Some(t.to_string()) }
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_string())
+                }
             });
             return ClientHandle::new(client, used, is_fallback);
         }
@@ -661,7 +664,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            }
+        }
     }
 
     fn create_request_with_js(url: &str) -> InternalScrapeRequest {
@@ -685,7 +688,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            }
+        }
     }
 
     fn create_request_with_screenshot(url: &str) -> InternalScrapeRequest {
@@ -714,7 +717,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            }
+        }
     }
 
     // === ReqwestEngine creation tests ===
@@ -816,7 +819,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
         assert_eq!(engine.support_score(&request), 100);
     }
 
@@ -862,7 +865,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
         assert_eq!(engine.support_score(&request), 10);
     }
 
@@ -890,7 +893,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
         // Mobile without JS should still get 100
         assert_eq!(engine.support_score(&request), 100);
     }
@@ -1024,7 +1027,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
         let result = engine.scrape(&request).await;
         assert!(result.is_err());
     }
@@ -1053,7 +1056,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
         let result = engine.scrape(&request).await;
         assert!(result.is_err());
     }
@@ -1149,7 +1152,10 @@ mod tests {
         );
         assert!(handle.has_proxy());
         // M4 修复：有效代理路径非 fallback
-        assert!(!handle.is_fallback(), "valid proxy path must not be fallback");
+        assert!(
+            !handle.is_fallback(),
+            "valid proxy path must not be fallback"
+        );
     }
 
     #[test]
@@ -1180,7 +1186,10 @@ mod tests {
             handle.used_proxy_url().is_none(),
             "empty proxy string → used_proxy_url must be None"
         );
-        assert!(!handle.is_fallback(), "empty proxy → no proxy path, not fallback");
+        assert!(
+            !handle.is_fallback(),
+            "empty proxy → no proxy path, not fallback"
+        );
     }
 
     #[test]
@@ -1200,7 +1209,10 @@ mod tests {
             Some("http://pool-proxy:8080"),
             "provider must provide used_proxy_url for report_failure / report_success"
         );
-        assert!(!handle.is_fallback(), "valid pool proxy must not be fallback");
+        assert!(
+            !handle.is_fallback(),
+            "valid pool proxy must not be fallback"
+        );
     }
 
     #[test]
@@ -1214,17 +1226,16 @@ mod tests {
         ));
         let engine = ReqwestEngine::with_provider(client, pool);
         // 请求级代理 > 池代理
-        let handle = engine.get_client(
-            &Some("http://request-proxy:9090".to_string()),
-            false,
-            None,
-        );
+        let handle = engine.get_client(&Some("http://request-proxy:9090".to_string()), false, None);
         assert_eq!(
             handle.used_proxy_url(),
             Some("http://request-proxy:9090"),
             "request-level proxy must override provider"
         );
-        assert!(!handle.is_fallback(), "valid request proxy must not be fallback");
+        assert!(
+            !handle.is_fallback(),
+            "valid request proxy must not be fallback"
+        );
     }
 
     #[test]
@@ -1244,7 +1255,10 @@ mod tests {
             "empty pool → used_proxy_url must be None"
         );
         // 空池不是 build_custom_client 失败，是 provider 返回 None 的正常路径
-        assert!(!handle.is_fallback(), "empty pool is normal path, not build failure");
+        assert!(
+            !handle.is_fallback(),
+            "empty pool is normal path, not build failure"
+        );
     }
 
     #[test]
@@ -1265,7 +1279,10 @@ mod tests {
             handle.used_proxy_url().is_none(),
             "all cooldown → fallback to injected client, used_proxy_url must be None"
         );
-        assert!(!handle.is_fallback(), "all cooldown is normal path, not build failure");
+        assert!(
+            !handle.is_fallback(),
+            "all cooldown is normal path, not build failure"
+        );
     }
 
     #[test]
@@ -1323,7 +1340,10 @@ mod tests {
             .used_proxy_url()
             .unwrap()
             .to_string();
-        assert_eq!(url1, url2, "sticky strategy must return same url within session");
+        assert_eq!(
+            url1, url2,
+            "sticky strategy must return same url within session"
+        );
     }
 
     #[test]
@@ -1397,7 +1417,10 @@ mod tests {
         // skip_tls_verification=true → 构建临时 client with danger_accept_invalid_certs
         // 验证不 panic + 输出 warn 日志
         let handle = engine.get_client(&None, true, None);
-        assert!(handle.used_proxy_url().is_none(), "skip_tls + no proxy → used_proxy_url None");
+        assert!(
+            handle.used_proxy_url().is_none(),
+            "skip_tls + no proxy → used_proxy_url None"
+        );
     }
 
     #[test]
@@ -1406,11 +1429,7 @@ mod tests {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         // skip_tls_verification=true + proxy → 构建临时 client with both options
-        let handle = engine.get_client(
-            &Some("http://proxy:8080".to_string()),
-            true,
-            None,
-        );
+        let handle = engine.get_client(&Some("http://proxy:8080".to_string()), true, None);
         assert_eq!(handle.used_proxy_url(), Some("http://proxy:8080"));
     }
 
@@ -1484,8 +1503,14 @@ mod tests {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         let pool = engine.ua_pool();
-        assert!(pool.count(false) >= 20, "desktop pool must have >= 20 profiles");
-        assert!(pool.count(true) >= 20, "mobile pool must have >= 20 profiles");
+        assert!(
+            pool.count(false) >= 20,
+            "desktop pool must have >= 20 profiles"
+        );
+        assert!(
+            pool.count(true) >= 20,
+            "mobile pool must have >= 20 profiles"
+        );
     }
 
     #[test]
@@ -1583,11 +1608,7 @@ mod tests {
         let pool = engine.ua_pool();
         let default_ua =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-        let non_default_count = pool
-            .desktop
-            .iter()
-            .filter(|p| p.ua != default_ua)
-            .count();
+        let non_default_count = pool.desktop.iter().filter(|p| p.ua != default_ua).count();
         assert!(
             non_default_count >= 20,
             "most desktop UAs should differ from DEFAULT_USER_AGENT, got {} non-default",

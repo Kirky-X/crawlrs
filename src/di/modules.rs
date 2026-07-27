@@ -341,17 +341,16 @@ impl AsyncAutoBuilder for EngineModule {
             // MEDIUM-2 修复：sticky_ttl / cooldown 从 settings.proxy 注入（原硬编码 60s/30s）
             //
             // 策略：从 settings.proxy.strategy 注入（H1：RoundRobin / Sticky 路由）
-            let proxy_provider: Option<Arc<dyn ProxyProvider>> = if settings.proxy.enabled
-                && !settings.proxy.urls.is_empty()
-            {
-                Some(Arc::new(ProxyPool::from_urls(
-                    settings.proxy.urls.clone(),
-                    std::time::Duration::from_secs(settings.proxy.sticky_ttl_seconds),
-                    std::time::Duration::from_secs(settings.proxy.cooldown_seconds),
-                )))
-            } else {
-                None
-            };
+            let proxy_provider: Option<Arc<dyn ProxyProvider>> =
+                if settings.proxy.enabled && !settings.proxy.urls.is_empty() {
+                    Some(Arc::new(ProxyPool::from_urls(
+                        settings.proxy.urls.clone(),
+                        std::time::Duration::from_secs(settings.proxy.sticky_ttl_seconds),
+                        std::time::Duration::from_secs(settings.proxy.cooldown_seconds),
+                    )))
+                } else {
+                    None
+                };
             // FlareSolverr 单代理：取 urls.first() 作为 fallback（FlareSolverr 暂未接入 ProxyProvider，
             // T056 范围外）。proxy.enabled=false 时为 None。
             let proxy_url: Option<String> = if settings.proxy.enabled {

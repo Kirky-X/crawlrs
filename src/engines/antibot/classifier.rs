@@ -17,8 +17,8 @@
 
 use super::patterns::{
     AntiBotTech, NEAR_EMPTY_BODY_LEN, TIER1_REGEXES, TIER2_AUTOMATON, TIER2_BODY_SIZE_LIMIT,
-    TIER3_ANY_TAG, TIER3_MIN_SIGNALS, TIER3_NO_BODY, TIER3_SCRIPT_BLOCK,
-    TIER3_SCRIPT_HEAVY_BYTES, TIER3_SCRIPT_HEAVY_VISIBLE_MAX, TIER3_VISIBLE_TEXT_MIN,
+    TIER3_ANY_TAG, TIER3_MIN_SIGNALS, TIER3_NO_BODY, TIER3_SCRIPT_BLOCK, TIER3_SCRIPT_HEAVY_BYTES,
+    TIER3_SCRIPT_HEAVY_VISIBLE_MAX, TIER3_VISIBLE_TEXT_MIN,
 };
 use once_cell::sync::{Lazy, OnceCell};
 use regex::Regex;
@@ -49,13 +49,11 @@ impl Detection {
 /// 用于识别 data-HTML（JSON / XML）避免对 API 响应误报
 ///
 /// 仅检查 body 起始字符与 Content-Type header。返回 true 时 [`classify`] 直接返回 `None`。
-static JSON_PREFIX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*[\[\{]").expect("antibot json-prefix regex")
-});
+static JSON_PREFIX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*[\[\{]").expect("antibot json-prefix regex"));
 
-static XML_PREFIX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*<\?xml\b").expect("antibot xml-prefix regex")
-});
+static XML_PREFIX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*<\?xml\b").expect("antibot xml-prefix regex"));
 
 /// 判定 body 是否为 data-HTML（JSON / XML），避免对 API 响应误报
 fn looks_like_data(body: &str, headers: &HeaderMap) -> bool {
@@ -392,8 +390,13 @@ mod tests {
 
     #[test]
     fn classify_503_short_body_returns_block() {
-        let det = classify(503, "Service Unavailable", &html_headers(), "https://example.com")
-            .expect("503 short body should detect");
+        let det = classify(
+            503,
+            "Service Unavailable",
+            &html_headers(),
+            "https://example.com",
+        )
+        .expect("503 short body should detect");
         assert_eq!(det.tech, AntiBotTech::Unknown);
     }
 
@@ -403,8 +406,13 @@ mod tests {
 
     #[test]
     fn classify_4xx_tier2_keyword_match() {
-        let det = classify(400, "You have been blocked by our system", &html_headers(), "https://example.com")
-            .expect("4xx tier2 keyword should detect");
+        let det = classify(
+            400,
+            "You have been blocked by our system",
+            &html_headers(),
+            "https://example.com",
+        )
+        .expect("4xx tier2 keyword should detect");
         assert_eq!(det.tech, AntiBotTech::Unknown);
         assert!(det.reason.contains("tier2"));
     }
@@ -434,10 +442,7 @@ mod tests {
     fn classify_200_script_heavy_no_content_returns_structural_block() {
         // 构造：有 <body>，可见文本极少，但脚本字节超大且无可见内容
         let big_script = format!("<script>{}</script>", "var x=1;".repeat(1500)); // >5KB
-        let body = format!(
-            "<html><body>{}</body></html>",
-            big_script
-        );
+        let body = format!("<html><body>{}</body></html>", big_script);
         let det = classify(200, &body, &html_headers(), "https://example.com")
             .expect("script-heavy 200 should detect");
         assert_eq!(det.tech, AntiBotTech::StructuralBlock);
@@ -494,15 +499,15 @@ mod tests {
             HeaderValue::from_static("text/html"),
         );
         // XML 起始且无 XML content-type → 走 body 起始判定
-        assert!(looks_like_data(
-            "<?xml version=\"1.0\"?><rss></rss>",
-            &h
-        ));
+        assert!(looks_like_data("<?xml version=\"1.0\"?><rss></rss>", &h));
     }
 
     #[test]
     fn looks_like_data_html_returns_false() {
-        assert!(!looks_like_data("<html><body>hi</body></html>", &html_headers()));
+        assert!(!looks_like_data(
+            "<html><body>hi</body></html>",
+            &html_headers()
+        ));
     }
 
     // -------- Detection 构造 --------

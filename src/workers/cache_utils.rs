@@ -186,7 +186,11 @@ const SENSITIVE_RESPONSE_HEADERS: &[&str] = &[
 /// 性能审查 MEDIUM-1 / LOW-2：用 `retain` 原地修改 +
 /// `eq_ignore_ascii_case` 零分配比较，避免双重 HashMap 分配。
 pub fn filter_sensitive_headers(headers: &mut HashMap<String, String>) {
-    headers.retain(|k, _| !SENSITIVE_RESPONSE_HEADERS.iter().any(|s| k.eq_ignore_ascii_case(s)));
+    headers.retain(|k, _| {
+        !SENSITIVE_RESPONSE_HEADERS
+            .iter()
+            .any(|s| k.eq_ignore_ascii_case(s))
+    });
 }
 
 // =============================================================================
@@ -267,7 +271,10 @@ where
 
     let mut map = serializer.serialize_map(Some(headers.len()))?;
     for (k, v) in headers {
-        if !SENSITIVE_RESPONSE_HEADERS.iter().any(|s| k.eq_ignore_ascii_case(s)) {
+        if !SENSITIVE_RESPONSE_HEADERS
+            .iter()
+            .any(|s| k.eq_ignore_ascii_case(s))
+        {
             map.serialize_entry(k, v)?;
         }
     }
@@ -330,14 +337,21 @@ mod tests {
         let ctx = make_ctx("https://example.com", HttpMethod::Get);
 
         let mut opts_zh = ScrapeOptions::default();
-        opts_zh.headers.insert("Accept-Language".to_string(), "zh".to_string());
+        opts_zh
+            .headers
+            .insert("Accept-Language".to_string(), "zh".to_string());
 
         let mut opts_en = ScrapeOptions::default();
-        opts_en.headers.insert("Accept-Language".to_string(), "en".to_string());
+        opts_en
+            .headers
+            .insert("Accept-Language".to_string(), "en".to_string());
 
         let key_zh = generate_scrape_cache_key(&ctx, &opts_zh);
         let key_en = generate_scrape_cache_key(&ctx, &opts_en);
-        assert_ne!(key_zh, key_en, "different headers must produce different cache keys");
+        assert_ne!(
+            key_zh, key_en,
+            "different headers must produce different cache keys"
+        );
     }
 
     #[test]
@@ -354,7 +368,10 @@ mod tests {
 
         let key_js = generate_scrape_cache_key(&ctx, &opts_js);
         let key_no_js = generate_scrape_cache_key(&ctx, &opts_no_js);
-        assert_ne!(key_js, key_no_js, "needs_js=true vs false must produce different keys");
+        assert_ne!(
+            key_js, key_no_js,
+            "needs_js=true vs false must produce different keys"
+        );
     }
 
     #[test]
@@ -371,7 +388,10 @@ mod tests {
 
         let key_s1 = generate_scrape_cache_key(&ctx, &opts_s1);
         let key_s2 = generate_scrape_cache_key(&ctx, &opts_s2);
-        assert_ne!(key_s1, key_s2, "different session_id must produce different keys");
+        assert_ne!(
+            key_s1, key_s2,
+            "different session_id must produce different keys"
+        );
     }
 
     #[test]
@@ -391,12 +411,20 @@ mod tests {
         let ctx = make_ctx("https://example.com", HttpMethod::Get);
 
         let mut opts_a = ScrapeOptions::default();
-        opts_a.headers.insert("X-Custom".to_string(), "v1".to_string());
-        opts_a.headers.insert("Accept".to_string(), "json".to_string());
+        opts_a
+            .headers
+            .insert("X-Custom".to_string(), "v1".to_string());
+        opts_a
+            .headers
+            .insert("Accept".to_string(), "json".to_string());
 
         let mut opts_b = ScrapeOptions::default();
-        opts_b.headers.insert("Accept".to_string(), "json".to_string());
-        opts_b.headers.insert("X-Custom".to_string(), "v1".to_string());
+        opts_b
+            .headers
+            .insert("Accept".to_string(), "json".to_string());
+        opts_b
+            .headers
+            .insert("X-Custom".to_string(), "v1".to_string());
 
         let key_a = generate_scrape_cache_key(&ctx, &opts_a);
         let key_b = generate_scrape_cache_key(&ctx, &opts_b);
@@ -488,7 +516,9 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         // 敏感头不应出现在序列化结果
-        let headers_obj = parsed["headers"].as_object().expect("headers should be object");
+        let headers_obj = parsed["headers"]
+            .as_object()
+            .expect("headers should be object");
         assert!(!headers_obj.contains_key("Set-Cookie"));
         assert!(headers_obj.contains_key("Content-Type"));
     }
@@ -520,7 +550,10 @@ mod tests {
         assert_eq!(restored.screenshot.as_deref(), Some("base64data"));
         assert_eq!(restored.content_type, "text/html");
         assert_eq!(restored.headers.len(), 2);
-        assert_eq!(restored.headers.get("Content-Type").map(|v| v.as_str()), Some("text/html"));
+        assert_eq!(
+            restored.headers.get("Content-Type").map(|v| v.as_str()),
+            Some("text/html")
+        );
         assert_eq!(restored.response_time_ms, 100);
         assert_eq!(restored.markdown.as_deref(), Some("# Title"));
     }
@@ -549,5 +582,4 @@ mod tests {
         assert_eq!(response.headers.len(), 1);
         assert!(response.headers.contains_key("Set-Cookie"));
     }
-
 }

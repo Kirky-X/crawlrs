@@ -8,9 +8,9 @@ use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
+use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
-use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::infrastructure::oxcache::CacheService;
 use crate::queue::task_queue::TaskQueue;
 // T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
@@ -196,10 +196,7 @@ impl WorkerManager {
                 interval.tick().await;
                 let purged = coalescer_for_purge.purge_stale();
                 if purged > 0 {
-                    info!(
-                        "purge_stale cleaned up {} zombie coalesce entries",
-                        purged
-                    );
+                    info!("purge_stale cleaned up {} zombie coalesce entries", purged);
                 }
             }
         }));

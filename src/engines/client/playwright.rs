@@ -9,7 +9,7 @@ use crate::engines::engine_client::{
     EngineError, InternalPageAction, InternalScrapeRequest, InternalScrapeResponse,
     InternalScreenshotConfig, ScraperEngine,
 };
-use crate::engines::intercept::{BLOCK_REASON, InterceptController, ResourceKind};
+use crate::engines::intercept::{InterceptController, ResourceKind, BLOCK_REASON};
 use crate::engines::validators;
 use crate::infrastructure::services::config_service::BrowserConfigTrait;
 use crate::utils::proxy::{redact_proxy_url, validate_proxy_url};
@@ -237,10 +237,12 @@ impl PlaywrightBrowserManagerComponent {
                 //    从根本上消除单字符串拼接导致的 argv 拆分风险
                 // 3. `redact_proxy_url` 脱敏日志输出，避免 user:pass 凭证泄露
                 const ALLOWED_PROXY_SCHEMES: &[&str] = &["http", "https", "socks5", "socks4"];
-                let validated = validate_proxy_url(proxy, ALLOWED_PROXY_SCHEMES).map_err(|e| {
-                    EngineError::Other(format!("Invalid proxy URL: {}", e))
-                })?;
-                log::info!("Using proxy for Playwright: {}", redact_proxy_url(&validated));
+                let validated = validate_proxy_url(proxy, ALLOWED_PROXY_SCHEMES)
+                    .map_err(|e| EngineError::Other(format!("Invalid proxy URL: {}", e)))?;
+                log::info!(
+                    "Using proxy for Playwright: {}",
+                    redact_proxy_url(&validated)
+                );
                 builder = builder.arg("--proxy-server").arg(validated);
             }
 
@@ -835,7 +837,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
         assert_eq!(engine.support_score(&request_js), 100);
 
         // Test with Screenshot requirement
@@ -859,7 +861,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
         assert_eq!(engine.support_score(&request_screenshot), 100);
 
         // Test with neither (basic request)
@@ -883,7 +885,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
         assert_eq!(engine.support_score(&request_basic), 10);
     }
 
@@ -893,8 +895,14 @@ mod tests {
     fn test_playwright_engine_has_non_empty_ua_pool() {
         let engine = PlaywrightEngine::new();
         let pool = engine.ua_pool();
-        assert!(pool.count(false) >= 20, "desktop pool must have >= 20 profiles");
-        assert!(pool.count(true) >= 20, "mobile pool must have >= 20 profiles");
+        assert!(
+            pool.count(false) >= 20,
+            "desktop pool must have >= 20 profiles"
+        );
+        assert!(
+            pool.count(true) >= 20,
+            "mobile pool must have >= 20 profiles"
+        );
     }
 
     #[test]

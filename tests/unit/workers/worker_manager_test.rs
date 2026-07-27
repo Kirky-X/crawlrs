@@ -33,9 +33,9 @@ use crawlrs::domain::repositories::task_repository::{
 };
 use crawlrs::domain::services::extraction_service::{ExtractionRule, ExtractionServiceTrait};
 use crawlrs::domain::services::llm_service::TokenUsage;
+use crawlrs::domain::services::team_semaphore::TeamSemaphore;
 use crawlrs::domain::services::webhook_service::WebhookService;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeResponse};
-use crawlrs::domain::services::team_semaphore::TeamSemaphore;
 use crawlrs::queue::task_queue::{QueueError, TaskQueue};
 use crawlrs::utils::regex_cache::RegexCache;
 use crawlrs::utils::robots::RobotsCheckerTrait;

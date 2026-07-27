@@ -5,11 +5,11 @@
 
 //! LLMService - LLM provider interaction handling
 
+use super::llm_provider_strategy::{OllamaStrategy, ProviderStrategy};
 use crate::config::settings::Settings;
 use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::{EngineClient, HttpMethod, ScrapeOptions, ScrapeRequest};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
-use super::llm_provider_strategy::{OllamaStrategy, ProviderStrategy};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 #[cfg(feature = "genai-llm")]

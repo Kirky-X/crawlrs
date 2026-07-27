@@ -298,7 +298,9 @@ mod tests {
     #[test]
     fn test_large_insert_no_false_negatives() {
         let mut interner = UrlInterner::with_capacity(5000);
-        let urls: Vec<String> = (0..5000).map(|i| format!("https://site.com/{}", i)).collect();
+        let urls: Vec<String> = (0..5000)
+            .map(|i| format!("https://site.com/{}", i))
+            .collect();
         for url in &urls {
             interner.insert(url);
         }

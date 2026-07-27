@@ -71,7 +71,6 @@ pub enum ProxyUrlError {
 ///     other => panic!("expected UnsupportedScheme, got {other:?}"),
 /// }
 /// ```
-#[must_use]
 pub fn validate_proxy_url(
     proxy_url: &str,
     allowed_schemes: &'static [&'static str],
@@ -106,8 +105,7 @@ pub fn validate_proxy_url(
     }
 
     // 3. 完整 URL 解析（验证 host 存在、port 合法等）
-    let parsed = Url::parse(proxy_url)
-        .map_err(|e| ProxyUrlError::InvalidFormat(e.to_string()))?;
+    let parsed = Url::parse(proxy_url).map_err(|e| ProxyUrlError::InvalidFormat(e.to_string()))?;
 
     // 4. host 必须非空
     if parsed.host_str().is_none() || parsed.host_str().map(|h| h.is_empty()).unwrap_or(true) {
@@ -211,8 +209,7 @@ mod tests {
     #[test]
     fn validate_proxy_url_with_credentials_passes() {
         assert!(
-            validate_proxy_url("http://user:secret@proxy.example.com:8080", CHROME_ALLOWED)
-                .is_ok()
+            validate_proxy_url("http://user:secret@proxy.example.com:8080", CHROME_ALLOWED).is_ok()
         );
     }
 

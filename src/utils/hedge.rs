@@ -96,7 +96,10 @@ impl HedgeController {
             ema_alpha > 0.0 && ema_alpha <= 1.0,
             "ema_alpha must be in (0, 1], got {ema_alpha}"
         );
-        assert!(min_samples >= 1, "min_samples must be >= 1, got {min_samples}");
+        assert!(
+            min_samples >= 1,
+            "min_samples must be >= 1, got {min_samples}"
+        );
         assert!(
             sigma_multiplier > 0.0,
             "sigma_multiplier must be > 0.0, got {sigma_multiplier}"
@@ -111,7 +114,11 @@ impl HedgeController {
 
     /// 使用默认参数创建（α=0.2，min_samples=10，σ_mult=1.0）
     pub fn with_defaults() -> Self {
-        Self::new(DEFAULT_EMA_ALPHA, DEFAULT_MIN_SAMPLES, DEFAULT_SIGMA_MULTIPLIER)
+        Self::new(
+            DEFAULT_EMA_ALPHA,
+            DEFAULT_MIN_SAMPLES,
+            DEFAULT_SIGMA_MULTIPLIER,
+        )
     }
 
     /// 记录一次延迟，更新 EMA 和方差
@@ -351,7 +358,10 @@ mod tests {
         c.record_latency(Duration::from_millis(200)); // EMA=0.2*200+0.8*100=120
         let ema = c.ema_latency().unwrap();
         let ema_ms = ema.as_secs_f64() * 1000.0;
-        assert!((ema_ms - 120.0).abs() < 0.01, "EMA should be 120, got {ema_ms}");
+        assert!(
+            (ema_ms - 120.0).abs() < 0.01,
+            "EMA should be 120, got {ema_ms}"
+        );
     }
 
     #[test]
@@ -618,7 +628,10 @@ mod tests {
         // EMA=0.8*200+0.2*100=180
         let ema = c.ema_latency().unwrap();
         let ema_ms = ema.as_secs_f64() * 1000.0;
-        assert!((ema_ms - 180.0).abs() < 0.5, "EMA should be 180, got {ema_ms}");
+        assert!(
+            (ema_ms - 180.0).abs() < 0.5,
+            "EMA should be 180, got {ema_ms}"
+        );
     }
 
     #[test]

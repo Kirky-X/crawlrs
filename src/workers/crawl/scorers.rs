@@ -65,16 +65,23 @@ impl KeywordRelevanceScorer {
 
 impl UrlScorer for KeywordRelevanceScorer {
     fn score(&self, url: &str, context: &ScoringContext) -> f32 {
-        // 过滤空关键词（空串是噪音，不计入 total）
-        let keywords: Vec<&String> = context.keywords.iter().filter(|kw| !kw.is_empty()).collect();
+        // 性能审查 M-4 修复：直接消费 iterator，避免 collect Vec<&String>
+        // 原实现每次评分分配 Vec + 对每个 keyword 重复 to_ascii_lowercase
+        //
+        // 优化：
+        // 1. 用 iterator 直接 count total 与 matched，无 Vec 分配
+        // 2. keyword 的 lowercase 在循环内一次性计算（无法在 ScoringContext 预缓存，
+        //    因 ScoringContext 是 trait 约束的输入参数，不能改其结构）
+        let total = context.keywords.iter().filter(|kw| !kw.is_empty()).count();
         // 空关键词列表 → 中性 0.5（无法判定相关性）
-        if keywords.is_empty() {
+        if total == 0 {
             return 0.5;
         }
         let url_lower = url.to_ascii_lowercase();
-        let total = keywords.len();
-        let matched = keywords
+        let matched = context
+            .keywords
             .iter()
+            .filter(|kw| !kw.is_empty())
             .filter(|kw| url_lower.contains(&kw.to_ascii_lowercase()))
             .count();
         // matched / total ∈ [0.0, 1.0]
@@ -204,7 +211,9 @@ impl CompositeScorer {
     /// 构造空的组合评分器（无 scorer 时 `score` 返回 0.5）
     #[must_use]
     pub fn new() -> Self {
-        Self { scorers: Vec::new() }
+        Self {
+            scorers: Vec::new(),
+        }
     }
 
     /// 追加一个 scorer 及其权重，返回 `self`（builder 模式）
@@ -248,13 +257,13 @@ impl UrlScorer for CompositeScorer {
         if self.scorers.is_empty() {
             return 0.5;
         }
-        let (weighted_sum, weight_sum) = self
-            .scorers
-            .iter()
-            .fold((0.0_f32, 0.0_f32), |(ws, wsum), (scorer, w)| {
-                let s = scorer.score(url, context);
-                (ws + s * w, wsum + w)
-            });
+        let (weighted_sum, weight_sum) =
+            self.scorers
+                .iter()
+                .fold((0.0_f32, 0.0_f32), |(ws, wsum), (scorer, w)| {
+                    let s = scorer.score(url, context);
+                    (ws + s * w, wsum + w)
+                });
         // 权重总和为 0 → 中性 0.5（避免除零）
         if weight_sum == 0.0 {
             return 0.5;
@@ -278,16 +287,16 @@ mod tests {
     #[test]
     fn keyword_relevance_all_matched_returns_one() {
         let scorer = KeywordRelevanceScorer::new();
-        let ctx = ScoringContext::new()
-            .with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
+        let ctx =
+            ScoringContext::new().with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
         assert_eq!(scorer.score("https://example.com/rust-crawler", &ctx), 1.0);
     }
 
     #[test]
     fn keyword_relevance_partial_match_returns_ratio() {
         let scorer = KeywordRelevanceScorer::new();
-        let ctx = ScoringContext::new()
-            .with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
+        let ctx =
+            ScoringContext::new().with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
         // 仅 rust 命中 → 1/2 = 0.5
         assert_eq!(scorer.score("https://example.com/rust-tutorial", &ctx), 0.5);
     }
@@ -295,8 +304,8 @@ mod tests {
     #[test]
     fn keyword_relevance_no_match_returns_zero() {
         let scorer = KeywordRelevanceScorer::new();
-        let ctx = ScoringContext::new()
-            .with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
+        let ctx =
+            ScoringContext::new().with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
         assert_eq!(scorer.score("https://example.com/python-guide", &ctx), 0.0);
     }
 
@@ -328,8 +337,7 @@ mod tests {
     fn keyword_relevance_empty_string_keyword_ignored() {
         let scorer = KeywordRelevanceScorer::new();
         // 空字符串关键词应被忽略（不计入 total）
-        let ctx = ScoringContext::new()
-            .with_keywords(vec!["".to_string(), "rust".to_string()]);
+        let ctx = ScoringContext::new().with_keywords(vec!["".to_string(), "rust".to_string()]);
         // 空关键词被忽略 → total=1，rust 命中 → 1.0
         assert_eq!(scorer.score("https://example.com/rust", &ctx), 1.0);
         // rust 不命中 → 0.0
@@ -466,8 +474,7 @@ mod tests {
 
     #[test]
     fn composite_single_scorer_returns_its_score() {
-        let scorer = CompositeScorer::new()
-            .with_scorer(PathDepthScorer::new(), 1.0);
+        let scorer = CompositeScorer::new().with_scorer(PathDepthScorer::new(), 1.0);
         let ctx = ScoringContext::new();
         // 单 scorer 权重 1.0 → 等于该 scorer 的分数
         assert_eq!(scorer.score("https://example.com/", &ctx), 1.0);
@@ -482,8 +489,8 @@ mod tests {
         let scorer = CompositeScorer::new()
             .with_scorer(KeywordRelevanceScorer::new(), 0.7)
             .with_scorer(PathDepthScorer::new(), 0.3);
-        let ctx = ScoringContext::new()
-            .with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
+        let ctx =
+            ScoringContext::new().with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
         let score = scorer.score("https://example.com/rust-crawler", &ctx);
         assert!((score - 0.85).abs() < 1e-6);
     }
@@ -493,8 +500,7 @@ mod tests {
         let scorer = CompositeScorer::new()
             .with_scorer(KeywordRelevanceScorer::new(), 2.0)
             .with_scorer(PathDepthScorer::new(), 1.0);
-        let ctx = ScoringContext::new()
-            .with_keywords(vec!["rust".to_string()]);
+        let ctx = ScoringContext::new().with_keywords(vec!["rust".to_string()]);
         // Keyword: rust 命中 → 1.0; PathDepth: /rust → depth 1 → 0.5
         // 加权: (2*1.0 + 1*0.5) / 3 = 2.5/3 ≈ 0.833
         let score = scorer.score("https://example.com/rust", &ctx);
@@ -503,8 +509,7 @@ mod tests {
 
     #[test]
     fn composite_zero_weight_returns_neutral() {
-        let scorer = CompositeScorer::new()
-            .with_scorer(PathDepthScorer::new(), 0.0);
+        let scorer = CompositeScorer::new().with_scorer(PathDepthScorer::new(), 0.0);
         let ctx = ScoringContext::new();
         // 权重总和为 0 → 0.5
         assert_eq!(scorer.score("https://example.com/", &ctx), 0.5);
@@ -515,8 +520,7 @@ mod tests {
         let scorer = CompositeScorer::new()
             .with_scorer(KeywordRelevanceScorer::new(), 0.5)
             .with_scorer(PathDepthScorer::new(), 0.5);
-        let ctx = ScoringContext::new()
-            .with_keywords(vec!["rust".to_string()]);
+        let ctx = ScoringContext::new().with_keywords(vec!["rust".to_string()]);
         // 多个 URL 的分数都应在 [0.0, 1.0]
         for url in &[
             "https://example.com/",
@@ -544,8 +548,7 @@ mod tests {
 
     #[test]
     fn composite_clone_shares_scorers() {
-        let scorer = CompositeScorer::new()
-            .with_scorer(PathDepthScorer::new(), 1.0);
+        let scorer = CompositeScorer::new().with_scorer(PathDepthScorer::new(), 1.0);
         let cloned = scorer.clone();
         let ctx = ScoringContext::new();
         // clone 后行为一致
@@ -555,8 +558,7 @@ mod tests {
 
     #[test]
     fn composite_with_shared_scorer_arc() {
-        let shared: std::sync::Arc<dyn UrlScorer> =
-            std::sync::Arc::new(PathDepthScorer::new());
+        let shared: std::sync::Arc<dyn UrlScorer> = std::sync::Arc::new(PathDepthScorer::new());
         let scorer = CompositeScorer::new().with_shared_scorer(shared, 1.0);
         let ctx = ScoringContext::new();
         assert_eq!(scorer.score("https://example.com/", &ctx), 1.0);
@@ -569,8 +571,7 @@ mod tests {
             .with_scorer(KeywordRelevanceScorer::new(), 0.5)
             .with_scorer(PathDepthScorer::new(), 0.3)
             .with_scorer(KeywordRelevanceScorer::new(), 0.2);
-        let ctx = ScoringContext::new()
-            .with_keywords(vec!["rust".to_string(), "blog".to_string()]);
+        let ctx = ScoringContext::new().with_keywords(vec!["rust".to_string(), "blog".to_string()]);
         // URL: https://example.com/rust → Keyword 0.5 (1/2), PathDepth 0.5
         // 加权: (0.5*0.5 + 0.5*0.3 + 0.5*0.2) / 1.0 = 0.25+0.15+0.1 = 0.5
         let score = scorer.score("https://example.com/rust", &ctx);

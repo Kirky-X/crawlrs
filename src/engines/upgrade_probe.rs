@@ -108,7 +108,9 @@ impl JsUpgradeProbe {
                 reasons.push(*sig);
             }
         }
-        if body_prefix.contains(REACT_ROOT_SHELL) && body_prefix.to_ascii_lowercase().contains("hydrate") {
+        if body_prefix.contains(REACT_ROOT_SHELL)
+            && body_prefix.to_ascii_lowercase().contains("hydrate")
+        {
             score += STRONG_SIGNAL_SCORE;
             reasons.push("react-root-shell-hydrate");
         }
@@ -209,7 +211,13 @@ fn extract_script_src(tag: &str) -> Option<&str> {
         // 跳过空格 / = / 制表符
         let bytes = after.as_bytes();
         let mut i = 0;
-        while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'=' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r') {
+        while i < bytes.len()
+            && (bytes[i] == b' '
+                || bytes[i] == b'='
+                || bytes[i] == b'\t'
+                || bytes[i] == b'\n'
+                || bytes[i] == b'\r')
+        {
             i += 1;
         }
         if i >= bytes.len() {
@@ -379,7 +387,8 @@ mod tests {
     #[test]
     fn nuxt_data_strong_signal_triggers_upgrade() {
         let probe = JsUpgradeProbe::default();
-        let body = r#"<html><body><script>window.__NUXT_DATA__ = {"data":[]};</script></body></html>"#;
+        let body =
+            r#"<html><body><script>window.__NUXT_DATA__ = {"data":[]};</script></body></html>"#;
         let v = probe.evaluate(&html_headers(), body);
         assert!(v.upgrade);
         assert!(v.reason.contains("__NUXT_DATA__"));
@@ -475,7 +484,11 @@ mod tests {
         body.push_str(LONG_VISIBLE_TEXT);
         body.push_str("</body></html>");
         let v = probe.evaluate(&html_headers(), &body);
-        assert!(v.upgrade, "5 modulepreloads should reach threshold, got {:?}", v);
+        assert!(
+            v.upgrade,
+            "5 modulepreloads should reach threshold, got {:?}",
+            v
+        );
         assert_eq!(v.score, 10);
         assert!(v.reason.contains("modulepreload"));
     }
@@ -530,7 +543,11 @@ mod tests {
         body.push_str(LONG_VISIBLE_TEXT);
         body.push_str("</body></html>");
         let v = probe.evaluate(&html_headers(), &body);
-        assert!(v.upgrade, "mixed signals should reach threshold, got {:?}", v);
+        assert!(
+            v.upgrade,
+            "mixed signals should reach threshold, got {:?}",
+            v
+        );
         assert_eq!(v.score, 11);
     }
 
@@ -562,7 +579,11 @@ mod tests {
         let h = HeaderMap::new();
         let body = r#"<html><body><script>window.__INITIAL_STATE__ = {};</script></body></html>"#;
         let v = probe.evaluate(&h, body);
-        assert!(v.upgrade, "missing CT should proceed to body eval, got {:?}", v);
+        assert!(
+            v.upgrade,
+            "missing CT should proceed to body eval, got {:?}",
+            v
+        );
     }
 
     #[test]

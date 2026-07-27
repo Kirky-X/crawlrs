@@ -11,10 +11,10 @@
 
 #![allow(deprecated)]
 
+use crate::common::CacheMode;
 use crate::engines::health_monitor::{AggregateHealthStatus, EngineHealthMonitor};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use crate::engines::validators::validate_url;
-use crate::common::CacheMode;
 use crate::utils::retry::RetryReason;
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -128,11 +128,12 @@ pub fn validate_session_id(session_id: &str) -> bool {
 ///
 /// `Selector` 模式对 selector 字符串做 JS 字符串转义，防注入（CWE-94）。
 /// `DomStable` 的 `stable_duration` 上限 60s，防恶意调用方设置过长导致 DoS。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum WaitFor {
     /// 等待网络空闲（无新请求持续 500ms）
     ///
     /// chromiumoxide 的 `goto` 已等待 load 事件，此处额外等待确保异步请求完成。
+    #[default]
     NetworkIdle,
     /// 等待指定 CSS selector 出现在 DOM 中
     ///
@@ -143,12 +144,6 @@ pub enum WaitFor {
     /// 通过轮询 `document.body.innerHTML.length` 比较，若连续 `stable_duration`
     /// 内长度不变则视为稳定。`stable_duration` 上限 60s。
     DomStable(Duration),
-}
-
-impl Default for WaitFor {
-    fn default() -> Self {
-        Self::NetworkIdle
-    }
 }
 
 /// Optional configuration for scrape operations.
@@ -1906,9 +1901,7 @@ mod tests {
 
     #[test]
     fn test_feature_toggle_is_retryable() {
-        assert!(
-            EngineError::FeatureToggle("chrome_degraded_to_http".to_string()).is_retryable()
-        );
+        assert!(EngineError::FeatureToggle("chrome_degraded_to_http".to_string()).is_retryable());
     }
 
     #[test]
@@ -2617,9 +2610,7 @@ mod tests {
 
     #[test]
     fn test_session_id_builder_rejects_control_chars() {
-        let options = ScrapeOptions::builder()
-            .session_id("bad\nsession")
-            .build();
+        let options = ScrapeOptions::builder().session_id("bad\nsession").build();
         assert!(
             options.session_id.is_none(),
             "session_id with control chars should be rejected by builder"

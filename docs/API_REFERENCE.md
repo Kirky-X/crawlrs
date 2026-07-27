@@ -368,9 +368,27 @@ Scrape a single web page.
 | `webhook` | string | No | Webhook URL for completion notification |
 | `extraction_rules` | object | No | CSS selector extraction rules |
 | `actions` | array | No | Page interaction actions |
-| `options` | object | No | Scraping options |
+| `options` | object | No | Scraping options (see [Options Parameters](#scrape-options-parameters)) |
 | `metadata` | object | No | Custom metadata for the task |
 | `sync_wait_ms` | integer | No | Wait time for synchronous response (max 30000) |
+
+<a id="scrape-options-parameters"></a>
+
+**Options Parameters:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `headers` | object | empty | Custom HTTP headers (e.g. `User-Agent`) |
+| `wait_for` | integer | — | **0.2.0 reserved field** (ignored by handler). Playwright engine internally uses conditional wait strategy (`WaitFor::NetworkIdle` by default); see [ARCHITECTURE.md → WaitFor](ARCHITECTURE.md#waitfor-策略) for the internal enum and planned API surface. |
+| `timeout` | integer | 30 | Request timeout in seconds |
+| `js_rendering` | boolean | false | Enable JavaScript rendering |
+| `screenshot` | boolean | false | Capture screenshot |
+| `screenshot_options` | object | — | Screenshot config (`full_page`, `quality`, `format`) |
+| `mobile` | boolean | false | Emulate mobile device |
+| `proxy` | string | — | Proxy URL (e.g. `http://proxy:8080`) |
+| `skip_tls_verification` | boolean | false | Skip TLS certificate verification |
+| `needs_tls_fingerprint` | boolean | false | Require TLS fingerprint adversarial engine |
+| `use_fire_engine` | boolean | false | Force use FlareSolverr engine |
 
 **Action Types:**
 

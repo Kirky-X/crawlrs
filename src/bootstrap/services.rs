@@ -22,6 +22,8 @@ use crate::infrastructure::auth::{
 };
 // garrison prelude 提供 GarrisonDao / GarrisonInterface / GarrisonManager trait 与类型。
 use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
+// T049/R-content-002：ContentExtractionFacade 用于正文提取（Trafilatura→DomSmoothie→CssRule + LLM 回退）
+use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::extraction_service::{ExtractionService, ExtractionServiceTrait};
 #[cfg(feature = "auth")]
 use dbnexus::DbPool;
@@ -60,10 +62,10 @@ use crate::infrastructure::services::limiteron_service::{LimiteronService, RateL
 use crate::infrastructure::services::noop_rate_limiting_service::NoopRateLimitingService;
 // R-wh-003 / T027：webhook feature 关闭时不导入 WebhookSenderImpl
 // （webhook_sender_impl 模块本身也被 cfg 门控，见 infrastructure::services::mod）
+use crate::domain::services::team_semaphore::{AdaptiveParams, TeamSemaphore};
 #[cfg(feature = "webhook")]
 use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
-use crate::domain::services::team_semaphore::{AdaptiveParams, TeamSemaphore};
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use crate::search::ab_test::SearchABTestEngine;
 use crate::search::aggregator::SearchAggregator;
@@ -124,6 +126,11 @@ pub struct ServicesComponents {
     pub llm_service: Arc<dyn LLMServiceTrait>,
     /// Extraction service.
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
+    /// Content extraction facade（T049/R-content-002）
+    ///
+    /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLMService，按 Trafilatura→DomSmoothie→CssRule
+    /// 优先级路由，`confidence < 0.7` 时触发 LLM 回退。由 `scrape_worker` 提取路径使用。
+    pub content_extractor: Arc<ContentExtractionFacade>,
     /// Regex cache for performance optimization.
     pub regex_cache: Arc<RegexCache>,
     /// Webhook worker
@@ -586,8 +593,9 @@ pub async fn init_services(
         init_search_engine(engine_client.clone(), settings);
 
     // Initialize search client (wraps search engines)
-    let search_client: Arc<dyn SearchClientTrait> =
-        Arc::new(crate::search::client::SearchClient::new(engine_client.clone()));
+    let search_client: Arc<dyn SearchClientTrait> = Arc::new(
+        crate::search::client::SearchClient::new(engine_client.clone()),
+    );
 
     // Initialize search service
     let search_service = init_search_service(repositories, settings, search_client.clone());
@@ -653,6 +661,12 @@ pub async fn init_services(
     // Initialize extraction service
     let extraction_service = Arc::new(ExtractionService::new(llm_service.clone()));
 
+    // T049/R-content-002：Initialize content extraction facade
+    //
+    // 装配 ContentExtractionFacade，注入 llm_service 用于低置信度回退（confidence < 0.7 时触发）。
+    // Facade 内部按 cfg 编译期决定 extractor 链（Trafilatura→DomSmoothie→CssRule）。
+    let content_extractor = Arc::new(ContentExtractionFacade::new(Some(llm_service.clone())));
+
     // Initialize regex cache
     let regex_cache = init_regex_cache();
 
@@ -699,6 +713,7 @@ pub async fn init_services(
         http_client,
         llm_service,
         extraction_service,
+        content_extractor,
         regex_cache,
         #[cfg(feature = "webhook")]
         webhook_worker,
@@ -719,11 +734,11 @@ pub async fn init_services(
 mod tests {
     use super::*;
     use crate::domain::models::CreditsTransactionType;
-    use crate::engines::router::EngineRouter;
     use crate::domain::services::rate_limiting_service::{
         BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
         QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
     };
+    use crate::engines::router::EngineRouter;
 
     fn make_http_client() -> Arc<reqwest::Client> {
         Arc::new(reqwest::Client::new())
@@ -1117,13 +1132,8 @@ mod tests {
         let engine_router = Arc::new(EngineRouter::new(engines.clone()));
         let engine_client = Arc::new(EngineClient::with_router(engine_router.clone()));
 
-        let services = init_services(
-            &infra,
-            engine_client,
-            infra.http_client.clone(),
-            &settings,
-        )
-        .await;
+        let services =
+            init_services(&infra, engine_client, infra.http_client.clone(), &settings).await;
 
         // Verify all service components are constructed.
         assert!(Arc::strong_count(&services.rate_limiting_service) >= 1);

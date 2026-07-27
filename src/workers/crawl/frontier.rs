@@ -26,6 +26,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
 
 use parking_lot::Mutex;
 use url::Url;
@@ -170,9 +171,14 @@ pub struct Frontier {
 
 struct FrontierInner {
     /// 每域名的优先级队列
-    domains: HashMap<String, BinaryHeap<ScoredUrl>>,
+    ///
+    /// 性能审查 M-1/M-2 修复：用 `Arc<str>` 作为 key 替代 `String`，
+    /// `Arc::clone` 是 O(1) 原子引用计数加 1（无堆分配），远快于 `String::clone` 的 O(n) memcpy。
+    /// 用 `Arc` 而非 `Rc` 是因为 `Frontier` 通过 `Arc<Frontier>` 跨 tokio task 共享，需 `Send + Sync`。
+    /// 同时 `domain_order` 也用 `Arc<str>`，使 `pop` 时 `domain_order[idx].clone()` 也降为 O(1)。
+    domains: HashMap<Arc<str>, BinaryHeap<ScoredUrl>>,
     /// 域名插入顺序（round-robin 按此顺序轮转）
-    domain_order: Vec<String>,
+    domain_order: Vec<Arc<str>>,
     /// round-robin 游标（指向下一个待出队的域名索引）
     cursor: usize,
     /// 总 URL 数
@@ -197,9 +203,14 @@ impl Frontier {
     ///
     /// 按 `scored.domain` 分组推入对应域名的 `BinaryHeap`。
     /// 新域名会追加到 `domain_order` 末尾。
+    ///
+    /// 性能审查 M-1 修复：用 `Arc<str>` 替代 `String` 作为 domain key，
+    /// `Arc::clone` 是 O(1) 原子引用计数加 1（无堆分配），原 3 次 String clone 改为 1 次 `Arc::from` 堆分配 + 2 次 O(1) Arc::clone。
+    /// 借用检查器不允许 entry().or_insert_with(closure) 内访问 `inner.domain_order`（双可变借用），
+    /// 故仍用 contains_key + insert 模式，但 Arc<str> 已消除主要开销。
     pub fn push(&self, scored: ScoredUrl) {
         let mut inner = self.inner.lock();
-        let domain = scored.domain.clone();
+        let domain: Arc<str> = Arc::from(scored.domain.as_str());
         if !inner.domains.contains_key(&domain) {
             inner.domain_order.push(domain.clone());
             inner.domains.insert(domain.clone(), BinaryHeap::new());
@@ -214,19 +225,20 @@ impl Frontier {
     /// 然后 `cursor` 前进到 `(found_index + 1) % domain_count`。
     ///
     /// 所有域名为空时返回 `None`。
+    ///
+    /// 性能审查 M-2 修复：原 `domain_order[idx].clone()` 是 O(n) String clone，
+    /// 改为 `Arc<str>` 后变为 O(1) 原子引用计数加 1。
     pub fn pop(&self) -> Option<ScoredUrl> {
         let mut inner = self.inner.lock();
         if inner.len == 0 || inner.domain_order.is_empty() {
             return None;
         }
         let domain_count = inner.domain_order.len();
-        // 从 cursor 开始扫描所有域名，最多扫描 domain_count 次
         for offset in 0..domain_count {
             let idx = (inner.cursor + offset) % domain_count;
             let domain = inner.domain_order[idx].clone();
             if let Some(heap) = inner.domains.get_mut(&domain) {
                 if let Some(scored) = heap.pop() {
-                    // cursor 前进到下一域名
                     inner.cursor = (idx + 1) % domain_count;
                     inner.len -= 1;
                     return Some(scored);
@@ -263,10 +275,8 @@ impl Frontier {
     #[must_use]
     pub fn domain_len(&self, domain: &str) -> usize {
         let inner = self.inner.lock();
-        inner
-            .domains
-            .get(&domain.to_ascii_lowercase())
-            .map_or(0, |h| h.len())
+        let lower = domain.to_ascii_lowercase();
+        inner.domains.get(lower.as_str()).map_or(0, |h| h.len())
     }
 }
 
@@ -359,7 +369,11 @@ mod tests {
     #[test]
     fn frontier_push_increments_len() {
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.5, "a.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/1".to_string(),
+            0.5,
+            "a.com".to_string(),
+        ));
         assert_eq!(f.len(), 1);
         assert!(!f.is_empty());
         assert_eq!(f.domain_count(), 1);
@@ -368,9 +382,21 @@ mod tests {
     #[test]
     fn frontier_push_multiple_domains() {
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.5, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://b.com/1".to_string(), 0.5, "b.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://c.com/1".to_string(), 0.5, "c.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/1".to_string(),
+            0.5,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://b.com/1".to_string(),
+            0.5,
+            "b.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://c.com/1".to_string(),
+            0.5,
+            "c.com".to_string(),
+        ));
         assert_eq!(f.len(), 3);
         assert_eq!(f.domain_count(), 3);
     }
@@ -378,9 +404,21 @@ mod tests {
     #[test]
     fn frontier_push_same_domain_multiple_urls() {
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.5, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/2".to_string(), 0.9, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/3".to_string(), 0.1, "a.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/1".to_string(),
+            0.5,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/2".to_string(),
+            0.9,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/3".to_string(),
+            0.1,
+            "a.com".to_string(),
+        ));
         assert_eq!(f.len(), 3);
         assert_eq!(f.domain_count(), 1);
         assert_eq!(f.domain_len("a.com"), 3);
@@ -391,9 +429,21 @@ mod tests {
     #[test]
     fn frontier_pop_single_domain_high_score_first() {
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/low".to_string(), 0.1, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/high".to_string(), 0.9, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/mid".to_string(), 0.5, "a.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/low".to_string(),
+            0.1,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/high".to_string(),
+            0.9,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/mid".to_string(),
+            0.5,
+            "a.com".to_string(),
+        ));
 
         // 单域名：域内按分数排序，高分优先
         let first = f.pop().unwrap();
@@ -409,8 +459,16 @@ mod tests {
     #[test]
     fn frontier_pop_decrements_len() {
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.5, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/2".to_string(), 0.9, "a.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/1".to_string(),
+            0.5,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/2".to_string(),
+            0.9,
+            "a.com".to_string(),
+        ));
         assert_eq!(f.len(), 2);
         f.pop();
         assert_eq!(f.len(), 1);
@@ -425,10 +483,26 @@ mod tests {
     fn frontier_round_robin_two_domains() {
         let f = Frontier::new();
         // a.com 有 3 个 URL（都高分），b.com 有 1 个 URL（低分）
-        f.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.9, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/2".to_string(), 0.8, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/3".to_string(), 0.7, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://b.com/1".to_string(), 0.1, "b.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/1".to_string(),
+            0.9,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/2".to_string(),
+            0.8,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/3".to_string(),
+            0.7,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://b.com/1".to_string(),
+            0.1,
+            "b.com".to_string(),
+        ));
 
         // round-robin: a.com → b.com → a.com → a.com
         let pop1 = f.pop().unwrap();
@@ -453,11 +527,31 @@ mod tests {
     #[test]
     fn frontier_round_robin_three_domains() {
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.9, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://b.com/1".to_string(), 0.5, "b.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://c.com/1".to_string(), 0.1, "c.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/2".to_string(), 0.8, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://b.com/2".to_string(), 0.4, "b.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/1".to_string(),
+            0.9,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://b.com/1".to_string(),
+            0.5,
+            "b.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://c.com/1".to_string(),
+            0.1,
+            "c.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/2".to_string(),
+            0.8,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://b.com/2".to_string(),
+            0.4,
+            "b.com".to_string(),
+        ));
 
         // round-robin: a → b → c → a → b
         let domains: Vec<String> = vec![
@@ -473,9 +567,21 @@ mod tests {
     #[test]
     fn frontier_round_robin_skips_empty_domain() {
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.9, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://b.com/1".to_string(), 0.5, "b.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/2".to_string(), 0.8, "a.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/1".to_string(),
+            0.9,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://b.com/1".to_string(),
+            0.5,
+            "b.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/2".to_string(),
+            0.8,
+            "a.com".to_string(),
+        ));
 
         // a → b → a（b 空后跳过）
         let pop1 = f.pop().unwrap();
@@ -501,7 +607,11 @@ mod tests {
             ));
         }
         // b.com 有 1 个 score=0.1 的 URL
-        f.push(ScoredUrl::with_domain("https://b.com/1".to_string(), 0.1, "b.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://b.com/1".to_string(),
+            0.1,
+            "b.com".to_string(),
+        ));
 
         // 第一次出队 a.com，第二次出队 b.com（不会被 a.com 饥饿）
         let pop1 = f.pop().unwrap();
@@ -521,7 +631,11 @@ mod tests {
     #[test]
     fn frontier_all_domains_empty_pop_returns_none() {
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.5, "a.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/1".to_string(),
+            0.5,
+            "a.com".to_string(),
+        ));
         f.pop();
         // 所有域名已空
         assert!(f.pop().is_none());
@@ -532,7 +646,11 @@ mod tests {
     #[test]
     fn frontier_domain_len_nonexistent_returns_zero() {
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.5, "a.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/1".to_string(),
+            0.5,
+            "a.com".to_string(),
+        ));
         assert_eq!(f.domain_len("a.com"), 1);
         assert_eq!(f.domain_len("b.com"), 0);
         assert_eq!(f.domain_len("nonexistent"), 0);
@@ -542,10 +660,26 @@ mod tests {
     fn frontier_mixed_scores_and_domains() {
         // 混合场景：多域名、多分数、域内排序 + 域间 round-robin
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/low".to_string(), 0.1, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://b.com/high".to_string(), 0.9, "b.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/high".to_string(), 0.8, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://b.com/low".to_string(), 0.2, "b.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/low".to_string(),
+            0.1,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://b.com/high".to_string(),
+            0.9,
+            "b.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/high".to_string(),
+            0.8,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://b.com/low".to_string(),
+            0.2,
+            "b.com".to_string(),
+        ));
 
         // round-robin: a.com(high=0.8) → b.com(high=0.9) → a.com(low=0.1) → b.com(low=0.2)
         let pop1 = f.pop().unwrap();
@@ -572,9 +706,21 @@ mod tests {
         // 同分数的 URL 在 BinaryHeap 中顺序不保证（同分时 heap 内部顺序不定）
         // 但都应能被弹出
         let f = Frontier::new();
-        f.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.5, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/2".to_string(), 0.5, "a.com".to_string()));
-        f.push(ScoredUrl::with_domain("https://a.com/3".to_string(), 0.5, "a.com".to_string()));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/1".to_string(),
+            0.5,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/2".to_string(),
+            0.5,
+            "a.com".to_string(),
+        ));
+        f.push(ScoredUrl::with_domain(
+            "https://a.com/3".to_string(),
+            0.5,
+            "a.com".to_string(),
+        ));
 
         let mut urls = Vec::new();
         while let Some(s) = f.pop() {

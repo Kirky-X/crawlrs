@@ -866,6 +866,8 @@ pub struct EngineRouter {
     feature_filter_enabled: bool,
     race_mode_enabled: bool,
     dynamic_threshold_factor: f64,
+    // T070/R-runtime-004：Hedge 控制器，race 胜出后记录延迟用于 P84 估算
+    hedge_controller: HedgeController,
 }
 ```
 
@@ -874,6 +876,87 @@ The router:
 2. Applies the selected load balancing strategy
 3. Falls back to sequential engines on failure
 4. Supports race mode (concurrent execution, return first success)
+5. **T070**: race mode 胜出后调用 `hedge_controller.record_latency(response_time)` 更新 EMA/方差，用于后续 P84 阈值估算（详见 [Hedge 请求副本控制器](#hedge-请求副本控制器)）
+
+### Hedge 请求副本控制器
+
+<a id="hedge-请求副本控制器"></a>
+
+**Location:** `src/utils/hedge.rs`
+
+**背景（T070/R-runtime-004，design.md §17）：** 移植 spider `hedge.rs`，基于 EMA（指数移动平均）+ 方差估算 P84 延迟阈值，超阈值时建议发送副本请求降尾延迟。
+
+**核心算法：**
+
+- EMA：`EMA_new = α·x + (1-α)·EMA_old`
+- 方差：`Var_new = (1-α)·Var_old + α·(x-EMA_new)·(x-EMA_old)`（指数加权移动方差，递推式）
+- P84 阈值：`P84 = EMA + σ_multiplier · sqrt(Var)`（标准正态分布 P84 ≈ μ+σ）
+
+**并发模型：** 使用 `parking_lot::Mutex<HedgeState>` 保护 `(ema, var, sample_count)` 三元组原子更新。非热路径（race 胜出后单次记录），Mutex 开销相对 race 100ms+ 网络耗时占比 < 0.0001%。
+
+**接入路径：**
+
+```rust
+// EngineRouter::route_race_mode 胜出后记录延迟
+Ok((engine_name, response, response_time)) => {
+    self.hedge_controller.record_latency(response_time);
+    Ok(response)
+}
+
+// 顺序路径未来可调用 should_hedge 决策副本触发
+if router.hedge_controller().should_hedge(elapsed) {
+    // 发送副本请求...
+}
+```
+
+**样本来源限制（M-2）：** 当前 `record_latency` 仅在 race 胜出后调用，记录 `min(各引擎延迟)` 分布。**不可直接用于顺序路径 P84 估算**（顺序路径是单引擎全延迟，分布完全不同，复用会导致阈值系统性偏低）。顺序路径接入时需独立的 HedgeController 实例。
+
+### WaitFor 策略
+
+<a id="waitfor-策略"></a>
+
+**Location:** 枚举定义在 `src/engines/engine_client.rs`，实现在 `src/engines/wait.rs`（`engine-playwright` feature 门控）
+
+**背景（T069/R-jsrender-004，design.md §17）：** 替代原有 `sync_wait_ms` 固定 sleep，提供条件式等待：满足条件立即返回，超时返回错误，避免无谓阻塞。
+
+```rust
+pub enum WaitFor {
+    NetworkIdle,           // 等待网络空闲（无新请求持续 500ms）
+    Selector(String),      // 等待指定 CSS selector 出现在 DOM 中
+    DomStable(Duration),   // 等待 DOM 稳定（无变化持续指定时长，上限 60s）
+}
+```
+
+**接入路径：** `InternalScrapeRequest.wait_for: Option<WaitFor>` 字段，Playwright 引擎在 `goto` 后调用 `request.wait_for.unwrap_or_default().wait(&page, timeout)`。
+
+**架构拆分动机：** 枚举定义在非 feature-gated 的 `engine_client.rs`，实现在 feature-gated 的 `wait.rs`，解决跨引擎依赖问题。
+
+**已知限制（DTO 未桥接）：** API DTO 层 `ScrapeRequestOptions.wait_for: Option<u64>` 是数值字段（毫秒），当前 handler 未将其转换为 `WaitFor` 枚举。API 用户传入的 `wait_for` 数值被忽略，Playwright 引擎始终走 `NetworkIdle` 默认策略。计划在后续迭代中将 DTO 升级为 tagged enum JSON 格式（`{"network_idle": {}}` / `{"selector": "#target"}` / `{"dom_stable": {"duration_ms": 500}}`）。
+
+### TabPool 浏览器 Tab 复用
+
+<a id="tabpool-浏览器-tab-复用"></a>
+
+**Location:** `src/engines/client/tab_pool.rs`
+
+**背景（T068/R-runtime-003，design.md §17）：** Playwright 引擎每次抓取创建新 Tab 开销大（CDP `Target.createTarget` + `Page.goto`，约 50-200ms），TabPool 在 BrowserPool 之上进一步复用 Page，消除 tab 创建开销。
+
+**实现：** 基于 `DashMap<usize, Page>` + `AtomicUsize` 栈顶指针的 LIFO 无锁栈：
+
+```rust
+pub struct TabPool {
+    slots: DashMap<usize, Page>,  // slot 索引 → Page
+    head: AtomicUsize,           // 单调递增的栈顶指针
+    max_size: usize,             // 最大池容量
+}
+```
+
+**acquire/release 流程：**
+
+- `acquire(&browser)`: 原子递减 `head` 取栈顶 Page；池空时调用 `browser.new_page("about:blank")` 新建。
+- `release(page)`: 先将 Page 导航到 `about:blank` 清理状态（5s 超时，超时则 drop 关闭 tab），再压回栈；池满（`head >= max_size`）则直接 drop。
+
+**多 Browser 安全：** TabPool 不绑定特定 Browser，`acquire` 接受 `&Browser` 参数。池空时用传入的 Browser 新建 Page；池非空时弹出的 Page 可能属于其他 Browser。调用方应保证 TabPool 生命周期与单个 Browser 一致（per-Browser 实例化），或在多 Browser 场景下由上层 `BrowserPool` 按 instance_id 路由。
 
 ### Page Action Types
 

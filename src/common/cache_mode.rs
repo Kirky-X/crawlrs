@@ -583,6 +583,9 @@ mod tests {
     fn test_cache_mode_serde_rejects_write_only() {
         // WriteOnly 已删除，反序列化应失败
         let result: Result<CacheMode, _> = serde_json::from_str("\"writeOnly\"");
-        assert!(result.is_err(), "writeOnly should be rejected after CRITICAL-1 fix");
+        assert!(
+            result.is_err(),
+            "writeOnly should be rejected after CRITICAL-1 fix"
+        );
     }
 }

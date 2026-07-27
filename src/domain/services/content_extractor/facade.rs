@@ -5,25 +5,25 @@
 
 //! 正文提取 Facade（design.md §11，T048/R-content-002）
 //!
-//! [`ContentExtractionFacade`] 按优先级链路 Trafilatura → DomSmoothie → CssRule 路由提取请求，
-//! 某实现特性未启用时跳过；首个成功提取的结果用于返回。
+//! [`ContentExtractionFacade`] 持有 `Vec<Box<dyn ContentExtractor>>`，按优先级
+//! Trafilatura → DomSmoothie → CssRule 依次调用。首个 `confidence >= 0.7` 的成功结果
+//! 立即返回；全部 `confidence < 0.7` 时取首个成功结果，LLMService 可用时触发回退升级。
 //!
-//! LLM 回退：当首选 extractor 返回结果 `confidence < 0.7` 且 `LLMService` 可用时，
-//! 触发 LLM 结构化提取升级，结果 confidence=0.8（高可信度）。
+//! LLM 回退：将首选 extractor 的低置信度结果送 LLM 结构化提取，输出 confidence=0.8。
 //!
 //! 特性兼容（R-content-003）：
 //! - `extractor-trafilatura` on → Trafilatura 优先
 //! - `extractor-dom-smoothie` on → DomSmoothie 次选
 //! - 三特性均关闭 → 退化为 CssRule 兜底（编译通过，功能可用）
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::domain::services::extraction_service::ExtractionService;
 use crate::domain::services::llm_service::LLMServiceTrait;
 
-use super::traits::{ContentExtractionError, ContentExtractor, ExtractedContent};
+use super::traits::{ContentExtractor, ExtractError, ExtractedContent};
 
 /// LLM 回退后内容 confidence（design.md 约定）
 const LLM_FALLBACK_CONFIDENCE: f32 = 0.8;
@@ -37,21 +37,16 @@ const LLM_INPUT_END_TAG: &str = "<scraped_content_end>";
 
 /// ContentExtractionFacade：按优先级路由多 extractor + LLM 回退
 ///
-/// 装配顺序（编译期由 cfg 决定可用 extractor，运行期按优先级链路调用）：
+/// 持有 `Vec<Box<dyn ContentExtractor>>`，构造时按优先级入队：
 /// 1. Trafilatura（gated `extractor-trafilatura`）— 主路径，质量最高
 /// 2. DomSmoothie（gated `extractor-dom-smoothie`）— 性能回退
 /// 3. CssRule（无条件）— 兜底
 ///
-/// LLM 回退条件：首选成功 extractor 返回 `confidence < 0.7` 且 `llm_service` 注入。
+/// 调用策略：依次尝试，首个 `confidence >= 0.7` 立即返回；
+/// 全部 `confidence < 0.7` 时取首个成功结果，LLMService 可用时触发回退升级。
 pub struct ContentExtractionFacade {
-    /// Trafilatura extractor（仅 `extractor-trafilatura` 启用时编译）
-    #[cfg(feature = "extractor-trafilatura")]
-    trafilatura: Arc<dyn ContentExtractor>,
-    /// DomSmoothie extractor（仅 `extractor-dom-smoothie` 启用时编译）
-    #[cfg(feature = "extractor-dom-smoothie")]
-    dom_smoothie: Arc<dyn ContentExtractor>,
-    /// CssRule 兜底 extractor（无条件编译）
-    css_rule: Arc<dyn ContentExtractor>,
+    /// 按优先级排列的 extractor 链
+    extractors: Vec<Box<dyn ContentExtractor>>,
     /// 可选 LLM 回退服务
     ///
     /// 注入时触发低 confidence 的结构化提取升级；缺失则跳过 LLM 回退。
@@ -61,66 +56,59 @@ pub struct ContentExtractionFacade {
 impl ContentExtractionFacade {
     /// 创建新 Facade 实例
     ///
-    /// 各 extractor 由 facade 内部按默认 `new()` 构造，无状态可共享。
+    /// 各 extractor 按 cfg 编译期决定是否入队，运行期按入队顺序（优先级）调用。
     /// LLM 回退按 `llm_service` 注入与否决定是否启用。
-    #[allow(unused_variables, unused_mut)]
     pub fn new(llm_service: Option<Arc<dyn LLMServiceTrait>>) -> Self {
-        // 各 extractor 通过 trait object 共享，构造对应 Arc<dyn ContentExtractor>
-        #[cfg(feature = "extractor-trafilatura")]
-        let trafilatura: Arc<dyn ContentExtractor> =
-            Arc::new(super::trafilatura_extractor::TrafilaturaExtractor::new());
-        #[cfg(feature = "extractor-dom-smoothie")]
-        let dom_smoothie: Arc<dyn ContentExtractor> =
-            Arc::new(super::dom_smoothie_extractor::DomSmoothieExtractor::new());
-        let css_rule: Arc<dyn ContentExtractor> =
-            Arc::new(super::css_rule_extractor::CssRuleExtractor::new());
+        let extractors: Vec<Box<dyn ContentExtractor>> = vec![
+            #[cfg(feature = "extractor-trafilatura")]
+            Box::new(super::trafilatura_extractor::TrafilaturaExtractor::new()),
+            #[cfg(feature = "extractor-dom-smoothie")]
+            Box::new(super::dom_smoothie_extractor::DomSmoothieExtractor::new()),
+            // CssRule 始终入队（兜底，无 feature 依赖）
+            Box::new(super::css_rule_extractor::CssRuleExtractor::new()),
+        ];
 
         Self {
-            #[cfg(feature = "extractor-trafilatura")]
-            trafilatura,
-            #[cfg(feature = "extractor-dom-smoothie")]
-            dom_smoothie,
-            css_rule,
+            extractors,
             llm_service,
         }
     }
 
     /// 按优先级链路尝试 extractor
     ///
-    /// 优先级：Trafilatura → DomSmoothie → CssRule（首个成功提取的返回）
-    /// 某实现特性未启用时跳过；某次提取错误时记录并继续尝试下一实现。
+    /// 策略：依次调用 `extractors` 中的 extractor：
+    /// - 首个 `confidence >= 0.7` 的成功结果立即返回（Ok）
+    /// - 成功但 `confidence < 0.7` 的结果记为 `first_low_confidence`，继续尝试后续 extractor
+    /// - 某次提取错误时记录并继续尝试下一实现
+    /// - 全部尝试完毕后：有 `first_low_confidence` 则返回它（供调用方决定 LLM 回退），
+    ///   否则返回所有错误（Err）
     fn try_extract_chain(
         &self,
         html: &str,
-        url: Option<&str>,
-    ) -> Result<ExtractedContent, Vec<(&'static str, ContentExtractionError)>> {
-        let mut errors: Vec<(&'static str, ContentExtractionError)> = Vec::new();
+        url: &str,
+    ) -> Result<ExtractedContent, Vec<(&'static str, ExtractError)>> {
+        let mut errors: Vec<(&'static str, ExtractError)> = Vec::new();
+        let mut first_low_confidence: Option<ExtractedContent> = None;
 
-        // Trafilatura 主路径
-        #[cfg(feature = "extractor-trafilatura")]
-        {
-            match self.trafilatura.extract(html, url) {
-                Ok(content) => return Ok(content),
-                Err(e) => errors.push(("trafilatura", e)),
+        for extractor in &self.extractors {
+            match extractor.extract(html, url) {
+                Ok(content) => {
+                    if content.confidence >= 0.7 {
+                        return Ok(content);
+                    }
+                    // 低置信度成功：记录首个，继续尝试后续 extractor（可能更高 confidence）
+                    if first_low_confidence.is_none() {
+                        first_low_confidence = Some(content);
+                    }
+                }
+                Err(e) => errors.push((extractor.name(), e)),
             }
         }
 
-        // DomSmoothie 性能回退
-        #[cfg(feature = "extractor-dom-smoothie")]
-        {
-            match self.dom_smoothie.extract(html, url) {
-                Ok(content) => return Ok(content),
-                Err(e) => errors.push(("dom-smoothie", e)),
-            }
-        }
-
-        // CssRule 兜底（始终可用）
-        match self.css_rule.extract(html, url) {
-            Ok(content) => Ok(content),
-            Err(e) => {
-                errors.push(("css-rule", e));
-                Err(errors)
-            }
+        // 全部 extractor 尝试完毕：返回首个低置信度成功结果，或全部失败错误
+        match first_low_confidence {
+            Some(content) => Ok(content),
+            None => Err(errors),
         }
     }
 
@@ -137,30 +125,36 @@ impl ContentExtractionFacade {
     /// - **Prompt 注入防御**：用 `<scraped_content_begin>...</scraped_content_end>`
     ///   边界标记包裹外部不可信文本，前置系统指令声明边界内为数据非指令
     /// - **DoS 防御**：`LLM_INPUT_MAX_LEN` 截断超长输入，防 token 滥用
-    async fn try_llm_fallback(
-        &self,
-        original: &ExtractedContent,
-    ) -> Option<ExtractedContent> {
+    async fn try_llm_fallback(&self, original: &ExtractedContent) -> Option<ExtractedContent> {
         let llm = self.llm_service.as_ref()?;
 
-        // HTML 预处理复用 ExtractionService::get_clean_text（spec constraint：不引入第三套清理实现）
-        let clean_text = ExtractionService::get_clean_text(&original.text);
-        let clean_text = clean_text.trim();
+        // 安全审查 HIGH-2：original.text 已是 extractor 输出的纯文本，禁止再调用 HTML 清理解析
+        // （原实现错误调用 ExtractionService::get_clean_text，对纯文本做 HTML 解析属于语义错误）
+        let clean_text = original.text.trim();
         if clean_text.is_empty() {
             log::warn!("content_extraction: LLM fallback skipped — clean text is empty");
             return None;
         }
 
-        // 安全审查 HIGH-1：截断超长输入（防 token 滥用 DoS）
-        let truncated = if clean_text.len() > LLM_INPUT_MAX_LEN {
+        // 安全审查 HIGH-1：按字符截断超长输入（防 token 滥用 DoS）
+        // 原实现按字节切片 `&clean_text[..LLM_INPUT_MAX_LEN]` 在 UTF-8 多字节字符中间会 panic
+        // 性能审查 M-3：用 Cow<'_, str> 避免无截断场景的 to_string clone
+        let truncated: Cow<'_, str> = if clean_text.len() > LLM_INPUT_MAX_LEN {
             log::warn!(
                 "content_extraction: LLM input truncated (len={}, max={})",
                 clean_text.len(),
                 LLM_INPUT_MAX_LEN
             );
-            &clean_text[..LLM_INPUT_MAX_LEN]
+            let mut out = String::with_capacity(LLM_INPUT_MAX_LEN);
+            for c in clean_text.chars() {
+                if out.len() + c.len_utf8() > LLM_INPUT_MAX_LEN {
+                    break;
+                }
+                out.push(c);
+            }
+            Cow::Owned(out)
         } else {
-            clean_text
+            Cow::Borrowed(clean_text)
         };
 
         // 安全审查 HIGH-1：用边界标记包裹不可信文本（防 prompt 注入）
@@ -229,13 +223,9 @@ impl ContentExtractionFacade {
     ///
     /// # 错误
     ///
-    /// 所有 extractor 均失败时返回 [`ContentExtractionError::ExtractorError`]，
+    /// 所有 extractor 均失败时返回 [`ExtractError::ExtractorFailed`]，
     /// 包含每个 extractor 的失败原因（不吞错）。
-    pub async fn extract(
-        &self,
-        html: &str,
-        url: Option<&str>,
-    ) -> Result<ExtractedContent, ContentExtractionError> {
+    pub async fn extract(&self, html: &str, url: &str) -> Result<ExtractedContent, ExtractError> {
         let content = self.try_extract_chain(html, url).map_err(|errors| {
             // 所有 extractor 失败，拼接错误信息（不吞错显性化）
             let detail = errors
@@ -243,10 +233,7 @@ impl ContentExtractionFacade {
                 .map(|(name, e)| format!("[{}] {}", name, e))
                 .collect::<Vec<_>>()
                 .join("; ");
-            ContentExtractionError::ExtractorError {
-                extractor: "facade-chain",
-                message: format!("all extractors failed: {}", detail),
-            }
+            ExtractError::ExtractorFailed(format!("all extractors failed: {}", detail))
         })?;
 
         // LLM 回退条件检查
@@ -257,39 +244,6 @@ impl ContentExtractionFacade {
         }
 
         Ok(content)
-    }
-}
-
-impl ContentExtractor for ContentExtractionFacade {
-    fn extract(&self, html: &str, url: Option<&str>) -> Result<ExtractedContent, ContentExtractionError> {
-        // 同步实现：直接返回 try_extract_chain 结果（LLM 回退需 await，不在此路径）
-        // 调用方如需 LLM 回退升级，应使用 async [`ContentExtractionFacade::extract`]。
-        let content = self.try_extract_chain(html, url).map_err(|errors| {
-            let detail = errors
-                .iter()
-                .map(|(name, e)| format!("[{}] {}", name, e))
-                .collect::<Vec<_>>()
-                .join("; ");
-            ContentExtractionError::ExtractorError {
-                extractor: "facade-chain",
-                message: format!("all extractors failed: {}", detail),
-            }
-        })?;
-
-        // 同步路径下 confidence<0.7 但无 LLM 可触发（trait 同步接口限制）
-        // 通知用户：低置信度结果未升级（log warn 而非吞掉）
-        if content.should_fallback_to_llm() && self.llm_service.is_some() {
-            log::warn!(
-                "content_extraction: confidence={} below threshold; \
-                 sync extract path cannot await LLM fallback, use async extract() instead",
-                content.confidence
-            );
-        }
-        Ok(content)
-    }
-
-    fn name(&self) -> &'static str {
-        "facade"
     }
 }
 
@@ -340,7 +294,7 @@ mod tests {
         let html = r#"<html><head><title>Article</title></head>
             <body><article><p>This is the main article content for testing.</p>
             <p>Second paragraph to ensure enough text length.</p></article></body></html>"#;
-        let result = facade.extract(html, Some("https://example.com/a")).await;
+        let result = facade.extract(html, "https://example.com/a").await;
         assert!(result.is_ok(), "extract should succeed");
         let content = result.unwrap();
         assert!(!content.text.is_empty());
@@ -353,17 +307,25 @@ mod tests {
         // （test 编译时 Cargo features 已固定，CssRule 兜底始终可用）
         let facade = ContentExtractionFacade::new(None);
         let html = r#"<html><body><p>fallback content</p></body></html>"#;
-        let result = facade.extract(html, None).await.expect("extract ok");
+        let result = facade
+            .extract(html, "https://example.com/")
+            .await
+            .expect("extract ok");
         assert!(!result.text.is_empty());
-        // CssRule 兜底 confidence = 0.5（最低）
-        assert!(result.confidence <= 0.5 || result.confidence > 0.0);
+        // confidence 因 feature 配置而异（--features full 时 Trafilatura/DomSmoothie 激活，
+        // confidence 可能 > 0.5；三特性均关闭时 CssRule 返回 0.5）。仅断言正值。
+        assert!(
+            result.confidence > 0.0,
+            "confidence should be positive, got: {}",
+            result.confidence
+        );
     }
 
     /// 空 HTML 应返回错误（不返回空内容）
     #[tokio::test]
     async fn facade_returns_error_for_empty_html() {
         let facade = ContentExtractionFacade::new(None);
-        let result = facade.extract("", None).await;
+        let result = facade.extract("", "https://example.com/").await;
         assert!(result.is_err());
     }
 
@@ -372,7 +334,7 @@ mod tests {
     async fn does_not_trigger_llm_fallback_when_confidence_high() {
         // 注入总是返回有效响应的 LLM（如果被调用）
         let llm_response = json!({"text": "llm extracted"});
-        let (llm, _call_count) = MockLLMService::new_with_response(llm_response);
+        let (llm, call_count) = MockLLMService::new_with_response(llm_response);
 
         let facade = ContentExtractionFacade::new(Some(Arc::new(llm)));
         // 构造高质量 HTML（trafilatura 应给出较高 confidence；css_rule 兜底 0.5 会触发）
@@ -382,11 +344,12 @@ mod tests {
             <p>Multiple paragraphs ensure good extraction quality score.</p>
             <p>Third paragraph with more relevant content for testing.</p>
             </article></body></html>"#;
-        let _ = facade.extract(html, Some("https://example.com/a")).await;
+        let _ = facade.extract(html, "https://example.com/a").await;
 
-        // 当 extractor-trafilatura 启用时：confidence 应 >= 0.6（视 trafilatura 实现）
-        // 当三个特性均关闭时：CssRule confidence=0.5 → 触发 LLM
+        // 当 extractor-trafilatura 启用时：confidence 应 >= 0.7 → call_count = 0
+        // 当三个特性均关闭时：CssRule confidence=0.5 → 触发 LLM → call_count = 1
         // 不严格断言 call_count，仅检查流程不 panic
+        let _ = call_count.load(Ordering::SeqCst);
     }
 
     /// LLM 回退失败时（返回 None）应保留首选 extractor 结果
@@ -398,7 +361,10 @@ mod tests {
 
         let facade = ContentExtractionFacade::new(Some(Arc::new(llm)));
         let html = r#"<html><body><article><p>Original content here.</p></article></body></html>"#;
-        let result = facade.extract(html, None).await.expect("extract ok");
+        let result = facade
+            .extract(html, "https://example.com/")
+            .await
+            .expect("extract ok");
 
         // 即使 LLM 回退失败，也应返回非空内容（保留首选 extractor 结果）
         assert!(!result.text.is_empty());
@@ -417,7 +383,7 @@ mod tests {
         let facade = ContentExtractionFacade::new(Some(Arc::new(llm)));
         // CssRule confidence=0.5 → 必触发 LLM 回退
         let html = r#"<html><body><p>short</p></body></html>"#;
-        let result = facade.extract(html, None).await;
+        let result = facade.extract(html, "https://example.com/").await;
 
         // 期望 LLM 被触发（仅当首选 extractor confidence<0.7 时）
         match result {
@@ -435,48 +401,62 @@ mod tests {
         }
     }
 
-    /// facade trait 的 name 应返回 "facade"
-    #[test]
-    fn facade_name_returns_facade() {
-        let facade = ContentExtractionFacade::new(None);
-        assert_eq!(facade.name(), "facade");
-    }
-
-    /// ContentExtractionFacade 应能作为 Box<dyn ContentExtractor> 使用
-    #[test]
-    fn facade_as_trait_object() {
-        let facade: Box<dyn ContentExtractor> =
-            Box::new(ContentExtractionFacade::new(None));
-        let html = "<html><body><p>trait object test</p></body></html>";
-        let result = facade.extract(html, None).expect("trait dispatch ok");
-        assert!(!result.text.is_empty());
-        assert_eq!(facade.name(), "facade");
-    }
-
     /// LLM_FALLBACK_CONFIDENCE 常量应为 0.8
     #[test]
     fn llm_fallback_confidence_is_0_8() {
         assert!((LLM_FALLBACK_CONFIDENCE - 0.8).abs() < f32::EPSILON);
     }
 
-    /// LLM=None 时同步 extract 应工作
+    /// extractors 链应按优先级包含至少 CssRule 兜底
     #[test]
-    fn sync_extract_without_llm_works() {
+    fn extractors_chain_always_contains_css_rule_fallback() {
         let facade = ContentExtractionFacade::new(None);
-        let html = r#"<html><body><article><p>sync content</p></article></body></html>"#;
-        // 显式通过 trait 调用同步 extract（避免与 async extract 同名冲突）
-        let result = ContentExtractor::extract(&facade, html, None).expect("sync extract ok");
-        assert!(!result.text.is_empty());
+        // CssRule 始终入队（无论 feature 配置）
+        assert!(
+            !facade.extractors.is_empty(),
+            "extractors chain should not be empty"
+        );
+        let names: Vec<&'static str> = facade.extractors.iter().map(|e| e.name()).collect();
+        assert!(
+            names.contains(&"css-rule"),
+            "css-rule should always be in chain, got: {:?}",
+            names
+        );
     }
 
-    /// LLM=None 时低 confidence 不应触发 panic（仅 log warn）
+    /// 优先级顺序：trafilatura 在 dom-smoothie 之前，dom-smoothie 在 css-rule 之前
     #[test]
-    fn sync_extract_low_confidence_without_llm_does_not_panic() {
+    fn extractors_priority_order_trafilatura_before_dom_smoothie_before_css_rule() {
         let facade = ContentExtractionFacade::new(None);
-        // CssRule confidence=0.5 → 触发 LLM 路径检查
-        // 但 llm_service=None → 不应 panic
-        let html = "<html><body><p>low quality</p></body></html>";
-        let result = ContentExtractor::extract(&facade, html, None);
-        assert!(result.is_ok());
+        let names: Vec<&'static str> = facade.extractors.iter().map(|e| e.name()).collect();
+
+        #[cfg(feature = "extractor-trafilatura")]
+        {
+            let trafilatura_idx = names.iter().position(|&n| n == "trafilatura").unwrap();
+            let css_rule_idx = names.iter().position(|&n| n == "css-rule").unwrap();
+            assert!(
+                trafilatura_idx < css_rule_idx,
+                "trafilatura should come before css-rule"
+            );
+        }
+
+        #[cfg(feature = "extractor-dom-smoothie")]
+        {
+            let dom_idx = names.iter().position(|&n| n == "dom-smoothie").unwrap();
+            let css_rule_idx = names.iter().position(|&n| n == "css-rule").unwrap();
+            assert!(
+                dom_idx < css_rule_idx,
+                "dom-smoothie should come before css-rule"
+            );
+
+            #[cfg(feature = "extractor-trafilatura")]
+            {
+                let trafilatura_idx = names.iter().position(|&n| n == "trafilatura").unwrap();
+                assert!(
+                    trafilatura_idx < dom_idx,
+                    "trafilatura should come before dom-smoothie"
+                );
+            }
+        }
     }
 }

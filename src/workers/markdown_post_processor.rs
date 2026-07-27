@@ -145,7 +145,11 @@ impl MarkdownPostProcessor {
 
         match self.markdown_service.to_markdown(content, false) {
             Ok(md) if !md.trim().is_empty() => {
-                debug!("task_id: {}, Markdown generated ({} bytes)", task_id, md.len());
+                debug!(
+                    "task_id: {}, Markdown generated ({} bytes)",
+                    task_id,
+                    md.len()
+                );
                 Ok(Some(md))
             }
             Ok(_md) => {
@@ -158,10 +162,7 @@ impl MarkdownPostProcessor {
             Err(e) => {
                 // 架构审查 M-1 #7：保留下层 MarkdownError 类型（通过 #[from] 自动转换），
                 // 调用方可 downcast_ref 拿到原始错误做精细处理。
-                warn!(
-                    "task_id: {}, Markdown conversion failed: {}",
-                    task_id, e
-                );
+                warn!("task_id: {}, Markdown conversion failed: {}", task_id, e);
                 Err(MarkdownPostProcessorError::ConversionFailed(e))
             }
         }
@@ -190,11 +191,18 @@ mod tests {
             "url": "https://example.com",
             "formats": ["markdown"]
         }));
-        let result = p.generate(Uuid::new_v4(), &req, "<html><body><h1>Title</h1></body></html>");
+        let result = p.generate(
+            Uuid::new_v4(),
+            &req,
+            "<html><body><h1>Title</h1></body></html>",
+        );
         let md = result.expect("expected Ok, got Err");
         assert!(md.is_some(), "expected Some(markdown)");
         let md = md.expect("some markdown");
-        assert!(md.contains("Title"), "expected Title in markdown, got: {md}");
+        assert!(
+            md.contains("Title"),
+            "expected Title in markdown, got: {md}"
+        );
     }
 
     /// formats 不含 "markdown" 时返回 Ok(None)（非错误）
@@ -207,7 +215,10 @@ mod tests {
         }));
         let result = p.generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>");
         assert!(result.is_ok(), "expected Ok, got Err: {:?}", result.err());
-        assert!(result.unwrap().is_none(), "expected Ok(None) when markdown not requested");
+        assert!(
+            result.unwrap().is_none(),
+            "expected Ok(None) when markdown not requested"
+        );
     }
 
     /// formats 为 None 时返回 Ok(None)（非错误）
@@ -217,7 +228,10 @@ mod tests {
         let req = make_req(json!({"url": "https://example.com"}));
         let result = p.generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>");
         assert!(result.is_ok(), "expected Ok, got Err: {:?}", result.err());
-        assert!(result.unwrap().is_none(), "expected Ok(None) when formats absent");
+        assert!(
+            result.unwrap().is_none(),
+            "expected Ok(None) when formats absent"
+        );
     }
 
     /// 空 HTML 在请求 markdown 时应返回 Err(EmptyResult)（架构审查 M-1：错误显性化）
@@ -271,7 +285,10 @@ mod tests {
                 None
             }
         };
-        assert!(generated.is_none(), "expected no markdown when not requested");
+        assert!(
+            generated.is_none(),
+            "expected no markdown when not requested"
+        );
 
         // 请求 markdown 但空 HTML → Err(EmptyResult) → 继续无 markdown
         let req = make_req(json!({
@@ -286,6 +303,9 @@ mod tests {
                 None
             }
         };
-        assert!(generated.is_none(), "expected no markdown on empty html error");
+        assert!(
+            generated.is_none(),
+            "expected no markdown on empty html error"
+        );
     }
 }

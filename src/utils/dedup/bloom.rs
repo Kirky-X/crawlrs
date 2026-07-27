@@ -296,9 +296,7 @@ impl Drop for MmapBloom {
             AllocKind::Mmap { mapped_bytes } => {
                 // SAFETY: `ptr` was returned by mmap with size `mapped_bytes`.
                 // 规则12：munmap 失败需显性化记录（Drop 不能返回错误，用 log::error）
-                let rc = unsafe {
-                    libc::munmap(self.ptr as *mut libc::c_void, mapped_bytes)
-                };
+                let rc = unsafe { libc::munmap(self.ptr as *mut libc::c_void, mapped_bytes) };
                 if rc != 0 {
                     log::error!(
                         "munmap failed (rc={}, addr={:p}, size={}): errno={}",
@@ -433,7 +431,9 @@ mod tests {
     #[test]
     fn test_no_false_negatives() {
         let mut bloom = MmapBloom::new(5000);
-        let urls: Vec<String> = (0..5000).map(|i| format!("https://site.com/{}", i)).collect();
+        let urls: Vec<String> = (0..5000)
+            .map(|i| format!("https://site.com/{}", i))
+            .collect();
 
         for url in &urls {
             bloom.insert(url);

@@ -178,7 +178,11 @@ mod tests {
     #[test]
     fn stealth_contains_navigator_overrider_in_before() {
         let injector = JsInjector::stealth();
-        assert_eq!(injector.before_scripts().len(), 1, "stealth before must have 1 script");
+        assert_eq!(
+            injector.before_scripts().len(),
+            1,
+            "stealth before must have 1 script"
+        );
         let script = &injector.before_scripts()[0];
         assert!(
             script.contains("navigator") && script.contains("webdriver"),
@@ -190,7 +194,10 @@ mod tests {
     #[test]
     fn stealth_has_empty_after() {
         let injector = JsInjector::stealth();
-        assert!(injector.after_scripts().is_empty(), "stealth after must be empty");
+        assert!(
+            injector.after_scripts().is_empty(),
+            "stealth after must be empty"
+        );
     }
 
     #[test]
@@ -219,7 +226,10 @@ mod tests {
     #[test]
     fn cleanup_has_empty_before() {
         let injector = JsInjector::cleanup();
-        assert!(injector.before_scripts().is_empty(), "cleanup before must be empty");
+        assert!(
+            injector.before_scripts().is_empty(),
+            "cleanup before must be empty"
+        );
     }
 
     #[test]
@@ -364,9 +374,16 @@ mod tests {
     fn clone_preserves_scripts() {
         let injector = JsInjector::cleanup();
         let cloned = injector.clone();
-        assert_eq!(injector.before_scripts().len(), cloned.before_scripts().len());
+        assert_eq!(
+            injector.before_scripts().len(),
+            cloned.before_scripts().len()
+        );
         assert_eq!(injector.after_scripts().len(), cloned.after_scripts().len());
-        for (a, b) in injector.after_scripts().iter().zip(cloned.after_scripts().iter()) {
+        for (a, b) in injector
+            .after_scripts()
+            .iter()
+            .zip(cloned.after_scripts().iter())
+        {
             assert_eq!(a, b);
         }
     }
@@ -409,7 +426,11 @@ mod tests {
         // 规则26：所有脚本必须保留来源注释
         let stealth = JsInjector::stealth();
         let cleanup = JsInjector::cleanup();
-        for s in stealth.before_scripts().iter().chain(cleanup.after_scripts().iter()) {
+        for s in stealth
+            .before_scripts()
+            .iter()
+            .chain(cleanup.after_scripts().iter())
+        {
             assert!(
                 s.starts_with("// Source: crawl4ai js_snippet/"),
                 "script missing crawl4ai source header: {}",

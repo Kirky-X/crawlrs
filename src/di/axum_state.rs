@@ -33,18 +33,20 @@ use crate::domain::repositories::webhook_event_repository::WebhookEventRepositor
 #[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
+// T049/R-content-002：ContentExtractionFacade 用于正文提取（多 extractor 优先级路由 + LLM 回退）
+use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
 #[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::llm_service::LLMServiceTrait;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::services::search_service::SearchServiceTrait;
+use crate::domain::services::team_semaphore::TeamSemaphore;
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
-use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClient;
 // T059/R-cache-002：高级缓存服务（scrape_worker 读写抓取结果缓存）
@@ -128,6 +130,11 @@ pub struct CrawlRsState {
     pub llm_service: Arc<dyn LLMServiceTrait>,
     /// Extraction service for data extraction
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
+    /// Content extraction facade（T049/R-content-002）
+    ///
+    /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLMService，按 Trafilatura→DomSmoothie→CssRule
+    /// 优先级路由，`confidence < 0.7` 时触发 LLM 回退。由 `scrape_worker` 提取路径使用。
+    pub content_extractor: Arc<ContentExtractionFacade>,
     /// Regex cache for performance optimization
     pub regex_cache: Arc<RegexCache>,
     /// 高级缓存服务（T059/R-cache-002）
@@ -206,6 +213,7 @@ impl CrawlRsState {
             search_service: services.search_service.clone(),
             llm_service: services.llm_service.clone(),
             extraction_service: services.extraction_service.clone(),
+            content_extractor: services.content_extractor.clone(),
             regex_cache: services.regex_cache.clone(),
             cache_service: infra.cache_service.clone(),
             audit_service: services.audit_service.clone(),
@@ -289,6 +297,10 @@ pub trait CrawlRsStateExt {
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait>;
     /// Get extraction service
     fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait>;
+    /// Get content extraction facade（T049/R-content-002）
+    ///
+    /// 供 `scrape_worker` 提取路径使用，按优先级路由多 extractor + LLM 回退。
+    fn content_extractor(&self) -> Arc<ContentExtractionFacade>;
     /// Get webhook worker
     ///
     /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
@@ -412,6 +424,10 @@ impl CrawlRsStateExt for CrawlRsState {
 
     fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait> {
         self.extraction_service.clone()
+    }
+
+    fn content_extractor(&self) -> Arc<ContentExtractionFacade> {
+        self.content_extractor.clone()
     }
 
     #[cfg(feature = "webhook")]
@@ -540,6 +556,10 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
 
     fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait> {
         self.as_ref().extraction_service()
+    }
+
+    fn content_extractor(&self) -> Arc<ContentExtractionFacade> {
+        self.as_ref().content_extractor()
     }
 
     #[cfg(feature = "webhook")]
@@ -709,6 +729,10 @@ mod tests {
 
         let extraction_service: Arc<dyn ExtractionServiceTrait> = state.extraction_service();
         assert!(Arc::strong_count(&extraction_service) >= 2);
+
+        // T049/R-content-002：content_extractor accessor
+        let content_extractor = state.content_extractor();
+        assert!(Arc::strong_count(&content_extractor) >= 2);
 
         // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
         #[cfg(feature = "webhook")]
@@ -935,6 +959,10 @@ mod tests {
 
         let extraction_service = state_arc.extraction_service();
         assert!(Arc::strong_count(&extraction_service) >= 2);
+
+        // T049/R-content-002：content_extractor Arc delegation
+        let content_extractor = state_arc.content_extractor();
+        assert!(Arc::strong_count(&content_extractor) >= 2);
 
         // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
         #[cfg(feature = "webhook")]

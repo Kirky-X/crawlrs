@@ -185,7 +185,7 @@ impl EngineHealthMonitor {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
 
         match engine.scrape(&test_request).await {
             Ok(response) => {
@@ -919,7 +919,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
 
         let result = monitor.scrape(&request).await;
         assert!(result.is_err());
@@ -954,7 +954,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
-            };
+        };
         assert_eq!(monitor.support_score(&request), 0);
     }
 

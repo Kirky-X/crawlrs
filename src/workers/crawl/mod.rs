@@ -196,7 +196,9 @@ impl FilterChain {
     /// 构造空链（无 filter 时默认放行所有 URL）
     #[must_use]
     pub fn new() -> Self {
-        Self { filters: Vec::new() }
+        Self {
+            filters: Vec::new(),
+        }
     }
 
     /// 追加一个 filter，返回 `self`（builder 模式）
@@ -229,9 +231,7 @@ impl FilterChain {
     ///
     /// 空链返回 `true`（默认放行）。
     pub fn accept(&self, url: &str, context: &FilterContext) -> bool {
-        self.filters
-            .iter()
-            .all(|f| f.accept(url, context))
+        self.filters.iter().all(|f| f.accept(url, context))
     }
 }
 

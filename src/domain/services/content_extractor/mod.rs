@@ -19,7 +19,7 @@
 //! - 三特性均关闭时 Facade 退化为 CssRule 兜底（编译通过，功能可用）
 
 pub mod traits;
-pub use traits::{ContentExtractionError, ContentExtractor, ExtractedContent, PageType};
+pub use traits::{ContentExtractor, ExtractError, ExtractedContent, PageType, Result};
 
 pub mod css_rule_extractor;
 pub use css_rule_extractor::CssRuleExtractor;

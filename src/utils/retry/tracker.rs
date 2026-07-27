@@ -207,7 +207,10 @@ mod tests {
         let mut t = RetryTracker::new_default();
         // 默认 max_anti_bot = 2
         t.record(RetryReason::AntiBot);
-        assert!(t.should_retry(RetryReason::AntiBot), "after 1 antibot: still allowed");
+        assert!(
+            t.should_retry(RetryReason::AntiBot),
+            "after 1 antibot: still allowed"
+        );
         assert!(t.should_retry(RetryReason::Transient), "transient still ok");
 
         t.record(RetryReason::AntiBot);
@@ -276,7 +279,10 @@ mod tests {
     fn tracker_custom_limits() {
         let mut t = RetryTracker::new(10, 1, 1);
         t.record(RetryReason::AntiBot);
-        assert!(!t.should_retry(RetryReason::AntiBot), "custom max_anti_bot=1");
+        assert!(
+            !t.should_retry(RetryReason::AntiBot),
+            "custom max_anti_bot=1"
+        );
         assert!(t.should_retry(RetryReason::Transient), "total=1 < 10");
         assert!(t.should_retry(RetryReason::FeatureToggle), "ft=0 < 1");
     }
@@ -292,7 +298,7 @@ mod tests {
         assert!(!t.should_retry(RetryReason::AntiBot));
         assert!(t.should_retry(RetryReason::FeatureToggle)); // ft=1 < 3
         assert!(t.should_retry(RetryReason::Transient)); // total=4 < 5
-        // 再记一次 transient 触顶
+                                                         // 再记一次 transient 触顶
         t.record(RetryReason::Transient);
         assert_eq!(t.total(), 5);
         assert!(!t.should_retry(RetryReason::Transient));
@@ -313,4 +319,3 @@ mod tests {
         assert!(!t.should_retry(RetryReason::AntiBot));
     }
 }
-

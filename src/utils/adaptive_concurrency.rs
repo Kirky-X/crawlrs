@@ -432,7 +432,7 @@ mod tests {
             c.record_success();
         }
         assert_eq!(c.current_limit(), 5); // 10/2=5
-        // 第 4 次（总计 4，不够 5）
+                                          // 第 4 次（总计 4，不够 5）
         c.record_success();
         assert_eq!(c.current_limit(), 5);
         // 第 5 次：+1

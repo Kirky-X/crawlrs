@@ -68,7 +68,9 @@ impl DomainFilter {
     /// `source_domain` 为 `None` 时返回 `false`（保守拒绝）。
     #[must_use]
     pub fn same_domain() -> Self {
-        Self { mode: DomainMode::SameDomain }
+        Self {
+            mode: DomainMode::SameDomain,
+        }
     }
 
     /// 构造 allowlist 过滤器（仅接受 `allowed_domains` 中的域名）
@@ -78,8 +80,13 @@ impl DomainFilter {
     /// - `allowed_domains`: 允许的域名列表（大小写不敏感，比较前小写化）
     #[must_use]
     pub fn allowlist(allowed_domains: Vec<String>) -> Self {
-        let normalized = allowed_domains.into_iter().map(|d| d.to_ascii_lowercase()).collect();
-        Self { mode: DomainMode::Allowlist(normalized) }
+        let normalized = allowed_domains
+            .into_iter()
+            .map(|d| d.to_ascii_lowercase())
+            .collect();
+        Self {
+            mode: DomainMode::Allowlist(normalized),
+        }
     }
 
     /// 构造 denylist 过滤器（拒绝 `denied_domains` 中的域名，其余接受）
@@ -89,8 +96,13 @@ impl DomainFilter {
     /// - `denied_domains`: 拒绝的域名列表（大小写不敏感，比较前小写化）
     #[must_use]
     pub fn denylist(denied_domains: Vec<String>) -> Self {
-        let normalized = denied_domains.into_iter().map(|d| d.to_ascii_lowercase()).collect();
-        Self { mode: DomainMode::Denylist(normalized) }
+        let normalized = denied_domains
+            .into_iter()
+            .map(|d| d.to_ascii_lowercase())
+            .collect();
+        Self {
+            mode: DomainMode::Denylist(normalized),
+        }
     }
 
     /// 从 URL 提取域名（小写化）
@@ -189,7 +201,9 @@ impl ContentTypeFilter {
             .into_iter()
             .map(|ct| ct.to_ascii_lowercase())
             .collect();
-        Self { allowed: normalized }
+        Self {
+            allowed: normalized,
+        }
     }
 
     /// 默认仅允许 `text/html` 源页面
@@ -271,8 +285,14 @@ impl UrlPatternFilter {
     /// - `exclude_patterns`: 不能匹配任何的模式列表（空表示无 exclude 限制）
     #[must_use]
     pub fn new(include_patterns: Vec<String>, exclude_patterns: Vec<String>) -> Self {
-        let include_regexes = include_patterns.iter().map(|p| Regex::new(p).ok()).collect();
-        let exclude_regexes = exclude_patterns.iter().map(|p| Regex::new(p).ok()).collect();
+        let include_regexes = include_patterns
+            .iter()
+            .map(|p| Regex::new(p).ok())
+            .collect();
+        let exclude_regexes = exclude_patterns
+            .iter()
+            .map(|p| Regex::new(p).ok())
+            .collect();
         Self {
             include_patterns,
             exclude_patterns,
@@ -441,10 +461,8 @@ mod tests {
 
     #[test]
     fn domain_filter_denylist_rejects_denied() {
-        let filter = DomainFilter::denylist(vec![
-            "facebook.com".to_string(),
-            "twitter.com".to_string(),
-        ]);
+        let filter =
+            DomainFilter::denylist(vec!["facebook.com".to_string(), "twitter.com".to_string()]);
         let ctx = FilterContext::new();
         assert!(!filter.accept("https://facebook.com/share", &ctx));
         assert!(!filter.accept("https://twitter.com/tweet", &ctx));
@@ -536,10 +554,8 @@ mod tests {
 
     #[test]
     fn url_pattern_include_multiple_any_match_accepts() {
-        let filter = UrlPatternFilter::include_only(vec![
-            "/blog/.*".to_string(),
-            "/news/.*".to_string(),
-        ]);
+        let filter =
+            UrlPatternFilter::include_only(vec!["/blog/.*".to_string(), "/news/.*".to_string()]);
         let ctx = FilterContext::new();
         assert!(filter.accept("https://example.com/blog/post", &ctx));
         assert!(filter.accept("https://example.com/news/today", &ctx));
@@ -569,10 +585,8 @@ mod tests {
     #[test]
     fn url_pattern_include_plus_exclude_combined() {
         // include = /blog/.*; exclude = /admin/.*
-        let filter = UrlPatternFilter::new(
-            vec!["/blog/.*".to_string()],
-            vec!["/admin/.*".to_string()],
-        );
+        let filter =
+            UrlPatternFilter::new(vec!["/blog/.*".to_string()], vec!["/admin/.*".to_string()]);
         let ctx = FilterContext::new();
         // 同时匹配 include 且不匹配 exclude → 接受
         assert!(filter.accept("https://example.com/blog/post", &ctx));
@@ -700,7 +714,8 @@ mod tests {
 
     #[test]
     fn filter_chain_with_shared_filter_accepts_arc() {
-        let shared: Arc<dyn UrlFilter> = Arc::new(DomainFilter::allowlist(vec!["example.com".to_string()]));
+        let shared: Arc<dyn UrlFilter> =
+            Arc::new(DomainFilter::allowlist(vec!["example.com".to_string()]));
         let chain = FilterChain::new().with_shared_filter(shared);
         let ctx = FilterContext::new();
         assert!(chain.accept("https://example.com/page", &ctx));

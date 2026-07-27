@@ -64,11 +64,7 @@ impl ClientHandle {
     /// 为失败，防止后续重复选择（即使本次请求实际未走代理）。
     #[inline]
     #[must_use]
-    pub fn new(
-        client: reqwest::Client,
-        used_proxy_url: Option<String>,
-        is_fallback: bool,
-    ) -> Self {
+    pub fn new(client: reqwest::Client, used_proxy_url: Option<String>, is_fallback: bool) -> Self {
         Self {
             client,
             used_proxy_url,

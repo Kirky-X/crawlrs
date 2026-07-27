@@ -85,11 +85,7 @@ impl CoalesceCoordinator {
     /// - `Ok(None)`：已被其他 worker 处理（等待方从 result_repo 读到结果，或被延后重排），
     ///   调用方应直接返回 Ok(())
     /// - `Err(e)`：协调失败（超时 / 仓储错误），调用方应失败处理
-    pub async fn try_coalesce(
-        &self,
-        url: &str,
-        task: &Task,
-    ) -> Result<Option<CoalesceGuard>> {
+    pub async fn try_coalesce(&self, url: &str, task: &Task) -> Result<Option<CoalesceGuard>> {
         match self.request_coalescer.try_start(url) {
             CoalesceResult::Proceed(g) => Ok(Some(g)),
             CoalesceResult::Wait(mut rx) => {
@@ -184,10 +180,7 @@ impl CoalesceCoordinator {
                         self.repository.update(&updated).await?;
                         Ok(None)
                     }
-                    Err(e) => Err(anyhow::anyhow!(
-                        "coalesce find_by_task_id failed: {}",
-                        e
-                    )),
+                    Err(e) => Err(anyhow::anyhow!("coalesce find_by_task_id failed: {}", e)),
                 }
             }
         }
@@ -333,7 +326,10 @@ mod tests {
                 Ok(None)
             }
         }
-        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> Result<Vec<crate::domain::models::ScrapeResult>> {
+        async fn find_by_task_ids(
+            &self,
+            _task_ids: &[Uuid],
+        ) -> Result<Vec<crate::domain::models::ScrapeResult>> {
             Ok(vec![])
         }
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
@@ -358,11 +354,8 @@ mod tests {
         let task_repo = Arc::new(CountingTaskRepo::new());
         let result_repo = Arc::new(ConfigurableResultRepo::new(false));
         let coalescer = Arc::new(RequestCoalescer::new());
-        let coord = CoalesceCoordinator::new(
-            task_repo.clone(),
-            result_repo.clone(),
-            coalescer.clone(),
-        );
+        let coord =
+            CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
         let result = coord.try_coalesce(&task.url, &task).await;
@@ -381,11 +374,8 @@ mod tests {
         let task_repo = Arc::new(CountingTaskRepo::new());
         let result_repo = Arc::new(ConfigurableResultRepo::new(false)); // 未命中
         let coalescer = Arc::new(RequestCoalescer::new());
-        let coord = CoalesceCoordinator::new(
-            task_repo.clone(),
-            result_repo.clone(),
-            coalescer.clone(),
-        );
+        let coord =
+            CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
         let url = task.url.clone();
@@ -396,9 +386,8 @@ mod tests {
         let task_clone = task.clone();
         let coord_clone = coord.clone();
         let url_clone = url.clone();
-        let handle = tokio::spawn(async move {
-            coord_clone.try_coalesce(&url_clone, &task_clone).await
-        });
+        let handle =
+            tokio::spawn(async move { coord_clone.try_coalesce(&url_clone, &task_clone).await });
 
         // 给一点时间让等待方进入 rx.recv()
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -438,11 +427,8 @@ mod tests {
         let task_repo = Arc::new(CountingTaskRepo::new());
         let result_repo = Arc::new(ConfigurableResultRepo::new(true)); // 命中
         let coalescer = Arc::new(RequestCoalescer::new());
-        let coord = CoalesceCoordinator::new(
-            task_repo.clone(),
-            result_repo.clone(),
-            coalescer.clone(),
-        );
+        let coord =
+            CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
         let url = task.url.clone();
@@ -452,9 +438,8 @@ mod tests {
         let task_clone = task.clone();
         let coord_clone = coord.clone();
         let url_clone = url.clone();
-        let handle = tokio::spawn(async move {
-            coord_clone.try_coalesce(&url_clone, &task_clone).await
-        });
+        let handle =
+            tokio::spawn(async move { coord_clone.try_coalesce(&url_clone, &task_clone).await });
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         drop(first_guard);
@@ -487,11 +472,8 @@ mod tests {
         let task_repo = Arc::new(CountingTaskRepo::new());
         let result_repo = Arc::new(ConfigurableResultRepo::new(false));
         let coalescer = Arc::new(RequestCoalescer::new());
-        let coord = CoalesceCoordinator::new(
-            task_repo.clone(),
-            result_repo.clone(),
-            coalescer.clone(),
-        );
+        let coord =
+            CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
         let url = task.url.clone();
@@ -502,9 +484,8 @@ mod tests {
         let task_clone = task.clone();
         let coord_clone = coord.clone();
         let url_clone = url.clone();
-        let handle = tokio::spawn(async move {
-            coord_clone.try_coalesce(&url_clone, &task_clone).await
-        });
+        let handle =
+            tokio::spawn(async move { coord_clone.try_coalesce(&url_clone, &task_clone).await });
 
         // 短暂等待，验证仍在等待中
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
