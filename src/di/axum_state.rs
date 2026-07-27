@@ -44,9 +44,11 @@ use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
-use crate::presentation::middleware::team_semaphore::TeamSemaphore;
+use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClient;
+// T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
+use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsCheckerTrait;
 use dbnexus::DbPool;
@@ -104,6 +106,12 @@ pub struct CrawlRsState {
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
     /// Team semaphore
     pub team_semaphore: Arc<TeamSemaphore>,
+    /// Request coalescer for deduplicating concurrent fetches of the same URL.
+    ///
+    /// T035/R-runtime-002：同 URL 并发请求只允许首个执行实际抓取，
+    /// 其余 worker 等待广播后从 `result_repo` 读取结果，避免重复网络往返。
+    /// 由 `ServicesComponents` 在 `init_services` 中创建为共享单例。
+    pub request_coalescer: Arc<RequestCoalescer>,
     /// Engine router
     pub engine_router: Arc<EngineRouter>,
     /// Engine client
@@ -183,6 +191,7 @@ impl CrawlRsState {
             webhook_service: services.webhook_service.clone(),
             robots_checker: services.robots_checker.clone(),
             team_semaphore: services.team_semaphore.clone(),
+            request_coalescer: services.request_coalescer.clone(),
             engine_router: engines.router.clone(),
             engine_client: engines.engine_client.clone(),
             create_scrape_use_case: services.create_scrape_use_case.clone(),
@@ -260,6 +269,10 @@ pub trait CrawlRsStateExt {
     fn robots_checker(&self) -> Arc<dyn RobotsCheckerTrait>;
     /// Get team semaphore
     fn team_semaphore(&self) -> Arc<TeamSemaphore>;
+    /// Get request coalescer
+    ///
+    /// T035/R-runtime-002：供 worker 共享同一 `RequestCoalescer` 实例。
+    fn request_coalescer(&self) -> Arc<RequestCoalescer>;
     /// Get audit service
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait>;
     /// Get extraction service
@@ -371,6 +384,10 @@ impl CrawlRsStateExt for CrawlRsState {
 
     fn team_semaphore(&self) -> Arc<TeamSemaphore> {
         self.team_semaphore.clone()
+    }
+
+    fn request_coalescer(&self) -> Arc<RequestCoalescer> {
+        self.request_coalescer.clone()
     }
 
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait> {
@@ -491,6 +508,10 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
 
     fn team_semaphore(&self) -> Arc<TeamSemaphore> {
         self.as_ref().team_semaphore()
+    }
+
+    fn request_coalescer(&self) -> Arc<RequestCoalescer> {
+        self.as_ref().request_coalescer()
     }
 
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait> {

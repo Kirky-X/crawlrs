@@ -181,7 +181,9 @@ impl EngineHealthMonitor {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
 
         match engine.scrape(&test_request).await {
             Ok(response) => {
@@ -911,7 +913,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
 
         let result = monitor.scrape(&request).await;
         assert!(result.is_err());
@@ -942,7 +946,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         assert_eq!(monitor.support_score(&request), 0);
     }
 

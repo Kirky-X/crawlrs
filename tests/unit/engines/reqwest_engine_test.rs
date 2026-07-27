@@ -67,7 +67,9 @@ mod tests {
             use_fire_engine: false,
             actions: Vec::new(),
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
 
         let result = client.scrape(&request).await;
         if let Err(e) = &result {
@@ -103,7 +105,9 @@ mod tests {
             use_fire_engine: false,
             actions: Vec::new(),
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
 
         let result = client.scrape(&request).await;
         assert!(result.is_ok());

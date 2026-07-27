@@ -8,9 +8,18 @@
 /// 提供后台任务处理和工作器管理功能
 /// 包括任务执行、工作器生命周期管理和并发控制
 pub mod backlog_worker;
+/// 请求合并协调器（H-4 职责拆分）
+///
+/// 从 ScrapeWorker 抽取的同 URL 并发请求 single-flight 协调逻辑。
+pub mod coalesce_coordinator;
 pub mod errors;
 pub mod expiration_worker;
 pub mod manager;
+/// Markdown 后处理器（H-4 职责拆分，gated `markdown` 特性）
+///
+/// 从 ScrapeWorker 抽取的 HTML→Markdown 转换逻辑。
+#[cfg(feature = "markdown")]
+pub mod markdown_post_processor;
 pub mod scheduler;
 pub mod scrape_worker;
 pub mod task_state_machine;

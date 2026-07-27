@@ -14,6 +14,8 @@ use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use crate::engines::validators::validate_url;
+use crate::utils::retry::{RetryDirective, RetryReason, RetryTracker};
+use crate::utils::ua_pool::UaPool;
 use dashmap::DashMap;
 use log::{info, warn};
 use rand::seq::SliceRandom;
@@ -274,6 +276,11 @@ pub struct EngineRouter {
     race_mode_enabled: bool,
     /// 动态阈值因子 (根据历史数据调整)
     dynamic_threshold_factor: f64,
+    /// UA 池（性能审查 H-1 修复：原在 route() 内每请求 UaPool::new() 分配 44 个 profile）
+    ///
+    /// UaPool 内部全 `&'static str`，构造后只读，可安全跨线程共享（Send+Sync 自动派生）。
+    /// 用 `Arc` 是因为 `EngineRouter` 本身可能被 Clone 共享。
+    ua_pool: Arc<UaPool>,
 }
 
 impl EngineRouter {
@@ -304,6 +311,7 @@ impl EngineRouter {
             feature_filter_enabled: true,  // 默认启用特征检测过滤
             race_mode_enabled: false,      // 默认禁用并发竞速模式
             dynamic_threshold_factor: 1.0, // 默认动态阈值因子
+            ua_pool: Arc::new(UaPool::new()), // 性能审查 H-1：构造一次共享
         }
     }
 
@@ -340,6 +348,7 @@ impl EngineRouter {
             feature_filter_enabled: true,
             race_mode_enabled: false,
             dynamic_threshold_factor: 1.0,
+            ua_pool: Arc::new(UaPool::new()), // 性能审查 H-1：构造一次共享
         }
     }
 
@@ -632,6 +641,61 @@ impl EngineRouter {
             .and_then(|result| result)
     }
 
+    /// H-1 修复：提取 RetryTracker 上限检查的公共逻辑（DRY）
+    ///
+    /// 在 AntiBot 和 retryable error 两个分支中，原代码有以下重复：
+    /// 1. `if !tracker.should_retry(reason)` → warn + metrics + return
+    /// 2. `if total_attempts >= max_retries` → warn + metrics + return
+    ///
+    /// 本方法封装两个检查，返回 `true` 表示应停止重试。
+    /// 调用方在调用前已 `tracker.record(reason)`，调用后根据返回值决定 `return`。
+    ///
+    /// # 参数
+    ///
+    /// - `tracker`: 重试跟踪器（已 record 过 reason）
+    /// - `reason`: 本次失败的 RetryReason（用于日志）
+    /// - `total_attempts`: 当前总尝试次数
+    /// - `max_retries`: 最大重试次数
+    ///
+    /// # 返回值
+    ///
+    /// - `true`: 应停止重试（已记录指标 + warn 日志）
+    /// - `false`: 可继续重试
+    fn should_stop_after_retry_check(
+        &self,
+        tracker: &RetryTracker,
+        reason: RetryReason,
+        total_attempts: usize,
+        max_retries: usize,
+    ) -> bool {
+        if !tracker.should_retry(reason) {
+            warn!(
+                "RetryTracker blocked {:?} after total={} (anti_bot={}, feature_toggle={}), stopping",
+                reason,
+                tracker.total(),
+                tracker.anti_bot(),
+                tracker.feature_toggle()
+            );
+            self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .failed_requests
+                .fetch_add(1, Ordering::Relaxed);
+            return true;
+        }
+        if total_attempts >= max_retries {
+            warn!(
+                "Max retries {} reached after {:?}, stopping",
+                max_retries, reason
+            );
+            self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .failed_requests
+                .fetch_add(1, Ordering::Relaxed);
+            return true;
+        }
+        false
+    }
+
     /// Internal route implementation without timeout
     #[allow(unused_variables)]
     async fn route_internal(
@@ -682,6 +746,15 @@ impl EngineRouter {
         #[cfg_attr(not(feature = "antibot"), allow(unused_mut))]
         let mut force_needs_js = false;
 
+        // T028（R-identity-002）：智能重试基础设施
+        // - RetryTracker：各 reason 独立计数与上限（AntiBot cap=2、FeatureToggle cap=3、total=5）
+        // - UaPool：按 attempt 稳定轮换 UA（pick_seeded）
+        // - last_reason：上次失败原因，用于计算下次 attempt 的 RetryDirective
+        let mut tracker = RetryTracker::new_default();
+        // 性能审查 H-1：复用结构体字段 ua_pool，避免每请求分配 44 个 profile
+        let ua_pool = &self.ua_pool;
+        let mut last_reason: Option<RetryReason> = None;
+
         for (score, engine) in candidates.into_iter().take(max_attempts) {
             total_attempts += 1;
             let engine_name = engine.name();
@@ -703,13 +776,67 @@ impl EngineRouter {
                 return Err(EngineError::Timeout(request.timeout));
             }
 
+            // T028（R-identity-002）：计算本次 attempt 的身份升级指令
+            // - 首次尝试（total_attempts=1）用 default（无升级）
+            // - 第 N 次重试（total_attempts=N+1, N>=1）基于上次失败 reason 升级
+            //   directive_attempt = total_attempts - 2（0-indexed：0=首次重试、1=第二次重试...）
+            let directive = if total_attempts == 1 {
+                RetryDirective::default()
+            } else {
+                let directive_attempt = (total_attempts - 2) as u32;
+                RetryDirective::for_attempt(
+                    last_reason.unwrap_or(RetryReason::Transient),
+                    directive_attempt,
+                )
+            };
+
+            // T028：按 directive.rotate_ua 轮换 UA（C-1 修复：同步轮换所有指纹相关 header）
+            //
+            // C-1 问题：原实现仅覆盖 User-Agent，未同步轮换 Accept-Language 与 sec-ch-ua，
+            //          导致重试时 UA 与 Accept-Language/sec-ch-ua 不一致（指纹矛盾），
+            //          反爬服务可识别为「指纹不一致的爬虫」。
+            //
+            // C-1 修复：将 profile 的所有指纹相关 header 一次性写入：
+            //   - User-Agent：所有 profile 必设
+            //   - Accept-Language：所有 profile 必设
+            //   - sec-ch-ua：仅 Chromium-based 浏览器非空时设置；为空时移除原值，
+            //     避免残留 Firefox/Safari UA 但保留 Chromium sec-ch-ua 的矛盾。
+            let mut headers = request.headers.clone();
+            if directive.rotate_ua {
+                let profile =
+                    ua_pool.pick_seeded((total_attempts - 1) as u64, request.mobile);
+                headers.insert("User-Agent".to_string(), profile.ua.to_string());
+                headers.insert(
+                    "Accept-Language".to_string(),
+                    profile.accept_language.to_string(),
+                );
+                if profile.sec_ch_ua.is_empty() {
+                    headers.remove("sec-ch-ua");
+                } else {
+                    headers.insert("sec-ch-ua".to_string(), profile.sec_ch_ua.to_string());
+                }
+                info!(
+                    "Attempt {}: rotated UA via pick_seeded(seed={}) -> {} ({}, AL={}, sec-ch-ua={})",
+                    total_attempts,
+                    total_attempts - 1,
+                    profile.ua,
+                    if profile.mobile { "mobile" } else { "desktop" },
+                    profile.accept_language,
+                    if profile.sec_ch_ua.is_empty() {
+                        "<none>"
+                    } else {
+                        profile.sec_ch_ua
+                    }
+                );
+            }
+
             let attempt_request = InternalScrapeRequest {
                 url: request.url.clone(),
                 method: request.method,
-                headers: request.headers.clone(),
+                headers,
                 timeout: remaining,
-                // T013（R-antibot-003）：anti-bot 命中后强制 needs_js，使浏览器引擎走 JS 渲染
-                needs_js: request.needs_js || force_needs_js,
+                // T013 + T028：force_needs_js（anti-bot）或 directive.force_browser 都强制 needs_js
+                needs_js: request.needs_js || force_needs_js || directive.force_browser,
                 needs_screenshot: request.needs_screenshot,
                 screenshot_config: request.screenshot_config.clone(),
                 mobile: request.mobile,
@@ -720,6 +847,8 @@ impl EngineRouter {
                 actions: request.actions.clone(),
                 body: request.body.clone(),
                 sync_wait_ms: request.sync_wait_ms,
+                block_ads: request.block_ads,
+                block_media: request.block_media,
             };
 
             let engine_start = Instant::now();
@@ -745,17 +874,19 @@ impl EngineRouter {
                                 last_error = Some(EngineError::AntiBotDetected(detection.reason));
                                 force_needs_js = true;
 
-                                if total_attempts >= max_retries {
-                                    warn!(
-                                        "Max retries {} reached after anti-bot detection",
-                                        max_retries
-                                    );
-                                    self.metrics
-                                        .total_requests
-                                        .fetch_add(1, Ordering::Relaxed);
-                                    self.metrics
-                                        .failed_requests
-                                        .fetch_add(1, Ordering::Relaxed);
+                                // T028（R-identity-002）：记录 AntiBot 失败到 tracker
+                                let reason = RetryReason::AntiBot;
+                                tracker.record(reason);
+                                last_reason = Some(reason);
+
+                                // T028：检查 tracker 上限（anti_bot cap=2）+ max_retries
+                                // H-1 修复：使用 should_stop_after_retry_check 消除重复（DRY）
+                                if self.should_stop_after_retry_check(
+                                    &tracker,
+                                    reason,
+                                    total_attempts,
+                                    max_retries,
+                                ) {
                                     return Err(last_error.unwrap_or_else(|| {
                                         EngineError::AllEnginesFailed(
                                             "Max retries reached".to_string(),
@@ -826,21 +957,29 @@ impl EngineRouter {
 
                     if e.is_retryable() {
                         self.circuit_breaker.record_failure(engine_name);
+
+                        // T028（R-identity-002）：记录失败原因到 tracker（在 e move 之前取 reason）
+                        let reason = e.retry_reason();
+                        tracker.record(reason);
+                        last_reason = Some(reason);
+
+                        // T028：检查 tracker 上限（AntiBot cap=2、FeatureToggle cap=3、total=5）+ max_retries
+                        // H-1 修复：使用 should_stop_after_retry_check 消除重复（DRY）
+                        if self.should_stop_after_retry_check(
+                            &tracker,
+                            reason,
+                            total_attempts,
+                            max_retries,
+                        ) {
+                            return Err(e);
+                        }
+
                         warn!(
-                            "Engine {} failed with retryable error: {}, trying next engine",
-                            engine_name, e
+                            "Engine {} failed with retryable error: {}, trying next engine \
+                             (reason={:?}, tracker total={})",
+                            engine_name, e, reason, tracker.total()
                         );
                         last_error = Some(e);
-
-                        // 检查是否超过最大重试次数
-                        if total_attempts >= max_retries {
-                            warn!("Max retries {} reached, failing request", max_retries);
-                            self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
-                            self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
-                            return Err(last_error.unwrap_or_else(|| {
-                                EngineError::AllEnginesFailed("Max retries reached".to_string())
-                            }));
-                        }
                         continue;
                     }
 
@@ -913,6 +1052,8 @@ impl EngineRouter {
                 actions: request.actions.clone(),
                 body: request.body.clone(),
                 sync_wait_ms: request.sync_wait_ms,
+                block_ads: request.block_ads,
+                block_media: request.block_media,
             };
 
             let race_future: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
@@ -1302,7 +1443,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         let result = router.route(&request).await;
 
         assert!(result.is_err());
@@ -1378,7 +1521,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        }
+            block_ads: false,
+            block_media: false,
+            }
     }
 
     // === should_filter_by_feature tests ===
@@ -2522,7 +2667,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
 
         // The low-score engine should be filtered out, leaving no candidates
         let result = router.route(&request).await;
@@ -2963,7 +3110,9 @@ mod tests_impl {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         let result = router.aggregate(&request).await;
 
         assert!(result.is_ok());
@@ -3014,7 +3163,9 @@ mod tests_impl {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         let result = router.aggregate(&request).await;
 
         assert!(result.is_ok());
@@ -3128,7 +3279,9 @@ mod tests_impl {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
 
         let result = router.route(&request).await;
         assert!(
@@ -3248,7 +3401,9 @@ mod tests_impl {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
 
         let result = router.route(&request).await;
         assert!(result.is_ok());
@@ -3372,7 +3527,9 @@ mod tests_impl {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
 
         let result = router.route(&request).await;
         assert!(
@@ -3498,7 +3655,9 @@ mod tests_impl {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
 
         let result = router.route(&request).await;
         assert!(result.is_ok());
@@ -3515,5 +3674,472 @@ mod tests_impl {
             browser_calls.is_empty(),
             "browser engine should NOT be called for non-SPA response"
         );
+    }
+
+    /// T028（R-identity-002）：验证 Transient 错误重试时 UA 按 attempt seed 轮换。
+    ///
+    /// 场景：3 个失败引擎（Transient）+ 1 个成功引擎，max_retries=4。
+    /// 预期 directive 序列：
+    /// - attempt 1 (total=1)：default，无 UA 轮换
+    /// - attempt 2 (total=2, da=0)：Transient attempt=0 → default，无 UA 轮换
+    /// - attempt 3 (total=3, da=1)：Transient attempt=1 → rotate_ua=true，seed=2
+    /// - attempt 4 (total=4, da=2)：Transient attempt=2 → rotate_ua=true，seed=3
+    #[tokio::test]
+    async fn test_t028_ua_rotated_across_transient_retries() {
+        use std::sync::Mutex;
+
+        /// 记录每次调用的 User-Agent header（None 表示未注入）。
+        /// 使用 `error_msg` 标签 + 消息构造错误，避免 `EngineError: Clone` 依赖。
+        struct UaRecordingEngine {
+            name: &'static str,
+            recorded_ua: Arc<Mutex<Vec<Option<String>>>>,
+            /// `Some(msg)` → 返回 `EngineError::RequestFailed(msg)`；`None` → 返回成功响应
+            error_msg: Option<String>,
+            /// 返回 Ok 时的响应
+            response: Option<InternalScrapeResponse>,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for UaRecordingEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                let ua = request
+                    .headers
+                    .get("User-Agent")
+                    .map(|v| v.to_string());
+                self.recorded_ua
+                    .lock()
+                    .expect("lock recorded_ua")
+                    .push(ua);
+                if let Some(ref msg) = self.error_msg {
+                    return Err(EngineError::RequestFailed(msg.clone()));
+                }
+                Ok(self.response.clone().expect("success response must be set"))
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        fn make_failing_engine(
+            name: &'static str,
+            record: Arc<Mutex<Vec<Option<String>>>>,
+            error_msg: &str,
+        ) -> Arc<dyn ScraperEngine> {
+            Arc::new(UaRecordingEngine {
+                name,
+                recorded_ua: record,
+                error_msg: Some(error_msg.to_string()),
+                response: None,
+            })
+        }
+
+        fn make_success_engine(
+            name: &'static str,
+            record: Arc<Mutex<Vec<Option<String>>>>,
+        ) -> Arc<dyn ScraperEngine> {
+            Arc::new(UaRecordingEngine {
+                name,
+                recorded_ua: record,
+                error_msg: None,
+                response: Some(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body>success content with enough visible text to pass \
+                              any antibot or probe checks along the retry path</body></html>"
+                        .to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 10,
+                }),
+            })
+        }
+
+        let rec1 = Arc::new(Mutex::new(Vec::new()));
+        let rec2 = Arc::new(Mutex::new(Vec::new()));
+        let rec3 = Arc::new(Mutex::new(Vec::new()));
+        let rec4 = Arc::new(Mutex::new(Vec::new()));
+
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            make_failing_engine("fail-1", rec1.clone(), "transient-1"),
+            make_failing_engine("fail-2", rec2.clone(), "transient-2"),
+            make_failing_engine("fail-3", rec3.clone(), "transient-3"),
+            make_success_engine("success-4", rec4.clone()),
+        ];
+
+        let mut router = EngineRouter::new(engines);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(4);
+        router.set_max_retries(4);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/test".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            };
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_ok(),
+            "route should succeed via 4th engine after 3 transient failures, got: {:?}",
+            result.err()
+        );
+
+        // attempt 1：default directive，无 UA 轮换
+        let r1 = rec1.lock().unwrap().clone();
+        assert_eq!(r1.len(), 1, "engine 1 should be called exactly once");
+        assert!(r1[0].is_none(), "attempt 1 must not rotate UA (default directive)");
+
+        // attempt 2：Transient attempt=0 → default，无 UA 轮换
+        let r2 = rec2.lock().unwrap().clone();
+        assert_eq!(r2.len(), 1, "engine 2 should be called exactly once");
+        assert!(
+            r2[0].is_none(),
+            "attempt 2 must not rotate UA (Transient attempt=0 → default directive)"
+        );
+
+        // attempt 3：Transient attempt=1 → rotate_ua=true，seed=2
+        let r3 = rec3.lock().unwrap().clone();
+        assert_eq!(r3.len(), 1, "engine 3 should be called exactly once");
+        assert!(
+            r3[0].is_some(),
+            "attempt 3 must rotate UA (Transient attempt=1 → rotate_ua=true)"
+        );
+        let ua3 = r3[0].clone().unwrap();
+
+        // attempt 4：Transient attempt=2 → rotate_ua=true，seed=3
+        let r4 = rec4.lock().unwrap().clone();
+        assert_eq!(r4.len(), 1, "engine 4 should be called exactly once");
+        assert!(
+            r4[0].is_some(),
+            "attempt 4 must rotate UA (Transient attempt=2 → rotate_ua=true)"
+        );
+        let ua4 = r4[0].clone().unwrap();
+
+        // 不同 seed 必须返回不同 UA（pick_seeded(2) vs pick_seeded(3)，desktop pool ≥22）
+        assert_ne!(
+            ua3, ua4,
+            "UA must differ across retry attempts (seed=2 vs seed=3)"
+        );
+    }
+
+    /// C-1 回归测试：重试轮换 UA 时所有指纹相关 header 必须同步一致。
+    ///
+    /// 场景：3 个失败引擎（Transient）+ 1 个成功引擎，max_retries=4。
+    /// 预期：attempt 3/4 触发 `directive.rotate_ua=true` 时，
+    ///   - User-Agent / Accept-Language / sec-ch-ua 三者必须来自同一 profile
+    ///   - 与 `UaPool::pick_seeded(seed, false)` 返回的 profile 字段严格相等
+    ///
+    /// 修复前：router 只覆盖 User-Agent，Accept-Language 与 sec-ch-ua 仍是首次 profile 的值，
+    ///         导致指纹矛盾（如 Chrome UA + Firefox sec-ch-ua）。
+    /// 修复后：三者一次性写入，保证指纹一致。
+    #[tokio::test]
+    async fn test_c1_fingerprint_headers_rotated_together() {
+        use crate::utils::ua_pool::UaPool;
+        use std::sync::Mutex;
+
+        /// 记录每次调用全部指纹相关 header（UA / AL / sec-ch-ua）
+        struct FingerprintRecordingEngine {
+            name: &'static str,
+            recorded: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
+            error_msg: Option<String>,
+            response: Option<InternalScrapeResponse>,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for FingerprintRecordingEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                let ua = request.headers.get("User-Agent").map(|v| v.to_string());
+                let al = request.headers.get("Accept-Language").map(|v| v.to_string());
+                let ch = request.headers.get("sec-ch-ua").map(|v| v.to_string());
+                self.recorded
+                    .lock()
+                    .expect("lock recorded")
+                    .push((ua, al, ch));
+                if let Some(ref msg) = self.error_msg {
+                    return Err(EngineError::RequestFailed(msg.clone()));
+                }
+                Ok(self.response.clone().expect("success response must be set"))
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        fn make_failing(
+            name: &'static str,
+            rec: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
+        ) -> Arc<dyn ScraperEngine> {
+            Arc::new(FingerprintRecordingEngine {
+                name,
+                recorded: rec,
+                error_msg: Some("transient".to_string()),
+                response: None,
+            })
+        }
+
+        fn make_success(
+            name: &'static str,
+            rec: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
+        ) -> Arc<dyn ScraperEngine> {
+            Arc::new(FingerprintRecordingEngine {
+                name,
+                recorded: rec,
+                error_msg: None,
+                response: Some(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body>success content with enough visible text to pass \
+                              any antibot or probe checks along the retry path</body></html>"
+                        .to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 10,
+                }),
+            })
+        }
+
+        let rec1 = Arc::new(Mutex::new(Vec::new()));
+        let rec2 = Arc::new(Mutex::new(Vec::new()));
+        let rec3 = Arc::new(Mutex::new(Vec::new()));
+        let rec4 = Arc::new(Mutex::new(Vec::new()));
+
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            make_failing("fail-1", rec1.clone()),
+            make_failing("fail-2", rec2.clone()),
+            make_failing("fail-3", rec3.clone()),
+            make_success("success-4", rec4.clone()),
+        ];
+
+        let mut router = EngineRouter::new(engines);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(4);
+        router.set_max_retries(4);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/test".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+        };
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_ok(),
+            "route should succeed via 4th engine after 3 transient failures, got: {:?}",
+            result.err()
+        );
+
+        // attempt 3：Transient attempt=1 → rotate_ua=true，seed=2
+        let r3 = rec3.lock().unwrap().clone();
+        assert_eq!(r3.len(), 1, "engine 3 should be called exactly once");
+        let (ua3, al3, ch3) = r3[0].clone();
+        assert!(ua3.is_some(), "attempt 3 must rotate User-Agent");
+        let ua3 = ua3.expect("ua3 set");
+
+        // attempt 4：Transient attempt=2 → rotate_ua=true，seed=3
+        let r4 = rec4.lock().unwrap().clone();
+        assert_eq!(r4.len(), 1, "engine 4 should be called exactly once");
+        let (ua4, al4, ch4) = r4[0].clone();
+        assert!(ua4.is_some(), "attempt 4 must rotate User-Agent");
+        let ua4 = ua4.expect("ua4 set");
+
+        // 与 UaPool.pick_seeded 的预期 profile 字段一致
+        let pool = UaPool::new();
+        let p3 = pool.pick_seeded(2, false);
+        let p4 = pool.pick_seeded(3, false);
+
+        // C-1 核心：UA + Accept-Language + sec-ch-ua 三者必须来自同一 profile
+        assert_eq!(
+            ua3, p3.ua,
+            "attempt 3 User-Agent must match pick_seeded(2).ua"
+        );
+        assert_eq!(
+            al3.as_deref(),
+            Some(p3.accept_language),
+            "attempt 3 Accept-Language must match profile.accept_language (C-1: 同步轮换)"
+        );
+        assert_eq!(
+            ch3.as_deref(),
+            if p3.sec_ch_ua.is_empty() {
+                None
+            } else {
+                Some(p3.sec_ch_ua)
+            },
+            "attempt 3 sec-ch-ua must match profile.sec_ch_ua (C-1: 同步轮换，Firefox/Safari 为 None)"
+        );
+
+        assert_eq!(
+            ua4, p4.ua,
+            "attempt 4 User-Agent must match pick_seeded(3).ua"
+        );
+        assert_eq!(
+            al4.as_deref(),
+            Some(p4.accept_language),
+            "attempt 4 Accept-Language must match profile.accept_language (C-1: 同步轮换)"
+        );
+        assert_eq!(
+            ch4.as_deref(),
+            if p4.sec_ch_ua.is_empty() {
+                None
+            } else {
+                Some(p4.sec_ch_ua)
+            },
+            "attempt 4 sec-ch-ua must match profile.sec_ch_ua (C-1: 同步轮换)"
+        );
+
+        // 不同 seed 必须返回不同 UA
+        assert_ne!(ua3, ua4, "UA must differ across retry attempts (seed=2 vs seed=3)");
+    }
+
+    /// T028（R-identity-002）：验证 RetryTracker 在 FeatureToggle cap=3 时停止重试。
+    ///
+    /// 场景：5 个引擎全部返回 `EngineError::FeatureToggle`，max_retries=5（高于 cap=3）。
+    /// 预期：tracker 在第 3 次 record 后 ft=3 → should_retry(FeatureToggle) 返回 false → 停止。
+    /// 即只调用前 3 个引擎，返回 FeatureToggle 错误。
+    #[tokio::test]
+    async fn test_t028_retry_tracker_caps_feature_toggle() {
+        use std::sync::Mutex;
+
+        struct FtFailingEngine {
+            name: &'static str,
+            call_count: Arc<Mutex<u32>>,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for FtFailingEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                let mut c = self.call_count.lock().unwrap();
+                *c += 1;
+                Err(EngineError::FeatureToggle(format!("toggle-fail-{}", *c)))
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        let counts: Vec<Arc<Mutex<u32>>> = (0..5)
+            .map(|_| Arc::new(Mutex::new(0u32)))
+            .collect();
+
+        let engines: Vec<Arc<dyn ScraperEngine>> = (0..5)
+            .map(|i| {
+                let e: Arc<dyn ScraperEngine> = Arc::new(FtFailingEngine {
+                    name: Box::leak(format!("ft-fail-{}", i).into_boxed_str()),
+                    call_count: counts[i].clone(),
+                });
+                e
+            })
+            .collect();
+
+        let mut router = EngineRouter::new(engines);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(5);
+        // max_retries=5 > feature_toggle cap=3，验证 tracker 先于 max_retries 触发
+        router.set_max_retries(5);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/ft-test".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            };
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_err(),
+            "route must fail after RetryTracker caps FeatureToggle"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, EngineError::FeatureToggle(_)),
+            "error must be FeatureToggle, got: {:?}",
+            err
+        );
+
+        // 验证只有前 3 个引擎被调用（cap=3 → 3 次 record 后停止）
+        for i in 0..3 {
+            let c = counts[i].lock().unwrap();
+            assert_eq!(
+                *c, 1,
+                "engine {} should be called exactly once (within cap)", i
+            );
+        }
+        for i in 3..5 {
+            let c = counts[i].lock().unwrap();
+            assert_eq!(
+                *c, 0,
+                "engine {} should NOT be called (RetryTracker stopped after cap=3)", i
+            );
+        }
     }
 }

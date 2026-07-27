@@ -113,6 +113,8 @@ impl CreateScrapeUseCase {
             headers,
             needs_tls_fingerprint: options.needs_tls_fingerprint.unwrap_or(false),
             use_fire_engine: options.use_fire_engine.unwrap_or(false),
+            block_ads: false,
+            block_media: false,
         };
 
         Ok(ScrapeRequest::new(dto.url).with_options(scrape_options))
@@ -195,7 +197,8 @@ fn map_engine_error(engine_error: crate::engines::engine_client::EngineError) ->
         crate::engines::engine_client::EngineError::InvalidUrl(msg) => DomainError::InvalidUrl(msg),
         crate::engines::engine_client::EngineError::RequestFailed(msg)
         | crate::engines::engine_client::EngineError::BrowserError(msg)
-        | crate::engines::engine_client::EngineError::AntiBotDetected(msg) => {
+        | crate::engines::engine_client::EngineError::AntiBotDetected(msg)
+        | crate::engines::engine_client::EngineError::FeatureToggle(msg) => {
             DomainError::NetworkError(msg)
         }
         crate::engines::engine_client::EngineError::NoEnginesAvailable => {

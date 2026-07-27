@@ -9,16 +9,35 @@ use crate::engines::engine_client::{
     EngineError, InternalPageAction, InternalScrapeRequest, InternalScrapeResponse,
     InternalScreenshotConfig, ScraperEngine,
 };
+use crate::engines::intercept::{BLOCK_REASON, InterceptController, ResourceKind};
 use crate::engines::validators;
 use crate::infrastructure::services::config_service::BrowserConfigTrait;
+use crate::utils::proxy::{redact_proxy_url, validate_proxy_url};
+use crate::utils::ua_pool::UaPool;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
+use chromiumoxide::cdp::browser_protocol::fetch::{
+    ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
+};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// PERF-C2 修复：默认网络空闲等待时间（毫秒）
+///
+/// 原为固定 5 秒 `tokio::time::sleep(Duration::from_secs(5))`，无条件阻塞每次浏览器引擎请求。
+/// 现降为 1 秒默认值，调用方可通过 `ScrapeOptions.sync_wait_ms` 显式覆盖（取 max）。
+///
+/// 设计权衡：
+/// - 完全删除 sleep 会导致 JS-heavy 页面（如 SPA）在 `page.goto` load 事件触发时
+///   尚未完成 hydration，content 取到空壳
+/// - 1 秒是经验值，覆盖 90% 页面的 network idle 需求
+/// - Stage 3 T060-T062 将引入 CDP `Page.loadEventFired` + MRT 超时彻底替代
+const DEFAULT_NETWORK_IDLE_WAIT_MS: u64 = 1000;
 
 /// Playwright context for browser operations
 ///
@@ -204,8 +223,23 @@ impl PlaywrightBrowserManagerComponent {
             builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
 
             if let Some(ref proxy) = proxy_url {
-                log::info!("Using proxy for Playwright: {}", proxy);
-                builder = builder.arg(format!("--proxy-server={}", proxy));
+                // 安全审查 H-1：严格校验 proxy URL 防止命令行参数注入
+                //
+                // 原漏洞：`format!("--proxy-server={}", proxy)` 若 proxy 含空格或特殊字符，
+                // Chrome 可能解析为多个 argv（如 "http://x --enable-bad-flag" 被拆为
+                // `--proxy-server=http://x` + `--enable-bad-flag`）。
+                //
+                // 修复：
+                // 1. `validate_proxy_url` 严格校验 URL 格式 + scheme 白名单 + 无空白字符
+                // 2. `arg("--proxy-server").arg(validated)` 分离传递 flag 与值，
+                //    从根本上消除单字符串拼接导致的 argv 拆分风险
+                // 3. `redact_proxy_url` 脱敏日志输出，避免 user:pass 凭证泄露
+                const ALLOWED_PROXY_SCHEMES: &[&str] = &["http", "https", "socks5", "socks4"];
+                let validated = validate_proxy_url(proxy, ALLOWED_PROXY_SCHEMES).map_err(|e| {
+                    EngineError::Other(format!("Invalid proxy URL: {}", e))
+                })?;
+                log::info!("Using proxy for Playwright: {}", redact_proxy_url(&validated));
+                builder = builder.arg("--proxy-server").arg(validated);
             }
 
             Browser::launch(
@@ -286,17 +320,31 @@ pub async fn check_browser_health(browser: &Browser) -> bool {
 pub struct PlaywrightEngine {
     /// 浏览器池（可选，用于实例复用）
     pool: Option<BrowserPool>,
+    /// UA 池（R-identity-001）：每次请求从池中选取一致的 UA + viewport
+    ua_pool: UaPool,
 }
 
 impl PlaywrightEngine {
     /// 创建新的 Playwright 引擎（使用全局浏览器池）
     pub fn new() -> Self {
-        Self { pool: None }
+        Self {
+            pool: None,
+            ua_pool: UaPool::default(),
+        }
     }
 
     /// 创建带有自定义浏览器池的 Playwright 引擎
     pub fn with_pool(pool: BrowserPool) -> Self {
-        Self { pool: Some(pool) }
+        Self {
+            pool: Some(pool),
+            ua_pool: UaPool::default(),
+        }
+    }
+
+    /// 获取 UA 池引用（用于测试验证 R-identity-001）
+    #[must_use]
+    pub fn ua_pool(&self) -> &UaPool {
+        &self.ua_pool
     }
 
     /// 获取或创建浏览器池
@@ -378,11 +426,28 @@ impl ScraperEngine for PlaywrightEngine {
             // Browser will be closed when application shuts down.
             // In case of errors, the Page will be dropped automatically.
 
-            // Set user agent if mobile
-            if request.mobile {
-                page.set_user_agent("Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1").await
-                    .map_err(|e| EngineError::BrowserError(e.to_string()))?;
-            }
+            // R-identity-001: 从 UaPool 取一致的 UA + viewport profile
+            // 替换原固定移动 UA 分支；mobile 和 desktop 都从池中取 profile
+            let profile = self.ua_pool.pick(request.mobile);
+
+            // Set User-Agent（所有请求都设，不只 mobile）
+            page.set_user_agent(profile.ua)
+                .await
+                .map_err(|e| EngineError::BrowserError(e.to_string()))?;
+
+            // Set viewport to match UA platform（R-identity-001: viewport 与 UA 一致）
+            // 用 CDP Emulation.setDeviceMetricsOverride 设置视口尺寸 + mobile 标志
+            let viewport_params = SetDeviceMetricsOverrideParams::new(
+                profile.viewport.0 as i64,
+                profile.viewport.1 as i64,
+                1.0,
+                profile.mobile,
+            );
+            page.execute(viewport_params)
+                .await
+                .map_err(|e| {
+                    EngineError::BrowserError(format!("Failed to set viewport: {}", e))
+                })?;
 
             // 设置自定义 Headers
             if !request.headers.is_empty() {
@@ -391,15 +456,94 @@ impl ScraperEngine for PlaywrightEngine {
                 log::warn!("Custom headers are currently partially supported in PlaywrightEngine due to API constraints");
             }
 
+            // T032 / R-jsrender-002：导航前注入 stealth 脚本（best-effort）
+            // 覆盖 navigator.webdriver 等反爬指纹属性，必须在页面脚本执行前生效
+            let stealth_injector = crate::engines::js_inject::JsInjector::stealth();
+            if let Err(e) = stealth_injector
+                .apply(&page, crate::engines::js_inject::InjectPhase::BeforeLoad)
+                .await
+            {
+                log::warn!("Stealth injection failed (best-effort, continue): {}", e);
+            }
+
+            // T033 / R-jsrender-003：请求拦截（广告/追踪域名 + 媒体资源）
+            // 仅当 block_ads 或 block_media 任一启用时激活 CDP Fetch domain 拦截。
+            // 启用后所有请求被暂停，必须由事件处理 task 及时 continue/fail，
+            // 否则请求会挂起直至超时。task 在 page 关闭后事件流结束自动退出。
+            if request.block_ads || request.block_media {
+                let controller = Arc::new(InterceptController::new(
+                    request.block_ads,
+                    request.block_media,
+                ));
+
+                // 启用 Fetch domain（默认拦截所有请求阶段）
+                page.execute(EnableParams::default())
+                    .await
+                    .map_err(|e| {
+                        EngineError::BrowserError(format!(
+                            "Failed to enable Fetch interception: {}",
+                            e
+                        ))
+                    })?;
+
+                // 订阅 EventRequestPaused 事件流
+                let mut events = page
+                    .event_listener::<EventRequestPaused>()
+                    .await
+                    .map_err(|e| {
+                        EngineError::BrowserError(format!(
+                            "Failed to subscribe EventRequestPaused: {}",
+                            e
+                        ))
+                    })?;
+
+                // 克隆 page + controller 给事件处理 task
+                let page_clone = page.clone();
+                let controller_clone = Arc::clone(&controller);
+
+                // 事件处理 task：对每个被暂停的请求判断是否拦截
+                // 命中黑名单/媒体 → FailRequest(BlockedByClient) + 计数
+                // 否则 → ContinueRequest（放行）
+                //
+                // H-3 重构：CDP `ResourceType` 在边界处通过 `ResourceKind::from` 转换为领域
+                // `ResourceKind`，避免 InterceptController 依赖具体 CDP 实现。
+                tokio::spawn(async move {
+                    while let Some(event) = events.next().await {
+                        let url = event.request.url.clone();
+                        let kind = ResourceKind::from(event.resource_type.clone());
+                        let request_id = event.request_id.clone();
+                        if controller_clone.should_block(&url, Some(kind)) {
+                            controller_clone.record_block();
+                            if let Err(e) = page_clone
+                                .execute(FailRequestParams::new(request_id, BLOCK_REASON))
+                                .await
+                            {
+                                log::debug!("FailRequest failed for {}: {}", url, e);
+                            }
+                        } else if let Err(e) = page_clone
+                            .execute(ContinueRequestParams::new(request_id))
+                            .await
+                        {
+                            log::debug!("ContinueRequest failed for {}: {}", url, e);
+                        }
+                    }
+                });
+            }
+
             // Navigate and wait for load
             // goto waits for the load event by default
             page.goto(&request.url).await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
-            // Wait for network to be idle (important for JS-heavy sites like Google)
-            // Since chromiumoxide doesn't have wait_for_load_state, we use a delay approach
-            // This ensures all dynamic content is loaded
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            // T032 / R-jsrender-002：页面加载后注入 cleanup 脚本（best-effort）
+            // 顺序：consent_popups → overlay_elements → flatten_shadow_dom（design.md §6）
+            let cleanup_injector = crate::engines::js_inject::JsInjector::cleanup();
+            if let Err(e) = cleanup_injector
+                .apply(&page, crate::engines::js_inject::InjectPhase::AfterLoad)
+                .await
+            {
+                log::warn!("Cleanup injection failed (best-effort, continue): {}", e);
+            }
 
             // Try to detect if we got a bot detection page
             let content: String = page
@@ -470,10 +614,19 @@ impl ScraperEngine for PlaywrightEngine {
                 }
             }
 
-            // 同步等待
-            if request.sync_wait_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(request.sync_wait_ms as u64)).await;
-            }
+            // PERF-C2 修复：网络空闲等待
+            //
+            // 原为 L510 固定 `tokio::time::sleep(Duration::from_secs(5))`，无条件 5 秒阻塞。
+            // 现合并到 sync_wait_ms 单一入口，取 max(DEFAULT_NETWORK_IDLE_WAIT_MS, sync_wait_ms)：
+            // - 调用方未显式设置（sync_wait_ms=0）：使用默认 1 秒（性能提升 5x）
+            // - 调用方显式设置 > 1 秒：使用调用方值（向后兼容）
+            // - 调用方显式设置 = 0 想跳过等待：仍用默认 1 秒（避免 SPA 页面取空壳）
+            //   若未来需要"零等待"语义，可引入 sync_wait_ms = -1 表示跳过默认
+            let effective_wait_ms = std::cmp::max(
+                DEFAULT_NETWORK_IDLE_WAIT_MS,
+                request.sync_wait_ms as u64,
+            );
+            tokio::time::sleep(Duration::from_millis(effective_wait_ms)).await;
 
             // Get final URL after navigation (handles redirects)
             let _final_url: String = page
@@ -644,7 +797,9 @@ mod tests {
             actions: vec![],
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         assert_eq!(engine.support_score(&request_js), 100);
 
         // Test with Screenshot requirement
@@ -664,7 +819,9 @@ mod tests {
             actions: vec![],
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         assert_eq!(engine.support_score(&request_screenshot), 100);
 
         // Test with neither (basic request)
@@ -684,7 +841,145 @@ mod tests {
             actions: vec![],
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         assert_eq!(engine.support_score(&request_basic), 10);
+    }
+
+    // === T022 / R-identity-001: UaPool 集成测试 ===
+
+    #[test]
+    fn test_playwright_engine_has_non_empty_ua_pool() {
+        let engine = PlaywrightEngine::new();
+        let pool = engine.ua_pool();
+        assert!(pool.count(false) >= 20, "desktop pool must have >= 20 profiles");
+        assert!(pool.count(true) >= 20, "mobile pool must have >= 20 profiles");
+    }
+
+    #[test]
+    fn test_playwright_engine_pick_ua_mobile_vs_desktop() {
+        let engine = PlaywrightEngine::new();
+        let pool = engine.ua_pool();
+        // mobile=true 应返回移动 profile
+        for _ in 0..10 {
+            let p = pool.pick(true);
+            assert!(p.mobile, "pick(true) must return mobile profile");
+        }
+        // mobile=false 应返回桌面 profile
+        for _ in 0..10 {
+            let p = pool.pick(false);
+            assert!(!p.mobile, "pick(false) must return desktop profile");
+        }
+    }
+
+    #[test]
+    fn test_playwright_engine_pick_ua_returns_varied_profiles() {
+        // R-identity-001: 多次选取应返回不同 UA（随机性）
+        let engine = PlaywrightEngine::new();
+        let pool = engine.ua_pool();
+        let mut uas = std::collections::HashSet::new();
+        for _ in 0..50 {
+            uas.insert(pool.pick(false).ua);
+        }
+        assert!(
+            uas.len() >= 2,
+            "multiple picks should return varied UAs, got only {} unique in 50 picks",
+            uas.len()
+        );
+    }
+
+    #[test]
+    fn test_playwright_engine_viewport_matches_platform() {
+        // R-identity-001: viewport 与 UA platform 必须一致
+        // - iOS platform → viewport 宽度 ∈ [375, 1366]（iPhone/iPad 范围）
+        // - Android platform → viewport 宽度 ∈ [360, 1280]
+        // - Windows/macOS/Linux → viewport 宽度 >= 1024
+        let engine = PlaywrightEngine::new();
+        let pool = engine.ua_pool();
+        for p in pool.desktop.iter().chain(pool.mobile.iter()) {
+            match p.platform {
+                "iOS" => {
+                    assert!(
+                        (375..=1366).contains(&p.viewport.0),
+                        "iOS viewport width {} out of range [375, 1366]: {}",
+                        p.viewport.0,
+                        p.ua
+                    );
+                }
+                "Android" => {
+                    assert!(
+                        (360..=1280).contains(&p.viewport.0),
+                        "Android viewport width {} out of range [360, 1280]: {}",
+                        p.viewport.0,
+                        p.ua
+                    );
+                }
+                "Windows" | "macOS" | "Linux" => {
+                    assert!(
+                        p.viewport.0 >= 1024,
+                        "Desktop viewport width {} < 1024: {}",
+                        p.viewport.0,
+                        p.ua
+                    );
+                }
+                _ => {
+                    panic!("unknown platform: {}", p.platform);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_playwright_engine_ua_not_fixed_mobile_string() {
+        // R-identity-001: 引擎的 mobile UA pool 应包含多个 UA
+        // 不应全部等于原固定 mobile UA 字符串
+        let engine = PlaywrightEngine::new();
+        let pool = engine.ua_pool();
+        let fixed_mobile_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1";
+        let non_fixed_count = pool
+            .mobile
+            .iter()
+            .filter(|p| p.ua != fixed_mobile_ua)
+            .count();
+        assert!(
+            non_fixed_count >= 20,
+            "most mobile UAs should differ from the old fixed UA, got {} non-fixed",
+            non_fixed_count
+        );
+    }
+
+    #[test]
+    fn test_playwright_engine_with_pool_has_ua_pool() {
+        // 验证 with_pool 构造路径也初始化 ua_pool
+        let config = BrowserPoolConfig::default();
+        let browser_config = Arc::new(
+            crate::infrastructure::services::config_service::BrowserConfigComponent::default(),
+        );
+        let pool = BrowserPool::new(config, browser_config);
+        let engine = PlaywrightEngine::with_pool(pool);
+        assert!(engine.ua_pool().count(false) >= 20);
+        assert!(engine.ua_pool().count(true) >= 20);
+    }
+
+    #[test]
+    fn test_playwright_engine_default_has_ua_pool() {
+        let engine = PlaywrightEngine::default();
+        assert!(engine.ua_pool().count(false) >= 20);
+        assert!(engine.ua_pool().count(true) >= 20);
+    }
+
+    #[test]
+    fn test_playwright_engine_pick_seeded_stable() {
+        // R-identity-001: 同 seed 必须稳定返回同一 profile
+        let engine = PlaywrightEngine::new();
+        let pool = engine.ua_pool();
+        let p1 = pool.pick_seeded(42, true);
+        let p2 = pool.pick_seeded(42, true);
+        assert_eq!(p1.ua, p2.ua, "same seed must return same mobile profile");
+        assert_eq!(
+            p1.viewport, p2.viewport,
+            "same seed must return same viewport"
+        );
     }
 }

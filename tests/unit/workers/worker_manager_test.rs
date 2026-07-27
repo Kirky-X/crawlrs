@@ -35,7 +35,7 @@ use crawlrs::domain::services::extraction_service::{ExtractionRule, ExtractionSe
 use crawlrs::domain::services::llm_service::TokenUsage;
 use crawlrs::domain::services::webhook_service::WebhookService;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeResponse};
-use crawlrs::presentation::middleware::team_semaphore::TeamSemaphore;
+use crawlrs::domain::services::team_semaphore::TeamSemaphore;
 use crawlrs::queue::task_queue::{QueueError, TaskQueue};
 use crawlrs::utils::regex_cache::RegexCache;
 use crawlrs::utils::robots::RobotsCheckerTrait;
@@ -434,6 +434,7 @@ fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> 
         engine_client: Arc::new(EngineClient::new()),
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase),
         team_semaphore: Arc::new(TeamSemaphore::new(10)),
+        request_coalescer: Arc::new(crawlrs::utils::coalesce::RequestCoalescer::new()),
         robots_checker: Arc::new(MockRobotsChecker),
         http_client: Arc::new(reqwest::Client::new()),
         extraction_service: Arc::new(MockExtractionService),

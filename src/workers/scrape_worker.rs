@@ -40,8 +40,15 @@ use crate::engines::engine_client::{
     ScreenshotConfig, ScrollDirection,
 };
 use crate::presentation::helpers::ssrf::is_internal_url;
-use crate::presentation::middleware::team_semaphore::TeamSemaphore;
+use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
+// H-4 职责拆分：请求合并协调器（替代原 request_coalescer 字段 + try_coalesce 方法）
+use crate::workers::coalesce_coordinator::CoalesceCoordinator;
+// H-4 职责拆分：Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
+#[cfg(feature = "markdown")]
+use crate::workers::markdown_post_processor::MarkdownPostProcessor;
+// H-4 职责拆分：仍需 RequestCoalescer 用于构造 CoalesceCoordinator（ScrapeWorkerBuilder.build 中使用）
+use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
 use crate::utils::retry_policy::RetryPolicy;
 use crate::utils::robots::RobotsCheckerTrait;
@@ -68,6 +75,19 @@ pub struct ScrapeWorker {
     engine_client: Arc<EngineClient>,
     _create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     team_semaphore: Arc<TeamSemaphore>,
+    /// 请求合并协调器（H-4 职责拆分，T035/R-runtime-002）
+    ///
+    /// 同 URL 并发请求只允许首个执行实际抓取，其余 worker 等待广播后从
+    /// `result_repo` 读取结果，避免重复网络往返。所有 worker 共享同一实例
+    /// （由 `WorkerManager` 从 `ServicesComponents.request_coalescer` +
+    /// `repository` + `result_repository` 构造注入）。
+    coalesce_coordinator: Arc<CoalesceCoordinator>,
+    /// Markdown 后处理器（H-4 职责拆分，T042/R-content-001）
+    ///
+    /// 无状态服务，根据任务 `formats` 字段判断是否生成 Markdown。
+    /// gated `markdown` 特性：关闭时本字段不存在，相关分支也不编译。
+    #[cfg(feature = "markdown")]
+    markdown_post_processor: MarkdownPostProcessor,
     token_usage: Arc<DashMap<Uuid, AtomicI64>>,
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
@@ -97,6 +117,9 @@ impl ScrapeWorker {
     /// 创建新的抓取工作器实例
     ///
     /// `memory_scheduler` 仅在 `metrics` 特性启用时需要（T019/R-runtime-001）。
+    /// `coalesce_coordinator` 由 `WorkerManager` 从 `repository` +
+    /// `result_repository` + `request_coalescer` 构造注入，
+    /// 所有 worker 共享同一实例（T035/R-runtime-002 + H-4 职责拆分）。
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         repository: Arc<dyn TaskRepository>,
@@ -107,6 +130,7 @@ impl ScrapeWorker {
         engine_client: Arc<EngineClient>,
         _create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
         team_semaphore: Arc<TeamSemaphore>,
+        coalesce_coordinator: Arc<CoalesceCoordinator>,
         robots_checker: Arc<dyn RobotsCheckerTrait>,
         settings: Arc<Settings>,
         default_concurrency_limit: usize,
@@ -127,6 +151,11 @@ impl ScrapeWorker {
             engine_client,
             _create_scrape_use_case,
             team_semaphore,
+            coalesce_coordinator,
+            #[cfg(feature = "markdown")]
+            markdown_post_processor: MarkdownPostProcessor::new(Arc::new(
+                crate::domain::services::markdown_service::HtmdMarkdownService::new(),
+            )),
             token_usage: Arc::new(DashMap::new()),
             robots_checker,
             settings,
@@ -277,13 +306,43 @@ impl ScrapeWorker {
     async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
         debug!("task_id: {}", task.id);
 
-        // Resolve engine router directly to handle actions if they exist
-        let scrape_request = Self::build_scrape_request(&task).unwrap_or_else(|e| {
-            error!("Failed to parse task payload, using default: {}", e);
-            ScrapeRequest::new(task.url.clone()).timeout(Duration::from_secs(
-                self.settings.timeouts.engines.default_timeout_seconds,
-            ))
-        });
+        // PERF-H1 修复：解析一次 payload，dto 与 ScrapeRequest 复用同一份解析结果。
+        //
+        // 旧实现：
+        //   1) build_scrape_request(&task) 内部 from_value(payload.clone()) 得 dto
+        //   2) handle_scrape_success(&task, &response) 内部再 from_value(payload.clone()) 得 dto
+        // → 每次抓取 clone + 解析 payload 2 次。
+        //
+        // 新实现：
+        //   1) parse_scrape_request_dto(&task) 得 dto（仅 1 次 clone + 解析）
+        //   2) build_scrape_request_from_dto(&dto) 复用 dto 构造 ScrapeRequest（零额外解析）
+        //   3) handle_scrape_success(&task, dto.as_ref(), &response) 复用 dto 引用（零额外解析）
+        // → 每次抓取 clone + 解析 payload 1 次。
+        let (scrape_request_dto, scrape_request) =
+            match Self::parse_scrape_request_dto(&task) {
+                Ok(dto) => {
+                    let req = match Self::build_scrape_request_from_dto(&dto) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!(
+                                "Failed to build scrape request from dto, using default: {}",
+                                e
+                            );
+                            ScrapeRequest::new(task.url.clone()).timeout(Duration::from_secs(
+                                self.settings.timeouts.engines.default_timeout_seconds,
+                            ))
+                        }
+                    };
+                    (Some(dto), req)
+                }
+                Err(e) => {
+                    error!("Failed to parse task payload, using default: {}", e);
+                    let req = ScrapeRequest::new(task.url.clone()).timeout(Duration::from_secs(
+                        self.settings.timeouts.engines.default_timeout_seconds,
+                    ));
+                    (None, req)
+                }
+            };
 
         // SSRF 防护 (CWE-918)：静态校验 options.proxy 不指向内部网络（防御纵深）。
         // handler 层已通过 validate_url 完成完整 DNS 解析校验，
@@ -299,30 +358,34 @@ impl ScrapeWorker {
             }
         }
 
+        // T035/R-runtime-002 + H-4 职责拆分：请求合并——同 URL 并发只允许首个执行实际抓取
+        //
+        // 调用 CoalesceCoordinator（独立组件），返回 `Some(guard)` 表示获得执行权，
+        // guard 在抓取完成（含错误路径）后随作用域结束 Drop，自动从 in_flight 移除条目并广播给等待方。
+        // 返回 `None` 表示已被其他 worker 处理（等待方从 result_repo 读到结果，
+        // 或任务被延后重排），调用方应直接返回 Ok。
+        let _coalesce_guard = match self.coalesce_coordinator.try_coalesce(&task.url, &task).await? {
+            Some(g) => g,
+            None => return Ok(()),
+        };
+
+        // T038/R-runtime-003：抓取成功/失败回填 AIMDController
+        //
+        // 由 `TeamSemaphore` 封装——Fixed 模式 noop；Adaptive 模式调用
+        // `AIMDController::record_*` 并经 `AdaptiveSemaphore::set_target` 推入新 target。
+        // guard 在 match 块作用域结束时 Drop，确保先广播给等待方再释放。
         let response = self.engine_client.scrape(&scrape_request).await;
 
         match response {
             Ok(response) => {
+                self.team_semaphore.record_success(task.team_id);
                 debug!("status_code: {}", response.status_code);
                 info!("Scrape successful, status: {}", response.status_code);
 
-                // Map ScrapeResponse to ScrapeResult
-                // _result variable is currently unused but might be used later or for debugging
-                let _result = ScrapeResult {
-                    id: Uuid::new_v4(),
-                    task_id: task.id,
-                    url: task.url.clone(),
-                    status_code: response.status_code as i32,
-                    content: response.content.clone(),
-                    content_type: response.content_type.clone(),
-                    headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null),
-                    meta_data: Value::Null,
-                    screenshot: response.screenshot.clone(),
-                    response_time_ms: response.response_time_ms as i64,
-                    created_at: Utc::now().naive_utc(),
-                };
-
-                if let Err(e) = self.handle_scrape_success(&task, &response).await {
+                if let Err(e) = self
+                    .handle_scrape_success(&task, scrape_request_dto.as_ref(), &response)
+                    .await
+                {
                     error!("Scrape success handler failed: {}", e);
                     debug!("error: {}", e);
                     self.handle_failure(&mut task).await?;
@@ -340,6 +403,7 @@ impl ScrapeWorker {
                 Ok(())
             }
             Err(e) => {
+                self.team_semaphore.record_failure(task.team_id);
                 error!("Scrape failed: {}", e);
                 debug!("error: {}", e);
 
@@ -372,6 +436,10 @@ impl ScrapeWorker {
             }
         }
     }
+
+    // H-4 职责拆分：`try_coalesce` 方法已迁移至 `CoalesceCoordinator`（独立组件）。
+    // 原 `request_coalescer` 字段已替换为 `coalesce_coordinator: Arc<CoalesceCoordinator>`。
+    // 调用方在 `process_scrape_task` 中通过 `self.coalesce_coordinator.try_coalesce(...)` 触发。
 
     /// 解析 Crawl 任务特定的 Payload
     async fn parse_crawl_payload(&self, task: &Task) -> Result<(Uuid, u32, CrawlConfigDto)> {
@@ -493,7 +561,9 @@ impl ScrapeWorker {
             use_fire_engine: false,
             actions: Vec::new(),
             sync_wait_ms: 0,
-        })
+            block_ads: false,
+            block_media: false,
+            })
     }
 
     /// 处理 Crawl 任务成功响应
@@ -694,7 +764,9 @@ impl ScrapeWorker {
             use_fire_engine: false,
             actions: vec![],
             sync_wait_ms: 0,
-        })
+            block_ads: false,
+            block_media: false,
+            })
     }
 
     async fn process_extract_task(&self, mut task: Task) -> Result<()> {
@@ -1015,7 +1087,12 @@ impl ScrapeWorker {
         true
     }
 
-    async fn handle_scrape_success(&self, task: &Task, response: &ScrapeResponse) -> Result<()> {
+    async fn handle_scrape_success(
+        &self,
+        task: &Task,
+        scrape_request_dto: Option<&ScrapeRequestDto>,
+        response: &ScrapeResponse,
+    ) -> Result<()> {
         debug!("task_id: {}", task.id);
 
         // 文本编码处理 - 集成文本处理功能
@@ -1027,7 +1104,35 @@ impl ScrapeWorker {
             }
         };
 
+        // PERF-H1 修复：复用 process_scrape_task 已解析的 ScrapeRequestDto 引用，
+        // 不再在 handle_scrape_success 内部二次 from_value(task.payload.clone())。
+        let parsed_req = scrape_request_dto;
+
         // 创建处理后的响应用于后续处理
+        // T042/R-content-001 + H-4 职责拆分：调用 MarkdownPostProcessor（独立组件）
+        // 若 formats 含 "markdown" 则生成 Markdown，否则返回 Ok(None)
+        //
+        // 架构审查 M-1（错误显性化）：generate() 现返回 Result<Option<String>, _>，
+        // 区分"未请求 markdown"（Ok(None)）与"转换失败/空结果"（Err）。
+        // 调用方策略（design.md §10）：markdown 为增强字段，失败不阻断基础抓取结果，
+        // 错误时记录告警并继续（generated_markdown = None）。
+        #[cfg(feature = "markdown")]
+        let generated_markdown: Option<String> = parsed_req.as_ref().and_then(|req| {
+            self.markdown_post_processor
+                .generate(task.id, req, &processed_content)
+                .unwrap_or_else(|e| {
+                    warn!("task_id: {}, markdown post-processing failed: {}", task.id, e);
+                    None
+                })
+        });
+        #[cfg(not(feature = "markdown"))]
+        let generated_markdown: Option<String> = None;
+
+        // 性能审查 H-3 修复：删除冗余的 `..response.clone()`（每次抓取省 1 次 ScrapeResponse clone）
+        //
+        // 原代码 `..response.clone()` 是为设置缺失的 `final_url` 字段而 clone 整个 response
+        // （含 content String、screenshot Option<String>、headers HashMap），开销巨大。
+        // 现显式设置 `final_url`，删除 spread clone。
         let processed_response = ScrapeResponse {
             content: processed_content,
             status_code: response.status_code,
@@ -1035,12 +1140,13 @@ impl ScrapeWorker {
             content_type: response.content_type.clone(),
             headers: response.headers.clone(),
             response_time_ms: response.response_time_ms,
-            ..response.clone()
+            final_url: response.final_url.clone(),
+            markdown: generated_markdown.or(response.markdown.clone()),
         };
 
         // 解析 ScrapeRequest 以检查是否有提取规则
         let mut extracted_data = None;
-        if let Ok(req) = serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
+        if let Some(req) = parsed_req.as_ref() {
             if let Some(rules) = &req.extraction_rules {
                 match self
                     .extraction_service
@@ -1106,7 +1212,14 @@ impl ScrapeWorker {
         Ok(())
     }
 
+    // H-4 职责拆分：`maybe_generate_markdown` 方法已迁移至 `MarkdownPostProcessor`（独立组件）。
+    // 原 `HtmdMarkdownService` 调用已替换为 `self.markdown_post_processor.generate(...)`，
+    // 由 `handle_scrape_success` 中调用。
+
     /// 处理文本编码转换
+    ///
+    /// 性能审查 H-2 修复：禁用路径短路，避免不必要的 `as_bytes().to_vec()`
+    /// 与 `String::from_utf8_lossy` 重复分配。
     async fn process_text_encoding(
         &self,
         task: &Task,
@@ -1121,6 +1234,11 @@ impl ScrapeWorker {
 
         // 创建文本处理集成器
         let text_integration = CrawlTextIntegration::new(false); // Disable by default for now
+
+        // 性能审查 H-2 修复：禁用时直接返回原始 content，避免 Vec 转换与重复分配
+        if !text_integration.is_enabled() {
+            return Ok(response.content.clone());
+        }
 
         // 准备输入数据
         let input = ScrapeResponseInput {
@@ -1173,6 +1291,29 @@ impl ScrapeWorker {
         let mut meta_data = Value::Null;
         if let Some(data) = extra_data {
             meta_data = data;
+        }
+
+        // T042/R-content-001：将 response.markdown 合并到 meta_data JSON
+        // ScrapeResult 实体无独立 markdown 列，统一存入 meta_data：
+        // - Null → {"markdown": "..."}
+        // - Object → 插入 "markdown" 键
+        // - 其他（数组/标量）→ 包装为 {"extracted": <原值>, "markdown": "..."}
+        if let Some(ref markdown) = response.markdown {
+            match &mut meta_data {
+                Value::Null => {
+                    meta_data = serde_json::json!({ "markdown": markdown });
+                }
+                Value::Object(map) => {
+                    map.insert("markdown".to_string(), Value::String(markdown.clone()));
+                }
+                _ => {
+                    let original = std::mem::replace(&mut meta_data, Value::Null);
+                    meta_data = serde_json::json!({
+                        "extracted": original,
+                        "markdown": markdown,
+                    });
+                }
+            }
         }
 
         // Content and screenshot from response
@@ -1296,11 +1437,27 @@ impl ScrapeWorker {
         }
     }
 
-    pub fn build_scrape_request(task: &Task) -> Result<ScrapeRequest> {
-        let scrape_request: ScrapeRequestDto =
-            serde_json::from_value(task.payload.clone()).context("Failed to parse task payload")?;
+    /// 从 Task payload 解析出 [`ScrapeRequestDto`]（PERF-H1 重构：拆分两步式）。
+    ///
+    /// 该方法仅负责反序列化，调用方可继续调 [`Self::build_scrape_request_from_dto`]
+    /// 构造 [`ScrapeRequest`]，或直接复用 dto 引用避免二次解析。
+    ///
+    /// # 性能要点
+    ///
+    /// `serde_json::from_value` 需要 owned `Value`，因此 `task.payload` 必须 clone 一次。
+    /// 调用方拿到 dto 后应在所有后续路径（构造 [`ScrapeRequest`]、生成 markdown、
+    /// 检查 extraction_rules）复用同一引用，禁止再次 `from_value(task.payload.clone())`。
+    pub(crate) fn parse_scrape_request_dto(task: &Task) -> Result<ScrapeRequestDto> {
+        serde_json::from_value(task.payload.clone()).context("Failed to parse task payload")
+    }
 
-        let options = scrape_request.options.as_ref();
+    /// 从已解析的 [`ScrapeRequestDto`] 构造 [`ScrapeRequest`]（PERF-H1 重构：拆分两步式）。
+    ///
+    /// 不再读取 `task.payload`，避免重复解析与 clone。
+    pub(crate) fn build_scrape_request_from_dto(
+        dto: &ScrapeRequestDto,
+    ) -> Result<ScrapeRequest> {
+        let options = dto.options.as_ref();
 
         let mut headers = HashMap::with_capacity(16);
         if let Some(opts) = options {
@@ -1315,7 +1472,7 @@ impl ScrapeWorker {
             }
         }
 
-        let needs_js = scrape_request
+        let needs_js = dto
             .actions
             .as_ref()
             .map(|a| !a.is_empty())
@@ -1332,7 +1489,7 @@ impl ScrapeWorker {
         });
 
         Ok(ScrapeRequest {
-            url: scrape_request.url.clone(),
+            url: dto.url.clone(),
             options: ScrapeOptions {
                 method: HttpMethod::Get,
                 body: None,
@@ -1350,7 +1507,7 @@ impl ScrapeWorker {
                     .and_then(|o| o.needs_tls_fingerprint)
                     .unwrap_or(false),
                 use_fire_engine: options.and_then(|o| o.use_fire_engine).unwrap_or(false),
-                actions: scrape_request
+                actions: dto
                     .actions
                     .clone()
                     .unwrap_or_default()
@@ -1386,9 +1543,24 @@ impl ScrapeWorker {
                         } => Some(PageAction::Input { selector, text }),
                     })
                     .collect(),
-                sync_wait_ms: scrape_request.sync_wait_ms.unwrap_or(0),
+                sync_wait_ms: dto.sync_wait_ms.unwrap_or(0),
+                block_ads: false,
+                block_media: false,
             },
         })
+    }
+
+    /// 从 [`Task`] 一次性解析并构造 [`ScrapeRequest`]（便利入口）。
+    ///
+    /// 调用方仅需 `&Task`，无需关心 dto 解析细节。内部委托
+    /// [`Self::parse_scrape_request_dto`] + [`Self::build_scrape_request_from_dto`]。
+    ///
+    /// **若调用方需要同时使用 [`ScrapeRequestDto`] 与 [`ScrapeRequest`]**，
+    /// 应直接调 [`Self::parse_scrape_request_dto`] 拿到 dto 后再调
+    /// [`Self::build_scrape_request_from_dto`]，避免双解析双 clone payload。
+    pub fn build_scrape_request(task: &Task) -> Result<ScrapeRequest> {
+        let dto = Self::parse_scrape_request_dto(task)?;
+        Self::build_scrape_request_from_dto(&dto)
     }
 }
 
@@ -1569,6 +1741,14 @@ impl ScrapeWorkerBuilder {
             .memory_scheduler
             .ok_or("memory_scheduler is required (metrics feature enabled)")?;
 
+        // H-4 职责拆分：构造 CoalesceCoordinator（共享 repository + result_repository + 新建 coalescer）
+        let request_coalescer = Arc::new(RequestCoalescer::new());
+        let coalesce_coordinator = Arc::new(CoalesceCoordinator::new(
+            repository.clone(),
+            result_repository.clone(),
+            request_coalescer,
+        ));
+
         Ok(ScrapeWorker::new(
             repository,
             result_repository,
@@ -1578,6 +1758,7 @@ impl ScrapeWorkerBuilder {
             engine_client,
             create_scrape_use_case,
             team_semaphore,
+            coalesce_coordinator,
             robots_checker,
             settings,
             self.default_concurrency_limit,
@@ -1608,6 +1789,45 @@ mod tests {
             "https://example.com".to_string(),
             payload,
         )
+    }
+
+    /// H-4 测试辅助：构造 CoalesceCoordinator + 新 RequestCoalescer（架构审查 H-2 修复）
+    ///
+    /// 集中装配逻辑，避免在 16+ 处测试中重复 `Arc::new(CoalesceCoordinator::new(...))`。
+    /// 默认使用新的 `RequestCoalescer` 实例（与多数单测场景一致）。
+    fn make_coalesce_coordinator(
+        task_repo: Arc<dyn TaskRepository>,
+        result_repo: Arc<dyn ScrapeResultRepository>,
+    ) -> Arc<CoalesceCoordinator> {
+        Arc::new(CoalesceCoordinator::new(
+            task_repo,
+            result_repo,
+            Arc::new(RequestCoalescer::new()),
+        ))
+    }
+
+    /// H-4 测试辅助：构造 CoalesceCoordinator + 指定 RequestCoalescer（架构审查 H-2 修复）
+    ///
+    /// 用于需要共享 `request_coalescer` 实例的测试（如 line 4629）。
+    fn make_coalesce_coordinator_with_coalescer(
+        task_repo: Arc<dyn TaskRepository>,
+        result_repo: Arc<dyn ScrapeResultRepository>,
+        request_coalescer: Arc<RequestCoalescer>,
+    ) -> Arc<CoalesceCoordinator> {
+        Arc::new(CoalesceCoordinator::new(
+            task_repo,
+            result_repo,
+            request_coalescer,
+        ))
+    }
+
+    /// PERF-H1 测试辅助：模拟生产路径解析 payload 得到 ScrapeRequestDto。
+    ///
+    /// 调用方完成 `let dto = parse_dto_for_test(&task);` 后，
+    /// 应以 `dto.as_ref()` 作为 `handle_scrape_success` 的第二参数，
+    /// 与生产路径 `process_scrape_task` 行为一致（解析失败返回 None）。
+    fn parse_dto_for_test(task: &Task) -> Option<ScrapeRequestDto> {
+        serde_json::from_value(task.payload.clone()).ok()
     }
 
     /// Build a RegexCache backed by an in-memory oxcache instance.
@@ -2524,6 +2744,42 @@ mod tests {
         }
     }
 
+    /// T042: 捕获 save_result 调用以验证 meta_data 持久化
+    ///
+    /// 用于 markdown 持久化测试：调用方通过 `captured()` 获取保存的 ScrapeResult。
+    struct CapturingScrapeResultRepository {
+        captured: std::sync::Mutex<Option<ScrapeResult>>,
+    }
+
+    impl CapturingScrapeResultRepository {
+        fn new() -> Self {
+            Self {
+                captured: std::sync::Mutex::new(None),
+            }
+        }
+        fn captured(&self) -> Option<ScrapeResult> {
+            self.captured.lock().ok()?.clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ScrapeResultRepository for CapturingScrapeResultRepository {
+        async fn save(&self, result: ScrapeResult) -> Result<()> {
+            let mut guard = self.captured.lock().expect("captured mutex poisoned");
+            *guard = Some(result);
+            Ok(())
+        }
+        async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<ScrapeResult>> {
+            Ok(None)
+        }
+        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> Result<Vec<ScrapeResult>> {
+            Ok(vec![])
+        }
+        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
+            Ok(0.0)
+        }
+    }
+
     /// Mock CrawlRepository — all methods return Ok with default values.
     struct MockCrawlRepository;
 
@@ -2651,6 +2907,7 @@ mod tests {
                 headers: HashMap::new(),
                 response_time_ms: 0,
                 final_url: None,
+                markdown: None,
             })
         }
     }
@@ -2714,16 +2971,23 @@ mod tests {
             .expect("Failed to load settings for mock worker");
         let settings_arc = Arc::new(settings.clone());
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
 
         ScrapeWorker::new(
-            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            task_repo,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             settings_arc,
             10,
@@ -2732,6 +2996,48 @@ mod tests {
             #[cfg(feature = "metrics")]
             make_test_memory_scheduler(),
         )
+    }
+
+    /// T042: 构造使用 CapturingScrapeResultRepository 的 worker
+    ///
+    /// 返回 (worker, capturing_repo_arc) —— 调用方通过 capturing_repo_arc.captured()
+    /// 获取 save_result 保存的 ScrapeResult 以断言 meta_data 内容。
+    async fn build_mock_worker_with_capturing_repo(
+    ) -> (ScrapeWorker, Arc<CapturingScrapeResultRepository>) {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings for mock worker");
+        let settings_arc = Arc::new(settings.clone());
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let capturing_repo = Arc::new(CapturingScrapeResultRepository::new());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> =
+            capturing_repo.clone() as Arc<dyn ScrapeResultRepository>;
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
+
+        let worker = ScrapeWorker::new(
+            task_repo,
+            result_repo,
+            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            engine_client,
+            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            team_semaphore,
+            coalesce_coordinator,
+            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+            settings_arc,
+            10,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            regex_cache,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
+        );
+        (worker, capturing_repo)
     }
 
     // --- should_crawl tests ---
@@ -3094,6 +3400,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let result = worker.save_result(&task, &response, None).await;
         assert!(result.is_ok());
@@ -3111,6 +3418,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
         let extra = json!({"title": "Test Page", "links": 5});
         let result = worker.save_result(&task, &response, Some(extra)).await;
@@ -3129,6 +3437,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 200,
             final_url: None,
+            markdown: None,
         };
         let result = worker.save_result(&task, &response, None).await;
         assert!(result.is_ok());
@@ -3148,6 +3457,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let result = worker.process_text_encoding(&task, &response).await;
         // Should either return processed content or an error (depending on
@@ -3261,6 +3571,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
         let mut rules = HashMap::new();
         rules.insert(
@@ -3295,6 +3606,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 30,
             final_url: None,
+            markdown: None,
         };
         let result = worker
             .handle_prompt_extraction(
@@ -3322,6 +3634,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 20,
             final_url: None,
+            markdown: None,
         };
         let schema = json!({"type": "object", "properties": {"title": {"type": "string"}}});
         let result = worker
@@ -3345,6 +3658,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
         let result = worker
             .save_extract_result(
@@ -3370,6 +3684,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 5,
             final_url: None,
+            markdown: None,
         };
         let result = worker
             .save_extract_result(&mut task, &response, None, "https://example.com")
@@ -3398,6 +3713,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let result = worker
@@ -3418,6 +3734,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let result = worker
@@ -3443,6 +3760,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(Some(vec!["example\\.com".to_string()]), None);
         let result = worker
@@ -3499,8 +3817,12 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
-        let result = worker.handle_scrape_success(&task, &response).await;
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), &response)
+            .await;
         assert!(result.is_ok());
     }
 
@@ -3528,9 +3850,246 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
-        let result = worker.handle_scrape_success(&task, &response).await;
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), &response)
+            .await;
         assert!(result.is_ok());
+    }
+
+    // --- T042/R-content-001: Markdown 集成测试（gated `markdown` 特性） ---
+
+    /// formats 含 "markdown" 时应生成 Markdown 并持久化到 meta_data
+    #[cfg(feature = "markdown")]
+    #[tokio::test]
+    async fn test_handle_scrape_success_with_markdown_format_generates_markdown() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "formats": ["markdown"],
+        }));
+        let response = ScrapeResponse {
+            content: r#"<html><body><h1>Title</h1><p>Paragraph text</p></body></html>"#
+                .to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: None,
+        };
+
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), &response)
+            .await;
+        assert!(result.is_ok(), "handle_scrape_success should succeed");
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        let meta = &saved.meta_data;
+        assert!(
+            meta.get("markdown").is_some(),
+            "meta_data should contain markdown key, got: {meta}"
+        );
+        let md = meta
+            .get("markdown")
+            .and_then(|v| v.as_str())
+            .expect("markdown should be a string");
+        assert!(
+            md.contains("Title"),
+            "markdown should contain heading text, got: {md}"
+        );
+        assert!(
+            md.contains("Paragraph text"),
+            "markdown should contain paragraph text, got: {md}"
+        );
+    }
+
+    /// formats 不含 "markdown" 时不应生成 Markdown
+    #[cfg(feature = "markdown")]
+    #[tokio::test]
+    async fn test_handle_scrape_success_without_markdown_format_no_markdown() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "formats": ["html"],
+        }));
+        let response = ScrapeResponse {
+            content: r#"<html><body><h1>Title</h1></body></html>"#.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: None,
+        };
+
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), &response)
+            .await;
+        assert!(result.is_ok());
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        // meta_data 应为 Null（无提取规则、无 markdown）
+        assert!(
+            saved.meta_data.is_null(),
+            "meta_data should be null when no markdown requested, got: {}",
+            saved.meta_data
+        );
+    }
+
+    /// formats 为 None 时不应生成 Markdown
+    #[cfg(feature = "markdown")]
+    #[tokio::test]
+    async fn test_handle_scrape_success_no_formats_field_no_markdown() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({
+            "url": "https://example.com",
+        }));
+        let response = ScrapeResponse {
+            content: r#"<html><body><h1>Title</h1></body></html>"#.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: None,
+        };
+
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), &response)
+            .await;
+        assert!(result.is_ok());
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        assert!(
+            saved.meta_data.is_null(),
+            "meta_data should be null when formats field absent, got: {}",
+            saved.meta_data
+        );
+    }
+
+    /// save_result 应将 markdown 合并到已存在的 meta_data Object 中
+    #[cfg(feature = "markdown")]
+    #[tokio::test]
+    async fn test_save_result_merges_markdown_into_existing_meta_data() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: "<html><body>Hello</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: Some("# Hello".to_string()),
+        };
+        // 已有提取数据：title 字段
+        let existing_meta = json!({"title": "Existing Title"});
+
+        let result = worker.save_result(&task, &response, Some(existing_meta)).await;
+        assert!(result.is_ok());
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        let meta = &saved.meta_data;
+        assert!(
+            meta.get("title").and_then(|v| v.as_str()) == Some("Existing Title"),
+            "meta_data should preserve existing extracted fields, got: {meta}"
+        );
+        assert!(
+            meta.get("markdown").and_then(|v| v.as_str()) == Some("# Hello"),
+            "meta_data should contain merged markdown, got: {meta}"
+        );
+    }
+
+    /// save_result 在 meta_data 为 Null 时应创建 {"markdown": "..."} 对象
+    #[cfg(feature = "markdown")]
+    #[tokio::test]
+    async fn test_save_result_with_markdown_only_creates_markdown_object() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: "<html><body>Hello</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: Some("# Generated MD".to_string()),
+        };
+
+        let result = worker.save_result(&task, &response, None).await;
+        assert!(result.is_ok());
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        let meta = &saved.meta_data;
+        assert!(
+            meta.is_object(),
+            "meta_data should be an object when only markdown present, got: {meta}"
+        );
+        assert!(
+            meta.get("markdown").and_then(|v| v.as_str()) == Some("# Generated MD"),
+            "meta_data should contain markdown, got: {meta}"
+        );
+        // 仅含 markdown 一个键
+        assert_eq!(
+            meta.as_object().map(|o| o.len()),
+            Some(1),
+            "meta_data should have exactly one key (markdown), got: {meta}"
+        );
+    }
+
+    /// save_result 在 response.markdown 为 None 时不应修改 meta_data
+    #[tokio::test]
+    async fn test_save_result_without_markdown_does_not_modify_meta_data() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: "<html><body>Hello</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: None,
+        };
+        let existing_meta = json!({"title": "Only Title"});
+
+        let result = worker.save_result(&task, &response, Some(existing_meta)).await;
+        assert!(result.is_ok());
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        let meta = &saved.meta_data;
+        assert!(
+            meta.get("title").and_then(|v| v.as_str()) == Some("Only Title"),
+            "meta_data should preserve existing fields, got: {meta}"
+        );
+        assert!(
+            meta.get("markdown").is_none(),
+            "meta_data should not contain markdown key when response.markdown is None, got: {meta}"
+        );
     }
 
     // --- handle_crawl_success tests ---
@@ -3547,6 +4106,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let request = worker.build_crawl_request(&task, &config);
@@ -3568,6 +4128,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let mut config = make_crawl_config(None, None);
         config.max_depth = 1;
@@ -3708,7 +4269,7 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
-        let worker = ScrapeWorkerBuilder::new()
+        let builder = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
                 Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
@@ -3728,9 +4289,10 @@ mod tests {
             .with_extraction_service(
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
-            .with_regex_cache(regex_cache)
-            .with_memory_scheduler(make_test_memory_scheduler())
-            .build();
+            .with_regex_cache(regex_cache);
+        #[cfg(feature = "metrics")]
+        let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
+        let worker = builder.build();
 
         assert!(worker.is_ok(), "build should succeed with all deps");
         let w = worker.unwrap();
@@ -4033,7 +4595,7 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
-        let worker = ScrapeWorkerBuilder::new()
+        let builder = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
                 Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
@@ -4054,10 +4616,10 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
-            .with_default_concurrency_limit(100)
-            .with_memory_scheduler(make_test_memory_scheduler())
-            .build()
-            .expect("build should succeed");
+            .with_default_concurrency_limit(100);
+        #[cfg(feature = "metrics")]
+        let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
+        let worker = builder.build().expect("build should succeed");
 
         assert_eq!(worker.default_concurrency_limit, 100);
     }
@@ -4094,12 +4656,18 @@ mod tests {
         );
         let services = init_services(
             &infra,
-            engines.router.clone(),
             engines.engine_client.clone(),
             infra.http_client.clone(),
             &settings,
         )
         .await;
+
+        // H-4 职责拆分：构造 CoalesceCoordinator（共享 task_repo + result_repo + request_coalescer）
+        let coalesce_coordinator = make_coalesce_coordinator_with_coalescer(
+            infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>,
+            infra.repositories.result_repo.clone() as Arc<dyn ScrapeResultRepository>,
+            services.request_coalescer.clone(),
+        );
 
         // Construct ScrapeWorker via new().
         let worker = ScrapeWorker::new(
@@ -4111,6 +4679,7 @@ mod tests {
             engines.engine_client.clone(),
             services.create_scrape_use_case.clone(),
             services.team_semaphore.clone(),
+            coalesce_coordinator,
             services.robots_checker.clone(),
             settings_arc,
             settings.concurrency.default_team_limit as usize,
@@ -4259,7 +4828,6 @@ mod tests {
         );
         let services = init_services(
             &infra,
-            engines.router.clone(),
             engines.engine_client.clone(),
             infra.http_client.clone(),
             &settings,
@@ -4267,7 +4835,7 @@ mod tests {
         .await;
 
         // Use ScrapeWorkerBuilder to construct the worker.
-        let worker =
+        let builder =
             ScrapeWorkerBuilder::new()
                 .with_repository(infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>)
                 .with_result_repository(
@@ -4287,10 +4855,12 @@ mod tests {
                 .with_settings(settings_arc)
                 .with_default_concurrency_limit(settings.concurrency.default_team_limit as usize)
                 .with_extraction_service(services.extraction_service.clone())
-                .with_regex_cache((*services.regex_cache).clone())
-                .with_memory_scheduler(make_test_memory_scheduler())
-                .build()
-                .expect("ScrapeWorkerBuilder::build should succeed with all required deps");
+                .with_regex_cache((*services.regex_cache).clone());
+        #[cfg(feature = "metrics")]
+        let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
+        let worker = builder
+            .build()
+            .expect("ScrapeWorkerBuilder::build should succeed with all required deps");
 
         // Verify the builder produced a valid worker.
         assert_ne!(worker.worker_id, Uuid::nil());
@@ -4434,16 +5004,23 @@ mod tests {
             .expect("Failed to load settings for mock worker");
         let settings_arc = Arc::new(settings.clone());
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
 
         ScrapeWorker::new(
-            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            task_repo,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             settings_arc,
             10,
@@ -4492,6 +5069,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let mut rules = HashMap::new();
         rules.insert(
@@ -4549,8 +5127,12 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
-        let result = worker.handle_scrape_success(&task, &response).await;
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), &response)
+            .await;
         assert!(result.is_ok());
     }
 
@@ -4632,6 +5214,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = CrawlConfigDto {
             max_depth: 3,
@@ -4672,6 +5255,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let result = worker
@@ -4759,6 +5343,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
         let mut rules = HashMap::new();
         rules.insert(
@@ -4791,6 +5376,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 30,
             final_url: None,
+            markdown: None,
         };
         let result = worker
             .handle_prompt_extraction(
@@ -4816,6 +5402,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 20,
             final_url: None,
+            markdown: None,
         };
         let schema = json!({"type": "object", "properties": {"title": {"type": "string"}}});
         let result = worker
@@ -4868,6 +5455,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let request = worker.build_crawl_request(&task, &config);
@@ -4891,6 +5479,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 30,
             final_url: None,
+            markdown: None,
         };
         let result = worker.process_text_encoding(&task, &response).await;
         // Should not panic — may succeed or fail depending on integration
@@ -4912,6 +5501,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 5,
             final_url: None,
+            markdown: None,
         };
         let result = worker.process_text_encoding(&task, &response).await;
         match result {
@@ -4936,6 +5526,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 500,
             final_url: None,
+            markdown: None,
         };
         let result = worker.save_result(&task, &response, None).await;
         assert!(result.is_ok());
@@ -5366,6 +5957,7 @@ mod tests {
                     EngineError::SsrfProtection(s) => EngineError::SsrfProtection(s.clone()),
                     EngineError::BrowserError(s) => EngineError::BrowserError(s.clone()),
                     EngineError::AntiBotDetected(s) => EngineError::AntiBotDetected(s.clone()),
+                    EngineError::FeatureToggle(s) => EngineError::FeatureToggle(s.clone()),
                     EngineError::RequestFailed(s) => EngineError::RequestFailed(s.clone()),
                     EngineError::Other(s) => EngineError::Other(s.clone()),
                     EngineError::Internal(s) => EngineError::Internal(s.clone()),
@@ -5447,16 +6039,22 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings()
             .expect("Failed to load settings for configurable worker");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
 
         ScrapeWorker::new(
             task_repo,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             crawl_repo,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             robots_checker,
             Arc::new(settings),
             10,
@@ -5478,9 +6076,14 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings()
             .expect("Failed to load settings for failing deps worker");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
 
         ScrapeWorker::new(
-            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
+            task_repo,
             result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             webhook_service,
@@ -5488,6 +6091,7 @@ mod tests {
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
@@ -5567,16 +6171,22 @@ mod tests {
 
         // TeamSemaphore with capacity 0 — no permits can be acquired
         let team_semaphore = Arc::new(TeamSemaphore::new(0));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
 
         let worker = ScrapeWorker::new(
             task_repo.clone(),
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             Arc::new(EngineClient::new()),
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
@@ -5638,16 +6248,22 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings()
             .expect("Failed to load settings for memory critical test");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone() as Arc<dyn TaskRepository>,
+            result_repo.clone(),
+        );
 
         let worker = ScrapeWorker::new(
             task_repo.clone() as Arc<dyn TaskRepository>,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             Arc::new(EngineClient::new()),
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
@@ -5745,16 +6361,22 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings()
             .expect("Failed to load settings for memory pressure test");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone() as Arc<dyn TaskRepository>,
+            result_repo.clone(),
+        );
 
         let worker = ScrapeWorker::new(
             task_repo.clone() as Arc<dyn TaskRepository>,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             Arc::new(EngineClient::new()),
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
@@ -6208,6 +6830,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
         let result = worker
             .save_extract_result(&mut task, &response, None, "https://example.com")
@@ -6319,15 +6942,23 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(FailingScrapeResultRepo);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
+
         let worker = ScrapeWorker::new(
-            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
-            Arc::new(FailingScrapeResultRepo) as Arc<dyn ScrapeResultRepository>,
+            task_repo,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
@@ -6346,6 +6977,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let request = worker.build_crawl_request(&task, &config);
@@ -6371,16 +7003,23 @@ mod tests {
         crawl_repo
             .fail_increment_completed
             .store(true, Ordering::SeqCst);
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
 
         let worker = ScrapeWorker::new(
-            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            task_repo,
+            result_repo,
             crawl_repo,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
@@ -6399,6 +7038,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let mut config = make_crawl_config(None, None);
         config.max_depth = 0; // No link extraction — depth 0 < max_depth 0 is false
@@ -6422,15 +7062,23 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(ConfigurableTaskRepo::new());
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
+
         let worker = ScrapeWorker::new(
-            Arc::new(ConfigurableTaskRepo::new()) as Arc<dyn TaskRepository>,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            task_repo,
+            result_repo,
             Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
@@ -6468,15 +7116,22 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
+
         let worker = ScrapeWorker::new(
             task_repo.clone(),
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(DenyingRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
@@ -6601,16 +7256,22 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings()
             .expect("Failed to load settings for success tests");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
 
         ScrapeWorker::new(
             task_repo,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             credits_repo,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
@@ -6705,16 +7366,22 @@ mod tests {
         let regex_cache = make_regex_cache().await;
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(FailingScrapeResultRepo);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone(),
+            result_repo.clone(),
+        );
 
         let worker = ScrapeWorker::new(
             task_repo.clone(),
-            Arc::new(FailingScrapeResultRepo) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
@@ -6813,6 +7480,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let result = worker
@@ -6864,9 +7532,13 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
 
-        let result = worker.handle_scrape_success(&task, &response).await;
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), &response)
+            .await;
         assert!(
             result.is_ok(),
             "handle_scrape_success should not fail when extraction fails"
@@ -6992,6 +7664,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
         let mut rules = HashMap::new();
         rules.insert(
@@ -7281,6 +7954,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let result = worker
@@ -7336,9 +8010,13 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
 
-        let result = worker.handle_scrape_success(&task, &response).await;
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), &response)
+            .await;
         // Should still succeed — credit deduction failure is just logged
         assert!(
             result.is_ok(),

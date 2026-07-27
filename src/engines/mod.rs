@@ -19,6 +19,16 @@ pub mod validators;
 #[cfg(feature = "antibot")]
 pub mod antibot;
 
+// JS 注入模块（T029-T031，R-jsrender-002）— 由 `engine-playwright` feature 门控
+// 依赖 chromiumoxide::Page，仅在浏览器引擎启用时可用
+#[cfg(feature = "engine-playwright")]
+pub mod js_inject;
+
+// 请求拦截模块（T033，R-jsrender-003）— 由 `engine-playwright` feature 门控
+// 依赖 chromiumoxide CDP Fetch domain + network::ResourceType
+#[cfg(feature = "engine-playwright")]
+pub mod intercept;
+
 // Shared validation utilities for SSRF protection
 pub mod shared;
 

@@ -385,6 +385,7 @@ mod tests {
                 mem_pressure_threshold: 0.8,
                 mem_critical_threshold: 0.9,
                 critical_timeout_seconds: 30,
+                adaptive_enabled: false,
             },
             webhook: WebhookSettings::default(),
             bing_search: BingSearchSettings::default(),

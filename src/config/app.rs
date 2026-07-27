@@ -155,6 +155,7 @@ pub struct RateLimitingSettings {
 /// * `mem_pressure_threshold` - 内存使用率进入 Pressure 状态的阈值，默认 0.8
 /// * `mem_critical_threshold` - 内存使用率进入 Critical 状态的阈值，默认 0.9
 /// * `critical_timeout_seconds` - Critical 状态持续多久后触发优雅关闭信号，默认 30 秒
+/// * `adaptive_enabled` - 是否启用 AIMD 自适应并发（T037/R-runtime-003），默认 false
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__CONCURRENCY__")]
 pub struct ConcurrencySettings {
@@ -185,6 +186,16 @@ pub struct ConcurrencySettings {
     /// 持续处于 Critical 状态超过该时长，调度器会触发优雅关闭信号。
     #[config(default = 30)]
     pub critical_timeout_seconds: u64,
+
+    /// T037/R-runtime-003：AIMD 自适应并发开关
+    ///
+    /// - `false`（默认）：使用固定并发（`default_team_limit`），行为等同 Stage 1 之前
+    /// - `true`：每队信号量由 `AdaptiveSemaphore` 承载，`scrape_worker` 成功/失败
+    ///   回填 `AIMDController::record_*`，动态 target 推入 `AdaptiveSemaphore::set_target`
+    ///
+    /// 默认关闭以保留向后兼容；开启后增强固定并发为动态带宽利用。
+    #[config(default = false)]
+    pub adaptive_enabled: bool,
 }
 
 #[cfg(test)]
@@ -293,12 +304,14 @@ mod tests {
             mem_pressure_threshold: 0.75,
             mem_critical_threshold: 0.85,
             critical_timeout_seconds: 45,
+            adaptive_enabled: true,
         };
         assert_eq!(settings.default_team_limit, 20);
         assert_eq!(settings.task_lock_duration_seconds, 600);
         assert!((settings.mem_pressure_threshold - 0.75).abs() < f64::EPSILON);
         assert!((settings.mem_critical_threshold - 0.85).abs() < f64::EPSILON);
         assert_eq!(settings.critical_timeout_seconds, 45);
+        assert!(settings.adaptive_enabled);
     }
 
     /// T018：内存感知调度器默认阈值符合 design.md（pressure=0.8, critical=0.9, timeout=30s）
@@ -310,5 +323,18 @@ mod tests {
         assert_eq!(settings.critical_timeout_seconds, 30);
         // pressure 必须严格小于 critical，否则状态机永不进入 Pressure
         assert!(settings.mem_pressure_threshold < settings.mem_critical_threshold);
+    }
+
+    /// T037/R-runtime-003：adaptive_enabled 默认 false（向后兼容）
+    ///
+    /// 默认关闭 AIMD 自适应并发，行为等同 Stage 1 之前的固定并发模式。
+    /// 开启后增强为动态带宽利用（每队 AdaptiveSemaphore + AIMDController）。
+    #[test]
+    fn test_concurrency_settings_adaptive_enabled_default_false() {
+        let settings = super::ConcurrencySettings::default();
+        assert!(
+            !settings.adaptive_enabled,
+            "adaptive_enabled must default to false for backward compatibility"
+        );
     }
 }

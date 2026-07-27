@@ -13,7 +13,7 @@ use axum::{
     Extension,
 };
 
-use crate::presentation::middleware::team_semaphore::TeamSemaphore;
+use crate::domain::services::team_semaphore::TeamSemaphore;
 
 /// 从请求扩展中提取team_id
 /// 认证中间件会将team_id注入到请求扩展中

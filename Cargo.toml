@@ -37,6 +37,10 @@ engine-flaresolverr = []
 # aho-corasick 用于 Tier2 通用词字面量集的多模式匹配（AC 自动机）
 antibot = ["dep:aho-corasick"]
 
+# --- Markdown 转换特性（content-processing, T039/R-content-001） ---
+# htmd 用于 HTML→Markdown 转换（Stage2 P1）
+markdown = ["dep:htmd"]
+
 # --- 浏览器下载特性 ---
 browser-download = ["dep:chromiumoxide_fetcher"]
 
@@ -149,6 +153,10 @@ chromiumoxide_fetcher = { version = "0.9", optional = true }
 # Anti-bot detection — gated by `antibot` feature (T008/R-antibot-002)
 # aho-corasick: Tier2 通用词字面量集的多模式匹配（AC 自动机）
 aho-corasick = { version = "1.1", optional = true }
+
+# Markdown conversion — gated by `markdown` feature (T039/R-content-001)
+# htmd: HTML→Markdown 转换主路径（Stage2 P1）
+htmd = { version = "0.2", optional = true }
 
 # Text processing and encoding
 chardetng = { version = "1.0" }
@@ -316,5 +324,5 @@ members = ["examples"]
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "admin-tools", "teams", "auth", "rate-limit", "webhook", "antibot"))',
+    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "admin-tools", "teams", "auth", "rate-limit", "webhook", "antibot", "markdown"))',
 ]

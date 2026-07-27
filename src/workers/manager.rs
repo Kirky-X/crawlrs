@@ -10,9 +10,13 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
-use crate::presentation::middleware::team_semaphore::TeamSemaphore;
+use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
+// T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
+use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::regex_cache::RegexCache;
+// H-4 职责拆分：CoalesceCoordinator（封装 try_coalesce 逻辑，注入 ScrapeWorker）
+use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 use crate::workers::expiration_worker::ExpirationWorker;
 use crate::workers::scrape_worker::ScrapeWorker;
 use crate::workers::{AbstractWorker, Worker};
@@ -38,6 +42,17 @@ pub struct WorkerManager {
     engine_client: Arc<EngineClient>,
     create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     team_semaphore: Arc<TeamSemaphore>,
+    /// 请求合并器（T035/R-runtime-002）
+    ///
+    /// 由 `WorkerManagerDeps` 从 `ServicesComponents.request_coalescer` 注入，
+    /// 所有 worker 共享同一实例。
+    request_coalescer: Arc<RequestCoalescer>,
+    /// 请求合并协调器（H-4 职责拆分）
+    ///
+    /// 由 `WorkerManager::new` 从 `repository` + `result_repository` +
+    /// `request_coalescer` 构造，封装 `try_coalesce` 逻辑。所有 worker 共享
+    /// 同一实例（通过 `Arc` clone 注入）。
+    coalesce_coordinator: Arc<CoalesceCoordinator>,
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
     default_concurrency_limit: usize,
@@ -64,6 +79,8 @@ pub struct WorkerManagerDeps {
     pub engine_client: Arc<EngineClient>,
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     pub team_semaphore: Arc<TeamSemaphore>,
+    /// 请求合并器（T035/R-runtime-002）
+    pub request_coalescer: Arc<RequestCoalescer>,
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
     pub http_client: Arc<reqwest::Client>,
     pub extraction_service:
@@ -98,6 +115,14 @@ impl WorkerManager {
             ))
         };
 
+        // H-4 职责拆分：在 move 前构造 CoalesceCoordinator，共享 repository +
+        // result_repository + request_coalescer（所有 worker 共享同一实例）
+        let coalesce_coordinator = Arc::new(CoalesceCoordinator::new(
+            deps.repository.clone(),
+            deps.result_repository.clone(),
+            deps.request_coalescer.clone(),
+        ));
+
         Self {
             queue: deps.queue,
             repository: deps.repository,
@@ -108,6 +133,8 @@ impl WorkerManager {
             engine_client: deps.engine_client,
             create_scrape_use_case: deps.create_scrape_use_case,
             team_semaphore: deps.team_semaphore,
+            coalesce_coordinator,
+            request_coalescer: deps.request_coalescer,
             robots_checker: deps.robots_checker,
             settings: config.settings,
             default_concurrency_limit: config.default_concurrency_limit,
@@ -135,6 +162,27 @@ impl WorkerManager {
             expiration_worker.run().await;
         }));
 
+        // 性能审查 H-1 修复：定期调度 RequestCoalescer::purge_stale
+        //
+        // worker panic / 死锁可能导致 CoalesceGuard 未 Drop，使 in-flight 条目
+        // 永久驻留 DashMap 阻塞同 URL 后续请求。每 60s 调用 purge_stale 清理
+        // 僵死条目（STALE_TIMEOUT=120s），并通过 broadcast 通知等待方重试。
+        let coalescer_for_purge = self.request_coalescer.clone();
+        self.handles.push(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            interval.tick().await; // 跳过首次立即触发
+            loop {
+                interval.tick().await;
+                let purged = coalescer_for_purge.purge_stale();
+                if purged > 0 {
+                    info!(
+                        "purge_stale cleaned up {} zombie coalesce entries",
+                        purged
+                    );
+                }
+            }
+        }));
+
         for _ in 0..count {
             let worker = ScrapeWorker::new(
                 self.repository.clone(),
@@ -145,6 +193,7 @@ impl WorkerManager {
                 self.engine_client.clone(),
                 self.create_scrape_use_case.clone(),
                 self.team_semaphore.clone(),
+                self.coalesce_coordinator.clone(),
                 self.robots_checker.clone(),
                 self.settings.clone(),
                 self.default_concurrency_limit,
@@ -903,6 +952,7 @@ mod tests {
             engine_client: Arc::new(EngineClient::new()),
             create_scrape_use_case: Arc::new(MockCreateScrapeUseCase),
             team_semaphore: Arc::new(TeamSemaphore::new(10)),
+            request_coalescer: Arc::new(crate::utils::coalesce::RequestCoalescer::new()),
             robots_checker: Arc::new(MockRobotsChecker),
             http_client: Arc::new(reqwest::Client::new()),
             extraction_service: Arc::new(MockExtractionService),
@@ -921,8 +971,8 @@ mod tests {
 
     // ---- WorkerManager::new tests ----
 
-    #[test]
-    fn test_worker_manager_new_assigns_fields() {
+    #[tokio::test]
+    async fn test_worker_manager_new_assigns_fields() {
         let manager = WorkerManager::new(make_deps(), make_config());
         assert_eq!(manager.default_concurrency_limit, 10);
         assert!(
@@ -937,10 +987,11 @@ mod tests {
     async fn test_start_workers_zero_count_starts_only_expiration_worker() {
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(0).await;
+        // start_workers(0) 启动：1 个 expiration worker + 1 个 purge_stale 调度任务
         assert_eq!(
             manager.handles.len(),
-            1,
-            "start_workers(0) should start only the expiration worker"
+            2,
+            "start_workers(0) should start expiration + purge_stale scheduler"
         );
     }
 
@@ -948,10 +999,11 @@ mod tests {
     async fn test_start_workers_multiple_count() {
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(3).await;
+        // start_workers(3) 启动：1 expiration + 1 purge_stale + 3 scrape = 5
         assert_eq!(
             manager.handles.len(),
-            4,
-            "start_workers(3) should start 1 expiration + 3 scrape workers"
+            5,
+            "start_workers(3) should start expiration + purge_stale + 3 scrape workers"
         );
     }
 
@@ -959,7 +1011,8 @@ mod tests {
     async fn test_start_workers_handles_are_aborted_on_drop() {
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(1).await;
-        assert_eq!(manager.handles.len(), 2);
+        // start_workers(1) 启动：1 expiration + 1 purge_stale + 1 scrape = 3
+        assert_eq!(manager.handles.len(), 3);
 
         // Give workers a moment to start.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1010,7 +1063,8 @@ mod tests {
 
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(1).await;
-        assert_eq!(manager.handles.len(), 2);
+        // start_workers(1) 启动：1 expiration + 1 purge_stale + 1 scrape = 3
+        assert_eq!(manager.handles.len(), 3);
 
         // Spawn a task to send SIGINT after a short delay, giving wait_for_shutdown
         // time to register the tokio signal handler.

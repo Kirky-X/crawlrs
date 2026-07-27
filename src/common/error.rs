@@ -441,6 +441,9 @@ impl From<crate::engines::engine_client::EngineError> for CrawlRsError {
             crate::engines::engine_client::EngineError::AntiBotDetected(msg) => {
                 CrawlRsError::Engine(format!("Anti-bot detected: {}", msg))
             }
+            crate::engines::engine_client::EngineError::FeatureToggle(msg) => {
+                CrawlRsError::Engine(format!("Feature toggle: {}", msg))
+            }
             crate::engines::engine_client::EngineError::Expired => {
                 CrawlRsError::Timeout("Request expired".to_string())
             }

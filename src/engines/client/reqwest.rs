@@ -7,7 +7,7 @@ use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use crate::engines::validators;
-use crate::utils::http_client::DEFAULT_USER_AGENT;
+use crate::utils::ua_pool::UaPool;
 use async_trait::async_trait;
 use log::error;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -30,6 +30,8 @@ pub struct ReqwestEngine {
     /// 引擎级请求超时（秒），用于 build_custom_client 构造临时 client（proxy/skip_tls 路径）
     /// 注入自 Settings.timeouts.engines.default_timeout_seconds（架构 MEDIUM：避免硬编码 30 秒）
     timeout_seconds: u64,
+    /// UA 池（R-identity-001）：每次请求从池中选取一致的 UA + Accept-Language + sec-ch-ua
+    ua_pool: UaPool,
 }
 
 impl ReqwestEngine {
@@ -51,6 +53,7 @@ impl ReqwestEngine {
             proxy_url: None,
             proxy_client: None,
             timeout_seconds,
+            ua_pool: UaPool::default(),
         }
     }
 
@@ -90,7 +93,14 @@ impl ReqwestEngine {
             proxy_url,
             proxy_client,
             timeout_seconds,
+            ua_pool: UaPool::default(),
         }
+    }
+
+    /// 获取 UA 池引用（用于测试验证 R-identity-001）
+    #[must_use]
+    pub fn ua_pool(&self) -> &UaPool {
+        &self.ua_pool
     }
 
     /// 构建自定义 reqwest::Client（统一处理 proxy + skip_tls）
@@ -251,36 +261,33 @@ impl ScraperEngine for ReqwestEngine {
         // 传入 skip_tls_verification 以支持开发环境跳过 TLS 验证（生产环境由 builder 拒绝）
         let client = self.get_client(&request.proxy, request.skip_tls_verification);
 
+        // R-identity-001: 从 UaPool 取一致的 UA + Accept-Language + sec-ch-ua profile
+        // 替换原固定 DEFAULT_USER_AGENT / 固定移动 UA 分支；
+        // DEFAULT_USER_AGENT 仍保留在 http_client.rs 作为 client 级默认（UaPool 不可用时的回退）
+        let profile = self.ua_pool.pick(request.mobile);
+
         // Create request builder.
         //
-        // Use a real desktop browser User-Agent instead of a self-identifying
+        // Use a real browser User-Agent from UaPool instead of a self-identifying
         // `crawlrs/*` UA: major search engines (Baidu, Sogou, Bing) reject
         // bot-identified requests with a 227-byte JS-redirect error page
         // instead of returning actual search results.
         let mut request_builder = match request.method {
-            crate::engines::engine_client::HttpMethod::Get => {
-                if request.mobile {
-                    client
-                        .get(&request.url)
-                        .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
-                } else {
-                    client
-                        .get(&request.url)
-                        .header("User-Agent", DEFAULT_USER_AGENT)
-                }
-            }
-            crate::engines::engine_client::HttpMethod::Post => {
-                if request.mobile {
-                    client
-                        .post(&request.url)
-                        .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
-                } else {
-                    client
-                        .post(&request.url)
-                        .header("User-Agent", DEFAULT_USER_AGENT)
-                }
-            }
+            crate::engines::engine_client::HttpMethod::Get => client.get(&request.url),
+            crate::engines::engine_client::HttpMethod::Post => client.post(&request.url),
         };
+
+        // 应用 UA 绑定 headers（User-Agent + Accept-Language + sec-ch-ua）
+        // - User-Agent: 所有 profile 必设
+        // - Accept-Language: 所有 profile 必设
+        // - sec-ch-ua: 仅 Chromium-based 浏览器（Firefox/Safari 为空串，跳过）
+        // 用户自定义 headers（request.headers）在后文 insert，可覆盖这些默认值
+        request_builder = request_builder
+            .header("User-Agent", profile.ua)
+            .header("Accept-Language", profile.accept_language);
+        if !profile.sec_ch_ua.is_empty() {
+            request_builder = request_builder.header("sec-ch-ua", profile.sec_ch_ua);
+        }
 
         // Add custom headers
         request_builder = request_builder.headers(headers);
@@ -420,7 +427,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        }
+            block_ads: false,
+            block_media: false,
+            }
     }
 
     fn create_request_with_js(url: &str) -> InternalScrapeRequest {
@@ -440,7 +449,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        }
+            block_ads: false,
+            block_media: false,
+            }
     }
 
     fn create_request_with_screenshot(url: &str) -> InternalScrapeRequest {
@@ -465,7 +476,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        }
+            block_ads: false,
+            block_media: false,
+            }
     }
 
     // === ReqwestEngine creation tests ===
@@ -538,7 +551,9 @@ mod tests {
             actions: Vec::new(),
             body: Some("data".to_string()),
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         assert_eq!(engine.support_score(&request), 100);
     }
 
@@ -580,7 +595,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         assert_eq!(engine.support_score(&request), 10);
     }
 
@@ -604,7 +621,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         // Mobile without JS should still get 100
         assert_eq!(engine.support_score(&request), 100);
     }
@@ -729,7 +748,9 @@ mod tests {
             actions: Vec::new(),
             body: Some("data".to_string()),
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         let result = engine.scrape(&request).await;
         assert!(result.is_err());
     }
@@ -754,7 +775,9 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         let result = engine.scrape(&request).await;
         assert!(result.is_err());
     }
@@ -956,5 +979,149 @@ mod tests {
         // skip_tls + 注入 timeout=120 → build_custom_client 用 120 秒构建临时 client
         // 验证不 panic + warn 日志输出
         let _result = engine.get_client(&Some("http://proxy:8080".to_string()), true);
+    }
+
+    // === T021 / R-identity-001: UaPool 集成测试 ===
+
+    #[test]
+    fn test_reqwest_engine_has_non_empty_ua_pool() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        assert!(pool.count(false) >= 20, "desktop pool must have >= 20 profiles");
+        assert!(pool.count(true) >= 20, "mobile pool must have >= 20 profiles");
+    }
+
+    #[test]
+    fn test_reqwest_engine_pick_ua_returns_varied_profiles() {
+        // R-identity-001: 多次选取应返回不同 UA（随机性，避免固定 UA 被反爬识别）
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        let mut uas = std::collections::HashSet::new();
+        for _ in 0..50 {
+            uas.insert(pool.pick(false).ua);
+        }
+        assert!(
+            uas.len() >= 2,
+            "multiple picks should return varied UAs, got only {} unique in 50 picks",
+            uas.len()
+        );
+    }
+
+    #[test]
+    fn test_reqwest_engine_pick_ua_mobile_vs_desktop() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        // mobile=true 应返回移动 profile
+        for _ in 0..10 {
+            let p = pool.pick(true);
+            assert!(p.mobile, "pick(true) must return mobile profile");
+        }
+        // mobile=false 应返回桌面 profile
+        for _ in 0..10 {
+            let p = pool.pick(false);
+            assert!(!p.mobile, "pick(false) must return desktop profile");
+        }
+    }
+
+    #[test]
+    fn test_reqwest_engine_pick_seeded_is_stable() {
+        // R-identity-001: 同 seed 必须稳定返回同一 profile（重试时轮换 UA 的基础）
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        let seed = 7_u64;
+        let p1 = pool.pick_seeded(seed, false);
+        let p2 = pool.pick_seeded(seed, false);
+        let p3 = pool.pick_seeded(seed, true);
+        let p4 = pool.pick_seeded(seed, true);
+        assert_eq!(p1.ua, p2.ua, "desktop: same seed must return same UA");
+        assert_eq!(p3.ua, p4.ua, "mobile: same seed must return same UA");
+        // desktop 和 mobile 同 seed 应返回不同 UA（来自不同分组）
+        assert_ne!(p1.ua, p3.ua, "desktop and mobile must differ for same seed");
+    }
+
+    #[test]
+    fn test_reqwest_engine_ua_profile_header_consistency() {
+        // R-identity-001: profile 的 UA / Accept-Language / sec-ch-ua 必须一致绑定
+        // - Chromium-based UA → sec-ch-ua 非空
+        // - Firefox/Safari UA → sec-ch-ua 为空
+        // - Accept-Language 永远非空
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        for p in pool.desktop.iter().chain(pool.mobile.iter()) {
+            assert!(!p.ua.is_empty(), "UA must be non-empty");
+            assert!(
+                !p.accept_language.is_empty(),
+                "Accept-Language must be non-empty"
+            );
+            let is_chromium = p.ua.contains("Chrome")
+                || p.ua.contains("CriOS")
+                || p.ua.contains("Edg")
+                || p.ua.contains("SamsungBrowser");
+            if is_chromium {
+                assert!(
+                    !p.sec_ch_ua.is_empty(),
+                    "Chromium UA must have non-empty sec_ch_ua: {}",
+                    p.ua
+                );
+            } else {
+                assert!(
+                    p.sec_ch_ua.is_empty(),
+                    "Non-Chromium UA must have empty sec_ch_ua: {}",
+                    p.ua
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_reqwest_engine_ua_not_default_user_agent() {
+        // R-identity-001: 引擎的 UA pool 应包含多个 UA，不全部等于 DEFAULT_USER_AGENT
+        // （验证确实替换了固定 UA）
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        let default_ua =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        let non_default_count = pool
+            .desktop
+            .iter()
+            .filter(|p| p.ua != default_ua)
+            .count();
+        assert!(
+            non_default_count >= 20,
+            "most desktop UAs should differ from DEFAULT_USER_AGENT, got {} non-default",
+            non_default_count
+        );
+    }
+
+    #[test]
+    fn test_reqwest_engine_with_proxy_has_ua_pool() {
+        // 验证所有构造路径都初始化 ua_pool
+        let client = create_test_client();
+        let engine = ReqwestEngine::with_proxy(client, "http://proxy:8080");
+        assert!(engine.ua_pool().count(false) >= 20);
+        assert!(engine.ua_pool().count(true) >= 20);
+    }
+
+    #[test]
+    fn test_reqwest_engine_with_timeout_has_ua_pool() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new_with_timeout(client, 60);
+        assert!(engine.ua_pool().count(false) >= 20);
+        assert!(engine.ua_pool().count(true) >= 20);
+    }
+
+    #[test]
+    fn test_reqwest_engine_with_proxy_and_timeout_has_ua_pool() {
+        let client = create_test_client();
+        let engine =
+            ReqwestEngine::with_proxy_and_timeout(client, "http://proxy:8080", 45);
+        assert!(engine.ua_pool().count(false) >= 20);
+        assert!(engine.ua_pool().count(true) >= 20);
     }
 }

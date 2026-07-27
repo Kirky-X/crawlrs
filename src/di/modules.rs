@@ -396,7 +396,6 @@ impl AsyncAutoBuilder for ServiceModule {
 
             let services = crate::bootstrap::services::init_services(
                 &infrastructure,
-                engines.router.clone(),
                 engines.engine_client.clone(),
                 infrastructure.http_client.clone(),
                 &settings,

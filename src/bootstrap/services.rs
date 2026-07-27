@@ -49,7 +49,6 @@ use crate::domain::services::webhook_service::WebhookServiceImpl;
 #[cfg(not(feature = "webhook"))]
 use crate::domain::services::noop_webhook_service::NoopWebhookService;
 use crate::engines::engine_client::EngineClient;
-use crate::engines::router::EngineRouter;
 use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
 #[cfg(feature = "teams")]
 use crate::infrastructure::geolocation::GeoLocationServiceImpl;
@@ -64,13 +63,15 @@ use crate::infrastructure::services::noop_rate_limiting_service::NoopRateLimitin
 #[cfg(feature = "webhook")]
 use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
-use crate::presentation::middleware::team_semaphore::TeamSemaphore;
+use crate::domain::services::team_semaphore::{AdaptiveParams, TeamSemaphore};
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use crate::search::ab_test::SearchABTestEngine;
 use crate::search::aggregator::SearchAggregator;
 use crate::search::client::SearchClientTrait;
 use crate::search::engine_trait::SearchEngine;
 use crate::search::smart as smart_search;
+// T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
+use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsChecker;
 
@@ -81,6 +82,12 @@ pub struct ServicesComponents {
     pub rate_limit_middleware: RateLimitMiddleware,
     /// Team semaphore for concurrency control.
     pub team_semaphore: Arc<TeamSemaphore>,
+    /// Request coalescer for deduplicating concurrent fetches of the same URL.
+    ///
+    /// T035/R-runtime-002：同 URL 并发请求只允许首个执行实际抓取，
+    /// 其余 worker 等待广播后从 result_repo 读取结果，避免重复网络往返。
+    /// 放入 `CrawlRsState` 供所有 worker 共享同一实例。
+    pub request_coalescer: Arc<RequestCoalescer>,
     /// Rate limiting service for distributed rate limiting.
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
     /// Create scrape use case.
@@ -148,15 +155,35 @@ pub fn init_rate_limit_middleware(
 
 /// Initialize team semaphore for concurrency control.
 ///
+/// T037/R-runtime-003：根据 `settings.concurrency.adaptive_enabled` 选择模式：
+/// - `false`（默认）：固定并发 `default_team_limit`，行为等同 Stage 1 之前
+/// - `true`：AIMD 自适应并发（`AdaptiveParams` 默认值，每队独立 controller）
+///
 /// # Arguments
 ///
-/// * `default_team_limit` - Default concurrent limit per team
+/// * `settings` - Application settings（读取 `concurrency.*` 字段）
 ///
 /// # Returns
 ///
 /// Returns an initialized team semaphore.
-pub fn init_team_semaphore(default_team_limit: u64) -> Arc<TeamSemaphore> {
-    Arc::new(TeamSemaphore::new(default_team_limit as usize))
+pub fn init_team_semaphore(settings: &Settings) -> Arc<TeamSemaphore> {
+    let default_team_limit = settings.concurrency.default_team_limit as usize;
+
+    if settings.concurrency.adaptive_enabled {
+        // AIMD 自适应模式：用 default_team_limit 作为 initial
+        let params = AdaptiveParams {
+            initial: default_team_limit,
+            ..Default::default()
+        };
+        info!(
+            "init_team_semaphore: Adaptive mode enabled (initial={}, min=1, max=100, threshold=10)",
+            default_team_limit
+        );
+        Arc::new(TeamSemaphore::with_adaptive(params))
+    } else {
+        // Fixed 模式（默认）：行为等同 Stage 1 之前
+        Arc::new(TeamSemaphore::new(default_team_limit))
+    }
 }
 
 /// Initialize rate limiting service.
@@ -466,8 +493,8 @@ pub fn init_regex_cache() -> Arc<RegexCache> {
 /// # Arguments
 ///
 /// * `infrastructure` - Initialized infrastructure components
-/// * `engine_router` - Engine router for creating use cases
-/// * `engine_client` - Engine client for scraping operations
+/// * `engine_client` - Engine client for scraping operations（包含 EngineRouter 与 EngineHealthMonitor，
+///   由调用方构造一次共享，符合 SSOT 原则，性能审查 M-3）
 /// * `settings` - Application settings
 ///
 /// # Returns
@@ -475,7 +502,6 @@ pub fn init_regex_cache() -> Arc<RegexCache> {
 /// Returns all initialized services.
 pub async fn init_services(
     infrastructure: &InfrastructureComponents,
-    engine_router: Arc<EngineRouter>,
     engine_client: Arc<EngineClient>,
     http_client: Arc<reqwest::Client>,
     settings: &Settings,
@@ -483,7 +509,15 @@ pub async fn init_services(
     let repositories = &infrastructure.repositories;
 
     // Initialize team semaphore
-    let team_semaphore = init_team_semaphore(settings.concurrency.default_team_limit as u64);
+    // T037/R-runtime-003：根据 concurrency.adaptive_enabled 选择 Fixed/Adaptive 模式
+    let team_semaphore = init_team_semaphore(settings);
+
+    // T035/R-runtime-002：初始化请求合并器（共享单例，所有 worker 复用）
+    //
+    // 共享 `DashMap<String, InFlightEntry>` 追踪 in-flight URL，避免多 worker 同 URL
+    // 并发抓取。`STALE_TIMEOUT=120s` 兜底僵死条目，由 `purge_stale` 定期清理
+    // （scrape_worker 在 process_task 入口按需调用）。
+    let request_coalescer = Arc::new(RequestCoalescer::new());
 
     // Initialize rate limiting service
     let rate_limiting_service = init_rate_limiting_service(repositories, settings).await;
@@ -536,17 +570,24 @@ pub async fn init_services(
         None,
     ));
 
+    // 性能审查 M-3 修复：复用入参 `engine_client`（由调用方构造一次共享）
+    //
+    // 原问题：函数内部两次 `Arc::new(EngineClient::with_router(engine_router.clone()))`
+    // 创建了两个独立 EngineClient 实例，每个实例自带一份 `Arc<EngineHealthMonitor>`，
+    // 导致：(1) 重复内存分配；(2) 健康监控状态不一致（search_engine 与 search_client
+    // 看到不同的 health 快照）；(3) 入参 engine_client 被 shadowing 后立即 drop，浪费构造。
+    //
+    // 修复：直接使用入参（由调用方 di/modules.rs / 测试构造一次共享），
+    // 符合 SSOT（Single Source of Truth）原则。search_engine_service 与 search_client
+    // 共享同一份 EngineHealthMonitor 状态。
+
     // Initialize search engine (for backward compatibility)
-    let search_engine_service: Arc<dyn SearchEngine> = init_search_engine(
-        Arc::new(EngineClient::with_router(engine_router.clone())),
-        settings,
-    );
+    let search_engine_service: Arc<dyn SearchEngine> =
+        init_search_engine(engine_client.clone(), settings);
 
     // Initialize search client (wraps search engines)
     let search_client: Arc<dyn SearchClientTrait> =
-        Arc::new(crate::search::client::SearchClient::new(Arc::new(
-            EngineClient::with_router(engine_router.clone()),
-        )));
+        Arc::new(crate::search::client::SearchClient::new(engine_client.clone()));
 
     // Initialize search service
     let search_service = init_search_service(repositories, settings, search_client.clone());
@@ -642,6 +683,7 @@ pub async fn init_services(
     ServicesComponents {
         rate_limit_middleware,
         team_semaphore,
+        request_coalescer,
         rate_limiting_service,
         create_scrape_use_case,
         webhook_service,
@@ -677,6 +719,7 @@ pub async fn init_services(
 mod tests {
     use super::*;
     use crate::domain::models::CreditsTransactionType;
+    use crate::engines::router::EngineRouter;
     use crate::domain::services::rate_limiting_service::{
         BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
         QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
@@ -799,31 +842,72 @@ mod tests {
 
     // ========== init_team_semaphore tests ==========
 
+    /// 构造测试用 Settings（ConcurrencySettings 自定义字段）
+    fn make_test_settings(default_team_limit: i64, adaptive_enabled: bool) -> Settings {
+        let mut settings = Settings::default();
+        settings.concurrency.default_team_limit = default_team_limit;
+        settings.concurrency.adaptive_enabled = adaptive_enabled;
+        settings
+    }
+
     #[test]
-    fn test_init_team_semaphore_creates_instance() {
-        let semaphore = init_team_semaphore(10);
+    fn test_init_team_semaphore_creates_instance_fixed() {
+        let settings = make_test_settings(10, false);
+        let semaphore = init_team_semaphore(&settings);
         assert!(
             Arc::strong_count(&semaphore) >= 1,
             "init_team_semaphore should return a valid Arc<TeamSemaphore>"
         );
+        assert_eq!(semaphore.mode(), "Fixed");
     }
 
     #[test]
-    fn test_init_team_semaphore_with_different_limits() {
-        let s1 = init_team_semaphore(1);
-        let s2 = init_team_semaphore(100);
-        let s3 = init_team_semaphore(1000);
-        // All should be successfully created
+    fn test_init_team_semaphore_with_different_limits_fixed() {
+        let s1 = init_team_semaphore(&make_test_settings(1, false));
+        let s2 = init_team_semaphore(&make_test_settings(100, false));
+        let s3 = init_team_semaphore(&make_test_settings(1000, false));
         assert!(Arc::strong_count(&s1) >= 1);
         assert!(Arc::strong_count(&s2) >= 1);
         assert!(Arc::strong_count(&s3) >= 1);
+        assert_eq!(s1.mode(), "Fixed");
+        assert_eq!(s2.mode(), "Fixed");
+        assert_eq!(s3.mode(), "Fixed");
     }
 
     #[test]
-    fn test_init_team_semaphore_zero_limit() {
-        // A zero limit is edge case; should still create without panic
-        let semaphore = init_team_semaphore(0);
+    fn test_init_team_semaphore_zero_limit_fixed() {
+        let settings = make_test_settings(0, false);
+        let semaphore = init_team_semaphore(&settings);
         assert!(Arc::strong_count(&semaphore) >= 1);
+        assert_eq!(semaphore.mode(), "Fixed");
+    }
+
+    /// T037/R-runtime-003：adaptive_enabled=true 创建 Adaptive 模式
+    #[test]
+    fn test_init_team_semaphore_adaptive_enabled_creates_adaptive() {
+        let settings = make_test_settings(10, true);
+        let semaphore = init_team_semaphore(&settings);
+        assert_eq!(semaphore.mode(), "Adaptive");
+        assert_eq!(semaphore.default_permits(), 10);
+    }
+
+    /// T037/R-runtime-003：adaptive_enabled=false（默认）创建 Fixed 模式（向后兼容）
+    #[test]
+    fn test_init_team_semaphore_adaptive_disabled_creates_fixed() {
+        let settings = make_test_settings(20, false);
+        let semaphore = init_team_semaphore(&settings);
+        assert_eq!(semaphore.mode(), "Fixed");
+        assert_eq!(semaphore.default_permits(), 20);
+    }
+
+    /// T037/R-runtime-003：Adaptive 模式下 default_team_limit 作为 initial
+    #[test]
+    fn test_init_team_semaphore_adaptive_uses_default_team_limit_as_initial() {
+        let settings = make_test_settings(15, true);
+        let semaphore = init_team_semaphore(&settings);
+        // Adaptive 模式：default_team_limit 作为 initial
+        let team_id = uuid::Uuid::new_v4();
+        assert_eq!(semaphore.current_target(team_id), 15);
     }
 
     // ========== init_regex_cache tests ==========
@@ -1032,7 +1116,6 @@ mod tests {
 
         let services = init_services(
             &infra,
-            engine_router,
             engine_client,
             infra.http_client.clone(),
             &settings,

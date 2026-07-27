@@ -78,6 +78,11 @@ task_lock_duration_seconds = 300
 mem_pressure_threshold = 0.8
 mem_critical_threshold = 0.9
 critical_timeout_seconds = 30
+# T037/R-runtime-003：AIMD 自适应并发开关
+# false（默认）：固定并发（default_team_limit），行为等同 Stage 1 之前
+# true：每队信号量由 AdaptiveSemaphore 承载，scrape_worker 成功/失败回填
+#       AIMDController::record_*，动态 target 推入 AdaptiveSemaphore::set_target
+adaptive_enabled = false
 
 # Search Configuration
 [search]

@@ -490,6 +490,8 @@ impl SmartSearchEngine {
                 use_fire_engine: needs_js,
                 actions,
                 sync_wait_ms: if needs_js { 10000 } else { 0 },
+                block_ads: false,
+                block_media: false,
             },
         }
     }
@@ -2714,6 +2716,9 @@ mod tests_ext {
 
     #[tokio::test]
     async fn test_search_html_too_short() {
+        // R-antibot-003：过短内容（< 200 bytes 且可见文本 < 50 chars）现由
+        // antibot 分类器在 engine_client 层拦截，返回 SmartRoutingFailed("Anti-bot detected: ...")
+        // 而非 InsufficientContent。此测试验证新行为。
         let config = create_test_config();
         let engine = create_engine_with_mock(MockScrapeBehavior::ShortHtml, config);
 
@@ -2721,10 +2726,48 @@ mod tests_ext {
         let result = engine.search(&request).await;
         assert!(result.is_err());
         match result.unwrap_err() {
-            SearchError::InsufficientContent(_, msg) => {
-                assert!(msg.contains("insufficient content"))
+            SearchError::SmartRoutingFailed(msg) => {
+                assert!(
+                    msg.contains("Anti-bot detected"),
+                    "expected anti-bot message, got: {msg}"
+                );
+                assert!(
+                    msg.contains("near-empty body"),
+                    "expected near-empty body hint, got: {msg}"
+                );
             }
-            _ => panic!("Expected SearchError::InsufficientContent"),
+            other => panic!("Expected SmartRoutingFailed(Anti-bot), got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_insufficient_content_below_threshold() {
+        // R-content-001：内容 > 200 bytes 且可见文本 >= 50 chars（不触发 antibot
+        // near-empty 检测）但 < 1000 bytes 时，仍由 smart_search 的
+        // InsufficientContent 路径拦截。
+        let visible_text = "a".repeat(250);
+        let html = format!(
+            "<html><body><p>{}</p></body></html>",
+            visible_text
+        );
+        // 确保 > 200 bytes（绕过 antibot near-empty 检测）但 < 1000 bytes（触发 InsufficientContent）
+        assert!(html.len() > 200, "html should exceed antibot threshold, got {}", html.len());
+        assert!(html.len() < 1000, "html should be below InsufficientContent threshold, got {}", html.len());
+
+        let config = create_test_config();
+        let engine = create_engine_with_mock(MockScrapeBehavior::Success(html), config);
+
+        let request = SearchRequest::new("rust");
+        let result = engine.search(&request).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchError::InsufficientContent(_, msg) => {
+                assert!(
+                    msg.contains("insufficient content"),
+                    "expected insufficient content message, got: {msg}"
+                );
+            }
+            other => panic!("Expected InsufficientContent, got: {other:?}"),
         }
     }
 
