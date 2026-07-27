@@ -8,6 +8,10 @@
 /// 提供后台任务处理和工作器管理功能
 /// 包括任务执行、工作器生命周期管理和并发控制
 pub mod backlog_worker;
+/// 深度爬取模块（design.md §15/§16，Stage4）
+///
+/// URL 过滤、评分、优先级队列与自适应停止条件。
+pub mod crawl;
 /// 抓取缓存工具集（H-4 职责拆分 / HIGH-2 SRP 拆分）
 ///
 /// 从 ScrapeWorker 抽取的 cache key 生成、URL 日志脱敏、敏感响应头过滤、
