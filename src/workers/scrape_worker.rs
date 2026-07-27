@@ -34,6 +34,8 @@ use crate::domain::services::extraction_service::ExtractionServiceTrait;
 use crate::domain::services::retry_handler::RetryHandler;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::utils::regex_cache::RegexCache;
+// T053/R-frontier-001：URL 分层去重器（Bloom 预筛 + DB 保权威）
+use crate::utils::dedup::{DedupResult, Deduplicator};
 
 use crate::engines::engine_client::{
     EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
@@ -102,6 +104,16 @@ pub struct ScrapeWorker {
     /// 调用 `admit()`，Pressure 时延后、Critical 时重排到 backlog。
     #[cfg(feature = "metrics")]
     memory_scheduler: Arc<MemoryScheduler>,
+    /// URL 分层去重器（T053/R-frontier-001）
+    ///
+    /// UrlNormalizer + Bloom + HashSet 三层组合，用于 `extract_and_queue_links`
+    /// 预筛 URL 是否已爬：
+    /// - Bloom 阴性 → 绝对新，直接入队并 insert
+    /// - Bloom 阳性 → 可能已爬，回落 `find_existing_urls` DB 校验（保权威）
+    ///
+    /// `RwLock` 因为 `extract_and_queue_links` 是 `&self`，但 bloom insert 需 `&mut`。
+    /// `Arc` 是为后续支持跨 worker 共享（当前每 worker 独立实例）。
+    deduplicator: Arc<parking_lot::RwLock<Deduplicator>>,
 }
 
 impl std::fmt::Debug for ScrapeWorker {
@@ -166,6 +178,9 @@ impl ScrapeWorker {
             regex_cache,
             #[cfg(feature = "metrics")]
             memory_scheduler,
+            // T053/R-frontier-001：默认每 worker 独立 Deduplicator
+            // 后续可由 WorkerManager 通过 Builder 注入共享实例优化 DB 查询量
+            deduplicator: Arc::new(parking_lot::RwLock::new(Deduplicator::new())),
         }
     }
 
@@ -186,6 +201,39 @@ impl ScrapeWorker {
                 }
             }
         }
+    }
+
+    /// Builder 内部使用：替换 deduplicator 字段
+    ///
+    /// 用于 `ScrapeWorkerBuilder::build` 在调用 `ScrapeWorker::new`（内部默认
+    /// 初始化 deduplicator）后，注入外部共享实例。`None` 保留默认实例。
+    pub(crate) fn with_deduplicator_opt(
+        mut self,
+        dedup: Option<Arc<parking_lot::RwLock<Deduplicator>>>,
+    ) -> Self {
+        if let Some(d) = dedup {
+            self.deduplicator = d;
+        }
+        self
+    }
+
+    /// 测试 helper：获取 deduplicator 引用（仅 `#[cfg(test)]` 可用）
+    ///
+    /// 用于单元测试预填充 Bloom，模拟"URL 已爬"场景：
+    /// ```ignore
+    /// let worker = build_mock_worker().await;
+    /// {
+    ///     let mut dedup = worker.deduplicator_for_test().write();
+    ///     dedup.insert("https://example.com/page1");
+    /// }
+    /// // 现在 page1 在 Bloom 中阳性，调用 extract_and_queue_links 时
+    /// // 会走 find_existing_urls DB 校验路径
+    /// ```
+    #[cfg(test)]
+    pub(crate) fn deduplicator_for_test(
+        &self,
+    ) -> Arc<parking_lot::RwLock<Deduplicator>> {
+        self.deduplicator.clone()
     }
 
     async fn process_next_task(&self, queue: &dyn TaskQueue) -> Result<bool> {
@@ -993,20 +1041,50 @@ impl ScrapeWorker {
 
         info!("Found {} unique links on {}", unique_links.len(), task.url);
 
-        // 使用批量查询优化 N+1 问题
-        // unique_links 是 HashSet<String>，需要转换为 Vec<String>
-        let links_vec: Vec<String> = unique_links.iter().cloned().collect();
-        let existing_urls = self.repository.find_existing_urls(&links_vec).await?;
-        let existing_url_set: std::collections::HashSet<String> =
-            existing_urls.into_iter().collect();
+        // T053/R-frontier-001：URL 分层去重
+        //
+        // 两阶段预筛（TOCTOU 修复：DefinitelyNew 路径用 check_and_insert 原子化）：
+        // 1. 对每个候选 URL 调用 `deduplicator.check_and_insert(url)`（写锁串行）：
+        //    - DefinitelyNew（Bloom 全阴性）→ 立即 insert + 加入 to_enqueue（无 race）
+        //    - MaybeExisting（Bloom 至少一个阳性）→ 仅加入 db_check（normalized 形式）
+        // 2. 对 db_check 列表调用 `find_existing_urls` 批量 DB 校验（保权威）：
+        //    DB 未命中 → check_and_insert 二次确认（防 race）→ 入队
+        //
+        // 安全审查修复：
+        // - HIGH-3：db_check 仅存 normalized，不再 extend variants（避免 6x 膨胀）
+        // - 性能严重1：check_and_insert 原子化，消除 TOCTOU 竞态
+        // - 性能严重2：避免 to_enqueue.clone()，分离 enqueue 与 insert 路径
+        let mut to_enqueue: Vec<String> = Vec::with_capacity(unique_links.len());
+        let mut db_check: Vec<String> = Vec::with_capacity(unique_links.len());
 
-        for link in unique_links.iter() {
-            // 检查是否已经抓取过 (去重)
-            if existing_url_set.contains(link) {
-                continue;
+        // 收集 Bloom 预筛结果 + 原子 insert（避免 TOCTOU）
+        {
+            let mut dedup = self.deduplicator.write();
+            for link in &unique_links {
+                match dedup.check_and_insert(link) {
+                    Ok(DedupResult::DefinitelyNew { normalized }) => {
+                        // 立即 insert 完成，无 race，可直接入队
+                        to_enqueue.push(normalized);
+                    }
+                    Ok(DedupResult::MaybeExisting { normalized, .. }) => {
+                        // 仅收集 normalized 用于 DB 校验（不再 extend variants）
+                        // variants 仅用于 Bloom 查询，DB 已存 normalized 形式
+                        db_check.push(normalized);
+                    }
+                    Err(e) => {
+                        // 规则 12：去重错误显性化，不静默跳过
+                        return Err(anyhow::anyhow!(
+                            "URL dedup check failed for {}: {}",
+                            link,
+                            e
+                        ));
+                    }
+                }
             }
+        }
 
-            // Re-construct with strategy adjustment
+        // DefinitelyNew 直接入队（已 insert，无需二次锁）
+        for link in &to_enqueue {
             let mut priority = task.priority;
             if let Some(strategy) = &config.strategy {
                 if strategy.to_lowercase() == "dfs" {
@@ -1045,6 +1123,94 @@ impl ScrapeWorker {
             self.crawl_repository
                 .increment_total_tasks(crawl_id)
                 .await?;
+        }
+
+        // 对 db_check 列表进行 DB 批量校验（保权威层）
+        if !db_check.is_empty() {
+            // 去重 db_check 列表（normalized 已是规范形式，sort+dedup 即可）
+            db_check.sort_unstable();
+            db_check.dedup();
+
+            let existing_urls = self.repository.find_existing_urls(&db_check).await?;
+            let existing_url_set: std::collections::HashSet<String> =
+                existing_urls.into_iter().collect();
+
+            // 收集 DB 未命中的 normalized URL（需二次 check_and_insert 防 race）
+            let mut to_db_insert: Vec<&String> = Vec::with_capacity(db_check.len());
+            for normalized in &db_check {
+                if !existing_url_set.contains(normalized) {
+                    to_db_insert.push(normalized);
+                }
+            }
+
+            // 二次 check_and_insert（防 race：DB 校验期间另一 worker 可能已 insert）
+            // + 入队 DB 未命中且 Bloom 也未命中的 URL
+            let mut to_db_enqueue: Vec<String> = Vec::with_capacity(to_db_insert.len());
+            if !to_db_insert.is_empty() {
+                let mut dedup = self.deduplicator.write();
+                for normalized in &to_db_insert {
+                    // check_and_insert：若 Bloom 已阳性（被其他 worker insert）→ MaybeExisting，跳过
+                    // 若 Bloom 仍阴性 → DefinitelyNew + insert，加入入队列表
+                    match dedup.check_and_insert(normalized) {
+                        Ok(DedupResult::DefinitelyNew { normalized: n }) => {
+                            to_db_enqueue.push(n);
+                        }
+                        Ok(DedupResult::MaybeExisting { .. }) => {
+                            // 另一 worker 已 insert，跳过避免重复入队
+                            continue;
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "URL dedup check_and_insert failed for {}: {}",
+                                normalized,
+                                e
+                            ));
+                        }
+                    }
+                }
+            }
+
+            // 入队 DB 校验后确认为新的 URL
+            for link in &to_db_enqueue {
+                let mut priority = task.priority;
+                if let Some(strategy) = &config.strategy {
+                    if strategy.to_lowercase() == "dfs" {
+                        priority = priority.saturating_add(1);
+                    }
+                }
+
+                let new_task = Task {
+                    id: Uuid::new_v4(),
+                    task_type: TaskType::Crawl,
+                    status: TaskStatus::Queued,
+                    priority,
+                    team_id: task.team_id,
+                    api_key_id: task.api_key_id,
+                    url: link.to_string(),
+                    payload: json!({
+                        "crawl_id": crawl_id.to_string(),
+                        "depth": current_depth + 1,
+                        "config": config
+                    }),
+                    retry_count: 0,
+                    attempt_count: 0,
+                    max_retries: 3,
+                    scheduled_at: None,
+                    created_at: Utc::now(),
+                    started_at: None,
+                    completed_at: None,
+                    crawl_id: Some(crawl_id),
+                    updated_at: Utc::now(),
+                    lock_token: None,
+                    lock_expires_at: None,
+                    expires_at: None,
+                };
+
+                self.repository.create(&new_task).await?;
+                self.crawl_repository
+                    .increment_total_tasks(crawl_id)
+                    .await?;
+            }
         }
 
         Ok(())
@@ -1584,6 +1750,10 @@ pub struct ScrapeWorkerBuilder {
     /// 内存感知调度器（T019/R-runtime-001），仅 metrics 特性启用时存在
     #[cfg(feature = "metrics")]
     memory_scheduler: Option<Arc<MemoryScheduler>>,
+    /// URL 分层去重器（T053/R-frontier-001），可选注入
+    ///
+    /// 不设置时使用 `Deduplicator::new()`（默认配置：保留 query，1M 容量）
+    deduplicator: Option<Arc<parking_lot::RwLock<Deduplicator>>>,
 }
 
 impl Default for ScrapeWorkerBuilder {
@@ -1604,6 +1774,7 @@ impl Default for ScrapeWorkerBuilder {
             regex_cache: None,
             #[cfg(feature = "metrics")]
             memory_scheduler: None,
+            deduplicator: None,
         }
     }
 }
@@ -1711,6 +1882,18 @@ impl ScrapeWorkerBuilder {
         self
     }
 
+    /// 设置 URL 分层去重器（T053/R-frontier-001，可选）
+    ///
+    /// 不调用时使用默认 `Deduplicator::new()`。生产环境推荐由 `WorkerManager`
+    /// 创建一个共享实例注入所有 worker，最大化 Bloom 预筛效果。
+    pub fn with_deduplicator(
+        mut self,
+        deduplicator: Arc<parking_lot::RwLock<Deduplicator>>,
+    ) -> Self {
+        self.deduplicator = Some(deduplicator);
+        self
+    }
+
     /// 构建 ScrapeWorker 实例
     #[allow(clippy::too_many_arguments)]
     pub fn build(self) -> Result<ScrapeWorker, &'static str> {
@@ -1766,7 +1949,8 @@ impl ScrapeWorkerBuilder {
             regex_cache,
             #[cfg(feature = "metrics")]
             memory_scheduler,
-        ))
+        )
+        .with_deduplicator_opt(self.deduplicator))
     }
 }
 
@@ -7466,6 +7650,15 @@ mod tests {
         )
         .await;
 
+        // T053/R-frontier-001：预填充 Bloom 让 page1/page2 走 DB 校验路径
+        // （Bloom 空时所有 URL DefinitelyNew 直接入队，不会调用 find_existing_urls）
+        let dedup_arc = worker.deduplicator_for_test();
+        {
+            let mut dedup = dedup_arc.write();
+            dedup.insert("https://example.com/page1");
+            dedup.insert("https://example.com/page2");
+        }
+
         let mut task = make_task(json!({}));
         task.url = "https://example.com".to_string();
         let html = r#"<html><body>
@@ -7940,6 +8133,15 @@ mod tests {
         )
         .await;
 
+        // T053/R-frontier-001：预填充 Bloom 让 page1 走 DB 校验路径
+        // （Bloom 空时所有 URL DefinitelyNew 直接入队，不查 DB）
+        // 只 insert page1，page2 仍 DefinitelyNew 直接入队
+        let dedup_arc = worker.deduplicator_for_test();
+        {
+            let mut dedup = dedup_arc.write();
+            dedup.insert("https://example.com/page1");
+        }
+
         let task = make_task(json!({}));
         // task.url = "https://example.com" (from make_task default)
         let html = r#"<html><body>
@@ -7962,11 +8164,57 @@ mod tests {
             .await;
         assert!(result.is_ok());
 
-        // page1 was skipped (existing), page2 was created → create_count == 1
+        // page1 was skipped (Bloom 命中 → DB 命中 → skip), page2 was created
+        // (Bloom 未命中 → DefinitelyNew → 直接入队) → create_count == 1
         assert_eq!(
             task_repo.create_count(),
             1,
             "only non-existing URLs should be created (page1 skipped, page2 created)"
+        );
+    }
+
+    // T053/R-frontier-001：新增测试，验证 Bloom 未命中时直接入队（不查 DB）
+    #[tokio::test]
+    async fn test_extract_and_queue_links_bloom_miss_directly_enqueues() {
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        // 不预填充 existing_urls（DB 返回空集），不预填充 Bloom
+        // → 所有 URL DefinitelyNew → 直接入队，不调用 find_existing_urls
+
+        let worker = build_configurable_worker(
+            task_repo.clone(),
+            Arc::new(ConfigurableCrawlRepo::new()),
+            Arc::new(MockRobotsChecker),
+            Arc::new(EngineClient::new()),
+        )
+        .await;
+
+        let task = make_task(json!({}));
+        let html = r#"<html><body>
+            <a href="/page1">Page 1</a>
+            <a href="/page2">Page 2</a>
+            <a href="/page3">Page 3</a>
+        </body></html>"#;
+        let response = ScrapeResponse {
+            content: html.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+            markdown: None,
+        };
+        let config = make_crawl_config(None, None);
+        let result = worker
+            .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+            .await;
+        assert!(result.is_ok());
+
+        // 所有 3 个 URL 都被入队（Bloom 全部未命中 → DefinitelyNew）
+        assert_eq!(
+            task_repo.create_count(),
+            3,
+            "all URLs should be created when Bloom is empty (no DB lookup)"
         );
     }
 

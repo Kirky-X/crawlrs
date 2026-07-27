@@ -13,6 +13,15 @@ pub mod crawl_text_integration;
 ///
 /// 同 URL 并发请求只允许首个执行抓取，其余等待后从缓存/DB 读取。
 pub mod coalesce;
+/// URL 分层去重（design.md §9，T050-T053/R-frontier-001）
+///
+/// UrlNormalizer + Bloom + UrlInterner 三层组合：
+/// - L1: Bloom 预筛（mmap+MAP_HUGETLB，1M URLs ~1.2MB，假阳性 <1%）
+/// - L2: HashSet 精确校验（hashbrown::HashSet<String>）
+/// - L3: DB（scrape_worker.find_existing_urls）保权威
+///
+/// Bloom 阴性 → 绝对新（无假阴性）；Bloom 阳性 → 回落 DB 校验。
+pub mod dedup;
 pub mod error_helpers;
 /// 工具模块
 ///
@@ -34,7 +43,12 @@ pub mod telemetry;
 pub mod text_processing;
 /// UA Pool — 一致性 User-Agent / Header / Viewport 绑定池（R-identity-001）
 pub mod ua_pool;
+/// URL 处理工具（SafeUrl / resolve_url / UrlError）
 pub mod url;
+/// URL 归一化器（design.md §9，T050/R-frontier-001）
+///
+/// 等价 URL 归一为同一规范串，配合 dedup 模块做分层去重。
+pub mod url_normalizer;
 
 // 向后兼容的重新导出 - 已清理，只保留结构体
 pub use crate::utils::text_processing::{

@@ -66,6 +66,11 @@ pub struct WorkerManager {
     /// 阈值构造，所有 worker 共享同一实例。
     #[cfg(feature = "metrics")]
     memory_scheduler: Arc<MemoryScheduler>,
+    /// URL 分层去重器（T053/R-frontier-001）
+    ///
+    /// 所有 worker 共享同一实例，最大化 Bloom 预筛效果。
+    /// `RwLock` 因为 Bloom insert 需 `&mut self`，contains 只需 `&self`。
+    deduplicator: Arc<parking_lot::RwLock<crate::utils::dedup::Deduplicator>>,
 }
 
 /// Worker Manager Dependencies
@@ -143,6 +148,12 @@ impl WorkerManager {
             regex_cache: deps.regex_cache,
             #[cfg(feature = "metrics")]
             memory_scheduler,
+            // T053/R-frontier-001：所有 worker 共享 Deduplicator 实例
+            // 共享 Bloom 让已爬 URL 在任一 worker 触发后立即对其他 worker 可见，
+            // 最大化降 DB 查询量效果。
+            deduplicator: Arc::new(parking_lot::RwLock::new(
+                crate::utils::dedup::Deduplicator::new(),
+            )),
         }
     }
 
@@ -201,7 +212,9 @@ impl WorkerManager {
                 self.regex_cache.clone(),
                 #[cfg(feature = "metrics")]
                 self.memory_scheduler.clone(),
-            );
+            )
+            // T053/R-frontier-001：注入共享 deduplicator（替换 ScrapeWorker::new 内部默认实例）
+            .with_deduplicator_opt(Some(self.deduplicator.clone()));
 
             let queue = self.queue.clone();
             // We spawn the worker loop on a separate task to avoid blocking the main thread
