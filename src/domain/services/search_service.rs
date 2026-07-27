@@ -1641,6 +1641,7 @@ mod tests {
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
+            auth: AuthSettings::default(),
         }
     }
 

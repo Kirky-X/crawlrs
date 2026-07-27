@@ -29,17 +29,17 @@ pub enum BaiduSearchCategory {
 }
 
 /// Baidu Search Engine implementation with EngineClient support
+///
+/// **性能 PERF-05**：不再持有 `parser: HtmlParser` 字段，改为通过
+/// `HtmlParser::baidu()` 静态方法访问全局 `Lazy` 单例，避免每个
+/// `BaiduSearchEngine::new` 实例都重复构造 `HtmlParser`（解析 8 个 CSS 选择器）。
 pub struct BaiduSearchEngine {
-    parser: HtmlParser,
     engine_client: Arc<EngineClient>,
 }
 
 impl BaiduSearchEngine {
     pub fn new(engine_client: Arc<EngineClient>) -> Self {
-        Self {
-            parser: HtmlParser::for_baidu(),
-            engine_client,
-        }
+        Self { engine_client }
     }
 
     pub fn build_baidu_url(
@@ -116,12 +116,13 @@ impl BaiduSearchEngine {
         Ok(results)
     }
 
-    pub async fn parse_search_results(
+    pub fn parse_search_results(
         &self,
         html: &str,
         _query: &str,
     ) -> Result<Vec<ResponseItem>, SearchError> {
-        Ok(self.parser.parse(html, SearchEngineType::Baidu))
+        // 性能 PERF-05：使用全局 Lazy 单例，避免每次 new 都重复解析选择器
+        Ok(HtmlParser::baidu().parse(html, SearchEngineType::Baidu))
     }
 }
 
@@ -215,7 +216,7 @@ impl SearchEngine for BaiduSearchEngine {
         let content = scrape_response.content;
 
         // Try parsing as HTML (Baidu returns HTML by default now)
-        let items = self.parse_search_results(&content, &request.query).await?;
+        let items = self.parse_search_results(&content, &request.query)?;
 
         // If items are empty, try JSON as fallback (though unlikely with current URL)
         let items = if items.is_empty() {
@@ -404,8 +405,8 @@ mod tests {
 
     // ========== parse_search_results 测试 ==========
 
-    #[tokio::test]
-    async fn test_parse_search_results_valid_html() {
+    #[test]
+    fn test_parse_search_results_valid_html() {
         // 测试从有效百度 HTML 中解析搜索结果
         let engine = create_engine();
         let html = r#"
@@ -421,7 +422,7 @@ mod tests {
         </body></html>
         "#;
 
-        let results = engine.parse_search_results(html, "test").await.unwrap();
+        let results = engine.parse_search_results(html, "test").unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "First Result");
         assert_eq!(results[0].url, "https://example.com/1");
@@ -429,20 +430,20 @@ mod tests {
         assert_eq!(results[1].title, "Second Result");
     }
 
-    #[tokio::test]
-    async fn test_parse_search_results_empty_html() {
+    #[test]
+    fn test_parse_search_results_empty_html() {
         // 边界情况：空 HTML 返回空结果
         let engine = create_engine();
-        let results = engine.parse_search_results("", "test").await.unwrap();
+        let results = engine.parse_search_results("", "test").unwrap();
         assert!(results.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_parse_search_results_no_matching_selectors() {
+    #[test]
+    fn test_parse_search_results_no_matching_selectors() {
         // 边界情况：HTML 不包含百度结果选择器时返回空
         let engine = create_engine();
         let html = r#"<html><body><div>no results here</div></body></html>"#;
-        let results = engine.parse_search_results(html, "test").await.unwrap();
+        let results = engine.parse_search_results(html, "test").unwrap();
         assert!(results.is_empty());
     }
 

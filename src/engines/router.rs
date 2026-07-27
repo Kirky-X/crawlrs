@@ -14,6 +14,9 @@ use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use crate::engines::validators::validate_url;
+use crate::utils::hedge::HedgeController;
+use crate::utils::retry::{RetryDirective, RetryReason, RetryTracker};
+use crate::utils::ua_pool::UaPool;
 use dashmap::DashMap;
 use log::{info, warn};
 use rand::seq::SliceRandom;
@@ -147,40 +150,53 @@ impl RouterMetrics {
     }
 
     /// 记录引擎选择
-    pub fn record_engine_selection(&self, engine_name: &str) {
+    ///
+    /// 仅累加 selection 计数；延迟/成功/失败统计各自在 `record_engine_*` 中用 `entry().or_insert(0)`
+    /// 自动初始化，避免重置已累计的值（架构审查 HIGH-1 修复）。
+    ///
+    /// 注：`engine_name` 参数保留以维持 API 兼容（调用方按语义传入），但本方法不再使用它
+    /// 来初始化 latencies（原 bug：insert(..., 0) 会重置累计延迟）。
+    pub fn record_engine_selection(&self, _engine_name: &str) {
         self.engine_selection_total.fetch_add(1, Ordering::Relaxed);
-        // DashMap: 直接插入，自动处理并发
-        self.latencies().insert(engine_name.to_string(), 0);
     }
 
     /// 记录引擎延迟
+    ///
+    /// 使用 `entry().or_insert(0)` 自动初始化首次记录，避免依赖 `record_engine_selection` 预初始化
+    /// （原实现 `record_engine_selection` 调用 `insert(..., 0)` 会重置累计延迟，架构审查 HIGH-1 bug）。
     pub fn record_engine_latency(&self, engine_name: &str, duration: Duration) {
-        // DashMap: 使用 modify 进行原子更新
         let total_ns = duration.as_nanos() as u64;
-        if let Some(mut count) = self.latencies().get_mut(engine_name) {
-            *count += total_ns;
-        }
+        self.latencies()
+            .entry(engine_name.to_string())
+            .and_modify(|c| *c += total_ns)
+            .or_insert(total_ns);
     }
 
     /// 记录引擎成功
+    ///
+    /// 使用 `entry().or_insert(0)` 自动初始化，避免依赖外部预初始化。
     pub fn record_engine_success(&self, engine_name: &str) {
-        // DashMap: 使用 get_mut 进行原子更新
-        if let Some(mut count) = self.success_count().get_mut(engine_name) {
-            *count += 1;
-        }
+        self.success_count()
+            .entry(engine_name.to_string())
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
     }
 
     /// 记录引擎失败
+    ///
+    /// 使用 `entry().or_insert(0)` 自动初始化 failure_count 与 failure_classification，
+    /// 避免依赖外部预初始化。
     pub fn record_engine_failure(&self, engine_name: &str, error_type: &str) {
-        // DashMap: 使用 get_mut 进行原子更新
-        if let Some(mut count) = self.failure_count().get_mut(engine_name) {
-            *count += 1;
-        }
+        self.failure_count()
+            .entry(engine_name.to_string())
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
 
         let error_category = Self::classify_error(error_type);
-        if let Some(mut count) = self.classification().get_mut(&error_category) {
-            *count += 1;
-        }
+        self.classification()
+            .entry(error_category)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
     }
 
     /// 获取按引擎名称的平均延迟（纳秒）
@@ -256,8 +272,8 @@ pub struct EngineRouter {
     engines: Vec<Arc<dyn ScraperEngine>>,
     /// 熔断器
     circuit_breaker: Arc<CircuitBreaker>,
-    /// 引擎性能统计
-    engine_stats: Arc<parking_lot::RwLock<std::collections::HashMap<String, EngineStats>>>,
+    /// 引擎性能统计（DashMap 优化并发读写，避免 RwLock 借用）
+    engine_stats: Arc<DashMap<String, EngineStats>>,
     /// 当前轮询索引
     round_robin_index: Arc<parking_lot::Mutex<usize>>,
     /// 负载均衡策略
@@ -274,6 +290,16 @@ pub struct EngineRouter {
     race_mode_enabled: bool,
     /// 动态阈值因子 (根据历史数据调整)
     dynamic_threshold_factor: f64,
+    /// UA 池（性能审查 H-1 修复：原在 route() 内每请求 UaPool::new() 分配 44 个 profile）
+    ///
+    /// UaPool 内部全 `&'static str`，构造后只读，可安全跨线程共享（Send+Sync 自动派生）。
+    /// 用 `Arc` 是因为 `EngineRouter` 本身可能被 Clone 共享。
+    ua_pool: Arc<UaPool>,
+    /// Hedge 控制器（design.md §17，T070/R-runtime-004）
+    ///
+    /// 记录 race 胜出引擎延迟，估算 P84 阈值，供未来顺序路径决策是否发送副本请求。
+    /// `HedgeController` 内部全 `Atomic*`，无锁线程安全，可直接共享无需 `Arc`。
+    hedge_controller: HedgeController,
 }
 
 impl EngineRouter {
@@ -287,7 +313,7 @@ impl EngineRouter {
     ///
     /// 返回新的引擎路由器实例
     pub fn new(engines: Vec<Arc<dyn ScraperEngine>>) -> Self {
-        let mut engine_stats = std::collections::HashMap::with_capacity(8);
+        let engine_stats = DashMap::with_capacity(8);
         for engine in &engines {
             engine_stats.insert(engine.name().to_string(), EngineStats::default());
         }
@@ -295,15 +321,17 @@ impl EngineRouter {
         Self {
             engines,
             circuit_breaker: Arc::new(CircuitBreaker::new()),
-            engine_stats: Arc::new(parking_lot::RwLock::new(engine_stats)),
+            engine_stats: Arc::new(engine_stats),
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy: LoadBalancingStrategy::SmartHybrid,
             metrics: Arc::new(RouterMetrics::new()),
             max_engine_attempts: 3,
-            max_retries: 5,                // 默认最大重试次数
-            feature_filter_enabled: true,  // 默认启用特征检测过滤
-            race_mode_enabled: false,      // 默认禁用并发竞速模式
-            dynamic_threshold_factor: 1.0, // 默认动态阈值因子
+            max_retries: 5,                                     // 默认最大重试次数
+            feature_filter_enabled: true,                       // 默认启用特征检测过滤
+            race_mode_enabled: false,                           // 默认禁用并发竞速模式
+            dynamic_threshold_factor: 1.0,                      // 默认动态阈值因子
+            ua_pool: Arc::new(UaPool::new()),                   // 性能审查 H-1：构造一次共享
+            hedge_controller: HedgeController::with_defaults(), // T070：默认参数
         }
     }
 
@@ -323,7 +351,7 @@ impl EngineRouter {
         circuit_breaker: Arc<CircuitBreaker>,
         strategy: LoadBalancingStrategy,
     ) -> Self {
-        let mut engine_stats = std::collections::HashMap::with_capacity(8);
+        let engine_stats = DashMap::with_capacity(8);
         for engine in &engines {
             engine_stats.insert(engine.name().to_string(), EngineStats::default());
         }
@@ -331,7 +359,7 @@ impl EngineRouter {
         Self {
             engines,
             circuit_breaker,
-            engine_stats: Arc::new(parking_lot::RwLock::new(engine_stats)),
+            engine_stats: Arc::new(engine_stats),
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy,
             metrics: Arc::new(RouterMetrics::new()),
@@ -340,6 +368,8 @@ impl EngineRouter {
             feature_filter_enabled: true,
             race_mode_enabled: false,
             dynamic_threshold_factor: 1.0,
+            ua_pool: Arc::new(UaPool::new()), // 性能审查 H-1：构造一次共享
+            hedge_controller: HedgeController::with_defaults(), // T070：默认参数
         }
     }
 
@@ -375,6 +405,16 @@ impl EngineRouter {
     /// 获取路由层指标
     pub fn metrics(&self) -> &Arc<RouterMetrics> {
         &self.metrics
+    }
+
+    /// 获取 Hedge 控制器引用（design.md §17，T070）
+    ///
+    /// 返回 `&HedgeController`，外部可读取 P84 阈值、样本数等观测值，
+    /// 也可调用 `should_hedge` 决策是否发起副本（未来顺序路径用）。
+    /// `record_latency` / `reset` 已限定为 `pub(crate)`，外部无法篡改状态
+    /// （架构审查 M-1：接口隔离修复）。
+    pub fn hedge_controller(&self) -> &HedgeController {
+        &self.hedge_controller
     }
 
     /// 选择最优引擎
@@ -424,25 +464,41 @@ impl EngineRouter {
             candidates.push((support_score, engine_name.to_string(), Arc::clone(engine)));
         }
 
-        // Second pass: calculate scores with stats (short lock hold)
-        let stats = self.engine_stats.read();
+        // PERF-04/MEDIUM-2：一次性收集 DashMap 为 HashMap，避免循环内多次 Ref 借用，
+        // 同时供 Second pass（calculate_engine_score）和 sort_candidates_by_strategy 复用，
+        // DashMap 全局只遍历一次。
+        let stats: std::collections::HashMap<String, EngineStats> = self
+            .engine_stats
+            .iter()
+            .map(|r| (r.key().clone(), r.value().clone()))
+            .collect();
+
+        // Second pass: calculate scores（从 HashMap 取 EngineStats，无 DashMap 借用开销）
         let mut scored_candidates = Vec::new();
 
         for (support_score, engine_name, engine) in candidates {
-            // Get engine stats
-            let default_stats = EngineStats::default();
-            let engine_stat = stats.get(&engine_name).unwrap_or(&default_stats);
+            // 性能审查 M-1 修复：循环内不 clone EngineStats，直接借用 stats HashMap
+            // （原 .cloned().unwrap_or_default() 每次循环都分配 EngineStats）
+            let engine_stat = stats.get(&engine_name);
+            let default_stat;
+            let engine_stat_ref: &EngineStats = match engine_stat {
+                Some(s) => s,
+                None => {
+                    default_stat = EngineStats::default();
+                    &default_stat
+                }
+            };
 
             // Apply dynamic threshold factor
             let adjusted_score = support_score * self.dynamic_threshold_factor;
 
             // Calculate final score
-            let final_score = self.calculate_engine_score(adjusted_score, engine_stat);
+            let final_score = self.calculate_engine_score(adjusted_score, engine_stat_ref);
 
             scored_candidates.push((final_score, engine));
         }
 
-        // Sort by strategy
+        // Sort by strategy（复用上方已收集的 stats，无需再次遍历 DashMap）
         self.sort_candidates_by_strategy(&mut scored_candidates, &stats);
 
         scored_candidates
@@ -572,8 +628,8 @@ impl EngineRouter {
 
     /// 更新引擎统计信息
     fn update_engine_stats(&self, engine_name: &str, success: bool, response_time: Duration) {
-        let mut stats = self.engine_stats.write();
-        if let Some(stat) = stats.get_mut(engine_name) {
+        // DashMap::get_mut 返回 RefMut guard，作用域结束自动释放
+        if let Some(mut stat) = self.engine_stats.get_mut(engine_name) {
             // 更新成功率
             let alpha = 0.1; // 平滑因子
             let current_success = if success { 1.0 } else { 0.0 };
@@ -626,7 +682,59 @@ impl EngineRouter {
             .and_then(|result| result)
     }
 
+    /// H-1 修复：提取 RetryTracker 上限检查的公共逻辑（DRY）
+    ///
+    /// 在 AntiBot 和 retryable error 两个分支中，原代码有以下重复：
+    /// 1. `if !tracker.should_retry(reason)` → warn + metrics + return
+    /// 2. `if total_attempts >= max_retries` → warn + metrics + return
+    ///
+    /// 本方法封装两个检查，返回 `true` 表示应停止重试。
+    /// 调用方在调用前已 `tracker.record(reason)`，调用后根据返回值决定 `return`。
+    ///
+    /// # 参数
+    ///
+    /// - `tracker`: 重试跟踪器（已 record 过 reason）
+    /// - `reason`: 本次失败的 RetryReason（用于日志）
+    /// - `total_attempts`: 当前总尝试次数
+    /// - `max_retries`: 最大重试次数
+    ///
+    /// # 返回值
+    ///
+    /// - `true`: 应停止重试（已记录指标 + warn 日志）
+    /// - `false`: 可继续重试
+    fn should_stop_after_retry_check(
+        &self,
+        tracker: &RetryTracker,
+        reason: RetryReason,
+        total_attempts: usize,
+        max_retries: usize,
+    ) -> bool {
+        if !tracker.should_retry(reason) {
+            warn!(
+                "RetryTracker blocked {:?} after total={} (anti_bot={}, feature_toggle={}), stopping",
+                reason,
+                tracker.total(),
+                tracker.anti_bot(),
+                tracker.feature_toggle()
+            );
+            self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+            self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
+            return true;
+        }
+        if total_attempts >= max_retries {
+            warn!(
+                "Max retries {} reached after {:?}, stopping",
+                max_retries, reason
+            );
+            self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+            self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
+            return true;
+        }
+        false
+    }
+
     /// Internal route implementation without timeout
+    #[allow(unused_variables)]
     async fn route_internal(
         &self,
         request: &InternalScrapeRequest,
@@ -669,6 +777,20 @@ impl EngineRouter {
         let max_retries = self.max_retries.max(1);
         let mut total_attempts = 0;
         let mut last_error = None;
+        // T013（R-antibot-003）：anti-bot 检测命中后，后续 attempt 强制 needs_js=true，
+        // 使浏览器/FlareSolverr 引擎走 JS 渲染路径突破反爬挑战。
+        // 仅 `antibot` 特性启用时 `force_needs_js` 会被改写；关闭时需抑制 unused_mut。
+        #[cfg_attr(not(feature = "antibot"), allow(unused_mut))]
+        let mut force_needs_js = false;
+
+        // T028（R-identity-002）：智能重试基础设施
+        // - RetryTracker：各 reason 独立计数与上限（AntiBot cap=2、FeatureToggle cap=3、total=5）
+        // - UaPool：按 attempt 稳定轮换 UA（pick_seeded）
+        // - last_reason：上次失败原因，用于计算下次 attempt 的 RetryDirective
+        let mut tracker = RetryTracker::new_default();
+        // 性能审查 H-1：复用结构体字段 ua_pool，避免每请求分配 44 个 profile
+        let ua_pool = &self.ua_pool;
+        let mut last_reason: Option<RetryReason> = None;
 
         for (score, engine) in candidates.into_iter().take(max_attempts) {
             total_attempts += 1;
@@ -691,12 +813,66 @@ impl EngineRouter {
                 return Err(EngineError::Timeout(request.timeout));
             }
 
+            // T028（R-identity-002）：计算本次 attempt 的身份升级指令
+            // - 首次尝试（total_attempts=1）用 default（无升级）
+            // - 第 N 次重试（total_attempts=N+1, N>=1）基于上次失败 reason 升级
+            //   directive_attempt = total_attempts - 2（0-indexed：0=首次重试、1=第二次重试...）
+            let directive = if total_attempts == 1 {
+                RetryDirective::default()
+            } else {
+                let directive_attempt = (total_attempts - 2) as u32;
+                RetryDirective::for_attempt(
+                    last_reason.unwrap_or(RetryReason::Transient),
+                    directive_attempt,
+                )
+            };
+
+            // T028：按 directive.rotate_ua 轮换 UA（C-1 修复：同步轮换所有指纹相关 header）
+            //
+            // C-1 问题：原实现仅覆盖 User-Agent，未同步轮换 Accept-Language 与 sec-ch-ua，
+            //          导致重试时 UA 与 Accept-Language/sec-ch-ua 不一致（指纹矛盾），
+            //          反爬服务可识别为「指纹不一致的爬虫」。
+            //
+            // C-1 修复：将 profile 的所有指纹相关 header 一次性写入：
+            //   - User-Agent：所有 profile 必设
+            //   - Accept-Language：所有 profile 必设
+            //   - sec-ch-ua：仅 Chromium-based 浏览器非空时设置；为空时移除原值，
+            //     避免残留 Firefox/Safari UA 但保留 Chromium sec-ch-ua 的矛盾。
+            let mut headers = request.headers.clone();
+            if directive.rotate_ua {
+                let profile = ua_pool.pick_seeded((total_attempts - 1) as u64, request.mobile);
+                headers.insert("User-Agent".to_string(), profile.ua.to_string());
+                headers.insert(
+                    "Accept-Language".to_string(),
+                    profile.accept_language.to_string(),
+                );
+                if profile.sec_ch_ua.is_empty() {
+                    headers.remove("sec-ch-ua");
+                } else {
+                    headers.insert("sec-ch-ua".to_string(), profile.sec_ch_ua.to_string());
+                }
+                info!(
+                    "Attempt {}: rotated UA via pick_seeded(seed={}) -> {} ({}, AL={}, sec-ch-ua={})",
+                    total_attempts,
+                    total_attempts - 1,
+                    profile.ua,
+                    if profile.mobile { "mobile" } else { "desktop" },
+                    profile.accept_language,
+                    if profile.sec_ch_ua.is_empty() {
+                        "<none>"
+                    } else {
+                        profile.sec_ch_ua
+                    }
+                );
+            }
+
             let attempt_request = InternalScrapeRequest {
                 url: request.url.clone(),
                 method: request.method,
-                headers: request.headers.clone(),
+                headers,
                 timeout: remaining,
-                needs_js: request.needs_js,
+                // T013 + T028：force_needs_js（anti-bot）或 directive.force_browser 都强制 needs_js
+                needs_js: request.needs_js || force_needs_js || directive.force_browser,
                 needs_screenshot: request.needs_screenshot,
                 screenshot_config: request.screenshot_config.clone(),
                 mobile: request.mobile,
@@ -707,12 +883,102 @@ impl EngineRouter {
                 actions: request.actions.clone(),
                 body: request.body.clone(),
                 sync_wait_ms: request.sync_wait_ms,
+                block_ads: request.block_ads,
+                block_media: request.block_media,
+                session_id: request.session_id.clone(),
+                wait_for: request.wait_for.clone(),
             };
 
             let engine_start = Instant::now();
-            match engine.scrape(&attempt_request).await {
-                Ok(response) => {
+
+            // T062（design.md §14）：瀑布式 MRT 超时包裹
+            //
+            // 单引擎调用以 `min(remaining, engine.max_response_time())` 包裹：
+            // - `remaining` = 请求整体剩余时间（request.timeout - 已耗时）
+            // - `mrt` = 引擎级最大响应时间（engine.max_response_time()）
+            //
+            // 取 min 确保：
+            // 1. remaining < mrt：请求整体超时优先（不浪费 MRT 配额）
+            // 2. mrt < remaining：超 MRT 即切下一引擎（瀑布式 fallback）
+            //
+            // race_mode 路径不受影响（保留作为可选模式，在 route_race_mode 中独立处理）。
+            let engine_mrt = engine.max_response_time();
+            let effective_timeout = std::cmp::min(remaining, engine_mrt);
+
+            match tokio::time::timeout(effective_timeout, engine.scrape(&attempt_request)).await {
+                Ok(Ok(response)) => {
                     let response_time = engine_start.elapsed();
+
+                    // T013（R-antibot-003）：引擎返回"成功"响应后，检查是否为反爬挑战页。
+                    // 命中 needs_browser 时将当前结果视为失败，强制后续 attempt needs_js=true，
+                    // 使浏览器/FlareSolverr 引擎走 JS 渲染路径突破反爬。
+                    #[cfg(feature = "antibot")]
+                    {
+                        if let Some(detection) = check_antibot_response(&response, &request.url) {
+                            if detection.needs_browser {
+                                self.update_engine_stats(engine_name, false, response_time);
+                                self.metrics
+                                    .record_engine_failure(engine_name, &detection.reason);
+                                warn!(
+                                    "Engine {} returned anti-bot challenge ({:?}): {}, \
+                                     forcing needs_js for subsequent attempts",
+                                    engine_name, detection.tech, detection.reason
+                                );
+                                last_error = Some(EngineError::AntiBotDetected(detection.reason));
+                                force_needs_js = true;
+
+                                // T028（R-identity-002）：记录 AntiBot 失败到 tracker
+                                let reason = RetryReason::AntiBot;
+                                tracker.record(reason);
+                                last_reason = Some(reason);
+
+                                // T028：检查 tracker 上限（anti_bot cap=2）+ max_retries
+                                // H-1 修复：使用 should_stop_after_retry_check 消除重复（DRY）
+                                if self.should_stop_after_retry_check(
+                                    &tracker,
+                                    reason,
+                                    total_attempts,
+                                    max_retries,
+                                ) {
+                                    return Err(last_error.unwrap_or_else(|| {
+                                        EngineError::AllEnginesFailed(
+                                            "Max retries reached".to_string(),
+                                        )
+                                    }));
+                                }
+                                continue;
+                            }
+                        }
+                    }
+
+                    // T015（R-jsrender-001）：流式 HTTP→Chrome 升级探测
+                    //
+                    // HTTP 引擎（needs_js==false）返回"成功"响应后，检查是否疑似 SPA 空壳。
+                    // 若 probe 判定 upgrade，将当前结果视为失败（不返回空壳给用户），
+                    // 以 needs_js=true 重新 route_internal 改派浏览器引擎（Playwright）渲染。
+                    //
+                    // 防递归：递归调用时 request.needs_js=true，attempt_request.needs_js=true，
+                    // 故 `!attempt_request.needs_js` 为 false，probe 检查自然跳过。
+                    if !attempt_request.needs_js {
+                        let verdict = check_js_upgrade_probe(&response);
+                        if verdict.upgrade {
+                            self.update_engine_stats(engine_name, false, response_time);
+                            self.metrics.record_engine_failure(
+                                engine_name,
+                                &format!("js-upgrade-probe: {}", verdict.reason),
+                            );
+                            info!(
+                                "Engine {} returned SPA shell (probe score={}, reason={}); \
+                                 re-routing with needs_js=true to dispatch browser engine",
+                                engine_name, verdict.score, verdict.reason
+                            );
+
+                            let mut js_request = request.clone();
+                            js_request.needs_js = true;
+                            return Box::pin(self.route_internal(&js_request)).await;
+                        }
+                    }
+
                     self.update_engine_stats(engine_name, true, response_time);
                     self.circuit_breaker.record_success(engine_name);
 
@@ -734,7 +1000,7 @@ impl EngineRouter {
 
                     return Ok(response);
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     let response_time = engine_start.elapsed();
                     self.update_engine_stats(engine_name, false, response_time);
 
@@ -744,21 +1010,32 @@ impl EngineRouter {
 
                     if e.is_retryable() {
                         self.circuit_breaker.record_failure(engine_name);
+
+                        // T028（R-identity-002）：记录失败原因到 tracker（在 e move 之前取 reason）
+                        let reason = e.retry_reason();
+                        tracker.record(reason);
+                        last_reason = Some(reason);
+
+                        // T028：检查 tracker 上限（AntiBot cap=2、FeatureToggle cap=3、total=5）+ max_retries
+                        // H-1 修复：使用 should_stop_after_retry_check 消除重复（DRY）
+                        if self.should_stop_after_retry_check(
+                            &tracker,
+                            reason,
+                            total_attempts,
+                            max_retries,
+                        ) {
+                            return Err(e);
+                        }
+
                         warn!(
-                            "Engine {} failed with retryable error: {}, trying next engine",
-                            engine_name, e
+                            "Engine {} failed with retryable error: {}, trying next engine \
+                             (reason={:?}, tracker total={})",
+                            engine_name,
+                            e,
+                            reason,
+                            tracker.total()
                         );
                         last_error = Some(e);
-
-                        // 检查是否超过最大重试次数
-                        if total_attempts >= max_retries {
-                            warn!("Max retries {} reached, failing request", max_retries);
-                            self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
-                            self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
-                            return Err(last_error.unwrap_or_else(|| {
-                                EngineError::AllEnginesFailed("Max retries reached".to_string())
-                            }));
-                        }
                         continue;
                     }
 
@@ -767,6 +1044,69 @@ impl EngineRouter {
                         engine_name, e
                     );
                     return Err(e);
+                }
+                Err(_elapsed) => {
+                    // T062：MRT 瀑布式超时——`tokio::time::timeout` 在 effective_timeout 后
+                    // 取消 engine.scrape() future，进入此分支。
+                    //
+                    // 架构审查 MEDIUM-2 修复：根据 effective_timeout 的来源区分两种语义：
+                    // - `effective_timeout == remaining`（remaining <= engine_mrt）：
+                    //   请求整体超时（剩余时间耗尽），返回 `EngineError::Timeout`。
+                    //   此时即使切下一引擎也无力回天，由上层 route_sequential 循环下轮
+                    //   的 `remaining.is_zero()` 检查兜底（L776）。
+                    // - `effective_timeout == engine_mrt`（engine_mrt < remaining）：
+                    //   真正的引擎 MRT 超时，返回 `EngineError::EngineMrtExceeded`，
+                    //   router 触发瀑布式 fallback 切下一引擎继续。
+                    //
+                    // 边界情况 `remaining == engine_mrt`：按 Timeout 处理（保守语义，
+                    // 避免误认为仍有剩余时间可 fallback）。
+                    let response_time = engine_start.elapsed();
+                    self.update_engine_stats(engine_name, false, response_time);
+
+                    // 判断本次超时来源（边界 == 走 Timeout 分支）
+                    let is_overall_timeout = effective_timeout <= remaining;
+                    let timeout_err = if is_overall_timeout {
+                        // remaining 耗尽（remaining <= engine_mrt）→ 请求整体超时
+                        warn!(
+                            "Request overall timeout (remaining={:?} <= mrt={:?}); \
+                             engine={} cancelled at effective_timeout={:?}",
+                            remaining, engine_mrt, engine_name, effective_timeout
+                        );
+                        EngineError::Timeout(effective_timeout)
+                    } else {
+                        // engine_mrt < remaining → 引擎级 MRT 超时
+                        let mrt_err = EngineError::EngineMrtExceeded {
+                            engine: engine_name.to_string(),
+                            mrt: effective_timeout,
+                        };
+                        warn!(
+                            "Engine {} exceeded MRT (effective_timeout={:?}, mrt={:?}, remaining={:?}); \
+                             waterfall fallback to next engine",
+                            engine_name, effective_timeout, engine_mrt, remaining
+                        );
+                        mrt_err
+                    };
+
+                    self.metrics
+                        .record_engine_failure(engine_name, &timeout_err.to_string());
+
+                    self.circuit_breaker.record_failure(engine_name);
+
+                    let reason = timeout_err.retry_reason();
+                    tracker.record(reason);
+                    last_reason = Some(reason);
+
+                    if self.should_stop_after_retry_check(
+                        &tracker,
+                        reason,
+                        total_attempts,
+                        max_retries,
+                    ) {
+                        return Err(timeout_err);
+                    }
+
+                    last_error = Some(timeout_err);
+                    continue;
                 }
             }
         }
@@ -831,6 +1171,10 @@ impl EngineRouter {
                 actions: request.actions.clone(),
                 body: request.body.clone(),
                 sync_wait_ms: request.sync_wait_ms,
+                block_ads: request.block_ads,
+                block_media: request.block_media,
+                session_id: request.session_id.clone(),
+                wait_for: request.wait_for.clone(),
             };
 
             let race_future: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =
@@ -863,6 +1207,10 @@ impl EngineRouter {
                         self.metrics
                             .record_engine_latency(&engine_name, response_time);
                         self.metrics.record_engine_success(&engine_name);
+
+                        // T070/§17：记录胜出引擎延迟到 Hedge 控制器，
+                        // 为未来顺序路径提供 P84 阈值估算（接入 race 路径为可选增强）
+                        self.hedge_controller.record_latency(response_time);
 
                         info!(
                             "Race mode: {} won in {:?}, total time: {:?}",
@@ -968,13 +1316,17 @@ impl EngineRouter {
 
     /// 获取引擎统计信息
     pub fn _get_engine_stats_impl(&self) -> std::collections::HashMap<String, EngineStats> {
-        self.engine_stats.read().clone()
+        // DashMap → HashMap 一次性收集（trait 契约要求返回 HashMap）
+        self.engine_stats
+            .iter()
+            .map(|r| (r.key().clone(), r.value().clone()))
+            .collect()
     }
 
     /// 重置引擎统计信息
     pub fn _reset_engine_stats_impl(&self, engine_name: &str) {
-        let mut stats = self.engine_stats.write();
-        if let Some(stat) = stats.get_mut(engine_name) {
+        // DashMap::get_mut 返回 RefMut guard，作用域结束自动释放
+        if let Some(mut stat) = self.engine_stats.get_mut(engine_name) {
             *stat = EngineStats::default();
         }
     }
@@ -983,8 +1335,8 @@ impl EngineRouter {
     pub fn register_engine(&mut self, engine: Arc<dyn ScraperEngine>) {
         let name = engine.name().to_string();
         self.engines.push(engine);
+        // DashMap::insert 直接替换/插入，无需获取写锁
         self.engine_stats
-            .write()
             .insert(name.clone(), EngineStats::default());
         info!("引擎已注册: {}", name);
     }
@@ -1059,6 +1411,63 @@ impl EngineRouterTrait for EngineRouter {
     fn registered_engines(&self) -> Vec<String> {
         self._registered_engines_impl()
     }
+}
+
+/// T013（R-antibot-003）：检查引擎"成功"响应是否为反爬挑战页。
+///
+/// 将 `InternalScrapeResponse` 的 `HashMap<String,String>` headers 转为
+/// `reqwest::header::HeaderMap` 后调用 `antibot::classify`。仅在 `antibot`
+/// feature 启用时编译；关闭时 route_internal 的检测块被 cfg 移除，此函数也不存在。
+#[cfg(feature = "antibot")]
+fn check_antibot_response(
+    response: &InternalScrapeResponse,
+    url: &str,
+) -> Option<crate::engines::antibot::Detection> {
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+    let mut header_map = HeaderMap::new();
+    for (k, v) in &response.headers {
+        if let Ok(name) = HeaderName::from_bytes(k.as_bytes()) {
+            if let Ok(value) = HeaderValue::from_str(v) {
+                header_map.append(name, value);
+            }
+        }
+    }
+    crate::engines::antibot::classify(response.status_code, &response.content, &header_map, url)
+}
+
+/// T015（R-jsrender-001）：对引擎"成功"响应运行 JS 升级探测。
+///
+/// 将 `InternalScrapeResponse` 的 headers 转为 `reqwest::header::HeaderMap` 后
+/// 调用 [`crate::engines::upgrade_probe::JsUpgradeProbe::evaluate`]。返回
+/// [`crate::engines::upgrade_probe::ProbeVerdict`]，由 `route_internal` 消费
+/// `upgrade=true` 时以 `needs_js=true` 重新改派浏览器引擎。
+///
+/// 与 [`check_antibot_response`] 不同，此函数**不** feature-gate：`upgrade_probe`
+/// 模块是纯 Rust 无外部依赖，始终编译；SPA 空壳探测是通用能力，不应受 `antibot` 特性开关影响。
+fn check_js_upgrade_probe(
+    response: &InternalScrapeResponse,
+) -> crate::engines::upgrade_probe::ProbeVerdict {
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+    let probe = crate::engines::upgrade_probe::JsUpgradeProbe::default();
+    let mut header_map = HeaderMap::new();
+    for (k, v) in &response.headers {
+        if let Ok(name) = HeaderName::from_bytes(k.as_bytes()) {
+            if let Ok(value) = HeaderValue::from_str(v) {
+                header_map.append(name, value);
+            }
+        }
+    }
+    // 性能审查 HIGH-1 修复：evaluate docstring 明确「body_prefix」语义，
+    // 传入完整 body 会让多次 `contains`/`find` 退化为 O(body_len)。
+    // 截取前 PROBE_PREFIX_LEN 字节，覆盖典型 SPA 空壳的 head+顶层 body。
+    let prefix_end = response
+        .content
+        .len()
+        .min(crate::engines::upgrade_probe::PROBE_PREFIX_LEN);
+    let body_prefix = &response.content[..prefix_end];
+    probe.evaluate(&header_map, body_prefix)
 }
 
 #[cfg(test)]
@@ -1160,6 +1569,10 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         };
         let result = router.route(&request).await;
 
@@ -1200,7 +1613,9 @@ mod tests {
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
                 status_code: 200,
-                content: "mock".to_string(),
+                // T013：内容需 ≥200 字节且可见文本 ≥50 字符，
+                // 否则被 antibot::classify Step 5 误判为 near-empty structural block。
+                content: "<html><body><h1>Mock Response</h1><p>This is a mock response for testing router logic. It contains enough visible text to avoid being flagged as a near-empty shell by the antibot classifier.</p></body></html>".to_string(),
                 screenshot: None,
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
@@ -1234,6 +1649,10 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         }
     }
 
@@ -1656,23 +2075,24 @@ mod tests {
     #[test]
     fn test_router_metrics_record_engine_latency() {
         let metrics = RouterMetrics::new();
-        metrics.record_engine_selection("engine1");
+        // 架构审查 HIGH-1 修复后：record_engine_latency 自带 entry().or_insert() 自动初始化，
+        // 不再依赖 record_engine_selection 预初始化 latencies=0
         metrics.record_engine_latency("engine1", Duration::from_millis(100));
+        metrics.record_engine_latency("engine1", Duration::from_millis(200));
+        // 累计延迟应为 100+200=300ms = 300_000_000ns
+        let total = metrics.engine_latencies.get("engine1").unwrap();
+        assert_eq!(*total, 300_000_000);
+        // avg 需要 success_count 同步存在（get_avg_latency_ns 检查两者）
+        // 单独记录 latency 不更新 success_count，故 avg 仍为 None
         let avg = metrics.get_avg_latency_ns("engine1");
-        // avg_latency = total_ns / success_count; success_count is 0, so None or Some
-        // record_engine_selection inserts into latencies with 0, but success_count has no entry
-        // get_avg_latency_ns checks both latencies and success_count
-        // Since success_count has no entry, avg should be None
         assert!(avg.is_none());
     }
 
     #[test]
     fn test_router_metrics_record_engine_success() {
         let metrics = RouterMetrics::new();
-        // Pre-initialize success_count entry (record_engine_success only increments existing keys)
-        metrics
-            .engine_success_count
-            .insert("engine1".to_string(), 0);
+        // 架构审查 HIGH-1 修复后：record_engine_success 自带 entry().or_insert() 自动初始化，
+        // 不再需要测试手动 insert 0 预初始化
         metrics.record_engine_success("engine1");
         metrics.record_engine_success("engine1");
         let count = metrics.engine_success_count.get("engine1").unwrap();
@@ -1682,17 +2102,8 @@ mod tests {
     #[test]
     fn test_router_metrics_record_engine_failure() {
         let metrics = RouterMetrics::new();
-        // Pre-initialize failure_count and failure_classification entries
-        // (record_engine_failure only increments existing keys)
-        metrics
-            .engine_failure_count
-            .insert("engine1".to_string(), 0);
-        metrics
-            .failure_classification
-            .insert("timeout".to_string(), 0);
-        metrics
-            .failure_classification
-            .insert("network_error".to_string(), 0);
+        // 架构审查 HIGH-1 修复后：record_engine_failure 自带 entry().or_insert() 自动初始化
+        // failure_count 和 failure_classification 都不再需要测试手动 insert 0 预初始化
         metrics.record_engine_failure("engine1", "timeout error");
         metrics.record_engine_failure("engine1", "network error");
         let count = metrics.engine_failure_count.get("engine1").unwrap();
@@ -1755,11 +2166,17 @@ mod tests {
     }
 
     #[test]
-    fn test_router_metrics_record_engine_success_no_key_is_noop() {
-        // Verify that record_engine_success is a no-op when key doesn't exist
+    fn test_router_metrics_record_engine_success_initializes_to_one() {
+        // Verify that record_engine_success self-initializes the counter to 1
+        // when key doesn't exist (架构审查 HIGH-1 修复：原实现 noop when key missing
+        // 导致 success_count 永远为 0，与"成功必须被计数"的业务语义冲突)。
         let metrics = RouterMetrics::new();
         metrics.record_engine_success("engine1");
-        assert!(metrics.engine_success_count.get("engine1").is_none());
+        assert_eq!(*metrics.engine_success_count.get("engine1").unwrap(), 1u64);
+
+        // 二次调用应递增，不应重置
+        metrics.record_engine_success("engine1");
+        assert_eq!(*metrics.engine_success_count.get("engine1").unwrap(), 2u64);
     }
 
     // === calculate_engine_score edge cases ===
@@ -1950,7 +2367,7 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.status_code, 200);
-        assert_eq!(response.content, "mock");
+        assert!(response.content.contains("Mock Response"));
     }
 
     // === SSRF 保护测试 ===
@@ -2079,6 +2496,85 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(response.content.starts_with("from-"));
+    }
+
+    /// T070/§17：验证 race 胜出后延迟被记录到 hedge_controller
+    #[tokio::test]
+    async fn test_route_race_mode_records_hedge_latency() {
+        struct FastEngine {
+            name: &'static str,
+            delay_ms: u64,
+        }
+        #[async_trait]
+        impl ScraperEngine for FastEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: format!("from-{}", self.name),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: self.delay_ms,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+        let e1: Arc<dyn ScraperEngine> = Arc::new(FastEngine {
+            name: "slow",
+            delay_ms: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(FastEngine {
+            name: "fast",
+            delay_ms: 5,
+        });
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        router.set_race_mode_enabled(true);
+
+        // 初始：hedge 样本为 0
+        assert_eq!(router.hedge_controller().sample_count(), 0);
+
+        // 多次 race 胜出 fast（5ms）
+        let request = make_request();
+        for _ in 0..12 {
+            let _ = router.route(&request).await.unwrap();
+        }
+
+        // 12 次 race 后：hedge 样本数应 ≥ DEFAULT_MIN_SAMPLES（10）
+        let controller = router.hedge_controller();
+        assert!(
+            controller.sample_count() >= 10,
+            "hedge should have >= 10 samples, got {}",
+            controller.sample_count()
+        );
+
+        // P84 阈值应可用（fast 5ms + slow 100ms 但 race 总是 fast 胜）
+        let threshold = controller
+            .p84_threshold()
+            .expect("P84 threshold should be available");
+        // fast 总是胜出，延迟应近 5ms（容忍调度抖动）
+        let threshold_ms = threshold.as_secs_f64() * 1000.0;
+        assert!(
+            threshold_ms < 50.0,
+            "P84 should be near fast engine latency, got {threshold_ms}ms"
+        );
+
+        // 已耗时大于阈值：should_hedge 应为 true
+        assert!(router
+            .hedge_controller()
+            .should_hedge(Duration::from_millis(100)));
+        // 已耗时小于阈值：should_hedge 应为 false
+        assert!(!router
+            .hedge_controller()
+            .should_hedge(Duration::from_micros(1)));
     }
 
     #[tokio::test]
@@ -2270,7 +2766,8 @@ mod tests {
             ) -> Result<InternalScrapeResponse, EngineError> {
                 Ok(InternalScrapeResponse {
                     status_code: 200,
-                    content: "ok".to_string(),
+                    // T013：同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
+                    content: "<html><body><h1>OK</h1><p>Succeeding engine response for testing trait delegation. It has enough visible text to pass the antibot classifier near-empty check.</p></body></html>".to_string(),
                     screenshot: None,
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
@@ -2305,7 +2802,8 @@ mod tests {
             ) -> Result<InternalScrapeResponse, EngineError> {
                 Ok(InternalScrapeResponse {
                     status_code: 200,
-                    content: "ok".to_string(),
+                    // T013：同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
+                    content: "<html><body><h1>OK</h1><p>Succeeding engine response for testing trait delegation. It has enough visible text to pass the antibot classifier near-empty check.</p></body></html>".to_string(),
                     screenshot: None,
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
@@ -2376,6 +2874,10 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         };
 
         // The low-score engine should be filtered out, leaving no candidates
@@ -2516,6 +3018,287 @@ mod tests {
             }
             other => panic!("Expected Timeout, got {:?}", other),
         }
+    }
+
+    // === T062: MRT 瀑布式超时测试（red → green） ===
+    //
+    // design.md §14 / T062：router 顺序 fallback 路径用 `min(remaining, engine.mrt())`
+    // 包裹单引擎调用，超 MRT 即切下一引擎（瀑布式），不切整体失败。
+    // race_mode 路径不受影响（保留作为可选模式）。
+
+    /// T062 red：engine1 的 scrape() 耗时超过其 MRT → router 应通过 tokio::time::timeout
+    /// 在 MRT 时刻取消 engine1，记录 Timeout 失败，瀑布式切到 engine2 → engine2 立即成功。
+    ///
+    /// 未实现 T062 时：engine1 直接 sleep 500ms 后返回 Ok，engine2 永远不会被调用，
+    /// 总耗时 ~500ms，测试失败（断言 engine2_called=true 与 elapsed<400ms）。
+    #[tokio::test]
+    async fn test_route_mrt_waterfall_first_engine_exceeds_mrt_falls_to_second() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Instant;
+
+        let engine1_called = Arc::new(AtomicBool::new(false));
+        let engine2_called = Arc::new(AtomicBool::new(false));
+
+        /// MRT 短但 scrape 耗时长的引擎（用于触发 MRT 超时）
+        struct MrtSlowEngine {
+            mrt: Duration,
+            sleep_dur: Duration,
+            called: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl ScraperEngine for MrtSlowEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.called.store(true, Ordering::SeqCst);
+                // 模拟引擎处理耗时超过 MRT
+                tokio::time::sleep(self.sleep_dur).await;
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body><h1>Slow Engine Response</h1><p>This is the slow engine response with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: self.sleep_dur.as_millis() as u64,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100 // 高分 → 优先被选中
+            }
+            fn name(&self) -> &'static str {
+                "mrt-slow"
+            }
+            fn max_response_time(&self) -> Duration {
+                self.mrt
+            }
+        }
+
+        /// 立即返回成功的引擎（作为 fallback 目标）
+        struct FastEngine {
+            called: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl ScraperEngine for FastEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.called.store(true, Ordering::SeqCst);
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body><h1>Fast Engine Response</h1><p>This is the fast engine response with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 1,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                90 // 较低分 → 作为 fallback
+            }
+            fn name(&self) -> &'static str {
+                "fast"
+            }
+        }
+
+        // engine1: MRT=50ms, scrape sleeps 500ms（远超 MRT）
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MrtSlowEngine {
+            mrt: Duration::from_millis(50),
+            sleep_dur: Duration::from_millis(500),
+            called: engine1_called.clone(),
+        });
+        // engine2: 立即返回成功
+        let e2: Arc<dyn ScraperEngine> = Arc::new(FastEngine {
+            called: engine2_called.clone(),
+        });
+
+        let mut router = EngineRouter::new(vec![e1, e2]);
+        // 允许至少 2 次引擎尝试（瀑布式 fallback）
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(5);
+        // 关闭 race_mode 与特征过滤，确保走顺序 fallback 路径
+        router.set_race_mode_enabled(false);
+
+        let request = make_request();
+        let start = Instant::now();
+        let result = router.route(&request).await;
+        let elapsed = start.elapsed();
+
+        // 断言 1：最终成功（通过 engine2）
+        assert!(result.is_ok(), "route should succeed via engine2 fallback");
+        let resp = result.unwrap();
+        assert_eq!(
+            resp.content, "<html><body><h1>Fast Engine Response</h1><p>This is the fast engine response with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>",
+            "response should come from fast engine (waterfall fallback)"
+        );
+
+        // 断言 2：engine1 被调用（首次尝试）
+        assert!(
+            engine1_called.load(Ordering::SeqCst),
+            "engine1 should have been called (first attempt)"
+        );
+        // 断言 3：engine2 也被调用（MRT 超时后瀑布式切换）
+        assert!(
+            engine2_called.load(Ordering::SeqCst),
+            "engine2 should have been called after engine1 exceeded MRT (waterfall)"
+        );
+
+        // 断言 4：总耗时应远小于 engine1 的 500ms sleep
+        // （MRT=50ms + engine2 ~1ms + 开销，应 < 400ms）
+        assert!(
+            elapsed < Duration::from_millis(400),
+            "should not wait for engine1's full 500ms sleep; elapsed={:?}",
+            elapsed
+        );
+    }
+
+    /// T062 red：engine 在其 MRT 内完成 → router 不应误超时，直接返回成功。
+    ///
+    /// 这是一个回归保护测试：确保 MRT 包裹不会破坏正常行为。
+    /// 即使未实现 T062，此测试也应通过（因为 engine1 直接返回 Ok）。
+    #[tokio::test]
+    async fn test_route_mrt_engine_within_mrt_succeeds_normally() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let engine1_called = Arc::new(AtomicBool::new(false));
+
+        struct MrtOkEngine {
+            mrt: Duration,
+            sleep_dur: Duration,
+            called: Arc<AtomicBool>,
+        }
+        #[async_trait]
+        impl ScraperEngine for MrtOkEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.called.store(true, Ordering::SeqCst);
+                tokio::time::sleep(self.sleep_dur).await;
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body><h1>Real Content Page</h1><p>This is a real page with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: self.sleep_dur.as_millis() as u64,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "mrt-ok"
+            }
+            fn max_response_time(&self) -> Duration {
+                self.mrt
+            }
+        }
+
+        // engine1: MRT=1s, scrape sleeps 50ms（在 MRT 内）
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MrtOkEngine {
+            mrt: Duration::from_secs(1),
+            sleep_dur: Duration::from_millis(50),
+            called: engine1_called.clone(),
+        });
+
+        let mut router = EngineRouter::new(vec![e1]);
+        router.set_race_mode_enabled(false);
+
+        let request = make_request();
+        let result = router.route(&request).await;
+
+        assert!(result.is_ok(), "engine within MRT should succeed");
+        let resp = result.unwrap();
+        assert_eq!(resp.content, "<html><body><h1>Real Content Page</h1><p>This is a real page with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>");
+        assert!(
+            engine1_called.load(Ordering::SeqCst),
+            "engine1 should have been called"
+        );
+    }
+
+    /// T062 red：当 remaining < mrt 时，router 应使用 remaining 作为超时
+    /// （即请求整体超时优先于单引擎 MRT）。
+    ///
+    /// 场景：request.timeout=80ms, engine.mrt=10s
+    /// engine1 sleep 200ms → 应在 ~80ms 时被取消（remaining 耗尽），返回 Timeout。
+    #[tokio::test]
+    async fn test_route_mrt_uses_min_remaining_when_remaining_less_than_mrt() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let engine1_calls = Arc::new(AtomicU32::new(0));
+
+        struct LongMrtSlowEngine {
+            mrt: Duration,
+            sleep_dur: Duration,
+            calls: Arc<AtomicU32>,
+        }
+        #[async_trait]
+        impl ScraperEngine for LongMrtSlowEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(self.sleep_dur).await;
+                Ok(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "should-not-reach-here".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 0,
+                })
+            }
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+            fn name(&self) -> &'static str {
+                "long-mrt-slow"
+            }
+            fn max_response_time(&self) -> Duration {
+                self.mrt
+            }
+        }
+
+        // engine1: MRT=10s（很长），但 request.timeout=80ms（很短）
+        // engine1 sleep 200ms → 应在 ~80ms 时被 remaining 超时取消
+        let e1: Arc<dyn ScraperEngine> = Arc::new(LongMrtSlowEngine {
+            mrt: Duration::from_secs(10),
+            sleep_dur: Duration::from_millis(200),
+            calls: engine1_calls.clone(),
+        });
+
+        let mut router = EngineRouter::new(vec![e1]);
+        router.set_max_engine_attempts(1);
+        router.set_max_retries(1);
+        router.set_race_mode_enabled(false);
+
+        let mut request = make_request();
+        request.timeout = Duration::from_millis(80);
+
+        let start = std::time::Instant::now();
+        let result = router.route(&request).await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "should fail with Timeout");
+        match result.unwrap_err() {
+            EngineError::Timeout(_) => {}
+            other => panic!("Expected Timeout, got {:?}", other),
+        }
+        // 总耗时应 ~80ms（remaining 耗尽），不是 200ms（engine sleep）或 10s（MRT）。
+        // 阈值放宽到 2000ms 容忍 CI/容器环境下 tokio 调度抖动（实测容器中可能 500ms+）。
+        assert!(
+            elapsed < Duration::from_millis(2000),
+            "should timeout at ~80ms (remaining); elapsed={:?}",
+            elapsed
+        );
+        assert_eq!(
+            engine1_calls.load(Ordering::SeqCst),
+            1,
+            "engine1 should be called exactly once"
+        );
     }
 
     // === route_race_mode remaining=0 branch (line 796-798) ===
@@ -2817,6 +3600,10 @@ mod tests_impl {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         };
         let result = router.aggregate(&request).await;
 
@@ -2868,11 +3655,1012 @@ mod tests_impl {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         };
         let result = router.aggregate(&request).await;
 
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.content, "Result 2");
+    }
+
+    // === T013（R-antibot-003）：反爬挑战页改派浏览器引擎 ===
+    //
+    // 验证：HTTP 引擎返回 Cloudflare 挑战页 HTML（status=200），被 antibot::classify 判
+    // needs_browser=true，路由将其视为失败、强制后续 attempt needs_js=true，由浏览器引擎
+    // 接管并返回正常结果。
+    //
+    // 仅在 `antibot` feature 启用时编译——`check_antibot_response` 与 cfg 块都依赖该 feature。
+    #[cfg(feature = "antibot")]
+    #[tokio::test]
+    async fn test_t013_antibot_cloudflare_forces_needs_js_for_next_attempt() {
+        use std::sync::Mutex;
+
+        /// 记录每次调用时的 `needs_js` 值，用于断言改派行为
+        struct NeedsJsRecordingEngine {
+            name: &'static str,
+            /// 用 Mutex 包装 Vec 以满足 ScraperEngine 的 Send+Sync 约束
+            recorded_needs_js: Arc<Mutex<Vec<bool>>>,
+            response: InternalScrapeResponse,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for NeedsJsRecordingEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.recorded_needs_js
+                    .lock()
+                    .expect("lock recorded_needs_js")
+                    .push(request.needs_js);
+                Ok(self.response.clone())
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        // Cloudflare 挑战页：命中 Tier1 /cdn-cgi/challenge-platform/ 标记
+        let cloudflare_body = concat!(
+            "<html><head><title>Just a moment...</title></head>",
+            "<body>",
+            "<script src=\"/cdn-cgi/challenge-platform/h/g/orchestrate/jsch/v1\"></script>",
+            "</body></html>"
+        );
+
+        let http_record = Arc::new(Mutex::new(Vec::new()));
+        let http_engine: Arc<dyn ScraperEngine> = Arc::new(NeedsJsRecordingEngine {
+            name: "http-reqwest",
+            recorded_needs_js: http_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: cloudflare_body.to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 50,
+            },
+        });
+
+        // 浏览器引擎应最终返回正常正文（body 需足够长且可见文本 >= 50 字符，
+        // 避免被 antibot Tier3 近空页检测误判为 StructuralBlock）
+        let browser_record = Arc::new(Mutex::new(Vec::new()));
+        let browser_engine: Arc<dyn ScraperEngine> = Arc::new(NeedsJsRecordingEngine {
+            name: "browser-playwright",
+            recorded_needs_js: browser_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "<html><body>This is the real rendered content from the browser \
+                           engine after JavaScript execution completed successfully.</body></html>"
+                    .to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 200,
+            },
+        });
+
+        let mut router = EngineRouter::new(vec![http_engine, browser_engine]);
+        // 关闭特征过滤与竞速，确保走顺序 fallback
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(2);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/protected".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
+        };
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_ok(),
+            "route should succeed via browser engine after antibot block, got: {:?}",
+            result.err()
+        );
+        let resp = result.unwrap();
+        assert!(resp
+            .content
+            .contains("real rendered content from the browser"));
+
+        // HTTP 引擎被调用 1 次，且 needs_js 与原始请求一致（false）
+        let http_calls = http_record.lock().unwrap().clone();
+        assert_eq!(
+            http_calls.len(),
+            1,
+            "http engine should be called exactly once"
+        );
+        assert!(
+            !http_calls[0],
+            "first attempt must have needs_js=false (original request)"
+        );
+
+        // 浏览器引擎被调用 1 次，且 needs_js=true（强制升级）
+        let browser_calls = browser_record.lock().unwrap().clone();
+        assert_eq!(
+            browser_calls.len(),
+            1,
+            "browser engine should be called exactly once"
+        );
+        assert!(
+            browser_calls[0],
+            "second attempt must have needs_js=true (force_needs_js after antibot block)"
+        );
+    }
+
+    /// T013 边界：HTTP 引擎返回正常页面（非反爬挑战），不应触发 force_needs_js
+    #[cfg(feature = "antibot")]
+    #[tokio::test]
+    async fn test_t013_normal_response_does_not_trigger_force_needs_js() {
+        use std::sync::Mutex;
+
+        struct SingleCallEngine {
+            name: &'static str,
+            recorded_needs_js: Arc<Mutex<Vec<bool>>>,
+            response: InternalScrapeResponse,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for SingleCallEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.recorded_needs_js
+                    .lock()
+                    .expect("lock recorded_needs_js")
+                    .push(request.needs_js);
+                Ok(self.response.clone())
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        let http_record = Arc::new(Mutex::new(Vec::new()));
+        let http_engine: Arc<dyn ScraperEngine> = Arc::new(SingleCallEngine {
+            name: "http-reqwest",
+            recorded_needs_js: http_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "<html><body>Normal page with sufficient visible text content \
+                           to pass tier3 structural checks.</body></html>"
+                    .to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 30,
+            },
+        });
+
+        // 第二引擎不应被调用
+        let browser_record = Arc::new(Mutex::new(Vec::new()));
+        let browser_engine: Arc<dyn ScraperEngine> = Arc::new(SingleCallEngine {
+            name: "browser-playwright",
+            recorded_needs_js: browser_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "browser content".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 0,
+            },
+        });
+
+        let mut router = EngineRouter::new(vec![http_engine, browser_engine]);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(2);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/normal".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
+        };
+
+        let result = router.route(&request).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().content, "<html><body>Normal page with sufficient visible text content to pass tier3 structural checks.</body></html>");
+
+        // HTTP 引擎被调用 1 次，needs_js=false
+        let http_calls = http_record.lock().unwrap().clone();
+        assert_eq!(http_calls.len(), 1);
+        assert!(!http_calls[0]);
+
+        // 浏览器引擎不应被调用
+        let browser_calls = browser_record.lock().unwrap().clone();
+        assert!(
+            browser_calls.is_empty(),
+            "browser engine should NOT be called for normal response"
+        );
+    }
+
+    // === T015（R-jsrender-001）：SPA 空壳响应触发改派浏览器引擎 ===
+    //
+    // 验证：HTTP 引擎（needs_js==false）返回含 `__NEXT_DATA__` 的 SPA 空壳响应，
+    // JsUpgradeProbe 判定 upgrade=true，路由以 needs_js=true 重新 route_internal
+    // 改派浏览器引擎，最终返回浏览器引擎渲染后的真实内容。
+    //
+    // 防递归：递归调用时 request.needs_js=true，attempt_request.needs_js=true，
+    // 故 `!attempt_request.needs_js` 为 false，probe 检查自然跳过。
+    #[tokio::test]
+    async fn test_t015_spa_shell_triggers_js_upgrade_re_dispatch() {
+        use std::sync::Mutex;
+
+        struct NeedsJsRecordingEngine {
+            name: &'static str,
+            recorded_needs_js: Arc<Mutex<Vec<bool>>>,
+            response: InternalScrapeResponse,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for NeedsJsRecordingEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.recorded_needs_js
+                    .lock()
+                    .expect("lock recorded_needs_js")
+                    .push(request.needs_js);
+                Ok(self.response.clone())
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        // SPA 空壳：含 __NEXT_DATA__ 强信号（probe score=10 >= threshold 10）
+        // 但可见文本 >= 50 字符，避免被 antibot Tier3 误判为 StructuralBlock
+        let spa_shell = concat!(
+            r#"<html><head>"#,
+            r#"<script id="__NEXT_DATA__" type="application/json">{"props":{}}</script>"#,
+            r#"</head><body>"#,
+            r#"Loading... please wait while we render the content for you. "#,
+            r#"This page requires JavaScript to function properly."#,
+            r#"</body></html>"#
+        );
+
+        let http_record = Arc::new(Mutex::new(Vec::new()));
+        let http_engine: Arc<dyn ScraperEngine> = Arc::new(NeedsJsRecordingEngine {
+            name: "http-reqwest",
+            recorded_needs_js: http_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: spa_shell.to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 30,
+            },
+        });
+
+        // 浏览器引擎返回渲染后的真实内容（可见文本 >= 50 避免 antibot 误判）
+        let browser_record = Arc::new(Mutex::new(Vec::new()));
+        let browser_engine: Arc<dyn ScraperEngine> = Arc::new(NeedsJsRecordingEngine {
+            name: "browser-playwright",
+            recorded_needs_js: browser_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "<html><body>This is the fully rendered content from the browser \
+                           engine after JavaScript execution completed successfully.</body></html>"
+                    .to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 200,
+            },
+        });
+
+        let mut router = EngineRouter::new(vec![http_engine, browser_engine]);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(2);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/spa-page".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
+        };
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_ok(),
+            "route should succeed via browser engine after SPA shell probe, got: {:?}",
+            result.err()
+        );
+        let resp = result.unwrap();
+        assert!(
+            resp.content
+                .contains("fully rendered content from the browser"),
+            "should return browser engine's rendered content, got: {}",
+            resp.content
+        );
+
+        // HTTP 引擎被调用 1 次，needs_js=false
+        let http_calls = http_record.lock().unwrap().clone();
+        assert_eq!(
+            http_calls.len(),
+            1,
+            "http engine should be called exactly once"
+        );
+        assert!(
+            !http_calls[0],
+            "http engine attempt must have needs_js=false (original request)"
+        );
+
+        // 浏览器引擎被调用 1 次，needs_js=true（probe 触发改派）
+        let browser_calls = browser_record.lock().unwrap().clone();
+        assert_eq!(
+            browser_calls.len(),
+            1,
+            "browser engine should be called exactly once"
+        );
+        assert!(
+            browser_calls[0],
+            "browser engine attempt must have needs_js=true (probe-triggered re-route)"
+        );
+    }
+
+    /// T015 边界：HTTP 引擎返回非 SPA 页面（无 JS 框架信号），不应触发改派
+    #[tokio::test]
+    async fn test_t015_non_spa_response_does_not_trigger_re_dispatch() {
+        use std::sync::Mutex;
+
+        struct SingleCallEngine {
+            name: &'static str,
+            recorded_needs_js: Arc<Mutex<Vec<bool>>>,
+            response: InternalScrapeResponse,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for SingleCallEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                self.recorded_needs_js
+                    .lock()
+                    .expect("lock recorded_needs_js")
+                    .push(request.needs_js);
+                Ok(self.response.clone())
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        let http_record = Arc::new(Mutex::new(Vec::new()));
+        let http_engine: Arc<dyn ScraperEngine> = Arc::new(SingleCallEngine {
+            name: "http-reqwest",
+            recorded_needs_js: http_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "<html><body>This is a static page with sufficient visible text content \
+                           to pass all antibot and probe checks. No SPA framework signals here.</body></html>"
+                    .to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 30,
+            },
+        });
+
+        let browser_record = Arc::new(Mutex::new(Vec::new()));
+        let browser_engine: Arc<dyn ScraperEngine> = Arc::new(SingleCallEngine {
+            name: "browser-playwright",
+            recorded_needs_js: browser_record.clone(),
+            response: InternalScrapeResponse {
+                status_code: 200,
+                content: "browser content".to_string(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 0,
+            },
+        });
+
+        let mut router = EngineRouter::new(vec![http_engine, browser_engine]);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(2);
+        router.set_max_retries(2);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/static-page".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
+        };
+
+        let result = router.route(&request).await;
+        assert!(result.is_ok());
+        assert!(result
+            .unwrap()
+            .content
+            .contains("static page with sufficient visible text"));
+
+        // HTTP 引擎被调用 1 次，needs_js=false
+        let http_calls = http_record.lock().unwrap().clone();
+        assert_eq!(http_calls.len(), 1);
+        assert!(!http_calls[0]);
+
+        // 浏览器引擎不应被调用（非 SPA，不触发 probe）
+        let browser_calls = browser_record.lock().unwrap().clone();
+        assert!(
+            browser_calls.is_empty(),
+            "browser engine should NOT be called for non-SPA response"
+        );
+    }
+
+    /// T028（R-identity-002）：验证 Transient 错误重试时 UA 按 attempt seed 轮换。
+    ///
+    /// 场景：3 个失败引擎（Transient）+ 1 个成功引擎，max_retries=4。
+    /// 预期 directive 序列：
+    /// - attempt 1 (total=1)：default，无 UA 轮换
+    /// - attempt 2 (total=2, da=0)：Transient attempt=0 → default，无 UA 轮换
+    /// - attempt 3 (total=3, da=1)：Transient attempt=1 → rotate_ua=true，seed=2
+    /// - attempt 4 (total=4, da=2)：Transient attempt=2 → rotate_ua=true，seed=3
+    #[tokio::test]
+    async fn test_t028_ua_rotated_across_transient_retries() {
+        use std::sync::Mutex;
+
+        /// 记录每次调用的 User-Agent header（None 表示未注入）。
+        /// 使用 `error_msg` 标签 + 消息构造错误，避免 `EngineError: Clone` 依赖。
+        struct UaRecordingEngine {
+            name: &'static str,
+            recorded_ua: Arc<Mutex<Vec<Option<String>>>>,
+            /// `Some(msg)` → 返回 `EngineError::RequestFailed(msg)`；`None` → 返回成功响应
+            error_msg: Option<String>,
+            /// 返回 Ok 时的响应
+            response: Option<InternalScrapeResponse>,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for UaRecordingEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                let ua = request.headers.get("User-Agent").map(|v| v.to_string());
+                self.recorded_ua.lock().expect("lock recorded_ua").push(ua);
+                if let Some(ref msg) = self.error_msg {
+                    return Err(EngineError::RequestFailed(msg.clone()));
+                }
+                Ok(self.response.clone().expect("success response must be set"))
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        fn make_failing_engine(
+            name: &'static str,
+            record: Arc<Mutex<Vec<Option<String>>>>,
+            error_msg: &str,
+        ) -> Arc<dyn ScraperEngine> {
+            Arc::new(UaRecordingEngine {
+                name,
+                recorded_ua: record,
+                error_msg: Some(error_msg.to_string()),
+                response: None,
+            })
+        }
+
+        fn make_success_engine(
+            name: &'static str,
+            record: Arc<Mutex<Vec<Option<String>>>>,
+        ) -> Arc<dyn ScraperEngine> {
+            Arc::new(UaRecordingEngine {
+                name,
+                recorded_ua: record,
+                error_msg: None,
+                response: Some(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body>success content with enough visible text to pass \
+                              any antibot or probe checks along the retry path</body></html>"
+                        .to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 10,
+                }),
+            })
+        }
+
+        let rec1 = Arc::new(Mutex::new(Vec::new()));
+        let rec2 = Arc::new(Mutex::new(Vec::new()));
+        let rec3 = Arc::new(Mutex::new(Vec::new()));
+        let rec4 = Arc::new(Mutex::new(Vec::new()));
+
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            make_failing_engine("fail-1", rec1.clone(), "transient-1"),
+            make_failing_engine("fail-2", rec2.clone(), "transient-2"),
+            make_failing_engine("fail-3", rec3.clone(), "transient-3"),
+            make_success_engine("success-4", rec4.clone()),
+        ];
+
+        let mut router = EngineRouter::new(engines);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(4);
+        router.set_max_retries(4);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/test".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
+        };
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_ok(),
+            "route should succeed via 4th engine after 3 transient failures, got: {:?}",
+            result.err()
+        );
+
+        // attempt 1：default directive，无 UA 轮换
+        let r1 = rec1.lock().unwrap().clone();
+        assert_eq!(r1.len(), 1, "engine 1 should be called exactly once");
+        assert!(
+            r1[0].is_none(),
+            "attempt 1 must not rotate UA (default directive)"
+        );
+
+        // attempt 2：Transient attempt=0 → default，无 UA 轮换
+        let r2 = rec2.lock().unwrap().clone();
+        assert_eq!(r2.len(), 1, "engine 2 should be called exactly once");
+        assert!(
+            r2[0].is_none(),
+            "attempt 2 must not rotate UA (Transient attempt=0 → default directive)"
+        );
+
+        // attempt 3：Transient attempt=1 → rotate_ua=true，seed=2
+        let r3 = rec3.lock().unwrap().clone();
+        assert_eq!(r3.len(), 1, "engine 3 should be called exactly once");
+        assert!(
+            r3[0].is_some(),
+            "attempt 3 must rotate UA (Transient attempt=1 → rotate_ua=true)"
+        );
+        let ua3 = r3[0].clone().unwrap();
+
+        // attempt 4：Transient attempt=2 → rotate_ua=true，seed=3
+        let r4 = rec4.lock().unwrap().clone();
+        assert_eq!(r4.len(), 1, "engine 4 should be called exactly once");
+        assert!(
+            r4[0].is_some(),
+            "attempt 4 must rotate UA (Transient attempt=2 → rotate_ua=true)"
+        );
+        let ua4 = r4[0].clone().unwrap();
+
+        // 不同 seed 必须返回不同 UA（pick_seeded(2) vs pick_seeded(3)，desktop pool ≥22）
+        assert_ne!(
+            ua3, ua4,
+            "UA must differ across retry attempts (seed=2 vs seed=3)"
+        );
+    }
+
+    /// C-1 回归测试：重试轮换 UA 时所有指纹相关 header 必须同步一致。
+    ///
+    /// 场景：3 个失败引擎（Transient）+ 1 个成功引擎，max_retries=4。
+    /// 预期：attempt 3/4 触发 `directive.rotate_ua=true` 时，
+    ///   - User-Agent / Accept-Language / sec-ch-ua 三者必须来自同一 profile
+    ///   - 与 `UaPool::pick_seeded(seed, false)` 返回的 profile 字段严格相等
+    ///
+    /// 修复前：router 只覆盖 User-Agent，Accept-Language 与 sec-ch-ua 仍是首次 profile 的值，
+    ///         导致指纹矛盾（如 Chrome UA + Firefox sec-ch-ua）。
+    /// 修复后：三者一次性写入，保证指纹一致。
+    #[tokio::test]
+    async fn test_c1_fingerprint_headers_rotated_together() {
+        use crate::utils::ua_pool::UaPool;
+        use std::sync::Mutex;
+
+        /// 记录每次调用全部指纹相关 header（UA / AL / sec-ch-ua）
+        struct FingerprintRecordingEngine {
+            name: &'static str,
+            recorded: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
+            error_msg: Option<String>,
+            response: Option<InternalScrapeResponse>,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for FingerprintRecordingEngine {
+            async fn scrape(
+                &self,
+                request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                let ua = request.headers.get("User-Agent").map(|v| v.to_string());
+                let al = request
+                    .headers
+                    .get("Accept-Language")
+                    .map(|v| v.to_string());
+                let ch = request.headers.get("sec-ch-ua").map(|v| v.to_string());
+                self.recorded
+                    .lock()
+                    .expect("lock recorded")
+                    .push((ua, al, ch));
+                if let Some(ref msg) = self.error_msg {
+                    return Err(EngineError::RequestFailed(msg.clone()));
+                }
+                Ok(self.response.clone().expect("success response must be set"))
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        fn make_failing(
+            name: &'static str,
+            rec: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
+        ) -> Arc<dyn ScraperEngine> {
+            Arc::new(FingerprintRecordingEngine {
+                name,
+                recorded: rec,
+                error_msg: Some("transient".to_string()),
+                response: None,
+            })
+        }
+
+        fn make_success(
+            name: &'static str,
+            rec: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
+        ) -> Arc<dyn ScraperEngine> {
+            Arc::new(FingerprintRecordingEngine {
+                name,
+                recorded: rec,
+                error_msg: None,
+                response: Some(InternalScrapeResponse {
+                    status_code: 200,
+                    content: "<html><body>success content with enough visible text to pass \
+                              any antibot or probe checks along the retry path</body></html>"
+                        .to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 10,
+                }),
+            })
+        }
+
+        let rec1 = Arc::new(Mutex::new(Vec::new()));
+        let rec2 = Arc::new(Mutex::new(Vec::new()));
+        let rec3 = Arc::new(Mutex::new(Vec::new()));
+        let rec4 = Arc::new(Mutex::new(Vec::new()));
+
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            make_failing("fail-1", rec1.clone()),
+            make_failing("fail-2", rec2.clone()),
+            make_failing("fail-3", rec3.clone()),
+            make_success("success-4", rec4.clone()),
+        ];
+
+        let mut router = EngineRouter::new(engines);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(4);
+        router.set_max_retries(4);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/test".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
+        };
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_ok(),
+            "route should succeed via 4th engine after 3 transient failures, got: {:?}",
+            result.err()
+        );
+
+        // attempt 3：Transient attempt=1 → rotate_ua=true，seed=2
+        let r3 = rec3.lock().unwrap().clone();
+        assert_eq!(r3.len(), 1, "engine 3 should be called exactly once");
+        let (ua3, al3, ch3) = r3[0].clone();
+        assert!(ua3.is_some(), "attempt 3 must rotate User-Agent");
+        let ua3 = ua3.expect("ua3 set");
+
+        // attempt 4：Transient attempt=2 → rotate_ua=true，seed=3
+        let r4 = rec4.lock().unwrap().clone();
+        assert_eq!(r4.len(), 1, "engine 4 should be called exactly once");
+        let (ua4, al4, ch4) = r4[0].clone();
+        assert!(ua4.is_some(), "attempt 4 must rotate User-Agent");
+        let ua4 = ua4.expect("ua4 set");
+
+        // 与 UaPool.pick_seeded 的预期 profile 字段一致
+        let pool = UaPool::new();
+        let p3 = pool.pick_seeded(2, false);
+        let p4 = pool.pick_seeded(3, false);
+
+        // C-1 核心：UA + Accept-Language + sec-ch-ua 三者必须来自同一 profile
+        assert_eq!(
+            ua3, p3.ua,
+            "attempt 3 User-Agent must match pick_seeded(2).ua"
+        );
+        assert_eq!(
+            al3.as_deref(),
+            Some(p3.accept_language),
+            "attempt 3 Accept-Language must match profile.accept_language (C-1: 同步轮换)"
+        );
+        assert_eq!(
+            ch3.as_deref(),
+            if p3.sec_ch_ua.is_empty() {
+                None
+            } else {
+                Some(p3.sec_ch_ua)
+            },
+            "attempt 3 sec-ch-ua must match profile.sec_ch_ua (C-1: 同步轮换，Firefox/Safari 为 None)"
+        );
+
+        assert_eq!(
+            ua4, p4.ua,
+            "attempt 4 User-Agent must match pick_seeded(3).ua"
+        );
+        assert_eq!(
+            al4.as_deref(),
+            Some(p4.accept_language),
+            "attempt 4 Accept-Language must match profile.accept_language (C-1: 同步轮换)"
+        );
+        assert_eq!(
+            ch4.as_deref(),
+            if p4.sec_ch_ua.is_empty() {
+                None
+            } else {
+                Some(p4.sec_ch_ua)
+            },
+            "attempt 4 sec-ch-ua must match profile.sec_ch_ua (C-1: 同步轮换)"
+        );
+
+        // 不同 seed 必须返回不同 UA
+        assert_ne!(
+            ua3, ua4,
+            "UA must differ across retry attempts (seed=2 vs seed=3)"
+        );
+    }
+
+    /// T028（R-identity-002）：验证 RetryTracker 在 FeatureToggle cap=3 时停止重试。
+    ///
+    /// 场景：5 个引擎全部返回 `EngineError::FeatureToggle`，max_retries=5（高于 cap=3）。
+    /// 预期：tracker 在第 3 次 record 后 ft=3 → should_retry(FeatureToggle) 返回 false → 停止。
+    /// 即只调用前 3 个引擎，返回 FeatureToggle 错误。
+    #[tokio::test]
+    async fn test_t028_retry_tracker_caps_feature_toggle() {
+        use std::sync::Mutex;
+
+        struct FtFailingEngine {
+            name: &'static str,
+            call_count: Arc<Mutex<u32>>,
+        }
+
+        #[async_trait]
+        impl ScraperEngine for FtFailingEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                let mut c = self.call_count.lock().unwrap();
+                *c += 1;
+                Err(EngineError::FeatureToggle(format!("toggle-fail-{}", *c)))
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        let counts: Vec<Arc<Mutex<u32>>> = (0..5).map(|_| Arc::new(Mutex::new(0u32))).collect();
+
+        let engines: Vec<Arc<dyn ScraperEngine>> = (0..5)
+            .map(|i| {
+                let e: Arc<dyn ScraperEngine> = Arc::new(FtFailingEngine {
+                    name: Box::leak(format!("ft-fail-{}", i).into_boxed_str()),
+                    call_count: counts[i].clone(),
+                });
+                e
+            })
+            .collect();
+
+        let mut router = EngineRouter::new(engines);
+        router.set_feature_filter_enabled(false);
+        router.set_race_mode_enabled(false);
+        router.set_strategy(LoadBalancingStrategy::WeightedRoundRobin);
+        router.set_max_engine_attempts(5);
+        // max_retries=5 > feature_toggle cap=3，验证 tracker 先于 max_retries 触发
+        router.set_max_retries(5);
+
+        let request = InternalScrapeRequest {
+            url: "https://example.com/ft-test".to_string(),
+            method: crate::engines::engine_client::HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
+        };
+
+        let result = router.route(&request).await;
+        assert!(
+            result.is_err(),
+            "route must fail after RetryTracker caps FeatureToggle"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, EngineError::FeatureToggle(_)),
+            "error must be FeatureToggle, got: {:?}",
+            err
+        );
+
+        // 验证只有前 3 个引擎被调用（cap=3 → 3 次 record 后停止）
+        for i in 0..3 {
+            let c = counts[i].lock().unwrap();
+            assert_eq!(
+                *c, 1,
+                "engine {} should be called exactly once (within cap)",
+                i
+            );
+        }
+        for i in 3..5 {
+            let c = counts[i].lock().unwrap();
+            assert_eq!(
+                *c, 0,
+                "engine {} should NOT be called (RetryTracker stopped after cap=3)",
+                i
+            );
+        }
     }
 }

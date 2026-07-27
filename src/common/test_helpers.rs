@@ -97,3 +97,70 @@ pub fn acquire_next_test_mutex() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
+
+/// 持有 garrison 全局态锁的 RAII guard。
+///
+/// T034 修复：`init_services` 调用 `set_garrison_dao` + `set_audit_service`
+/// 注入全局态，若其他测试已注入会导致 fail-fast panic。此 guard 在 setup
+/// 阶段持有两把 `tokio::sync::Mutex` 锁并 reset 全局态，确保 `init_services` 调用安全。
+///
+/// # 用法
+///
+/// ```ignore
+/// #[tokio::test]
+/// async fn test_init_services() {
+///     let _guard = acquire_garrison_global_state().await;
+///     // 安全调用 init_services / build_test_state / ServiceModule
+/// }
+/// ```
+///
+/// # 锁顺序
+///
+/// 先获取 DAO 锁，再获取 AUDIT_SERVICE 锁。两把锁都是 `tokio::sync::Mutex`，
+/// async-aware，安全跨 await 持有（避免 `std::sync::Mutex` 阻塞 runtime 线程）。
+///
+/// # cfg 门控（架构审查 M1 修复）
+///
+/// auth feature 关闭时，`garrison_dao`/`garrison_listener` 模块不编译。
+/// 此 guard 与 [`acquire_garrison_global_state`] 在 auth-off 时退化为 no-op
+/// （[`NoopGarrisonGuard`]），调用方 `let _guard = acquire_garrison_global_state().await;`
+/// 在两种 feature 组合下都能编译，避免散布的 `#[cfg(feature = "auth")]`。
+#[cfg(feature = "auth")]
+pub struct GarrisonGlobalStateGuard {
+    _dao_guard: tokio::sync::MutexGuard<'static, ()>,
+    _audit_guard: tokio::sync::MutexGuard<'static, ()>,
+}
+
+/// auth-off 时的 no-op guard（架构审查 M1 修复）。
+///
+/// 当 `auth` feature 关闭时，`garrison_dao`/`garrison_listener` 模块不编译，
+/// 不存在需要保护的全局态。此空 struct 让调用方代码在两种 feature 下都能编译。
+#[cfg(not(feature = "auth"))]
+pub struct NoopGarrisonGuard;
+
+/// 获取 garrison 全局态锁并 reset DAO + AUDIT_SERVICE。
+///
+/// 返回 [`GarrisonGlobalStateGuard`]，调用方持有 guard 直到测试结束。
+///
+/// auth feature 关闭时退化为 no-op（返回 [`NoopGarrisonGuard`]），见上文 cfg 门控说明。
+#[cfg(feature = "auth")]
+pub async fn acquire_garrison_global_state() -> GarrisonGlobalStateGuard {
+    let dao_guard = crate::infrastructure::auth::garrison_dao::test_mutex()
+        .lock()
+        .await;
+    crate::infrastructure::auth::garrison_dao::reset_garrison_dao_for_test();
+    let audit_guard = crate::infrastructure::auth::garrison_listener::test_mutex()
+        .lock()
+        .await;
+    crate::infrastructure::auth::garrison_listener::reset_audit_service_for_test();
+    GarrisonGlobalStateGuard {
+        _dao_guard: dao_guard,
+        _audit_guard: audit_guard,
+    }
+}
+
+/// auth-off 时的 no-op 实现（架构审查 M1 修复）。
+#[cfg(not(feature = "auth"))]
+pub async fn acquire_garrison_global_state() -> NoopGarrisonGuard {
+    NoopGarrisonGuard
+}

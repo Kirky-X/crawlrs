@@ -33,6 +33,8 @@ use crate::bootstrap::engines::EngineComponents;
 use crate::bootstrap::infrastructure::{InfrastructureComponents, Repositories};
 use crate::bootstrap::services::ServicesComponents;
 use crate::config::settings::Settings;
+use crate::engines::provider::ProxyProvider;
+use crate::engines::proxy_pool::ProxyPool;
 use crate::infrastructure::database::dbnexus_connection::DatabasePool;
 use crate::infrastructure::oxcache::{ConcurrencyController, SearchCache};
 
@@ -332,21 +334,38 @@ impl AsyncAutoBuilder for EngineModule {
         Box::pin(async move {
             let settings = kit.require::<SettingsModule>()?;
             let http_client = kit.require::<HttpModule>()?;
-            // 仅在 proxy.enabled=true 时传递 Some(proxy_url)，否则传 None（架构 MEDIUM 5：
-            // 用 Option<String> 替代空字符串 sentinel，API 语义更明确）。
-            // 之前的 bug：直接传 settings.proxy.url() 而不检查 enabled，
-            // 导致 proxy.enabled=false 时仍尝试连接 localhost:10808 → Connection refused
+            // T056/R-identity-003 + H1/H2 修复: 构造 ProxyProvider 注入 ReqwestEngine
+            // - proxy.enabled=true 且 urls 非空 → Some(Arc<dyn ProxyProvider>)
+            // - 否则 → None（ReqwestEngine 不使用代理）
+            //
+            // MEDIUM-2 修复：sticky_ttl / cooldown 从 settings.proxy 注入（原硬编码 60s/30s）
+            //
+            // 策略：从 settings.proxy.strategy 注入（H1：RoundRobin / Sticky 路由）
+            let proxy_provider: Option<Arc<dyn ProxyProvider>> =
+                if settings.proxy.enabled && !settings.proxy.urls.is_empty() {
+                    Some(Arc::new(ProxyPool::from_urls(
+                        settings.proxy.urls.clone(),
+                        std::time::Duration::from_secs(settings.proxy.sticky_ttl_seconds),
+                        std::time::Duration::from_secs(settings.proxy.cooldown_seconds),
+                    )))
+                } else {
+                    None
+                };
+            // FlareSolverr 单代理：取 urls.first() 作为 fallback（FlareSolverr 暂未接入 ProxyProvider，
+            // T056 范围外）。proxy.enabled=false 时为 None。
             let proxy_url: Option<String> = if settings.proxy.enabled {
-                Some(settings.proxy.url().to_string())
+                settings.proxy.urls.first().cloned()
             } else {
                 None
             };
             let engines = crate::bootstrap::engines::init_engine_components(
                 http_client,
+                proxy_provider,
+                settings.proxy.strategy,
                 proxy_url,
                 &settings.engines,
-                // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
-                settings.timeouts.engines.default_timeout_seconds,
+                // T061：注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
+                &settings.timeouts.engines,
             );
             Ok(engines)
         })
@@ -396,7 +415,6 @@ impl AsyncAutoBuilder for ServiceModule {
 
             let services = crate::bootstrap::services::init_services(
                 &infrastructure,
-                engines.router.clone(),
                 engines.engine_client.clone(),
                 infrastructure.http_client.clone(),
                 &settings,
@@ -620,6 +638,7 @@ mod tests {
         kit.register::<InfrastructureModule>().unwrap();
         kit.register::<ServiceModule>().unwrap();
 
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let kit = kit.build().await.expect("Failed to build kit");
         let _services: ServicesComponents = kit
             .require::<ServiceModule>()
@@ -655,6 +674,7 @@ mod tests {
         kit.register::<InfrastructureModule>().unwrap();
         kit.register::<ServiceModule>().unwrap();
 
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let kit = kit.build().await.expect("Failed to build all modules");
 
         assert!(kit.contains::<SettingsModule>());

@@ -12,7 +12,7 @@ use log::{error, warn};
 use metrics::{describe_counter, describe_gauge, describe_histogram, gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
@@ -214,7 +214,10 @@ impl Default for SystemMonitor {
 }
 
 /// Mutable system monitor for background updates
-struct MutableSystemMonitor {
+///
+/// T019（R-runtime-001）：pub 以便 `init_metrics` 与 `MemoryScheduler` 共享同一实例。
+/// 通过 `shared_system_monitor()` 获取全局单例，避免重复采集（design.md §5：复用）。
+pub struct MutableSystemMonitor {
     system: Arc<Mutex<System>>,
 }
 
@@ -232,7 +235,8 @@ impl MutableSystemMonitor {
         }
     }
 
-    fn refresh(&mut self) {
+    /// 刷新系统指标（T019：改为 `&self`，内部 Arc<Mutex> 保证线程安全）
+    pub fn refresh(&self) {
         let mut sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
@@ -244,7 +248,7 @@ impl MutableSystemMonitor {
         sys.refresh_memory();
     }
 
-    fn cpu_usage(&self) -> f64 {
+    pub fn cpu_usage(&self) -> f64 {
         let sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
@@ -255,7 +259,7 @@ impl MutableSystemMonitor {
         f64::from(sys.global_cpu_usage()) / 100.0
     }
 
-    fn memory_usage(&self) -> f64 {
+    pub fn memory_usage(&self) -> f64 {
         let sys = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
@@ -272,9 +276,57 @@ impl MutableSystemMonitor {
     }
 }
 
+/// T019：为 MutableSystemMonitor 实现 SystemMonitorTrait
+///
+/// 供 `MemoryScheduler` 以 `Arc<dyn SystemMonitorTrait>` 注入。
+impl SystemMonitorTrait for MutableSystemMonitor {
+    fn cpu_usage(&self) -> f64 {
+        MutableSystemMonitor::cpu_usage(self)
+    }
+    fn memory_usage(&self) -> f64 {
+        MutableSystemMonitor::memory_usage(self)
+    }
+    fn is_metrics_stale(&self) -> bool {
+        // 后台任务持续刷新，不判定过期；调用方按需采样即可
+        false
+    }
+}
+
+/// T019：全局共享系统监控单例
+///
+/// `init_metrics()` 首次调用时初始化并启动后台刷新任务；
+/// `WorkerManager` 后续调用获取同一 `Arc` 实例供 `MemoryScheduler` 读取，
+/// 避免重复 sysinfo 采集（design.md §5：复用现有 SystemMonitorTrait）。
+static SHARED_MONITOR: OnceLock<Arc<MutableSystemMonitor>> = OnceLock::new();
+
+/// 获取全局共享 `MutableSystemMonitor` 单例
+///
+/// 首次调用时创建实例并启动 5 秒间隔的后台刷新任务（需在 tokio runtime 内调用）。
+/// 后续调用直接返回缓存的 `Arc`。
+pub fn shared_system_monitor() -> Arc<MutableSystemMonitor> {
+    SHARED_MONITOR
+        .get_or_init(|| {
+            let monitor = Arc::new(MutableSystemMonitor::new());
+            let monitor_clone = Arc::clone(&monitor);
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(5));
+                loop {
+                    interval.tick().await;
+                    monitor_clone.refresh();
+                }
+            });
+            monitor
+        })
+        .clone()
+}
+
 /// 初始化指标系统
 ///
 /// 配置并注册应用所需的各类监控指标
+///
+/// T019：通过 `shared_system_monitor()` 获取全局单例，避免重复采集。
+/// 后台刷新任务由 `shared_system_monitor()` 首次调用时启动，此处仅负责
+/// Prometheus 注册与指标导出。
 pub fn init_metrics() {
     let builder = PrometheusBuilder::new();
     if let Err(e) = builder.with_http_listener(([0, 0, 0, 0], 9100)).install() {
@@ -285,15 +337,15 @@ pub fn init_metrics() {
         return;
     }
 
-    // Create mutable system monitor for background task
-    let mut monitor = MutableSystemMonitor::new();
+    // T019：复用全局共享 monitor（首次调用会启动后台刷新任务）
+    let monitor = shared_system_monitor();
 
-    // Start background task to update system metrics
+    // Start background task to update system metrics（Prometheus 导出）
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
             interval.tick().await;
-            update_system_metrics(&mut monitor);
+            update_system_metrics(&monitor);
         }
     });
 
@@ -343,7 +395,7 @@ pub fn init_metrics() {
     );
 }
 
-fn update_system_metrics(monitor: &mut MutableSystemMonitor) {
+fn update_system_metrics(monitor: &MutableSystemMonitor) {
     monitor.refresh();
 
     let cpu_usage = monitor.cpu_usage();
@@ -695,7 +747,7 @@ mod tests {
 
     #[test]
     fn test_mutable_system_monitor_refresh_does_not_panic() {
-        let mut monitor = MutableSystemMonitor::new();
+        let monitor = MutableSystemMonitor::new();
         monitor.refresh();
     }
 
@@ -717,7 +769,7 @@ mod tests {
 
     #[test]
     fn test_mutable_system_monitor_cpu_usage_after_refresh() {
-        let mut monitor = MutableSystemMonitor::new();
+        let monitor = MutableSystemMonitor::new();
         monitor.refresh();
         let cpu = monitor.cpu_usage();
         assert!((0.0..=1.0).contains(&cpu));
@@ -725,7 +777,7 @@ mod tests {
 
     #[test]
     fn test_mutable_system_monitor_memory_usage_after_refresh() {
-        let mut monitor = MutableSystemMonitor::new();
+        let monitor = MutableSystemMonitor::new();
         monitor.refresh();
         let mem = monitor.memory_usage();
         assert!((0.0..=1.0).contains(&mem));
@@ -733,7 +785,7 @@ mod tests {
 
     #[test]
     fn test_mutable_system_monitor_multiple_refresh_cycles() {
-        let mut monitor = MutableSystemMonitor::new();
+        let monitor = MutableSystemMonitor::new();
         for _ in 0..3 {
             monitor.refresh();
             let cpu = monitor.cpu_usage();
@@ -747,15 +799,15 @@ mod tests {
 
     #[test]
     fn test_update_system_metrics_does_not_panic() {
-        let mut monitor = MutableSystemMonitor::new();
-        update_system_metrics(&mut monitor);
+        let monitor = MutableSystemMonitor::new();
+        update_system_metrics(&monitor);
     }
 
     #[test]
     fn test_update_system_metrics_after_refresh() {
-        let mut monitor = MutableSystemMonitor::new();
+        let monitor = MutableSystemMonitor::new();
         monitor.refresh();
-        update_system_metrics(&mut monitor);
+        update_system_metrics(&monitor);
         // Verify monitor is still functional after update
         let cpu = monitor.cpu_usage();
         let mem = monitor.memory_usage();
@@ -765,10 +817,10 @@ mod tests {
 
     #[test]
     fn test_update_system_metrics_multiple_calls() {
-        let mut monitor = MutableSystemMonitor::new();
+        let monitor = MutableSystemMonitor::new();
         // Calling update_system_metrics multiple times should not panic
         for _ in 0..5 {
-            update_system_metrics(&mut monitor);
+            update_system_metrics(&monitor);
         }
         let cpu = monitor.cpu_usage();
         let mem = monitor.memory_usage();
@@ -836,7 +888,7 @@ mod tests {
 
     #[test]
     fn test_mutable_system_monitor_mutex_poisoned_refresh_no_panic() {
-        let mut monitor = MutableSystemMonitor::new();
+        let monitor = MutableSystemMonitor::new();
         let system_arc = monitor.system.clone();
         let handle = std::thread::spawn(move || {
             let _guard = system_arc.lock().unwrap();

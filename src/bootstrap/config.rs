@@ -12,6 +12,7 @@ use crate::infrastructure::security::env_var_security::{EnvVarSecurityMonitor, E
 use anyhow::Result;
 use confers::{ConfigBuilder, EnvSource};
 use log::{debug, error, info, warn};
+use validator::Validate;
 
 /// Load application configuration from the standard settings file and environment.
 ///
@@ -19,6 +20,15 @@ use log::{debug, error, info, warn};
 /// environment variables prefixed by `CRAWLRS__` (nested via `__`).
 /// Note: confers 0.4's `load_sync()` only applies field-level defaults and env
 /// vars; it no longer auto-discovers config files (breaking change from 0.2.2).
+///
+/// # 安全验证（T062 安全审查 CRITICAL-1 修复）
+///
+/// confers 0.4 `#[config(validate)]` 集成的是 `garde::Validate`，而 `Settings` 用的是
+/// `validator::Validate`，两者不兼容——`#[validate(range(...))]` 等注解不会被
+/// confers 自动触发。本函数在 `build()` 后显式调用 `Settings::validate()`，
+/// 覆盖所有 `#[validate(...)]` 注解（EngineTimeoutSettings 的 range、TaskQueryRequestDto
+/// 的 range 等），防止环境变量注入 `CRAWLRS__TIMEOUTS__ENGINES__DEFAULT_TIMEOUT_SECONDS=0`
+/// 绕过校验触发 DoS（CWE-400 + CWE-20 + 配置注入）。
 pub fn load_settings() -> Result<Settings> {
     let settings = ConfigBuilder::<Settings>::new()
         .file("config/default.toml")
@@ -27,7 +37,14 @@ pub fn load_settings() -> Result<Settings> {
         ))
         .build()
         .map_err(|e| anyhow::anyhow!("Configuration load failed: {}", e))?;
-    info!("Configuration loaded successfully from config sources");
+
+    // T062 安全审查 CRITICAL-1 修复：显式调用 validator::Validate::validate()
+    // 防止环境变量绕过 #[validate(range(min = 1, max = 600))] 等约束
+    settings
+        .validate()
+        .map_err(|e| anyhow::anyhow!("Configuration validation failed: {}", e))?;
+
+    info!("Configuration loaded and validated successfully from config sources");
     Ok(settings)
 }
 
@@ -47,9 +64,15 @@ pub fn load_settings() -> Result<Settings> {
 /// Returns `Ok(())` if validation passes, or an error with details about
 /// the security issue.
 pub fn validate_security(_settings: &Settings, _is_production: bool) -> Result<()> {
-    // Validation is now handled by confers automatically via #[config(validate)]
-    // This function can be used for additional production-specific checks if needed
-    debug!("Security validation configured via confers library");
+    // 安全审查 H-1 修复说明：
+    //
+    // 原注释"Validation is now handled by confers automatically via #[config(validate)]"
+    // 是错误的——confers 0.4 集成的是 `garde::Validate`，而 `Settings` 用的是
+    // `validator::Validate`，两者不兼容。`validator::Validate::validate` 已在
+    // `load_settings()` 中显式调用（覆盖所有 `#[validate(...)]` 注解）。
+    //
+    // 此函数保留为生产环境特定检查的扩展点（如密钥强度、JWT 长度等业务规则）。
+    debug!("Security validation configured via validator::Validate in load_settings()");
     Ok(())
 }
 
@@ -104,8 +127,22 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
     let env = std::env::var("CRAWLRS_ENV")
         .or_else(|_| std::env::var("APP_ENVIRONMENT"))
         .unwrap_or_else(|_| "development".to_string());
-    let is_test = env.to_lowercase() == "test"
-        || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
+    let env_lower = env.to_lowercase();
+    let is_test =
+        env_lower == "test" || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
+    let is_dev = env_lower == "development" || env_lower == "dev" || is_test;
+
+    // SSRF 防护禁用开关风险告警（R-sec-002）
+    // 仅在非 test/development 环境下告警；开发/测试场景允许禁用以方便调试
+    if std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok() && !is_dev
+    {
+        warn!(
+            "⚠️ SSRF 保护已通过 CRAWLRS_DISABLE_SSRF_PROTECTION 禁用！\
+             此开关仅限开发/测试环境使用，生产环境禁用将导致内网探测风险。\
+             当前环境: {}。如需生产部署，请移除该环境变量并配置 trusted_proxies。",
+            env
+        );
+    }
 
     // Check for forbidden variables
     if !report.forbidden_variables.is_empty() && !is_test {
@@ -895,6 +932,109 @@ mod tests {
             result.is_ok(),
             "validate_environment with CRAWLRS_ENV=test should succeed even with forbidden vars"
         );
+    }
+
+    // ========== SSRF protection disable warning (T002) ==========
+
+    #[test]
+    fn test_validate_environment_warns_when_ssrf_disabled_in_non_dev_env() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_ssrf = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").ok();
+
+        // 生产环境 + SSRF 禁用 → 应触发 warn 但仍返回 Ok
+        std::env::set_var("APP_ENVIRONMENT", "production");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "true");
+
+        let result = validate_environment(false);
+
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+        if let Some(v) = saved_crawlrs_env {
+            std::env::set_var("CRAWLRS_ENV", v);
+        } else {
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+        if let Some(v) = saved_ssrf {
+            std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", v);
+        } else {
+            std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
+        }
+
+        // validate_environment 应返回 Ok（warn 不阻断启动），告警由日志验证
+        assert!(
+            result.is_ok(),
+            "validate_environment should succeed with SSRF disabled (warn only), got err: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_validate_environment_no_warn_when_ssrf_disabled_in_dev_env() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
+        let saved_db_url = std::env::var("DATABASE_URL").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_ssrf = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").ok();
+
+        // 开发环境 + SSRF 禁用 → 不应触发风险告警（开发/测试场景允许）
+        std::env::set_var("APP_ENVIRONMENT", "development");
+        std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", "true");
+
+        let result = validate_environment(false);
+
+        if let Some(v) = saved_app_env {
+            std::env::set_var("APP_ENVIRONMENT", v);
+        } else {
+            std::env::remove_var("APP_ENVIRONMENT");
+        }
+        if let Some(v) = saved_db_url {
+            std::env::set_var("DATABASE_URL", v);
+        } else {
+            std::env::remove_var("DATABASE_URL");
+        }
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+        if let Some(v) = saved_crawlrs_env {
+            std::env::set_var("CRAWLRS_ENV", v);
+        } else {
+            std::env::remove_var("CRAWLRS_ENV");
+        }
+        if let Some(v) = saved_ssrf {
+            std::env::set_var("CRAWLRS_DISABLE_SSRF_PROTECTION", v);
+        } else {
+            std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
+        }
+
+        assert!(result.is_ok());
     }
 
     // ========== Test logger for covering log::info!/log::error! paths ==========

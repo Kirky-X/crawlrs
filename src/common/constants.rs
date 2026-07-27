@@ -64,6 +64,36 @@ pub mod security_limits {
     pub const WEAK_SECRET_LENGTH: usize = 8;
 }
 
+/// 默认身份常量 - 用于 `auth` feature 关闭时的单租户降级
+///
+/// **阶段说明**：Stage 0 仅定义常量；Stage 1 (T007-T009) 实现 `default_identity_middleware`
+/// 并加 `#[cfg(not(feature = "auth"))]` 门控；Stage 3 (T017-T022) 对 limiteron 路径加 cfg 门控。
+/// 在所有门控就位前，`--no-default-features` 构建会失败（预期行为，Stage 5 统一验证）。
+///
+/// 命名使用 `default_identity` 而非 `auth`，避免与 `domain::auth`（ApiKeyScope 等领域模型）同名歧义。
+pub mod default_identity {
+    use uuid::Uuid;
+
+    /// 单租户模式下的默认团队 ID（非 nil，固定值 1）
+    pub const DEFAULT_TEAM_ID: Uuid = Uuid::from_u128(1);
+
+    /// 单租户模式下的默认 API Key ID（非 nil，固定值 2，与 DEFAULT_TEAM_ID 区分）
+    pub const DEFAULT_API_KEY_ID: Uuid = Uuid::from_u128(2);
+
+    /// 单租户降级模式下注入的 `token_hash` 占位字符串。
+    ///
+    /// 真实 `auth_middleware` 注入 `"sha256:<hex>"` 格式的 `token_hash`；
+    /// 单租户模式下没有 token，使用固定字符串 `"default_identity"` 作为占位。
+    ///
+    /// 这保证了下游中间件（如 `limiteron_rate_limit_middleware`）的
+    /// `Extension<String>` 提取器在单租户模式下也能获取到非空字符串。
+    ///
+    /// 注意：此字符串格式与真实 `token_hash` 不一致（无 `sha256:` 前缀），
+    /// 当前下游消费者仅用作 rate-limit bucket key，不解析格式；若未来下游
+    /// 新增格式解析逻辑，需同步调整此占位或统一格式（见 diting 架构审查 LOW-3）。
+    pub const DEFAULT_IDENTITY_TOKEN_HASH: &str = "default_identity";
+}
+
 /// 数据库连接池常量 - 避免settings.rs中的魔法数字
 pub mod database_config {
     pub const DEFAULT_MAX_CONNECTIONS: u32 = 100;
@@ -342,5 +372,25 @@ mod tests {
     fn test_rate_limit_constants() {
         assert_eq!(rate_limit::DEFAULT_RPM, 60);
         assert_eq!(rate_limit::BUCKET_CAPACITY, 100);
+    }
+
+    #[test]
+    fn test_auth_default_identity_constants() {
+        // R-flags-004: DEFAULT_TEAM_ID 与 DEFAULT_API_KEY_ID 必须非 nil 且互不相等
+        assert_ne!(
+            default_identity::DEFAULT_TEAM_ID,
+            uuid::Uuid::nil(),
+            "DEFAULT_TEAM_ID must not be nil UUID"
+        );
+        assert_ne!(
+            default_identity::DEFAULT_API_KEY_ID,
+            uuid::Uuid::nil(),
+            "DEFAULT_API_KEY_ID must not be nil UUID"
+        );
+        assert_ne!(
+            default_identity::DEFAULT_TEAM_ID,
+            default_identity::DEFAULT_API_KEY_ID,
+            "DEFAULT_TEAM_ID and DEFAULT_API_KEY_ID must be distinct"
+        );
     }
 }

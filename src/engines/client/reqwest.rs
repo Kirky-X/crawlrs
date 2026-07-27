@@ -3,12 +3,17 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::config::settings::ProxyStrategy;
+use crate::engines::client::handle::ClientHandle;
 use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
+use crate::engines::provider::{ProxyCategory, ProxyProvider};
 use crate::engines::validators;
-use crate::utils::http_client::DEFAULT_USER_AGENT;
+use crate::utils::proxy::redact_proxy_url;
+use crate::utils::ua_pool::UaPool;
 use async_trait::async_trait;
+use dashmap::DashMap;
 use log::error;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::sync::Arc;
@@ -17,80 +22,192 @@ use std::time::{Duration, Instant};
 /// 默认超时时间
 const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
 
+/// 默认代理策略（无 settings 注入时使用）
+const DEFAULT_PROXY_STRATEGY: ProxyStrategy = ProxyStrategy::RoundRobin;
+
+/// ReqwestEngine 默认 MRT（5 秒，对应 `EngineTimeoutSettings::fetch_seconds`）。
+///
+/// design.md §14 / T060：HTTP fetch 引擎比浏览器引擎快，5 秒已足够覆盖正常请求；
+/// 超时即切下一引擎（瀑布式）。生产环境应通过 [`ReqwestEngine::new_with_mrt`] 等
+/// 构造函数从 `Settings.timeouts.engines.fetch_seconds` 注入，避免硬编码。
+const DEFAULT_REQWEST_MRT_SECONDS: u64 = 5;
+
 /// 抓取引擎
 ///
 /// 基于reqwest实现的基本HTTP抓取引擎
+///
+/// 代理来源（T056/R-identity-003 + H1/H2/H3 修复）：
+/// - **请求级代理**（`request.proxy`）：覆盖池，调用方指定特定代理
+/// - **代理提供者**（`proxy_provider`）：按 `ProxyStrategy` 决定调度策略
+///   - `RoundRobin`：`ProxyProvider::next(ProxyCategory::Html)`
+///   - `Sticky`：`ProxyProvider::sticky(session_id)`（`request.session_id` 必填，否则 fallback 到 next）
+/// - 两者皆无 → 直接使用注入的 `http_client`（无代理）
 pub struct ReqwestEngine {
     /// HTTP 客户端（通过依赖注入，支持连接复用）
     http_client: Arc<reqwest::Client>,
-    /// 引擎级代理 URL（如果配置）
-    proxy_url: Option<String>,
-    /// 引擎级代理 client（在 with_proxy 时一次性创建，避免每次请求重建丢失连接池）
-    proxy_client: Option<reqwest::Client>,
+    /// 代理提供者（H2 修复：依赖抽象 `ProxyProvider` trait，而非具体 `ProxyPool`）
+    ///
+    /// `None` 时不使用代理；`Some` 时按 `proxy_strategy` 调度策略取代理。
+    proxy_provider: Option<Arc<dyn ProxyProvider>>,
+    /// 代理调度策略（H1 修复：用于在 `next` / `sticky` 之间路由）
+    proxy_strategy: ProxyStrategy,
     /// 引擎级请求超时（秒），用于 build_custom_client 构造临时 client（proxy/skip_tls 路径）
     /// 注入自 Settings.timeouts.engines.default_timeout_seconds（架构 MEDIUM：避免硬编码 30 秒）
     timeout_seconds: u64,
+    /// 单引擎最大响应时间（MRT，design.md §14 / T060）。
+    ///
+    /// router 顺序 fallback 路径用 `min(remaining, mrt)` 包裹单引擎调用，
+    /// 超 MRT 即切下一引擎。注入自 `Settings.timeouts.engines.fetch_seconds`（默认 5 秒）。
+    mrt: Duration,
+    /// UA 池（R-identity-001）：每次请求从池中选取一致的 UA + Accept-Language + sec-ch-ua
+    ua_pool: UaPool,
+    /// 代理 client 缓存（性能审查 HIGH-1 修复）
+    ///
+    /// 按 `proxy_url` 缓存已构建的 `reqwest::Client`，避免每次请求都重建 client
+    /// 导致连接池丢失。`reqwest::Client::clone()` 内部 Arc 共享，克隆开销极低。
+    ///
+    /// 仅缓存 proxy_provider 路径下成功构建的 client（`is_fallback=false`）：
+    /// - skip_tls 路径不缓存（请求级别配置，每次可能不同）
+    /// - 请求级 proxy 不缓存（按需用，文档说"很少用"，且 URL 范围不可控）
+    /// - fallback client 不缓存（避免缓存注入的 http_client 反复 clone）
+    ///
+    /// 缓存键为代理 URL（池数量有限，缓存大小有界）。
+    proxy_client_cache: DashMap<String, reqwest::Client>,
 }
 
 impl ReqwestEngine {
-    /// 创建新的 ReqwestEngine 实例
+    /// 创建新的 ReqwestEngine 实例（无代理提供者）
     ///
     /// 使用 DEFAULT_TIMEOUT_SECONDS（30 秒）作为引擎级超时。
-    /// 生产环境应使用 [`ReqwestEngine::new_with_timeout`] 从 Settings 注入超时。
+    /// 生产环境应使用 [`ReqwestEngine::new_with_timeout`] 从 Settings 注入超时，
+    /// 并使用 [`ReqwestEngine::with_provider`] 注入代理提供者。
     pub fn new(http_client: Arc<reqwest::Client>) -> Self {
         Self::new_with_timeout(http_client, DEFAULT_TIMEOUT_SECONDS)
     }
 
-    /// 创建带超时配置的 ReqwestEngine 实例
-    ///
-    /// 生产环境调用点应从 `settings.timeouts.engines.default_timeout_seconds` 注入，
-    /// 避免硬编码 30 秒（架构 MEDIUM 2）。
-    pub fn new_with_timeout(http_client: Arc<reqwest::Client>, timeout_seconds: u64) -> Self {
-        Self {
-            http_client,
-            proxy_url: None,
-            proxy_client: None,
-            timeout_seconds,
-        }
-    }
-
-    /// 创建带代理配置的 ReqwestEngine 实例
-    ///
-    /// 代理 client 在构造时一次性创建，避免每次请求都重建 reqwest::Client
-    /// 丢失连接池（性能 HIGH：代理路径每次重建 client 丢失连接池）。
-    /// 空字符串视为未配置代理（与 EngineModule 的 proxy.enabled=false 一致）。
-    /// 使用 DEFAULT_TIMEOUT_SECONDS（30 秒）作为引擎级超时。
-    pub fn with_proxy(http_client: Arc<reqwest::Client>, proxy_url: impl Into<String>) -> Self {
-        Self::with_proxy_and_timeout(http_client, proxy_url, DEFAULT_TIMEOUT_SECONDS)
-    }
-
-    /// 创建带代理 + 超时配置的 ReqwestEngine 实例
+    /// 创建带超时配置的 ReqwestEngine 实例（无代理提供者）
     ///
     /// 生产环境调用点应从 `settings.timeouts.engines.default_timeout_seconds` 注入超时，
     /// 避免硬编码 30 秒（架构 MEDIUM 2）。
-    /// 代理 client 在构造时一次性创建，避免每次请求都重建 reqwest::Client
-    /// 丢失连接池（性能 HIGH：代理路径每次重建 client 丢失连接池）。
-    /// 空字符串视为未配置代理（与 EngineModule 的 proxy.enabled=false 一致）。
-    pub fn with_proxy_and_timeout(
+    pub fn new_with_timeout(http_client: Arc<reqwest::Client>, timeout_seconds: u64) -> Self {
+        Self::new_with_timeout_and_mrt(
+            http_client,
+            timeout_seconds,
+            Duration::from_secs(DEFAULT_REQWEST_MRT_SECONDS),
+        )
+    }
+
+    /// 创建带超时 + MRT 配置的 ReqwestEngine 实例（无代理提供者，T060/T061）。
+    ///
+    /// 生产环境应从：
+    /// - `settings.timeouts.engines.default_timeout_seconds` 注入 `timeout_seconds`
+    /// - `settings.timeouts.engines.fetch_seconds` 注入 `mrt`
+    #[must_use]
+    pub fn new_with_timeout_and_mrt(
         http_client: Arc<reqwest::Client>,
-        proxy_url: impl Into<String>,
         timeout_seconds: u64,
+        mrt: Duration,
     ) -> Self {
-        let url = proxy_url.into();
-        // 空字符串视为未配置代理
-        let (proxy_url, proxy_client) = if url.trim().is_empty() {
-            (None, None)
-        } else {
-            let client =
-                Self::build_custom_client(Some(&url), false, &http_client, timeout_seconds);
-            (Some(url), Some(client))
-        };
         Self {
             http_client,
-            proxy_url,
-            proxy_client,
+            proxy_provider: None,
+            proxy_strategy: DEFAULT_PROXY_STRATEGY,
             timeout_seconds,
+            mrt,
+            ua_pool: UaPool::default(),
+            proxy_client_cache: DashMap::new(),
         }
+    }
+
+    /// 创建带代理提供者配置的 ReqwestEngine 实例（H2 修复：依赖 `ProxyProvider` trait）
+    ///
+    /// 默认使用 `ProxyStrategy::RoundRobin`。如需 sticky，请使用 [`Self::with_provider_and_strategy`]。
+    /// 使用 DEFAULT_TIMEOUT_SECONDS（30 秒）作为引擎级超时。
+    #[must_use]
+    pub fn with_provider(
+        http_client: Arc<reqwest::Client>,
+        proxy_provider: Arc<dyn ProxyProvider>,
+    ) -> Self {
+        Self::with_provider_strategy_and_timeout(
+            http_client,
+            proxy_provider,
+            DEFAULT_PROXY_STRATEGY,
+            DEFAULT_TIMEOUT_SECONDS,
+        )
+    }
+
+    /// 创建带代理提供者 + 策略 + 超时配置的 ReqwestEngine 实例（H1/H2 修复）
+    ///
+    /// 生产环境调用点应从：
+    /// - `settings.proxy.strategy` 注入 `proxy_strategy`
+    /// - `settings.timeouts.engines.default_timeout_seconds` 注入超时
+    ///
+    /// 避免硬编码（架构 MEDIUM 2）。
+    #[must_use]
+    pub fn with_provider_strategy_and_timeout(
+        http_client: Arc<reqwest::Client>,
+        proxy_provider: Arc<dyn ProxyProvider>,
+        proxy_strategy: ProxyStrategy,
+        timeout_seconds: u64,
+    ) -> Self {
+        Self::with_provider_strategy_timeout_and_mrt(
+            http_client,
+            proxy_provider,
+            proxy_strategy,
+            timeout_seconds,
+            Duration::from_secs(DEFAULT_REQWEST_MRT_SECONDS),
+        )
+    }
+
+    /// 创建带代理提供者 + 策略 + 超时 + MRT 配置的 ReqwestEngine 实例（T060/T061）。
+    ///
+    /// 生产环境调用点应从：
+    /// - `settings.proxy.strategy` 注入 `proxy_strategy`
+    /// - `settings.timeouts.engines.default_timeout_seconds` 注入 `timeout_seconds`
+    /// - `settings.timeouts.engines.fetch_seconds` 注入 `mrt`
+    #[must_use]
+    pub fn with_provider_strategy_timeout_and_mrt(
+        http_client: Arc<reqwest::Client>,
+        proxy_provider: Arc<dyn ProxyProvider>,
+        proxy_strategy: ProxyStrategy,
+        timeout_seconds: u64,
+        mrt: Duration,
+    ) -> Self {
+        Self {
+            http_client,
+            proxy_provider: Some(proxy_provider),
+            proxy_strategy,
+            timeout_seconds,
+            mrt,
+            ua_pool: UaPool::default(),
+            proxy_client_cache: DashMap::new(),
+        }
+    }
+
+    /// 获取 UA 池引用（用于测试验证 R-identity-001）
+    #[must_use]
+    pub fn ua_pool(&self) -> &UaPool {
+        &self.ua_pool
+    }
+
+    /// 引擎是否配置了代理提供者（用于测试验证 H2）
+    #[must_use]
+    pub fn has_proxy_provider(&self) -> bool {
+        self.proxy_provider.is_some()
+    }
+
+    /// 获取代理调度策略（用于测试验证 H1）
+    #[must_use]
+    pub fn proxy_strategy(&self) -> ProxyStrategy {
+        self.proxy_strategy
+    }
+
+    /// 获取引擎级 MRT（用于测试验证 T060）。
+    ///
+    /// 返回构造时注入的 `mrt`（默认 5 秒，对应 `fetch_seconds`）。
+    #[must_use]
+    pub fn mrt(&self) -> Duration {
+        self.mrt
     }
 
     /// 构建自定义 reqwest::Client（统一处理 proxy + skip_tls）
@@ -100,13 +217,22 @@ impl ReqwestEngine {
     /// - `skip_tls`: true 时启用 `danger_accept_invalid_certs(true)`（仅开发环境，生产环境由
     ///   `ScrapeOptions::builder().skip_tls_verification(true)` 在 APP_ENVIRONMENT=production 时拒绝）
     /// - `timeout_seconds`: 请求超时（秒），从 Settings 注入避免硬编码
-    ///   创建失败时 fallback 到注入的 http_client。
+    /// - `fallback`: 构建失败时回退到的注入 http_client
+    ///
+    /// # 返回值
+    ///
+    /// `(reqwest::Client, bool)` —— 第二个 bool 是 `is_fallback`：
+    /// - `false`：client 构建成功
+    /// - `true`：构建失败，已回退到 `fallback`（M4 修复：失败显性化，规则12）
+    ///
+    /// M4 修复：失败时日志从 `warn` 升级为 `error`，并返回 `is_fallback=true` 标志
+    /// 让调用方感知失败（不藏默认值背后）。
     fn build_custom_client(
         proxy_url: Option<&str>,
         skip_tls: bool,
         fallback: &Arc<reqwest::Client>,
         timeout_seconds: u64,
-    ) -> reqwest::Client {
+    ) -> (reqwest::Client, bool) {
         // 强制 IPv4 + dns_resolver：与 init_http_client 保持一致
         // 避免代理路径下 DNS 解析仍走系统默认 getaddrinfo 返回 IPv6
         let mut builder = reqwest::Client::builder()
@@ -122,30 +248,42 @@ impl ReqwestEngine {
         let effective_proxy = proxy_url.map(|s| s.trim()).filter(|s| !s.is_empty());
 
         match effective_proxy {
-            Some(url) => match reqwest::Proxy::http(url) {
-                Ok(proxy) => match builder.proxy(proxy).build() {
-                    Ok(client) => {
-                        log::debug!(
-                            "Using HTTP proxy: {} (skip_tls={}, timeout={}s)",
-                            url,
-                            skip_tls,
-                            timeout_seconds
+            Some(url) => {
+                match reqwest::Proxy::http(url) {
+                    Ok(proxy) => match builder.proxy(proxy).build() {
+                        Ok(client) => {
+                            // 安全：代理 URL 可能含 user:pass@host 凭据，日志输出必须脱敏
+                            // （CWE-532 防护，T056 安全审查 CRITICAL-1 修复）
+                            log::debug!(
+                                "Using HTTP proxy: {} (skip_tls={}, timeout={}s)",
+                                redact_proxy_url(url),
+                                skip_tls,
+                                timeout_seconds
+                            );
+                            (client, false)
+                        }
+                        Err(e) => {
+                            // M4 修复：warn → error（规则12：失败必须显性化）
+                            // 安全：url 脱敏后输出（CWE-532 防护）
+                            error!(
+                            "Failed to build proxy client (url={}, skip_tls={}, timeout={}s): {}, \
+                             falling back to injected http_client",
+                            redact_proxy_url(url), skip_tls, timeout_seconds, e
                         );
-                        client
-                    }
+                            ((**fallback).clone(), true)
+                        }
+                    },
                     Err(e) => {
-                        log::warn!("Failed to build proxy client: {}, using fallback client", e);
-                        (**fallback).clone()
-                    }
-                },
-                Err(e) => {
-                    log::warn!(
-                        "Failed to configure HTTP proxy: {}, using fallback client",
-                        e
+                        // M4 修复：warn → error
+                        // 安全：url 脱敏后输出（CWE-532 防护）
+                        error!(
+                        "Failed to configure HTTP proxy (url={}): {}, falling back to injected http_client",
+                        redact_proxy_url(url), e
                     );
-                    (**fallback).clone()
+                        ((**fallback).clone(), true)
+                    }
                 }
-            },
+            }
             None => match builder.build() {
                 Ok(client) => {
                     if skip_tls {
@@ -154,25 +292,42 @@ impl ReqwestEngine {
                             timeout_seconds
                         );
                     }
-                    client
+                    (client, false)
                 }
                 Err(e) => {
-                    log::warn!("Failed to build client: {}, using fallback client", e);
-                    (**fallback).clone()
+                    // M4 修复：warn → error
+                    error!(
+                        "Failed to build client (skip_tls={}, timeout={}s): {}, \
+                         falling back to injected http_client",
+                        skip_tls, timeout_seconds, e
+                    );
+                    ((**fallback).clone(), true)
                 }
             },
         }
     }
 
-    /// 获取HTTP客户端
+    /// 获取 HTTP 客户端句柄（H3 修复：返回 `ClientHandle`，封装代理 URL 状态回填）
     ///
-    /// 代理优先级：请求级代理 > 引擎级代理 > 无代理
-    /// 引擎级代理用缓存的 proxy_client（避免每次重建）
-    /// 请求级代理如果与引擎级相同，复用缓存的 proxy_client
+    /// 代理优先级（design.md §12，T056 + H1/H2/H3 修复）：
+    /// 1. **请求级代理**（`request.proxy`）：覆盖提供者
+    /// 2. **代理提供者**（`proxy_provider`）：按 `proxy_strategy` 调度
+    ///    - `RoundRobin` → `ProxyProvider::next(ProxyCategory::Html)`
+    ///    - `Sticky` + `session_id` 存在 → `ProxyProvider::sticky(session_id)`
+    ///    - `Sticky` + `session_id` 为 None → fallback 到 `next`，并 warn 日志
+    /// 3. **无代理**：直接使用注入的 `http_client`
     ///
     /// `skip_tls_verification=true` 时必须构建临时 client（无法覆盖已有 client 的 TLS 设置），
     /// 并输出 warn 日志（安全审计需要 — TLS 验证被显式跳过）。
-    fn get_client(&self, proxy: &Option<String>, skip_tls: bool) -> reqwest::Client {
+    ///
+    /// L2 修复：用 early return 拍平原 3 层嵌套（provider → match → if let）。
+    /// M4 修复：`build_custom_client` 返回 `(client, is_fallback)` 元组，传递给 `ClientHandle::new`。
+    fn get_client(
+        &self,
+        proxy: &Option<String>,
+        skip_tls: bool,
+        session_id: Option<&str>,
+    ) -> ClientHandle {
         // skip_tls_verification=true：构建临时 client with danger_accept_invalid_certs
         // 生产环境 ScrapeOptions::builder() 已拒绝该选项，这里只处理开发环境
         if skip_tls {
@@ -180,38 +335,93 @@ impl ReqwestEngine {
                 "skip_tls_verification=true: TLS certificate validation disabled for this request"
             );
             let proxy_url = proxy.as_ref().map(|s| s.as_str());
-            return Self::build_custom_client(
-                proxy_url,
-                true,
-                &self.http_client,
-                self.timeout_seconds,
-            );
+            let (client, is_fallback) =
+                Self::build_custom_client(proxy_url, true, &self.http_client, self.timeout_seconds);
+            let used = proxy.as_ref().and_then(|s| {
+                let t = s.trim();
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_string())
+                }
+            });
+            return ClientHandle::new(client, used, is_fallback);
         }
 
-        // 请求级代理优先
+        // 请求级代理优先（覆盖提供者）
         let request_proxy = proxy.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
 
         if let Some(url) = request_proxy {
-            // 请求级代理与引擎级代理相同，复用缓存的 proxy_client
-            if self.proxy_url.as_deref() == Some(url) {
-                if let Some(client) = &self.proxy_client {
-                    return client.clone();
-                }
-            }
-            // 请求级代理与引擎级不同，每次创建（不缓存，请求级代理很少用）
-            return Self::build_custom_client(
+            // 请求级代理：每次构建（不缓存，请求级代理很少用）
+            let (client, is_fallback) = Self::build_custom_client(
                 Some(url),
                 false,
                 &self.http_client,
                 self.timeout_seconds,
             );
+            return ClientHandle::new(client, Some(url.to_string()), is_fallback);
         }
 
-        // 无请求级代理：用引擎级代理 client 或 http_client
-        match &self.proxy_client {
-            Some(client) => client.clone(),
-            None => (*self.http_client).clone(),
-        }
+        // 从代理提供者按策略调度（H1：按 ProxyStrategy 路由 next / sticky）
+        // L2 修复：用 early return 拍平嵌套，避免 provider → match → if let 三层
+        let Some(provider) = &self.proxy_provider else {
+            // 无代理提供者 → 直接使用注入的 http_client
+            return ClientHandle::new(self.http_client.as_ref().clone(), None, false);
+        };
+
+        let picked = match self.proxy_strategy {
+            ProxyStrategy::RoundRobin => provider.next(ProxyCategory::Html),
+            ProxyStrategy::Sticky => match session_id {
+                Some(sid) if !sid.is_empty() => provider.sticky(sid),
+                // Sticky 策略但 session_id 缺失：fallback 到 next 并 warn
+                _ => {
+                    log::warn!(
+                        "proxy_strategy=Sticky but session_id is missing/empty; \
+                         falling back to RoundRobin (next)"
+                    );
+                    provider.next(ProxyCategory::Html)
+                }
+            },
+        };
+
+        let Some(url) = picked else {
+            // 池为空或全冷却 → fallback 到 http_client
+            log::debug!(
+                "proxy_provider returned None (empty pool or all proxies in cooldown), \
+                 using injected http_client"
+            );
+            return ClientHandle::new(self.http_client.as_ref().clone(), None, false);
+        };
+
+        // 性能审查 HIGH-1 修复：proxy_provider 路径缓存 reqwest::Client
+        //
+        // 原实现每次请求都 build_custom_client，导致：
+        // - 每次请求都新建 reqwest::Client（含 cookie store + dns resolver + TLS context）
+        // - 连接池无法复用，每次都重新 TCP/TLS 握手
+        // - 在高并发爬取场景下严重影响吞吐量
+        //
+        // 修复后：按 proxy_url 缓存成功构建的 client，reqwest::Client::clone() 仅增加 Arc 引用计数
+        // 缓存大小有界（池中代理 URL 数量有限），不会无限增长。
+        //
+        // 仅缓存 is_fallback=false 的 client；fallback 路径直接用注入的 http_client（避免缓存 fallback）
+        let (client, is_fallback) = if let Some(cached) = self.proxy_client_cache.get(&url) {
+            // 缓存命中：clone 即可（reqwest::Client::clone 内部 Arc 共享）
+            (cached.clone(), false)
+        } else {
+            // 缓存未命中：构建新 client
+            let (client, is_fallback) = Self::build_custom_client(
+                Some(&url),
+                false,
+                &self.http_client,
+                self.timeout_seconds,
+            );
+            // 仅缓存成功构建的 client（fallback 不缓存，避免缓存注入的 http_client 反复 clone）
+            if !is_fallback {
+                self.proxy_client_cache.insert(url.clone(), client.clone());
+            }
+            (client, is_fallback)
+        };
+        ClientHandle::new(client, Some(url), is_fallback)
     }
 }
 
@@ -249,38 +459,41 @@ impl ScraperEngine for ReqwestEngine {
 
         // Use shared HTTP client for connection reuse, with proxy support
         // 传入 skip_tls_verification 以支持开发环境跳过 TLS 验证（生产环境由 builder 拒绝）
-        let client = self.get_client(&request.proxy, request.skip_tls_verification);
+        // H3 修复：get_client 返回 ClientHandle，封装代理 URL 状态；
+        // 通过 report_failure / report_success 回填 ProxyProvider，无需调用方感知代理 URL。
+        let handle = self.get_client(
+            &request.proxy,
+            request.skip_tls_verification,
+            request.session_id.as_deref(),
+        );
+
+        // R-identity-001: 从 UaPool 取一致的 UA + Accept-Language + sec-ch-ua profile
+        // 替换原固定 DEFAULT_USER_AGENT / 固定移动 UA 分支；
+        // DEFAULT_USER_AGENT 仍保留在 http_client.rs 作为 client 级默认（UaPool 不可用时的回退）
+        let profile = self.ua_pool.pick(request.mobile);
 
         // Create request builder.
         //
-        // Use a real desktop browser User-Agent instead of a self-identifying
+        // Use a real browser User-Agent from UaPool instead of a self-identifying
         // `crawlrs/*` UA: major search engines (Baidu, Sogou, Bing) reject
         // bot-identified requests with a 227-byte JS-redirect error page
         // instead of returning actual search results.
         let mut request_builder = match request.method {
-            crate::engines::engine_client::HttpMethod::Get => {
-                if request.mobile {
-                    client
-                        .get(&request.url)
-                        .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
-                } else {
-                    client
-                        .get(&request.url)
-                        .header("User-Agent", DEFAULT_USER_AGENT)
-                }
-            }
-            crate::engines::engine_client::HttpMethod::Post => {
-                if request.mobile {
-                    client
-                        .post(&request.url)
-                        .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1")
-                } else {
-                    client
-                        .post(&request.url)
-                        .header("User-Agent", DEFAULT_USER_AGENT)
-                }
-            }
+            crate::engines::engine_client::HttpMethod::Get => handle.client.get(&request.url),
+            crate::engines::engine_client::HttpMethod::Post => handle.client.post(&request.url),
         };
+
+        // 应用 UA 绑定 headers（User-Agent + Accept-Language + sec-ch-ua）
+        // - User-Agent: 所有 profile 必设
+        // - Accept-Language: 所有 profile 必设
+        // - sec-ch-ua: 仅 Chromium-based 浏览器（Firefox/Safari 为空串，跳过）
+        // 用户自定义 headers（request.headers）在后文 insert，可覆盖这些默认值
+        request_builder = request_builder
+            .header("User-Agent", profile.ua)
+            .header("Accept-Language", profile.accept_language);
+        if !profile.sec_ch_ua.is_empty() {
+            request_builder = request_builder.header("sec-ch-ua", profile.sec_ch_ua);
+        }
 
         // Add custom headers
         request_builder = request_builder.headers(headers);
@@ -297,8 +510,18 @@ impl ScraperEngine for ReqwestEngine {
 
         let response = match response_result {
             Ok(resp) => resp,
-            Err(e) if e.is_timeout() => return Err(EngineError::Timeout(request.timeout)),
+            Err(e) if e.is_timeout() => {
+                // H3: 通过 ClientHandle.report_failure 回填 ProxyProvider（无需感知 used_proxy_url）
+                if let Some(provider) = &self.proxy_provider {
+                    handle.report_failure(provider.as_ref());
+                }
+                return Err(EngineError::Timeout(request.timeout));
+            }
             Err(e) => {
+                // H3: 通过 ClientHandle.report_failure 回填 ProxyProvider（无需感知 used_proxy_url）
+                if let Some(provider) = &self.proxy_provider {
+                    handle.report_failure(provider.as_ref());
+                }
                 // 打印完整错误链（含 source）以便诊断根因
                 let mut chain = Vec::new();
                 let mut current: Option<&dyn std::error::Error> = Some(&e);
@@ -316,6 +539,14 @@ impl ScraperEngine for ReqwestEngine {
         };
 
         let status_code = response.status().as_u16();
+
+        // H3: 2xx 成功 → 通过 ClientHandle.report_success 回填 ProxyProvider 恢复代理健康
+        // 4xx/5xx 视为业务层失败，但代理本身可用，不 report_failure（避免误伤好代理）
+        if (200..300).contains(&status_code) {
+            if let Some(provider) = &self.proxy_provider {
+                handle.report_success(provider.as_ref());
+            }
+        }
         let content_type = response
             .headers()
             .get("content-type")
@@ -381,6 +612,14 @@ impl ScraperEngine for ReqwestEngine {
     fn name(&self) -> &'static str {
         "reqwest"
     }
+
+    /// T060：覆写 MRT，返回构造时注入的 `mrt`（默认 5 秒）。
+    ///
+    /// router 顺序 fallback 路径用 `min(remaining, self.mrt)` 包裹单引擎调用，
+    /// 超 MRT 即切下一引擎（瀑布式）。
+    fn max_response_time(&self) -> Duration {
+        self.mrt
+    }
 }
 
 #[cfg(test)]
@@ -389,6 +628,7 @@ mod tests {
     use crate::engines::engine_client::{
         HttpMethod, InternalScrapeRequest, InternalScreenshotConfig,
     };
+    use crate::engines::proxy_pool::ProxyPool;
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -420,6 +660,10 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         }
     }
 
@@ -440,6 +684,10 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         }
     }
 
@@ -465,6 +713,10 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         }
     }
 
@@ -475,20 +727,40 @@ mod tests {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         assert_eq!(engine.name(), "reqwest");
+        assert!(!engine.has_proxy_provider());
     }
 
     #[test]
-    fn test_reqwest_engine_with_proxy() {
+    fn test_reqwest_engine_with_provider() {
         let client = create_test_client();
-        let engine = ReqwestEngine::with_proxy(client, "http://proxy.example.com:8080");
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://a:8080".to_string(), "http://b:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider(client, pool);
         assert_eq!(engine.name(), "reqwest");
+        assert!(engine.has_proxy_provider());
     }
 
     #[test]
-    fn test_reqwest_engine_with_empty_proxy() {
+    fn test_reqwest_engine_with_provider_strategy_and_timeout() {
         let client = create_test_client();
-        let engine = ReqwestEngine::with_proxy(client, "");
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://a:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider_strategy_and_timeout(
+            client,
+            pool,
+            ProxyStrategy::RoundRobin,
+            45,
+        );
         assert_eq!(engine.name(), "reqwest");
+        assert!(engine.has_proxy_provider());
+        assert_eq!(engine.proxy_strategy(), ProxyStrategy::RoundRobin);
+        assert_eq!(engine.timeout_seconds, 45);
     }
 
     // === name() tests ===
@@ -501,9 +773,14 @@ mod tests {
     }
 
     #[test]
-    fn test_name_returns_reqwest_with_proxy() {
+    fn test_name_returns_reqwest_with_provider() {
         let client = create_test_client();
-        let engine = ReqwestEngine::with_proxy(client, "http://proxy:8080");
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://proxy:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider(client, pool);
         assert_eq!(engine.name(), "reqwest");
     }
 
@@ -538,6 +815,10 @@ mod tests {
             actions: Vec::new(),
             body: Some("data".to_string()),
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         };
         assert_eq!(engine.support_score(&request), 100);
     }
@@ -580,6 +861,10 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         };
         assert_eq!(engine.support_score(&request), 10);
     }
@@ -604,17 +889,26 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         };
         // Mobile without JS should still get 100
         assert_eq!(engine.support_score(&request), 100);
     }
 
     #[test]
-    fn test_support_score_with_proxy() {
+    fn test_support_score_with_provider() {
         let client = create_test_client();
-        let engine = ReqwestEngine::with_proxy(client, "http://proxy:8080");
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://proxy:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider(client, pool);
         let request = create_basic_request("https://example.com");
-        // Proxy shouldn't affect support score
+        // ProxyProvider shouldn't affect support score
         assert_eq!(engine.support_score(&request), 100);
     }
 
@@ -729,6 +1023,10 @@ mod tests {
             actions: Vec::new(),
             body: Some("data".to_string()),
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         };
         let result = engine.scrape(&request).await;
         assert!(result.is_err());
@@ -754,6 +1052,10 @@ mod tests {
             actions: Vec::new(),
             body: None,
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
         };
         let result = engine.scrape(&request).await;
         assert!(result.is_err());
@@ -812,62 +1114,282 @@ mod tests {
         });
     }
 
-    // === get_client private method tests ===
+    // === get_client private method tests (H3: 返回 ClientHandle) ===
     // get_client is a private method, but accessible via `use super::*` in tests.
     // These tests only build clients without sending HTTP requests.
 
     #[test]
-    fn test_get_client_with_no_proxy_returns_injected_client() {
+    fn test_get_client_with_no_proxy_returns_injected_client_and_no_url() {
         ensure_debug_logger();
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
-        // No proxy → should return the injected client
-        let _result = engine.get_client(&None, false);
+        // No proxy + no provider → ClientHandle.used_proxy_url = None
+        let handle = engine.get_client(&None, false, None);
+        assert!(
+            handle.used_proxy_url().is_none(),
+            "no proxy + no provider → used_proxy_url must be None"
+        );
+        assert!(!handle.has_proxy());
+        // M4 修复：无代理路径非 fallback
+        assert!(!handle.is_fallback(), "no proxy path must not be fallback");
     }
 
     #[test]
-    fn test_get_client_with_valid_http_proxy_returns_proxy_client() {
+    fn test_get_client_with_request_level_proxy_returns_proxy_url() {
         ensure_debug_logger();
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
-        // Valid HTTP proxy URL → should create a new client with proxy
-        let _result = engine.get_client(&Some("http://proxy.example.com:8080".to_string()), false);
+        // Request-level proxy (valid HTTP) → ClientHandle.used_proxy_url = Some(url)
+        let handle = engine.get_client(
+            &Some("http://proxy.example.com:8080".to_string()),
+            false,
+            None,
+        );
+        assert_eq!(
+            handle.used_proxy_url(),
+            Some("http://proxy.example.com:8080"),
+            "request-level proxy must be returned as used_proxy_url"
+        );
+        assert!(handle.has_proxy());
+        // M4 修复：有效代理路径非 fallback
+        assert!(
+            !handle.is_fallback(),
+            "valid proxy path must not be fallback"
+        );
     }
 
     #[test]
-    fn test_get_client_with_invalid_proxy_falls_back_to_injected() {
+    fn test_get_client_with_invalid_request_proxy_still_returns_url() {
         ensure_debug_logger();
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
-        // Invalid proxy URL → reqwest::Proxy::http fails → log::warn! → fall back to injected client
-        let _result = engine.get_client(&Some("://invalid".to_string()), false);
+        // 即使 reqwest::Proxy::http 失败 fallback 到 injected client，used_proxy_url 仍是请求级代理
+        // 因为调用方语义上"尝试使用了这个代理"。report_failure 仍会调用（provider 为 None 时跳过）
+        let handle = engine.get_client(&Some("://invalid".to_string()), false, None);
+        // "://invalid" trim 后非空 → 视为请求级代理，used_proxy_url = Some("://invalid")
+        assert_eq!(handle.used_proxy_url(), Some("://invalid"));
+        // M4 修复：无效代理 → build_custom_client 失败 → is_fallback=true
+        assert!(
+            handle.is_fallback(),
+            "invalid proxy must set is_fallback=true (M4: 失败显性化)"
+        );
     }
 
     #[test]
-    fn test_get_client_with_global_proxy_and_no_request_proxy() {
+    fn test_get_client_with_empty_request_proxy_returns_no_url() {
         ensure_debug_logger();
         let client = create_test_client();
-        let engine = ReqwestEngine::with_proxy(client, "http://global-proxy:8080");
-        // No request proxy, but engine has global proxy → should use global proxy
-        let _result = engine.get_client(&None, false);
+        let engine = ReqwestEngine::new(client);
+        // 空字符串 → 视为无请求级代理
+        let handle = engine.get_client(&Some("".to_string()), false, None);
+        assert!(
+            handle.used_proxy_url().is_none(),
+            "empty proxy string → used_proxy_url must be None"
+        );
+        assert!(
+            !handle.is_fallback(),
+            "empty proxy → no proxy path, not fallback"
+        );
     }
 
     #[test]
-    fn test_get_client_request_proxy_overrides_global_proxy() {
+    fn test_get_client_with_provider_returns_pool_url() {
         ensure_debug_logger();
         let client = create_test_client();
-        let engine = ReqwestEngine::with_proxy(client, "http://global-proxy:8080");
-        // Both request and global proxy → request proxy takes precedence
-        let _result = engine.get_client(&Some("http://request-proxy:9090".to_string()), false);
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://pool-proxy:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider(client, pool);
+        // 无请求级代理 → 从 provider 取 → ClientHandle.used_proxy_url = Some(pool_url)
+        let handle = engine.get_client(&None, false, None);
+        assert_eq!(
+            handle.used_proxy_url(),
+            Some("http://pool-proxy:8080"),
+            "provider must provide used_proxy_url for report_failure / report_success"
+        );
+        assert!(
+            !handle.is_fallback(),
+            "valid pool proxy must not be fallback"
+        );
     }
 
     #[test]
-    fn test_get_client_with_invalid_global_proxy_falls_back() {
+    fn test_get_client_request_proxy_overrides_provider() {
         ensure_debug_logger();
         let client = create_test_client();
-        let engine = ReqwestEngine::with_proxy(client, "://invalid");
-        // Invalid global proxy with no request proxy → fall back to injected client
-        let _result = engine.get_client(&None, false);
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://pool-proxy:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider(client, pool);
+        // 请求级代理 > 池代理
+        let handle = engine.get_client(&Some("http://request-proxy:9090".to_string()), false, None);
+        assert_eq!(
+            handle.used_proxy_url(),
+            Some("http://request-proxy:9090"),
+            "request-level proxy must override provider"
+        );
+        assert!(
+            !handle.is_fallback(),
+            "valid request proxy must not be fallback"
+        );
+    }
+
+    #[test]
+    fn test_get_client_empty_pool_returns_injected_client() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            Vec::<String>::new(),
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider(client, pool);
+        // 空池 → fallback 到注入 client，used_proxy_url = None
+        let handle = engine.get_client(&None, false, None);
+        assert!(
+            handle.used_proxy_url().is_none(),
+            "empty pool → used_proxy_url must be None"
+        );
+        // 空池不是 build_custom_client 失败，是 provider 返回 None 的正常路径
+        assert!(
+            !handle.is_fallback(),
+            "empty pool is normal path, not build failure"
+        );
+    }
+
+    #[test]
+    fn test_get_client_pool_all_cooldown_returns_injected_client() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let pool = Arc::new(ProxyPool::from_urls(
+            vec!["http://pool-proxy:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        pool.mark_failure("http://pool-proxy:8080");
+        let pool_dyn: Arc<dyn ProxyProvider> = pool;
+        let engine = ReqwestEngine::with_provider(client, pool_dyn);
+        // 全冷却 → fallback 到注入 client，used_proxy_url = None（不 report_failure）
+        let handle = engine.get_client(&None, false, None);
+        assert!(
+            handle.used_proxy_url().is_none(),
+            "all cooldown → fallback to injected client, used_proxy_url must be None"
+        );
+        assert!(
+            !handle.is_fallback(),
+            "all cooldown is normal path, not build failure"
+        );
+    }
+
+    #[test]
+    fn test_get_client_rr_cycles_through_pool() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec![
+                "http://a:8080".to_string(),
+                "http://b:8080".to_string(),
+                "http://c:8080".to_string(),
+            ],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider(client, pool);
+        // RR 应轮询所有代理：3 次调用应覆盖 a/b/c（顺序由 rr 计数器决定）
+        let urls: Vec<String> = (0..3)
+            .map(|_| {
+                engine
+                    .get_client(&None, false, None)
+                    .used_proxy_url()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert!(urls.contains(&"http://a:8080".to_string()));
+        assert!(urls.contains(&"http://b:8080".to_string()));
+        assert!(urls.contains(&"http://c:8080".to_string()));
+    }
+
+    #[test]
+    fn test_get_client_sticky_strategy_uses_sticky_when_session_id_present() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://a:8080".to_string(), "http://b:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider_strategy_and_timeout(
+            client,
+            pool,
+            ProxyStrategy::Sticky,
+            30,
+        );
+        // Sticky + session_id="sess-1" → 两次调用应返回同一代理（粘性）
+        let url1 = engine
+            .get_client(&None, false, Some("sess-1"))
+            .used_proxy_url()
+            .unwrap()
+            .to_string();
+        let url2 = engine
+            .get_client(&None, false, Some("sess-1"))
+            .used_proxy_url()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            url1, url2,
+            "sticky strategy must return same url within session"
+        );
+    }
+
+    #[test]
+    fn test_get_client_sticky_strategy_falls_back_to_rr_when_session_id_missing() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://a:8080".to_string(), "http://b:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider_strategy_and_timeout(
+            client,
+            pool,
+            ProxyStrategy::Sticky,
+            30,
+        );
+        // Sticky + session_id=None → fallback 到 next（RR）
+        let handle = engine.get_client(&None, false, None);
+        assert!(
+            handle.used_proxy_url().is_some(),
+            "sticky without session_id should fall back to next and return a proxy url"
+        );
+    }
+
+    #[test]
+    fn test_get_client_sticky_strategy_falls_back_to_rr_when_session_id_empty() {
+        ensure_debug_logger();
+        let client = create_test_client();
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://a:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider_strategy_and_timeout(
+            client,
+            pool,
+            ProxyStrategy::Sticky,
+            30,
+        );
+        // Sticky + session_id="" → fallback 到 next（RR）
+        let handle = engine.get_client(&None, false, Some(""));
+        assert!(
+            handle.used_proxy_url().is_some(),
+            "sticky with empty session_id should fall back to next"
+        );
     }
 
     #[test]
@@ -876,7 +1398,15 @@ mod tests {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         // Valid HTTPS proxy URL
-        let _result = engine.get_client(&Some("https://proxy.example.com:8443".to_string()), false);
+        let handle = engine.get_client(
+            &Some("https://proxy.example.com:8443".to_string()),
+            false,
+            None,
+        );
+        assert_eq!(
+            handle.used_proxy_url(),
+            Some("https://proxy.example.com:8443")
+        );
     }
 
     #[test]
@@ -886,7 +1416,11 @@ mod tests {
         let engine = ReqwestEngine::new(client);
         // skip_tls_verification=true → 构建临时 client with danger_accept_invalid_certs
         // 验证不 panic + 输出 warn 日志
-        let _result = engine.get_client(&None, true);
+        let handle = engine.get_client(&None, true, None);
+        assert!(
+            handle.used_proxy_url().is_none(),
+            "skip_tls + no proxy → used_proxy_url None"
+        );
     }
 
     #[test]
@@ -895,7 +1429,8 @@ mod tests {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         // skip_tls_verification=true + proxy → 构建临时 client with both options
-        let _result = engine.get_client(&Some("http://proxy:8080".to_string()), true);
+        let handle = engine.get_client(&Some("http://proxy:8080".to_string()), true, None);
+        assert_eq!(handle.used_proxy_url(), Some("http://proxy:8080"));
     }
 
     // === timeout 注入测试（架构 MEDIUM 2） ===
@@ -906,45 +1441,48 @@ mod tests {
         let engine = ReqwestEngine::new_with_timeout(client, 60);
         // 验证 timeout_seconds 字段被正确注入（通过 build_custom_client 路径间接验证）
         // get_client 不 panic 即说明 timeout_seconds 已正确传递
-        let _result = engine.get_client(&None, false);
+        let _ = engine.get_client(&None, false, None);
         assert_eq!(engine.timeout_seconds, 60);
     }
 
     #[test]
-    fn test_with_proxy_and_timeout_sets_timeout_seconds() {
+    fn test_with_provider_strategy_and_timeout_sets_timeout_seconds() {
         let client = create_test_client();
-        let engine =
-            ReqwestEngine::with_proxy_and_timeout(client, "http://proxy.example.com:8080", 45);
-        // 引擎级代理路径下，timeout_seconds 应为注入值 45
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://proxy.example.com:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider_strategy_and_timeout(
+            client,
+            pool,
+            ProxyStrategy::RoundRobin,
+            45,
+        );
+        // provider 路径下，timeout_seconds 应为注入值 45
         assert_eq!(engine.timeout_seconds, 45);
-        // 验证 proxy_client 也使用注入的 timeout 构建（不 panic）
-        let _result = engine.get_client(&None, false);
-    }
-
-    #[test]
-    fn test_with_proxy_and_timeout_empty_proxy_uses_timeout() {
-        let client = create_test_client();
-        let engine = ReqwestEngine::with_proxy_and_timeout(client, "", 90);
-        // 空代理 URL → proxy_url=None, proxy_client=None
-        // 但 timeout_seconds 仍应为注入值 90
-        assert_eq!(engine.timeout_seconds, 90);
-        assert!(engine.proxy_url.is_none());
-        assert!(engine.proxy_client.is_none());
+        // 验证 proxy client 也使用注入的 timeout 构建（不 panic）
+        let _ = engine.get_client(&None, false, None);
     }
 
     #[test]
     fn test_new_defaults_to_30_seconds() {
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
-        // 向后兼容：new() 默认使用 DEFAULT_TIMEOUT_SECONDS（30 秒）
+        // new() 默认使用 DEFAULT_TIMEOUT_SECONDS（30 秒）
         assert_eq!(engine.timeout_seconds, 30);
     }
 
     #[test]
-    fn test_with_proxy_defaults_to_30_seconds() {
+    fn test_with_provider_defaults_to_30_seconds() {
         let client = create_test_client();
-        let engine = ReqwestEngine::with_proxy(client, "http://proxy:8080");
-        // 向后兼容：with_proxy() 默认使用 DEFAULT_TIMEOUT_SECONDS（30 秒）
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://proxy:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider(client, pool);
+        // with_provider() 默认使用 DEFAULT_TIMEOUT_SECONDS（30 秒）
         assert_eq!(engine.timeout_seconds, 30);
     }
 
@@ -955,6 +1493,166 @@ mod tests {
         let engine = ReqwestEngine::new_with_timeout(client, 120);
         // skip_tls + 注入 timeout=120 → build_custom_client 用 120 秒构建临时 client
         // 验证不 panic + warn 日志输出
-        let _result = engine.get_client(&Some("http://proxy:8080".to_string()), true);
+        let _ = engine.get_client(&Some("http://proxy:8080".to_string()), true, None);
+    }
+
+    // === T021 / R-identity-001: UaPool 集成测试 ===
+
+    #[test]
+    fn test_reqwest_engine_has_non_empty_ua_pool() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        assert!(
+            pool.count(false) >= 20,
+            "desktop pool must have >= 20 profiles"
+        );
+        assert!(
+            pool.count(true) >= 20,
+            "mobile pool must have >= 20 profiles"
+        );
+    }
+
+    #[test]
+    fn test_reqwest_engine_pick_ua_returns_varied_profiles() {
+        // R-identity-001: 多次选取应返回不同 UA（随机性，避免固定 UA 被反爬识别）
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        let mut uas = std::collections::HashSet::new();
+        for _ in 0..50 {
+            uas.insert(pool.pick(false).ua);
+        }
+        assert!(
+            uas.len() >= 2,
+            "multiple picks should return varied UAs, got only {} unique in 50 picks",
+            uas.len()
+        );
+    }
+
+    #[test]
+    fn test_reqwest_engine_pick_ua_mobile_vs_desktop() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        // mobile=true 应返回移动 profile
+        for _ in 0..10 {
+            let p = pool.pick(true);
+            assert!(p.mobile, "pick(true) must return mobile profile");
+        }
+        // mobile=false 应返回桌面 profile
+        for _ in 0..10 {
+            let p = pool.pick(false);
+            assert!(!p.mobile, "pick(false) must return desktop profile");
+        }
+    }
+
+    #[test]
+    fn test_reqwest_engine_pick_seeded_is_stable() {
+        // R-identity-001: 同 seed 必须稳定返回同一 profile（重试时轮换 UA 的基础）
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        let seed = 7_u64;
+        let p1 = pool.pick_seeded(seed, false);
+        let p2 = pool.pick_seeded(seed, false);
+        let p3 = pool.pick_seeded(seed, true);
+        let p4 = pool.pick_seeded(seed, true);
+        assert_eq!(p1.ua, p2.ua, "desktop: same seed must return same UA");
+        assert_eq!(p3.ua, p4.ua, "mobile: same seed must return same UA");
+        // desktop 和 mobile 同 seed 应返回不同 UA（来自不同分组）
+        assert_ne!(p1.ua, p3.ua, "desktop and mobile must differ for same seed");
+    }
+
+    #[test]
+    fn test_reqwest_engine_ua_profile_header_consistency() {
+        // R-identity-001: profile 的 UA / Accept-Language / sec-ch-ua 必须一致绑定
+        // - Chromium-based UA → sec-ch-ua 非空
+        // - Firefox/Safari UA → sec-ch-ua 为空
+        // - Accept-Language 永远非空
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        for p in pool.desktop.iter().chain(pool.mobile.iter()) {
+            assert!(!p.ua.is_empty(), "UA must be non-empty");
+            assert!(
+                !p.accept_language.is_empty(),
+                "Accept-Language must be non-empty"
+            );
+            let is_chromium = p.ua.contains("Chrome")
+                || p.ua.contains("CriOS")
+                || p.ua.contains("Edg")
+                || p.ua.contains("SamsungBrowser");
+            if is_chromium {
+                assert!(
+                    !p.sec_ch_ua.is_empty(),
+                    "Chromium UA must have non-empty sec_ch_ua: {}",
+                    p.ua
+                );
+            } else {
+                assert!(
+                    p.sec_ch_ua.is_empty(),
+                    "Non-Chromium UA must have empty sec_ch_ua: {}",
+                    p.ua
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_reqwest_engine_ua_not_default_user_agent() {
+        // R-identity-001: 引擎的 UA pool 应包含多个 UA，不全部等于 DEFAULT_USER_AGENT
+        // （验证确实替换了固定 UA）
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        let pool = engine.ua_pool();
+        let default_ua =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        let non_default_count = pool.desktop.iter().filter(|p| p.ua != default_ua).count();
+        assert!(
+            non_default_count >= 20,
+            "most desktop UAs should differ from DEFAULT_USER_AGENT, got {} non-default",
+            non_default_count
+        );
+    }
+
+    #[test]
+    fn test_reqwest_engine_with_provider_has_ua_pool() {
+        // 验证所有构造路径都初始化 ua_pool
+        let client = create_test_client();
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://proxy:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider(client, pool);
+        assert!(engine.ua_pool().count(false) >= 20);
+        assert!(engine.ua_pool().count(true) >= 20);
+    }
+
+    #[test]
+    fn test_reqwest_engine_with_timeout_has_ua_pool() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new_with_timeout(client, 60);
+        assert!(engine.ua_pool().count(false) >= 20);
+        assert!(engine.ua_pool().count(true) >= 20);
+    }
+
+    #[test]
+    fn test_reqwest_engine_with_proxy_pool_and_timeout_has_ua_pool() {
+        let client = create_test_client();
+        let pool: Arc<dyn ProxyProvider> = Arc::new(ProxyPool::from_urls(
+            vec!["http://proxy:8080".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ));
+        let engine = ReqwestEngine::with_provider_strategy_and_timeout(
+            client,
+            pool,
+            ProxyStrategy::RoundRobin,
+            45,
+        );
+        assert!(engine.ua_pool().count(false) >= 20);
+        assert!(engine.ua_pool().count(true) >= 20);
     }
 }

@@ -8,11 +8,16 @@ use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
+use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
-use crate::presentation::middleware::team_semaphore::TeamSemaphore;
+use crate::infrastructure::oxcache::CacheService;
 use crate::queue::task_queue::TaskQueue;
+// T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
+use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::regex_cache::RegexCache;
+// H-4 职责拆分：CoalesceCoordinator（封装 try_coalesce 逻辑，注入 ScrapeWorker）
+use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 use crate::workers::expiration_worker::ExpirationWorker;
 use crate::workers::scrape_worker::ScrapeWorker;
 use crate::workers::{AbstractWorker, Worker};
@@ -23,6 +28,9 @@ use tokio::task::JoinHandle;
 
 use crate::config::settings::Settings;
 use crate::utils::robots::RobotsCheckerTrait;
+// T019（R-runtime-001）：MemoryScheduler 接入 WorkerManager
+#[cfg(feature = "metrics")]
+use crate::workers::scheduler::memory_scheduler::MemoryScheduler;
 
 /// 工作管理器
 pub struct WorkerManager {
@@ -35,6 +43,17 @@ pub struct WorkerManager {
     engine_client: Arc<EngineClient>,
     create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     team_semaphore: Arc<TeamSemaphore>,
+    /// 请求合并器（T035/R-runtime-002）
+    ///
+    /// 由 `WorkerManagerDeps` 从 `ServicesComponents.request_coalescer` 注入，
+    /// 所有 worker 共享同一实例。
+    request_coalescer: Arc<RequestCoalescer>,
+    /// 请求合并协调器（H-4 职责拆分）
+    ///
+    /// 由 `WorkerManager::new` 从 `repository` + `result_repository` +
+    /// `request_coalescer` 构造，封装 `try_coalesce` 逻辑。所有 worker 共享
+    /// 同一实例（通过 `Arc` clone 注入）。
+    coalesce_coordinator: Arc<CoalesceCoordinator>,
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
     default_concurrency_limit: usize,
@@ -42,6 +61,22 @@ pub struct WorkerManager {
     extraction_service:
         Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
     regex_cache: RegexCache,
+    /// 内存感知调度器（T019/R-runtime-001）
+    ///
+    /// 由 `WorkerManager::new` 从 `shared_system_monitor()` + `ConcurrencySettings`
+    /// 阈值构造，所有 worker 共享同一实例。
+    #[cfg(feature = "metrics")]
+    memory_scheduler: Arc<MemoryScheduler>,
+    /// URL 分层去重器（T053/R-frontier-001）
+    ///
+    /// 所有 worker 共享同一实例，最大化 Bloom 预筛效果。
+    /// `RwLock` 因为 Bloom insert 需 `&mut self`，contains 只需 `&self`。
+    deduplicator: Arc<parking_lot::RwLock<crate::utils::dedup::Deduplicator>>,
+    /// 高级缓存服务（T059/R-cache-002）
+    ///
+    /// 由 `WorkerManagerDeps` 从 `InfrastructureComponents.cache_service` 注入，
+    /// 所有 worker 共享同一实例，用于 `process_scrape_task` 读写抓取结果缓存。
+    cache_service: Arc<dyn CacheService>,
 }
 
 /// Worker Manager Dependencies
@@ -55,11 +90,15 @@ pub struct WorkerManagerDeps {
     pub engine_client: Arc<EngineClient>,
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     pub team_semaphore: Arc<TeamSemaphore>,
+    /// 请求合并器（T035/R-runtime-002）
+    pub request_coalescer: Arc<RequestCoalescer>,
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
     pub http_client: Arc<reqwest::Client>,
     pub extraction_service:
         Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
     pub regex_cache: RegexCache,
+    /// 高级缓存服务（T059/R-cache-002）
+    pub cache_service: Arc<dyn CacheService>,
 }
 
 /// Worker Manager Configuration
@@ -70,6 +109,33 @@ pub struct WorkerManagerConfig {
 
 impl WorkerManager {
     pub fn new(deps: WorkerManagerDeps, config: WorkerManagerConfig) -> Self {
+        // T019（R-runtime-001）：构造内存感知调度器
+        //
+        // 复用 `shared_system_monitor()` 全局单例（init_metrics 启动时已初始化），
+        // 从 `ConcurrencySettings` 读取阈值（pressure/critical/timeout）。
+        #[cfg(feature = "metrics")]
+        let memory_scheduler = {
+            use crate::infrastructure::observability::metrics::{
+                shared_system_monitor, SystemMonitorTrait,
+            };
+            Arc::new(MemoryScheduler::new(
+                shared_system_monitor() as Arc<dyn SystemMonitorTrait>,
+                config.settings.concurrency.mem_pressure_threshold,
+                config.settings.concurrency.mem_critical_threshold,
+                std::time::Duration::from_secs(
+                    config.settings.concurrency.critical_timeout_seconds,
+                ),
+            ))
+        };
+
+        // H-4 职责拆分：在 move 前构造 CoalesceCoordinator，共享 repository +
+        // result_repository + request_coalescer（所有 worker 共享同一实例）
+        let coalesce_coordinator = Arc::new(CoalesceCoordinator::new(
+            deps.repository.clone(),
+            deps.result_repository.clone(),
+            deps.request_coalescer.clone(),
+        ));
+
         Self {
             queue: deps.queue,
             repository: deps.repository,
@@ -80,12 +146,24 @@ impl WorkerManager {
             engine_client: deps.engine_client,
             create_scrape_use_case: deps.create_scrape_use_case,
             team_semaphore: deps.team_semaphore,
+            coalesce_coordinator,
+            request_coalescer: deps.request_coalescer,
             robots_checker: deps.robots_checker,
             settings: config.settings,
             default_concurrency_limit: config.default_concurrency_limit,
             handles: Vec::new(),
             extraction_service: deps.extraction_service,
             regex_cache: deps.regex_cache,
+            #[cfg(feature = "metrics")]
+            memory_scheduler,
+            // T053/R-frontier-001：所有 worker 共享 Deduplicator 实例
+            // 共享 Bloom 让已爬 URL 在任一 worker 触发后立即对其他 worker 可见，
+            // 最大化降 DB 查询量效果。
+            deduplicator: Arc::new(parking_lot::RwLock::new(
+                crate::utils::dedup::Deduplicator::new(),
+            )),
+            // T059/R-cache-002：所有 worker 共享 CacheService 实例
+            cache_service: deps.cache_service,
         }
     }
 
@@ -105,6 +183,24 @@ impl WorkerManager {
             expiration_worker.run().await;
         }));
 
+        // 性能审查 H-1 修复：定期调度 RequestCoalescer::purge_stale
+        //
+        // worker panic / 死锁可能导致 CoalesceGuard 未 Drop，使 in-flight 条目
+        // 永久驻留 DashMap 阻塞同 URL 后续请求。每 60s 调用 purge_stale 清理
+        // 僵死条目（STALE_TIMEOUT=120s），并通过 broadcast 通知等待方重试。
+        let coalescer_for_purge = self.request_coalescer.clone();
+        self.handles.push(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            interval.tick().await; // 跳过首次立即触发
+            loop {
+                interval.tick().await;
+                let purged = coalescer_for_purge.purge_stale();
+                if purged > 0 {
+                    info!("purge_stale cleaned up {} zombie coalesce entries", purged);
+                }
+            }
+        }));
+
         for _ in 0..count {
             let worker = ScrapeWorker::new(
                 self.repository.clone(),
@@ -115,12 +211,18 @@ impl WorkerManager {
                 self.engine_client.clone(),
                 self.create_scrape_use_case.clone(),
                 self.team_semaphore.clone(),
+                self.coalesce_coordinator.clone(),
                 self.robots_checker.clone(),
                 self.settings.clone(),
                 self.default_concurrency_limit,
                 self.extraction_service.clone(),
                 self.regex_cache.clone(),
-            );
+                self.cache_service.clone(),
+                #[cfg(feature = "metrics")]
+                self.memory_scheduler.clone(),
+            )
+            // T053/R-frontier-001：注入共享 deduplicator（替换 ScrapeWorker::new 内部默认实例）
+            .with_deduplicator_opt(Some(self.deduplicator.clone()));
 
             let queue = self.queue.clone();
             // We spawn the worker loop on a separate task to avoid blocking the main thread
@@ -871,12 +973,58 @@ mod tests {
             engine_client: Arc::new(EngineClient::new()),
             create_scrape_use_case: Arc::new(MockCreateScrapeUseCase),
             team_semaphore: Arc::new(TeamSemaphore::new(10)),
+            request_coalescer: Arc::new(crate::utils::coalesce::RequestCoalescer::new()),
             robots_checker: Arc::new(MockRobotsChecker),
             http_client: Arc::new(reqwest::Client::new()),
             extraction_service: Arc::new(MockExtractionService),
             regex_cache: RegexCache::new(Arc::new(
                 crate::infrastructure::oxcache::RegexCacheType::new(),
             )),
+            cache_service: Arc::new(NoopCacheService) as Arc<dyn CacheService>,
+        }
+    }
+
+    /// Noop CacheService for testing（T059/R-cache-002）
+    ///
+    /// 所有操作返回 Ok(None)/Ok(())，不实际存储数据。
+    /// 用于 `WorkerManagerDeps` 构造时满足 `cache_service` 字段类型要求。
+    struct NoopCacheService;
+
+    #[async_trait::async_trait]
+    impl CacheService for NoopCacheService {
+        fn get(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn set(
+            &self,
+            _key: &str,
+            _value: &str,
+            _ttl_seconds: u64,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn exists(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+        {
+            Box::pin(async { Ok(false) })
         }
     }
 
@@ -889,8 +1037,8 @@ mod tests {
 
     // ---- WorkerManager::new tests ----
 
-    #[test]
-    fn test_worker_manager_new_assigns_fields() {
+    #[tokio::test]
+    async fn test_worker_manager_new_assigns_fields() {
         let manager = WorkerManager::new(make_deps(), make_config());
         assert_eq!(manager.default_concurrency_limit, 10);
         assert!(
@@ -905,10 +1053,11 @@ mod tests {
     async fn test_start_workers_zero_count_starts_only_expiration_worker() {
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(0).await;
+        // start_workers(0) 启动：1 个 expiration worker + 1 个 purge_stale 调度任务
         assert_eq!(
             manager.handles.len(),
-            1,
-            "start_workers(0) should start only the expiration worker"
+            2,
+            "start_workers(0) should start expiration + purge_stale scheduler"
         );
     }
 
@@ -916,10 +1065,11 @@ mod tests {
     async fn test_start_workers_multiple_count() {
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(3).await;
+        // start_workers(3) 启动：1 expiration + 1 purge_stale + 3 scrape = 5
         assert_eq!(
             manager.handles.len(),
-            4,
-            "start_workers(3) should start 1 expiration + 3 scrape workers"
+            5,
+            "start_workers(3) should start expiration + purge_stale + 3 scrape workers"
         );
     }
 
@@ -927,7 +1077,8 @@ mod tests {
     async fn test_start_workers_handles_are_aborted_on_drop() {
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(1).await;
-        assert_eq!(manager.handles.len(), 2);
+        // start_workers(1) 启动：1 expiration + 1 purge_stale + 1 scrape = 3
+        assert_eq!(manager.handles.len(), 3);
 
         // Give workers a moment to start.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -978,7 +1129,8 @@ mod tests {
 
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(1).await;
-        assert_eq!(manager.handles.len(), 2);
+        // start_workers(1) 启动：1 expiration + 1 purge_stale + 1 scrape = 3
+        assert_eq!(manager.handles.len(), 3);
 
         // Spawn a task to send SIGINT after a short delay, giving wait_for_shutdown
         // time to register the tokio signal handler.

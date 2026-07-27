@@ -27,4 +27,8 @@ pub mod oxcache;
 pub mod persistence;
 pub mod security;
 pub use database::repositories;
+// R-auth-engine-002 / T004：garrison 认证基础设施仅在 auth feature 启用时编译
+// （DAO 复用内建 GarrisonDaoOxcache、Config 构造、Interface 实现 RBAC 桥接）
+#[cfg(feature = "auth")]
+pub mod auth;
 pub mod services;

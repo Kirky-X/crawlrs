@@ -1014,23 +1014,35 @@ mod tests {
 
     use crate::domain::auth::ApiKeyScope;
     use crate::domain::models::scrape_result::ScrapeResult;
-    use crate::domain::models::{Crawl, CrawlStatus, Task, TaskStatus, TaskType, Webhook};
+    use crate::domain::models::{Crawl, CrawlStatus, Task, TaskStatus, TaskType};
+    // R-wh-003 / T027：webhook feature 关闭时不导入 Webhook 模型
+    #[cfg(feature = "webhook")]
+    use crate::domain::models::Webhook;
     use crate::domain::repositories::crawl_repository::CrawlRepository;
+    // R-teams-004 / T014：teams feature 关闭时不导入 geo_restriction 相关类型
+    #[cfg(feature = "teams")]
     use crate::domain::repositories::geo_restriction_repository::{
         GeoRestrictionRepository, GeoRestrictionRepositoryError,
     };
     use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
     use crate::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
+    // R-wh-003 / T027：webhook feature 关闭时不导入 WebhookRepository
+    #[cfg(feature = "webhook")]
     use crate::domain::repositories::webhook_repository::WebhookRepository;
+    // R-teams-004 / T014：teams feature 关闭时不导入 geo_location 相关类型
+    #[cfg(feature = "teams")]
     use crate::domain::services::geo_location::{GeoLocation, GeoLocationService};
     use crate::domain::services::rate_limiting_service::{
         BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
         QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
         RateLimitingService,
     };
+    // R-teams-004 / T014：teams feature 关闭时不导入 team_service 相关类型
+    #[cfg(feature = "teams")]
     use crate::domain::services::team_service::{TeamGeoRestrictions, TeamService};
     use async_trait::async_trait;
     use std::collections::HashSet;
+    #[cfg(feature = "teams")]
     use std::net::IpAddr;
     use std::sync::Mutex;
 
@@ -1263,8 +1275,11 @@ mod tests {
     }
 
     // --- MockWebhookRepository ---
+    // R-wh-003 / T027：webhook feature 关闭时不编译此 mock
 
+    #[cfg(feature = "webhook")]
     struct MockWebhookRepository;
+    #[cfg(feature = "webhook")]
     #[async_trait]
     impl WebhookRepository for MockWebhookRepository {
         async fn create(&self, webhook: &Webhook) -> Result<Webhook, RepositoryError> {
@@ -1329,12 +1344,15 @@ mod tests {
     }
 
     // --- MockGeoRestrictionRepository ---
+    // R-teams-004 / T014：teams feature 关闭时不编译此 mock
 
+    #[cfg(feature = "teams")]
     struct MockGeoRestrictionRepository {
         restrictions: TeamGeoRestrictions,
         get_should_fail: bool,
     }
 
+    #[cfg(feature = "teams")]
     impl MockGeoRestrictionRepository {
         fn new() -> Self {
             Self {
@@ -1344,6 +1362,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "teams")]
     #[async_trait]
     impl GeoRestrictionRepository for MockGeoRestrictionRepository {
         async fn get_team_restrictions(
@@ -1379,8 +1398,11 @@ mod tests {
     }
 
     // --- MockGeoLocationService ---
+    // R-teams-004 / T014：teams feature 关闭时不编译此 mock
 
+    #[cfg(feature = "teams")]
     struct MockGeoLocationService;
+    #[cfg(feature = "teams")]
     #[async_trait]
     impl GeoLocationService for MockGeoLocationService {
         async fn get_location(&self, _ip: &IpAddr) -> anyhow::Result<GeoLocation> {
@@ -1618,32 +1640,46 @@ mod tests {
     }
 
     /// Build a CrawlHandlerState from configurable mock dependencies.
+    ///
+    /// R-teams-004 / R-wh-003：feature-off 时跳过对应依赖构造。
+    /// `geo_restriction_repo` / `team_service`（teams-on）与 `webhook_repo`（webhook-on）
+    /// 在函数内部按 feature 条件构造，调用方无需关心 feature 组合。
     fn build_handler_state(
         crawl_repo: MockCrawlRepository,
         task_repo: MockTaskRepository,
         scrape_result_repo: MockScrapeResultRepository,
-        geo_restriction_repo: MockGeoRestrictionRepository,
         rate_limiting_service: MockRateLimitingService,
     ) -> Arc<CrawlHandlerState> {
         let crawl_repo: Arc<dyn CrawlRepository> = Arc::new(crawl_repo);
         let task_repo: Arc<dyn TaskRepository> = Arc::new(task_repo);
-        let webhook_repo: Arc<dyn WebhookRepository> = Arc::new(MockWebhookRepository);
         let scrape_result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(scrape_result_repo);
+        let rate_limiting_service: Arc<dyn RateLimitingService> = Arc::new(rate_limiting_service);
+
+        // R-teams-004 / T014：teams-on 时构造 geo_restriction_repo / team_service
+        #[cfg(feature = "teams")]
         let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
-            Arc::new(geo_restriction_repo);
+            Arc::new(MockGeoRestrictionRepository::new());
+        #[cfg(feature = "teams")]
         let team_service = Arc::new(TeamService::new(
             Arc::new(MockGeoLocationService),
             geo_restriction_repo.clone(),
         ));
-        let rate_limiting_service: Arc<dyn RateLimitingService> = Arc::new(rate_limiting_service);
+
+        // R-wh-003 / T027：webhook-on 时构造 webhook_repo
+        #[cfg(feature = "webhook")]
+        let webhook_repo: Arc<dyn WebhookRepository> = Arc::new(MockWebhookRepository);
+
         Arc::new(CrawlHandlerState::new(
             crawl_repo,
             task_repo,
-            webhook_repo,
             scrape_result_repo,
-            geo_restriction_repo,
-            team_service,
             rate_limiting_service,
+            #[cfg(feature = "webhook")]
+            webhook_repo,
+            #[cfg(feature = "teams")]
+            geo_restriction_repo,
+            #[cfg(feature = "teams")]
+            team_service,
         ))
     }
 
@@ -1655,7 +1691,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -1679,7 +1714,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -1706,7 +1740,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::with_tasks(vec![task]),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state_with_team(team_id);
@@ -1735,7 +1768,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::with_tasks(vec![task]),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state_with_team(team_id);
@@ -1760,7 +1792,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::failing_find_by_crawl(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -1785,7 +1816,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -1809,7 +1839,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -1834,7 +1863,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_denied(),
         );
         let auth = make_auth_state();
@@ -1858,7 +1886,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_quota_exceeded(),
         );
         let auth = make_auth_state();
@@ -1883,7 +1910,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -1907,7 +1933,6 @@ mod tests {
             MockCrawlRepository::failing_create(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -1936,7 +1961,6 @@ mod tests {
             MockCrawlRepository::with_crawl(crawl),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state_with_team(team_id);
@@ -1954,7 +1978,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -1974,7 +1997,6 @@ mod tests {
             MockCrawlRepository::with_crawl(crawl),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         // Different team_id → use_case returns Ok(None) → 404
@@ -1993,7 +2015,6 @@ mod tests {
             MockCrawlRepository::failing_find(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -2017,7 +2038,6 @@ mod tests {
             MockCrawlRepository::with_crawl(crawl),
             MockTaskRepository::with_tasks(vec![task]),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state_with_team(team_id);
@@ -2035,7 +2055,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -2057,7 +2076,6 @@ mod tests {
             MockCrawlRepository::with_crawl(crawl),
             MockTaskRepository::with_tasks(vec![task]),
             MockScrapeResultRepository::failing(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state_with_team(team_id);
@@ -2080,7 +2098,6 @@ mod tests {
             MockCrawlRepository::with_crawl(crawl),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state_with_team(team_id);
@@ -2098,7 +2115,6 @@ mod tests {
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -2118,7 +2134,6 @@ mod tests {
             MockCrawlRepository::with_crawl(crawl),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state_with_team(Uuid::new_v4());
@@ -2139,7 +2154,6 @@ mod tests {
             MockCrawlRepository::with_crawl(crawl),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state_with_team(team_id);
@@ -2158,7 +2172,6 @@ mod tests {
             MockCrawlRepository::failing_find(),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state();
@@ -2179,7 +2192,6 @@ mod tests {
             MockCrawlRepository::failing_update_with_crawl(crawl),
             MockTaskRepository::new(),
             MockScrapeResultRepository::new(),
-            MockGeoRestrictionRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
         let auth = make_auth_state_with_team(team_id);

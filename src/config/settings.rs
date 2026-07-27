@@ -16,7 +16,9 @@ use validator::Validate;
 
 // 重新导出子模块中的类型
 pub use super::app::{ConcurrencySettings, DatabaseSettings, RateLimitingSettings, ServerSettings};
-pub use super::engines::{EngineSettings, FireCdpSettings, FireTlsSettings, FlareSolverrSettings};
+pub use super::engines::{
+    EngineSettings, FlareSolverrCdpSettings, FlareSolverrSettings, FlareSolverrTlsSettings,
+};
 pub use super::llm::LLMSettings;
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 pub use super::search::{BingSearchSettings, SearchSettings};
@@ -83,6 +85,7 @@ pub struct Settings {
     pub workers: WorkerSettings,
 
     /// 超时配置
+    #[validate(nested)]
     pub timeouts: TimeoutSettings,
 
     /// 缓存配置
@@ -90,6 +93,9 @@ pub struct Settings {
 
     /// 可信代理配置
     pub trusted_proxies: TrustedProxySettings,
+
+    /// 认证配置（R-auth-engine-002 / T011：garrison JWT 密钥等）
+    pub auth: AuthSettings,
 }
 
 // =============================================================================
@@ -152,37 +158,150 @@ impl WebhookSettings {
 }
 
 // =============================================================================
+// 认证配置（R-auth-engine-002 / T011）
+// =============================================================================
+
+/// 认证配置设置。
+///
+/// 配置 garrison 认证鉴权框架的 JWT 密钥等参数。
+///
+/// # 字段说明
+///
+/// * `jwt_secret` - JWT 签名密钥（HS256），敏感信息，仅 crate 可见
+///
+/// # 安全提示
+///
+/// `jwt_secret` 字段包含 JWT 签名密钥，泄露可能导致 token 伪造。
+/// 该字段仅对 crate 可见，外部模块应使用 `jwt_secret()` 方法访问。
+/// 密钥长度须 ≥32 字节（HS256 最小要求），弱密钥会在 `build_garrison_config` 中被拒绝。
+///
+/// # Debug 脱敏
+///
+/// 手动实现 `Debug`（不派生 `#[derive(Debug)]`），对 `jwt_secret` 字段输出 `"***REDACTED***"`，
+/// 防止日志打印 Settings 时泄露密钥（CWE-532 防护）。对齐 [`ProxySettings`] 的 redaction 模式。
+#[derive(Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__AUTH__")]
+pub struct AuthSettings {
+    /// JWT 签名密钥（HS256，敏感信息）。
+    ///
+    /// 默认空字符串——`auth` feature 启用时，`build_garrison_config("")` 会返回 `Err(EmptySecret)`，
+    /// 导致启动 panic（fail-fast），强制运维通过环境变量或配置文件提供强密钥。
+    #[config(default = "".to_string())]
+    pub(crate) jwt_secret: String,
+}
+
+impl std::fmt::Debug for AuthSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthSettings")
+            .field("jwt_secret", &"***REDACTED***")
+            .finish()
+    }
+}
+
+impl AuthSettings {
+    /// 获取 JWT 签名密钥。
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回 JWT 签名密钥，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn jwt_secret(&self) -> &str {
+        &self.jwt_secret
+    }
+}
+
+// =============================================================================
 // 代理配置
 // =============================================================================
 
+/// 代理轮换策略（design.md §12，T055/R-identity-003）
+///
+/// 决定调用方在 ProxyPool 上的默认行为：
+/// - `RoundRobin`：每次请求调用 `ProxyPool::next(category)` 取下一个
+/// - `Sticky`：按 `session_id` 调用 `ProxyPool::sticky(session_id)` 锁定同一代理
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyStrategy {
+    #[default]
+    RoundRobin,
+    Sticky,
+}
+
 /// HTTP代理配置设置
 ///
-/// 配置HTTP代理参数，用于转发爬虫请求
+/// 配置HTTP代理参数，用于转发爬虫请求。
+///
+/// 支持多代理轮换池（design.md §12 / R-identity-003）：
+/// - `urls`: 代理 URL 列表，可包含 userinfo（日志输出会脱敏）
+/// - `strategy`: 轮换策略（RoundRobin / Sticky）
+/// - `enabled`: 是否启用代理
+/// - `sticky_ttl_seconds`: 粘性会话 TTL（秒），TTL 内同一 session_id 返回同一代理
+/// - `cooldown_seconds`: 失败代理默认冷却时长（秒）
 #[derive(Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__PROXY__")]
 pub struct ProxySettings {
-    /// 代理服务器URL (可能包含认证信息)
-    #[config(default = "http://localhost:10808".to_string())]
-    pub(crate) url: String,
+    /// 代理 URL 列表（支持多个代理轮换，按 strategy 决定调度方式）
+    #[config(default = Vec::<String>::new())]
+    pub urls: Vec<String>,
+
+    /// 代理轮换策略
+    #[serde(default)]
+    pub strategy: ProxyStrategy,
 
     /// 是否启用代理
     #[config(default = false)]
     pub enabled: bool,
+
+    /// 粘性会话 TTL（秒）
+    ///
+    /// `ProxyStrategy::Sticky` 时，TTL 内同一 `session_id` 返回同一代理；
+    /// TTL 过期或代理冷却中时重选。
+    /// 默认 60 秒（MEDIUM-2 修复：从 di/modules.rs 硬编码移入配置）。
+    #[config(default = 60)]
+    #[serde(default = "default_sticky_ttl_seconds")]
+    pub sticky_ttl_seconds: u64,
+
+    /// 失败代理默认冷却时长（秒）
+    ///
+    /// `mark_failure` 后代理进入冷却，在此期间不被 `next` / `sticky` 选中。
+    /// 默认 30 秒（MEDIUM-2 修复：从 di/modules.rs 硬编码移入配置）。
+    #[config(default = 30)]
+    #[serde(default = "default_cooldown_seconds")]
+    pub cooldown_seconds: u64,
+}
+
+/// serde 默认值：粘性会话 TTL（与 `#[config(default = 60)]` 保持一致）
+fn default_sticky_ttl_seconds() -> u64 {
+    60
+}
+
+/// serde 默认值：失败代理冷却时长（与 `#[config(default = 30)]` 保持一致）
+fn default_cooldown_seconds() -> u64 {
+    30
 }
 
 impl std::fmt::Debug for ProxySettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 安全：urls 可能含 user:pass@host 凭证，Debug 输出统一脱敏
         f.debug_struct("ProxySettings")
-            .field("url", &"***REDACTED***")
+            .field("urls", &"***REDACTED***")
+            .field("strategy", &self.strategy)
             .field("enabled", &self.enabled)
+            .field("sticky_ttl_seconds", &self.sticky_ttl_seconds)
+            .field("cooldown_seconds", &self.cooldown_seconds)
             .finish()
     }
 }
 
 impl ProxySettings {
-    /// 获取代理服务器URL
-    pub fn url(&self) -> &str {
-        &self.url
+    /// 获取代理 URL 列表
+    pub fn urls(&self) -> &[String] {
+        &self.urls
+    }
+
+    /// 获取代理轮换策略
+    pub fn strategy(&self) -> ProxyStrategy {
+        self.strategy
     }
 }
 
@@ -239,13 +358,20 @@ impl WorkerCount {
 /// 超时配置设置
 ///
 /// 配置各种操作的超时时间
-#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+///
+/// # 安全验证（T062 安全审查 HIGH-1 修复）
+///
+/// `engines` 字段添加 `#[validate(nested)]`，使 `Settings::validate()` 递归
+/// 调用 `EngineTimeoutSettings::validate()`，覆盖所有 `#[validate(range(min=1, max=600))]`
+/// 约束。其余子结构（workers/retry/cache）无 range 约束，不需要 nested。
+#[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
 #[config(env_prefix = "CRAWLRS__TIMEOUTS__")]
 pub struct TimeoutSettings {
     /// Worker相关超时
     pub workers: WorkerTimeoutSettings,
 
     /// 引擎相关超时
+    #[validate(nested)]
     pub engines: EngineTimeoutSettings,
 
     /// 重试策略超时
@@ -269,20 +395,73 @@ pub struct WorkerTimeoutSettings {
 }
 
 /// 引擎超时设置
-#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+///
+/// # 安全验证（T062 安全审查 MEDIUM-1 修复）
+///
+/// 所有超时字段均添加 `#[validate(range(min = 1, max = 600))]` 约束：
+/// - `min = 1`：防止配置为 0 秒导致 `tokio::time::timeout(Duration::ZERO, ...)`
+///   立即超时，触发瀑布式 fallback 直到所有引擎失败，造成 DoS
+/// - `max = 600`：防止配置过大值（10 分钟已足够覆盖最慢的浏览器引擎）
+#[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
 #[config(env_prefix = "CRAWLRS__TIMEOUTS__ENGINES__")]
 pub struct EngineTimeoutSettings {
     /// 默认请求超时（秒）
     #[config(default = 30)]
+    #[validate(range(min = 1, max = 600))]
     pub default_timeout_seconds: u64,
 
     /// Playwright引擎超时（秒）
     #[config(default = 30)]
+    #[validate(range(min = 1, max = 600))]
     pub playwright_timeout_seconds: u64,
 
     /// FlareSolverr超时（秒）
     #[config(default = 30)]
+    #[validate(range(min = 1, max = 600))]
     pub flaresolverr_timeout_seconds: u64,
+
+    /// HTTP fetch 引擎 MRT（Maximum Response Time，秒）—— design.md §14 / T061。
+    ///
+    /// 用于 `ReqwestEngine` 单引擎最大响应时间。router 顺序 fallback 路径
+    /// 用 `min(remaining, fetch_seconds)` 包裹单引擎调用，超时即切下一引擎。
+    /// 默认 5 秒（HTTP fetch 引擎比浏览器引擎快）。
+    #[config(default = 5)]
+    #[serde(default = "default_fetch_seconds")]
+    #[validate(range(min = 1, max = 600))]
+    pub fetch_seconds: u64,
+
+    /// TLS 指纹引擎 MRT（秒）—— design.md §14 / T061。
+    ///
+    /// 用于 `FlareSolverrEngine::Tls` 模式单引擎最大响应时间。
+    /// 默认 15 秒（TLS 指纹对抗比完整浏览器快）。
+    #[config(default = 15)]
+    #[serde(default = "default_tls_seconds")]
+    #[validate(range(min = 1, max = 600))]
+    pub tls_seconds: u64,
+
+    /// CDP/浏览器引擎 MRT（秒）—— design.md §14 / T061。
+    ///
+    /// 用于 `PlaywrightEngine` 和 `FlareSolverrEngine::{Cdp, Full}` 模式
+    /// 单引擎最大响应时间。默认 30 秒（覆盖完整浏览器启动 + JS 渲染）。
+    #[config(default = 30)]
+    #[serde(default = "default_cdp_seconds")]
+    #[validate(range(min = 1, max = 600))]
+    pub cdp_seconds: u64,
+}
+
+/// serde 默认值：HTTP fetch 引擎 MRT（与 `#[config(default = 5)]` 保持一致）
+fn default_fetch_seconds() -> u64 {
+    5
+}
+
+/// serde 默认值：TLS 指纹引擎 MRT（与 `#[config(default = 15)]` 保持一致）
+fn default_tls_seconds() -> u64 {
+    15
+}
+
+/// serde 默认值：CDP/浏览器引擎 MRT（与 `#[config(default = 30)]` 保持一致）
+fn default_cdp_seconds() -> u64 {
+    30
 }
 
 /// 重试超时设置
@@ -510,6 +689,22 @@ pub fn validate_security(settings: &Settings) -> Result<(), validator::Validatio
         }
     }
 
+    // JWT secret 校验（auth-on 时强制，MEDIUM-3 修复：早期失败反馈）
+    //
+    // 仅在 `auth` feature 启用时检查——auth-off 走 default_identity_middleware，
+    // 不读取 jwt_secret。空 / 弱密钥（< 32 字节）会被 `build_garrison_config` 二次拒绝，
+    // 此处提前检查让运维在启动时即收到反馈而非等到 garrison 初始化。
+    #[cfg(feature = "auth")]
+    {
+        let jwt_secret = settings.auth.jwt_secret();
+        if jwt_secret.is_empty() {
+            return Err(validator::ValidationError::new("auth_jwt_secret_empty"));
+        }
+        if jwt_secret.len() < 32 {
+            return Err(validator::ValidationError::new("auth_jwt_secret_weak"));
+        }
+    }
+
     Ok(())
 }
 
@@ -567,11 +762,33 @@ mod tests {
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
+            auth: AuthSettings::default(),
         };
 
         assert_eq!(settings.server.port, 8899);
         assert!(settings.rate_limiting.enabled);
         assert!(settings.trusted_proxies.enabled);
+    }
+
+    /// R-auth-engine-002：AuthSettings Debug 输出对 jwt_secret 脱敏（CWE-532 防护）。
+    ///
+    /// 验证 `format!("{:?}", auth_settings)` 不含密钥明文，仅含 `"***REDACTED***"`。
+    /// 防止日志打印 Settings 时泄露 JWT 签名密钥。
+    #[test]
+    fn test_auth_settings_debug_redacts_jwt_secret() {
+        let auth = AuthSettings {
+            jwt_secret: "super-secret-jwt-key-32-bytes-or-more!!".to_string(),
+        };
+
+        let debug_output = format!("{:?}", auth);
+        assert!(
+            !debug_output.contains("super-secret-jwt-key-32-bytes-or-more!!"),
+            "Debug output must not contain plaintext jwt_secret, got: {debug_output}"
+        );
+        assert!(
+            debug_output.contains("***REDACTED***"),
+            "Debug output should contain '***REDACTED***' placeholder, got: {debug_output}"
+        );
     }
 
     #[test]
@@ -729,55 +946,116 @@ mod tests {
     // ========== ProxySettings tests ==========
 
     #[test]
-    fn test_proxy_settings_default_url() {
+    fn test_proxy_settings_default_empty_urls_and_round_robin_strategy() {
         let settings = ProxySettings::default();
-        assert_eq!(settings.url(), "http://localhost:10808");
+        assert!(settings.urls.is_empty(), "default urls should be empty");
+        assert_eq!(settings.strategy, ProxyStrategy::RoundRobin);
         assert!(!settings.enabled);
+        // MEDIUM-2 修复：默认 sticky_ttl=60s, cooldown=30s
+        assert_eq!(settings.sticky_ttl_seconds, 60);
+        assert_eq!(settings.cooldown_seconds, 30);
     }
 
     #[test]
-    fn test_proxy_settings_url_accessor() {
+    fn test_proxy_settings_urls_and_strategy_accessor() {
         let settings = ProxySettings {
-            url: "http://proxy.example.com:8080".to_string(),
+            urls: vec!["http://proxy.example.com:8080".to_string()],
+            strategy: ProxyStrategy::Sticky,
             enabled: true,
+            sticky_ttl_seconds: 120,
+            cooldown_seconds: 45,
         };
-        assert_eq!(settings.url(), "http://proxy.example.com:8080");
+        assert_eq!(settings.urls(), &["http://proxy.example.com:8080"]);
+        assert_eq!(settings.strategy(), ProxyStrategy::Sticky);
         assert!(settings.enabled);
     }
 
     #[test]
-    fn test_proxy_settings_debug_redacts_url() {
+    fn test_proxy_settings_debug_redacts_urls() {
         let settings = ProxySettings {
-            url: "http://secret:password@proxy:8080".to_string(),
+            urls: vec!["http://secret:password@proxy:8080".to_string()],
+            strategy: ProxyStrategy::RoundRobin,
             enabled: true,
+            sticky_ttl_seconds: 60,
+            cooldown_seconds: 30,
         };
         let debug_str = format!("{:?}", settings);
-        assert!(debug_str.contains("***REDACTED***"));
-        assert!(!debug_str.contains("secret:password"));
-        assert!(debug_str.contains("true"));
+        assert!(
+            debug_str.contains("***REDACTED***"),
+            "urls must be redacted in Debug"
+        );
+        assert!(
+            !debug_str.contains("secret:password"),
+            "credentials must not leak to Debug"
+        );
+        assert!(debug_str.contains("true"), "enabled should be visible");
+        assert!(
+            debug_str.contains("RoundRobin"),
+            "strategy should be visible (non-sensitive)"
+        );
     }
 
     #[test]
     fn test_proxy_settings_clone_preserves_fields() {
         let settings = ProxySettings {
-            url: "http://clone-proxy:9090".to_string(),
+            urls: vec!["http://clone-proxy:9090".to_string()],
+            strategy: ProxyStrategy::Sticky,
             enabled: true,
+            sticky_ttl_seconds: 90,
+            cooldown_seconds: 20,
         };
         let cloned = settings.clone();
-        assert_eq!(cloned.url(), "http://clone-proxy:9090");
+        assert_eq!(cloned.urls(), &["http://clone-proxy:9090"]);
+        assert_eq!(cloned.strategy(), ProxyStrategy::Sticky);
         assert!(cloned.enabled);
+        assert_eq!(cloned.sticky_ttl_seconds, 90);
+        assert_eq!(cloned.cooldown_seconds, 20);
     }
 
     #[test]
     fn test_proxy_settings_serde_roundtrip() {
         let settings = ProxySettings {
-            url: "http://serde-proxy:7070".to_string(),
+            urls: vec!["http://serde-proxy:7070".to_string()],
+            strategy: ProxyStrategy::Sticky,
             enabled: false,
+            sticky_ttl_seconds: 100,
+            cooldown_seconds: 50,
         };
         let json = serde_json::to_string(&settings).expect("serialize");
         let back: ProxySettings = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(back.url(), "http://serde-proxy:7070");
+        assert_eq!(back.urls(), &["http://serde-proxy:7070"]);
+        assert_eq!(back.strategy(), ProxyStrategy::Sticky);
         assert!(!back.enabled);
+        assert_eq!(back.sticky_ttl_seconds, 100);
+        assert_eq!(back.cooldown_seconds, 50);
+    }
+
+    /// strategy 字段 serde 用 snake_case：JSON/TOML 中 "round_robin" / "sticky"
+    #[test]
+    fn test_proxy_settings_strategy_serde_snake_case() {
+        // RoundRobin ↔ "round_robin"
+        let json = r#"{"urls":[],"strategy":"round_robin","enabled":false}"#;
+        let s: ProxySettings = serde_json::from_str(json).expect("deserialize round_robin");
+        assert_eq!(s.strategy, ProxyStrategy::RoundRobin);
+        let back = serde_json::to_string(&s).expect("serialize");
+        assert!(
+            back.contains("\"round_robin\""),
+            "serialized should be snake_case: {back}"
+        );
+
+        // Sticky ↔ "sticky"
+        let json = r#"{"urls":[],"strategy":"sticky","enabled":false}"#;
+        let s: ProxySettings = serde_json::from_str(json).expect("deserialize sticky");
+        assert_eq!(s.strategy, ProxyStrategy::Sticky);
+    }
+
+    /// strategy 字段缺失时 serde(default) → RoundRobin
+    #[test]
+    fn test_proxy_settings_strategy_missing_falls_back_to_default() {
+        let json = r#"{"urls":["http://x:8080"],"enabled":true}"#;
+        let s: ProxySettings = serde_json::from_str(json).expect("deserialize missing strategy");
+        assert_eq!(s.strategy, ProxyStrategy::RoundRobin);
+        assert!(s.enabled);
     }
 
     // ========== WorkerSettings tests ==========
@@ -828,10 +1106,179 @@ mod tests {
             default_timeout_seconds: 45,
             playwright_timeout_seconds: 50,
             flaresolverr_timeout_seconds: 55,
+            fetch_seconds: 5,
+            tls_seconds: 15,
+            cdp_seconds: 30,
         };
         assert_eq!(settings.default_timeout_seconds, 45);
         assert_eq!(settings.playwright_timeout_seconds, 50);
         assert_eq!(settings.flaresolverr_timeout_seconds, 55);
+        assert_eq!(settings.fetch_seconds, 5);
+        assert_eq!(settings.tls_seconds, 15);
+        assert_eq!(settings.cdp_seconds, 30);
+    }
+
+    /// T061：EngineTimeoutSettings 新增 MRT 字段使用 serde(default) 兼容旧 config 文件。
+    ///
+    /// 验证：旧 toml/env 中没有 `fetch_seconds` / `tls_seconds` / `cdp_seconds` 字段时，
+    /// 反序列化应回退到默认值（fetch=5, tls=15, cdp=30），不报错。
+    #[test]
+    fn test_engine_timeout_settings_serde_default_for_mrt_fields() {
+        // 模拟旧 config 文件：只有原有 3 个字段，无 MRT 字段
+        let old_toml = r#"
+            default_timeout_seconds = 45
+            playwright_timeout_seconds = 50
+            flaresolverr_timeout_seconds = 55
+        "#;
+        let settings: EngineTimeoutSettings = toml::from_str(old_toml).expect("deserialize");
+        assert_eq!(settings.default_timeout_seconds, 45);
+        assert_eq!(settings.playwright_timeout_seconds, 50);
+        assert_eq!(settings.flaresolverr_timeout_seconds, 55);
+        // 新字段应回退到 serde 默认值
+        assert_eq!(settings.fetch_seconds, 5, "fetch_seconds default");
+        assert_eq!(settings.tls_seconds, 15, "tls_seconds default");
+        assert_eq!(settings.cdp_seconds, 30, "cdp_seconds default");
+    }
+
+    /// T061：EngineTimeoutSettings MRT 字段可被显式覆盖。
+    #[test]
+    fn test_engine_timeout_settings_mrt_fields_override() {
+        let toml = r#"
+            default_timeout_seconds = 60
+            playwright_timeout_seconds = 45
+            flaresolverr_timeout_seconds = 60
+            fetch_seconds = 8
+            tls_seconds = 20
+            cdp_seconds = 45
+        "#;
+        let settings: EngineTimeoutSettings = toml::from_str(toml).expect("deserialize");
+        assert_eq!(settings.fetch_seconds, 8);
+        assert_eq!(settings.tls_seconds, 20);
+        assert_eq!(settings.cdp_seconds, 45);
+    }
+
+    /// T062 安全审查 MEDIUM-1：EngineTimeoutSettings 的 Validate 派生应拒绝越界值。
+    ///
+    /// 验证：所有超时字段（含 MRT）必须 >=1 且 <=600 秒。
+    /// - 0 秒 → `tokio::time::timeout(Duration::ZERO, ...)` 立即超时 → 瀑布式 fallback 全部失败 → DoS
+    /// - 超过 600 秒 → 配置错误（10 分钟已足够覆盖最慢浏览器引擎）
+    #[test]
+    fn test_engine_timeout_settings_validate_rejects_zero() {
+        let settings = EngineTimeoutSettings {
+            default_timeout_seconds: 0,
+            playwright_timeout_seconds: 30,
+            flaresolverr_timeout_seconds: 30,
+            fetch_seconds: 5,
+            tls_seconds: 15,
+            cdp_seconds: 30,
+        };
+        let result = settings.validate();
+        assert!(
+            result.is_err(),
+            "default_timeout_seconds=0 should be rejected (DoS risk)"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("default_timeout_seconds"),
+            "error should mention field name: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_engine_timeout_settings_validate_rejects_zero_mrt_fields() {
+        // fetch_seconds=0 → tokio::time::timeout(Duration::ZERO) → 立即超时
+        let settings = EngineTimeoutSettings {
+            default_timeout_seconds: 30,
+            playwright_timeout_seconds: 30,
+            flaresolverr_timeout_seconds: 30,
+            fetch_seconds: 0,
+            tls_seconds: 15,
+            cdp_seconds: 30,
+        };
+        assert!(
+            settings.validate().is_err(),
+            "fetch_seconds=0 should be rejected"
+        );
+
+        // tls_seconds=0
+        let settings = EngineTimeoutSettings {
+            default_timeout_seconds: 30,
+            playwright_timeout_seconds: 30,
+            flaresolverr_timeout_seconds: 30,
+            fetch_seconds: 5,
+            tls_seconds: 0,
+            cdp_seconds: 30,
+        };
+        assert!(
+            settings.validate().is_err(),
+            "tls_seconds=0 should be rejected"
+        );
+
+        // cdp_seconds=0
+        let settings = EngineTimeoutSettings {
+            default_timeout_seconds: 30,
+            playwright_timeout_seconds: 30,
+            flaresolverr_timeout_seconds: 30,
+            fetch_seconds: 5,
+            tls_seconds: 15,
+            cdp_seconds: 0,
+        };
+        assert!(
+            settings.validate().is_err(),
+            "cdp_seconds=0 should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_engine_timeout_settings_validate_rejects_exceeding_max() {
+        // 601 秒 → 超过 max=600（10 分钟）
+        let settings = EngineTimeoutSettings {
+            default_timeout_seconds: 30,
+            playwright_timeout_seconds: 30,
+            flaresolverr_timeout_seconds: 30,
+            fetch_seconds: 601,
+            tls_seconds: 15,
+            cdp_seconds: 30,
+        };
+        assert!(
+            settings.validate().is_err(),
+            "fetch_seconds=601 should be rejected (exceeding max)"
+        );
+    }
+
+    #[test]
+    fn test_engine_timeout_settings_validate_accepts_boundary_values() {
+        // 边界值：min=1 和 max=600 都应通过
+        let settings = EngineTimeoutSettings {
+            default_timeout_seconds: 1,
+            playwright_timeout_seconds: 600,
+            flaresolverr_timeout_seconds: 1,
+            fetch_seconds: 1,
+            tls_seconds: 600,
+            cdp_seconds: 1,
+        };
+        assert!(
+            settings.validate().is_ok(),
+            "boundary values (1 and 600) should pass validation"
+        );
+    }
+
+    #[test]
+    fn test_engine_timeout_settings_validate_accepts_defaults() {
+        // 默认值应通过验证
+        let settings = EngineTimeoutSettings {
+            default_timeout_seconds: 30,
+            playwright_timeout_seconds: 30,
+            flaresolverr_timeout_seconds: 30,
+            fetch_seconds: 5,
+            tls_seconds: 15,
+            cdp_seconds: 30,
+        };
+        assert!(
+            settings.validate().is_ok(),
+            "default values should pass validation"
+        );
     }
 
     #[test]
@@ -972,6 +1419,11 @@ mod tests {
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
+            // MEDIUM-3 修复后 validate_security 在 auth-on 时校验 jwt_secret，
+            // 测试用强密钥（32+ 字节）确保 validate_security 通过
+            auth: AuthSettings {
+                jwt_secret: "a-very-strong-and-secure-jwt-secret-key-32+chars".to_string(),
+            },
         }
     }
 

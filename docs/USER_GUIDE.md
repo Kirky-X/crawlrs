@@ -16,6 +16,7 @@
 - [Introduction](#introduction)
 - [Getting Started](#getting-started)
 - [Authentication](#authentication)
+- [Single-Tenant / No-Auth Deployment](#single-tenant--no-auth-deployment)
 - [Scraping](#scraping)
 - [Crawling](#crawling)
 - [Searching](#searching)
@@ -117,26 +118,95 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ## Authentication
 
+> **0.2.0 起（`garrison-auth-migration`）：** 认证引擎由 **garrison v0.8.1** 接管。Bearer token 格式为 `garrison_key_id.garrison_secret`，由 garrison 签发与校验，crawlrs 不再自管 `key_hash`。
+
+### Garrison 认证简介
+
+| 组件 | 职责 |
+|------|------|
+| **JWT 签发** | garrison 用 `CRAWLRS__AUTH__JWT_SECRET`（HS256，≥32 字节）签发 API Key 内嵌的 JWT |
+| **RBAC** | 预置 3 权限（`crawlrs:read/write/admin`）+ 3 角色（`admin/user/read_only`），`tenant_id=0` 所有 team 共享 |
+| **firewall-bruteforce** | 5 次失败/60 秒窗口/300 秒锁定；401/429 由 garrison 直接触发 |
+| **audit-log** | 认证事件落库到 crawlrs `audit_logs` + garrison 自管 schema |
+
+**权限映射（admin 蕴含 read+write）：** garrison permissions 经 `auth_bridge::map_perms_to_scope` 桥接为 `ApiKeyScope`，下游业务层无感知。
+
+| garrison 权限 | 映射到 `ApiKeyScope` |
+|---------------|----------------------|
+| `crawlrs:admin` | `read=true, write=true, admin=true` |
+| `crawlrs:write` | `write=true` |
+| `crawlrs:read` | `read=true` |
+
+全部通过 `ApiKeyScope::with_custom_limits` 构造（`DEFAULT_SEARCH_LIMIT=100`, `DEFAULT_SCRAPE_LIMIT=50`），不调用 `full_access()`——避免无限制 `u32::MAX` 与项目配额语义冲突。
+
 ### API Key Configuration
 
-API keys are configured on the server side. There is no cloud dashboard — keys are set via environment variables, config files, or the database.
+> **0.2.0 起**：API Key 不再通过 `CRAWLRS__AUTH__KEYS` 环境变量或 `[auth] keys` 配置项下发。需通过 `POST /v1/admin/api-keys` 端点或 `reissue_api_keys` CLI 工具向 garrison 申请签发。
 
-**Environment variable:**
+**签发新 API Key（管理员）：**
+
 ```bash
-export CRAWLRS__AUTH__KEYS="sk-your-key-here"
+# 调用 admin API 签发
+curl -X POST http://localhost:8899/v1/admin/api-keys \
+  -H "Authorization: Bearer garrison_admin_key_id.garrison_admin_secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "team_id": "770e8400-e29b-41d4-a716-446655440000",
+    "scopes": ["read", "write"],
+    "expires_in_secs": 2592000
+  }'
 ```
 
-**Config file (`config/default.toml`):**
-```toml
-[auth]
-keys = ["sk-your-key-here"]
-```
+详细参数说明参见 [API_REFERENCE.md → Admin API](API_REFERENCE.md#admin-api)。
 
 Keys are passed as a Bearer token in the `Authorization` header:
 
 ```bash
-curl -H "Authorization: Bearer sk-your-key-here" http://localhost:8899/v1/scrape
+curl -H "Authorization: Bearer garrison_key_id.garrison_secret" http://localhost:8899/v1/scrape
 ```
+
+> **⚠️ 安全提示：** 明文 key 仅在签发响应中返回一次，请立即写入 secrets manager。
+
+### Garrison 认证迁移（0.2.0）
+
+**影响范围：**
+
+- 现有 API Key（基于旧表 `api_keys.key_hash` SHA-256）**全部作废**，需经 garrison 重新领取
+- `scopes` 表只读（`deprecated_at` 标记），原有 scope 映射不再生效
+- 必填 `CRAWLRS__AUTH__JWT_SECRET`（HS256 ≥32 字节，弱密钥拒绝启动）
+
+**重新领取流程（运维）：**
+
+```bash
+# 1. 构建带 admin-tools + auth 的二进制
+cargo build --release --features admin-tools,auth
+
+# 2. 设置 JWT_SECRET 环境变量（≥32 字节，HS256）
+export CRAWLRS__AUTH__JWT_SECRET="your-32-byte-or-longer-secret-key-here"
+
+# 3. 运行 reissue_api_keys 工具：
+#    - 预置 garrison RBAC（3 权限 / 3 角色 / 6 角色权限映射，tenant_id=0）
+#    - 枚举需重签 team 清单
+#    - 为每个 team 签发新 garrison API Key（明文 key 仅打印一次）
+./target/release/reissue_api_keys
+
+# 4. 应用数据库迁移（标记旧表弃用，不删表不删列）
+psql -f migrations/005_deprecate_legacy_api_keys.sql
+```
+
+**`migrations/005_deprecate_legacy_api_keys.sql` 行为：**
+
+- 给 `api_keys` 表追加 `deprecated_at` 列并回填 `NOW()`
+- 给 `scopes` 表追加 `deprecated_at` 列并回填 `NOW()`
+- 不删除任何数据、不删除任何列，便于回滚与历史审计
+
+**客户端迁移：**
+
+- 调用方式不变，仍是 `Authorization: Bearer <key>`
+- 仅需将 `<key>` 替换为新的 `garrison_key_id.garrison_secret`
+- 401/429 响应语义不变，但 429 触发逻辑由 garrison `firewall-bruteforce` 接管
+
+详细架构说明参见 [ARCHITECTURE.md → Garrison 认证引擎](ARCHITECTURE.md#garrison-认证引擎)。
 
 ### Scopes
 
@@ -149,6 +219,8 @@ API keys are scoped to restrict access:
 | `search` | Search engine queries |
 | `extract` | Data extraction |
 | `admin` | Full administrative access |
+
+> **0.2.0 起**：scope 由 garrison RBAC 权限经 `auth_bridge::map_perms_to_scope` 桥接而来，下游业务层无感知。
 
 ### Security Best Practices
 
@@ -183,6 +255,152 @@ Check your current limits:
 curl -X GET http://localhost:8899/v1/teams/me/usage \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
+
+---
+
+## Single-Tenant / No-Auth Deployment
+
+> **R-flags-005:** crawlrs supports a lightweight deployment mode with business capability features disabled. This is ideal for single-tenant self-hosted scenarios that do not require multi-tenant isolation, API Key authentication, rate limiting, or Webhook notifications.
+
+### Overview
+
+By default, crawlrs builds with all business capability features enabled (`default = ["teams", "auth", "rate-limit", "webhook"]`). For simpler deployments (e.g., internal tools, single-user scraping services), you can disable these features to:
+
+- Reduce binary size (~22MB vs ~30MB)
+- Eliminate database tables for teams/api_keys/webhooks
+- Skip API Key verification (requests pass through with a fixed identity)
+- Disable rate limiting (all requests allowed)
+- Disable Webhook delivery (no `/v1/webhooks` routes, no `webhook_worker`)
+
+### Building with No Default Features
+
+```bash
+# Single-tenant, no auth, no rate limiting, no Webhook
+cargo build --release --no-default-features
+
+# Single-tenant + rate limiting only (no auth, no Webhook)
+cargo build --release --no-default-features --features rate-limit
+
+# Multi-tenant + auth (no rate limiting, no Webhook)
+cargo build --release --no-default-features --features teams
+```
+
+### Default Identity Constants
+
+When `auth` is disabled, the `default_identity_middleware` injects a fixed `AuthState` into all requests, using these constants defined in `src/common/constants.rs`:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `DEFAULT_TEAM_ID` | `Uuid::from_u128(1)` | All requests are attributed to this team |
+| `DEFAULT_API_KEY_ID` | `Uuid::from_u128(2)` | Fixed API Key ID for audit logs |
+| `DEFAULT_IDENTITY_TOKEN_HASH` | `"default_identity"` | Placeholder token hash for downstream extractors |
+
+The injected `AuthState` has `ApiKeyScope::full_access()` (read/write/admin all `true`, search/scrape limits `u32::MAX`), so all endpoints are accessible without authentication.
+
+### Noop Service Implementations
+
+When business capability features are disabled, corresponding Noop implementations are injected via DI:
+
+| Disabled Feature | Noop Implementation | Behavior |
+|------------------|---------------------|----------|
+| `rate-limit` | `NoopRateLimitingService` | `check_rate_limit` → `Allowed`; `check_and_deduct_quota` → `Ok(())`; `get_quota_balance` → `Ok(i64::MAX)` |
+| `webhook` | `NoopWebhookService` | `trigger_completion` / `trigger_failure` → `Ok(())` (no-op) |
+
+### Conditional Endpoints
+
+When features are disabled, the corresponding routes are not registered (return 404):
+
+| Endpoint | Required Feature | Disabled Behavior |
+|----------|------------------|-------------------|
+| `/v1/teams/me`, `/v1/teams/me/usage`, `/v1/teams/geo-restrictions` (GET/PUT) | `teams` | 404 Not Found |
+| `/v1/extract` (with geo-restriction generic) | `teams` | Degrades to `extract` signature without geo-restrictions |
+| `/v1/webhooks` (POST/GET) | `webhook` | 404 Not Found |
+
+### Pre-provisioning Credits for Default Tenant
+
+> **Important:** When `rate-limit` is enabled but `teams` is disabled, quota deductions still occur against `DEFAULT_TEAM_ID`. You must pre-provision credits for the default tenant before making requests, otherwise `check_and_deduct_quota` will return `PaymentRequired` (402).
+
+Use the `add_credits` CLI tool to provision the default tenant:
+
+```bash
+# Build with admin-tools feature
+cargo build --release --no-default-features --features rate-limit,admin-tools
+
+# Add 10000 credits to DEFAULT_TEAM_ID (Uuid::from_u128(1))
+./target/release/add_credits --team-id 00000000-0000-0000-0000-000000000001 --amount 10000
+```
+
+### Configuration Example
+
+`config/default.toml` for single-tenant + rate-limit deployment:
+
+```toml
+[database]
+url = "postgresql://user:password@localhost/crawlrs"
+max_connections = 20
+
+[server]
+host = "0.0.0.0"
+port = 8899
+
+[rate_limiting]
+enabled = true
+default_rpm = 60
+default_limit = 60
+burst_size = 20
+
+# No [auth] section needed — auth feature disabled
+# No [webhook] section needed — webhook feature disabled
+```
+
+**Auth 启用时的配置（0.2.0 garrison-auth-migration）：**
+
+当 `auth` feature 启用（默认）时，必须设置 `CRAWLRS__AUTH__JWT_SECRET`。可通过环境变量或 TOML 配置：
+
+```bash
+# 环境变量方式（推荐用于容器化部署）
+export CRAWLRS__AUTH__JWT_SECRET="your-32-byte-or-longer-hs256-secret-key"
+```
+
+```toml
+# config/default.toml 方式
+[auth]
+jwt_secret = "your-32-byte-or-longer-hs256-secret-key"
+```
+
+> **⚠️ 强密钥要求：** HS256 密钥必须 ≥32 字节；garrison 启动时检测弱密钥会直接拒绝启动。建议使用 `openssl rand -base64 48` 生成随机密钥。
+>
+> **注意：** 旧的 `CRAWLRS__AUTH__KEYS` 和 `[auth] keys` 配置项已弃用，0.2.0 起不再生效。API Key 改由 garrison 通过 `POST /v1/admin/api-keys` 或 `reissue_api_keys` CLI 签发。
+
+### Verification
+
+After building with `--no-default-features`, verify the deployment:
+
+```bash
+# Health check (always available)
+curl http://localhost:8899/health
+
+# Scrape without Authorization header (auth disabled)
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}'
+
+# Verify /v1/webhooks returns 404 (webhook disabled)
+curl -X POST http://localhost:8899/v1/webhooks -d '{}'
+
+# Verify /v1/teams/me returns 404 (teams disabled)
+curl http://localhost:8899/v1/teams/me
+```
+
+### Migration from Multi-Tenant to Single-Tenant
+
+If you are migrating from a multi-tenant deployment:
+
+1. **Export your data** from the multi-tenant database (scrape results, crawl configurations)
+2. **Re-import** into the single-tenant database, mapping all `team_id` values to `DEFAULT_TEAM_ID` (`00000000-0000-0000-0000-000000000001`)
+3. **Rebuild** with `--no-default-features` (or with only the features you need)
+4. **Pre-provision credits** for `DEFAULT_TEAM_ID` if `rate-limit` is enabled
+5. **Verify** all endpoints behave as expected
 
 ---
 

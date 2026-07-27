@@ -35,7 +35,9 @@ mod tests {
             use_fire_engine: false,
             actions: Vec::new(),
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         assert_eq!(engine.support_score(&basic_request), 10); // Updated based on implementation: 10 for basic
 
         // 需要JS的请求应该获得最高分数
@@ -53,7 +55,9 @@ mod tests {
             use_fire_engine: false,
             actions: Vec::new(),
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         assert_eq!(engine.support_score(&js_request), 100);
 
         // 需要截图的请求应该获得最高分数
@@ -71,7 +75,9 @@ mod tests {
             use_fire_engine: false,
             actions: Vec::new(),
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         assert_eq!(engine.support_score(&screenshot_request), 100);
 
         // 移动端请求应该获得中等分数
@@ -89,7 +95,9 @@ mod tests {
             use_fire_engine: false,
             actions: Vec::new(),
             sync_wait_ms: 0,
-        };
+            block_ads: false,
+            block_media: false,
+            };
         assert_eq!(engine.support_score(&mobile_request), 10); // Updated based on implementation
     }
 

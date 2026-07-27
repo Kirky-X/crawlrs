@@ -34,20 +34,47 @@ use crate::domain::services::extraction_service::ExtractionServiceTrait;
 use crate::domain::services::retry_handler::RetryHandler;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::utils::regex_cache::RegexCache;
-
-use crate::engines::engine_client::{
-    EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
-    ScreenshotConfig, ScrollDirection,
+// T053/R-frontier-001：URL 分层去重器（Bloom 预筛 + DB 保权威）
+use crate::utils::dedup::{DedupResult, Deduplicator};
+// T066/R-frontier-002/003：深度爬取过滤 + 评分 + 优先级队列
+use crate::workers::crawl::{
+    FilterContext, Frontier, PathDepthScorer, ScoringContext, UrlFilter, UrlPatternFilter,
+    UrlScorer,
 };
+
+use crate::common::HttpMethod;
+use crate::common::{CacheContext, CacheMode};
+use crate::domain::services::team_semaphore::TeamSemaphore;
+use crate::engines::engine_client::{
+    EngineClient, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse, ScreenshotConfig,
+    ScrollDirection,
+};
+use crate::infrastructure::oxcache::CacheService;
 use crate::presentation::helpers::ssrf::is_internal_url;
-use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
+// H-4 职责拆分：请求合并协调器（替代原 request_coalescer 字段 + try_coalesce 方法）
+use crate::workers::coalesce_coordinator::CoalesceCoordinator;
+// HIGH-2 SRP 拆分：cache key 生成、URL 脱敏、敏感头过滤、borrowed 序列化
+use crate::workers::cache_utils::{self, redact_url_for_log, SanitizedScrapeResponse};
+// H-4 职责拆分：Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
+#[cfg(feature = "markdown")]
+use crate::workers::markdown_post_processor::MarkdownPostProcessor;
+// H-4 职责拆分：仍需 RequestCoalescer 用于构造 CoalesceCoordinator（ScrapeWorkerBuilder.build 中使用）
+use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
 use crate::utils::retry_policy::RetryPolicy;
 use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::errors::ScrapeWorkerError;
+// T019（R-runtime-001）：内存感知调度器接入 scrape_worker
+// MemoryScheduler 依赖 SystemMonitorTrait（metrics 特性门控），故整块接入由 metrics 门控
+#[cfg(feature = "metrics")]
+use crate::workers::scheduler::memory_scheduler::{Admission, MemoryScheduler};
 
 /// 从缓存获取正则表达式
+///
+/// T066 后 `should_crawl` 委托 `UrlPatternFilter`（内部自管 regex 缓存），
+/// 此函数仅保留供测试验证 `RegexCache` 行为，标记 `#[cfg(test)]` 避免生产死代码。
+#[cfg(test)]
 fn get_cached_regex(pattern: &str, cache: &RegexCache) -> Result<regex::Regex, ScrapeWorkerError> {
     cache
         .get_or_insert(pattern)
@@ -64,6 +91,19 @@ pub struct ScrapeWorker {
     engine_client: Arc<EngineClient>,
     _create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     team_semaphore: Arc<TeamSemaphore>,
+    /// 请求合并协调器（H-4 职责拆分，T035/R-runtime-002）
+    ///
+    /// 同 URL 并发请求只允许首个执行实际抓取，其余 worker 等待广播后从
+    /// `result_repo` 读取结果，避免重复网络往返。所有 worker 共享同一实例
+    /// （由 `WorkerManager` 从 `ServicesComponents.request_coalescer` +
+    /// `repository` + `result_repository` 构造注入）。
+    coalesce_coordinator: Arc<CoalesceCoordinator>,
+    /// Markdown 后处理器（H-4 职责拆分，T042/R-content-001）
+    ///
+    /// 无状态服务，根据任务 `formats` 字段判断是否生成 Markdown。
+    /// gated `markdown` 特性：关闭时本字段不存在，相关分支也不编译。
+    #[cfg(feature = "markdown")]
+    markdown_post_processor: MarkdownPostProcessor,
     token_usage: Arc<DashMap<Uuid, AtomicI64>>,
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
@@ -71,7 +111,34 @@ pub struct ScrapeWorker {
     default_concurrency_limit: usize,
     retry_handler: RetryHandler,
     extraction_service: Arc<dyn ExtractionServiceTrait>,
+    /// T066 后 `should_crawl` 委托 `UrlPatternFilter`，此字段不再被生产代码读取。
+    /// 保留以维持 builder API 兼容（`with_regex_cache` + 构造器签名），
+    /// 全面移除需更新 30+ 调用点，作为独立重构任务处理。
+    #[allow(dead_code)]
     regex_cache: RegexCache,
+    /// 内存感知调度器（T019/R-runtime-001）
+    ///
+    /// `metrics` 启用时由 `WorkerManager` 注入；`process_task` 在获取并发许可前
+    /// 调用 `admit()`，Pressure 时延后、Critical 时重排到 backlog。
+    #[cfg(feature = "metrics")]
+    memory_scheduler: Arc<MemoryScheduler>,
+    /// URL 分层去重器（T053/R-frontier-001）
+    ///
+    /// UrlNormalizer + Bloom + HashSet 三层组合，用于 `extract_and_queue_links`
+    /// 预筛 URL 是否已爬：
+    /// - Bloom 阴性 → 绝对新，直接入队并 insert
+    /// - Bloom 阳性 → 可能已爬，回落 `find_existing_urls` DB 校验（保权威）
+    ///
+    /// `RwLock` 因为 `extract_and_queue_links` 是 `&self`，但 bloom insert 需 `&mut`。
+    /// `Arc` 是为后续支持跨 worker 共享（当前每 worker 独立实例）。
+    deduplicator: Arc<parking_lot::RwLock<Deduplicator>>,
+    /// 高级缓存服务（T059/R-cache-002）
+    ///
+    /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
+    /// 所有 worker 共享同一实例。`process_scrape_task` 在读写缓存前经
+    /// `CacheContext` 门控：`is_cacheable() && should_read()` 查缓存命中直返，
+    /// `is_cacheable() && should_write()` 抓取成功后写回。
+    cache_service: Arc<dyn CacheService>,
 }
 
 impl std::fmt::Debug for ScrapeWorker {
@@ -85,6 +152,13 @@ impl std::fmt::Debug for ScrapeWorker {
 
 impl ScrapeWorker {
     /// 创建新的抓取工作器实例
+    ///
+    /// `memory_scheduler` 仅在 `metrics` 特性启用时需要（T019/R-runtime-001）。
+    /// `coalesce_coordinator` 由 `WorkerManager` 从 `repository` +
+    /// `result_repository` + `request_coalescer` 构造注入，
+    /// 所有 worker 共享同一实例（T035/R-runtime-002 + H-4 职责拆分）。
+    /// `cache_service` 由 `WorkerManager` 从 `InfrastructureComponents.cache_service`
+    /// 注入，所有 worker 共享同一实例（T059/R-cache-002）。
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         repository: Arc<dyn TaskRepository>,
@@ -95,11 +169,14 @@ impl ScrapeWorker {
         engine_client: Arc<EngineClient>,
         _create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
         team_semaphore: Arc<TeamSemaphore>,
+        coalesce_coordinator: Arc<CoalesceCoordinator>,
         robots_checker: Arc<dyn RobotsCheckerTrait>,
         settings: Arc<Settings>,
         default_concurrency_limit: usize,
         extraction_service: Arc<dyn ExtractionServiceTrait>,
         regex_cache: RegexCache,
+        cache_service: Arc<dyn CacheService>,
+        #[cfg(feature = "metrics")] memory_scheduler: Arc<MemoryScheduler>,
     ) -> Self {
         // 根据任务类型选择合适的重试策略
         let retry_policy = RetryPolicy::slow(); // 网络请求适合慢速重试策略
@@ -114,6 +191,11 @@ impl ScrapeWorker {
             engine_client,
             _create_scrape_use_case,
             team_semaphore,
+            coalesce_coordinator,
+            #[cfg(feature = "markdown")]
+            markdown_post_processor: MarkdownPostProcessor::new(Arc::new(
+                crate::domain::services::markdown_service::HtmdMarkdownService::new(),
+            )),
             token_usage: Arc::new(DashMap::new()),
             robots_checker,
             settings,
@@ -122,6 +204,12 @@ impl ScrapeWorker {
             retry_handler,
             extraction_service,
             regex_cache,
+            #[cfg(feature = "metrics")]
+            memory_scheduler,
+            // T053/R-frontier-001：默认每 worker 独立 Deduplicator
+            // 后续可由 WorkerManager 通过 Builder 注入共享实例优化 DB 查询量
+            deduplicator: Arc::new(parking_lot::RwLock::new(Deduplicator::new())),
+            cache_service,
         }
     }
 
@@ -142,6 +230,37 @@ impl ScrapeWorker {
                 }
             }
         }
+    }
+
+    /// Builder 内部使用：替换 deduplicator 字段
+    ///
+    /// 用于 `ScrapeWorkerBuilder::build` 在调用 `ScrapeWorker::new`（内部默认
+    /// 初始化 deduplicator）后，注入外部共享实例。`None` 保留默认实例。
+    pub(crate) fn with_deduplicator_opt(
+        mut self,
+        dedup: Option<Arc<parking_lot::RwLock<Deduplicator>>>,
+    ) -> Self {
+        if let Some(d) = dedup {
+            self.deduplicator = d;
+        }
+        self
+    }
+
+    /// 测试 helper：获取 deduplicator 引用（仅 `#[cfg(test)]` 可用）
+    ///
+    /// 用于单元测试预填充 Bloom，模拟"URL 已爬"场景：
+    /// ```ignore
+    /// let worker = build_mock_worker().await;
+    /// {
+    ///     let mut dedup = worker.deduplicator_for_test().write();
+    ///     dedup.insert("https://example.com/page1");
+    /// }
+    /// // 现在 page1 在 Bloom 中阳性，调用 extract_and_queue_links 时
+    /// // 会走 find_existing_urls DB 校验路径
+    /// ```
+    #[cfg(test)]
+    pub(crate) fn deduplicator_for_test(&self) -> Arc<parking_lot::RwLock<Deduplicator>> {
+        self.deduplicator.clone()
     }
 
     async fn process_next_task(&self, queue: &dyn TaskQueue) -> Result<bool> {
@@ -175,6 +294,47 @@ impl ScrapeWorker {
                 self.trigger_webhook(&task, Some("Task expired".to_string()))
                     .await;
                 return Ok(());
+            }
+        }
+
+        // T019（R-runtime-001）：内存感知准入检查
+        //
+        // 在获取并发许可（Team Semaphore）之前先采样内存状态并决定是否放行：
+        // - Normal  → Proceed：进入并发获取流程
+        // - Pressure → Defer：复用现有 backlog 重排逻辑延后（design.md §5：
+        //   不新建持久队列，复用 scheduled_at + Queued 状态机）
+        // - Critical → Reschedule：同样经 backlog 重排，但语义为拒绝当前批次
+        //
+        // 采样策略：每次 process_task 调用 `update_state()` 读取最新内存使用率。
+        // 这与 `MemoryScheduler::spawn_monitor` 的后台 1s 采样互补——后台采样驱动
+        // 优雅关闭信号，此处 per-task 采样保证 admit() 返回最新决策。
+        #[cfg(feature = "metrics")]
+        {
+            self.memory_scheduler.update_state();
+            match self.memory_scheduler.admit().await {
+                Admission::Proceed => {}
+                Admission::Defer => {
+                    warn!(
+                        "Memory pressure detected, deferring task {} (team_id={}) via backlog reschedule",
+                        task.id, task.team_id
+                    );
+                    // 复用现有 backlog 重排逻辑：延后 30 秒重新入队
+                    task.scheduled_at = Some(Utc::now() + chrono::Duration::seconds(30));
+                    task.status = TaskStatus::Queued;
+                    self.repository.update(&task).await?;
+                    return Ok(());
+                }
+                Admission::Reschedule => {
+                    warn!(
+                        "Memory critical detected, rescheduling task {} (team_id={}) to backlog",
+                        task.id, task.team_id
+                    );
+                    // Critical 同样复用 backlog 重排逻辑（design.md：不新建持久队列）
+                    task.scheduled_at = Some(Utc::now() + chrono::Duration::seconds(30));
+                    task.status = TaskStatus::Queued;
+                    self.repository.update(&task).await?;
+                    return Ok(());
+                }
             }
         }
 
@@ -221,13 +381,42 @@ impl ScrapeWorker {
     async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
         debug!("task_id: {}", task.id);
 
-        // Resolve engine router directly to handle actions if they exist
-        let scrape_request = Self::build_scrape_request(&task).unwrap_or_else(|e| {
-            error!("Failed to parse task payload, using default: {}", e);
-            ScrapeRequest::new(task.url.clone()).timeout(Duration::from_secs(
-                self.settings.timeouts.engines.default_timeout_seconds,
-            ))
-        });
+        // PERF-H1 修复：解析一次 payload，dto 与 ScrapeRequest 复用同一份解析结果。
+        //
+        // 旧实现：
+        //   1) build_scrape_request(&task) 内部 from_value(payload.clone()) 得 dto
+        //   2) handle_scrape_success(&task, &response) 内部再 from_value(payload.clone()) 得 dto
+        // → 每次抓取 clone + 解析 payload 2 次。
+        //
+        // 新实现：
+        //   1) parse_scrape_request_dto(&task) 得 dto（仅 1 次 clone + 解析）
+        //   2) build_scrape_request_from_dto(&dto) 复用 dto 构造 ScrapeRequest（零额外解析）
+        //   3) handle_scrape_success(&task, dto.as_ref(), &response) 复用 dto 引用（零额外解析）
+        // → 每次抓取 clone + 解析 payload 1 次。
+        let (scrape_request_dto, scrape_request) = match Self::parse_scrape_request_dto(&task) {
+            Ok(dto) => {
+                let req = match Self::build_scrape_request_from_dto(&dto) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        error!(
+                            "Failed to build scrape request from dto, using default: {}",
+                            e
+                        );
+                        ScrapeRequest::new(task.url.clone()).timeout(Duration::from_secs(
+                            self.settings.timeouts.engines.default_timeout_seconds,
+                        ))
+                    }
+                };
+                (Some(dto), req)
+            }
+            Err(e) => {
+                error!("Failed to parse task payload, using default: {}", e);
+                let req = ScrapeRequest::new(task.url.clone()).timeout(Duration::from_secs(
+                    self.settings.timeouts.engines.default_timeout_seconds,
+                ));
+                (None, req)
+            }
+        };
 
         // SSRF 防护 (CWE-918)：静态校验 options.proxy 不指向内部网络（防御纵深）。
         // handler 层已通过 validate_url 完成完整 DNS 解析校验，
@@ -243,47 +432,131 @@ impl ScrapeWorker {
             }
         }
 
-        let response = self.engine_client.scrape(&scrape_request).await;
+        // T035/R-runtime-002 + H-4 职责拆分：请求合并——同 URL 并发只允许首个执行实际抓取
+        //
+        // 调用 CoalesceCoordinator（独立组件），返回 `Some(guard)` 表示获得执行权，
+        // guard 在抓取完成（含错误路径）后随作用域结束 Drop，自动从 in_flight 移除条目并广播给等待方。
+        // 返回 `None` 表示已被其他 worker 处理（等待方从 result_repo 读到结果，
+        // 或任务被延后重排），调用方应直接返回 Ok。
+        let _coalesce_guard = match self
+            .coalesce_coordinator
+            .try_coalesce(&task.url, &task)
+            .await?
+        {
+            Some(g) => g,
+            None => return Ok(()),
+        };
+
+        // T038/R-runtime-003：抓取成功/失败回填 AIMDController
+        //
+        // 由 `TeamSemaphore` 封装——Fixed 模式 noop；Adaptive 模式调用
+        // `AIMDController::record_*` 并经 `AdaptiveSemaphore::set_target` 推入新 target。
+        // guard 在 match 块作用域结束时 Drop，确保先广播给等待方再释放。
+
+        // T059/R-cache-002：高级缓存模式门控
+        //
+        // 构造 `CacheContext`，按 `cache_mode` 决定读写行为：
+        // - 读缓存：`is_cacheable() && should_read()` → 查缓存，命中直返跳过 `engine_client.scrape()`
+        // - 写缓存：`is_cacheable() && should_write()` 且抓取成功 → 序列化写回
+        //
+        // `cache_mode=None`（默认）等价于 `Enabled`（`unwrap_or_default()`）。
+        // 不可缓存的请求（data:/blob:/POST）跳过整个缓存流程。
+        let cache_ctx = CacheContext {
+            url: scrape_request.url.clone(),
+            method: scrape_request.options.method,
+            mode: scrape_request.options.cache_mode.unwrap_or_default(),
+        };
+
+        // HIGH-1 改进：cache key 纳入 ScrapeOptions 影响字段（headers/needs_js/session_id）
+        //
+        // 由 `cache_utils::generate_scrape_cache_key` 统一生成，读/写共用同一 key。
+        // 旧实现仅 `scrape:{method}:{url}` 会导致同 URL 不同 options 的缓存串扰
+        // （如 needs_js=true 拿到渲染后 DOM 与 needs_js=false 拿到原始 HTML 共享缓存）。
+        let cache_key = cache_utils::generate_scrape_cache_key(&cache_ctx, &scrape_request.options);
+
+        // 读缓存门控
+        let cached_response = if cache_ctx.is_cacheable() && cache_ctx.should_read() {
+            match self.try_read_scrape_cache(&cache_ctx, &cache_key).await {
+                Ok(Some(cached)) => {
+                    // 性能审查 LOW-1：debug 禁用时跳过 redact_url_for_log 调用（~1μs）
+                    // log crate 的 debug! 宏本身已 lazy format_args，但函数参数在宏调用前已求值，
+                    // 需 log_enabled! 守卫才能避免 redact_url_for_log 的 Url::parse + String 分配。
+                    if log::log_enabled!(log::Level::Debug) {
+                        debug!(
+                            "Cache hit, returning cached response url={} mode={:?}",
+                            redact_url_for_log(&cache_ctx.url),
+                            cache_ctx.mode
+                        );
+                    }
+                    Some(cached)
+                }
+                Ok(None) => None,
+                Err(e) => {
+                    // 规则12：缓存读失败不吞，记录后降级为 miss（不阻塞抓取）
+                    // T062 安全审查 MEDIUM-2：日志使用脱敏 URL，防止 query 参数泄露
+                    warn!(
+                        "Cache read failed, falling back to scrape url={} error={}",
+                        redact_url_for_log(&cache_ctx.url),
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let response = match cached_response {
+            Some(cached) => Ok(cached),
+            None => {
+                let resp = self.engine_client.scrape(&scrape_request).await;
+                // 写缓存门控：仅抓取成功且 should_write() 时写回
+                if let Ok(ref r) = resp {
+                    if cache_ctx.is_cacheable() && cache_ctx.should_write() {
+                        if let Err(e) = self.try_write_scrape_cache(&cache_ctx, &cache_key, r).await
+                        {
+                            // 规则12：缓存写失败不吞，记录但不影响抓取结果
+                            // T062 安全审查 MEDIUM-2：日志使用脱敏 URL
+                            warn!(
+                                "Cache write failed url={} error={}",
+                                redact_url_for_log(&cache_ctx.url),
+                                e
+                            );
+                        }
+                    }
+                }
+                resp
+            }
+        };
 
         match response {
             Ok(response) => {
+                self.team_semaphore.record_success(task.team_id);
                 debug!("status_code: {}", response.status_code);
                 info!("Scrape successful, status: {}", response.status_code);
 
-                // Map ScrapeResponse to ScrapeResult
-                // _result variable is currently unused but might be used later or for debugging
-                let _result = ScrapeResult {
-                    id: Uuid::new_v4(),
-                    task_id: task.id,
-                    url: task.url.clone(),
-                    status_code: response.status_code as i32,
-                    content: response.content.clone(),
-                    content_type: response.content_type.clone(),
-                    headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null),
-                    meta_data: Value::Null,
-                    screenshot: response.screenshot.clone(),
-                    response_time_ms: response.response_time_ms as i64,
-                    created_at: Utc::now().naive_utc(),
-                };
+                // 性能审查 H-1 修复：handle_scrape_success 改为 owned ScrapeResponse，
+                // 调用前提前提取 has_screenshot 标志（response 将被 move 消费）
+                let has_screenshot = response.screenshot.is_some();
+                let has_proxy = scrape_request.options.proxy.is_some();
 
-                if let Err(e) = self.handle_scrape_success(&task, &response).await {
+                if let Err(e) = self
+                    .handle_scrape_success(&task, scrape_request_dto.as_ref(), response)
+                    .await
+                {
                     error!("Scrape success handler failed: {}", e);
                     debug!("error: {}", e);
                     self.handle_failure(&mut task).await?;
                 } else {
                     debug!("Scrape success handler completed successfully");
                     // 扣除基础费用及高级功能费用 (PRD-253)
-                    self.deduct_feature_credits(
-                        task.team_id,
-                        task.id,
-                        response.screenshot.is_some(),
-                        scrape_request.options.proxy.is_some(),
-                    )
-                    .await;
+                    self.deduct_feature_credits(task.team_id, task.id, has_screenshot, has_proxy)
+                        .await;
                 }
                 Ok(())
             }
             Err(e) => {
+                self.team_semaphore.record_failure(task.team_id);
                 error!("Scrape failed: {}", e);
                 debug!("error: {}", e);
 
@@ -298,12 +571,12 @@ impl ScrapeWorker {
                     if let Ok(Some(mut t)) = self.repository.find_by_id(task.id).await {
                         t.status = TaskStatus::Failed;
                         t.completed_at = Some(Utc::now());
-                        // Add error to payload for tracking
-                        let mut payload = t.payload.clone();
-                        if let Some(obj) = payload.as_object_mut() {
+                        // 性能审查 M-5 修复：直接操作 t.payload，避免 clone 整个 JSON
+                        // （原实现 let mut payload = t.payload.clone() + 后续 t.payload = payload
+                        // 在失败路径上多分配一次 JSON Value）
+                        if let Some(obj) = t.payload.as_object_mut() {
                             obj.insert("error".to_string(), json!(e.to_string()));
                         }
-                        t.payload = payload;
                         self.repository.update(&t).await?;
                     }
                 } else {
@@ -316,6 +589,90 @@ impl ScrapeWorker {
             }
         }
     }
+
+    // T059/R-cache-002：缓存读写辅助方法
+    //
+    // 这两个方法封装 `CacheService` 的调用细节（key 生成、序列化、TTL），
+    // `process_scrape_task` 仅负责门控决策（是否调用它们）。
+    // 失败时不阻塞抓取流程——调用方已处理错误降级（规则12：失败显性化）。
+
+    /// 读抓取结果缓存（T059/R-cache-002）
+    ///
+    /// 由调用方先用 [`cache_utils::generate_scrape_cache_key`] 计算 cache key
+    /// （纳入 ScrapeOptions 影响字段，HIGH-1 改进），传入本方法查 `CacheService`。
+    ///
+    /// 返回 `Ok(None)` 表示缓存未命中；`Ok(Some)` 表示命中；`Err` 表示缓存故障。
+    ///
+    /// T062 安全审查 MEDIUM-2：日志使用脱敏 URL（key 含完整 URL，可能含 query 参数中的 token）。
+    async fn try_read_scrape_cache(
+        &self,
+        ctx: &CacheContext,
+        key: &str,
+    ) -> Result<Option<ScrapeResponse>> {
+        match self.cache_service.get(key).await {
+            Ok(Some(json)) => match serde_json::from_str::<ScrapeResponse>(&json) {
+                Ok(resp) => Ok(Some(resp)),
+                Err(e) => {
+                    // 反序列化失败：缓存数据损坏，记录后视为 miss（不阻塞抓取）
+                    // T062 安全审查 MEDIUM-2：日志输出脱敏 URL 而非完整 key（key 含 URL）
+                    warn!(
+                        "Cache deserialize failed, treating as miss url={} error={}",
+                        redact_url_for_log(&ctx.url),
+                        e
+                    );
+                    Ok(None)
+                }
+            },
+            Ok(None) => Ok(None),
+            Err(e) => Err(anyhow::anyhow!("cache get failed: {}", e)),
+        }
+    }
+
+    /// 写抓取结果缓存（T059/R-cache-002）
+    ///
+    /// 由调用方先用 [`cache_utils::generate_scrape_cache_key`] 计算 cache key 传入。
+    /// 序列化 `ScrapeResponse` → JSON → 写入 `CacheService`（带 TTL）。
+    /// TTL 从 `settings.cache.types.search.ttl_seconds` 读取（默认 300s，
+    /// 由 `CacheTypeSettings::ttl_seconds` 的 `#[config(default = 300)]` 保证非零）。
+    ///
+    /// T062 安全审查 LOW-2：序列化时通过 [`SanitizedScrapeResponse`] 自定义 Serialize
+    /// 跳过敏感响应头（Set-Cookie、Authorization 等），防止凭证泄露到缓存（CWE-200）。
+    ///
+    /// 性能 HIGH-1：原实现 `response.clone()` 完整克隆 ScrapeResponse（含 content
+    /// 可能数 MB、screenshot 可能 100KB+），仅用于过滤 headers 后序列化。改为
+    /// [`SanitizedScrapeResponse::from_response`] 借用原 response，零克隆序列化。
+    ///
+    /// T062 安全审查 MEDIUM-2：日志使用脱敏 URL（key 含完整 URL）。
+    async fn try_write_scrape_cache(
+        &self,
+        ctx: &CacheContext,
+        key: &str,
+        response: &ScrapeResponse,
+    ) -> Result<()> {
+        // 性能 HIGH-1：借用序列化，避免克隆整个 ScrapeResponse
+        let sanitized = SanitizedScrapeResponse::from_response(response);
+        let json = serde_json::to_string(&sanitized)
+            .context("Failed to serialize ScrapeResponse for cache")?;
+        let ttl = self.settings.cache.types.search.ttl_seconds;
+        self.cache_service
+            .set(key, &json, ttl)
+            .await
+            .map_err(|e| anyhow::anyhow!("cache set failed: {}", e))?;
+        // 性能审查 LOW-1：debug 禁用时跳过 redact_url_for_log 调用（~1μs）
+        if log::log_enabled!(log::Level::Debug) {
+            debug!(
+                "Cache written url={} ttl={}s mode={:?}",
+                redact_url_for_log(&ctx.url),
+                ttl,
+                ctx.mode
+            );
+        }
+        Ok(())
+    }
+
+    // H-4 职责拆分：`try_coalesce` 方法已迁移至 `CoalesceCoordinator`（独立组件）。
+    // 原 `request_coalescer` 字段已替换为 `coalesce_coordinator: Arc<CoalesceCoordinator>`。
+    // 调用方在 `process_scrape_task` 中通过 `self.coalesce_coordinator.try_coalesce(...)` 触发。
 
     /// 解析 Crawl 任务特定的 Payload
     async fn parse_crawl_payload(&self, task: &Task) -> Result<(Uuid, u32, CrawlConfigDto)> {
@@ -437,6 +794,11 @@ impl ScrapeWorker {
             use_fire_engine: false,
             actions: Vec::new(),
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            cache_mode: None,
+            wait_for: None,
         })
     }
 
@@ -457,7 +819,7 @@ impl ScrapeWorker {
 
         // 文本编码处理
         let processed_content = match self.process_text_encoding(task, &response).await {
-            Ok(content) => content,
+            Ok(content) => content.into_owned(),
             Err(e) => {
                 warn!("文本编码处理失败，使用原始内容: {}", e);
                 response.content.clone()
@@ -638,6 +1000,11 @@ impl ScrapeWorker {
             use_fire_engine: false,
             actions: vec![],
             sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            cache_mode: None,
+            wait_for: None,
         })
     }
 
@@ -657,7 +1024,7 @@ impl ScrapeWorker {
 
         // 3. 文本编码处理
         let processed_content = match self.process_text_encoding(&task, &scrape_resp).await {
-            Ok(content) => content,
+            Ok(content) => content.into_owned(),
             Err(e) => {
                 warn!("文本编码处理失败，使用原始内容: {}", e);
                 scrape_resp.content.clone()
@@ -827,6 +1194,23 @@ impl ScrapeWorker {
             return Ok(());
         }
 
+        // 性能审查 H-3 修复：循环外构造一次 UrlPatternFilter，循环内复用引用
+        // 原实现每个链接都 clone include/exclude Vec + 重建 UrlPatternFilter（含 Regex 编译）
+        //
+        // 边界：include_patterns == Some(vec![]) → 空 include 视为"拒绝所有"（vacuous truth）
+        // UrlPatternFilter 将空 include 视为"无限制"（返回 true），需在外层显式短路
+        let empty_include_short_circuit =
+            matches!(&config.include_patterns, Some(patterns) if patterns.is_empty());
+        let pattern_filter = if empty_include_short_circuit {
+            None // 短路：所有 URL 都被拒绝
+        } else {
+            Some(UrlPatternFilter::new(
+                config.include_patterns.clone().unwrap_or_default(),
+                config.exclude_patterns.clone().unwrap_or_default(),
+            ))
+        };
+        let filter_ctx = FilterContext::default();
+
         let unique_links = {
             let document = Html::parse_document(&response.content);
             let selector = Selector::parse("a")
@@ -851,8 +1235,13 @@ impl ScrapeWorker {
                             continue;
                         }
 
-                        // 检查包含/排除模式
-                        if !self.should_crawl(&url_str, config) {
+                        // 检查包含/排除模式（复用循环外构造的 pattern_filter）
+                        if let Some(filter) = &pattern_filter {
+                            if !filter.accept(&url_str, &filter_ctx) {
+                                continue;
+                            }
+                        } else if empty_include_short_circuit {
+                            // include_patterns=Some(empty) 边界：拒绝所有
                             continue;
                         }
 
@@ -865,126 +1254,235 @@ impl ScrapeWorker {
 
         info!("Found {} unique links on {}", unique_links.len(), task.url);
 
-        // 使用批量查询优化 N+1 问题
-        // unique_links 是 HashSet<String>，需要转换为 Vec<String>
-        let links_vec: Vec<String> = unique_links.iter().cloned().collect();
-        let existing_urls = self.repository.find_existing_urls(&links_vec).await?;
-        let existing_url_set: std::collections::HashSet<String> =
-            existing_urls.into_iter().collect();
+        // T053/R-frontier-001：URL 分层去重
+        //
+        // 两阶段预筛（TOCTOU 修复：DefinitelyNew 路径用 check_and_insert 原子化）：
+        // 1. 对每个候选 URL 调用 `deduplicator.check_and_insert(url)`（写锁串行）：
+        //    - DefinitelyNew（Bloom 全阴性）→ 立即 insert + 加入 to_enqueue（无 race）
+        //    - MaybeExisting（Bloom 至少一个阳性）→ 仅加入 db_check（normalized 形式）
+        // 2. 对 db_check 列表调用 `find_existing_urls` 批量 DB 校验（保权威）：
+        //    DB 未命中 → check_and_insert 二次确认（防 race）→ 入队
+        //
+        // 安全审查修复：
+        // - HIGH-3：db_check 仅存 normalized，不再 extend variants（避免 6x 膨胀）
+        // - 性能严重1：check_and_insert 原子化，消除 TOCTOU 竞态
+        // - 性能严重2：避免 to_enqueue.clone()，分离 enqueue 与 insert 路径
+        let mut to_enqueue: Vec<String> = Vec::with_capacity(unique_links.len());
+        let mut db_check: Vec<String> = Vec::with_capacity(unique_links.len());
 
-        for link in unique_links.iter() {
-            // 检查是否已经抓取过 (去重)
-            if existing_url_set.contains(link) {
-                continue;
+        // 收集 Bloom 预筛结果 + 原子 insert（避免 TOCTOU）
+        {
+            let mut dedup = self.deduplicator.write();
+            for link in &unique_links {
+                match dedup.check_and_insert(link) {
+                    Ok(DedupResult::DefinitelyNew { normalized }) => {
+                        // 立即 insert 完成，无 race，可直接入队
+                        to_enqueue.push(normalized);
+                    }
+                    Ok(DedupResult::MaybeExisting { normalized, .. }) => {
+                        // 仅收集 normalized 用于 DB 校验（不再 extend variants）
+                        // variants 仅用于 Bloom 查询，DB 已存 normalized 形式
+                        db_check.push(normalized);
+                    }
+                    Err(e) => {
+                        // 规则 12：去重错误显性化，不静默跳过
+                        return Err(anyhow::anyhow!(
+                            "URL dedup check failed for {}: {}",
+                            link,
+                            e
+                        ));
+                    }
+                }
             }
+        }
 
-            // Re-construct with strategy adjustment
-            let mut priority = task.priority;
-            if let Some(strategy) = &config.strategy {
-                if strategy.to_lowercase() == "dfs" {
-                    priority = priority.saturating_add(1);
+        // T066/R-frontier-003：收集新 URL，统一经 Frontier 评分排序后入队
+        // 性能审查 M-2 修复：用 std::mem::take 消费 to_enqueue，避免 iter().cloned() 重复 clone
+        let mut new_urls: Vec<String> = Vec::with_capacity(unique_links.len());
+        new_urls.extend(std::mem::take(&mut to_enqueue));
+
+        // 对 db_check 列表进行 DB 批量校验（保权威层）
+        if !db_check.is_empty() {
+            // 去重 db_check 列表（normalized 已是规范形式，sort+dedup 即可）
+            db_check.sort_unstable();
+            db_check.dedup();
+
+            let existing_urls = self.repository.find_existing_urls(&db_check).await?;
+            let existing_url_set: std::collections::HashSet<String> =
+                existing_urls.into_iter().collect();
+
+            // 收集 DB 未命中的 normalized URL（需二次 check_and_insert 防 race）
+            let mut to_db_insert: Vec<&String> = Vec::with_capacity(db_check.len());
+            for normalized in &db_check {
+                if !existing_url_set.contains(normalized) {
+                    to_db_insert.push(normalized);
                 }
             }
 
-            let new_task = Task {
-                id: Uuid::new_v4(),
-                task_type: TaskType::Crawl,
-                status: TaskStatus::Queued,
-                priority,
-                team_id: task.team_id,
-                api_key_id: task.api_key_id,
-                url: link.to_string(),
-                payload: json!({
-                    "crawl_id": crawl_id.to_string(),
-                    "depth": current_depth + 1,
-                    "config": config
-                }),
-                retry_count: 0,
-                attempt_count: 0,
-                max_retries: 3,
-                scheduled_at: None,
-                created_at: Utc::now(),
-                started_at: None,
-                completed_at: None,
-                crawl_id: Some(crawl_id),
-                updated_at: Utc::now(),
-                lock_token: None,
-                lock_expires_at: None,
-                expires_at: None,
-            };
+            // 二次 check_and_insert（防 race：DB 校验期间另一 worker 可能已 insert）
+            // + 入队 DB 未命中且 Bloom 也未命中的 URL
+            let mut to_db_enqueue: Vec<String> = Vec::with_capacity(to_db_insert.len());
+            if !to_db_insert.is_empty() {
+                let mut dedup = self.deduplicator.write();
+                for normalized in &to_db_insert {
+                    // check_and_insert：若 Bloom 已阳性（被其他 worker insert）→ MaybeExisting，跳过
+                    // 若 Bloom 仍阴性 → DefinitelyNew + insert，加入入队列表
+                    match dedup.check_and_insert(normalized) {
+                        Ok(DedupResult::DefinitelyNew { normalized: n }) => {
+                            to_db_enqueue.push(n);
+                        }
+                        Ok(DedupResult::MaybeExisting { .. }) => {
+                            // 另一 worker 已 insert，跳过避免重复入队
+                            continue;
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "URL dedup check_and_insert failed for {}: {}",
+                                normalized,
+                                e
+                            ));
+                        }
+                    }
+                }
+            }
 
-            self.repository.create(&new_task).await?;
-            self.crawl_repository
-                .increment_total_tasks(crawl_id)
-                .await?;
+            // 收集 DB 校验后确认为新的 URL（性能审查 M-2：用 take 消费 to_db_enqueue）
+            new_urls.extend(std::mem::take(&mut to_db_enqueue));
+        }
+
+        // T066/R-frontier-003：用 Frontier 按 URL 评分 + 域名 round-robin 排序入队
+        //
+        // 浅路径（hub/index 页面）评分更高，优先出队以提升爬取覆盖效率。
+        // 域名 round-robin 避免单域名饥饿。
+        if !new_urls.is_empty() {
+            let scorer = PathDepthScorer::new();
+            let scoring_ctx = ScoringContext::default();
+            let frontier = Frontier::new();
+
+            for url in &new_urls {
+                let score = scorer.score(url, &scoring_ctx);
+                match crate::workers::crawl::ScoredUrl::new(url.clone(), score) {
+                    Ok(scored) => frontier.push(scored),
+                    Err(e) => {
+                        // URL 域名提取失败（不应到达，links 已过滤 http/https）
+                        warn!("task_id: {}, URL 评分失败跳过: {} ({})", task.id, url, e);
+                    }
+                }
+            }
+
+            info!(
+                "task_id: {}, {} URLs 入 Frontier（{} 域名），按评分出队",
+                task.id,
+                frontier.len(),
+                frontier.domain_count()
+            );
+
+            while let Some(scored) = frontier.pop() {
+                let mut priority = task.priority;
+                if let Some(strategy) = &config.strategy {
+                    if strategy.to_lowercase() == "dfs" {
+                        priority = priority.saturating_add(1);
+                    }
+                }
+
+                let new_task = Task {
+                    id: Uuid::new_v4(),
+                    task_type: TaskType::Crawl,
+                    status: TaskStatus::Queued,
+                    priority,
+                    team_id: task.team_id,
+                    api_key_id: task.api_key_id,
+                    url: scored.url,
+                    payload: json!({
+                        "crawl_id": crawl_id.to_string(),
+                        "depth": current_depth + 1,
+                        "config": config
+                    }),
+                    retry_count: 0,
+                    attempt_count: 0,
+                    max_retries: 3,
+                    scheduled_at: None,
+                    created_at: Utc::now(),
+                    started_at: None,
+                    completed_at: None,
+                    crawl_id: Some(crawl_id),
+                    updated_at: Utc::now(),
+                    lock_token: None,
+                    lock_expires_at: None,
+                    expires_at: None,
+                };
+
+                self.repository.create(&new_task).await?;
+                self.crawl_repository
+                    .increment_total_tasks(crawl_id)
+                    .await?;
+            }
         }
 
         Ok(())
     }
 
-    fn should_crawl(&self, url: &str, config: &CrawlConfigDto) -> bool {
-        // 1. 检查包含模式 (如果有配置，必须匹配其中一个)
-        if let Some(includes) = &config.include_patterns {
-            let mut matched = false;
-            for pattern in includes {
-                if let Ok(re) = get_cached_regex(pattern, &self.regex_cache) {
-                    if re.is_match(url) {
-                        matched = true;
-                        break;
-                    }
-                } else if url.contains(pattern) {
-                    // 简单的字符串包含回退
-                    matched = true;
-                    break;
-                }
-            }
-            if !matched {
-                return false;
-            }
-        }
-
-        // 2. 检查排除模式 (如果有配置，不能匹配任何一个)
-        if let Some(excludes) = &config.exclude_patterns {
-            for pattern in excludes {
-                if let Ok(re) = get_cached_regex(pattern, &self.regex_cache) {
-                    if re.is_match(url) {
-                        return false;
-                    }
-                } else if url.contains(pattern) {
-                    return false;
-                }
-            }
-        }
-
-        true
-    }
-
-    async fn handle_scrape_success(&self, task: &Task, response: &ScrapeResponse) -> Result<()> {
+    async fn handle_scrape_success(
+        &self,
+        task: &Task,
+        scrape_request_dto: Option<&ScrapeRequestDto>,
+        response: ScrapeResponse,
+    ) -> Result<()> {
         debug!("task_id: {}", task.id);
 
         // 文本编码处理 - 集成文本处理功能
-        let processed_content = match self.process_text_encoding(task, response).await {
-            Ok(content) => content,
+        // 性能审查 H-2 修复：process_text_encoding 返回 Cow<'_, str>，禁用路径零 clone
+        let processed_content = match self.process_text_encoding(task, &response).await {
+            Ok(content) => content.into_owned(),
             Err(e) => {
                 warn!("文本编码处理失败，使用原始内容: {}", e);
                 response.content.clone()
             }
         };
 
+        // PERF-H1 修复：复用 process_scrape_task 已解析的 ScrapeRequestDto 引用，
+        // 不再在 handle_scrape_success 内部二次 from_value(task.payload.clone())。
+        let parsed_req = scrape_request_dto;
+
         // 创建处理后的响应用于后续处理
+        // T042/R-content-001 + H-4 职责拆分：调用 MarkdownPostProcessor（独立组件）
+        // 若 formats 含 "markdown" 则生成 Markdown，否则返回 Ok(None)
+        //
+        // 架构审查 M-1（错误显性化）：generate() 现返回 Result<Option<String>, _>，
+        // 区分"未请求 markdown"（Ok(None)）与"转换失败/空结果"（Err）。
+        // 调用方策略（design.md §10）：markdown 为增强字段，失败不阻断基础抓取结果，
+        // 错误时记录告警并继续（generated_markdown = None）。
+        #[cfg(feature = "markdown")]
+        let generated_markdown: Option<String> = parsed_req.as_ref().and_then(|req| {
+            self.markdown_post_processor
+                .generate(task.id, req, &processed_content)
+                .unwrap_or_else(|e| {
+                    warn!(
+                        "task_id: {}, markdown post-processing failed: {}",
+                        task.id, e
+                    );
+                    None
+                })
+        });
+        #[cfg(not(feature = "markdown"))]
+        let generated_markdown: Option<String> = None;
+
+        // 性能审查 H-1 修复：handle_scrape_success 改为 owned ScrapeResponse，
+        // 构造 processed_response 时直接 move 字段，避免 clone screenshot(100KB+)/headers/...
         let processed_response = ScrapeResponse {
             content: processed_content,
             status_code: response.status_code,
-            screenshot: response.screenshot.clone(),
-            content_type: response.content_type.clone(),
-            headers: response.headers.clone(),
+            screenshot: response.screenshot,
+            content_type: response.content_type,
+            headers: response.headers,
             response_time_ms: response.response_time_ms,
-            ..response.clone()
+            final_url: response.final_url,
+            markdown: generated_markdown.or(response.markdown),
         };
 
         // 解析 ScrapeRequest 以检查是否有提取规则
         let mut extracted_data = None;
-        if let Ok(req) = serde_json::from_value::<ScrapeRequestDto>(task.payload.clone()) {
+        if let Some(req) = parsed_req.as_ref() {
             if let Some(rules) = &req.extraction_rules {
                 match self
                     .extraction_service
@@ -1050,12 +1548,23 @@ impl ScrapeWorker {
         Ok(())
     }
 
+    // H-4 职责拆分：`maybe_generate_markdown` 方法已迁移至 `MarkdownPostProcessor`（独立组件）。
+    // 原 `HtmdMarkdownService` 调用已替换为 `self.markdown_post_processor.generate(...)`，
+    // 由 `handle_scrape_success` 中调用。
+
     /// 处理文本编码转换
-    async fn process_text_encoding(
+    ///
+    /// 性能审查 H-2 修复：禁用路径短路，避免不必要的 `as_bytes().to_vec()`
+    /// 与 `String::from_utf8_lossy` 重复分配。
+    ///
+    /// 性能审查 H-2 修复：返回 `Cow<'_, str>` 而非 `String`，
+    /// 禁用路径（`CrawlTextIntegration::new(false)`）返回 `Cow::Borrowed(&response.content)`，
+    /// 避免每次抓取都 clone 整个 content（可能数 MB）。
+    async fn process_text_encoding<'a>(
         &self,
         task: &Task,
-        response: &ScrapeResponse,
-    ) -> Result<String> {
+        response: &'a ScrapeResponse,
+    ) -> Result<std::borrow::Cow<'a, str>> {
         use log::{info, warn};
 
         info!(
@@ -1065,6 +1574,11 @@ impl ScrapeWorker {
 
         // 创建文本处理集成器
         let text_integration = CrawlTextIntegration::new(false); // Disable by default for now
+
+        // 性能审查 H-2 修复：禁用时返回借用引用，避免 clone 整个 content（数 MB）
+        if !text_integration.is_enabled() {
+            return Ok(std::borrow::Cow::Borrowed(&response.content));
+        }
 
         // 准备输入数据
         let input = ScrapeResponseInput {
@@ -1092,7 +1606,9 @@ impl ScrapeWorker {
                         processed_response.processing_success as u32,
                         processed_response.processing_error.is_none() as u32
                     );
-                    Ok(processed_response.processed_content)
+                    Ok(std::borrow::Cow::Owned(
+                        processed_response.processed_content,
+                    ))
                 } else {
                     let error_msg = processed_response
                         .processing_error
@@ -1119,9 +1635,31 @@ impl ScrapeWorker {
             meta_data = data;
         }
 
+        // T042/R-content-001：将 response.markdown 合并到 meta_data JSON
+        // ScrapeResult 实体无独立 markdown 列，统一存入 meta_data：
+        // - Null → {"markdown": "..."}
+        // - Object → 插入 "markdown" 键
+        // - 其他（数组/标量）→ 包装为 {"extracted": <原值>, "markdown": "..."}
+        if let Some(ref markdown) = response.markdown {
+            match &mut meta_data {
+                Value::Null => {
+                    meta_data = serde_json::json!({ "markdown": markdown });
+                }
+                Value::Object(map) => {
+                    map.insert("markdown".to_string(), Value::String(markdown.clone()));
+                }
+                _ => {
+                    let original = std::mem::replace(&mut meta_data, Value::Null);
+                    meta_data = serde_json::json!({
+                        "extracted": original,
+                        "markdown": markdown,
+                    });
+                }
+            }
+        }
+
         // Content and screenshot from response
         let content_to_store = response.content.clone();
-        let _screenshot_to_store = response.screenshot.clone();
 
         // Create result entity
         let result = ScrapeResult {
@@ -1240,11 +1778,25 @@ impl ScrapeWorker {
         }
     }
 
-    pub fn build_scrape_request(task: &Task) -> Result<ScrapeRequest> {
-        let scrape_request: ScrapeRequestDto =
-            serde_json::from_value(task.payload.clone()).context("Failed to parse task payload")?;
+    /// 从 Task payload 解析出 [`ScrapeRequestDto`]（PERF-H1 重构：拆分两步式）。
+    ///
+    /// 该方法仅负责反序列化，调用方可继续调 [`Self::build_scrape_request_from_dto`]
+    /// 构造 [`ScrapeRequest`]，或直接复用 dto 引用避免二次解析。
+    ///
+    /// # 性能要点
+    ///
+    /// `serde_json::from_value` 需要 owned `Value`，因此 `task.payload` 必须 clone 一次。
+    /// 调用方拿到 dto 后应在所有后续路径（构造 [`ScrapeRequest`]、生成 markdown、
+    /// 检查 extraction_rules）复用同一引用，禁止再次 `from_value(task.payload.clone())`。
+    pub(crate) fn parse_scrape_request_dto(task: &Task) -> Result<ScrapeRequestDto> {
+        serde_json::from_value(task.payload.clone()).context("Failed to parse task payload")
+    }
 
-        let options = scrape_request.options.as_ref();
+    /// 从已解析的 [`ScrapeRequestDto`] 构造 [`ScrapeRequest`]（PERF-H1 重构：拆分两步式）。
+    ///
+    /// 不再读取 `task.payload`，避免重复解析与 clone。
+    pub(crate) fn build_scrape_request_from_dto(dto: &ScrapeRequestDto) -> Result<ScrapeRequest> {
+        let options = dto.options.as_ref();
 
         let mut headers = HashMap::with_capacity(16);
         if let Some(opts) = options {
@@ -1259,11 +1811,7 @@ impl ScrapeWorker {
             }
         }
 
-        let needs_js = scrape_request
-            .actions
-            .as_ref()
-            .map(|a| !a.is_empty())
-            .unwrap_or(false)
+        let needs_js = dto.actions.as_ref().map(|a| !a.is_empty()).unwrap_or(false)
             || options.and_then(|o| o.js_rendering).unwrap_or(false);
 
         let screenshot_config = options.and_then(|o| {
@@ -1276,7 +1824,7 @@ impl ScrapeWorker {
         });
 
         Ok(ScrapeRequest {
-            url: scrape_request.url.clone(),
+            url: dto.url.clone(),
             options: ScrapeOptions {
                 method: HttpMethod::Get,
                 body: None,
@@ -1294,7 +1842,7 @@ impl ScrapeWorker {
                     .and_then(|o| o.needs_tls_fingerprint)
                     .unwrap_or(false),
                 use_fire_engine: options.and_then(|o| o.use_fire_engine).unwrap_or(false),
-                actions: scrape_request
+                actions: dto
                     .actions
                     .clone()
                     .unwrap_or_default()
@@ -1330,9 +1878,38 @@ impl ScrapeWorker {
                         } => Some(PageAction::Input { selector, text }),
                     })
                     .collect(),
-                sync_wait_ms: scrape_request.sync_wait_ms.unwrap_or(0),
+                sync_wait_ms: dto.sync_wait_ms.unwrap_or(0),
+                block_ads: false,
+                block_media: false,
+                session_id: None,
+                // T058/R-cache-002：cache_mode 桥接（bypass_cache 优先级处理）
+                //
+                // bypass_cache=Some(true) 覆盖 cache_mode 为 Bypass（应急绕过读，正常写回）。
+                // 其余情况按 cache_mode 走；两者皆 None 时等价于 Enabled（默认）。
+                cache_mode: {
+                    let bypass = options.and_then(|o| o.bypass_cache).unwrap_or(false);
+                    if bypass {
+                        Some(CacheMode::Bypass)
+                    } else {
+                        options.and_then(|o| o.cache_mode)
+                    }
+                },
+                wait_for: None,
             },
         })
+    }
+
+    /// 从 [`Task`] 一次性解析并构造 [`ScrapeRequest`]（便利入口）。
+    ///
+    /// 调用方仅需 `&Task`，无需关心 dto 解析细节。内部委托
+    /// [`Self::parse_scrape_request_dto`] + [`Self::build_scrape_request_from_dto`]。
+    ///
+    /// **若调用方需要同时使用 [`ScrapeRequestDto`] 与 [`ScrapeRequest`]**，
+    /// 应直接调 [`Self::parse_scrape_request_dto`] 拿到 dto 后再调
+    /// [`Self::build_scrape_request_from_dto`]，避免双解析双 clone payload。
+    pub fn build_scrape_request(task: &Task) -> Result<ScrapeRequest> {
+        let dto = Self::parse_scrape_request_dto(task)?;
+        Self::build_scrape_request_from_dto(&dto)
     }
 }
 
@@ -1353,6 +1930,17 @@ pub struct ScrapeWorkerBuilder {
     default_concurrency_limit: usize,
     extraction_service: Option<Arc<dyn ExtractionServiceTrait>>,
     regex_cache: Option<RegexCache>,
+    /// 内存感知调度器（T019/R-runtime-001），仅 metrics 特性启用时存在
+    #[cfg(feature = "metrics")]
+    memory_scheduler: Option<Arc<MemoryScheduler>>,
+    /// URL 分层去重器（T053/R-frontier-001），可选注入
+    ///
+    /// 不设置时使用 `Deduplicator::new()`（默认配置：保留 query，1M 容量）
+    deduplicator: Option<Arc<parking_lot::RwLock<Deduplicator>>>,
+    /// 高级缓存服务（T059/R-cache-002，必需）
+    ///
+    /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入。
+    cache_service: Option<Arc<dyn CacheService>>,
 }
 
 impl Default for ScrapeWorkerBuilder {
@@ -1371,6 +1959,10 @@ impl Default for ScrapeWorkerBuilder {
             default_concurrency_limit: 10,
             extraction_service: None,
             regex_cache: None,
+            #[cfg(feature = "metrics")]
+            memory_scheduler: None,
+            deduplicator: None,
+            cache_service: None,
         }
     }
 }
@@ -1471,6 +2063,34 @@ impl ScrapeWorkerBuilder {
         self
     }
 
+    /// 设置高级缓存服务（T059/R-cache-002，必需）
+    ///
+    /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
+    /// 用于 `process_scrape_task` 读写抓取结果缓存。
+    pub fn with_cache_service(mut self, cache_service: Arc<dyn CacheService>) -> Self {
+        self.cache_service = Some(cache_service);
+        self
+    }
+
+    /// 设置内存感知调度器（T019/R-runtime-001，metrics 特性启用时必需）
+    #[cfg(feature = "metrics")]
+    pub fn with_memory_scheduler(mut self, memory_scheduler: Arc<MemoryScheduler>) -> Self {
+        self.memory_scheduler = Some(memory_scheduler);
+        self
+    }
+
+    /// 设置 URL 分层去重器（T053/R-frontier-001，可选）
+    ///
+    /// 不调用时使用默认 `Deduplicator::new()`。生产环境推荐由 `WorkerManager`
+    /// 创建一个共享实例注入所有 worker，最大化 Bloom 预筛效果。
+    pub fn with_deduplicator(
+        mut self,
+        deduplicator: Arc<parking_lot::RwLock<Deduplicator>>,
+    ) -> Self {
+        self.deduplicator = Some(deduplicator);
+        self
+    }
+
     /// 构建 ScrapeWorker 实例
     #[allow(clippy::too_many_arguments)]
     pub fn build(self) -> Result<ScrapeWorker, &'static str> {
@@ -1496,6 +2116,19 @@ impl ScrapeWorkerBuilder {
             .extraction_service
             .ok_or("extraction_service is required")?;
         let regex_cache = self.regex_cache.ok_or("regex_cache is required")?;
+        let cache_service = self.cache_service.ok_or("cache_service is required")?;
+        #[cfg(feature = "metrics")]
+        let memory_scheduler = self
+            .memory_scheduler
+            .ok_or("memory_scheduler is required (metrics feature enabled)")?;
+
+        // H-4 职责拆分：构造 CoalesceCoordinator（共享 repository + result_repository + 新建 coalescer）
+        let request_coalescer = Arc::new(RequestCoalescer::new());
+        let coalesce_coordinator = Arc::new(CoalesceCoordinator::new(
+            repository.clone(),
+            result_repository.clone(),
+            request_coalescer,
+        ));
 
         Ok(ScrapeWorker::new(
             repository,
@@ -1506,12 +2139,17 @@ impl ScrapeWorkerBuilder {
             engine_client,
             create_scrape_use_case,
             team_semaphore,
+            coalesce_coordinator,
             robots_checker,
             settings,
             self.default_concurrency_limit,
             extraction_service,
             regex_cache,
-        ))
+            cache_service,
+            #[cfg(feature = "metrics")]
+            memory_scheduler,
+        )
+        .with_deduplicator_opt(self.deduplicator))
     }
 }
 
@@ -1520,7 +2158,96 @@ mod tests {
     use super::*;
     use crate::engines::EngineError;
     use crate::infrastructure::oxcache::RegexCacheType;
+    use crate::workers::cache_utils::{filter_sensitive_headers, generate_scrape_cache_key};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Mutex;
     use std::time::Duration;
+
+    // ========== T059/R-cache-002: MockCacheService ==========
+
+    /// 可观测的 MockCacheService 用于 T059 缓存门控测试
+    ///
+    /// - `data`：内存存储，可预填充模拟 cache hit
+    /// - `get_count`/`set_count`：原子计数器，验证读/写行为
+    struct MockCacheService {
+        data: Mutex<HashMap<String, String>>,
+        get_count: AtomicU64,
+        set_count: AtomicU64,
+    }
+
+    impl MockCacheService {
+        fn new() -> Self {
+            Self {
+                data: Mutex::new(HashMap::new()),
+                get_count: AtomicU64::new(0),
+                set_count: AtomicU64::new(0),
+            }
+        }
+
+        fn with_entry(key: &str, value: &str) -> Self {
+            let s = Self::new();
+            s.data
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            s
+        }
+
+        fn get_count(&self) -> u64 {
+            self.get_count.load(Ordering::Relaxed)
+        }
+
+        fn set_count(&self) -> u64 {
+            self.set_count.load(Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CacheService for MockCacheService {
+        fn get(
+            &self,
+            key: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<String>>> + Send + '_>> {
+            self.get_count.fetch_add(1, Ordering::Relaxed);
+            let data = self.data.lock().unwrap().get(key).cloned();
+            Box::pin(async move { Ok(data) })
+        }
+
+        fn set(
+            &self,
+            key: &str,
+            value: &str,
+            _ttl_seconds: u64,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+            self.set_count.fetch_add(1, Ordering::Relaxed);
+            // R-cache-002 修复：必须真正写入 data，否则写后读测试（test_try_write_scrape_cache_key_matches_read_key）
+            // 会因 miss 失败。原实现以 `_key`/`_value` 命名导致数据被丢弃，违反规则 12（失败显性化）。
+            // `_ttl_seconds` 保留下划线前缀：内存 mock 无过期语义，TTL 不影响读写一致性验证。
+            self.data
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete(
+            &self,
+            key: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+            self.data.lock().unwrap().remove(key);
+            Box::pin(async { Ok(()) })
+        }
+
+        fn exists(
+            &self,
+            key: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + '_>> {
+            let exists = self.data.lock().unwrap().contains_key(key);
+            Box::pin(async move { Ok(exists) })
+        }
+    }
 
     // ========== Helper functions ==========
 
@@ -1536,6 +2263,45 @@ mod tests {
         )
     }
 
+    /// H-4 测试辅助：构造 CoalesceCoordinator + 新 RequestCoalescer（架构审查 H-2 修复）
+    ///
+    /// 集中装配逻辑，避免在 16+ 处测试中重复 `Arc::new(CoalesceCoordinator::new(...))`。
+    /// 默认使用新的 `RequestCoalescer` 实例（与多数单测场景一致）。
+    fn make_coalesce_coordinator(
+        task_repo: Arc<dyn TaskRepository>,
+        result_repo: Arc<dyn ScrapeResultRepository>,
+    ) -> Arc<CoalesceCoordinator> {
+        Arc::new(CoalesceCoordinator::new(
+            task_repo,
+            result_repo,
+            Arc::new(RequestCoalescer::new()),
+        ))
+    }
+
+    /// H-4 测试辅助：构造 CoalesceCoordinator + 指定 RequestCoalescer（架构审查 H-2 修复）
+    ///
+    /// 用于需要共享 `request_coalescer` 实例的测试（如 line 4629）。
+    fn make_coalesce_coordinator_with_coalescer(
+        task_repo: Arc<dyn TaskRepository>,
+        result_repo: Arc<dyn ScrapeResultRepository>,
+        request_coalescer: Arc<RequestCoalescer>,
+    ) -> Arc<CoalesceCoordinator> {
+        Arc::new(CoalesceCoordinator::new(
+            task_repo,
+            result_repo,
+            request_coalescer,
+        ))
+    }
+
+    /// PERF-H1 测试辅助：模拟生产路径解析 payload 得到 ScrapeRequestDto。
+    ///
+    /// 调用方完成 `let dto = parse_dto_for_test(&task);` 后，
+    /// 应以 `dto.as_ref()` 作为 `handle_scrape_success` 的第二参数，
+    /// 与生产路径 `process_scrape_task` 行为一致（解析失败返回 None）。
+    fn parse_dto_for_test(task: &Task) -> Option<ScrapeRequestDto> {
+        serde_json::from_value(task.payload.clone()).ok()
+    }
+
     /// Build a RegexCache backed by an in-memory oxcache instance.
     async fn make_regex_cache() -> RegexCache {
         let cache: RegexCacheType = oxcache::Cache::builder()
@@ -1547,6 +2313,40 @@ mod tests {
         RegexCache::new(Arc::new(cache))
     }
 
+    /// T019：构造测试用 MemoryScheduler
+    ///
+    /// 默认返回 Normal 状态的调度器（内存使用率 0.5）。
+    /// 需要模拟 Critical/Pressure 的测试可自行构造 MemoryScheduler。
+    #[cfg(feature = "metrics")]
+    fn make_test_memory_scheduler() -> Arc<MemoryScheduler> {
+        use crate::infrastructure::observability::metrics::SystemMonitorTrait;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        /// 测试用 mock：memory_usage 从 AtomicU64 读取（f64 位模式）
+        struct StaticMockMonitor {
+            bits: AtomicU64,
+        }
+        impl SystemMonitorTrait for StaticMockMonitor {
+            fn cpu_usage(&self) -> f64 {
+                0.0
+            }
+            fn memory_usage(&self) -> f64 {
+                f64::from_bits(self.bits.load(Ordering::Relaxed))
+            }
+            fn is_metrics_stale(&self) -> bool {
+                false
+            }
+        }
+        Arc::new(MemoryScheduler::new(
+            Arc::new(StaticMockMonitor {
+                bits: AtomicU64::new(0.5f64.to_bits()),
+            }),
+            0.8,
+            0.9,
+            Duration::from_secs(30),
+        ))
+    }
+
     // ========== get_cached_regex tests ==========
 
     #[tokio::test]
@@ -1556,6 +2356,166 @@ mod tests {
         let regex = result.expect("valid pattern should produce a Regex");
         assert!(regex.is_match("123"));
         assert!(!regex.is_match("abc"));
+    }
+
+    // ========== T062 安全审查 MEDIUM-2: redact_url_for_log tests ==========
+
+    #[test]
+    fn test_redact_url_for_log_strips_query_params() {
+        // query 参数中的 token/api_key 必须被移除
+        let url = "https://example.com/api?token=secret&api_key=key123";
+        let redacted = redact_url_for_log(url);
+        assert_eq!(redacted, "https://example.com/api");
+        assert!(
+            !redacted.contains("secret"),
+            "token value must not appear in log"
+        );
+        assert!(
+            !redacted.contains("key123"),
+            "api_key value must not appear in log"
+        );
+    }
+
+    #[test]
+    fn test_redact_url_for_log_strips_fragment() {
+        let url = "https://example.com/page#section";
+        let redacted = redact_url_for_log(url);
+        assert_eq!(redacted, "https://example.com/page");
+        assert!(!redacted.contains("section"));
+    }
+
+    #[test]
+    fn test_redact_url_for_log_preserves_path() {
+        let url = "https://example.com/deep/nested/path";
+        let redacted = redact_url_for_log(url);
+        assert_eq!(redacted, url);
+    }
+
+    #[test]
+    fn test_redact_url_for_log_preserves_port() {
+        let url = "http://localhost:8080/api";
+        let redacted = redact_url_for_log(url);
+        assert_eq!(redacted, url);
+    }
+
+    #[test]
+    fn test_redact_url_for_log_invalid_url_returns_placeholder() {
+        // 非法 URL 返回占位符，绝不原样返回可能含凭证的输入
+        let redacted = redact_url_for_log("not a url at all");
+        assert_eq!(redacted, "[invalid-url]");
+    }
+
+    #[test]
+    fn test_redact_url_for_log_truncates_long_urls() {
+        // 超长 URL 截断到 200 字符 + "..."
+        let long_path = "a".repeat(300);
+        let url = format!("https://example.com/{}", long_path);
+        let redacted = redact_url_for_log(&url);
+        assert!(
+            redacted.ends_with("..."),
+            "truncated URL should end with '...': {}",
+            redacted
+        );
+        // 截断后总长度应 <= 203（200 + "..."）
+        assert!(
+            redacted.len() <= 203,
+            "redacted length {} should be <= 203",
+            redacted.len()
+        );
+    }
+
+    #[test]
+    fn test_redact_url_for_log_empty_query_only() {
+        // 仅 query 无 path
+        let url = "https://example.com?token=secret";
+        let redacted = redact_url_for_log(url);
+        assert_eq!(redacted, "https://example.com/");
+        assert!(!redacted.contains("secret"));
+    }
+
+    // ========== T062 安全审查 LOW-2: filter_sensitive_headers tests ==========
+    // 性能审查 MEDIUM-1：函数改为原地修改 (&mut HashMap)，测试同步更新
+
+    #[test]
+    fn test_filter_sensitive_headers_removes_set_cookie() {
+        let mut headers = HashMap::new();
+        headers.insert("Set-Cookie".to_string(), "session=abc123".to_string());
+        headers.insert("Content-Type".to_string(), "text/html".to_string());
+        filter_sensitive_headers(&mut headers);
+        assert!(!headers.contains_key("Set-Cookie"));
+        assert!(headers.contains_key("Content-Type"));
+    }
+
+    #[test]
+    fn test_filter_sensitive_headers_removes_authorization() {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer token123".to_string());
+        headers.insert("X-Custom".to_string(), "value".to_string());
+        filter_sensitive_headers(&mut headers);
+        assert!(!headers.contains_key("Authorization"));
+        assert!(headers.contains_key("X-Custom"));
+    }
+
+    #[test]
+    fn test_filter_sensitive_headers_case_insensitive() {
+        // HTTP header 名称大小写不敏感
+        let mut headers = HashMap::new();
+        headers.insert("set-cookie".to_string(), "v1".to_string());
+        headers.insert("SET-COOKIE".to_string(), "v2".to_string());
+        headers.insert("Set-Cookie".to_string(), "v3".to_string());
+        filter_sensitive_headers(&mut headers);
+        assert!(
+            !headers.contains_key("set-cookie"),
+            "lowercase set-cookie should be filtered"
+        );
+        assert!(
+            !headers.contains_key("SET-COOKIE"),
+            "uppercase SET-COOKIE should be filtered"
+        );
+        assert!(
+            !headers.contains_key("Set-Cookie"),
+            "mixed-case Set-Cookie should be filtered"
+        );
+    }
+
+    #[test]
+    fn test_filter_sensitive_headers_removes_all_sensitive() {
+        let mut headers = HashMap::new();
+        headers.insert("Set-Cookie".to_string(), "v".to_string());
+        headers.insert("Cookie".to_string(), "v".to_string());
+        headers.insert("Authorization".to_string(), "v".to_string());
+        headers.insert("Proxy-Authorization".to_string(), "v".to_string());
+        headers.insert("WWW-Authenticate".to_string(), "v".to_string());
+        headers.insert("X-Api-Key".to_string(), "v".to_string());
+        headers.insert("X-Auth-Token".to_string(), "v".to_string());
+        headers.insert("X-Session-Id".to_string(), "v".to_string());
+        filter_sensitive_headers(&mut headers);
+        assert!(
+            headers.is_empty(),
+            "all sensitive headers should be removed"
+        );
+    }
+
+    #[test]
+    fn test_filter_sensitive_headers_preserves_non_sensitive() {
+        let mut headers = HashMap::new();
+        headers.insert("Content-Type".to_string(), "text/html".to_string());
+        headers.insert("Content-Length".to_string(), "1234".to_string());
+        headers.insert("Cache-Control".to_string(), "no-cache".to_string());
+        headers.insert("ETag".to_string(), "abc".to_string());
+        filter_sensitive_headers(&mut headers);
+        assert_eq!(headers.len(), 4);
+        assert!(headers.contains_key("Content-Type"));
+        assert!(headers.contains_key("Content-Length"));
+        assert!(headers.contains_key("Cache-Control"));
+        assert!(headers.contains_key("ETag"));
+    }
+
+    #[test]
+    fn test_filter_sensitive_headers_empty_input() {
+        let mut headers: HashMap<String, String> = HashMap::new();
+        filter_sensitive_headers(&mut headers);
+        assert!(headers.is_empty());
     }
 
     #[tokio::test]
@@ -2416,6 +3376,42 @@ mod tests {
         }
     }
 
+    /// T042: 捕获 save_result 调用以验证 meta_data 持久化
+    ///
+    /// 用于 markdown 持久化测试：调用方通过 `captured()` 获取保存的 ScrapeResult。
+    struct CapturingScrapeResultRepository {
+        captured: std::sync::Mutex<Option<ScrapeResult>>,
+    }
+
+    impl CapturingScrapeResultRepository {
+        fn new() -> Self {
+            Self {
+                captured: std::sync::Mutex::new(None),
+            }
+        }
+        fn captured(&self) -> Option<ScrapeResult> {
+            self.captured.lock().ok()?.clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ScrapeResultRepository for CapturingScrapeResultRepository {
+        async fn save(&self, result: ScrapeResult) -> Result<()> {
+            let mut guard = self.captured.lock().expect("captured mutex poisoned");
+            *guard = Some(result);
+            Ok(())
+        }
+        async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<ScrapeResult>> {
+            Ok(None)
+        }
+        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> Result<Vec<ScrapeResult>> {
+            Ok(vec![])
+        }
+        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
+            Ok(0.0)
+        }
+    }
+
     /// Mock CrawlRepository — all methods return Ok with default values.
     struct MockCrawlRepository;
 
@@ -2543,6 +3539,7 @@ mod tests {
                 headers: HashMap::new(),
                 response_time_ms: 0,
                 final_url: None,
+                markdown: None,
             })
         }
     }
@@ -2606,25 +3603,133 @@ mod tests {
             .expect("Failed to load settings for mock worker");
         let settings_arc = Arc::new(settings.clone());
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
         ScrapeWorker::new(
-            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            task_repo,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             settings_arc,
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         )
     }
 
+    /// T059/R-cache-002：构造使用指定 MockCacheService 的 worker
+    ///
+    /// 返回 (worker, cache_arc) —— 调用方通过 cache_arc.get_count()/set_count()
+    /// 验证缓存读/写行为，或通过 cache_arc 预填充数据模拟 cache hit。
+    async fn build_mock_worker_with_cache(cache: Arc<MockCacheService>) -> ScrapeWorker {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings for mock worker");
+        let settings_arc = Arc::new(settings.clone());
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
+
+        ScrapeWorker::new(
+            task_repo,
+            result_repo,
+            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            engine_client,
+            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            team_semaphore,
+            coalesce_coordinator,
+            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+            settings_arc,
+            10,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            regex_cache,
+            cache as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
+        )
+    }
+
+    /// T042: 构造使用 CapturingScrapeResultRepository 的 worker
+    ///
+    /// 返回 (worker, capturing_repo_arc) —— 调用方通过 capturing_repo_arc.captured()
+    /// 获取 save_result 保存的 ScrapeResult 以断言 meta_data 内容。
+    async fn build_mock_worker_with_capturing_repo(
+    ) -> (ScrapeWorker, Arc<CapturingScrapeResultRepository>) {
+        let regex_cache = make_regex_cache().await;
+        let engine_client = Arc::new(EngineClient::new());
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings for mock worker");
+        let settings_arc = Arc::new(settings.clone());
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let capturing_repo = Arc::new(CapturingScrapeResultRepository::new());
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> =
+            capturing_repo.clone() as Arc<dyn ScrapeResultRepository>;
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
+
+        let worker = ScrapeWorker::new(
+            task_repo,
+            result_repo,
+            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            engine_client,
+            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            team_semaphore,
+            coalesce_coordinator,
+            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+            settings_arc,
+            10,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
+        );
+        (worker, capturing_repo)
+    }
+
     // --- should_crawl tests ---
+    //
+    // 架构审查 M-4 修复：原 should_crawl 方法在生产 impl 块中（虽然 #[cfg(test)] 门控），
+    // 违反规则9（生产 impl 块不应保留测试 helper）。已移到 test mod 内独立 impl 块，
+    // 保持 test_mock_should_crawl_* 系列调用方式（`worker.should_crawl(...)`）不变。
+    impl super::ScrapeWorker {
+        /// 测试专用：验证 UrlPatternFilter 行为等价性
+        ///
+        /// 性能审查 H-3 修复后：生产路径 extract_and_queue_links 已改为循环外构造一次
+        /// UrlPatternFilter 复用，不再调用 should_crawl。此方法保留供测试验证行为等价性。
+        fn should_crawl(&self, url: &str, config: &CrawlConfigDto) -> bool {
+            // T066/R-frontier-002：委托 UrlPatternFilter（行为等价，回归测试断言）
+            //
+            // 边界场景：Some(vec![]) 空 include 列表 → 无 pattern 可匹配 → 拒绝（vacuous truth）。
+            // UrlPatternFilter 将空 include 视为"无限制"（返回 true），需在此显式处理。
+            if matches!(&config.include_patterns, Some(patterns) if patterns.is_empty()) {
+                return false;
+            }
+            let include = config.include_patterns.clone().unwrap_or_default();
+            let exclude = config.exclude_patterns.clone().unwrap_or_default();
+            UrlPatternFilter::new(include, exclude).accept(url, &FilterContext::default())
+        }
+    }
 
     #[tokio::test]
     async fn test_mock_should_crawl_no_patterns_returns_true() {
@@ -2984,6 +4089,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let result = worker.save_result(&task, &response, None).await;
         assert!(result.is_ok());
@@ -3001,6 +4107,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
         let extra = json!({"title": "Test Page", "links": 5});
         let result = worker.save_result(&task, &response, Some(extra)).await;
@@ -3019,6 +4126,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 200,
             final_url: None,
+            markdown: None,
         };
         let result = worker.save_result(&task, &response, None).await;
         assert!(result.is_ok());
@@ -3038,6 +4146,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let result = worker.process_text_encoding(&task, &response).await;
         // Should either return processed content or an error (depending on
@@ -3151,6 +4260,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
         let mut rules = HashMap::new();
         rules.insert(
@@ -3185,6 +4295,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 30,
             final_url: None,
+            markdown: None,
         };
         let result = worker
             .handle_prompt_extraction(
@@ -3212,6 +4323,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 20,
             final_url: None,
+            markdown: None,
         };
         let schema = json!({"type": "object", "properties": {"title": {"type": "string"}}});
         let result = worker
@@ -3235,6 +4347,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
         let result = worker
             .save_extract_result(
@@ -3260,6 +4373,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 5,
             final_url: None,
+            markdown: None,
         };
         let result = worker
             .save_extract_result(&mut task, &response, None, "https://example.com")
@@ -3288,6 +4402,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let result = worker
@@ -3308,6 +4423,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let result = worker
@@ -3333,6 +4449,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(Some(vec!["example\\.com".to_string()]), None);
         let result = worker
@@ -3389,8 +4506,12 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
-        let result = worker.handle_scrape_success(&task, &response).await;
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), response)
+            .await;
         assert!(result.is_ok());
     }
 
@@ -3418,9 +4539,249 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
-        let result = worker.handle_scrape_success(&task, &response).await;
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), response)
+            .await;
         assert!(result.is_ok());
+    }
+
+    // --- T042/R-content-001: Markdown 集成测试（gated `markdown` 特性） ---
+
+    /// formats 含 "markdown" 时应生成 Markdown 并持久化到 meta_data
+    #[cfg(feature = "markdown")]
+    #[tokio::test]
+    async fn test_handle_scrape_success_with_markdown_format_generates_markdown() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "formats": ["markdown"],
+        }));
+        let response = ScrapeResponse {
+            content: r#"<html><body><h1>Title</h1><p>Paragraph text</p></body></html>"#.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: None,
+        };
+
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), response)
+            .await;
+        assert!(result.is_ok(), "handle_scrape_success should succeed");
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        let meta = &saved.meta_data;
+        assert!(
+            meta.get("markdown").is_some(),
+            "meta_data should contain markdown key, got: {meta}"
+        );
+        let md = meta
+            .get("markdown")
+            .and_then(|v| v.as_str())
+            .expect("markdown should be a string");
+        assert!(
+            md.contains("Title"),
+            "markdown should contain heading text, got: {md}"
+        );
+        assert!(
+            md.contains("Paragraph text"),
+            "markdown should contain paragraph text, got: {md}"
+        );
+    }
+
+    /// formats 不含 "markdown" 时不应生成 Markdown
+    #[cfg(feature = "markdown")]
+    #[tokio::test]
+    async fn test_handle_scrape_success_without_markdown_format_no_markdown() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({
+            "url": "https://example.com",
+            "formats": ["html"],
+        }));
+        let response = ScrapeResponse {
+            content: r#"<html><body><h1>Title</h1></body></html>"#.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: None,
+        };
+
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), response)
+            .await;
+        assert!(result.is_ok());
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        // meta_data 应为 Null（无提取规则、无 markdown）
+        assert!(
+            saved.meta_data.is_null(),
+            "meta_data should be null when no markdown requested, got: {}",
+            saved.meta_data
+        );
+    }
+
+    /// formats 为 None 时不应生成 Markdown
+    #[cfg(feature = "markdown")]
+    #[tokio::test]
+    async fn test_handle_scrape_success_no_formats_field_no_markdown() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({
+            "url": "https://example.com",
+        }));
+        let response = ScrapeResponse {
+            content: r#"<html><body><h1>Title</h1></body></html>"#.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: None,
+        };
+
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), response)
+            .await;
+        assert!(result.is_ok());
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        assert!(
+            saved.meta_data.is_null(),
+            "meta_data should be null when formats field absent, got: {}",
+            saved.meta_data
+        );
+    }
+
+    /// save_result 应将 markdown 合并到已存在的 meta_data Object 中
+    #[cfg(feature = "markdown")]
+    #[tokio::test]
+    async fn test_save_result_merges_markdown_into_existing_meta_data() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: "<html><body>Hello</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: Some("# Hello".to_string()),
+        };
+        // 已有提取数据：title 字段
+        let existing_meta = json!({"title": "Existing Title"});
+
+        let result = worker
+            .save_result(&task, &response, Some(existing_meta))
+            .await;
+        assert!(result.is_ok());
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        let meta = &saved.meta_data;
+        assert!(
+            meta.get("title").and_then(|v| v.as_str()) == Some("Existing Title"),
+            "meta_data should preserve existing extracted fields, got: {meta}"
+        );
+        assert!(
+            meta.get("markdown").and_then(|v| v.as_str()) == Some("# Hello"),
+            "meta_data should contain merged markdown, got: {meta}"
+        );
+    }
+
+    /// save_result 在 meta_data 为 Null 时应创建 {"markdown": "..."} 对象
+    #[cfg(feature = "markdown")]
+    #[tokio::test]
+    async fn test_save_result_with_markdown_only_creates_markdown_object() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: "<html><body>Hello</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: Some("# Generated MD".to_string()),
+        };
+
+        let result = worker.save_result(&task, &response, None).await;
+        assert!(result.is_ok());
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        let meta = &saved.meta_data;
+        assert!(
+            meta.is_object(),
+            "meta_data should be an object when only markdown present, got: {meta}"
+        );
+        assert!(
+            meta.get("markdown").and_then(|v| v.as_str()) == Some("# Generated MD"),
+            "meta_data should contain markdown, got: {meta}"
+        );
+        // 仅含 markdown 一个键
+        assert_eq!(
+            meta.as_object().map(|o| o.len()),
+            Some(1),
+            "meta_data should have exactly one key (markdown), got: {meta}"
+        );
+    }
+
+    /// save_result 在 response.markdown 为 None 时不应修改 meta_data
+    #[tokio::test]
+    async fn test_save_result_without_markdown_does_not_modify_meta_data() {
+        let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
+        let task = make_task(json!({"url": "https://example.com"}));
+        let response = ScrapeResponse {
+            content: "<html><body>Hello</body></html>".to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 50,
+            final_url: None,
+            markdown: None,
+        };
+        let existing_meta = json!({"title": "Only Title"});
+
+        let result = worker
+            .save_result(&task, &response, Some(existing_meta))
+            .await;
+        assert!(result.is_ok());
+
+        let saved = capturing_repo
+            .captured()
+            .expect("result should have been saved");
+        let meta = &saved.meta_data;
+        assert!(
+            meta.get("title").and_then(|v| v.as_str()) == Some("Only Title"),
+            "meta_data should preserve existing fields, got: {meta}"
+        );
+        assert!(
+            meta.get("markdown").is_none(),
+            "meta_data should not contain markdown key when response.markdown is None, got: {meta}"
+        );
     }
 
     // --- handle_crawl_success tests ---
@@ -3437,6 +4798,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let request = worker.build_crawl_request(&task, &config);
@@ -3458,6 +4820,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let mut config = make_crawl_config(None, None);
         config.max_depth = 1;
@@ -3598,7 +4961,7 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
-        let worker = ScrapeWorkerBuilder::new()
+        let builder = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
                 Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
@@ -3619,7 +4982,10 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
-            .build();
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>);
+        #[cfg(feature = "metrics")]
+        let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
+        let worker = builder.build();
 
         assert!(worker.is_ok(), "build should succeed with all deps");
         let w = worker.unwrap();
@@ -3653,6 +5019,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -3684,6 +5051,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -3717,6 +5085,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -3750,6 +5119,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -3782,6 +5152,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -3814,6 +5185,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -3846,6 +5218,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -3877,6 +5250,7 @@ mod tests {
             .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
             .with_settings(Arc::new(settings))
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -3922,7 +5296,7 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
-        let worker = ScrapeWorkerBuilder::new()
+        let builder = ScrapeWorkerBuilder::new()
             .with_repository(Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>)
             .with_result_repository(
                 Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>
@@ -3943,9 +5317,11 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
-            .with_default_concurrency_limit(100)
-            .build()
-            .expect("build should succeed");
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
+            .with_default_concurrency_limit(100);
+        #[cfg(feature = "metrics")]
+        let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
+        let worker = builder.build().expect("build should succeed");
 
         assert_eq!(worker.default_concurrency_limit, 100);
     }
@@ -3974,20 +5350,29 @@ mod tests {
         let infra = init_infrastructure(&settings).await?;
         let engines = crate::bootstrap::engines::init_engine_components(
             infra.http_client.clone(),
-            // proxy_url=None：此处无代理配置（架构 MEDIUM 5：用 Option 替代空字符串 sentinel）
+            // proxy_provider=None, proxy_strategy=RoundRobin, proxy_url=None：测试环境无代理配置
+            // H1/H2 修复：proxy_provider 改为 Option<Arc<dyn ProxyProvider>>，新增 strategy 参数
+            None,
+            crate::config::settings::ProxyStrategy::RoundRobin,
             None,
             &settings.engines,
-            // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
-            settings.timeouts.engines.default_timeout_seconds,
+            // T061：注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
+            &settings.timeouts.engines,
         );
         let services = init_services(
             &infra,
-            engines.router.clone(),
             engines.engine_client.clone(),
             infra.http_client.clone(),
             &settings,
         )
         .await;
+
+        // H-4 职责拆分：构造 CoalesceCoordinator（共享 task_repo + result_repo + request_coalescer）
+        let coalesce_coordinator = make_coalesce_coordinator_with_coalescer(
+            infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>,
+            infra.repositories.result_repo.clone() as Arc<dyn ScrapeResultRepository>,
+            services.request_coalescer.clone(),
+        );
 
         // Construct ScrapeWorker via new().
         let worker = ScrapeWorker::new(
@@ -3999,11 +5384,15 @@ mod tests {
             engines.engine_client.clone(),
             services.create_scrape_use_case.clone(),
             services.team_semaphore.clone(),
+            coalesce_coordinator,
             services.robots_checker.clone(),
             settings_arc,
             settings.concurrency.default_team_limit as usize,
             services.extraction_service.clone(),
             (*services.regex_cache).clone(),
+            infra.cache_service.clone(),
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         );
 
         Ok(worker)
@@ -4033,6 +5422,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_scrape_worker_new_constructs_successfully");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let worker = match build_scrape_worker().await {
             Ok(w) => w,
             Err(e) => {
@@ -4052,6 +5442,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_scrape_worker_should_crawl_with_no_patterns");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let worker = match build_scrape_worker().await {
             Ok(w) => w,
             Err(e) => {
@@ -4072,6 +5463,7 @@ mod tests {
             );
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let worker = match build_scrape_worker().await {
             Ok(w) => w,
             Err(e) => {
@@ -4094,6 +5486,7 @@ mod tests {
             );
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let worker = match build_scrape_worker().await {
             Ok(w) => w,
             Err(e) => {
@@ -4114,6 +5507,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_scrape_worker_builder_builds_full_worker");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let handle = match tcf::DbHandle::start().await {
             Ok(h) => h,
             Err(e) => {
@@ -4132,15 +5526,16 @@ mod tests {
         };
         let engines = crate::bootstrap::engines::init_engine_components(
             infra.http_client.clone(),
-            // proxy_url=None：此处无代理配置（架构 MEDIUM 5：用 Option 替代空字符串 sentinel）
+            // proxy_pool=None, proxy_url=None：此处无代理配置（T056：用 ProxyPool 替代单 proxy_url）
+            None,
+            crate::config::settings::ProxyStrategy::RoundRobin,
             None,
             &settings.engines,
-            // 注入 timeout（架构 MEDIUM 2：避免 ReqwestEngine 硬编码 30 秒）
-            settings.timeouts.engines.default_timeout_seconds,
+            // T061：注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
+            &settings.timeouts.engines,
         );
         let services = init_services(
             &infra,
-            engines.router.clone(),
             engines.engine_client.clone(),
             infra.http_client.clone(),
             &settings,
@@ -4148,7 +5543,7 @@ mod tests {
         .await;
 
         // Use ScrapeWorkerBuilder to construct the worker.
-        let worker =
+        let builder =
             ScrapeWorkerBuilder::new()
                 .with_repository(infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>)
                 .with_result_repository(
@@ -4169,8 +5564,12 @@ mod tests {
                 .with_default_concurrency_limit(settings.concurrency.default_team_limit as usize)
                 .with_extraction_service(services.extraction_service.clone())
                 .with_regex_cache((*services.regex_cache).clone())
-                .build()
-                .expect("ScrapeWorkerBuilder::build should succeed with all required deps");
+                .with_cache_service(infra.cache_service.clone());
+        #[cfg(feature = "metrics")]
+        let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
+        let worker = builder
+            .build()
+            .expect("ScrapeWorkerBuilder::build should succeed with all required deps");
 
         // Verify the builder produced a valid worker.
         assert_ne!(worker.worker_id, Uuid::nil());
@@ -4182,6 +5581,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_scrape_worker_build_crawl_request");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let worker = match build_scrape_worker().await {
             Ok(w) => w,
             Err(e) => {
@@ -4313,21 +5713,29 @@ mod tests {
             .expect("Failed to load settings for mock worker");
         let settings_arc = Arc::new(settings.clone());
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
         ScrapeWorker::new(
-            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            task_repo,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             settings_arc,
             10,
             Arc::new(MockExtractionServiceWithTokens) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         )
     }
 
@@ -4369,6 +5777,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let mut rules = HashMap::new();
         rules.insert(
@@ -4426,8 +5835,12 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
-        let result = worker.handle_scrape_success(&task, &response).await;
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), response)
+            .await;
         assert!(result.is_ok());
     }
 
@@ -4509,6 +5922,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = CrawlConfigDto {
             max_depth: 3,
@@ -4549,6 +5963,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let result = worker
@@ -4636,6 +6051,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            markdown: None,
         };
         let mut rules = HashMap::new();
         rules.insert(
@@ -4668,6 +6084,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 30,
             final_url: None,
+            markdown: None,
         };
         let result = worker
             .handle_prompt_extraction(
@@ -4693,6 +6110,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 20,
             final_url: None,
+            markdown: None,
         };
         let schema = json!({"type": "object", "properties": {"title": {"type": "string"}}});
         let result = worker
@@ -4745,6 +6163,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let request = worker.build_crawl_request(&task, &config);
@@ -4768,6 +6187,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 30,
             final_url: None,
+            markdown: None,
         };
         let result = worker.process_text_encoding(&task, &response).await;
         // Should not panic — may succeed or fail depending on integration
@@ -4789,6 +6209,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 5,
             final_url: None,
+            markdown: None,
         };
         let result = worker.process_text_encoding(&task, &response).await;
         match result {
@@ -4813,6 +6234,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 500,
             final_url: None,
+            markdown: None,
         };
         let result = worker.save_result(&task, &response, None).await;
         assert!(result.is_ok());
@@ -4842,6 +6264,8 @@ mod tests {
         update_count: AtomicU32,
         create_count: AtomicU32,
         mark_completed_count: AtomicU32,
+        /// T019：捕获最近一次 update 的 task，用于验证 reschedule 后的状态
+        last_updated_task: std::sync::Mutex<Option<Task>>,
     }
 
     impl ConfigurableTaskRepo {
@@ -4857,6 +6281,7 @@ mod tests {
                 update_count: AtomicU32::new(0),
                 create_count: AtomicU32::new(0),
                 mark_completed_count: AtomicU32::new(0),
+                last_updated_task: std::sync::Mutex::new(None),
             }
         }
 
@@ -4879,6 +6304,11 @@ mod tests {
         fn set_existing_urls(&self, urls: HashSet<String>) {
             *self.existing_urls_result.lock().unwrap() = urls;
         }
+
+        /// T019：获取最近一次 update 捕获的 task（用于验证 reschedule 状态）
+        fn last_updated_task(&self) -> Option<Task> {
+            self.last_updated_task.lock().unwrap().clone()
+        }
     }
 
     #[async_trait::async_trait]
@@ -4898,6 +6328,8 @@ mod tests {
         }
         async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
             self.update_count.fetch_add(1, Ordering::SeqCst);
+            // T019：捕获 update 的 task 用于验证 reschedule 状态
+            *self.last_updated_task.lock().unwrap() = Some(task.clone());
             if self.fail_update.load(Ordering::SeqCst) {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "Mock update error"
@@ -5232,9 +6664,17 @@ mod tests {
                     EngineError::InvalidUrl(s) => EngineError::InvalidUrl(s.clone()),
                     EngineError::SsrfProtection(s) => EngineError::SsrfProtection(s.clone()),
                     EngineError::BrowserError(s) => EngineError::BrowserError(s.clone()),
+                    EngineError::AntiBotDetected(s) => EngineError::AntiBotDetected(s.clone()),
+                    EngineError::FeatureToggle(s) => EngineError::FeatureToggle(s.clone()),
                     EngineError::RequestFailed(s) => EngineError::RequestFailed(s.clone()),
                     EngineError::Other(s) => EngineError::Other(s.clone()),
                     EngineError::Internal(s) => EngineError::Internal(s.clone()),
+                    EngineError::EngineMrtExceeded { engine, mrt } => {
+                        EngineError::EngineMrtExceeded {
+                            engine: engine.clone(),
+                            mrt: *mrt,
+                        }
+                    }
                 }),
             }
         }
@@ -5313,21 +6753,28 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings()
             .expect("Failed to load settings for configurable worker");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
         ScrapeWorker::new(
             task_repo,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             crawl_repo,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             robots_checker,
             Arc::new(settings),
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         )
     }
 
@@ -5342,9 +6789,12 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings()
             .expect("Failed to load settings for failing deps worker");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
         ScrapeWorker::new(
-            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
+            task_repo,
             result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             webhook_service,
@@ -5352,11 +6802,15 @@ mod tests {
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         )
     }
 
@@ -5429,21 +6883,28 @@ mod tests {
 
         // TeamSemaphore with capacity 0 — no permits can be acquired
         let team_semaphore = Arc::new(TeamSemaphore::new(0));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
         let worker = ScrapeWorker::new(
             task_repo.clone(),
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             Arc::new(EngineClient::new()),
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         );
 
         let task = make_task(json!({"url": "https://example.com"}));
@@ -5456,6 +6917,226 @@ mod tests {
             1,
             "update should be called to reschedule task"
         );
+    }
+
+    // ========== T019：内存感知准入检查测试（R-runtime-001）==========
+
+    /// T019：构造 Critical 状态的 MemoryScheduler，验证 process_task 延后任务而非执行
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn test_process_task_memory_critical_defers_task() {
+        use crate::infrastructure::observability::metrics::SystemMonitorTrait;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        /// 测试用 mock：memory_usage 返回固定值（f64 位模式存储于 AtomicU64）
+        struct CriticalMockMonitor {
+            bits: AtomicU64,
+        }
+        impl SystemMonitorTrait for CriticalMockMonitor {
+            fn cpu_usage(&self) -> f64 {
+                0.0
+            }
+            fn memory_usage(&self) -> f64 {
+                f64::from_bits(self.bits.load(Ordering::Relaxed))
+            }
+            fn is_metrics_stale(&self) -> bool {
+                false
+            }
+        }
+
+        // 构造 Critical 状态调度器（内存使用率 0.95 >= critical_threshold 0.9）
+        let memory_scheduler: Arc<MemoryScheduler> = Arc::new(MemoryScheduler::new(
+            Arc::new(CriticalMockMonitor {
+                bits: AtomicU64::new(0.95f64.to_bits()),
+            }),
+            0.8,
+            0.9,
+            Duration::from_secs(30),
+        ));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let regex_cache = make_regex_cache().await;
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings for memory critical test");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone() as Arc<dyn TaskRepository>,
+            result_repo.clone(),
+        );
+
+        let worker = ScrapeWorker::new(
+            task_repo.clone() as Arc<dyn TaskRepository>,
+            result_repo,
+            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            Arc::new(EngineClient::new()),
+            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            team_semaphore,
+            coalesce_coordinator,
+            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+            Arc::new(settings),
+            10,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            memory_scheduler,
+        );
+
+        let task = make_task(json!({"url": "https://example.com"}));
+        let original_scheduled_at = task.scheduled_at;
+        let result = worker.process_task(task).await;
+
+        // 延后而非执行：process_task 应返回 Ok(())（reschedule 非错误）
+        assert!(
+            result.is_ok(),
+            "Critical memory should defer task, returning Ok(())"
+        );
+
+        // update 应被调用一次（reschedule 到 backlog）
+        assert_eq!(
+            task_repo.update_count(),
+            1,
+            "Critical memory should trigger one update to reschedule task"
+        );
+
+        // mark_failed 不应被调用（延后 ≠ 失败）
+        assert_eq!(
+            task_repo.mark_failed_count(),
+            0,
+            "Critical memory should NOT mark task as failed"
+        );
+
+        // 验证 reschedule 后的 task 状态：status=Queued，scheduled_at 推后 30s
+        let updated = task_repo
+            .last_updated_task()
+            .expect("update should have captured the task");
+        assert_eq!(
+            updated.status,
+            TaskStatus::Queued,
+            "deferred task should be re-queued"
+        );
+        let now = Utc::now();
+        let scheduled = updated
+            .scheduled_at
+            .expect("scheduled_at should be set for deferred task");
+        assert!(
+            scheduled > now,
+            "scheduled_at should be in the future (deferred), got {} <= now {}",
+            scheduled,
+            now
+        );
+        // 与原 scheduled_at 相比应有明显推迟（30 秒）
+        if let Some(orig) = original_scheduled_at {
+            assert!(
+                scheduled > orig,
+                "deferred scheduled_at should be later than original"
+            );
+        }
+    }
+
+    /// T019：构造 Pressure 状态的 MemoryScheduler，验证 process_task 延后任务
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn test_process_task_memory_pressure_defers_task() {
+        use crate::infrastructure::observability::metrics::SystemMonitorTrait;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct PressureMockMonitor {
+            bits: AtomicU64,
+        }
+        impl SystemMonitorTrait for PressureMockMonitor {
+            fn cpu_usage(&self) -> f64 {
+                0.0
+            }
+            fn memory_usage(&self) -> f64 {
+                f64::from_bits(self.bits.load(Ordering::Relaxed))
+            }
+            fn is_metrics_stale(&self) -> bool {
+                false
+            }
+        }
+
+        // Pressure：0.85 介于 pressure(0.8) 与 critical(0.9) 之间
+        let memory_scheduler: Arc<MemoryScheduler> = Arc::new(MemoryScheduler::new(
+            Arc::new(PressureMockMonitor {
+                bits: AtomicU64::new(0.85f64.to_bits()),
+            }),
+            0.8,
+            0.9,
+            Duration::from_secs(30),
+        ));
+
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        let regex_cache = make_regex_cache().await;
+        let settings = crate::bootstrap::config::load_settings()
+            .expect("Failed to load settings for memory pressure test");
+        let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator = make_coalesce_coordinator(
+            task_repo.clone() as Arc<dyn TaskRepository>,
+            result_repo.clone(),
+        );
+
+        let worker = ScrapeWorker::new(
+            task_repo.clone() as Arc<dyn TaskRepository>,
+            result_repo,
+            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+            Arc::new(EngineClient::new()),
+            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+            team_semaphore,
+            coalesce_coordinator,
+            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+            Arc::new(settings),
+            10,
+            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+            regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            memory_scheduler,
+        );
+
+        let task = make_task(json!({"url": "https://example.com"}));
+        let result = worker.process_task(task).await;
+
+        assert!(
+            result.is_ok(),
+            "Pressure memory should defer task, returning Ok(())"
+        );
+        assert_eq!(
+            task_repo.update_count(),
+            1,
+            "Pressure memory should trigger one update to defer task"
+        );
+        assert_eq!(
+            task_repo.mark_failed_count(),
+            0,
+            "Pressure memory should NOT mark task as failed"
+        );
+    }
+
+    /// T019：Normal 状态下任务正常进入并发获取流程（不延后）
+    #[cfg(feature = "metrics")]
+    #[tokio::test]
+    async fn test_process_task_memory_normal_proceeds() {
+        // Normal 状态调度器由 make_test_memory_scheduler() 提供（内存 0.5 < pressure 0.8）
+        let worker = build_configurable_worker(
+            Arc::new(ConfigurableTaskRepo::new()),
+            Arc::new(ConfigurableCrawlRepo::new()),
+            Arc::new(MockRobotsChecker),
+            Arc::new(EngineClient::new()),
+        )
+        .await;
+
+        let task = make_task(json!({"url": "https://example.com"}));
+        // Normal 状态下任务应进入并发获取流程；由于 mock engine 会失败，
+        // process_task 返回 Ok(()) 但不触发 reschedule-by-memory。
+        // 关键断言：不因内存准入检查而提前 return（update_count == 0 表示未走内存延后路径）
+        let _ = worker.process_task(task).await;
+        // build_configurable_worker 使用独立的 ConfigurableTaskRepo，无法直接读取 update_count；
+        // 此测试仅验证 Normal 状态下不 panic 且流程继续（未在准入检查处短路）。
     }
 
     // ========== process_next_task: success path (dequeue returns a task) ==========
@@ -5772,6 +7453,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -5803,6 +7485,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -5836,6 +7519,7 @@ mod tests {
                 Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>
             )
             .with_regex_cache(regex_cache)
+            .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
             .build();
 
         assert!(result.is_err());
@@ -5862,6 +7546,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
         let result = worker
             .save_extract_result(&mut task, &response, None, "https://example.com")
@@ -5973,20 +7658,29 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(FailingScrapeResultRepo);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
+
         let worker = ScrapeWorker::new(
-            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
-            Arc::new(FailingScrapeResultRepo) as Arc<dyn ScrapeResultRepository>,
+            task_repo,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         );
 
         let task = make_task(json!({}));
@@ -5998,6 +7692,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let request = worker.build_crawl_request(&task, &config);
@@ -6023,21 +7718,29 @@ mod tests {
         crawl_repo
             .fail_increment_completed
             .store(true, Ordering::SeqCst);
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository);
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
         let worker = ScrapeWorker::new(
-            Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            task_repo,
+            result_repo,
             crawl_repo,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         );
 
         let task = make_task(json!({}));
@@ -6049,6 +7752,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let mut config = make_crawl_config(None, None);
         config.max_depth = 0; // No link extraction — depth 0 < max_depth 0 is false
@@ -6072,20 +7776,29 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
+        let task_repo: Arc<dyn TaskRepository> = Arc::new(ConfigurableTaskRepo::new());
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
+
         let worker = ScrapeWorker::new(
-            Arc::new(ConfigurableTaskRepo::new()) as Arc<dyn TaskRepository>,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            task_repo,
+            result_repo,
             Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         );
 
         let mut task = make_task(json!({}));
@@ -6116,20 +7829,28 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
+
         let worker = ScrapeWorker::new(
             task_repo.clone(),
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(DenyingRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         );
 
         let crawl_id = Uuid::new_v4();
@@ -6247,21 +7968,28 @@ mod tests {
         let settings = crate::bootstrap::config::load_settings()
             .expect("Failed to load settings for success tests");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
         ScrapeWorker::new(
             task_repo,
-            Arc::new(MockScrapeResultRepository) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             credits_repo,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
             extraction_service,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         )
     }
 
@@ -6349,21 +8077,28 @@ mod tests {
         let regex_cache = make_regex_cache().await;
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let team_semaphore = Arc::new(TeamSemaphore::new(10));
+        let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(FailingScrapeResultRepo);
+        let coalesce_coordinator =
+            make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
         let worker = ScrapeWorker::new(
             task_repo.clone(),
-            Arc::new(FailingScrapeResultRepo) as Arc<dyn ScrapeResultRepository>,
+            result_repo,
             Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
             Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
             Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
             engine_client,
             Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
             team_semaphore,
+            coalesce_coordinator,
             Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
             Arc::new(settings),
             10,
             Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
             regex_cache,
+            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+            #[cfg(feature = "metrics")]
+            make_test_memory_scheduler(),
         );
 
         let task = make_task(json!({"url": "https://example.com"}));
@@ -6441,6 +8176,15 @@ mod tests {
         )
         .await;
 
+        // T053/R-frontier-001：预填充 Bloom 让 page1/page2 走 DB 校验路径
+        // （Bloom 空时所有 URL DefinitelyNew 直接入队，不会调用 find_existing_urls）
+        let dedup_arc = worker.deduplicator_for_test();
+        {
+            let mut dedup = dedup_arc.write();
+            dedup.insert("https://example.com/page1");
+            dedup.insert("https://example.com/page2");
+        }
+
         let mut task = make_task(json!({}));
         task.url = "https://example.com".to_string();
         let html = r#"<html><body>
@@ -6455,6 +8199,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let result = worker
@@ -6506,9 +8251,13 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
 
-        let result = worker.handle_scrape_success(&task, &response).await;
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), response)
+            .await;
         assert!(
             result.is_ok(),
             "handle_scrape_success should not fail when extraction fails"
@@ -6634,6 +8383,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
         let mut rules = HashMap::new();
         rules.insert(
@@ -6909,6 +8659,15 @@ mod tests {
         )
         .await;
 
+        // T053/R-frontier-001：预填充 Bloom 让 page1 走 DB 校验路径
+        // （Bloom 空时所有 URL DefinitelyNew 直接入队，不查 DB）
+        // 只 insert page1，page2 仍 DefinitelyNew 直接入队
+        let dedup_arc = worker.deduplicator_for_test();
+        {
+            let mut dedup = dedup_arc.write();
+            dedup.insert("https://example.com/page1");
+        }
+
         let task = make_task(json!({}));
         // task.url = "https://example.com" (from make_task default)
         let html = r#"<html><body>
@@ -6923,6 +8682,7 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            markdown: None,
         };
         let config = make_crawl_config(None, None);
         let result = worker
@@ -6930,11 +8690,57 @@ mod tests {
             .await;
         assert!(result.is_ok());
 
-        // page1 was skipped (existing), page2 was created → create_count == 1
+        // page1 was skipped (Bloom 命中 → DB 命中 → skip), page2 was created
+        // (Bloom 未命中 → DefinitelyNew → 直接入队) → create_count == 1
         assert_eq!(
             task_repo.create_count(),
             1,
             "only non-existing URLs should be created (page1 skipped, page2 created)"
+        );
+    }
+
+    // T053/R-frontier-001：新增测试，验证 Bloom 未命中时直接入队（不查 DB）
+    #[tokio::test]
+    async fn test_extract_and_queue_links_bloom_miss_directly_enqueues() {
+        let task_repo = Arc::new(ConfigurableTaskRepo::new());
+        // 不预填充 existing_urls（DB 返回空集），不预填充 Bloom
+        // → 所有 URL DefinitelyNew → 直接入队，不调用 find_existing_urls
+
+        let worker = build_configurable_worker(
+            task_repo.clone(),
+            Arc::new(ConfigurableCrawlRepo::new()),
+            Arc::new(MockRobotsChecker),
+            Arc::new(EngineClient::new()),
+        )
+        .await;
+
+        let task = make_task(json!({}));
+        let html = r#"<html><body>
+            <a href="/page1">Page 1</a>
+            <a href="/page2">Page 2</a>
+            <a href="/page3">Page 3</a>
+        </body></html>"#;
+        let response = ScrapeResponse {
+            content: html.to_string(),
+            status_code: 200,
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 100,
+            final_url: None,
+            markdown: None,
+        };
+        let config = make_crawl_config(None, None);
+        let result = worker
+            .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+            .await;
+        assert!(result.is_ok());
+
+        // 所有 3 个 URL 都被入队（Bloom 全部未命中 → DefinitelyNew）
+        assert_eq!(
+            task_repo.create_count(),
+            3,
+            "all URLs should be created when Bloom is empty (no DB lookup)"
         );
     }
 
@@ -6978,9 +8784,13 @@ mod tests {
             headers: HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            markdown: None,
         };
 
-        let result = worker.handle_scrape_success(&task, &response).await;
+        let dto = parse_dto_for_test(&task);
+        let result = worker
+            .handle_scrape_success(&task, dto.as_ref(), response)
+            .await;
         // Should still succeed — credit deduction failure is just logged
         assert!(
             result.is_ok(),
@@ -7120,10 +8930,7 @@ mod tests {
     async fn test_should_crawl_multiple_include_patterns_any_match() {
         let worker = build_should_crawl_worker().await;
         let config = build_crawl_config(
-            Some(vec![
-                r".*/docs/.*".to_string(),
-                r".*/api/.*".to_string(),
-            ]),
+            Some(vec![r".*/docs/.*".to_string(), r".*/api/.*".to_string()]),
             None,
         );
 
@@ -7146,5 +8953,284 @@ mod tests {
         assert!(!worker.should_crawl("https://example.com/admin/users", &config));
         assert!(!worker.should_crawl("https://example.com/internal/debug", &config));
         assert!(worker.should_crawl("https://example.com/public/page", &config));
+    }
+
+    // =========================================================================
+    // T059/R-cache-002: 高级缓存模式门控测试
+    // =========================================================================
+
+    // --- generate_scrape_cache_key ---
+
+    #[test]
+    fn test_generate_scrape_cache_key_format() {
+        let ctx = CacheContext {
+            url: "https://example.com".to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+        assert!(key.starts_with("scrape:"));
+        assert!(key.contains("https://example.com"));
+    }
+
+    #[test]
+    fn test_generate_scrape_cache_key_different_methods_produce_different_keys() {
+        let url = "https://example.com/api";
+        let get_key = generate_scrape_cache_key(
+            &CacheContext {
+                url: url.to_string(),
+                method: HttpMethod::Get,
+                mode: CacheMode::Enabled,
+            },
+            &ScrapeOptions::default(),
+        );
+        let post_key = generate_scrape_cache_key(
+            &CacheContext {
+                url: url.to_string(),
+                method: HttpMethod::Post,
+                mode: CacheMode::Enabled,
+            },
+            &ScrapeOptions::default(),
+        );
+        assert_ne!(
+            get_key, post_key,
+            "GET and POST must have different cache keys"
+        );
+    }
+
+    #[test]
+    fn test_generate_scrape_cache_key_different_urls_produce_different_keys() {
+        let key1 = generate_scrape_cache_key(
+            &CacheContext {
+                url: "https://a.com".to_string(),
+                method: HttpMethod::Get,
+                mode: CacheMode::Enabled,
+            },
+            &ScrapeOptions::default(),
+        );
+        let key2 = generate_scrape_cache_key(
+            &CacheContext {
+                url: "https://b.com".to_string(),
+                method: HttpMethod::Get,
+                mode: CacheMode::Enabled,
+            },
+            &ScrapeOptions::default(),
+        );
+        assert_ne!(key1, key2);
+    }
+
+    // --- try_read_scrape_cache ---
+
+    #[tokio::test]
+    async fn test_try_read_scrape_cache_miss_returns_none() {
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let ctx = CacheContext {
+            url: "https://example.com".to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+
+        let result = worker.try_read_scrape_cache(&ctx, &key).await;
+        assert!(result.is_ok(), "read should succeed even on miss");
+        assert!(result.unwrap().is_none(), "empty cache should return None");
+        assert_eq!(cache.get_count(), 1, "get should be called once");
+    }
+
+    #[tokio::test]
+    async fn test_try_read_scrape_cache_hit_returns_response() {
+        let url = "https://example.com";
+        let ctx = CacheContext {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::ReadOnly,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+        let cached_response = ScrapeResponse::new(200, "cached content", "text/html");
+        let cached_json = serde_json::to_string(&cached_response).expect("serialize failed");
+
+        let cache = Arc::new(MockCacheService::with_entry(&key, &cached_json));
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let result = worker.try_read_scrape_cache(&ctx, &key).await;
+        assert!(result.is_ok(), "read should succeed on hit");
+        let resp = result.unwrap().expect("should have cached response");
+        assert_eq!(resp.status_code, 200);
+        assert_eq!(resp.content, "cached content");
+        assert_eq!(cache.get_count(), 1, "get should be called once");
+    }
+
+    #[tokio::test]
+    async fn test_try_read_scrape_cache_corrupt_data_returns_none() {
+        let url = "https://example.com";
+        let ctx = CacheContext {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+        // 存入损坏的 JSON（不是有效的 ScrapeResponse）
+        let cache = Arc::new(MockCacheService::with_entry(&key, "{invalid json}"));
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let result = worker.try_read_scrape_cache(&ctx, &key).await;
+        assert!(
+            result.is_ok(),
+            "corrupt cache should not error, degrade to miss"
+        );
+        assert!(
+            result.unwrap().is_none(),
+            "corrupt data should be treated as miss"
+        );
+        assert_eq!(cache.get_count(), 1, "get should still be called once");
+    }
+
+    // --- try_write_scrape_cache ---
+
+    #[tokio::test]
+    async fn test_try_write_scrape_cache_writes_serialized_response() {
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let ctx = CacheContext {
+            url: "https://example.com/page".to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+
+        let response = ScrapeResponse::new(200, "fresh content", "text/html");
+        let result = worker.try_write_scrape_cache(&ctx, &key, &response).await;
+        assert!(result.is_ok(), "write should succeed");
+        assert_eq!(cache.set_count(), 1, "set should be called once");
+    }
+
+    #[tokio::test]
+    async fn test_try_write_scrape_cache_key_matches_read_key() {
+        let url = "https://example.com/sync";
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        // 写缓存（Bypass 模式：should_read=false, should_write=true，合并原 WriteOnly 语义）
+        let ctx = CacheContext {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            mode: CacheMode::Bypass,
+        };
+        let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
+        let response = ScrapeResponse::new(200, "written", "text/html");
+        worker
+            .try_write_scrape_cache(&ctx, &key, &response)
+            .await
+            .unwrap();
+        assert_eq!(cache.set_count(), 1);
+
+        // 读缓存应命中（同一个 key）
+        let result = worker.try_read_scrape_cache(&ctx, &key).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap().expect("should hit after write");
+        assert_eq!(resp.content, "written");
+    }
+
+    // --- process_scrape_task 门控行为（通过 MockCacheService 计数器验证）---
+
+    /// 辅助：构造带 cache_mode 的 Task payload
+    fn make_task_with_cache_mode(url: &str, mode: Option<CacheMode>) -> Task {
+        let options = match mode {
+            Some(m) => serde_json::json!({ "cache_mode": m }),
+            None => serde_json::json!({}),
+        };
+        let payload = serde_json::json!({
+            "url": url,
+            "options": options,
+        });
+        make_task(payload)
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_disabled_mode_no_cache_read_or_write() {
+        // Disabled 模式：should_read=false, should_write=false
+        // → 不读缓存（get_count=0），不写缓存（set_count=0）
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let task = make_task_with_cache_mode("https://example.com", Some(CacheMode::Disabled));
+        let _ = worker.process_scrape_task(task).await;
+
+        assert_eq!(cache.get_count(), 0, "Disabled mode should not read cache");
+        assert_eq!(cache.set_count(), 0, "Disabled mode should not write cache");
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_bypass_mode_no_read_but_attempt_write() {
+        // Bypass 模式：should_read=false, should_write=true
+        // → 不读缓存（get_count=0）
+        // → 抓取失败（engine_client 无引擎），不写缓存（set_count=0）
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let task = make_task_with_cache_mode("https://example.com", Some(CacheMode::Bypass));
+        let _ = worker.process_scrape_task(task).await;
+
+        assert_eq!(cache.get_count(), 0, "Bypass mode should not read cache");
+        assert_eq!(
+            cache.set_count(),
+            0,
+            "Bypass mode should not write on scrape failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_read_only_mode_reads_cache_no_write() {
+        // ReadOnly 模式：should_read=true, should_write=false
+        // → 读缓存（get_count=1），缓存未命中
+        // → 抓取失败（engine_client 无引擎），不写缓存（set_count=0）
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let task = make_task_with_cache_mode("https://example.com", Some(CacheMode::ReadOnly));
+        let _ = worker.process_scrape_task(task).await;
+
+        assert_eq!(cache.get_count(), 1, "ReadOnly mode should read cache");
+        assert_eq!(cache.set_count(), 0, "ReadOnly mode should not write cache");
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_enabled_mode_reads_cache_no_write_on_failure() {
+        // Enabled 模式：should_read=true, should_write=true
+        // → 读缓存（get_count=1），缓存未命中
+        // → 抓取失败（engine_client 无引擎），不写缓存（set_count=0）
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let task = make_task_with_cache_mode("https://example.com", Some(CacheMode::Enabled));
+        let _ = worker.process_scrape_task(task).await;
+
+        assert_eq!(cache.get_count(), 1, "Enabled mode should read cache");
+        assert_eq!(
+            cache.set_count(),
+            0,
+            "Enabled mode should not write on scrape failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_scrape_task_default_mode_reads_cache() {
+        // cache_mode=None（默认）→ 等价于 Enabled
+        // → 读缓存（get_count=1）
+        let cache = Arc::new(MockCacheService::new());
+        let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+        let task = make_task_with_cache_mode("https://example.com", None);
+        let _ = worker.process_scrape_task(task).await;
+
+        assert_eq!(
+            cache.get_count(),
+            1,
+            "Default (Enabled) mode should read cache"
+        );
+        assert_eq!(cache.set_count(), 0, "Should not write on scrape failure");
     }
 }

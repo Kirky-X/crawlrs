@@ -66,14 +66,18 @@ mod app {
     ) -> anyhow::Result<()> {
         log::info!("Starting API service...");
 
-        // Start webhook worker
-        let webhook_worker = AbstractWorker::new(
-            app_state.webhook_worker(),
-            std::time::Duration::from_secs(5),
-        );
-        tokio::spawn(async move {
-            webhook_worker.run().await;
-        });
+        // R-wh-003 / T029：webhook worker 仅在 webhook feature 启用时启动
+        // webhook-off：webhook_worker accessor 不编译，跳过 spawn
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_worker = AbstractWorker::new(
+                app_state.webhook_worker(),
+                std::time::Duration::from_secs(5),
+            );
+            tokio::spawn(async move {
+                webhook_worker.run().await;
+            });
+        }
 
         // Start backlog worker
         let backlog_worker = AbstractWorker::new(
@@ -118,14 +122,18 @@ mod app {
     ) -> anyhow::Result<()> {
         log::info!("Starting Worker service...");
 
-        // Start webhook worker
-        let webhook_worker = AbstractWorker::new(
-            app_state.webhook_worker(),
-            std::time::Duration::from_secs(5),
-        );
-        tokio::spawn(async move {
-            webhook_worker.run().await;
-        });
+        // R-wh-003 / T029：webhook worker 仅在 webhook feature 启用时启动
+        // webhook-off：webhook_worker accessor 不编译，跳过 spawn
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_worker = AbstractWorker::new(
+                app_state.webhook_worker(),
+                std::time::Duration::from_secs(5),
+            );
+            tokio::spawn(async move {
+                webhook_worker.run().await;
+            });
+        }
 
         // Create worker manager with dependencies (使用 DI 注入的服务)
         let deps = crawlrs::workers::manager::WorkerManagerDeps {
@@ -138,10 +146,12 @@ mod app {
             engine_client: app_state.engine_client(),
             create_scrape_use_case: app_state.create_scrape_use_case(),
             team_semaphore: app_state.team_semaphore.clone(),
+            request_coalescer: app_state.request_coalescer.clone(),
             robots_checker: app_state.robots_checker.clone(),
             http_client,
             extraction_service: app_state.extraction_service(),
             regex_cache: (*app_state.regex_cache()).clone(),
+            cache_service: app_state.cache_service(),
         };
 
         let config = WorkerManagerConfig {
@@ -195,13 +205,12 @@ mod app {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize inklog logger: {}", e))?;
 
-        // 3. Set proxy environment variables if enabled
-        if settings.proxy.enabled {
-            env::set_var("CRAWLRS_PROXY_URL", settings.proxy.url());
-            log::info!("HTTP proxy enabled (credentials hidden)");
-        }
+        // T056/C1 修复：移除 CRAWLRS_PROXY_URL 环境变量桥接。
+        // 代理已统一由 EngineModule 构造 ProxyPool 注入 ReqwestEngine，
+        // 通过 settings.proxy.urls 直接读取，无需通过环境变量中转。
+        // 双重生效会导致：http_client 级别代理 + ReqwestEngine 级别代理 同时生效冲突。
 
-        // 4. Build application state via trait-kit AsyncKit
+        // 3. Build application state via trait-kit AsyncKit
         log::info!("Initializing application dependencies...");
 
         let mut kit = AsyncKit::new();
@@ -234,7 +243,7 @@ mod app {
 
         log::info!("Application dependencies initialized successfully");
 
-        // 5. Start service based on type
+        // 4. Start service based on type
         match ServiceType::from_args() {
             ServiceType::Api => {
                 start_api_service(&app_state, settings).await?;

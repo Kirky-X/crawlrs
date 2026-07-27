@@ -61,6 +61,95 @@ jobs:
       - name: Build (full)
         run: cargo build --features "full"
 
+  feature-matrix:
+    name: Feature Matrix (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # R-flags-005: 覆盖 7 种 feature 组合，确保门控完整、无未门控引用
+          # R-auth-engine-005 (T032): garrison 仅在 auth-on 时被引入依赖树
+          #   - auth-off 组合（no-default/rate-limit-only/webhook-only）：expect-garrison=false
+          #   - auth-on 组合（teams-only/auth-only/default/full）：expect-garrison=true
+          #     （teams 隐含 auth，auth 隐含 dep:garrison，见 Cargo.toml [features]）
+          - name: no-default
+            flags: "--no-default-features"
+            expect-garrison: false
+          - name: teams-only
+            flags: "--no-default-features --features teams"
+            expect-garrison: true
+          - name: auth-only
+            flags: "--no-default-features --features auth"
+            expect-garrison: true
+          - name: rate-limit-only
+            flags: "--no-default-features --features rate-limit"
+            expect-garrison: false
+          - name: webhook-only
+            flags: "--no-default-features --features webhook"
+            expect-garrison: false
+          - name: default
+            flags: "--features default"
+            expect-garrison: true
+          - name: full
+            flags: "--features full"
+            expect-garrison: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: ci-feature-matrix-${{ matrix.name }}
+      - name: Check feature combination
+        run: cargo check ${{ matrix.flags }} --lib
+      - name: Verify garrison feature gating (R-auth-engine-005)
+        env:
+          EXPECT_GARRISON: ${{ matrix.expect-garrison }}
+          MATRIX_FLAGS: ${{ matrix.flags }}
+        run: |
+          set -euo pipefail
+          # T032: 确认 garrison 仅在 auth-on 编译
+          # `cargo tree` 输出形如 `├── garrison v0.8.1`，grep `garrison v` 可稳定匹配
+          # 安全审查 L1 修复：分离 cargo tree 与 grep 退出码，避免 `|| true` 吞掉 cargo tree 失败
+          tree_output=$(cargo tree $MATRIX_FLAGS 2>&1) || {
+            echo "FAIL: cargo tree failed for flags: $MATRIX_FLAGS"
+            echo "$tree_output"
+            exit 1
+          }
+          count=$(echo "$tree_output" | grep -c "garrison v" || true)
+          if [ "$EXPECT_GARRISON" = "true" ]; then
+            expected=1
+          else
+            expected=0
+          fi
+          if [ "$count" -ge 1 ] && [ "$expected" = "1" ]; then
+            echo "PASS: garrison found ($count occurrence(s)), expected present (flags: $MATRIX_FLAGS)"
+          elif [ "$count" -eq 0 ] && [ "$expected" = "0" ]; then
+            echo "PASS: garrison not found, expected absent (flags: $MATRIX_FLAGS)"
+          else
+            echo "FAIL: garrison found=$count, expected=$expected (flags: $MATRIX_FLAGS)"
+            echo "--- cargo tree output (garrison matches) ---"
+            echo "$tree_output" | grep -i "garrison" || true
+            exit 1
+          fi
+      - name: Verify no RSA code paths (deny.toml RUSTSEC-2023-0071 premise)
+        if: matrix.expect-garrison == true
+        run: |
+          set -euo pipefail
+          # 安全审查 H1 修复：deny.toml 全局忽略 RUSTSEC-2023-0071（RSA Marvin Attack）
+          # 的前提是 crawlrs 不调用任何 RSA 代码路径。此步骤自动化验证前提仍成立，
+          # 防止未来引入 RSA 签名/验证代码时 ignore 静默失效。
+          matches=$(grep -rE 'RS256|RS384|RS512|use rsa::|rsa::' src/ --include='*.rs' || true)
+          if [ -n "$matches" ]; then
+            echo "FAIL: found RSA code paths, deny.toml ignore for RUSTSEC-2023-0071 no longer safe:"
+            echo "$matches"
+            exit 1
+          fi
+          echo "PASS: no RSA code paths in src/, deny.toml ignore premise holds"
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest

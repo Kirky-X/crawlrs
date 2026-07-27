@@ -13,8 +13,19 @@ pub struct Model {
     pub id: Uuid,
     pub team_id: Uuid,
     #[sea_orm(unique)]
+    /// garrison `key_id`（公开标识，可安全记录到日志）。
+    ///
+    /// R-key-lifecycle-001 / T027-3：签发路径写入 garrison `key_id`（非明文 secret）。
+    /// 旧版 crawlrs 此字段存明文 key 前缀，已弃用此用法。
     pub key: String,
     /// Hash of the API key for secure storage (SHA-256 hex encoded)
+    ///
+    /// # 弃用说明（R-key-lifecycle-003 / T028）
+    ///
+    /// garrison 自管哈希存储（`garrison:apikey:<ns>:<key>` on oxcache + postgres），
+    /// crawlrs 不再需要 `key_hash`。新签发的 API Key 此字段设为 `None`。
+    /// 保留列供历史数据只读核对，待全量重签完成后可移除。
+    #[deprecated(since = "0.2.0", note = "garrison 自管哈希；新 key 设为 None")]
     pub key_hash: Option<String>,
     pub created_at: ChronoDateTimeWithTimeZone,
     pub updated_at: Option<ChronoDateTimeWithTimeZone>,
@@ -41,6 +52,7 @@ impl Related<super::team::Entity> for Entity {
 impl ActiveModelBehavior for ActiveModel {}
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use sea_orm::ActiveValue;

@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() < 3 {
         eprintln!(
             "Usage: {} <team-uuid> <amount> [description]",
-            args.get(0).map(|s| s.as_str()).unwrap_or("add_credits")
+            args.first().map(|s| s.as_str()).unwrap_or("add_credits")
         );
         std::process::exit(1);
     }

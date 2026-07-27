@@ -11,19 +11,35 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::auth::ApiKeyScope;
+// T028：`AuthScopeRepository` trait 已弃用，本 impl 文件保留实现供历史数据迁移/查询
+#[allow(deprecated)]
 use crate::domain::repositories::auth_scope_repository::{AuthScopeRepository, RepositoryError};
 use crate::infrastructure::database::entities::api_key::{
     Column as ApiKeyColumn, Entity as ApiKeyEntity,
 };
+// T028：`scope::Model` 已弃用，本文件保留实现供历史数据迁移/查询
+#[allow(deprecated)]
 use crate::infrastructure::database::entities::auth::scope::{
     Column as ScopeColumn, Entity as ScopeEntity,
 };
 
+/// 旧作用域仓库实现（已弃用，R-key-lifecycle-003 / T028）。
+///
+/// # 弃用说明
+///
+/// garrison RBAC 接管后，`scopes` 表不再被认证/签发路径调用。
+/// 此实现保留供历史数据查询/迁移脚本使用，不参与热路径。
+/// 详见 [`crate::domain::repositories::auth_scope_repository::AuthScopeRepository`] 的弃用说明。
 #[derive(Clone)]
+#[deprecated(
+    since = "0.2.0",
+    note = "garrison RBAC 接管；保留仅供历史数据迁移/查询"
+)]
 pub struct AuthScopeRepositoryImpl {
     pool: Arc<DbPool>,
 }
 
+#[allow(deprecated)]
 impl AuthScopeRepositoryImpl {
     pub fn new(pool: Arc<DbPool>) -> Self {
         Self { pool }
@@ -31,6 +47,7 @@ impl AuthScopeRepositoryImpl {
 }
 
 #[async_trait::async_trait]
+#[allow(deprecated)]
 impl AuthScopeRepository for AuthScopeRepositoryImpl {
     async fn find_by_api_key_id(
         &self,
@@ -148,9 +165,10 @@ impl AuthScopeRepository for AuthScopeRepositoryImpl {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::common::test_helpers::create_test_db_pool;
+    use crate::common::test_helpers::{create_test_db_pool, skip_if_no_test_db};
     use crate::domain::auth::ApiKeyScope;
 
     fn sample_scope() -> ApiKeyScope {
@@ -167,6 +185,9 @@ mod tests {
 
     #[test]
     fn test_new_creates_repository_instance() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let repo = AuthScopeRepositoryImpl::new(pool);
         // Repository should be constructible with a real pool
@@ -177,6 +198,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_api_key_id_returns_none_for_unknown() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key_id(Uuid::new_v4()).await;
         assert!(
@@ -192,6 +216,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_api_key_returns_none_for_unknown() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key("sk-test-key").await;
         assert!(result.is_ok(), "find_by_api_key failed: {:?}", result.err());
@@ -200,6 +227,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_api_key_with_empty_key_returns_none() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key("").await;
         assert!(result.is_ok(), "find_by_api_key failed: {:?}", result.err());
@@ -208,6 +238,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_upsert_creates_new_scope() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let api_key_id = Uuid::new_v4();
         let expected = sample_scope();
@@ -229,6 +262,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_by_api_key_id_returns_false_for_unknown() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.delete_by_api_key_id(Uuid::new_v4()).await;
         assert!(
@@ -390,6 +426,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_api_key_with_unicode_key_returns_none() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key("sk-测试-キー-🔑").await;
         assert!(result.is_ok(), "find_by_api_key failed: {:?}", result.err());
@@ -398,6 +437,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_api_key_with_long_key_returns_none() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let long_key = "sk-".to_string() + &"a".repeat(10_000);
         let result = repo.find_by_api_key(&long_key).await;
@@ -407,6 +449,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_upsert_with_admin_scope_succeeds() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let admin_scope = ApiKeyScope {
             read: true,
@@ -421,6 +466,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_upsert_with_zero_limits_succeeds() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let zero_scope = ApiKeyScope {
             read: false,
@@ -435,6 +483,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_by_api_key_id_with_nil_uuid_returns_false() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.delete_by_api_key_id(Uuid::nil()).await;
         assert!(
@@ -447,6 +498,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_api_key_id_with_nil_uuid_returns_none() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let repo = AuthScopeRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key_id(Uuid::nil()).await;
         assert!(

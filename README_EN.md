@@ -102,7 +102,7 @@ Compared to Node.js implementations:
 | **Caching** | oxcache multi-layer caching (L1 moka memory backend) with per-type TTL (search/dns/regex) |
 | **Metrics & Monitoring** | Prometheus-compatible export |
 | **Webhooks** | Event-driven task completion notifications |
-| **API Key Authentication** | Scoped access control and team isolation |
+| **API Key Authentication** | garrison v0.8.1 takes over authentication: RBAC + JWT + firewall-bruteforce + audit-log, scoped access control and team isolation |
 | **Audit Logging** | Complete request tracking |
 | **Proxy Support** | Unified outbound proxy configuration |
 | **LLM Extraction** | genai-based LLM content extraction |
@@ -147,12 +147,16 @@ cargo build --release --features "engine-playwright,metrics"
 
 ### Feature Flags
 
-> **Note:** `default = []` — no features are enabled by default. Use a preset (`standard` / `full`) or list features explicitly.
+> **Note:** `default = ["teams", "auth", "rate-limit", "webhook"]` — all business capability features are enabled by default (multi-tenant + auth + rate limiting + Webhook), preserving existing full-feature behavior. Use presets (`standard` / `full`) or list features explicitly to add engine and infrastructure features.
 
-> **Core stack is non-optional.** Core dependencies (oxcache 0.3 / dbnexus 0.4 / confers 0.4 / limiteron 0.2 / sdforge 0.4 / inklog 0.1 / trait-kit 0.3 + scraper / chardetng / encoding_rs / robotstxt) and the HTTP fetching stack are always compiled; they are no longer exposed as features.
+> **Core stack is non-optional.** Core dependencies (oxcache 0.3 / dbnexus 0.4 / confers 0.4 / sdforge 0.4 / inklog 0.1 / trait-kit 0.3 + scraper / chardetng / encoding_rs / robotstxt) and the HTTP fetching stack are always compiled; they are no longer exposed as features.
 
 | Feature | Description | Default |
 |---------|-------------|----------|
+| `teams` | Multi-tenant isolation (teams, geo-restrictions, quota isolation); implies `auth` | ✅ Yes |
+| `auth` | API Key auth middleware; when disabled, `default_identity_middleware` injects a fixed identity | ✅ Yes |
+| `rate-limit` | limiteron-based rate limiting and circuit breaking; when disabled, `NoopRateLimitingService` allows all | ✅ Yes |
+| `webhook` | Webhook delivery and management; when disabled, `NoopWebhookService` is injected and `/v1/webhooks` route removed | ✅ Yes |
 | `engine-playwright` | chromiumoxide-based browser automation | ❌ No |
 | `engine-flaresolverr` | FlareSolverr anti-bot protection (FlareSolverrMode enum distinguishes Full/Cdp/Tls modes) | ❌ No |
 | `metrics` | Prometheus metrics export | ❌ No |
@@ -165,14 +169,16 @@ cargo build --release --features "engine-playwright,metrics"
 
 ### Presets & Binary Size
 
-The core stack (oxcache / dbnexus / confers / limiteron / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP fetching stack) is always compiled and no longer exposed as features.
+The core stack (oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP fetching stack) is always compiled and no longer exposed as features. Business capability features (`teams` / `auth` / `rate-limit` / `webhook`) are enabled by default; use `--no-default-features` to build single-tenant/no-auth deployments.
 
 | Preset | Feature Set | Binary Size | Use Case |
 |-----|---------|-----------|---------|
-| standard | `engine-playwright, metrics` | ~35MB | JS rendering needed (core stack included by default) |
+| default | `teams, auth, rate-limit, webhook` | ~30MB | Single/multi-tenant full features (business capabilities on by default) |
+| standard | `default + engine-playwright, metrics` | ~35MB | JS rendering needed (core stack included by default) |
 | full | `standard + engine-flaresolverr` | ~52MB | All features |
+| no-default | `--no-default-features` | ~22MB | Single-tenant/no-auth deployment (all business capabilities off, Noop implementations) |
 
-> **Note:** `default = []` is not listed in the preset table because it enables no optional features, compiling only the core stack (~30MB); intended for explicit opt-in scenarios.
+> **Note:** `default` includes business capability features, so the preset table already includes them. To disable business capabilities, use `--no-default-features` and list required features explicitly (e.g. `--no-default-features --features rate-limit`).
 
 ### Custom Combinations
 
@@ -180,14 +186,24 @@ The core stack (oxcache / dbnexus / confers / limiteron / sdforge / inklog / tra
 # Custom combination: core stack always compiled, only specify optional features
 cargo build --release --features "engine-playwright,metrics,genai-llm"
 
-# Core stack only (no optional features)
+# Core stack only (disable all business capabilities + engines, single-tenant/no-auth deployment)
 cargo build --release --no-default-features
+
+# Single-tenant + rate limiting (disable auth and Webhook)
+cargo build --release --no-default-features --features rate-limit
+
+# Multi-tenant + auth (disable rate limiting and Webhook)
+cargo build --release --no-default-features --features teams
 ```
 
 ### Feature Reference
 
 | Feature | Description | Impact |
 |------|------|------|
+| `teams` | Multi-tenant isolation (teams, geo-restrictions, quota isolation) | Implies `auth`; when disabled, degrades to single-tenant using `DEFAULT_TEAM_ID` |
+| `auth` | API Key auth middleware | When disabled, uses `default_identity_middleware` to inject fixed `AuthState` |
+| `rate-limit` | limiteron-based rate limiting and circuit breaking | Pulls in `limiteron` dependency; when disabled, injects `NoopRateLimitingService` allowing all |
+| `webhook` | Webhook delivery and management | When disabled, injects `NoopWebhookService` and removes `/v1/webhooks` route |
 | `engine-playwright` | chromiumoxide JS rendering engine | +8MB |
 | `engine-flaresolverr` | FlareSolverr engine (FlareSolverrMode enum for Full/Cdp/Tls modes) | - |
 | `metrics` | Metrics monitoring | - |
@@ -195,6 +211,41 @@ cargo build --release --no-default-features
 | `browser-download` | Auto-download Playwright browser | - |
 | `test-mocks` | Test mock modules (`#[cfg(any(test, feature = "test-mocks"))]`) | - |
 | `admin-tools` | Ops CLI tools (`cargo run --bin add_credits --features admin-tools`) | - |
+
+### Feature Matrix (Business Capabilities)
+
+> **R-flags-005:** Business capability features (`teams` / `auth` / `rate-limit` / `webhook`) are enabled by default. Use `--no-default-features` to disable them for lightweight single-tenant/no-auth/no-rate-limit/no-Webhook deployments. Each feature has a corresponding Noop implementation injected when disabled, ensuring business logic is unaware of the change.
+
+#### Business Capability Feature Matrix
+
+| Feature | Default | Dependencies | Behavior when disabled | Related Constants/Noop Implementations |
+|------|------|----------|------------|---------------------|
+| `teams` | ✅ Enabled | Implies `auth` | Degrades to single-tenant; all requests attributed to `DEFAULT_TEAM_ID` (`Uuid::from_u128(1)`) | `DEFAULT_TEAM_ID` |
+| `auth` | ✅ Enabled | `dep:garrison` | **As of 0.2.0 garrison v0.8.1 takes over authentication**: `auth_middleware_inner` calls `GarrisonUtil::check_api_key` + `bridge_to_auth_state` to inject `AuthState`; provides RBAC + JWT + firewall-bruteforce + audit-log. When disabled, uses `default_identity_middleware` to inject fixed `AuthState` (`DEFAULT_API_KEY_ID` + `full_access` scope) | `DEFAULT_API_KEY_ID` (`Uuid::from_u128(2)`), `default_identity_middleware`, `auth_bridge::map_perms_to_scope` |
+| `rate-limit` | ✅ Enabled | `dep:limiteron` | Injects `NoopRateLimitingService`: `check_rate_limit` returns `Allowed`, `check_and_deduct_quota` returns `Ok(())`, `get_quota_balance` returns `Ok(i64::MAX)` | `NoopRateLimitingService` |
+| `webhook` | ✅ Enabled | None | Injects `NoopWebhookService`: `trigger_completion` / `trigger_failure` return `Ok(())`; removes `/v1/webhooks` route and `webhook_worker` | `NoopWebhookService` |
+
+#### Conditional Endpoints
+
+| Endpoint | Required Feature | Behavior when disabled |
+|------|----------|------------|
+| `/v1/teams/me`, `/v1/teams/me/usage`, `/v1/teams/geo-restrictions` (GET/PUT) | `teams` | Route not registered (404) |
+| `/v1/extract` (with geo-restriction generic) | `teams` | Degrades to `extract` signature without geo-restrictions |
+| `/v1/webhooks` (POST/GET) | `webhook` | Route not registered (404) |
+
+#### Feature Combination Verification Matrix (CI Coverage)
+
+The CI `feature-matrix` job covers the following 7 combinations, ensuring complete gating and no ungated references:
+
+| Combination | Command | Verification Target |
+|------|------|----------|
+| no-default | `cargo check --no-default-features --lib` | All gating in place; no business capabilities + no engines |
+| teams-only | `cargo check --no-default-features --features teams --lib` | Multi-tenant (implies `auth`) compiles standalone |
+| auth-only | `cargo check --no-default-features --features auth --lib` | Auth only (single-tenant + auth) |
+| rate-limit-only | `cargo check --no-default-features --features rate-limit --lib` | Rate limiting only (single-tenant + rate limiting) |
+| webhook-only | `cargo check --no-default-features --features webhook --lib` | Webhook only (single-tenant + Webhook) |
+| default | `cargo check --features default --lib` | Full business capability default combination |
+| full | `cargo check --features full --lib` | Full features (business capabilities + engines + metrics) |
 
 ---
 
@@ -320,10 +371,11 @@ crawlrs uses confers for configuration management, supporting TOML files and `CR
 | `[concurrency]` | Concurrency control | `default_team_limit`, `task_lock_duration_seconds` |
 | `[search]` | Search config | `default_engine`, `ab_test_enabled`, `timeout_seconds` |
 | `[webhook]` | Webhook | `timeout_seconds`, `max_retries`, `secret`, `batch_size` |
-| `[proxy]` | Outbound proxy | `url`, `enabled` |
+| `[proxy]` | Outbound proxy | `urls`, `strategy`, `enabled`, `sticky_ttl_seconds`, `cooldown_seconds` |
 | `[llm]` | LLM extraction | `api_key`, `model`, `api_base_url` |
 | `[workers]` | Worker pool | `count` (`"auto"` or number) |
 | `[engines.flaresolverr]` | FlareSolverr | `enabled`, `url`, `timeout_seconds` |
+| `[timeouts.engines]` | Engine timeouts + MRT | `default_timeout_seconds`, `playwright_timeout_seconds`, `flaresolverr_timeout_seconds`, `fetch_seconds` (HTTP MRT), `tls_seconds` (TLS MRT), `cdp_seconds` (CDP MRT) |
 | `[logging]` | Log output | `[logging.console]`, `[logging.file]` (path/max_file_size/file_count) |
 | `[trusted_proxies]` | Trusted proxies | `enabled`, `proxies` (CIDR list) |
 
@@ -342,11 +394,70 @@ All protected endpoints require an API key in the `Authorization` header:
 Authorization: Bearer YOUR_API_KEY
 
 # Example curl
-curl -H "Authorization: Bearer crawlrs_sk_abc123" \
+curl -H "Authorization: Bearer garrison_key_id.garrison_secret" \
   http://localhost:8899/v1/scrape
 ```
 
-> **⚠️ Security Tip:** Never commit API keys to version control. Use environment variables.
+> **As of 0.2.0 (`garrison-auth-migration`):** Authentication is now handled by **garrison v0.8.1**. The Bearer token format is `garrison_key_id.garrison_secret`, issued and verified by garrison. crawlrs no longer manages `key_hash` itself; the legacy `CRAWLRS__AUTH__KEYS` / `[auth] keys` config options are deprecated.
+
+**Authentication capabilities provided by garrison:**
+
+| Capability | Description |
+|------------|-------------|
+| **JWT Issuance** | garrison embeds a JWT (HS256, ≥32-byte key, weak keys rejected at startup) into each API Key, signed via `CRAWLRS__AUTH__JWT_SECRET` |
+| **RBAC** | Pre-provisioned 3 permissions (`crawlrs:read/write/admin`) + 3 roles (`admin/user/read_only`), `tenant_id=0` shared across all teams |
+| **firewall-bruteforce** | 5 failures / 60s window / 300s lockout; 401/429 directly triggered by garrison |
+| **audit-log** | Auth events written to crawlrs `audit_logs` table + garrison's own schema |
+
+**Issuing a new API Key (admin):**
+
+```bash
+curl -X POST http://localhost:8899/v1/admin/api-keys \
+  -H "Authorization: Bearer garrison_admin_key_id.garrison_admin_secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "team_id": "770e8400-e29b-41d4-a716-446655440000",
+    "scopes": ["read", "write"],
+    "expires_in_secs": 2592000
+  }'
+```
+
+> **⚠️ Security Tip:** Never commit API keys to version control. The plaintext key is returned only once in the issuance response — store it in a secrets manager immediately.
+
+### Migrating to 0.2.0: Garrison Authentication
+
+**Impact:**
+
+- Existing API keys (based on the legacy `api_keys.key_hash` SHA-256 table) are **all invalidated** and must be re-issued via garrison
+- The `scopes` table is now read-only (`deprecated_at` marker); legacy scope mappings no longer take effect
+- `CRAWLRS__AUTH__JWT_SECRET` is now required (HS256 ≥32 bytes; weak keys are rejected at startup)
+
+**Re-issuance flow (operators):**
+
+```bash
+# 1. Build with admin-tools + auth features
+cargo build --release --features admin-tools,auth
+
+# 2. Set JWT_SECRET env var (≥32 bytes, HS256)
+export CRAWLRS__AUTH__JWT_SECRET="your-32-byte-or-longer-secret-key-here"
+
+# 3. Run the reissue_api_keys tool:
+#    - Provisions garrison RBAC (3 perms / 3 roles / 6 role-permission mappings, tenant_id=0)
+#    - Enumerates teams that need re-issuance
+#    - Issues a new garrison API Key per team (plaintext key printed once)
+./target/release/reissue_api_keys
+
+# 4. Apply DB migration (marks legacy tables as deprecated; no table/column drops)
+psql -f migrations/005_deprecate_legacy_api_keys.sql
+```
+
+**Client-side migration:**
+
+- The calling convention is unchanged: `Authorization: Bearer <key>`
+- Just replace `<key>` with the new `garrison_key_id.garrison_secret`
+- 401/429 response semantics are unchanged, but 429 triggering is now handled by garrison `firewall-bruteforce`
+
+See [ARCHITECTURE.md → Garrison Authentication Engine](docs/ARCHITECTURE.md#garrison-认证引擎) for full architecture details.
 
 ### 📡 Public Endpoints
 
@@ -380,6 +491,7 @@ curl -H "Authorization: Bearer crawlrs_sk_abc123" \
 | `/v1/tasks/_cancel` | POST | Batch cancel tasks |
 | `/v1/audit/logs` | GET | Get audit logs |
 | `/v1/audit/denied` | GET | Get denied requests |
+| `/v1/admin/api-keys` | POST | Issue garrison API Key (new in 0.2.0, requires `crawlrs:admin` permission) |
 
 ### 📡 SDK Endpoints
 

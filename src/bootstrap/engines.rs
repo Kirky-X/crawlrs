@@ -6,6 +6,7 @@
 //! Scraper engines initialization and configuration.
 
 use crate::config::engines::EngineSettings;
+use crate::config::settings::{EngineTimeoutSettings, ProxyStrategy};
 #[cfg(feature = "engine-flaresolverr")]
 use crate::engines::client::flare_solverr::FlareSolverrEngine;
 #[cfg(feature = "engine-playwright")]
@@ -13,6 +14,9 @@ use crate::engines::client::playwright::PlaywrightEngine;
 use crate::engines::client::reqwest::ReqwestEngine;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::engine_client::ScraperEngine;
+use crate::engines::provider::ProxyProvider;
+#[cfg(test)]
+use crate::engines::proxy_pool::ProxyPool;
 use crate::engines::router::EngineRouter;
 use std::sync::Arc;
 
@@ -35,60 +39,88 @@ pub struct EngineComponents {
 /// # Arguments
 ///
 /// * `http_client` - Shared HTTP client
-/// * `proxy_url` - URL for the HTTP proxy (if enabled)。`None` 表示未配置代理，
-///   替代之前的空字符串 sentinel（架构 MEDIUM 5：API 语义明确化）
+/// * `proxy_provider` - 代理提供者（design.md §12，T054/T056/R-identity-003 + H2 修复）。
+///   `None` 时 ReqwestEngine 不使用代理；`Some` 时按 `proxy_strategy` 调度策略取代理。
+///   `Arc<dyn ProxyProvider>` 可被多 worker 共享，并依赖抽象 trait 而非具体 `ProxyPool`。
+/// * `proxy_strategy` - 代理调度策略（H1 修复：RoundRobin / Sticky）。
+///   `proxy_provider` 为 `None` 时此参数被忽略。
+/// * `proxy_url` - FlareSolverr 引擎使用的单代理 URL（FlareSolverr 服务自身访问代理）。
+///   `None` 表示未配置代理。注意：FlareSolverr 暂未接入 ProxyProvider（T056 范围外）。
 /// * `engine_config` - Engine-specific configuration settings
-/// * `timeout_seconds` - 请求超时（秒），从 `settings.timeouts.engines.default_timeout_seconds`
-///   注入 ReqwestEngine，避免硬编码 30 秒（架构 MEDIUM 2）
+/// * `engine_timeouts` - 引擎超时配置（T061：包含 `default_timeout_seconds` + 三个 MRT 字段
+///   `fetch_seconds` / `tls_seconds` / `cdp_seconds`）。从此注入超时与 MRT，避免硬编码。
 ///
 /// # Returns
 ///
 /// Returns a vector of initialized engines.
-#[allow(deprecated)]
 #[allow(unused_variables)]
 pub fn init_engines(
     http_client: Arc<reqwest::Client>,
+    proxy_provider: Option<Arc<dyn ProxyProvider>>,
+    proxy_strategy: ProxyStrategy,
     proxy_url: Option<&str>,
     engine_config: &EngineSettings,
-    timeout_seconds: u64,
+    engine_timeouts: &EngineTimeoutSettings,
 ) -> Vec<Arc<dyn ScraperEngine>> {
-    // 将 Option<&str> 转换为 ReqwestEngine::with_proxy_and_timeout 接受的 String。
-    // None → 空字符串（ReqwestEngine 内部会将空字符串视为未配置代理）
-    let proxy_url_str = proxy_url.unwrap_or("");
+    // T061：从 EngineTimeoutSettings 派生超时与各引擎 MRT，避免硬编码
+    let timeout_seconds = engine_timeouts.default_timeout_seconds;
+    let fetch_mrt = std::time::Duration::from_secs(engine_timeouts.fetch_seconds);
+    let tls_mrt = std::time::Duration::from_secs(engine_timeouts.tls_seconds);
+    let cdp_mrt = std::time::Duration::from_secs(engine_timeouts.cdp_seconds);
+
+    // T056/R-identity-003 + H1/H2 修复 + T060/T061：ReqwestEngine 接入 ProxyProvider + 策略 + MRT
+    // - provider 为 Some 时 with_provider_strategy_timeout_and_mrt 注入
+    // - provider 为 None 时 new_with_timeout_and_mrt（无代理）
     #[allow(unused_mut)]
-    let mut engines: Vec<Arc<dyn ScraperEngine>> =
-        vec![Arc::new(ReqwestEngine::with_proxy_and_timeout(
+    let mut engines: Vec<Arc<dyn ScraperEngine>> = match proxy_provider {
+        Some(provider) => vec![Arc::new(
+            ReqwestEngine::with_provider_strategy_timeout_and_mrt(
+                http_client.clone(),
+                provider,
+                proxy_strategy,
+                timeout_seconds,
+                fetch_mrt,
+            ),
+        )],
+        None => vec![Arc::new(ReqwestEngine::new_with_timeout_and_mrt(
             http_client.clone(),
-            proxy_url_str.to_string(),
             timeout_seconds,
-        ))];
+            fetch_mrt,
+        ))],
+    };
 
+    // T060/T061：PlaywrightEngine 注入 cdp_seconds 作为 MRT
     #[cfg(feature = "engine-playwright")]
-    engines.push(Arc::new(PlaywrightEngine::new()));
+    engines.push(Arc::new(PlaywrightEngine::with_mrt(cdp_mrt)));
 
+    // T060/T061：FlareSolverrEngine 按模式注入对应 MRT
+    // - Tls 模式 → tls_seconds
+    // - Cdp / Full 模式 → cdp_seconds
     #[cfg(feature = "engine-flaresolverr")]
-    if engine_config.fire_tls.enabled {
+    if engine_config.flaresolverr_tls.enabled {
         log::info!(
-            "Fire Engine TLS enabled with URL: {}",
-            engine_config.fire_tls.url
+            "FlareSolverr TLS enabled with URL: {}",
+            engine_config.flaresolverr_tls.url
         );
-        engines.push(Arc::new(FlareSolverrEngine::with_tls_mode_and_url(
+        engines.push(Arc::new(FlareSolverrEngine::with_tls_mode_url_and_mrt(
             http_client.clone(),
-            &engine_config.fire_tls.url,
+            &engine_config.flaresolverr_tls.url,
             proxy_url,
+            tls_mrt,
         )));
     }
 
     #[cfg(feature = "engine-flaresolverr")]
-    if engine_config.fire_cdp.enabled {
+    if engine_config.flaresolverr_cdp.enabled {
         log::info!(
-            "Fire Engine CDP enabled with URL: {}",
-            engine_config.fire_cdp.url
+            "FlareSolverr CDP enabled with URL: {}",
+            engine_config.flaresolverr_cdp.url
         );
-        engines.push(Arc::new(FlareSolverrEngine::with_cdp_mode_and_url(
+        engines.push(Arc::new(FlareSolverrEngine::with_cdp_mode_url_and_mrt(
             http_client.clone(),
-            &engine_config.fire_cdp.url,
+            &engine_config.flaresolverr_cdp.url,
             proxy_url,
+            cdp_mrt,
         )));
     }
 
@@ -98,9 +130,10 @@ pub fn init_engines(
             "FlareSolverr enabled with URL: {}",
             engine_config.flaresolverr.url
         );
-        engines.push(Arc::new(FlareSolverrEngine::with_url(
+        engines.push(Arc::new(FlareSolverrEngine::with_url_and_mrt(
             http_client.clone(),
             &engine_config.flaresolverr.url,
+            cdp_mrt,
         )));
     }
 
@@ -115,26 +148,32 @@ pub fn init_engines(
 /// # Arguments
 ///
 /// * `http_client` - Shared HTTP client
-/// * `proxy_url` - URL for the HTTP proxy。`None` 表示未配置代理（架构 MEDIUM 5）
+/// * `proxy_provider` - 代理提供者（H2 修复：`Arc<dyn ProxyProvider>`）。
+///   `None` 时不使用代理。
+/// * `proxy_strategy` - 代理调度策略（H1 修复：RoundRobin / Sticky）。
+/// * `proxy_url` - FlareSolverr 单代理 URL（`None` 表示未配置）
 /// * `engine_config` - Engine-specific configuration
-/// * `timeout_seconds` - 请求超时（秒），从 `settings.timeouts.engines.default_timeout_seconds`
-///   注入 ReqwestEngine，避免硬编码 30 秒（架构 MEDIUM 2）
+/// * `engine_timeouts` - 引擎超时配置（T061：包含 `default_timeout_seconds` + 三个 MRT 字段）。
+///   从此注入超时与 MRT，避免硬编码。
 ///
 /// # Returns
 ///
 /// Returns all engine components.
-#[allow(deprecated)]
 pub fn init_engine_components(
     http_client: Arc<reqwest::Client>,
+    proxy_provider: Option<Arc<dyn ProxyProvider>>,
+    proxy_strategy: ProxyStrategy,
     proxy_url: Option<String>,
     _engine_config: &EngineSettings,
-    timeout_seconds: u64,
+    engine_timeouts: &EngineTimeoutSettings,
 ) -> EngineComponents {
     let engines = init_engines(
         http_client,
+        proxy_provider,
+        proxy_strategy,
         proxy_url.as_deref(),
         _engine_config,
-        timeout_seconds,
+        engine_timeouts,
     );
     let router = Arc::new(EngineRouter::new(engines.clone()));
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
@@ -149,9 +188,30 @@ pub fn init_engine_components(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn make_http_client() -> Arc<reqwest::Client> {
         Arc::new(reqwest::Client::new())
+    }
+
+    fn make_proxy_provider() -> Arc<dyn ProxyProvider> {
+        Arc::new(ProxyPool::from_urls(
+            vec!["http://localhost:10808".to_string()],
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ))
+    }
+
+    /// T061：构造默认 EngineTimeoutSettings（30s/30s/30s + MRT 5s/15s/30s）
+    fn make_engine_timeouts() -> EngineTimeoutSettings {
+        EngineTimeoutSettings {
+            default_timeout_seconds: 30,
+            playwright_timeout_seconds: 30,
+            flaresolverr_timeout_seconds: 30,
+            fetch_seconds: 5,
+            tls_seconds: 15,
+            cdp_seconds: 30,
+        }
     }
 
     // ========== init_engines tests ==========
@@ -162,9 +222,11 @@ mod tests {
         let engine_config = EngineSettings::default();
         let engines = init_engines(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808"),
             &engine_config,
-            30,
+            &make_engine_timeouts(),
         );
         assert!(
             !engines.is_empty(),
@@ -178,9 +240,11 @@ mod tests {
         let engine_config = EngineSettings::default();
         let engines = init_engines(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808"),
             &engine_config,
-            30,
+            &make_engine_timeouts(),
         );
         let engine_names: Vec<&str> = engines.iter().map(|e| e.name()).collect();
         assert!(
@@ -199,9 +263,11 @@ mod tests {
         let engine_config = EngineSettings::default();
         let engines = init_engines(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808"),
             &engine_config,
-            30,
+            &make_engine_timeouts(),
         );
         assert!(
             !engines.is_empty(),
@@ -210,11 +276,34 @@ mod tests {
     }
 
     #[test]
-    fn test_init_engines_with_empty_proxy_url() {
-        // Verify init_engines works with None proxy URL.
+    fn test_init_engines_with_no_proxy_provider() {
+        // Verify init_engines works with None proxy_provider (无代理路径)
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
-        let engines = init_engines(http_client, None, &engine_config, 30);
+        let engines = init_engines(
+            http_client,
+            None,
+            ProxyStrategy::RoundRobin,
+            None,
+            &engine_config,
+            &make_engine_timeouts(),
+        );
+        assert!(!engines.is_empty());
+    }
+
+    #[test]
+    fn test_init_engines_with_sticky_strategy() {
+        // H1 修复验证：Sticky 策略可正常构造 ReqwestEngine
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let engines = init_engines(
+            http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::Sticky,
+            None,
+            &engine_config,
+            &make_engine_timeouts(),
+        );
         assert!(!engines.is_empty());
     }
 
@@ -226,9 +315,11 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808".to_string()),
             &engine_config,
-            30,
+            &make_engine_timeouts(),
         );
         assert!(
             !components.engines.is_empty(),
@@ -245,9 +336,11 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808".to_string()),
             &engine_config,
-            30,
+            &make_engine_timeouts(),
         );
         assert!(
             !components.engines.is_empty(),
@@ -261,9 +354,11 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808".to_string()),
             &engine_config,
-            30,
+            &make_engine_timeouts(),
         );
         // The router should have registered engines matching the engines vec
         let registered = components.router.registered_engines();
@@ -279,9 +374,11 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808".to_string()),
             &engine_config,
-            30,
+            &make_engine_timeouts(),
         );
         // EngineClient should report at least 1 engine
         assert!(
@@ -296,9 +393,11 @@ mod tests {
         let engine_config = EngineSettings::default();
         let components = init_engine_components(
             http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::RoundRobin,
             Some("http://localhost:10808".to_string()),
             &engine_config,
-            30,
+            &make_engine_timeouts(),
         );
         // EngineComponents derives Clone; verify clone produces equivalent field counts
         let cloned = components.clone();

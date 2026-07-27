@@ -46,11 +46,15 @@ impl CrawlTextIntegration {
         content_type: Option<&str>,
         status_code: u16,
     ) -> Result<ProcessedScrapeResponse, CrawlProcessingError> {
+        // 性能审查 H-2 修复：禁用时不分配 2 份 String，
+        // 用 Cow 延迟转换并直接返回原始字节引用。
         if !self.is_enabled() {
             debug!("文本处理功能已禁用，直接返回原始内容");
+            // 仅在最终需要 String 时做一次 utf8_lossy（lazy）
+            let original = String::from_utf8_lossy(content).into_owned();
             return Ok(ProcessedScrapeResponse {
-                original_content: String::from_utf8_lossy(content).into_owned(),
-                processed_content: String::from_utf8_lossy(content).into_owned(),
+                original_content: original.clone(),
+                processed_content: original,
                 content_type: content_type.map(|s| s.to_string()),
                 status_code,
                 url: url.to_string(),

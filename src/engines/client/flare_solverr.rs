@@ -13,6 +13,15 @@
 //! 三种模式（Full / Cdp / Tls）共享同一个 FlareSolverr API 客户端实现，
 //! 仅在 support_score 和 name 上有差异，Tls 模式额外拒绝截图请求。
 //!
+//! ## T056 范围外说明（ProxyProvider 接入）
+//!
+//! 本引擎仍使用单 `proxy_url`（`Option<&str>`）而非 `ProxyProvider` trait。
+//! 这是 design.md 明确标注的 T056 范围外项：
+//! - FlareSolverr 通过 HTTP API 调用外部服务，proxy_url 仅记录到 `X-Proxy-URL` header
+//!   供 FlareSolverr 服务自身识别代理（不同于 ReqwestEngine 直接通过 reqwest::Proxy 使用代理）
+//! - 接入 ProxyProvider 需要 FlareSolverr 服务端支持代理轮换语义，超出 T056 范围
+//! - 后续如需接入，可在 `with_mode_and_proxy` / `with_url` 等构造函数中扩展
+//!
 //! This engine is particularly useful for:
 //! - Google search (bypasses CAPTCHA)
 //! - Cloudflare-protected sites
@@ -21,12 +30,25 @@
 use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
+use crate::utils::proxy::redact_proxy_url;
 use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// FlareSolverrEngine TLS 模式默认 MRT（15 秒，对应 `EngineTimeoutSettings::tls_seconds`）。
+///
+/// design.md §14 / T060：TLS 模式专注 TLS 指纹对抗，速度较快，15 秒足够；
+/// 超时即切下一引擎（瀑布式）。
+const DEFAULT_FLARESOLVERR_TLS_MRT_SECONDS: u64 = 15;
+
+/// FlareSolverrEngine CDP / Full 模式默认 MRT（30 秒，对应 `EngineTimeoutSettings::cdp_seconds`）。
+///
+/// design.md §14 / T060：CDP/Full 模式涉及完整浏览器自动化，30 秒覆盖绝大多数场景。
+const DEFAULT_FLARESOLVERR_CDP_MRT_SECONDS: u64 = 30;
 
 /// FlareSolverr 工作模式枚举
 ///
@@ -60,8 +82,8 @@ impl FlareSolverrMode {
     pub fn engine_name(&self) -> &'static str {
         match self {
             Self::Full => "flaresolverr",
-            Self::Cdp => "fire_engine_cdp",
-            Self::Tls => "fire_engine_tls",
+            Self::Cdp => "flaresolverr_cdp",
+            Self::Tls => "flaresolverr_tls",
         }
     }
 
@@ -74,6 +96,20 @@ impl FlareSolverrMode {
         match self {
             Self::Full => false,
             Self::Cdp | Self::Tls => true,
+        }
+    }
+
+    /// 获取该模式下的默认 MRT（Maximum Response Time，T060）。
+    ///
+    /// - `Full` / `Cdp`：30 秒（`cdp_seconds`，涉及完整浏览器）
+    /// - `Tls`：15 秒（`tls_seconds`，仅 TLS 指纹对抗，速度较快）
+    ///
+    /// 引擎构造时若未注入 `mrt`，则使用此默认值。
+    /// 生产环境应通过 [`FlareSolverrConfig::mrt`] 从 `EngineTimeoutSettings` 注入。
+    pub fn default_mrt(&self) -> Duration {
+        match self {
+            Self::Full | Self::Cdp => Duration::from_secs(DEFAULT_FLARESOLVERR_CDP_MRT_SECONDS),
+            Self::Tls => Duration::from_secs(DEFAULT_FLARESOLVERR_TLS_MRT_SECONDS),
         }
     }
 }
@@ -91,6 +127,13 @@ pub struct FlareSolverrConfig {
     pub mode: FlareSolverrMode,
     /// 代理 URL（用于 Cdp/Tls 模式记录到 X-Proxy-URL header）
     pub proxy_url: Option<String>,
+    /// 单引擎最大响应时间（MRT，design.md §14 / T060）。
+    ///
+    /// `None` 时按 [`FlareSolverrMode::default_mrt`] 推导（Tls=15s，Cdp/Full=30s）。
+    /// `Some(d)` 时使用注入值，生产环境应从 `EngineTimeoutSettings` 注入：
+    /// - `tls_seconds` → Tls 模式
+    /// - `cdp_seconds` → Cdp / Full 模式
+    pub mrt: Option<Duration>,
 }
 
 impl Default for FlareSolverrConfig {
@@ -110,6 +153,7 @@ impl Default for FlareSolverrConfig {
             session_id: None,
             mode: FlareSolverrMode::default(),
             proxy_url: None,
+            mrt: None,
         }
     }
 }
@@ -125,154 +169,6 @@ fn validate_flaresolverr_url(url: &str) -> Result<String, String> {
             "Invalid protocol '{}': FLARESOLVERR_URL must use http or https",
             parsed.scheme()
         )),
-    }
-}
-
-/// 脱敏代理 URL 中的凭证信息
-///
-/// 若代理 URL 含 `user:pass@host` 形式的 userinfo，将其替换为 `***@host`，
-/// 防止日志泄露凭证。
-///
-/// 失败降级策略：URL 解析失败时返回 `[INVALID-PROXY-URL]` 占位符，绝不
-/// 原样返回可能携带凭证的输入字符串，避免日志泄露风险。
-fn redact_proxy_url(proxy_url: &str) -> String {
-    let parsed = match url::Url::parse(proxy_url) {
-        Ok(u) => u,
-        Err(_) => return "[INVALID-PROXY-URL]".to_string(),
-    };
-
-    let username = parsed.username();
-    let password = parsed.password();
-
-    if username.is_empty() && password.is_none() {
-        // 无凭证，原样返回
-        return proxy_url.to_string();
-    }
-
-    // 重建脱敏 URL：保留 scheme/host/port/path，替换 userinfo
-    let mut redacted = String::new();
-    redacted.push_str(parsed.scheme());
-    redacted.push_str("://***@");
-
-    if let Some(host_str) = parsed.host_str() {
-        redacted.push_str(host_str);
-    }
-    if let Some(port) = parsed.port() {
-        redacted.push_str(&format!(":{}", port));
-    }
-    // 仅在 path 非空且非默认 "/" 时追加（url::Url::parse 会将无路径 URL
-    // 规范化为带尾 "/"，追加它会污染脱敏输出，例如 "host:8080/"）
-    let path = parsed.path();
-    if !path.is_empty() && path != "/" {
-        redacted.push_str(path);
-    }
-    if let Some(query) = parsed.query() {
-        redacted.push_str(&format!("?{}", query));
-    }
-    if let Some(fragment) = parsed.fragment() {
-        redacted.push_str(&format!("#{}", fragment));
-    }
-
-    redacted
-}
-
-#[cfg(test)]
-mod redact_proxy_url_tests {
-    use super::redact_proxy_url;
-
-    #[test]
-    fn test_redact_proxy_url_no_credentials() {
-        // 无凭证的代理 URL 应原样返回
-        assert_eq!(
-            redact_proxy_url("http://proxy.example.com:8080"),
-            "http://proxy.example.com:8080"
-        );
-    }
-
-    #[test]
-    fn test_redact_proxy_url_with_user_only() {
-        // 仅有用户名的代理 URL 应脱敏用户名
-        assert_eq!(
-            redact_proxy_url("http://user@proxy.example.com:8080"),
-            "http://***@proxy.example.com:8080"
-        );
-    }
-
-    #[test]
-    fn test_redact_proxy_url_with_user_and_password() {
-        // 含 user:pass 的代理 URL 应完全脱敏 userinfo
-        assert_eq!(
-            redact_proxy_url("http://user:secret@proxy.example.com:8080"),
-            "http://***@proxy.example.com:8080"
-        );
-    }
-
-    #[test]
-    fn test_redact_proxy_url_invalid_url_returns_placeholder() {
-        // 安全要求：解析失败的 URL 绝不原样返回（防止泄露凭证），
-        // 必须返回 [INVALID-PROXY-URL] 占位符
-        assert_eq!(redact_proxy_url("not a url at all"), "[INVALID-PROXY-URL]");
-    }
-
-    #[test]
-    fn test_redact_proxy_url_preserves_path_and_query() {
-        // 脱敏后应保留 path 和 query
-        assert_eq!(
-            redact_proxy_url("http://user:pass@proxy.example.com:8080/path?q=1"),
-            "http://***@proxy.example.com:8080/path?q=1"
-        );
-    }
-
-    // ========== 边界用例（覆盖 tiangang M1 缺失场景） ==========
-
-    #[test]
-    fn test_redact_proxy_url_https() {
-        // HTTPS 协议应正确处理
-        // 注意：url::Url::parse 会规范化掉默认端口（443 for https）
-        assert_eq!(
-            redact_proxy_url("https://user:pass@proxy.example.com:443"),
-            "https://***@proxy.example.com"
-        );
-    }
-
-    #[test]
-    fn test_redact_proxy_url_ipv6() {
-        // IPv6 主机应保留方括号格式
-        assert_eq!(
-            redact_proxy_url("http://user:pass@[::1]:8080"),
-            "http://***@[::1]:8080"
-        );
-    }
-
-    #[test]
-    fn test_redact_proxy_url_url_encoded_credentials() {
-        // URL 编码的凭证（含特殊字符）应被脱敏（不保留原始编码值）
-        assert_eq!(
-            redact_proxy_url("http://us%40er:p%40ss@proxy.example.com:8080"),
-            "http://***@proxy.example.com:8080"
-        );
-    }
-
-    #[test]
-    fn test_redact_proxy_url_preserves_fragment() {
-        // 脱敏后应保留 fragment
-        // 注意：path "/" 是 url::Url::parse 自动补全的，已在 redact_proxy_url 中过滤掉
-        assert_eq!(
-            redact_proxy_url("http://user:pass@proxy.example.com:8080/#section"),
-            "http://***@proxy.example.com:8080#section"
-        );
-    }
-
-    #[test]
-    fn test_redact_proxy_url_empty_string() {
-        // 空字符串应返回 [INVALID-PROXY-URL]（不 panic）
-        assert_eq!(redact_proxy_url(""), "[INVALID-PROXY-URL]");
-    }
-
-    #[test]
-    fn test_redact_proxy_url_only_userinfo_no_host() {
-        // 无 host 的格式错误 URL 应返回 [INVALID-PROXY-URL]
-        assert_eq!(redact_proxy_url("http://user:pass@"), "[INVALID-PROXY-URL]");
     }
 }
 
@@ -308,6 +204,7 @@ impl FlareSolverrEngine {
             session_id: None,
             mode: FlareSolverrMode::Full,
             proxy_url: None,
+            mrt: None,
         };
         Self::with_config(client, config)
     }
@@ -348,6 +245,7 @@ impl FlareSolverrEngine {
             session_id: None,
             mode: FlareSolverrMode::Cdp,
             proxy_url: proxy_url.map(|s| s.to_string()),
+            mrt: None,
         };
         Self::with_config(client, config)
     }
@@ -376,6 +274,74 @@ impl FlareSolverrEngine {
             session_id: None,
             mode: FlareSolverrMode::Tls,
             proxy_url: proxy_url.map(|s| s.to_string()),
+            mrt: None,
+        };
+        Self::with_config(client, config)
+    }
+
+    /// Create a new FlareSolverrEngine from configuration URL with explicit MRT (Full mode, T060/T061)。
+    ///
+    /// 生产环境应从 `settings.timeouts.engines.cdp_seconds` 注入 `mrt`（Full 模式属 CDP 类）。
+    /// URL 必须为 http/https 协议，否则使用默认占位符（避免 SSRF 风险）。
+    #[must_use]
+    pub fn with_url_and_mrt(client: Arc<Client>, url: impl Into<String>, mrt: Duration) -> Self {
+        let validated = validate_flaresolverr_url(&url.into())
+            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let config = FlareSolverrConfig {
+            url: validated,
+            timeout_seconds: 60,
+            session_id: None,
+            mode: FlareSolverrMode::Full,
+            proxy_url: None,
+            mrt: Some(mrt),
+        };
+        Self::with_config(client, config)
+    }
+
+    /// Create a FlareSolverrEngine in CDP mode with URL, proxy and explicit MRT (T060/T061)。
+    ///
+    /// 生产环境应从 `settings.timeouts.engines.cdp_seconds` 注入 `mrt`。
+    /// URL 必须为 http/https 协议，否则使用默认占位符。
+    #[must_use]
+    pub fn with_cdp_mode_url_and_mrt(
+        client: Arc<Client>,
+        base_url: &str,
+        proxy_url: Option<&str>,
+        mrt: Duration,
+    ) -> Self {
+        let validated = validate_flaresolverr_url(base_url)
+            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let config = FlareSolverrConfig {
+            url: validated,
+            timeout_seconds: 60,
+            session_id: None,
+            mode: FlareSolverrMode::Cdp,
+            proxy_url: proxy_url.map(|s| s.to_string()),
+            mrt: Some(mrt),
+        };
+        Self::with_config(client, config)
+    }
+
+    /// Create a FlareSolverrEngine in TLS mode with URL, proxy and explicit MRT (T060/T061)。
+    ///
+    /// 生产环境应从 `settings.timeouts.engines.tls_seconds` 注入 `mrt`。
+    /// URL 必须为 http/https 协议，否则使用默认占位符。
+    #[must_use]
+    pub fn with_tls_mode_url_and_mrt(
+        client: Arc<Client>,
+        base_url: &str,
+        proxy_url: Option<&str>,
+        mrt: Duration,
+    ) -> Self {
+        let validated = validate_flaresolverr_url(base_url)
+            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let config = FlareSolverrConfig {
+            url: validated,
+            timeout_seconds: 60,
+            session_id: None,
+            mode: FlareSolverrMode::Tls,
+            proxy_url: proxy_url.map(|s| s.to_string()),
+            mrt: Some(mrt),
         };
         Self::with_config(client, config)
     }
@@ -397,6 +363,7 @@ impl FlareSolverrEngine {
             session_id: None,
             mode,
             proxy_url: proxy_url.map(|s| s.to_string()),
+            mrt: None,
         };
         Self::with_config(client, config)
     }
@@ -414,6 +381,18 @@ impl FlareSolverrEngine {
     /// Get the current working mode
     pub fn mode(&self) -> FlareSolverrMode {
         self.config.mode
+    }
+
+    /// 获取引擎级 MRT（用于测试验证 T060）。
+    ///
+    /// 返回构造时注入的 `mrt`；若未注入则按 [`FlareSolverrMode::default_mrt`] 推导：
+    /// - `Full` / `Cdp`：30 秒
+    /// - `Tls`：15 秒
+    #[must_use]
+    pub fn mrt(&self) -> Duration {
+        self.config
+            .mrt
+            .unwrap_or_else(|| self.config.mode.default_mrt())
     }
 
     /// Get the API URL for FlareSolverr
@@ -539,6 +518,15 @@ impl FlareSolverrEngineBuilder {
     /// Set proxy URL (for Cdp/Tls modes)
     pub fn with_proxy(mut self, proxy_url: &str) -> Self {
         self.config.proxy_url = Some(proxy_url.to_string());
+        self
+    }
+
+    /// Set engine MRT (Maximum Response Time, T060/T061).
+    ///
+    /// `None` 时按 [`FlareSolverrMode::default_mrt`] 推导。
+    /// 生产环境应从 `EngineTimeoutSettings` 注入对应字段。
+    pub fn with_mrt(mut self, mrt: Duration) -> Self {
+        self.config.mrt = Some(mrt);
         self
     }
 
@@ -895,5 +883,17 @@ impl ScraperEngine for FlareSolverrEngine {
     /// 是否支持 TLS 指纹对抗（根据 mode 返回）
     fn supports_tls_fingerprint(&self) -> bool {
         self.config.mode.supports_tls_fingerprint()
+    }
+
+    /// T060：覆写 MRT，按 mode 区分（design.md §14）。
+    ///
+    /// - `Tls`：15 秒（`tls_seconds`，速度较快）
+    /// - `Cdp` / `Full`：30 秒（`cdp_seconds`，涉及完整浏览器）
+    ///
+    /// 若构造时注入了 `mrt`，则使用注入值；否则按 mode 默认推导。
+    /// router 顺序 fallback 路径用 `min(remaining, self.mrt())` 包裹单引擎调用，
+    /// 超 MRT 即切下一引擎（瀑布式）。
+    fn max_response_time(&self) -> Duration {
+        self.mrt()
     }
 }

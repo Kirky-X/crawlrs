@@ -7,12 +7,16 @@
 //!
 //! 提供应用程序的通用功能，包括错误类型、常量定义等
 
+pub mod cache_mode;
 pub mod constants;
 pub mod error;
+pub mod http_method;
 pub mod time_utils;
 
+pub use cache_mode::{CacheContext, CacheMode};
 pub use constants::*;
 pub use error::{CrawlRsError, CrawlRsResult};
+pub use http_method::HttpMethod;
 pub use time_utils::{
     from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt, UTC_OFFSET,
 };

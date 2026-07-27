@@ -146,7 +146,9 @@ mod tests {
     async fn test_validate_url_ssrf_double_encoded_blocked() {
         // Double-encoded localhost: %2531%2532%2537%252e%2530%252e%2530%252e%2531
         // These should be caught by scheme/host validation even if decoded
-        assert!(validate_url("http://%31%32%37%2e%30%2e%30%2e%31").await.is_err());
+        assert!(validate_url("http://%31%32%37%2e%30%2e%30%2e%31")
+            .await
+            .is_err());
         assert!(validate_url("http://0x7f000001").await.is_err()); // hex IP for 127.0.0.1
         assert!(validate_url("http://2130706433").await.is_err()); // decimal IP for 127.0.0.1
     }
@@ -154,7 +156,9 @@ mod tests {
     #[tokio::test]
     async fn test_validate_url_ssrf_url_with_credentials_blocked() {
         // URLs with embedded credentials should be blocked (potential bypass)
-        assert!(validate_url("http://user:pass@127.0.0.1/path").await.is_err());
+        assert!(validate_url("http://user:pass@127.0.0.1/path")
+            .await
+            .is_err());
         assert!(validate_url("http://admin@localhost/admin").await.is_err());
     }
 
@@ -174,11 +178,19 @@ mod tests {
     #[tokio::test]
     async fn test_validate_url_ssrf_cloud_metadata_variants() {
         // AWS metadata
-        assert!(validate_url("http://169.254.169.254/latest/meta-data/").await.is_err());
+        assert!(validate_url("http://169.254.169.254/latest/meta-data/")
+            .await
+            .is_err());
         // GCP metadata
-        assert!(validate_url("http://metadata.google.internal/computeMetadata/v1/").await.is_err());
+        assert!(
+            validate_url("http://metadata.google.internal/computeMetadata/v1/")
+                .await
+                .is_err()
+        );
         // Azure metadata
-        assert!(validate_url("http://169.254.169.254/metadata/instance").await.is_err());
+        assert!(validate_url("http://169.254.169.254/metadata/instance")
+            .await
+            .is_err());
     }
 
     #[tokio::test]

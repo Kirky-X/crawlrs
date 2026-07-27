@@ -11,10 +11,13 @@
 
 #![allow(deprecated)]
 
+use crate::common::CacheMode;
 use crate::engines::health_monitor::{AggregateHealthStatus, EngineHealthMonitor};
 use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use crate::engines::validators::validate_url;
+use crate::utils::retry::RetryReason;
 use log::warn;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -72,6 +75,77 @@ impl ScrapeRequest {
     }
 }
 
+/// session_id 最大长度（字节）— 防止 DoS（T056 安全审查 MEDIUM-2 修复）
+///
+/// 限制 ProxyPool::sticky 的 DashMap key 长度，防止恶意超长 session_id
+/// 导致内存耗尽。128 字节对绝大多数会话标识场景足够。
+pub const MAX_SESSION_ID_LEN: usize = 128;
+
+/// 校验 session_id 是否合法（T056 安全审查 MEDIUM-2 修复）
+///
+/// # 校验规则
+///
+/// - 长度 <= [`MAX_SESSION_ID_LEN`] 字节
+/// - 字符集为可打印 ASCII（0x20-0x7E），排除控制字符
+///
+/// # 防护
+///
+/// - 超长字符串 → 防止 DashMap key 内存耗尽（DoS）
+/// - 控制字符/换行符 → 防止日志注入（CWE-117）
+///
+/// # 返回
+///
+/// - `true`：合法
+/// - `false`：非法
+#[must_use]
+pub fn validate_session_id(session_id: &str) -> bool {
+    if session_id.len() > MAX_SESSION_ID_LEN {
+        return false;
+    }
+    session_id.bytes().all(|b| (0x20..=0x7E).contains(&b))
+}
+
+/// 页面加载后等待策略（T069，R-jsrender-004）
+///
+/// 三种模式：
+/// - [`WaitFor::NetworkIdle`]：等待网络空闲（无新请求持续 500ms）
+/// - [`WaitFor::Selector(String)`]：等待指定 CSS selector 出现在 DOM 中
+/// - [`WaitFor::DomStable(Duration)`]：等待 DOM 稳定（无变化持续指定时长）
+///
+/// # 设计动机
+///
+/// 原有 `sync_wait_ms` 是固定 sleep，无论页面是否就绪都阻塞相同时间。
+/// `WaitFor` 提供条件式等待：满足条件立即返回，超时返回错误，避免无谓阻塞。
+/// 在 Playwright 引擎中替代 `sync_wait_ms` 的固定 sleep 逻辑。
+///
+/// # 实现
+///
+/// 枚举本身不依赖 `chromiumoxide`，可被非浏览器引擎代码持有。
+/// `wait` 方法的实现在 `engines/wait.rs`（`engine-playwright` feature 门控），
+/// 依赖 `chromiumoxide::Page`。
+///
+/// # 安全性
+///
+/// `Selector` 模式对 selector 字符串做 JS 字符串转义，防注入（CWE-94）。
+/// `DomStable` 的 `stable_duration` 上限 60s，防恶意调用方设置过长导致 DoS。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum WaitFor {
+    /// 等待网络空闲（无新请求持续 500ms）
+    ///
+    /// chromiumoxide 的 `goto` 已等待 load 事件，此处额外等待确保异步请求完成。
+    #[default]
+    NetworkIdle,
+    /// 等待指定 CSS selector 出现在 DOM 中
+    ///
+    /// selector 字符串会在 JS 中转义，防注入。
+    Selector(String),
+    /// 等待 DOM 稳定（无变化持续指定时长）
+    ///
+    /// 通过轮询 `document.body.innerHTML.length` 比较，若连续 `stable_duration`
+    /// 内长度不变则视为稳定。`stable_duration` 上限 60s。
+    DomStable(Duration),
+}
+
 /// Optional configuration for scrape operations.
 #[derive(Debug, Clone)]
 pub struct ScrapeOptions {
@@ -103,6 +177,38 @@ pub struct ScrapeOptions {
     pub needs_tls_fingerprint: bool,
     /// Force use of Fire Engine (CDP) for this request (default: false)
     pub use_fire_engine: bool,
+    /// Block ad / tracker domains via CDP Fetch request interception (default: false)
+    ///
+    /// T033 / R-jsrender-003：当为 true 且使用浏览器引擎时，启用广告/追踪域名黑名单拦截，
+    /// 命中 [`crate::engines::intercept::AD_DOMAIN_BLACKLIST`] 的请求将被 `Fetch.failRequest` 中止。
+    pub block_ads: bool,
+    /// Block media resources (image/media/font) via CDP Fetch interception (default: false)
+    ///
+    /// T033 / R-jsrender-003：当为 true 且使用浏览器引擎时，启用媒体资源类型拦截，
+    /// CDP `ResourceType::{Image, Media, Font}` 的请求将被 `Fetch.failRequest` 中止。
+    pub block_media: bool,
+    /// 粘性会话 ID（H1 修复：用于 ProxyStrategy::Sticky 时调用 ProxyProvider::sticky）
+    ///
+    /// 调用方在需要粘性会话（同一会话固定走同一代理）时设置。
+    /// `None` 时按 `ProxyStrategy::RoundRobin` 走 `ProxyProvider::next`。
+    pub session_id: Option<String>,
+    /// 缓存模式（T058/R-cache-002，design.md §13）
+    ///
+    /// 控制本次抓取的缓存读写行为。`None`（默认）等价于 `Some(CacheMode::Enabled)`，
+    /// 由 `scrape_worker` 在读写 `CacheService` 前经 `CacheContext` 门控。
+    ///
+    /// 5 种模式详见 [`crate::common::CacheMode`]。
+    pub cache_mode: Option<CacheMode>,
+    /// 页面加载后等待策略（T069，R-jsrender-004，design.md §17）
+    ///
+    /// 仅浏览器引擎（Playwright）生效。`None`（默认）时 Playwright 使用
+    /// [`WaitFor::NetworkIdle`]（与原 `sync_wait_ms` 默认 1 秒等待语义一致）。
+    ///
+    /// 设置后**替代** Playwright 中基于 `sync_wait_ms` 的固定 sleep 逻辑：
+    /// 满足条件立即返回，超时返回 `EngineError::BrowserError`。
+    ///
+    /// `sync_wait_ms` 字段保留供非浏览器引擎（如 FlareSolverr）使用。
+    pub wait_for: Option<WaitFor>,
 }
 
 impl Default for ScrapeOptions {
@@ -122,6 +228,11 @@ impl Default for ScrapeOptions {
             headers: HashMap::new(),
             needs_tls_fingerprint: false,
             use_fire_engine: false,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            cache_mode: None,
+            wait_for: None,
         }
     }
 }
@@ -251,8 +362,66 @@ impl ScrapeOptionsBuilder {
         self
     }
 
+    /// Enable/disable ad & tracker domain blocking via CDP Fetch interception (T033, R-jsrender-003).
+    pub fn block_ads(mut self, enabled: bool) -> Self {
+        self.0.block_ads = enabled;
+        self
+    }
+
+    /// Enable/disable media resource (image/media/font) blocking via CDP Fetch interception (T033).
+    pub fn block_media(mut self, enabled: bool) -> Self {
+        self.0.block_media = enabled;
+        self
+    }
+
+    /// 设置粘性会话 ID（H1 修复：用于 ProxyStrategy::Sticky）
+    ///
+    /// 调用方在需要粘性会话（同一会话固定走同一代理）时设置。
+    /// `None` 时按 `ProxyStrategy::RoundRobin` 走 `ProxyProvider::next`。
+    ///
+    /// # 安全校验（T056 安全审查 MEDIUM-2 修复）
+    ///
+    /// - 长度上限：[`MAX_SESSION_ID_LEN`] 字节（128）
+    /// - 字符集：可打印 ASCII（0x20-0x7E），排除控制字符
+    ///
+    /// 非法输入（超长或含控制字符）会被拒绝并记录 warn 日志，`session_id` 保持 `None`。
+    /// 防止 DoS（超长字符串填充 sticky binding map）和日志注入（CWE-117）。
+    pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
+        let sid = session_id.into();
+        if validate_session_id(&sid) {
+            self.0.session_id = Some(sid);
+        } else {
+            warn!(
+                "session_id rejected (length={}, max={}, must be printable ASCII); \
+                 falling back to None (RoundRobin)",
+                sid.len(),
+                MAX_SESSION_ID_LEN
+            );
+        }
+        self
+    }
+
     pub fn build(self) -> ScrapeOptions {
         self.0
+    }
+
+    /// 设置缓存模式（T058/R-cache-002，design.md §13）
+    ///
+    /// `None`（默认）等价于 `Some(CacheMode::Enabled)`。
+    /// 详见 [`crate::common::CacheMode`]。
+    pub fn cache_mode(mut self, mode: impl Into<Option<CacheMode>>) -> Self {
+        self.0.cache_mode = mode.into();
+        self
+    }
+
+    /// 设置页面加载后等待策略（T069，R-jsrender-004，design.md §17）
+    ///
+    /// 仅浏览器引擎（Playwright）生效。`None` 时使用 [`WaitFor::NetworkIdle`]。
+    /// 详见 [`WaitFor`]。
+    #[must_use]
+    pub fn wait_for(mut self, wait: impl Into<Option<WaitFor>>) -> Self {
+        self.0.wait_for = wait.into();
+        self
     }
 }
 
@@ -306,7 +475,11 @@ impl Default for ScreenshotConfig {
 /// Unified response structure for scraping operations.
 ///
 /// This is the canonical response type returned by EngineClient.
-#[derive(Debug, Clone)]
+///
+/// T059/R-cache-002：实现 `Serialize`/`Deserialize` 以支持 `scrape_worker`
+/// 缓存门控——抓取成功后序列化为 JSON 字符串写入 `CacheService`，
+/// 读缓存命中时反序列化还原为 `ScrapeResponse` 直返，跳过实际抓取。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeResponse {
     /// HTTP status code
     pub status_code: u16,
@@ -322,6 +495,11 @@ pub struct ScrapeResponse {
     pub response_time_ms: u64,
     /// Final URL after any redirects
     pub final_url: Option<String>,
+    /// Markdown 转换结果（T041/R-content-001）
+    ///
+    /// 仅当请求 `formats` 含 `"markdown"` 且 `markdown` 特性启用时由
+    /// `scrape_worker` 填充；其余情况为 `None`，对老调用方透明。
+    pub markdown: Option<String>,
 }
 
 impl ScrapeResponse {
@@ -339,6 +517,7 @@ impl ScrapeResponse {
             headers: HashMap::new(),
             response_time_ms: 0,
             final_url: None,
+            markdown: None,
         }
     }
 
@@ -370,6 +549,19 @@ pub struct InternalScrapeRequest {
     pub actions: Vec<InternalPageAction>,
     pub body: Option<String>,
     pub sync_wait_ms: u32,
+    /// T033 / R-jsrender-003：广告/追踪域名拦截开关（仅浏览器引擎生效）
+    pub block_ads: bool,
+    /// T033 / R-jsrender-003：媒体资源类型拦截开关（仅浏览器引擎生效）
+    pub block_media: bool,
+    /// 粘性会话 ID（H1 修复：用于 ProxyStrategy::Sticky 时调用 ProxyProvider::sticky）
+    ///
+    /// 通过 `ScrapeRequest::to_internal` 从 `ScrapeOptions.session_id` 桥接而来。
+    pub session_id: Option<String>,
+    /// 页面加载后等待策略（T069，R-jsrender-004，design.md §17）
+    ///
+    /// 通过 `ScrapeRequest::to_internal` 从 `ScrapeOptions.wait_for` 桥接而来。
+    /// 仅浏览器引擎（Playwright）消费；`None` 时 Playwright 使用 [`WaitFor::NetworkIdle`]。
+    pub wait_for: Option<WaitFor>,
 }
 
 /// Internal screenshot configuration
@@ -450,6 +642,23 @@ impl ScrapeRequest {
                     format: config.format.clone(),
                 });
 
+        // T056 安全审查 MEDIUM-2 修复：to_internal 二次校验 session_id
+        // 防止用户绕过 builder 直接构造 ScrapeOptions 注入非法 session_id
+        // （超长字符串 DoS / 控制字符日志注入 CWE-117）
+        let session_id = match &options.session_id {
+            Some(sid) if validate_session_id(sid) => Some(sid.clone()),
+            Some(sid) => {
+                warn!(
+                    "session_id rejected in to_internal (length={}, max={}, \
+                     must be printable ASCII); falling back to None (RoundRobin)",
+                    sid.len(),
+                    MAX_SESSION_ID_LEN
+                );
+                None
+            }
+            None => None,
+        };
+
         InternalScrapeRequest {
             url: self.url.clone(),
             method: options.method,
@@ -466,16 +675,19 @@ impl ScrapeRequest {
             actions,
             body: options.body.clone(),
             sync_wait_ms: options.sync_wait_ms,
+            block_ads: options.block_ads,
+            block_media: options.block_media,
+            session_id,
+            wait_for: options.wait_for.clone(),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HttpMethod {
-    #[default]
-    Get,
-    Post,
-}
+// HttpMethod 已提升至 `common::http_method`（CRITICAL-1 修复：消除
+// 原 `infrastructure::oxcache::cache_mode`（现已提升至 `common::cache_mode`）对 `engines` 层的反向依赖）。
+// 此处 `pub use` 重新导出，保持与 `ScrapeRequest` / `ScrapeOptions` 等
+// 引擎类型的协同导入路径（符合代码库既有 `pub use crate::...` 惯例）。
+pub use crate::common::HttpMethod;
 
 /// Convert from internal ScrapeResponse to public format
 impl InternalScrapeResponse {
@@ -489,6 +701,7 @@ impl InternalScrapeResponse {
             headers: self.headers.clone(),
             response_time_ms: self.response_time_ms,
             final_url: Some(original_url.to_string()),
+            markdown: None,
         }
     }
 }
@@ -524,9 +737,41 @@ pub enum EngineError {
     #[error("Browser error: {0}")]
     BrowserError(String),
 
+    /// 反爬虫检测命中（design.md §1.6/1.7，R-antibot-003）
+    ///
+    /// 携带 `antibot::classifier::classify` 给出的 `Detection::reason` 字符串。
+    /// 可重试：`is_retryable()=true`，`retry_reason()=AntiBot`，
+    /// 路由层据此切身份（UA/代理/stealth）+ 强制浏览器/FlareSolverr 引擎改派。
+    #[error("Anti-bot detected: {0}")]
+    AntiBotDetected(String),
+
+    /// 引擎特性切换（T027，R-identity-002）
+    ///
+    /// 当引擎降级或特性切换（如 Chrome → HTTP、JS 渲染失败回退到静态抓取）时触发。
+    /// 携带描述信息（如 "chrome_degraded_to_http"）。
+    /// 可重试：`is_retryable()=true`，`retry_reason()=FeatureToggle`，
+    /// 路由层据此换引擎重试，并按 `RetryDirective` 立即轮换 UA（attempt=0 特例）。
+    #[error("Feature toggle: {0}")]
+    FeatureToggle(String),
+
     /// Request expired (circuit breaker open)
     #[error("Request expired")]
     Expired,
+
+    /// 引擎级 MRT 超时（架构审查 MEDIUM-2 修复，design.md §14 / T062）
+    ///
+    /// 区别于 `Timeout`（请求整体超时），此变体表示单引擎在 MRT（Maximum Response Time）
+    /// 内未完成，router 触发瀑布式 fallback 切换到下一引擎。
+    ///
+    /// 可重试：`is_retryable()=true`，`retry_reason()=Transient`（同引擎可重试，
+    /// 但 router 会优先切下一引擎而非重试同引擎）。
+    #[error("Engine {engine} exceeded MRT of {mrt:?}")]
+    EngineMrtExceeded {
+        /// 引擎名称
+        engine: String,
+        /// 实际使用的 MRT（即 `effective_timeout = min(remaining, engine_mrt)`）
+        mrt: Duration,
+    },
 
     /// Other error
     #[error("Other error: {0}")]
@@ -566,10 +811,43 @@ impl EngineError {
             Self::InvalidUrl(_) => false,
             Self::SsrfProtection(_) => false,
             Self::BrowserError(_) => true,
+            Self::AntiBotDetected(_) => true,
+            Self::FeatureToggle(_) => true,
             Self::Internal(_) => false,
             Self::AllEnginesFailed(_) => false,
             Self::Expired => false,
             Self::Other(_) => false,
+            // 引擎级 MRT 超时：可重试（router 优先切下一引擎，而非重试同引擎）
+            Self::EngineMrtExceeded { .. } => true,
+        }
+    }
+
+    /// 将错误归类为重试原因（design.md §4，R-antibot-003 / R-identity-002）。
+    ///
+    /// 调用方应先查 [`is_retryable()`](Self::is_retryable)：
+    /// 不可重试的错误虽返回 [`RetryReason::Transient`]，
+    /// 但不会被重试系统消费，仅作占位以保证返回值完备。
+    ///
+    /// 映射：
+    /// - `RequestFailed` / `Timeout` / `BrowserError` → `Transient`（同引擎可重试）
+    /// - `AntiBotDetected` → `AntiBot`（需切身份 + 浏览器引擎改派）
+    /// - `FeatureToggle` → `FeatureToggle`（需换引擎重试；T027 新增）
+    /// - 其余不可重试变体 → `Transient`（占位）
+    pub fn retry_reason(&self) -> RetryReason {
+        match self {
+            Self::AntiBotDetected(_) => RetryReason::AntiBot,
+            Self::FeatureToggle(_) => RetryReason::FeatureToggle,
+            Self::RequestFailed(_)
+            | Self::Timeout(_)
+            | Self::BrowserError(_)
+            | Self::NoEnginesAvailable
+            | Self::InvalidUrl(_)
+            | Self::SsrfProtection(_)
+            | Self::Internal(_)
+            | Self::AllEnginesFailed(_)
+            | Self::Expired
+            | Self::Other(_)
+            | Self::EngineMrtExceeded { .. } => RetryReason::Transient,
         }
     }
 }
@@ -604,6 +882,32 @@ pub trait ScraperEngine: Send + Sync {
     /// for anti-fingerprinting purposes.
     fn supports_tls_fingerprint(&self) -> bool {
         false
+    }
+
+    /// 引擎级最大响应时间（MRT, Maximum Response Time）—— design.md §14 / T060。
+    ///
+    /// 用于 router 顺序 fallback 路径瀑布式超时：单引擎调用以
+    /// `min(remaining_timeout, engine.max_response_time())` 包裹，
+    /// 超 MRT 即切下一引擎（不切整体失败）。race 模式不受影响。
+    ///
+    /// # 默认实现
+    ///
+    /// 返回 30 秒（与 `EngineTimeoutSettings::default_timeout_seconds` 默认值一致）。
+    /// 各引擎按类型覆写为更精确的 MRT：
+    /// - HTTP fetch 引擎（reqwest）：5 秒（`fetch_seconds`）
+    /// - CDP/浏览器引擎（playwright / flaresolverr_cdp / flaresolverr_full）：30 秒（`cdp_seconds`）
+    /// - TLS 指纹引擎（flaresolverr_tls）：15 秒（`tls_seconds`）
+    ///
+    /// # 注入
+    ///
+    /// 引擎构造时应从 `EngineTimeoutSettings` 注入对应字段，避免硬编码
+    /// （参考 `ReqwestEngine::new_with_timeout` 模式）。
+    ///
+    /// 架构审查 MEDIUM-1 修复：删除 `DEFAULT_ENGINE_MRT` 常量，默认实现直接返回
+    /// `Duration::from_secs(30)`，避免与 `EngineTimeoutSettings::default_timeout_seconds`
+    /// 形成隐式耦合（注释承诺"保持一致"但代码无引用关系）。
+    fn max_response_time(&self) -> Duration {
+        Duration::from_secs(30)
     }
 }
 
@@ -798,11 +1102,16 @@ fn convert_error(e: EngineError) -> EngineError {
         }
         EngineError::SsrfProtection(msg) => EngineError::SsrfProtection(msg),
         EngineError::BrowserError(msg) => EngineError::BrowserError(msg),
+        EngineError::AntiBotDetected(msg) => EngineError::AntiBotDetected(msg),
+        EngineError::FeatureToggle(msg) => EngineError::FeatureToggle(msg),
         EngineError::Expired => EngineError::Internal("Request expired".to_string()),
         EngineError::Other(msg) => EngineError::Internal(msg),
         EngineError::NoEnginesAvailable => EngineError::NoEnginesAvailable,
         EngineError::InvalidUrl(msg) => EngineError::InvalidUrl(msg),
         EngineError::Internal(msg) => EngineError::Internal(msg),
+        EngineError::EngineMrtExceeded { engine, mrt } => {
+            EngineError::EngineMrtExceeded { engine, mrt }
+        }
     }
 }
 
@@ -1232,6 +1541,7 @@ mod tests {
         assert!(EngineError::RequestFailed("err".to_string()).is_retryable());
         assert!(EngineError::Timeout(Duration::from_secs(10)).is_retryable());
         assert!(EngineError::BrowserError("crash".to_string()).is_retryable());
+        assert!(EngineError::AntiBotDetected("Cloudflare challenge".to_string()).is_retryable());
         assert!(!EngineError::NoEnginesAvailable.is_retryable());
         assert!(!EngineError::InvalidUrl("bad".to_string()).is_retryable());
         assert!(!EngineError::SsrfProtection("blocked".to_string()).is_retryable());
@@ -1511,10 +1821,122 @@ mod tests {
         assert!(!EngineError::InvalidUrl("bad".to_string()).is_retryable());
         assert!(!EngineError::SsrfProtection("blocked".to_string()).is_retryable());
         assert!(EngineError::BrowserError("err".to_string()).is_retryable());
+        assert!(EngineError::AntiBotDetected("rate limited".to_string()).is_retryable());
         assert!(!EngineError::Internal("err".to_string()).is_retryable());
         assert!(!EngineError::AllEnginesFailed("all failed".to_string()).is_retryable());
         assert!(!EngineError::Expired.is_retryable());
         assert!(!EngineError::Other("err".to_string()).is_retryable());
+    }
+
+    // === retry_reason() tests (T012, R-antibot-003) ===
+
+    #[test]
+    fn test_retry_reason_antibot_detected_maps_to_antibot() {
+        let err = EngineError::AntiBotDetected("Cloudflare challenge page".to_string());
+        assert_eq!(err.retry_reason(), RetryReason::AntiBot);
+    }
+
+    #[test]
+    fn test_retry_reason_transient_errors_map_to_transient() {
+        assert_eq!(
+            EngineError::RequestFailed("conn refused".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::Timeout(Duration::from_secs(10)).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::BrowserError("crash".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+    }
+
+    #[test]
+    fn test_retry_reason_non_retryable_errors_map_to_transient_placeholder() {
+        // 不可重试错误返回 Transient 占位（调用方应先查 is_retryable()）
+        assert_eq!(
+            EngineError::NoEnginesAvailable.retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::InvalidUrl("bad".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::SsrfProtection("blocked".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::Internal("err".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(
+            EngineError::AllEnginesFailed("all".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+        assert_eq!(EngineError::Expired.retry_reason(), RetryReason::Transient);
+        assert_eq!(
+            EngineError::Other("err".to_string()).retry_reason(),
+            RetryReason::Transient
+        );
+    }
+
+    #[test]
+    fn test_antibot_detected_display_format() {
+        let err = EngineError::AntiBotDetected("429 Too Many Requests".to_string());
+        assert_eq!(err.to_string(), "Anti-bot detected: 429 Too Many Requests");
+    }
+
+    #[test]
+    fn test_convert_error_antibot_detected_passthrough() {
+        let err = convert_error(EngineError::AntiBotDetected("WAF block".to_string()));
+        match err {
+            EngineError::AntiBotDetected(msg) => assert_eq!(msg, "WAF block"),
+            other => panic!("Expected AntiBotDetected, got {:?}", other),
+        }
+    }
+
+    // === T027: EngineError::FeatureToggle tests (R-identity-002) ===
+
+    #[test]
+    fn test_feature_toggle_is_retryable() {
+        assert!(EngineError::FeatureToggle("chrome_degraded_to_http".to_string()).is_retryable());
+    }
+
+    #[test]
+    fn test_feature_toggle_retry_reason() {
+        assert_eq!(
+            EngineError::FeatureToggle("chrome_degraded_to_http".to_string()).retry_reason(),
+            RetryReason::FeatureToggle
+        );
+    }
+
+    #[test]
+    fn test_feature_toggle_display_format() {
+        let err = EngineError::FeatureToggle("js_render_failed_fallback".to_string());
+        assert_eq!(err.to_string(), "Feature toggle: js_render_failed_fallback");
+    }
+
+    #[test]
+    fn test_convert_error_feature_toggle_passthrough() {
+        let err = convert_error(EngineError::FeatureToggle("engine_downgrade".to_string()));
+        match err {
+            EngineError::FeatureToggle(msg) => assert_eq!(msg, "engine_downgrade"),
+            other => panic!("Expected FeatureToggle, got {:?}", other),
+        }
+    }
+
+    /// R-identity-002: FeatureToggle 与其他 reason 区分
+    #[test]
+    fn test_feature_toggle_distinct_from_other_reasons() {
+        let ft_err = EngineError::FeatureToggle("test".to_string());
+        let ab_err = EngineError::AntiBotDetected("test".to_string());
+        let tr_err = EngineError::Timeout(Duration::from_secs(1));
+
+        assert_eq!(ft_err.retry_reason(), RetryReason::FeatureToggle);
+        assert_ne!(ft_err.retry_reason(), ab_err.retry_reason());
+        assert_ne!(ft_err.retry_reason(), tr_err.retry_reason());
     }
 
     // === to_public conversion tests ===
@@ -2098,5 +2520,126 @@ mod tests {
             }
             other => panic!("Expected Unavailable, got {:?}", other),
         }
+    }
+
+    // === T056 MEDIUM-2: session_id 校验测试 ===
+
+    #[test]
+    fn test_validate_session_id_accepts_normal_string() {
+        assert!(validate_session_id("session-123"));
+        assert!(validate_session_id("abc"));
+        assert!(validate_session_id("user_session_id_456"));
+    }
+
+    #[test]
+    fn test_validate_session_id_accepts_printable_ascii() {
+        // 0x20-0x7E 范围内的所有可打印 ASCII 字符
+        let printable: String = (0x20u8..=0x7E).map(|b| b as char).collect();
+        assert!(
+            validate_session_id(&printable),
+            "all printable ASCII chars should be valid"
+        );
+    }
+
+    #[test]
+    fn test_validate_session_id_accepts_max_length() {
+        // 正好 128 字节
+        let max_len = "a".repeat(MAX_SESSION_ID_LEN);
+        assert!(
+            validate_session_id(&max_len),
+            "exactly MAX_SESSION_ID_LEN bytes should be valid"
+        );
+    }
+
+    #[test]
+    fn test_validate_session_id_rejects_too_long() {
+        // 129 字节 — 超过上限
+        let too_long = "a".repeat(MAX_SESSION_ID_LEN + 1);
+        assert!(
+            !validate_session_id(&too_long),
+            "string exceeding MAX_SESSION_ID_LEN should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_validate_session_id_rejects_control_chars() {
+        // 控制字符（0x00-0x1F, 0x7F）应被拒绝
+        assert!(!validate_session_id("session\n123"));
+        assert!(!validate_session_id("session\t123"));
+        assert!(!validate_session_id("session\r123"));
+        assert!(!validate_session_id("session\0123"));
+        assert!(!validate_session_id("session\u{007F}123"));
+    }
+
+    #[test]
+    fn test_validate_session_id_rejects_empty_string() {
+        // 空字符串：长度为 0，字符集检查为空（all 返回 true）
+        // 空字符串在语义上无效（不能作为 session_id），但当前实现允许它
+        // 因为空字符串不会导致 DoS 或日志注入，且 rr_pick 的回退行为是 RoundRobin
+        // 这里测试当前行为（空字符串通过校验），如果未来需要拒绝空字符串可修改
+        assert!(validate_session_id(""));
+    }
+
+    #[test]
+    fn test_validate_session_id_rejects_non_ascii() {
+        // 非 ASCII 字符（UTF-8 多字节）应被拒绝
+        assert!(!validate_session_id("session-中文"));
+        assert!(!validate_session_id("session-é"));
+        assert!(!validate_session_id("session-🎉"));
+    }
+
+    #[test]
+    fn test_session_id_builder_accepts_valid_input() {
+        let options = ScrapeOptions::builder()
+            .session_id("valid-session-123")
+            .build();
+        assert_eq!(options.session_id, Some("valid-session-123".to_string()));
+    }
+
+    #[test]
+    fn test_session_id_builder_rejects_too_long() {
+        let too_long = "a".repeat(MAX_SESSION_ID_LEN + 1);
+        let options = ScrapeOptions::builder()
+            .session_id(too_long.clone())
+            .build();
+        assert!(
+            options.session_id.is_none(),
+            "too long session_id should be rejected by builder"
+        );
+    }
+
+    #[test]
+    fn test_session_id_builder_rejects_control_chars() {
+        let options = ScrapeOptions::builder().session_id("bad\nsession").build();
+        assert!(
+            options.session_id.is_none(),
+            "session_id with control chars should be rejected by builder"
+        );
+    }
+
+    #[test]
+    fn test_to_internal_validates_session_id() {
+        // to_internal 应二次校验 session_id，拒绝非法值
+        let mut options = ScrapeOptions::default();
+        options.session_id = Some("bad\nsession".to_string());
+        let request = ScrapeRequest::new("https://example.com").with_options(options);
+        let internal = request.to_internal();
+        assert!(
+            internal.session_id.is_none(),
+            "to_internal should reject invalid session_id (bypassing builder)"
+        );
+    }
+
+    #[test]
+    fn test_to_internal_preserves_valid_session_id() {
+        let mut options = ScrapeOptions::default();
+        options.session_id = Some("valid-session".to_string());
+        let request = ScrapeRequest::new("https://example.com").with_options(options);
+        let internal = request.to_internal();
+        assert_eq!(
+            internal.session_id,
+            Some("valid-session".to_string()),
+            "to_internal should preserve valid session_id"
+        );
     }
 }

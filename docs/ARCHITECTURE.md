@@ -19,6 +19,7 @@
 - [System Architecture](#system-architecture)
 - [Layer Architecture](#layer-architecture)
 - [Core Components](#core-components)
+  - [Feature Gate Architecture](#feature-gate-architecture)
 - [Data Flow](#data-flow)
 - [Crawling Engines](#crawling-engines)
 - [Queue System](#queue-system)
@@ -401,9 +402,9 @@ domain/
 │   ├── webhook_sender.rs
 │   ├── audit_service.rs
 │   ├── audit_log_builder.rs
-│   ├── auth_scope_service.rs
 │   ├── geo_location.rs
 │   ├── llm_service.rs
+│   ├── llm_provider_strategy.rs  # T006/R-sec-006: ProviderStrategy 策略模式（OllamaStrategy/OpenAiStrategy）
 │   ├── relevance_scorer.rs
 │   └── retry_handler.rs
 ├── auth/                   # Authentication models
@@ -566,15 +567,15 @@ dbnexus provides connection pooling, permission control, migration framework, me
 | `tasks_backlog` | Backlog of expired/pending tasks for reprocessing |
 | `crawls` | Crawl configurations (depth, patterns) |
 | `scrape_results` | Scrape results (raw HTML, markdown, metadata) |
-| `api_keys` | API key management (bcrypt hashed) |
+| `api_keys` | ⚠️ PARTIALLY DEPRECATED (0.2.0): `key_hash`/`scopes` 列由 garrison 接管，仅保留 `id`/`team_id`/`key` 列供 `api_key_id→team_id` 反查映射（`deprecated_at` 标记） |
 | `webhooks` | Webhook configurations (URL, events, retry) |
 | `webhook_events` | Webhook event logs and delivery status |
-| `audit_logs` | API access and event audit logs |
+| `audit_logs` | API access and event audit logs (garrison `audit-log` 也写入此表) |
 | `team` | Team accounts and settings |
 | `credits` | Team credit balances |
 | `credits_transactions` | Credit usage history |
 | `geo_restriction_logs` | Geographic restriction check logs |
-| `auth_scopes` | API key permission scopes |
+| `auth_scopes` | ⚠️ DEPRECATED (0.2.0): garrison RBAC 接管权限映射，本表不再写入（`deprecated_at` 标记，仅作历史审计只读） |
 
 **Cache Layer:**
 
@@ -603,7 +604,7 @@ DI uses **trait-kit 0.3** with async module builders. Three top-level modules ar
 - `EngineModule` - ReqwestEngine, PlaywrightEngine, FlareSolverrEngine, EngineRouter, EngineClient
 - `ServiceModule` - Rate limiting, search, webhook, team services, workers
 
-**CrawlRsState** is the runtime state extracted from the built DI container:
+**CrawlRsState** is the runtime state extracted from the built DI container. Since v0.2.0 (`feature-gate-optional-modules` change), 7 fields are gated by `#[cfg(feature = "...")]` and only compiled when the corresponding business-capability feature is enabled:
 
 ```rust
 #[derive(Clone)]
@@ -613,12 +614,16 @@ pub struct CrawlRsState {
     pub credits_repo: Arc<dyn CreditsRepository>,
     pub crawl_repo: Arc<dyn CrawlRepository>,
     pub result_repo: Arc<dyn ScrapeResultRepository>,
+    #[cfg(feature = "webhook")]
     pub webhook_repo: Arc<dyn WebhookRepository>,
+    #[cfg(feature = "webhook")]
     pub webhook_event_repo: Arc<dyn WebhookEventRepository>,
     pub tasks_backlog_repo: Arc<dyn TasksBacklogRepository>,
     pub task_queue: Arc<dyn TaskQueue>,
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
+    #[cfg(feature = "teams")]
     pub team_service: Arc<TeamService>,
+    // webhook_service 始终编译（trait），webhook-off 时装配 NoopWebhookService
     pub webhook_service: Arc<dyn WebhookService>,
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
     pub team_semaphore: Arc<TeamSemaphore>,
@@ -627,18 +632,29 @@ pub struct CrawlRsState {
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     pub search_client: Arc<SearchClient>,
     pub search_service: Arc<dyn SearchServiceTrait>,
-    pub auth_scope_service: Option<Arc<AuthScopeService>>,
     pub llm_service: Arc<dyn LLMServiceTrait>,
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
     pub regex_cache: Arc<RegexCache>,
     pub audit_service: Arc<dyn AuditServiceTrait>,
+    #[cfg(feature = "webhook")]
     pub webhook_worker: Arc<WebhookWorker>,
     pub backlog_worker: Arc<BacklogWorker>,
     pub expiration_worker: Arc<ExpirationWorker>,
+    #[cfg(feature = "teams")]
     pub geo_location_service: Arc<dyn GeoLocationService>,
+    #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
 ```
+
+| Field | Gated By | Off-mode Behavior |
+|-------|----------|-------------------|
+| `webhook_repo` / `webhook_event_repo` / `webhook_worker` | `webhook` | Field not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn block skipped |
+| `team_service` / `geo_location_service` / `geo_restriction_repo` | `teams` | Field not compiled; `/v1/teams/*` routes not registered; `extract_handler` signature loses GR generic |
+| `webhook_service` | (none, always compiled) | webhook-off: assembled with `NoopWebhookService` (no-op trait impl) |
+| `rate_limiting_service` | (none, always compiled) | rate-limit-off: assembled with `NoopRateLimitingService` (always-allow trait impl) |
+
+See [Feature Gate Architecture](#feature-gate-architecture) for the full gating matrix.
 
 State is injected into Axum handlers via `Extension<CrawlRsState>`.
 
@@ -653,6 +669,100 @@ SettingsModule (config: Arc<Settings>)
          └── EngineModule → EngineComponents (depends: HttpModule, SettingsModule)
                 └── ServiceModule → ServicesComponents (depends: all above)
 ```
+
+### Feature Gate Architecture
+
+Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 business-capability features** that allow operators to build stripped-down binaries for single-tenant / no-auth / no-webhook / no-rate-limit deployments. The gating strategy follows two complementary patterns:
+
+1. **Field/module gating** (`#[cfg(feature = "...")]` on `pub mod`/struct field/fn) — gated symbols are **not compiled** when the feature is off, eliminating dead code and reducing binary size.
+2. **Noop trait injection** — for traits that business logic calls unconditionally (`WebhookService`, `RateLimitingService`), the trait is always compiled but the DI container assembles a no-op implementation when the feature is off, preserving call-site compatibility.
+
+### Feature Matrix
+
+| Feature | Default | Depends On | Off-mode Behavior |
+|---------|---------|------------|-------------------|
+| `teams` | on | `auth` | `/v1/teams/*` routes not registered; `extract_handler` loses GR generic + geo-restriction block; `CrawlRsState.{team_service, geo_location_service, geo_restriction_repo}` not compiled; `team_id` falls back to `DEFAULT_TEAM_ID` |
+| `auth` | on | `dep:garrison` | **0.2.0 起 garrison v0.8.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`，无 DB 查询、无暴力破解防护 |
+| `rate-limit` | on | `dep:limiteron` | `LimiteronService` replaced by `NoopRateLimitingService` (check_rate_limit→Allowed, check_and_deduct_quota→Ok, get_quota_balance→Ok(i64::MAX), process_backlog_tasks→Ok(0)); `limiteron_service`/`distributed_rate_limit_middleware`/`limiteron_rate_limit_middleware` modules not compiled |
+| `webhook` | on | — | `WebhookServiceImpl`/`WebhookManagementServiceImpl`/`webhook_sender`/`webhook_handler`/`webhook_worker` modules not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn blocks skipped; `WebhookService` trait preserved and assembled with `NoopWebhookService` (all ops return `Ok(())`) |
+
+### Default feature set
+
+```toml
+[features]
+default = ["teams", "auth", "rate-limit", "webhook"]
+teams   = ["auth"]
+auth    = ["dep:garrison"]   # 0.2.0: garrison v0.8.1 接管认证引擎
+rate-limit = ["dep:limiteron"]
+webhook = []
+```
+
+### Gating pattern examples
+
+**Field gating** (`src/di/axum_state.rs`):
+
+```rust
+#[cfg(feature = "webhook")]
+pub webhook_repo: Arc<dyn WebhookRepository>,
+```
+
+**Noop injection** (`src/bootstrap/services.rs::init_rate_limiting_service`):
+
+```rust
+#[cfg(feature = "rate-limit")]
+{ /* assemble LimiteronService */ }
+#[cfg(not(feature = "rate-limit"))]
+{
+    log::warn!("rate-limit feature disabled, using NoopRateLimitingService");
+    Arc::new(NoopRateLimitingService::new())
+}
+```
+
+**Route gating with shadowing** (`src/bootstrap/routes.rs`):
+
+```rust
+#[cfg(feature = "webhook")]
+let app = app.route("/v1/webhooks", post(webhook_handler::create_webhook::<WebhookRepoImpl>));
+// webhook-off: route not registered, returns 404
+```
+
+**Middleware layer gating** (`src/bootstrap/routes.rs`):
+
+```rust
+#[cfg(feature = "auth")]
+let app = app.layer(axum::middleware::from_fn(auth_middleware::auth_middleware()));
+#[cfg(not(feature = "auth"))]
+let app = {
+    let template = build_default_identity_template(state);
+    app.layer(axum::middleware::from_fn_with_state(
+        template,
+        auth_middleware::default_identity_middleware,
+    ))
+};
+```
+
+### CI verification
+
+The `feature-matrix` job in `.github/workflows/ci.yml` runs `cargo check` against 7 feature combinations to ensure no broken cfg paths slip in:
+
+| Combination | Flags |
+|-------------|-------|
+| no-default | `--no-default-features` |
+| teams-only | `--no-default-features --features teams` |
+| auth-only | `--no-default-features --features auth` |
+| rate-limit-only | `--no-default-features --features rate-limit` |
+| webhook-only | `--no-default-features --features webhook` |
+| default | `--features default` |
+| full | `--features full` |
+
+### Migration notes
+
+When a feature is off, the corresponding endpoints return **404** (not 401/403) because routes are not registered at startup. Operators switching from full to stripped-down builds should:
+
+- For `auth`-off: pre-provision credits for `DEFAULT_TEAM_ID` via `add_credits` CLI (see `docs/USER_GUIDE.md` → Single-Tenant / No-Auth Deployment)
+- For `rate-limit`-off: ensure upstream gateways enforce their own rate limiting
+- For `webhook`-off: notify clients that completion callbacks will not be delivered
+- For `teams`-off: only `DEFAULT_TEAM_ID` exists; multi-tenant data isolation is enforced at the application layer (all rows owned by `DEFAULT_TEAM_ID`)
 
 ---
 
@@ -746,7 +856,8 @@ pub enum LoadBalancingStrategy {
 pub struct EngineRouter {
     engines: Vec<Arc<dyn ScraperEngine>>,
     circuit_breaker: Arc<CircuitBreaker>,
-    engine_stats: Arc<parking_lot::RwLock<HashMap<String, EngineStats>>>,
+    // T003/R-sec-003: 使用 DashMap 替代 RwLock<HashMap>，避免读写锁借用开销
+    engine_stats: Arc<DashMap<String, EngineStats>>,
     round_robin_index: Arc<parking_lot::Mutex<usize>>,
     strategy: LoadBalancingStrategy,
     metrics: Arc<RouterMetrics>,
@@ -755,6 +866,8 @@ pub struct EngineRouter {
     feature_filter_enabled: bool,
     race_mode_enabled: bool,
     dynamic_threshold_factor: f64,
+    // T070/R-runtime-004：Hedge 控制器，race 胜出后记录延迟用于 P84 估算
+    hedge_controller: HedgeController,
 }
 ```
 
@@ -763,6 +876,87 @@ The router:
 2. Applies the selected load balancing strategy
 3. Falls back to sequential engines on failure
 4. Supports race mode (concurrent execution, return first success)
+5. **T070**: race mode 胜出后调用 `hedge_controller.record_latency(response_time)` 更新 EMA/方差，用于后续 P84 阈值估算（详见 [Hedge 请求副本控制器](#hedge-请求副本控制器)）
+
+### Hedge 请求副本控制器
+
+<a id="hedge-请求副本控制器"></a>
+
+**Location:** `src/utils/hedge.rs`
+
+**背景（T070/R-runtime-004，design.md §17）：** 移植 spider `hedge.rs`，基于 EMA（指数移动平均）+ 方差估算 P84 延迟阈值，超阈值时建议发送副本请求降尾延迟。
+
+**核心算法：**
+
+- EMA：`EMA_new = α·x + (1-α)·EMA_old`
+- 方差：`Var_new = (1-α)·Var_old + α·(x-EMA_new)·(x-EMA_old)`（指数加权移动方差，递推式）
+- P84 阈值：`P84 = EMA + σ_multiplier · sqrt(Var)`（标准正态分布 P84 ≈ μ+σ）
+
+**并发模型：** 使用 `parking_lot::Mutex<HedgeState>` 保护 `(ema, var, sample_count)` 三元组原子更新。非热路径（race 胜出后单次记录），Mutex 开销相对 race 100ms+ 网络耗时占比 < 0.0001%。
+
+**接入路径：**
+
+```rust
+// EngineRouter::route_race_mode 胜出后记录延迟
+Ok((engine_name, response, response_time)) => {
+    self.hedge_controller.record_latency(response_time);
+    Ok(response)
+}
+
+// 顺序路径未来可调用 should_hedge 决策副本触发
+if router.hedge_controller().should_hedge(elapsed) {
+    // 发送副本请求...
+}
+```
+
+**样本来源限制（M-2）：** 当前 `record_latency` 仅在 race 胜出后调用，记录 `min(各引擎延迟)` 分布。**不可直接用于顺序路径 P84 估算**（顺序路径是单引擎全延迟，分布完全不同，复用会导致阈值系统性偏低）。顺序路径接入时需独立的 HedgeController 实例。
+
+### WaitFor 策略
+
+<a id="waitfor-策略"></a>
+
+**Location:** 枚举定义在 `src/engines/engine_client.rs`，实现在 `src/engines/wait.rs`（`engine-playwright` feature 门控）
+
+**背景（T069/R-jsrender-004，design.md §17）：** 替代原有 `sync_wait_ms` 固定 sleep，提供条件式等待：满足条件立即返回，超时返回错误，避免无谓阻塞。
+
+```rust
+pub enum WaitFor {
+    NetworkIdle,           // 等待网络空闲（无新请求持续 500ms）
+    Selector(String),      // 等待指定 CSS selector 出现在 DOM 中
+    DomStable(Duration),   // 等待 DOM 稳定（无变化持续指定时长，上限 60s）
+}
+```
+
+**接入路径：** `InternalScrapeRequest.wait_for: Option<WaitFor>` 字段，Playwright 引擎在 `goto` 后调用 `request.wait_for.unwrap_or_default().wait(&page, timeout)`。
+
+**架构拆分动机：** 枚举定义在非 feature-gated 的 `engine_client.rs`，实现在 feature-gated 的 `wait.rs`，解决跨引擎依赖问题。
+
+**已知限制（DTO 未桥接）：** API DTO 层 `ScrapeRequestOptions.wait_for: Option<u64>` 是数值字段（毫秒），当前 handler 未将其转换为 `WaitFor` 枚举。API 用户传入的 `wait_for` 数值被忽略，Playwright 引擎始终走 `NetworkIdle` 默认策略。计划在后续迭代中将 DTO 升级为 tagged enum JSON 格式（`{"network_idle": {}}` / `{"selector": "#target"}` / `{"dom_stable": {"duration_ms": 500}}`）。
+
+### TabPool 浏览器 Tab 复用
+
+<a id="tabpool-浏览器-tab-复用"></a>
+
+**Location:** `src/engines/client/tab_pool.rs`
+
+**背景（T068/R-runtime-003，design.md §17）：** Playwright 引擎每次抓取创建新 Tab 开销大（CDP `Target.createTarget` + `Page.goto`，约 50-200ms），TabPool 在 BrowserPool 之上进一步复用 Page，消除 tab 创建开销。
+
+**实现：** 基于 `DashMap<usize, Page>` + `AtomicUsize` 栈顶指针的 LIFO 无锁栈：
+
+```rust
+pub struct TabPool {
+    slots: DashMap<usize, Page>,  // slot 索引 → Page
+    head: AtomicUsize,           // 单调递增的栈顶指针
+    max_size: usize,             // 最大池容量
+}
+```
+
+**acquire/release 流程：**
+
+- `acquire(&browser)`: 原子递减 `head` 取栈顶 Page；池空时调用 `browser.new_page("about:blank")` 新建。
+- `release(page)`: 先将 Page 导航到 `about:blank` 清理状态（5s 超时，超时则 drop 关闭 tab），再压回栈；池满（`head >= max_size`）则直接 drop。
+
+**多 Browser 安全：** TabPool 不绑定特定 Browser，`acquire` 接受 `&Browser` 参数。池空时用传入的 Browser 新建 Page；池非空时弹出的 Page 可能属于其他 Browser。调用方应保证 TabPool 生命周期与单个 Browser 一致（per-Browser 实例化），或在多 Browser 场景下由上层 `BrowserPool` 按 instance_id 路由。
 
 ### Page Action Types
 
@@ -842,8 +1036,8 @@ All three modes share the same FlareSolverr API client implementation, differing
 | Mode | `name()` | `supports_tls_fingerprint()` | Screenshots |
 |------|----------|------------------------------|-------------|
 | Full | `flaresolverr` | No | Yes |
-| Cdp | `fire_engine_cdp` | Yes | Yes |
-| Tls | `fire_engine_tls` | Yes | Rejected |
+| Cdp | `flaresolverr_cdp` | Yes | Yes |
+| Tls | `flaresolverr_tls` | Yes | Rejected |
 
 **Use Cases:**
 - Cloudflare-protected sites
@@ -855,6 +1049,24 @@ All three modes share the same FlareSolverr API client implementation, differing
 - Full: JS rendering, session management, CAPTCHA detection
 - Cdp: TLS fingerprinting, browser automation, CDP protocol
 - Tls: TLS fingerprint adversarial, fast execution, no screenshot
+
+---
+
+### Search Subsystem (T007/R-sec-007 委托架构)
+
+**Location:** `src/search/`
+
+**职责分层：**
+
+- **smart 层** (`src/search/smart/mod.rs`)：URL 构建、速率限制、超时/重试控制、scoring、验证码前置检查、测试数据加载
+- **client 层** (`src/search/client/{google,bing,baidu,sogou}.rs`)：HTML 解析、URL 提取、XSS 防护、CSS 选择器管理
+
+**委托关系**：smart 端 `parse_google/bing/baidu/sogou_results` 委托 client 端 `parse_results`/`parse_search_results` 实现，消除 Stage 0 前的平行解析实现。smart 端补 score 由 `apply_scoring` 统一处理（PERF-03/MEDIUM-1）。
+
+**性能优化**：
+- PERF-02：smart 端用 `OnceCell` 缓存 4 个 client 引擎实例，避免每次解析都 `new` 一个 client 引擎
+- PERF-05：client 端 `HtmlParser` 改为 `once_cell::sync::Lazy` 全局单例，`baidu.rs`/`bing.rs` 不再持有 `parser` 字段
+- PERF-01：`google.rs` 的 `GoogleParseContext` 改为 `Lazy` 全局单例，避免重复编译 15 个 CSS 选择器
 
 ---
 
@@ -1066,33 +1278,100 @@ Configured with rules for:
 
 ### Authentication
 
-**API Key Authentication:**
-- Extract API key from `Authorization: Bearer` header or `x-api-key` header
-- Lookup key hash in database (bcrypt)
-- Verify via constant-time comparison (`subtle` crate)
-- Check active status and expiration
-- Load team ID, scopes, and permissions into `AuthState`
+> **0.2.0 变更（`garrison-auth-migration`）：** 认证引擎由 garrison v0.8.1 接管。旧的手写 SHA-256 `api_key_hash` 查表、`AuthRateLimiter`、`AuthScopeService` 已被删除；`api_keys.key_hash` / `scopes` 表标记为弃用（`deprecated_at` 列）。
+
+**Garrison 接管的认证流程：**
+
+1. 客户端在 `Authorization: Bearer` 头中传入 garrison 签发的 key，格式为 `garrison_key_id.garrison_secret`
+2. `auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` 校验 key、过期、状态、RBAC 权限
+3. garrison 内部维护 oxcache + 自管 postgres schema，命中时无 DB 往返
+4. `auth_bridge::bridge_to_auth_state` 将 garrison 返回的 `permissions` 通过 `map_perms_to_scope` 映射为 `ApiKeyScope`，注入 `AuthState`
+5. crawlrs 侧仅保留 `api_keys` 表的 `id`/`team_id`/`key` 列，用于 `api_key_id→team_id` 反查；该映射由 `TEAM_ID_CACHE` (LRU) 缓存
 
 ```rust
 pub struct AuthState {
+    pub pool: Arc<DbPool>,
     pub team_id: Uuid,
     pub api_key_id: Uuid,
-    pub scopes: Vec<String>,
-    pub is_active: bool,
+    pub scope: ApiKeyScope,
 }
 ```
+
+**401 / 429 由 garrison `firewall-bruteforce` 触发：**
+- 默认策略：5 次失败 / 60 秒窗口 / 300 秒锁定
+- 锁定期间所有请求返回 429（带 `Retry-After` 头）
+- 失败计数与锁定状态由 garrison 自管 oxcache 持有
+
+### Garrison 认证引擎
+
+garrison v0.8.1 提供五大组件，crawlrs 通过 `auth` feature 隐式依赖：
+
+| 组件 | 职责 | crawlrs 集成方式 |
+|------|------|------------------|
+| **DAO** | 自管 postgres schema（`garrison_api_keys` / `garrison_roles` / `garrison_permissions` 等） | 由 garrison 自行迁移，crawlrs 不感知 |
+| **Interface** | `GarrisonUtil::check_api_key` / `ApiKeyHandler::generate_with_namespace` | `auth_middleware_inner` 与 `POST /v1/admin/api-keys` handler 直接调用 |
+| **Config** | RBAC 角色 / 权限 / tenant 隔离配置 | crawlrs 启动时通过 `reissue_api_keys` CLI 预置 RBAC（`tenant_id=0`，所有 team 共享） |
+| **RBAC + JWT** | HS256 JWT 签发、角色-权限映射、API Key 生成与校验 | 必填 `CRAWLRS__AUTH__JWT_SECRET`（≥32 字节，弱密钥拒绝启动） |
+| **firewall-bruteforce** | 失败计数、窗口锁定、IP 隔离 | 401/429 由 garrison 直接返回，crawlrs 透传 |
+| **audit-log** | 认证事件落库（成功 / 失败 / 锁定） | 写入 crawlrs `audit_logs` 表 + garrison 自管 schema |
+
+**预置 RBAC 模型（`tenant_id=0`，所有 team 共享）：**
+
+| 权限 | 角色 admin | 角色 user | 角色 read_only |
+|------|-----------|-----------|----------------|
+| `crawlrs:admin` | ✅ | ❌ | ❌ |
+| `crawlrs:write` | ✅ | ✅ | ❌ |
+| `crawlrs:read` | ✅ | ✅ | ✅ |
+
+`auth_bridge::map_perms_to_scope` 将上述权限映射回 `ApiKeyScope`（确定性查找表，admin 蕴含 read+write）：
+- `crawlrs:admin` → `read=true, write=true, admin=true`
+- `crawlrs:write` → `write=true`
+- `crawlrs:read` → `read=true`
+
+全部通过 `ApiKeyScope::with_custom_limits` 构造（`DEFAULT_SEARCH_LIMIT=100`, `DEFAULT_SCRAPE_LIMIT=50`），不调用 `full_access()`——避免无限制 `u32::MAX` 与项目配额语义冲突。
 
 ### Authorization
 
 **Scope-based Access Control:**
 
 ```rust
-pub struct ScopeValidator {
-    required_scopes: HashMap<String, HashSet<String>>,
-}
+pub async fn scope_middleware(req: Request<Body>, next: Next) -> Result<Response, StatusCode>
 ```
 
+`scope_middleware`（`auth_middleware.rs:335`）从 `AuthState.scope` 读取 `ApiKeyScope`，调用 `determine_required_scope(path, method)` 推导所需 `ScopePermission`，再用 `ApiKeyScope::has_permission` 校验。`ScopePermission` 枚举：`Read` / `Write` / `Admin`（`domain/auth/mod.rs:38`）。
+
 Scopes: `scrape`, `crawl`, `search`, `extract`, `admin`
+
+> **0.2.0 起**：`AuthState.scope` 由 `auth_bridge::map_perms_to_scope` 从 garrison permissions 桥接而来，下游 `scope_middleware` 无感知。
+
+### 迁移指南（0.2.0 garrison-auth-migration）
+
+**对现有部署的影响：**
+
+1. **旧 API Key 作废**：原 `api_keys.key_hash` (SHA-256) 中的所有 key 失效，客户端必须经 garrison 重新领取
+2. **`scopes` 表只读**：原有 scope 映射不再生效；新权限由 garrison RBAC 提供
+3. **必填配置**：`CRAWLRS__AUTH__JWT_SECRET` 必须设置（HS256，≥32 字节），弱密钥将拒绝启动
+
+**运维步骤：**
+
+```bash
+# 1. 启用 auth + admin-tools 特性
+cargo build --release --features admin-tools,auth
+
+# 2. 运行 reissue_api_keys 工具：
+#    - 预置 garrison RBAC（3 权限 / 3 角色 / 6 角色权限映射，tenant_id=0）
+#    - 枚举所有需重签的 team 清单
+#    - 为每个 team 签发新 garrison API Key（明文 key 仅打印一次）
+./target/release/reissue_api_keys
+
+# 3. 应用数据库迁移（标记旧表弃用，不删表不删列）
+psql -f migrations/005_deprecate_legacy_api_keys.sql
+```
+
+**`migrations/005_deprecate_legacy_api_keys.sql` 行为：**
+- 仅给 `api_keys` 表追加 `deprecated_at` 列并回填 `NOW()`
+- 仅给 `scopes` 表追加 `deprecated_at` 列并回填 `NOW()`
+- 不删除任何数据、不删除任何列，便于回滚与历史审计
 
 ### SSRF Protection
 

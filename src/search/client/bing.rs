@@ -21,17 +21,17 @@ use std::sync::Arc;
 use url::Url;
 
 /// Bing Search Engine implementation with EngineClient support
+///
+/// **性能 PERF-05**：不再持有 `parser: HtmlParser` 字段，改为通过
+/// `HtmlParser::bing()` 静态方法访问全局 `Lazy` 单例，避免每个
+/// `BingSearchEngine::new` 实例都重复构造 `HtmlParser`（解析 4 个 CSS 选择器）。
 pub struct BingSearchEngine {
-    parser: HtmlParser,
     engine_client: Arc<EngineClient>,
 }
 
 impl BingSearchEngine {
     pub fn new(engine_client: Arc<EngineClient>) -> Self {
-        Self {
-            parser: HtmlParser::for_bing(),
-            engine_client,
-        }
+        Self { engine_client }
     }
 
     /// Construct Bing cookies for region and language settings
@@ -124,14 +124,15 @@ impl BingSearchEngine {
         )
     }
 
-    pub async fn parse_search_results(&self, html: &str) -> Result<Vec<ResponseItem>, SearchError> {
+    pub fn parse_search_results(&self, html: &str) -> Result<Vec<ResponseItem>, SearchError> {
         if html.is_empty() {
             return Err(SearchError::Parse(
                 "Empty HTML response received".to_string(),
             ));
         }
 
-        Ok(self.parser.parse(html, SearchEngineType::Bing))
+        // 性能 PERF-05：使用全局 Lazy 单例，避免每次 new 都重复解析选择器
+        Ok(HtmlParser::bing().parse(html, SearchEngineType::Bing))
     }
 }
 
@@ -212,7 +213,7 @@ impl SearchEngine for BingSearchEngine {
         }
 
         let html = scrape_response.content;
-        let items = self.parse_search_results(&html).await?;
+        let items = self.parse_search_results(&html)?;
         let total_count = items.len() as u64;
 
         Ok(Response {
@@ -424,11 +425,11 @@ mod tests {
 
     // ========== parse_search_results 测试 ==========
 
-    #[tokio::test]
-    async fn test_parse_search_results_empty_html_returns_error() {
+    #[test]
+    fn test_parse_search_results_empty_html_returns_error() {
         // 边界情况：空 HTML 返回 Parse 错误
         let engine = create_engine();
-        let result = engine.parse_search_results("").await;
+        let result = engine.parse_search_results("");
         assert!(result.is_err());
         let err = result.unwrap_err();
         match err {
@@ -442,8 +443,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_parse_search_results_valid_html() {
+    #[test]
+    fn test_parse_search_results_valid_html() {
         // 测试从有效 Bing HTML 中解析搜索结果
         let engine = create_engine();
         let html = r#"
@@ -459,7 +460,7 @@ mod tests {
         </body></html>
         "#;
 
-        let results = engine.parse_search_results(html).await.unwrap();
+        let results = engine.parse_search_results(html).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "First Result");
         assert_eq!(results[0].url, "https://example.com/1");
@@ -467,12 +468,12 @@ mod tests {
         assert_eq!(results[1].title, "Second Result");
     }
 
-    #[tokio::test]
-    async fn test_parse_search_results_no_matching_selectors() {
+    #[test]
+    fn test_parse_search_results_no_matching_selectors() {
         // 边界情况：HTML 不包含 Bing 结果选择器时返回空
         let engine = create_engine();
         let html = r#"<html><body><div>no bing results here</div></body></html>"#;
-        let results = engine.parse_search_results(html).await.unwrap();
+        let results = engine.parse_search_results(html).unwrap();
         assert!(results.is_empty());
     }
 

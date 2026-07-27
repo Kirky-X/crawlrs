@@ -20,26 +20,39 @@ use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::di::modules::{EngineModule, InfrastructureModule, ModuleBuildError, ServiceModule};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
+// R-teams-004 / T014：teams-off 时不导入 teams 相关类型
+#[cfg(feature = "teams")]
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository;
+// R-wh-003 / T027：webhook feature 关闭时不导入 webhook 相关 repository 类型
+// （字段不编译，accessor 也不编译）
+#[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+#[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
-use crate::domain::services::auth_scope_service::AuthScopeService;
+// T049/R-content-002：ContentExtractionFacade 用于正文提取（多 extractor 优先级路由 + LLM 回退）
+use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
+#[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::llm_service::LLMServiceTrait;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::services::search_service::SearchServiceTrait;
+use crate::domain::services::team_semaphore::TeamSemaphore;
+#[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
-use crate::presentation::middleware::team_semaphore::TeamSemaphore;
 use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClient;
+// T059/R-cache-002：高级缓存服务（scrape_worker 读写抓取结果缓存）
+use crate::infrastructure::oxcache::CacheService;
+// T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
+use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsCheckerTrait;
 use dbnexus::DbPool;
@@ -62,8 +75,16 @@ pub struct CrawlRsState {
     /// Scrape result repository
     pub result_repo: Arc<dyn ScrapeResultRepository>,
     /// Webhook repository
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook-off 模式下，无 webhook 管理功能，不需要 `WebhookRepository`。
+    #[cfg(feature = "webhook")]
     pub webhook_repo: Arc<dyn WebhookRepository>,
     /// Webhook event repository
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook-off 模式下，无 webhook 事件持久化，不需要 `WebhookEventRepository`。
+    #[cfg(feature = "webhook")]
     pub webhook_event_repo: Arc<dyn WebhookEventRepository>,
     /// Tasks backlog repository
     pub tasks_backlog_repo: Arc<dyn TasksBacklogRepository>,
@@ -72,13 +93,29 @@ pub struct CrawlRsState {
     /// Rate limiting service
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
     /// Team service
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams-off 模式下，handler 不再需要 `TeamService`（无地理限制、无团队管理）。
+    /// 引用此字段的代码（routes.rs 的 `Extension(team_service)` 装配、handler 签名）
+    /// 必须通过 `#[cfg(feature = "teams")]` 门控。
+    #[cfg(feature = "teams")]
     pub team_service: Arc<TeamService>,
     /// Webhook service
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时此字段保留，但装配 `NoopWebhookService`。
+    /// `WebhookService` trait 需始终编译（业务逻辑通过 trait 调用 trigger_completion / trigger_failure），
+    /// 故此字段不门控；`ServicesComponents` 与 `init_services` 中的装配按 cfg 选择具体实现。
     pub webhook_service: Arc<dyn WebhookService>,
     /// Robots checker
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
     /// Team semaphore
     pub team_semaphore: Arc<TeamSemaphore>,
+    /// Request coalescer for deduplicating concurrent fetches of the same URL.
+    ///
+    /// T035/R-runtime-002：同 URL 并发请求只允许首个执行实际抓取，
+    /// 其余 worker 等待广播后从 `result_repo` 读取结果，避免重复网络往返。
+    /// 由 `ServicesComponents` 在 `init_services` 中创建为共享单例。
+    pub request_coalescer: Arc<RequestCoalescer>,
     /// Engine router
     pub engine_router: Arc<EngineRouter>,
     /// Engine client
@@ -89,25 +126,45 @@ pub struct CrawlRsState {
     pub search_client: Arc<SearchClient>,
     /// Search service (trait object for DI)
     pub search_service: Arc<dyn SearchServiceTrait>,
-    /// Auth scope service for API key permission management
-    pub auth_scope_service: Option<Arc<AuthScopeService>>,
     /// LLM service for LLM operations
     pub llm_service: Arc<dyn LLMServiceTrait>,
     /// Extraction service for data extraction
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
+    /// Content extraction facade（T049/R-content-002）
+    ///
+    /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLMService，按 Trafilatura→DomSmoothie→CssRule
+    /// 优先级路由，`confidence < 0.7` 时触发 LLM 回退。由 `scrape_worker` 提取路径使用。
+    pub content_extractor: Arc<ContentExtractionFacade>,
     /// Regex cache for performance optimization
     pub regex_cache: Arc<RegexCache>,
+    /// 高级缓存服务（T059/R-cache-002）
+    ///
+    /// 由 `InfrastructureModule` 从 `InfrastructureComponents.cache_service` 注入，
+    /// 用于 `scrape_worker` 读写抓取结果缓存。所有 worker 共享同一实例。
+    pub cache_service: Arc<dyn CacheService>,
     /// Audit service
     pub audit_service: Arc<dyn AuditServiceTrait>,
     /// Webhook worker
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook-off 模式下，不启动 webhook_worker，不需要此字段。
+    #[cfg(feature = "webhook")]
     pub webhook_worker: Arc<crate::workers::webhook_worker::WebhookWorker>,
     /// Backlog worker
     pub backlog_worker: Arc<crate::workers::backlog_worker::BacklogWorker>,
     /// Expiration worker
     pub expiration_worker: Arc<crate::workers::expiration_worker::ExpirationWorker>,
     /// Geo location service
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams-off 模式下，无地理限制相关业务，不需要 `GeoLocationService`。
+    #[cfg(feature = "teams")]
     pub geo_location_service: Arc<dyn GeoLocationService>,
     /// Geo restriction repository
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams-off 模式下，无地理限制数据访问，不需要 `GeoRestrictionRepository`。
+    #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
 }
 
@@ -136,29 +193,37 @@ impl CrawlRsState {
             credits_repo: infra.repositories.credits_repo.clone(),
             crawl_repo: infra.repositories.crawl_repo.clone(),
             result_repo: infra.repositories.result_repo.clone(),
+            #[cfg(feature = "webhook")]
             webhook_repo: infra.repositories.webhook_repo.clone(),
+            #[cfg(feature = "webhook")]
             webhook_event_repo: infra.repositories.webhook_event_repo.clone(),
             tasks_backlog_repo: infra.repositories.tasks_backlog_repo.clone(),
             task_queue: services.queue.clone(),
             rate_limiting_service: services.rate_limiting_service.clone(),
+            #[cfg(feature = "teams")]
             team_service: services.team_service.clone(),
             webhook_service: services.webhook_service.clone(),
             robots_checker: services.robots_checker.clone(),
             team_semaphore: services.team_semaphore.clone(),
+            request_coalescer: services.request_coalescer.clone(),
             engine_router: engines.router.clone(),
             engine_client: engines.engine_client.clone(),
             create_scrape_use_case: services.create_scrape_use_case.clone(),
             search_client,
             search_service: services.search_service.clone(),
-            auth_scope_service: services.auth_scope_service.clone(),
             llm_service: services.llm_service.clone(),
             extraction_service: services.extraction_service.clone(),
+            content_extractor: services.content_extractor.clone(),
             regex_cache: services.regex_cache.clone(),
+            cache_service: infra.cache_service.clone(),
             audit_service: services.audit_service.clone(),
+            #[cfg(feature = "webhook")]
             webhook_worker: services.webhook_worker.clone(),
             backlog_worker: services.backlog_worker.clone(),
             expiration_worker: services.expiration_worker.clone(),
+            #[cfg(feature = "teams")]
             geo_location_service: services.geo_location_service.clone(),
+            #[cfg(feature = "teams")]
             geo_restriction_repo: infra.repositories.geo_restriction_repo.clone(),
         })
     }
@@ -178,12 +243,21 @@ pub trait CrawlRsStateExt {
     /// Get result repository
     fn result_repo(&self) -> Arc<dyn ScrapeResultRepository>;
     /// Get webhook repository
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
+    #[cfg(feature = "webhook")]
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository>;
     /// Get webhook event repository
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
+    #[cfg(feature = "webhook")]
     fn webhook_event_repo(&self) -> Arc<dyn WebhookEventRepository>;
     /// Get rate limiting service
     fn rate_limiting_service(&self) -> Arc<dyn RateLimitingService>;
     /// Get team service
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    #[cfg(feature = "teams")]
     fn team_service(&self) -> Arc<TeamService>;
     /// Get webhook service
     fn webhook_service(&self) -> Arc<dyn WebhookService>;
@@ -197,12 +271,14 @@ pub trait CrawlRsStateExt {
     fn search_client(&self) -> Arc<SearchClient>;
     /// Get search service
     fn search_service(&self) -> Arc<dyn SearchServiceTrait>;
-    /// Get auth scope service
-    fn auth_scope_service(&self) -> Option<Arc<AuthScopeService>>;
     /// Get LLM service
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait>;
     /// Get regex cache
     fn regex_cache(&self) -> Arc<RegexCache>;
+    /// Get cache service
+    ///
+    /// T059/R-cache-002：供 `WorkerManagerDeps` 注入 `scrape_worker`。
+    fn cache_service(&self) -> Arc<dyn CacheService>;
     /// Get database pool (dbnexus DbPool)
     fn db_pool(&self) -> Arc<DbPool>;
     /// Get tasks backlog repository
@@ -213,19 +289,36 @@ pub trait CrawlRsStateExt {
     fn robots_checker(&self) -> Arc<dyn RobotsCheckerTrait>;
     /// Get team semaphore
     fn team_semaphore(&self) -> Arc<TeamSemaphore>;
+    /// Get request coalescer
+    ///
+    /// T035/R-runtime-002：供 worker 共享同一 `RequestCoalescer` 实例。
+    fn request_coalescer(&self) -> Arc<RequestCoalescer>;
     /// Get audit service
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait>;
     /// Get extraction service
     fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait>;
+    /// Get content extraction facade（T049/R-content-002）
+    ///
+    /// 供 `scrape_worker` 提取路径使用，按优先级路由多 extractor + LLM 回退。
+    fn content_extractor(&self) -> Arc<ContentExtractionFacade>;
     /// Get webhook worker
+    ///
+    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
+    #[cfg(feature = "webhook")]
     fn webhook_worker(&self) -> Arc<crate::workers::webhook_worker::WebhookWorker>;
     /// Get backlog worker
     fn backlog_worker(&self) -> Arc<crate::workers::backlog_worker::BacklogWorker>;
     /// Get expiration worker
     fn expiration_worker(&self) -> Arc<crate::workers::expiration_worker::ExpirationWorker>;
     /// Get geo location service
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    #[cfg(feature = "teams")]
     fn geo_location_service(&self) -> Arc<dyn GeoLocationService>;
     /// Get geo restriction repository
+    ///
+    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository>;
 }
 
@@ -246,10 +339,12 @@ impl CrawlRsStateExt for CrawlRsState {
         self.result_repo.clone()
     }
 
+    #[cfg(feature = "webhook")]
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
         self.webhook_repo.clone()
     }
 
+    #[cfg(feature = "webhook")]
     fn webhook_event_repo(&self) -> Arc<dyn WebhookEventRepository> {
         self.webhook_event_repo.clone()
     }
@@ -258,6 +353,7 @@ impl CrawlRsStateExt for CrawlRsState {
         self.rate_limiting_service.clone()
     }
 
+    #[cfg(feature = "teams")]
     fn team_service(&self) -> Arc<TeamService> {
         self.team_service.clone()
     }
@@ -286,16 +382,16 @@ impl CrawlRsStateExt for CrawlRsState {
         self.search_service.clone()
     }
 
-    fn auth_scope_service(&self) -> Option<Arc<AuthScopeService>> {
-        self.auth_scope_service.clone()
-    }
-
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait> {
         self.llm_service.clone()
     }
 
     fn regex_cache(&self) -> Arc<RegexCache> {
         self.regex_cache.clone()
+    }
+
+    fn cache_service(&self) -> Arc<dyn CacheService> {
+        self.cache_service.clone()
     }
 
     fn db_pool(&self) -> Arc<DbPool> {
@@ -318,6 +414,10 @@ impl CrawlRsStateExt for CrawlRsState {
         self.team_semaphore.clone()
     }
 
+    fn request_coalescer(&self) -> Arc<RequestCoalescer> {
+        self.request_coalescer.clone()
+    }
+
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait> {
         self.audit_service.clone()
     }
@@ -326,6 +426,11 @@ impl CrawlRsStateExt for CrawlRsState {
         self.extraction_service.clone()
     }
 
+    fn content_extractor(&self) -> Arc<ContentExtractionFacade> {
+        self.content_extractor.clone()
+    }
+
+    #[cfg(feature = "webhook")]
     fn webhook_worker(&self) -> Arc<crate::workers::webhook_worker::WebhookWorker> {
         self.webhook_worker.clone()
     }
@@ -338,10 +443,12 @@ impl CrawlRsStateExt for CrawlRsState {
         self.expiration_worker.clone()
     }
 
+    #[cfg(feature = "teams")]
     fn geo_location_service(&self) -> Arc<dyn GeoLocationService> {
         self.geo_location_service.clone()
     }
 
+    #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
         self.geo_restriction_repo.clone()
     }
@@ -364,10 +471,12 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().result_repo()
     }
 
+    #[cfg(feature = "webhook")]
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
         self.as_ref().webhook_repo()
     }
 
+    #[cfg(feature = "webhook")]
     fn webhook_event_repo(&self) -> Arc<dyn WebhookEventRepository> {
         self.as_ref().webhook_event_repo()
     }
@@ -376,6 +485,7 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().rate_limiting_service()
     }
 
+    #[cfg(feature = "teams")]
     fn team_service(&self) -> Arc<TeamService> {
         self.as_ref().team_service()
     }
@@ -404,16 +514,16 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().search_service()
     }
 
-    fn auth_scope_service(&self) -> Option<Arc<AuthScopeService>> {
-        self.as_ref().auth_scope_service()
-    }
-
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait> {
         self.as_ref().llm_service()
     }
 
     fn regex_cache(&self) -> Arc<RegexCache> {
         self.as_ref().regex_cache()
+    }
+
+    fn cache_service(&self) -> Arc<dyn CacheService> {
+        self.as_ref().cache_service()
     }
 
     fn db_pool(&self) -> Arc<DbPool> {
@@ -436,6 +546,10 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().team_semaphore()
     }
 
+    fn request_coalescer(&self) -> Arc<RequestCoalescer> {
+        self.as_ref().request_coalescer()
+    }
+
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait> {
         self.as_ref().audit_service()
     }
@@ -444,6 +558,11 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().extraction_service()
     }
 
+    fn content_extractor(&self) -> Arc<ContentExtractionFacade> {
+        self.as_ref().content_extractor()
+    }
+
+    #[cfg(feature = "webhook")]
     fn webhook_worker(&self) -> Arc<crate::workers::webhook_worker::WebhookWorker> {
         self.as_ref().webhook_worker()
     }
@@ -456,10 +575,12 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().expiration_worker()
     }
 
+    #[cfg(feature = "teams")]
     fn geo_location_service(&self) -> Arc<dyn GeoLocationService> {
         self.as_ref().geo_location_service()
     }
 
+    #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
         self.as_ref().geo_restriction_repo()
     }
@@ -522,6 +643,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_app_state_all_accessors_return_valid_arcs");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_app_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -543,17 +665,25 @@ mod tests {
         let result_repo: Arc<dyn ScrapeResultRepository> = state.result_repo();
         assert!(Arc::strong_count(&result_repo) >= 2);
 
-        let webhook_repo: Arc<dyn WebhookRepository> = state.webhook_repo();
-        assert!(Arc::strong_count(&webhook_repo) >= 2);
-
-        let webhook_event_repo: Arc<dyn WebhookEventRepository> = state.webhook_event_repo();
-        assert!(Arc::strong_count(&webhook_event_repo) >= 2);
-
         let rate_limiting: Arc<dyn RateLimitingService> = state.rate_limiting_service();
         assert!(Arc::strong_count(&rate_limiting) >= 2);
 
-        let team_service: Arc<TeamService> = state.team_service();
-        assert!(Arc::strong_count(&team_service) >= 2);
+        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        #[cfg(feature = "teams")]
+        {
+            let team_service: Arc<TeamService> = state.team_service();
+            assert!(Arc::strong_count(&team_service) >= 2);
+        }
+
+        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_repo: Arc<dyn WebhookRepository> = state.webhook_repo();
+            assert!(Arc::strong_count(&webhook_repo) >= 2);
+
+            let webhook_event_repo: Arc<dyn WebhookEventRepository> = state.webhook_event_repo();
+            assert!(Arc::strong_count(&webhook_event_repo) >= 2);
+        }
 
         let webhook_service: Arc<dyn WebhookService> = state.webhook_service();
         assert!(Arc::strong_count(&webhook_service) >= 2);
@@ -572,9 +702,6 @@ mod tests {
 
         let search_service: Arc<dyn SearchServiceTrait> = state.search_service();
         assert!(Arc::strong_count(&search_service) >= 2);
-
-        let auth_scope: Option<Arc<AuthScopeService>> = state.auth_scope_service();
-        assert!(auth_scope.is_some());
 
         let llm_service: Arc<dyn LLMServiceTrait> = state.llm_service();
         assert!(Arc::strong_count(&llm_service) >= 2);
@@ -603,8 +730,16 @@ mod tests {
         let extraction_service: Arc<dyn ExtractionServiceTrait> = state.extraction_service();
         assert!(Arc::strong_count(&extraction_service) >= 2);
 
-        let webhook_worker = state.webhook_worker();
-        assert!(Arc::strong_count(&webhook_worker) >= 2);
+        // T049/R-content-002：content_extractor accessor
+        let content_extractor = state.content_extractor();
+        assert!(Arc::strong_count(&content_extractor) >= 2);
+
+        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_worker = state.webhook_worker();
+            assert!(Arc::strong_count(&webhook_worker) >= 2);
+        }
 
         let backlog_worker = state.backlog_worker();
         assert!(Arc::strong_count(&backlog_worker) >= 2);
@@ -612,11 +747,15 @@ mod tests {
         let expiration_worker = state.expiration_worker();
         assert!(Arc::strong_count(&expiration_worker) >= 2);
 
-        let geo_location: Arc<dyn GeoLocationService> = state.geo_location_service();
-        assert!(Arc::strong_count(&geo_location) >= 2);
+        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        #[cfg(feature = "teams")]
+        {
+            let geo_location: Arc<dyn GeoLocationService> = state.geo_location_service();
+            assert!(Arc::strong_count(&geo_location) >= 2);
 
-        let geo_restriction: Arc<dyn GeoRestrictionRepository> = state.geo_restriction_repo();
-        assert!(Arc::strong_count(&geo_restriction) >= 2);
+            let geo_restriction: Arc<dyn GeoRestrictionRepository> = state.geo_restriction_repo();
+            assert!(Arc::strong_count(&geo_restriction) >= 2);
+        }
     }
 
     #[tokio::test]
@@ -625,6 +764,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_app_state_arc_accessors_delegate_correctly");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_app_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -655,6 +795,7 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_app_state_clone_preserves_fields");
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_app_state().await {
             Ok(s) => s,
             Err(e) => {
@@ -730,6 +871,7 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_app_state_with_test_db().await {
             Ok(s) => s,
             Err(e) => {
@@ -753,17 +895,25 @@ mod tests {
         let result_repo = state_arc.result_repo();
         assert!(Arc::strong_count(&result_repo) >= 2);
 
-        let webhook_repo = state_arc.webhook_repo();
-        assert!(Arc::strong_count(&webhook_repo) >= 2);
-
-        let webhook_event_repo = state_arc.webhook_event_repo();
-        assert!(Arc::strong_count(&webhook_event_repo) >= 2);
-
         let rate_limiting_service = state_arc.rate_limiting_service();
         assert!(Arc::strong_count(&rate_limiting_service) >= 2);
 
-        let team_service = state_arc.team_service();
-        assert!(Arc::strong_count(&team_service) >= 2);
+        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        #[cfg(feature = "teams")]
+        {
+            let team_service = state_arc.team_service();
+            assert!(Arc::strong_count(&team_service) >= 2);
+        }
+
+        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_repo = state_arc.webhook_repo();
+            assert!(Arc::strong_count(&webhook_repo) >= 2);
+
+            let webhook_event_repo = state_arc.webhook_event_repo();
+            assert!(Arc::strong_count(&webhook_event_repo) >= 2);
+        }
 
         let webhook_service = state_arc.webhook_service();
         assert!(Arc::strong_count(&webhook_service) >= 2);
@@ -782,11 +932,6 @@ mod tests {
 
         let search_service = state_arc.search_service();
         assert!(Arc::strong_count(&search_service) >= 2);
-
-        // auth_scope_service returns Option<Arc<...>> — verify Some when
-        // the underlying state has it configured.
-        let auth_scope = state_arc.auth_scope_service();
-        assert!(auth_scope.is_some());
 
         let llm_service = state_arc.llm_service();
         assert!(Arc::strong_count(&llm_service) >= 2);
@@ -815,8 +960,16 @@ mod tests {
         let extraction_service = state_arc.extraction_service();
         assert!(Arc::strong_count(&extraction_service) >= 2);
 
-        let webhook_worker = state_arc.webhook_worker();
-        assert!(Arc::strong_count(&webhook_worker) >= 2);
+        // T049/R-content-002：content_extractor Arc delegation
+        let content_extractor = state_arc.content_extractor();
+        assert!(Arc::strong_count(&content_extractor) >= 2);
+
+        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        #[cfg(feature = "webhook")]
+        {
+            let webhook_worker = state_arc.webhook_worker();
+            assert!(Arc::strong_count(&webhook_worker) >= 2);
+        }
 
         let backlog_worker = state_arc.backlog_worker();
         assert!(Arc::strong_count(&backlog_worker) >= 2);
@@ -824,11 +977,15 @@ mod tests {
         let expiration_worker = state_arc.expiration_worker();
         assert!(Arc::strong_count(&expiration_worker) >= 2);
 
-        let geo_location = state_arc.geo_location_service();
-        assert!(Arc::strong_count(&geo_location) >= 2);
+        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        #[cfg(feature = "teams")]
+        {
+            let geo_location = state_arc.geo_location_service();
+            assert!(Arc::strong_count(&geo_location) >= 2);
 
-        let geo_restriction = state_arc.geo_restriction_repo();
-        assert!(Arc::strong_count(&geo_restriction) >= 2);
+            let geo_restriction = state_arc.geo_restriction_repo();
+            assert!(Arc::strong_count(&geo_restriction) >= 2);
+        }
     }
 
     /// Verify that cloning `Arc<CrawlRsState>` does not corrupt accessor
@@ -838,6 +995,7 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
         let state = match build_app_state_with_test_db().await {
             Ok(s) => s,
             Err(e) => {
@@ -859,11 +1017,5 @@ mod tests {
         let db_b = cloned_arc.db_pool();
         assert!(Arc::strong_count(&db_a) >= 2);
         assert!(Arc::strong_count(&db_b) >= 2);
-
-        // auth_scope_service should return Some on both clones.
-        let auth_a = state_arc.auth_scope_service();
-        let auth_b = cloned_arc.auth_scope_service();
-        assert!(auth_a.is_some());
-        assert!(auth_b.is_some());
     }
 }

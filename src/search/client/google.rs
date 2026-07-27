@@ -11,18 +11,21 @@ use crate::search::{
     types::{EngineHealth, SearchEngineType},
     SearchRequest,
 };
+use crate::utils::text_processing::encoding::TextEncodingProcessor;
 use async_trait::async_trait;
 use chrono::Utc;
 use log::{info, warn};
 use once_cell::sync::Lazy;
 use rand::RngExt;
-use scraper::Html;
-use std::collections::{HashMap, HashSet};
+use scraper::{ElementRef, Html, Selector};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-use super::shared_utils::{build_query_string, escape_html_text, safe_parse_selector};
+#[cfg(test)]
+use super::shared_utils::safe_parse_selector;
+use super::shared_utils::{build_query_string, escape_html_text};
 
 /// Google CONSENT cookie 值（绕过 EU 同意重定向）
 ///
@@ -61,6 +64,85 @@ static GOOGLE_STATIC_HEADERS: Lazy<HashMap<String, String>> = Lazy::new(|| {
 /// 2 次 `str::contains` 代码更直观，且无证据表明 AhoCorasick 对 2 个短模式更优。
 /// 已删除 aho-corasick 直接依赖（regex 仍间接引入）。
 const GOOGLE_BOT_PROTECTION_OR_PATTERNS: [&str; 2] = ["/sorry/", "sorry.google.com"];
+
+/// Google 结果解析的预编译依赖上下文（client 端）
+///
+/// 移植自 `src/search/smart/mod.rs::GoogleParseContext`，消除 smart 端与
+/// client 端的 Google 解析平行实现（R-sec-007）。
+///
+/// **与 smart 端差异**：
+/// - **不含 `scorer` 字段**：`RelevanceScorer` 属于 domain 层，client 作为
+///   基础设施层不应反向依赖 domain（架构层级违反）。评分由 smart 端在
+///   委托 client 解析后自行附加。
+/// - 保留 `processor` 字段：`TextEncodingProcessor` 位于 utils 层，client 可使用。
+///
+/// **设计说明**（同 smart 端）：
+/// - 选择器字段（result/title/snippet/link）是 Google HTML 解析专用
+/// - `link_selector` 是单个 Selector（非 Vec），用于"遍历所有匹配元素"
+///   而非"按优先级回退"（与 title/snippet_selectors 语义不同）
+///
+/// **性能 PERF-01**：使用 `once_cell::sync::Lazy` 全局单例，避免每次
+/// `parse_results` 都调用 `GoogleParseContext::new()` 重新解析 15 个选择器
+/// （5 result + 4 title + 5 snippet + 1 link）。`Selector::parse` 内部涉及
+/// CSS tokenizer + AST 构造，是已知昂贵操作。`TextEncodingProcessor` 的
+/// `Arc<Mutex<LruCache>>` 共享单例可减少重复的编码检测。
+struct GoogleParseContext {
+    /// Google 现代搜索结果容器选择器（已预编译，按优先级排序）
+    result_selectors: Vec<Selector>,
+    /// 标题选择器（已预编译，按优先级排序）
+    title_selectors: Vec<Selector>,
+    /// 描述选择器（已预编译，按优先级排序）
+    snippet_selectors: Vec<Selector>,
+    /// 链接选择器（单个，用于遍历所有 <a> 元素）
+    link_selector: Selector,
+    /// 文本编码处理器
+    processor: TextEncodingProcessor,
+}
+
+impl GoogleParseContext {
+    /// 预编译所有选择器并创建 processor
+    fn new() -> Self {
+        Self {
+            result_selectors: [
+                "div.g",
+                "div[data-sokoban-container]",
+                "div.MjjYud",
+                "div.Ww4FFb",
+                "div.v7W49e",
+            ]
+            .iter()
+            .filter_map(|s| Selector::parse(s).ok())
+            .collect(),
+            title_selectors: [
+                "h3",
+                "div[data-attrid='title']",
+                "span.dvSrP",
+                "div.v7W49e h3",
+            ]
+            .iter()
+            .filter_map(|s| Selector::parse(s).ok())
+            .collect(),
+            snippet_selectors: [
+                "span[ae30]",
+                "div[itemprop='description']",
+                "div.yXK7ld",
+                "div.zIBAzf",
+                "span[style='color:#4d5156']",
+            ]
+            .iter()
+            .filter_map(|s| Selector::parse(s).ok())
+            .collect(),
+            link_selector: Selector::parse("a").expect("\"a\" selector should always parse"),
+            processor: TextEncodingProcessor::new(),
+        }
+    }
+}
+
+/// 全局缓存的 `GoogleParseContext` 单例（性能 PERF-01）
+///
+/// 使用 `once_cell::sync::Lazy` 在首次访问时构造一次，后续所有 `parse_results`
+/// 调用复用同一实例。避免每次解析都重新编译 15 个 CSS 选择器。
+static GOOGLE_PARSE_CONTEXT: Lazy<GoogleParseContext> = Lazy::new(GoogleParseContext::new);
 
 /// Google Search Engine implementation
 struct ArcIdCache {
@@ -139,102 +221,40 @@ impl GoogleSearchEngine {
     }
 
     /// Parse Google HTML results with XSS protection
+    ///
+    /// 行为对齐 smart 端 `parse_google_results`（R-sec-007）：
+    /// - 使用 `GoogleParseContext` 多选择器优先级（按顺序尝试 result_selectors，
+    ///   第一个命中的非空结果集即停止）
+    /// - URL 过滤：只接受 `href.starts_with("http") && !href.contains("google.com")`
+    ///   （不清理 `/url?q=`，与 smart 端一致）
+    /// - 不去重（与 smart 端一致）
+    /// - 保留 max 20 上限作为 client 端安全护栏（smart 端无此限制，但 client 作为
+    ///   基础设施层应有防御性边界）
     pub fn parse_results(&self, html: &str) -> Result<Vec<ResponseItem>, SearchError> {
         let document = Html::parse_document(html);
         let mut results = Vec::with_capacity(20);
-        // 用 HashSet 跟踪已见 URL，O(1) 查找替代 O(n) 线性扫描（性能 MEDIUM：去重 O(n²) → O(n)）
-        let mut seen_urls: HashSet<String> = HashSet::new();
 
         info!("Parsing Google search results...");
 
-        // 根据 temp/search.md 中的逆向工程结果
-        // Google 结果包裹在 div[jscontroller*="SC7lYd"] 中
-        let result_selector = safe_parse_selector("div[jscontroller*='SC7lYd']")
-            .expect("Failed to parse Google selector: div[jscontroller*='SC7lYd']");
+        // 使用全局缓存的 GoogleParseContext 单例（性能 PERF-01）
+        // 避免每次解析都重新编译 15 个 CSS 选择器
+        let ctx = &*GOOGLE_PARSE_CONTEXT;
 
-        // 标题在 a > h3 中
-        let title_selector =
-            safe_parse_selector("a h3, h3").expect("Failed to parse Google title selector");
-
-        // URL 从 a 的 href 属性提取
-        let link_selector =
-            safe_parse_selector("a[href]").expect("Failed to parse Google link selector");
-
-        // 摘要从 div[data-sncf="1"] 中提取
-        let snippet_selector = safe_parse_selector("div[data-sncf='1'], div[data-snc]")
-            .expect("Failed to parse Google snippet selector");
-
-        // 提取搜索结果块
-        for result_element in document.select(&result_selector) {
-            // 提取标题
-            let title_node = result_element.select(&title_selector).next();
-            if title_node.is_none() {
-                continue;
-            }
-            let title = title_node
-                .expect("title_node should not be None after is_none() check")
-                .text()
-                .collect::<String>()
-                .trim()
-                .to_string();
-
-            if title.is_empty() {
-                continue;
-            }
-
-            // 提取链接
-            let url_node = result_element.select(&link_selector).next();
-            if url_node.is_none() {
-                continue;
-            }
-            let mut url = url_node
-                .expect("url_node should not be None after is_none() check")
-                .value()
-                .attr("href")
-                .unwrap_or("")
-                .to_string();
-
-            if url.is_empty() {
-                continue;
-            }
-
-            // 清理 URL - 处理 /url?q= 格式
-            if url.starts_with("/url?q=") {
-                url = url
-                    .trim_start_matches("/url?q=")
-                    .split('&')
-                    .next()
-                    .unwrap_or(&url)
-                    .to_string();
-            } else if url.starts_with("/") && !url.starts_with("//") {
-                url = format!("https://www.google.com{}", url);
-            }
-
-            if !url.starts_with("http") {
-                continue;
-            }
-
-            // 提取摘要 - data-sncf="1" 通常包含摘要文本
-            let content_nodes = result_element.select(&snippet_selector).next();
-            let description = content_nodes
-                .map(|e| e.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
-
-            // 去重：HashSet::insert 返回 false 表示 URL 已存在
-            // O(1) 查找替代之前的 O(n) 线性扫描（results.iter().any）
-            if !seen_urls.insert(url.clone()) {
-                continue;
-            }
-
-            results.push(ResponseItem {
-                title: escape_html_text(&title),
-                url,
-                description: escape_html_text(&description),
-                engine: SearchEngineType::Google,
-            });
-
-            if results.len() >= 20 {
-                break;
+        // 使用预编译的 result_selectors，按优先级尝试直到找到有效结果
+        for selector in &ctx.result_selectors {
+            let elements: Vec<_> = document.select(selector).collect();
+            if !elements.is_empty() {
+                for element in elements {
+                    if let Some(result) = self.extract_google_result(&element, ctx) {
+                        results.push(result);
+                        if results.len() >= 20 {
+                            break;
+                        }
+                    }
+                }
+                if !results.is_empty() {
+                    break;
+                }
             }
         }
 
@@ -243,6 +263,69 @@ impl GoogleSearchEngine {
             results.len()
         );
         Ok(results)
+    }
+
+    /// 从 Google 结果元素中提取信息
+    ///
+    /// 移植自 smart 端 `extract_google_result`，使用预编译的 `GoogleParseContext`
+    /// 中的选择器/processor，避免在每个元素上重复 `Selector::parse` 和构造对象。
+    /// XSS 防护统一使用 `escape_html_text` 自由函数。
+    ///
+    /// **与 smart 端差异**：不计算 `score`（client 不依赖 domain 层 RelevanceScorer）。
+    fn extract_google_result(
+        &self,
+        element: &ElementRef<'_>,
+        ctx: &GoogleParseContext,
+    ) -> Option<ResponseItem> {
+        // 提取标题：遍历 title_selectors，第一个命中的非空文本即采用
+        let mut title = String::new();
+        for selector in &ctx.title_selectors {
+            if let Some(el) = element.select(selector).next() {
+                title = escape_html_text(el.text().collect::<String>().trim());
+                if !title.is_empty() {
+                    break;
+                }
+            }
+        }
+
+        // 提取 URL：遍历所有 <a> 元素，第一个满足 http 前缀且非 google.com 的 href 即采用
+        // （不清理 /url?q=，与 smart 端一致）
+        let mut url = String::new();
+        for el in element.select(&ctx.link_selector) {
+            if let Some(href) = el.value().attr("href") {
+                if href.starts_with("http") && !href.contains("google.com") {
+                    url = href.to_string();
+                    break;
+                }
+            }
+        }
+
+        // 提取描述：遍历 snippet_selectors，第一个命中的非空文本即采用
+        // （经 escape_html_text + processor.process_text 处理）
+        let mut description = String::new();
+        for selector in &ctx.snippet_selectors {
+            if let Some(el) = element.select(selector).next() {
+                description = escape_html_text(el.text().collect::<String>().trim());
+                description = ctx
+                    .processor
+                    .process_text(description.as_bytes())
+                    .unwrap_or(description);
+                if !description.is_empty() {
+                    break;
+                }
+            }
+        }
+
+        if !title.is_empty() && !url.is_empty() {
+            Some(ResponseItem {
+                title,
+                url,
+                description,
+                engine: SearchEngineType::Google,
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -507,16 +590,17 @@ mod tests {
     #[test]
     fn test_parse_results_valid_html() {
         // 测试从有效 Google HTML 解析结果
+        // 行为对齐 smart 端：使用 div.g 结果选择器 + div.zIBAzf 摘要选择器
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/1"><h3>First Result</h3></a>
-                <div data-sncf="1">First snippet</div>
+                <div class="zIBAzf">First snippet</div>
             </div>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/2"><h3>Second Result</h3></a>
-                <div data-sncf="1">Second snippet</div>
+                <div class="zIBAzf">Second snippet</div>
             </div>
         </body></html>
         "#;
@@ -525,7 +609,11 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "First Result");
         assert_eq!(results[0].url, "https://example.com/1");
-        assert_eq!(results[0].description, "First snippet");
+        assert!(
+            results[0].description.contains("First snippet"),
+            "description should contain 'First snippet', got: {}",
+            results[0].description
+        );
         assert_eq!(results[0].engine, SearchEngineType::Google);
         assert_eq!(results[1].title, "Second Result");
     }
@@ -540,37 +628,41 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_results_url_q_format_cleaned() {
-        // 测试 /url?q= 格式的链接被正确清理
+    fn test_parse_results_url_q_format_skipped() {
+        // 行为对齐 smart 端：/url?q= 格式不以 http 开头，被跳过（不清理）
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
-                <a href="/url?q=https://example.com/real&sa=t"><h3>Cleaned URL</h3></a>
+            <div class="g">
+                <a href="/url?q=https://example.com/real&sa=t"><h3>Skipped URL</h3></a>
             </div>
         </body></html>
         "#;
 
         let results = engine.parse_results(html).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].url, "https://example.com/real");
+        assert!(
+            results.is_empty(),
+            "/url?q= URLs should be skipped (not http prefix)"
+        );
     }
 
     #[test]
-    fn test_parse_results_relative_url_prefixed() {
-        // 测试相对 URL 被添加 google.com 前缀
+    fn test_parse_results_relative_url_skipped() {
+        // 行为对齐 smart 端：相对 URL 不以 http 开头，被跳过（不添加 google.com 前缀）
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="/relative/path"><h3>Relative URL</h3></a>
             </div>
         </body></html>
         "#;
 
         let results = engine.parse_results(html).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].url, "https://www.google.com/relative/path");
+        assert!(
+            results.is_empty(),
+            "relative URLs should be skipped (not http prefix)"
+        );
     }
 
     #[test]
@@ -579,10 +671,10 @@ mod tests {
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="javascript:void(0)"><h3>JS Link</h3></a>
             </div>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/valid"><h3>Valid</h3></a>
             </div>
         </body></html>
@@ -594,37 +686,42 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_results_deduplicates_by_url() {
-        // 测试相同 URL 的结果被去重
+    fn test_parse_results_no_dedup() {
+        // 行为对齐 smart 端：不去重，重复 URL 会出现多次
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/dup"><h3>First Title</h3></a>
             </div>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/dup"><h3>Duplicate Title</h3></a>
             </div>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/unique"><h3>Unique Title</h3></a>
             </div>
         </body></html>
         "#;
 
         let results = engine.parse_results(html).unwrap();
-        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results.len(),
+            3,
+            "duplicate URLs should NOT be deduped (smart-end behavior)"
+        );
         assert_eq!(results[0].title, "First Title");
-        assert_eq!(results[1].title, "Unique Title");
+        assert_eq!(results[1].title, "Duplicate Title");
+        assert_eq!(results[2].title, "Unique Title");
     }
 
     #[test]
     fn test_parse_results_max_20_limit() {
-        // 测试结果数量上限为 20
+        // 测试结果数量上限为 20（client 端安全护栏，smart 端无此限制）
         let engine = create_engine();
         let mut html = String::from("<html><body>");
         for i in 0..25 {
             html.push_str(&format!(
-                r#"<div jscontroller="SC7lYd"><a href="https://example.com/{}"><h3>Result {}</h3></a></div>"#,
+                r#"<div class="g"><a href="https://example.com/{}"><h3>Result {}</h3></a></div>"#,
                 i, i
             ));
         }
@@ -640,10 +737,10 @@ mod tests {
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/1"></a>
             </div>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/2"><h3>Valid Result</h3></a>
             </div>
         </body></html>
@@ -844,10 +941,10 @@ mod tests {
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/1"><h3>   </h3></a>
             </div>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/2"><h3>Valid</h3></a>
             </div>
         </body></html>
@@ -862,10 +959,10 @@ mod tests {
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <h3>Title Without Link</h3>
             </div>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/valid"><h3>Valid</h3></a>
             </div>
         </body></html>
@@ -880,10 +977,10 @@ mod tests {
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href=""><h3>Empty Href</h3></a>
             </div>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/valid"><h3>Valid</h3></a>
             </div>
         </body></html>
@@ -894,18 +991,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_results_url_q_without_ampersand() {
+    fn test_parse_results_url_q_without_ampersand_skipped() {
+        // 行为对齐 smart 端：/url?q= 格式（无 &）不以 http 开头，被跳过
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
-                <a href="/url?q=https://example.com/clean"><h3>Clean</h3></a>
+            <div class="g">
+                <a href="/url?q=https://example.com/clean"><h3>Skipped</h3></a>
             </div>
         </body></html>
         "#;
         let results = engine.parse_results(html).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].url, "https://example.com/clean");
+        assert!(
+            results.is_empty(),
+            "/url?q= URLs should be skipped (not http prefix)"
+        );
     }
 
     #[test]
@@ -913,7 +1013,7 @@ mod tests {
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="//example.com/protocol-relative"><h3>Protocol Relative</h3></a>
             </div>
         </body></html>
@@ -926,19 +1026,24 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_results_data_snc_selector() {
+    fn test_parse_results_zibazf_snippet_selector() {
+        // 行为对齐 smart 端：使用 div.zIBAzf 摘要选择器（smart 端 snippet_selectors 第 4 项）
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
-                <a href="https://example.com/1"><h3>With SNC</h3></a>
-                <div data-snc="1">SNC snippet</div>
+            <div class="g">
+                <a href="https://example.com/1"><h3>With Snippet</h3></a>
+                <div class="zIBAzf">SNC snippet</div>
             </div>
         </body></html>
         "#;
         let results = engine.parse_results(html).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].description, "SNC snippet");
+        assert!(
+            results[0].description.contains("SNC snippet"),
+            "description should contain 'SNC snippet', got: {}",
+            results[0].description
+        );
     }
 
     #[test]
@@ -946,7 +1051,7 @@ mod tests {
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/1"><h3>No Snippet</h3></a>
             </div>
         </body></html>
@@ -961,7 +1066,7 @@ mod tests {
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="https://example.com/1"><h3>A &amp; B</h3></a>
             </div>
         </body></html>
@@ -973,17 +1078,42 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_results_relative_url_with_path() {
+    fn test_parse_results_relative_url_with_path_skipped() {
+        // 行为对齐 smart 端：相对 URL（含路径）不以 http 开头，被跳过
         let engine = create_engine();
         let html = r#"
         <html><body>
-            <div jscontroller="SC7lYd">
+            <div class="g">
                 <a href="/search?q=test"><h3>Relative Path</h3></a>
             </div>
         </body></html>
         "#;
         let results = engine.parse_results(html).unwrap();
+        assert!(
+            results.is_empty(),
+            "relative URLs should be skipped (not http prefix)"
+        );
+    }
+
+    #[test]
+    fn test_parse_results_skips_google_com_urls() {
+        // 行为对齐 smart 端：URL 包含 google.com 被跳过
+        // （smart 端 test_parse_google_results_skips_google_links 对应行为）
+        let engine = create_engine();
+        let html = r#"
+        <html><body>
+            <div class="g">
+                <h3>Google Link</h3>
+                <a href="https://google.com/search?q=test">google.com</a>
+            </div>
+            <div class="g">
+                <h3>External Link</h3>
+                <a href="https://example.com">example.com</a>
+            </div>
+        </body></html>
+        "#;
+        let results = engine.parse_results(html).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].url, "https://www.google.com/search?q=test");
+        assert_eq!(results[0].url, "https://example.com");
     }
 }

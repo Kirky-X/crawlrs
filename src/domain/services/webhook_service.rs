@@ -8,11 +8,18 @@
 //! Unified webhook service for task completion and failure notifications.
 //! Supports dependency injection via trait-kit.
 
-use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::domain::models::{Task, Webhook};
 use crate::domain::models::{WebhookEvent, WebhookEventType};
+// R-wh-001 / T026：以下 import 仅 WebhookServiceImpl / WebhookManagementServiceImpl 使用，
+// webhook-off 时这两个 Impl 不编译，import 需同步门控避免 unused imports warning。
+#[cfg(feature = "webhook")]
+use crate::application::dto::scrape_request::ScrapeRequestDto;
+#[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+#[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_repository::WebhookRepository;
+// R-wh-001 / T026：webhook_sender 模块被门控，此 import 需同步门控
+#[cfg(feature = "webhook")]
 use crate::domain::services::webhook_sender::WebhookSender;
 // 架构 MEDIUM-1（审查 M1 折中说明）：本 import 引入 domain → infrastructure 的依赖箭头。
 // `constant_time_eq_str` 是无状态纯函数（无 I/O、无 DB、无全局状态），位于
@@ -21,13 +28,22 @@ use crate::domain::services::webhook_sender::WebhookSender;
 // 但当前选择 **DRY 优先于分层纯净** — 复用公共 helper（含完整文档 + 7 个单元测试）
 // 优于在 domain 层复制一份。此为已知折中，未来可在 `domain::shared` 重构时统一迁移。
 use crate::infrastructure::security::constant_time_eq_str;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+// R-wh-001: anyhow::anyhow! 宏仅 Impl 中使用，webhook-off 时不导入
+#[cfg(feature = "webhook")]
+use anyhow::anyhow;
 use async_trait::async_trait;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
+// R-wh-001: log::{error, info} 仅 Impl 中使用，webhook-off 时不导入
+#[cfg(feature = "webhook")]
 use log::{error, info};
+// R-wh-001: serde_json::json 仅 Impl 中使用，webhook-off 时不导入
+#[cfg(feature = "webhook")]
 use serde_json::json;
 use sha2::Sha256;
+// R-wh-001: Arc 仅 Impl 中使用，webhook-off 时不导入
+#[cfg(feature = "webhook")]
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -47,6 +63,10 @@ pub trait WebhookService: Send + Sync {
 }
 
 /// Webhook服务实现
+///
+/// R-wh-001 / T023：webhook feature 关闭时不编译此类型。
+/// webhook-off 模式下，`init_services` 装配 `NoopWebhookService` 替代（见 T027）。
+#[cfg(feature = "webhook")]
 pub struct WebhookServiceImpl {
     /// Webhook 发送器
     webhook_sender: Arc<dyn WebhookSender>,
@@ -56,6 +76,8 @@ pub struct WebhookServiceImpl {
     repository: Arc<dyn WebhookEventRepository>,
 }
 
+/// R-wh-001 / T023：webhook feature 关闭时不编译此 impl
+#[cfg(feature = "webhook")]
 impl WebhookServiceImpl {
     /// 创建新的 Webhook 服务实现
     pub fn new(
@@ -118,6 +140,8 @@ impl WebhookServiceImpl {
     }
 }
 
+/// R-wh-001 / T023：webhook feature 关闭时不编译此 impl
+#[cfg(feature = "webhook")]
 #[async_trait]
 impl WebhookService for WebhookServiceImpl {
     async fn send_webhook(&self, event: &WebhookEvent) -> Result<()> {
@@ -170,6 +194,8 @@ impl WebhookService for WebhookServiceImpl {
     }
 }
 
+/// R-wh-001 / T023：webhook feature 关闭时不编译此 impl
+#[cfg(feature = "webhook")]
 impl WebhookServiceImpl {
     /// 发送任务 webhook 事件
     async fn send_task_webhook(
@@ -285,6 +311,8 @@ pub trait WebhookManagementService: Send + Sync {
 ///
 /// 通过组合 `WebhookService` 复用已有的签名生成与发送逻辑，
 /// 避免代码重复。DI 注册在 Phase 11 统一处理。
+/// R-wh-001 / T023：webhook feature 关闭时不编译此类型
+#[cfg(feature = "webhook")]
 pub struct WebhookManagementServiceImpl {
     /// Webhook 仓库（端点 CRUD）
     webhook_repository: Arc<dyn WebhookRepository>,
@@ -294,6 +322,8 @@ pub struct WebhookManagementServiceImpl {
     webhook_service: Arc<dyn WebhookService>,
 }
 
+/// R-wh-001 / T023：webhook feature 关闭时不编译此 impl
+#[cfg(feature = "webhook")]
 impl WebhookManagementServiceImpl {
     /// 创建新的 Webhook 管理服务实现（测试与手动构造用）
     pub fn new(
@@ -309,6 +339,8 @@ impl WebhookManagementServiceImpl {
     }
 }
 
+/// R-wh-001 / T023：webhook feature 关闭时不编译此 impl
+#[cfg(feature = "webhook")]
 #[async_trait]
 impl WebhookManagementService for WebhookManagementServiceImpl {
     async fn register_webhook(&self, team_id: Uuid, url: String) -> Result<Webhook> {
@@ -547,7 +579,7 @@ pub fn verify_webhook_signature_from_parts(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "webhook"))]
 mod tests {
     use super::*;
     use crate::domain::repositories::task_repository::RepositoryError;

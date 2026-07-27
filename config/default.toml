@@ -1,3 +1,8 @@
+# 安全说明（R-sec-002）：
+# CRAWLRS_DISABLE_SSRF_PROTECTION 环境变量仅限开发/测试环境使用，
+# 生产环境设置此变量将导致 SSRF 防护失效（内网探测风险）。
+# 启动时若在非 test/development 环境检测到该变量，会输出显著 warn 告警。
+
 # Database Configuration
 [database]
 # URL is loaded from CRAWLRS__DATABASE__URL env var in production
@@ -66,6 +71,18 @@ max_size = 5000
 [concurrency]
 default_team_limit = 10
 task_lock_duration_seconds = 300
+# 内存感知调度器（crawler-capability-absorption Stage 1 / T016-T018）
+# 内存使用率（0.0-1.0）达到 pressure 阈值时调度器对新任务执行 Defer；
+# 达到 critical 阈值时执行 Reschedule，持续超过 critical_timeout_seconds
+# 后通过 watch channel 发出优雅关闭信号。
+mem_pressure_threshold = 0.8
+mem_critical_threshold = 0.9
+critical_timeout_seconds = 30
+# T037/R-runtime-003：AIMD 自适应并发开关
+# false（默认）：固定并发（default_team_limit），行为等同 Stage 1 之前
+# true：每队信号量由 AdaptiveSemaphore 承载，scrape_worker 成功/失败回填
+#       AIMDController::record_*，动态 target 推入 AdaptiveSemaphore::set_target
+adaptive_enabled = false
 
 # Search Configuration
 [search]
@@ -136,38 +153,43 @@ api_base_url = "http://localhost:11434/v1"
 # Scores are used by engine router to select the best engine for a request
 # Range: 0-100 (higher = more preferred)
 [engine_scores]
-# Fire CDP engine scores
-fire_cdp_with_tls_screenshot = 100  # TLS fingerprint + screenshot needed
-fire_cdp_with_tls = 100             # TLS fingerprint needed (no screenshot)
-fire_cdp_screenshot = 80            # Screenshot only
-fire_cdp_js = 90                    # JavaScript rendering needed
-fire_cdp_actions = 90               # Page interactions needed
-fire_cdp_default = 40               # Default score for basic requests
+# FlareSolverr CDP engine scores
+flaresolverr_cdp_with_tls_screenshot = 100  # TLS fingerprint + screenshot needed
+flaresolverr_cdp_with_tls = 100             # TLS fingerprint needed (no screenshot)
+flaresolverr_cdp_screenshot = 80            # Screenshot only
+flaresolverr_cdp_js = 90                    # JavaScript rendering needed
+flaresolverr_cdp_actions = 90               # Page interactions needed
+flaresolverr_cdp_default = 40               # Default score for basic requests
 
-# Fire TLS engine scores
-fire_tls_with_tls = 100             # TLS fingerprint needed
-fire_tls_unsupported = 0            # JS, screenshot, or actions not supported
-fire_tls_default = 40               # Default score for basic requests
+# FlareSolverr TLS engine scores
+flaresolverr_tls_with_tls = 100             # TLS fingerprint needed
+flaresolverr_tls_unsupported = 0            # JS, screenshot, or actions not supported
+flaresolverr_tls_default = 40               # Default score for basic requests
 
 # HTTP Proxy Configuration
 # Configure proxy for all scraping engines
 [proxy]
-url = "http://localhost:10808"
+urls = ["http://localhost:10808"]
+strategy = "round_robin"
 enabled = false
+# Sticky session TTL (seconds): same session_id returns same proxy within TTL
+sticky_ttl_seconds = 60
+# Failed proxy cooldown (seconds): proxies marked failed are not selected during cooldown
+cooldown_seconds = 30
 
 # Engine Configuration
-# Configure scraping engines (FlareSolverr, Fire Engine, etc.)
+# Configure scraping engines (FlareSolverr variants)
 [engines.flaresolverr]
 enabled = true
 url = "http://localhost:8191/v1"
 timeout_seconds = 30
 max_retries = 3
 
-[engines.fire_cdp]
+[engines.flaresolverr_cdp]
 enabled = false
 url = "http://localhost:8191/v1"
 
-[engines.fire_tls]
+[engines.flaresolverr_tls]
 enabled = false
 url = "http://localhost:8191/v1"
 
@@ -188,6 +210,13 @@ backlog_interval_seconds = 30
 default_timeout_seconds = 30
 playwright_timeout_seconds = 30
 flaresolverr_timeout_seconds = 30
+# T061/R-runtime-004：单引擎最大响应时间（MRT），router 顺序 fallback 路径按 min(remaining, mrt) 包裹
+# HTTP fetch 引擎（reqwest）MRT，默认 5 秒
+fetch_seconds = 5
+# TLS 指纹引擎（flaresolverr_tls）MRT，默认 15 秒
+tls_seconds = 15
+# CDP/浏览器引擎（playwright / flaresolverr_cdp / flaresolverr_full）MRT，默认 30 秒
+cdp_seconds = 30
 
 [timeouts.retry]
 initial_backoff_seconds = 1
@@ -235,3 +264,23 @@ enabled = true
 # 生产环境请根据实际部署架构配置，例如：
 # proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1", "::1"]
 proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1", "::1"]
+
+# =============================================================================
+# 认证配置（R-auth-engine-002 / T011：garrison JWT 密钥等）
+# =============================================================================
+#
+# `auth` feature 启用时（`--features default` 或 `--features auth`）：
+# - `jwt_secret` 为空或 <32 字节 → 启动 panic（fail-fast，CWE-326 弱密钥防护）
+# - 必须通过环境变量 `CRAWLRS__AUTH__JWT_SECRET` 或此处显式提供强密钥（≥32 字节）
+#
+# `auth` feature 关闭时（`--no-default-features`）：
+# - 本段仍需存在（confers 反序列化 Settings 结构需要）
+# - `jwt_secret` 字段值被忽略（garrison 不编译，不读取）
+#
+# 开发环境推荐：通过环境变量注入测试密钥，避免提交真实密钥到版本控制
+# 生产环境推荐：通过运维密钥管理系统注入，禁止硬编码在配置文件
+[auth]
+# JWT 签名密钥（HS256）。默认空字符串——auth-on 时 fail-fast 触发 panic。
+# 开发环境可通过环境变量注入：export CRAWLRS__AUTH__JWT_SECRET="test-jwt-secret-32-bytes-or-more!!"
+jwt_secret = ""
+

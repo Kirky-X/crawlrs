@@ -21,10 +21,11 @@ categories = ["web-programming", "web-programming::http-client"]
 exclude = []
 
 [features]
-default = []
+# 默认构建保持现有全功能行为：多租户 + 认证 + 限流 + Webhook
+default = ["teams", "auth", "rate-limit", "webhook"]
 
-standard = ["engine-playwright", "metrics"]
-full = ["standard", "engine-flaresolverr"]
+standard = ["engine-playwright", "metrics", "antibot"]
+full = ["standard", "engine-flaresolverr", "extractor-full"]
 
 genai-llm = ["dep:genai"]
 
@@ -32,11 +33,42 @@ genai-llm = ["dep:genai"]
 engine-playwright = ["dep:chromiumoxide"]
 engine-flaresolverr = []
 
+# --- 反爬虫检测特性（antibot-detection, T008/R-antibot-002） ---
+# aho-corasick 用于 Tier2 通用词字面量集的多模式匹配（AC 自动机）
+antibot = ["dep:aho-corasick"]
+
+# --- Markdown 转换特性（content-processing, T039/R-content-001） ---
+# htmd 用于 HTML→Markdown 转换（Stage2 P1）
+markdown = ["dep:htmd"]
+
+# --- 正文提取特性（content-processing, T043/R-content-003） ---
+# rs-trafilatura: 主路径，移植自 trafilatura，文章正文提取质量最高
+extractor-trafilatura = ["dep:rs-trafilatura"]
+# dom_smoothie: 性能回退，移植自 readability.js，DOM 结构启发式
+extractor-dom-smoothie = ["dep:dom_smoothie"]
+# extractor-full: 聚合两个 extractor，折叠进 `full`（保证 `--features full` 时全可用）
+extractor-full = ["extractor-trafilatura", "extractor-dom-smoothie"]
+
 # --- 浏览器下载特性 ---
 browser-download = ["dep:chromiumoxide_fetcher"]
 
 # --- 基础设施特性 ---
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
+
+# --- 业务能力特性（feature-gate-optional-modules） ---
+# 阶段说明：Stage 0 仅声明 feature + 常量；cfg 门控与 Noop* 实现见 Stage 1-4；
+# `--no-default-features` 在所有门控就位前会失败（预期，Stage 5 统一验证）。
+#
+# `teams` 隐含 `auth`：多租户需认证识别租户
+teams = ["auth"]
+# `auth` 关闭时走 default_identity_middleware 注入固定 AuthState
+# （DEFAULT_TEAM_ID/DEFAULT_API_KEY_ID 见 src/common/constants.rs::default_identity）
+# garrison-auth-migration：auth-on 改由 garrison 提供认证引擎，故 `auth` 隐含 `dep:garrison`
+auth = ["dep:garrison", "dep:inventory"]
+# `rate-limit` 门控 limiteron 依赖；关闭时注入 NoopRateLimitingService
+rate-limit = ["dep:limiteron"]
+# `webhook` 关闭时注入 NoopWebhookService 并移除 /v1/webhooks 路由
+webhook = []
 
 # --- 测试特性 ---
 test-mocks = []
@@ -116,12 +148,29 @@ inklog = { version = "0.1", default-features = false, features = ["cli", "http",
 sdforge = { version = "0.4", default-features = false, features = ["http"] }
 metrics = { version = "0.24", optional = true }
 metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"], optional = true }
+# inventory：编译期监听器注册（garrison GarrisonListenerEntry 需要，crawlrs 直接使用以注册 CrawlrsAuditListener）
+# optional：仅 auth feature 启用时引入（auth = ["dep:garrison", "dep:inventory"]）
+inventory = { version = "0.3", default-features = false, optional = true }
 
 # Web scraping and content processing
 scraper = { version = "0.27" }
 robotstxt = { version = "0.3" }
 chromiumoxide = { version = "0.9", optional = true }
 chromiumoxide_fetcher = { version = "0.9", optional = true }
+
+# Anti-bot detection — gated by `antibot` feature (T008/R-antibot-002)
+# aho-corasick: Tier2 通用词字面量集的多模式匹配（AC 自动机）
+aho-corasick = { version = "1.1", optional = true }
+
+# Markdown conversion — gated by `markdown` feature (T039/R-content-001)
+# htmd: HTML→Markdown 转换主路径（Stage2 P1）
+htmd = { version = "0.2", optional = true }
+
+# Content extraction — gated by `extractor-*` features (T043/R-content-003)
+# rs-trafilatura: 主路径，移植自 trafilatura（提取文章正文 + 元数据）
+rs-trafilatura = { version = "0.2", default-features = false, optional = true }
+# dom_smoothie: 性能回退，移植自 readability.js（DOM 启发式提取）
+dom_smoothie = { version = "0.16", default-features = false, optional = true }
 
 # Text processing and encoding
 chardetng = { version = "1.0" }
@@ -144,8 +193,8 @@ zeroize = "1.9"
 # Network utilities
 ipnetwork = "0.21"
 
-# Rate limiting and circuit breaking
-limiteron = { version = "0.2", default-features = false, features = [
+# Rate limiting and circuit breaking — gated by `rate-limit` feature
+limiteron = { version = "0.2", default-features = false, optional = true, features = [
     "postgres",
     "ban-manager",
     "quota-control",
@@ -154,11 +203,44 @@ limiteron = { version = "0.2", default-features = false, features = [
     "parallel-checker",
 ] }
 
+# Authentication & authorization framework — gated by `auth` feature
+# garrison-auth-migration (R-auth-engine-001)：auth-on 改由 garrison 提供认证引擎
+# 版本与 dbnexus/oxcache/trait-kit/confers/inklog/sdforge/limiteron 同作者对齐（共享 rc.43 链）
+garrison = { version = "0.8", default-features = false, optional = true, features = [
+    "backend-embedded",
+    "web-axum",
+    "db-postgres",
+    "cache-memory",
+    "protocol-apikey",
+    "protocol-jwt",
+    "permission-registry",
+    "authorize-api",
+    "listener",
+    "audit-log",
+    "audit-inklog",
+    "firewall",
+    "firewall-bruteforce",
+    "tenant-isolation",
+    "tracing-log",
+    # three-tier-cache：启用 garrison 内置 L1(oxcache 30s)+L2(DAO 300s)+L3(interface 回调) 三层缓存，
+    # 避免 get_permission_list/get_role_list 每次认证都触发 N+1+M 数据库查询（P-CRITICAL-001 修复）。
+    "three-tier-cache",
+    # protocol-zeroize：JWT secret 使用 Zeroizing<String> 包装，Drop 时清零内存（CWE-316 防护）。
+    "protocol-zeroize",
+] }
+
 # Concurrency and synchronization
 parking_lot = "0.12"
 
 # Regular expressions
 regex = "1.12"
+
+# Bloom filter & interner — URL 分层去重（T050-T053/R-frontier-001）
+# ahash: bloom 双哈希种子（已存在，复用）
+# hashbrown: spider ListBucket 同款 HashSet，比 std HashSet 性能更好
+# 规则25：显式声明所需特性，禁止 default-features = true
+# hashbrown 0.17 的 ahash 通过 default-hasher 特性提供
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "equivalent", "inline-more"] }
 
 bytes = "1.12"
 genai = { version = "0.6", optional = true }
@@ -229,6 +311,14 @@ name = "add_credits"
 path = "tools/add_credits.rs"
 required-features = ["admin-tools"]
 
+# R-key-lifecycle-002 / T029：一次性运维脚本，读旧 api_keys 表枚举需重签 team 清单，
+# 并在 garrison RBAC 表中预置标准角色/权限（tenant_id=0，所有 crawlrs team 共享）。
+# 依赖 garrison repository trait，故需 auth feature（auth-on 才编译 garrison）。
+[[bin]]
+name = "reissue_api_keys"
+path = "tools/reissue_api_keys.rs"
+required-features = ["admin-tools", "auth"]
+
 # =============================================================================
 # Build Optimization Profiles
 # =============================================================================
@@ -252,8 +342,18 @@ debug = true
 [workspace]
 members = ["examples"]
 
+# =============================================================================
+# Target-Specific Dependencies
+# =============================================================================
+# libc：MmapBloom 的 mmap/munmap 调用所需（T051/R-frontier-001）
+# - Linux: MAP_HUGETLB 大页支持（性能优化）
+# - 其他 Unix (macOS/BSD): 普通 mmap
+# - 非 Unix (Windows/WASM): 不引入，bloom.rs 自动 fallback 到 Vec<u8> heap
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "admin-tools"))',
+    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "admin-tools", "teams", "auth", "rate-limit", "webhook", "antibot", "markdown", "extractor-trafilatura", "extractor-dom-smoothie", "extractor-full"))',
 ]
