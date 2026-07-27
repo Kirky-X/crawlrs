@@ -220,6 +220,12 @@ impl HedgeController {
     /// 虽然 `Mutex` 保证本方法不引发 UB，但若与并发的 `record_latency` 交错执行，
     /// 可能产生中间状态（部分字段已清零、部分未清零）被读路径观测到。
     /// **生产路径禁止并发调用**，仅在已知无 race 路径调用时使用。
+    ///
+    /// # 为何 `#[allow(dead_code)]`
+    ///
+    /// 当前仅在测试中调用，但保留 `pub(crate)` 接口为未来冷启动/配置热重载
+    /// 场景预留（架构审查 M-1：接口隔离，不暴露为 `pub`）。
+    #[allow(dead_code)]
     pub(crate) fn reset(&self) {
         let mut state = self.state.lock();
         state.ema_latency_ms = 0.0;
