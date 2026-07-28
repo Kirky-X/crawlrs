@@ -318,11 +318,11 @@ fn build_test_state() -> CrawlHandlerState {
     CrawlHandlerState::new(
         crawl_repo,
         task_repo,
-        webhook_repo,
         scrape_result_repo,
+        rate_limiting_service,
+        webhook_repo,
         geo_restriction_repo,
         team_service,
-        rate_limiting_service,
     )
 }
 

@@ -23,25 +23,20 @@
 
 use std::sync::Arc;
 
-use once_cell::sync::Lazy;
-
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
-    middleware::{self, Next},
+    middleware::{self, from_fn_with_state, Next},
     routing::{get, post, put},
     Router,
 };
-use tokio::sync::Mutex;
+use dbnexus::DbPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 use crawlrs::domain::auth::{ApiKeyScope, AuditLogEntry, ScopePermission};
 use crawlrs::domain::services::audit_service::{AuditServiceError, AuditServiceTrait};
-use crawlrs::presentation::middleware::auth_middleware::{
-    self, get_global_auth_state, reset_global_auth_state, set_global_auth_state, AuthError,
-    AuthState,
-};
+use crawlrs::presentation::middleware::auth_middleware::{self, AuthError, AuthState};
 
 use crate::common::helpers::db_pool::create_test_pool_or_panic;
 
@@ -132,34 +127,6 @@ fn make_auth_state(scope: ApiKeyScope) -> AuthState {
     AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), scope)
 }
 
-/// Serialize tests that touch GLOBAL_AUTH_STATE (Mutex<Option<...>> — resettable per test).
-static GLOBAL_STATE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-/// Ensure global auth state is initialized (Stage 3 DTO 化后仅含 4 字段).
-///
-/// 架构 MEDIUM-1：GLOBAL_AUTH_STATE 是 `ParkRwLock<Option<Arc<AuthState>>>`（可重置）。
-/// 默认复用已设置的 state（避免重建）；调用方需要 fresh state 时，
-/// 应先 `reset_global_auth_state()` 再调用本函数。
-/// All callers must hold GLOBAL_STATE_LOCK to avoid races.
-///
-/// ## Stage 3 重构
-///
-/// AuthState DTO 化后仅含 `pool`/`team_id`/`api_key_id`/`scope` 四字段。
-/// `ApiKeyCache` / `AuthRateLimiter` / `trusted_proxies` 已删除：
-/// - 限速由 garrison firewall 负责（决策 2）
-/// - team_id 缓存由 `TEAM_ID_CACHE` 内部 LRU 负责（决策 4）
-/// - IP 解析由 garrison 在 `check_api_key` 内部处理
-fn ensure_global_auth_state() -> Arc<AuthState> {
-    if let Some(state) = get_global_auth_state() {
-        return state;
-    }
-    let pool = create_test_pool_or_panic();
-    let state = AuthState::new(pool, Uuid::nil(), Uuid::nil(), ApiKeyScope::default());
-    let state = Arc::new(state);
-    set_global_auth_state(state.clone());
-    get_global_auth_state().unwrap_or(state)
-}
-
 /// Build a Router wired with scope_middleware and an AuthState injector layer.
 ///
 /// The injector runs before scope_middleware (outer layer) so AuthState is
@@ -194,12 +161,12 @@ fn build_scope_test_app(auth_state: Option<AuthState>) -> Router {
 }
 
 /// Build a Router wired with the auth_middleware layer.
-fn build_auth_test_app() -> Router {
+fn build_auth_test_app(pool: Arc<DbPool>) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/metrics", get(|| async { "ok" }))
         .route("/protected", get(|| async { "ok" }))
-        .layer(middleware::from_fn(auth_middleware::auth_middleware()))
+        .layer(from_fn_with_state(pool, auth_middleware::auth_middleware_inner))
 }
 
 // ============================================================================
@@ -543,15 +510,12 @@ async fn test_scope_middleware_no_audit_service_still_works() {
 }
 
 // ============================================================================
-// Auth Middleware Integration Tests (serialized via GLOBAL_STATE_LOCK)
+// Auth Middleware Integration Tests
 // ============================================================================
 
 #[tokio::test]
 async fn test_auth_middleware_public_endpoint_bypasses_auth() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    ensure_global_auth_state();
-
-    let app = build_auth_test_app();
+    let app = build_auth_test_app(create_test_pool_or_panic());
 
     let response = app
         .oneshot(
@@ -572,10 +536,7 @@ async fn test_auth_middleware_public_endpoint_bypasses_auth() {
 
 #[tokio::test]
 async fn test_auth_middleware_metrics_endpoint_bypasses_auth() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    ensure_global_auth_state();
-
-    let app = build_auth_test_app();
+    let app = build_auth_test_app(create_test_pool_or_panic());
 
     let response = app
         .oneshot(
@@ -596,10 +557,7 @@ async fn test_auth_middleware_metrics_endpoint_bypasses_auth() {
 
 #[tokio::test]
 async fn test_auth_middleware_missing_bearer_token_returns_401() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    ensure_global_auth_state();
-
-    let app = build_auth_test_app();
+    let app = build_auth_test_app(create_test_pool_or_panic());
 
     let response = app
         .oneshot(
@@ -620,10 +578,7 @@ async fn test_auth_middleware_missing_bearer_token_returns_401() {
 
 #[tokio::test]
 async fn test_auth_middleware_non_bearer_scheme_returns_401() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    ensure_global_auth_state();
-
-    let app = build_auth_test_app();
+    let app = build_auth_test_app(create_test_pool_or_panic());
 
     let response = app
         .oneshot(
@@ -645,10 +600,7 @@ async fn test_auth_middleware_non_bearer_scheme_returns_401() {
 
 #[tokio::test]
 async fn test_auth_middleware_empty_bearer_token_returns_401() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    ensure_global_auth_state();
-
-    let app = build_auth_test_app();
+    let app = build_auth_test_app(create_test_pool_or_panic());
 
     let response = app
         .oneshot(
@@ -675,29 +627,6 @@ async fn test_auth_middleware_empty_bearer_token_returns_401() {
 // T031（Stage 7）：rate_limit 与 IP 锁定测试已迁移至
 // `tests/integration/auth_garrison_test.rs`——需 garrison 单例 + 真实 IP 上下文，
 // 单元测试无法覆盖（参考文件头注释 §Stage 3 重构）。
-
-// ============================================================================
-// Global State Function Tests
-// ============================================================================
-
-#[tokio::test]
-async fn test_global_auth_state_set_and_get() {
-    let _guard = GLOBAL_STATE_LOCK.lock().await;
-    // ensure_global_auth_state sets it if not already set
-    let state = ensure_global_auth_state();
-    assert!(state.team_id == Uuid::nil() || state.team_id != Uuid::nil());
-
-    // get_global_auth_state should return the same state
-    let retrieved = get_global_auth_state();
-    assert!(
-        retrieved.is_some(),
-        "get_global_auth_state should return Some after set"
-    );
-    assert!(
-        Arc::ptr_eq(&state, &retrieved.unwrap()),
-        "get_global_auth_state should return the same Arc"
-    );
-}
 
 // ============================================================================
 // AuthError Tests (additional coverage for error variants)

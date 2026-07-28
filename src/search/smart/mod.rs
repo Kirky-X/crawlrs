@@ -2581,6 +2581,8 @@ mod tests_ext {
 
     enum MockScrapeBehavior {
         Success(String),
+        /// 仅在 `antibot` feature 启用时由 `test_search_html_too_short` 构造。
+        #[cfg(feature = "antibot")]
         ShortHtml,
         RetryableError,
         NonRetryableError,
@@ -2618,6 +2620,7 @@ mod tests_ext {
                     headers: HashMap::new(),
                     response_time_ms: 0,
                 }),
+                #[cfg(feature = "antibot")]
                 MockScrapeBehavior::ShortHtml => Ok(InternalScrapeResponse {
                     status_code: 200,
                     content: "short".to_string(),
@@ -2713,6 +2716,9 @@ mod tests_ext {
             .any(|i| i.title.contains("Test Result")));
     }
 
+    // R-antibot-003：此测试依赖 antibot 分类器在 engine_client 层的 near-empty body 拦截；
+    // antibot feature 关闭时该路径被 cfg 移除，行为变为 InsufficientContent，故需 feature gate。
+    #[cfg(feature = "antibot")]
     #[tokio::test]
     async fn test_search_html_too_short() {
         // R-antibot-003：过短内容（< 200 bytes 且可见文本 < 50 chars）现由

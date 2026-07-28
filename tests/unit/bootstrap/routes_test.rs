@@ -32,6 +32,7 @@ use testcontainers::core::IntoContainerPort;
 use testcontainers::runners::AsyncRunner;
 use testcontainers::ImageExt;
 use testcontainers_modules::postgres::Postgres;
+use tokio::sync::OnceCell;
 use tower::ServiceExt;
 
 use crawlrs::bootstrap::config::load_settings;
@@ -151,24 +152,54 @@ async fn build_app_state(
     Ok((state, settings))
 }
 
-/// Test fixture: boot PostgreSQL, build CrawlRsState, return both.
+/// Process-wide shared test state.
+///
+/// `garrison`'s `GARRISON_DAO` is a process-global singleton that can only
+/// be initialized once (see `src/infrastructure/auth/garrison_dao.rs`).
+/// Parallel tests that each call `build_app_state()` → `init_garrison_auth()`
+/// race on this singleton: only the first wins, the rest fail with
+/// `GarrisonDao("set_garrison_dao failed: global DAO already injected ...")`.
+///
+/// Solution: boot PostgreSQL + build `CrawlRsState` exactly once per process
+/// and reuse the same instance across all tests in this file. The
+/// `PgContainer` is held inside the cell and dropped when the process exits
+/// (its `Drop` stops the container).
+static SHARED_STATE: OnceCell<Option<(CrawlRsState, Arc<crawlrs::config::Settings>, PgContainer)>> =
+    OnceCell::const_new();
+
+/// Initialize (first call) or fetch (subsequent calls) the shared test state.
 ///
 /// Callers should call `docker_available()` first and skip on `false`.
-async fn setup_state() -> Option<(CrawlRsState, Arc<crawlrs::config::Settings>, PgContainer)> {
-    let pg = match PgContainer::start().await {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("[skip] failed to start postgres container: {e}");
-            return None;
-        }
-    };
-    match build_app_state(&pg.url).await {
-        Ok((state, settings)) => Some((state, settings, pg)),
-        Err(e) => {
-            eprintln!("[skip] failed to build CrawlRsState: {e}");
-            None
-        }
-    }
+/// On first call, boots PostgreSQL and builds `CrawlRsState` (initializing
+/// the garrison singleton in the process). On subsequent calls, returns
+/// references to the cached instance — so all tests share one garrison DAO.
+async fn get_or_init_state() -> Option<
+    (
+        &'static CrawlRsState,
+        Arc<crawlrs::config::Settings>,
+        &'static PgContainer,
+    ),
+> {
+    let cell = SHARED_STATE
+        .get_or_init(|| async {
+            let pg = match PgContainer::start().await {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[skip] failed to start postgres container: {e}");
+                    return None;
+                }
+            };
+            match build_app_state(&pg.url).await {
+                Ok((state, settings)) => Some((state, settings, pg)),
+                Err(e) => {
+                    eprintln!("[skip] failed to build CrawlRsState: {e}");
+                    None
+                }
+            }
+        })
+        .await;
+    cell.as_ref()
+        .map(|(state, settings, pg)| (state, settings.clone(), pg))
 }
 
 /// Build a one-shot request with the given method, URI, and no body.
@@ -211,7 +242,7 @@ async fn test_public_routes_health_returns_ok() {
         eprintln!("[skip] Docker unavailable — test_public_routes_health_returns_ok");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -230,7 +261,7 @@ async fn test_public_routes_version_returns_cargo_version() {
         eprintln!("[skip] Docker unavailable — test_public_routes_version_returns_cargo_version");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -249,7 +280,7 @@ async fn test_public_routes_metrics_is_registered() {
         eprintln!("[skip] Docker unavailable — test_public_routes_metrics_is_registered");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -269,7 +300,7 @@ async fn test_public_routes_unknown_path_returns_404() {
         eprintln!("[skip] Docker unavailable — test_public_routes_unknown_path_returns_404");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -286,7 +317,7 @@ async fn test_public_routes_health_is_get_only() {
         eprintln!("[skip] Docker unavailable — test_public_routes_health_is_get_only");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -305,7 +336,7 @@ async fn test_public_routes_does_not_include_protected_endpoints() {
         );
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -326,7 +357,7 @@ async fn test_protected_routes_builds_without_panic() {
         eprintln!("[skip] Docker unavailable — test_protected_routes_builds_without_panic");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -341,7 +372,7 @@ async fn test_protected_routes_scrape_post_is_registered() {
         eprintln!("[skip] Docker unavailable — test_protected_routes_scrape_post_is_registered");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -361,7 +392,7 @@ async fn test_protected_routes_scrape_get_by_id_is_registered() {
         );
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -377,7 +408,7 @@ async fn test_protected_routes_extract_post_is_registered() {
         eprintln!("[skip] Docker unavailable — test_protected_routes_extract_post_is_registered");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -396,7 +427,7 @@ async fn test_protected_routes_webhooks_post_and_list_get_registered() {
         );
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -419,7 +450,7 @@ async fn test_protected_routes_crawl_post_get_delete_registered() {
         );
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -450,7 +481,7 @@ async fn test_protected_routes_search_post_is_registered() {
         eprintln!("[skip] Docker unavailable — test_protected_routes_search_post_is_registered");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -467,7 +498,7 @@ async fn test_protected_routes_team_endpoints_registered() {
         eprintln!("[skip] Docker unavailable — test_protected_routes_team_endpoints_registered");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -498,7 +529,7 @@ async fn test_protected_routes_audit_endpoints_registered() {
         eprintln!("[skip] Docker unavailable — test_protected_routes_audit_endpoints_registered");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -518,7 +549,7 @@ async fn test_protected_routes_scrape_get_rejected_by_auth_before_method_check()
         );
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -540,7 +571,7 @@ async fn test_protected_routes_search_get_rejected_by_auth_before_method_check()
         );
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -558,7 +589,7 @@ async fn test_protected_routes_unknown_path_rejected_by_auth() {
         );
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -576,7 +607,7 @@ async fn test_protected_routes_requires_auth_header() {
         eprintln!("[skip] Docker unavailable — test_protected_routes_requires_auth_header");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -597,7 +628,7 @@ async fn test_v2_routes_builds_without_panic() {
         eprintln!("[skip] Docker unavailable — test_v2_routes_builds_without_panic");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -611,7 +642,7 @@ async fn test_v2_routes_tasks_query_post_is_registered() {
         eprintln!("[skip] Docker unavailable — test_v2_routes_tasks_query_post_is_registered");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -628,7 +659,7 @@ async fn test_v2_routes_tasks_cancel_post_is_registered() {
         eprintln!("[skip] Docker unavailable — test_v2_routes_tasks_cancel_post_is_registered");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -647,7 +678,7 @@ async fn test_v2_routes_tasks_query_get_rejected_before_method_check() {
         );
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -666,7 +697,7 @@ async fn test_v2_routes_unknown_path_rejected_by_middleware() {
         eprintln!("[skip] Docker unavailable — test_v2_routes_unknown_path_rejected_by_middleware");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -684,7 +715,7 @@ async fn test_v2_routes_requires_auth_header() {
         eprintln!("[skip] Docker unavailable — test_v2_routes_requires_auth_header");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -704,7 +735,7 @@ async fn test_full_app_builds_without_panic() {
         eprintln!("[skip] Docker unavailable — test_full_app_builds_without_panic");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -718,7 +749,7 @@ async fn test_full_app_health_endpoint_accessible() {
         eprintln!("[skip] Docker unavailable — test_full_app_health_endpoint_accessible");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -736,7 +767,7 @@ async fn test_full_app_version_endpoint_accessible() {
         eprintln!("[skip] Docker unavailable — test_full_app_version_endpoint_accessible");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -754,7 +785,7 @@ async fn test_full_app_protected_route_requires_auth() {
         eprintln!("[skip] Docker unavailable — test_full_app_protected_route_requires_auth");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -770,7 +801,7 @@ async fn test_full_app_v2_task_route_requires_auth() {
         eprintln!("[skip] Docker unavailable — test_full_app_v2_task_route_requires_auth");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -786,7 +817,7 @@ async fn test_full_app_unknown_route_rejected_by_middleware() {
         eprintln!("[skip] Docker unavailable — test_full_app_unknown_route_rejected_by_middleware");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -812,7 +843,7 @@ async fn test_full_app_security_headers_present_on_public_route() {
         );
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -840,7 +871,7 @@ async fn test_full_app_cors_wildcard_origin_reflected_on_request() {
         );
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -870,7 +901,7 @@ async fn test_full_app_cors_preflight_returns_allow_methods() {
         eprintln!("[skip] Docker unavailable — test_full_app_cors_preflight_returns_allow_methods");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -899,7 +930,7 @@ async fn test_full_app_cors_specific_origin_reflected() {
         eprintln!("[skip] Docker unavailable — test_full_app_cors_specific_origin_reflected");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -937,7 +968,7 @@ async fn test_full_app_cors_invalid_origin_falls_back_to_wildcard() {
         );
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -976,7 +1007,7 @@ async fn test_full_app_body_limit_rejects_oversized_payload() {
         eprintln!("[skip] Docker unavailable — test_full_app_body_limit_rejects_oversized_payload");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -1005,7 +1036,7 @@ async fn test_full_app_body_limit_accepts_normal_payload() {
         eprintln!("[skip] Docker unavailable — test_full_app_body_limit_accepts_normal_payload");
         return;
     }
-    let (state, settings, _pg) = match setup_state().await {
+    let (state, settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };
@@ -1036,7 +1067,7 @@ async fn test_app_state_accessors_return_valid_arcs() {
         eprintln!("[skip] Docker unavailable — test_app_state_accessors_return_valid_arcs");
         return;
     }
-    let (state, _settings, _pg) = match setup_state().await {
+    let (state, _settings, _pg) = match get_or_init_state().await {
         Some(v) => v,
         None => return,
     };

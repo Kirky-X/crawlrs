@@ -111,6 +111,12 @@ mod engine_client_tests {
             EngineError::NoEnginesAvailable => EngineError::NoEnginesAvailable,
             EngineError::InvalidUrl(msg) => EngineError::InvalidUrl(msg.clone()),
             EngineError::Internal(msg) => EngineError::Internal(msg.clone()),
+            EngineError::AntiBotDetected(msg) => EngineError::AntiBotDetected(msg.clone()),
+            EngineError::FeatureToggle(msg) => EngineError::FeatureToggle(msg.clone()),
+            EngineError::EngineMrtExceeded { engine, mrt } => EngineError::EngineMrtExceeded {
+                engine: engine.clone(),
+                mrt: *mrt,
+            },
         }
     }
 

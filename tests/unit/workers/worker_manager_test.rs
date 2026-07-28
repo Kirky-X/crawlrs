@@ -36,6 +36,7 @@ use crawlrs::domain::services::llm_service::TokenUsage;
 use crawlrs::domain::services::team_semaphore::TeamSemaphore;
 use crawlrs::domain::services::webhook_service::WebhookService;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeResponse};
+use crawlrs::infrastructure::oxcache::CacheService;
 use crawlrs::queue::task_queue::{QueueError, TaskQueue};
 use crawlrs::utils::regex_cache::RegexCache;
 use crawlrs::utils::robots::RobotsCheckerTrait;
@@ -413,6 +414,47 @@ impl ExtractionServiceTrait for MockExtractionService {
     }
 }
 
+/// Noop CacheService for testing（T059/R-cache-002）。
+struct MockCacheService;
+
+#[async_trait::async_trait]
+impl CacheService for MockCacheService {
+    fn get(
+        &self,
+        _key: &str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn set(
+        &self,
+        _key: &str,
+        _value: &str,
+        _ttl_seconds: u64,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+    {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn delete(
+        &self,
+        _key: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+    {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn exists(
+        &self,
+        _key: &str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+    {
+        Box::pin(async { Ok(false) })
+    }
+}
+
 // =============================================================================
 // Helper functions
 // =============================================================================
@@ -439,6 +481,7 @@ fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> 
         http_client: Arc::new(reqwest::Client::new()),
         extraction_service: Arc::new(MockExtractionService),
         regex_cache: make_regex_cache(),
+        cache_service: Arc::new(MockCacheService) as Arc<dyn CacheService>,
     }
 }
 
@@ -750,7 +793,8 @@ fn test_worker_manager_deps_with_shared_repository() {
 
     let _manager = WorkerManager::new(deps, config);
     // repo Arc is still valid.
-    assert_eq!(Arc::strong_count(&repo), 2); // original + deps
+    // strong_count = 3: original + deps.repository + coalesce_coordinator (H-4 职责拆分)
+    assert_eq!(Arc::strong_count(&repo), 3); // original + deps + coalesce_coordinator
 }
 
 // =============================================================================

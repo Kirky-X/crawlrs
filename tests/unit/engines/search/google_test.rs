@@ -48,11 +48,11 @@ async fn test_google_arc_id_refresh_after_hour() {
 #[test]
 fn test_google_result_parsing() {
     let html = r#"
-        <div jscontroller="SC7lYd">
+        <div class="g">
             <a href="https://example.com">
                 <h3>Test Title</h3>
             </a>
-            <div data-sncf="1">Test description</div>
+            <div class="yXK7ld">Test description</div>
         </div>
     "#;
 
