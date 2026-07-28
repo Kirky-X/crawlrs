@@ -125,7 +125,13 @@ pub fn reset_team_id_cache() {
 /// - `Ok(None)`：`api_key_id` 不在 `api_keys` 表中
 /// - `Err(AuthError::InternalError)`：dbnexus `DbError`（连接池/会话获取失败）
 /// - `Err(AuthError::DatabaseError)`：sea-orm 查询失败（`DbErr`）
+//
+// feature-gate-optional-modules T010/T011 修复（design.md §4）：
+// teams feature 关闭时，`auth_middleware_inner` 直接使用 DEFAULT_TEAM_ID，
+// 此函数不被调用。用 `cfg_attr(not(feature = "teams"), allow(dead_code))`
+// 显式声明 teams-off 时 unused 是预期行为（Rust 条件编译 unused 的标准处理）。
 #[cfg(feature = "auth")]
+#[cfg_attr(not(feature = "teams"), allow(dead_code))]
 async fn fetch_team_id_by_api_key_id(
     pool: &Arc<DbPool>,
     api_key_id: Uuid,
@@ -287,11 +293,18 @@ pub async fn auth_middleware_inner(
     };
 
     // 5. 反查 crawlrs DB 获取 team_id（带 LRU 缓存，决策 4）
+    //
+    // feature-gate-optional-modules T010/T011 修复（design.md §4）：
+    // teams feature 关闭时（单租户模式），强制使用 DEFAULT_TEAM_ID，不查 DB。
+    // teams-on 时保持原逻辑从 DB 反查。
+    #[cfg(feature = "teams")]
     let team_id = match fetch_team_id_by_api_key_id(&pool, api_key_id).await {
         Ok(Some(tid)) => tid,
         Ok(None) => return AuthError::KeyNotFound(api_key_id).into_response(),
         Err(e) => return e.into_response(),
     };
+    #[cfg(not(feature = "teams"))]
+    let team_id = crate::common::constants::default_identity::DEFAULT_TEAM_ID;
 
     // 6. 桥接为 AuthState（传 api_key_id 而非 login_id，消除重复 Uuid 解析）
     let auth_state = match bridge_to_auth_state(pool.clone(), api_key_id, &perms, team_id).await {

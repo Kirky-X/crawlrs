@@ -24,7 +24,7 @@ exclude = []
 # 默认构建保持现有全功能行为：多租户 + 认证 + 限流 + Webhook
 default = ["teams", "auth", "rate-limit", "webhook"]
 
-standard = ["engine-playwright", "metrics", "antibot"]
+standard = ["engine-playwright", "metrics", "antibot", "markdown"]
 full = ["standard", "engine-flaresolverr", "extractor-full"]
 
 genai-llm = ["dep:genai"]
