@@ -70,6 +70,9 @@ rate-limit = ["dep:limiteron"]
 # `webhook` 关闭时注入 NoopWebhookService 并移除 /v1/webhooks 路由
 webhook = []
 
+# --- HTTP 服务特性（forge 宏生成的 SDK 端点依赖此 feature gate）---
+http = []
+
 # --- 测试特性 ---
 test-mocks = []
 
@@ -355,5 +358,5 @@ libc = "0.2"
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "admin-tools", "teams", "auth", "rate-limit", "webhook", "antibot", "markdown", "extractor-trafilatura", "extractor-dom-smoothie", "extractor-full"))',
+    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "admin-tools", "teams", "auth", "rate-limit", "webhook", "http", "antibot", "markdown", "extractor-trafilatura", "extractor-dom-smoothie", "extractor-full"))',
 ]
