@@ -342,7 +342,7 @@ cargo run --bin crawlrs
 curl http://localhost:8899/health
 
 # 预期响应：
-# {"status":"healthy","version":"0.1.0"}
+# {"status":"healthy","version":"0.2.0"}
 ```
 
 ---

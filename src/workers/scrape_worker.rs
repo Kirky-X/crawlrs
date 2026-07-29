@@ -23,7 +23,7 @@ use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::config::settings::Settings;
-use crate::domain::models::scrape_result::ScrapeResult;
+use crate::domain::models::ScrapeResult;
 use crate::domain::models::CrawlStatus;
 use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
@@ -1168,7 +1168,7 @@ impl ScrapeWorker {
             meta_data,
             screenshot: None,
             response_time_ms: 0,
-            created_at: Utc::now().naive_utc(),
+            created_at: Utc::now(),
         };
 
         self.result_repository.save(scrape_result).await?;
@@ -1673,7 +1673,7 @@ impl ScrapeWorker {
             meta_data,
             screenshot: response.screenshot.clone(),
             response_time_ms: response.response_time_ms as i64,
-            created_at: Utc::now().naive_utc(),
+            created_at: Utc::now(),
         };
 
         self.result_repository.save(result).await?;

@@ -405,8 +405,7 @@ mod tests {
             if self.should_fail {
                 return Err(AuditServiceError::RepositoryError(
                     AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                        "mock error".to_string(),
-                    )),
+                        "mock error".to_string(),).into()),
                 ));
             }
             Ok(self.logs.lock().unwrap().clone())
@@ -421,8 +420,7 @@ mod tests {
             if self.should_fail {
                 return Err(AuditServiceError::RepositoryError(
                     AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                        "mock error".to_string(),
-                    )),
+                        "mock error".to_string(),).into()),
                 ));
             }
             Ok(self.logs.lock().unwrap().clone())
@@ -436,8 +434,7 @@ mod tests {
             if self.should_fail {
                 return Err(AuditServiceError::RepositoryError(
                     AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                        "mock error".to_string(),
-                    )),
+                        "mock error".to_string(),).into()),
                 ));
             }
             Ok(self

@@ -19,11 +19,39 @@ use chrono::{Duration, Utc};
 use dbnexus::DbPool;
 use sea_orm::{
     sea_query::Expr, ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseBackend,
-    EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
+    DbErr, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    Statement,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
 use uuid::Uuid;
+
+impl From<DbErr> for RepositoryError {
+    fn from(err: DbErr) -> Self {
+        RepositoryError::Database(anyhow::anyhow!(err))
+    }
+}
+
+impl From<dbnexus::DbError> for RepositoryError {
+    fn from(err: dbnexus::DbError) -> Self {
+        use dbnexus::DbError;
+        match err {
+            DbError::Connection(db_err) => RepositoryError::Database(anyhow::anyhow!(db_err)),
+            DbError::Config(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
+                format!("Config: {}", msg)
+            ))),
+            DbError::Permission(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
+                format!("Permission: {}", msg)
+            ))),
+            DbError::Transaction(msg) => RepositoryError::Database(anyhow::anyhow!(
+                DbErr::Custom(format!("Transaction: {}", msg))
+            )),
+            DbError::Migration(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
+                format!("Migration: {}", msg)
+            ))),
+        }
+    }
+}
 
 /// Task repository implementation using Sea-ORM
 #[derive(Clone)]
@@ -232,21 +260,29 @@ impl TaskRepository for TaskRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        if let Some(entity) = task_entity::Entity::find_by_id(id)
-            .one(conn)
+        task_entity::Entity::update_many()
+            .col_expr(
+                task_entity::Column::Status,
+                Expr::value(TaskStatus::Completed.to_string()),
+            )
+            .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .col_expr(
+                task_entity::Column::CompletedAt,
+                Expr::value(Utc::now()),
+            )
+            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockExpiresAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
+            .filter(task_entity::Column::Id.eq(id))
+            .filter(task_entity::Column::Status.is_in([
+                TaskStatus::Queued.to_string(),
+                TaskStatus::Active.to_string(),
+            ]))
+            .exec(conn)
             .await
-            .map_err(|e| RepositoryError::Database(e.into()))?
-        {
-            let mut domain = TaskMapper::to_domain(entity);
-            domain.complete();
-
-            let active_model = TaskMapper::to_active_model(&domain);
-
-            active_model
-                .update(conn)
-                .await
-                .map_err(|e| RepositoryError::Database(e.into()))?;
-        }
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
         Ok(())
     }
@@ -262,21 +298,29 @@ impl TaskRepository for TaskRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        if let Some(entity) = task_entity::Entity::find_by_id(id)
-            .one(conn)
+        task_entity::Entity::update_many()
+            .col_expr(
+                task_entity::Column::Status,
+                Expr::value(TaskStatus::Failed.to_string()),
+            )
+            .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .col_expr(
+                task_entity::Column::CompletedAt,
+                Expr::value(Utc::now()),
+            )
+            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockExpiresAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
+            .filter(task_entity::Column::Id.eq(id))
+            .filter(task_entity::Column::Status.is_in([
+                TaskStatus::Queued.to_string(),
+                TaskStatus::Active.to_string(),
+            ]))
+            .exec(conn)
             .await
-            .map_err(|e| RepositoryError::Database(e.into()))?
-        {
-            let mut domain = TaskMapper::to_domain(entity);
-            domain.fail();
-
-            let active_model = TaskMapper::to_active_model(&domain);
-
-            active_model
-                .update(conn)
-                .await
-                .map_err(|e| RepositoryError::Database(e.into()))?;
-        }
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
         Ok(())
     }
@@ -292,21 +336,29 @@ impl TaskRepository for TaskRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        if let Some(entity) = task_entity::Entity::find_by_id(id)
-            .one(conn)
+        task_entity::Entity::update_many()
+            .col_expr(
+                task_entity::Column::Status,
+                Expr::value(TaskStatus::Cancelled.to_string()),
+            )
+            .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .col_expr(
+                task_entity::Column::CompletedAt,
+                Expr::value(Utc::now()),
+            )
+            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockExpiresAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
+            .filter(task_entity::Column::Id.eq(id))
+            .filter(task_entity::Column::Status.is_in([
+                TaskStatus::Queued.to_string(),
+                TaskStatus::Active.to_string(),
+            ]))
+            .exec(conn)
             .await
-            .map_err(|e| RepositoryError::Database(e.into()))?
-        {
-            let mut domain = TaskMapper::to_domain(entity);
-            domain.cancel();
-
-            let active_model = TaskMapper::to_active_model(&domain);
-
-            active_model
-                .update(conn)
-                .await
-                .map_err(|e| RepositoryError::Database(e.into()))?;
-        }
+            .map_err(|e| RepositoryError::Database(e.into()))?;
 
         Ok(())
     }
@@ -409,43 +461,26 @@ impl TaskRepository for TaskRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        // PERF: 使用批量更新代替 N+1 查询
-        // 获取所有需要取消的任务 ID
-        let task_ids: Vec<Uuid> = task_entity::Entity::find()
-            .select_only()
-            .column_as(task_entity::Column::Id, "id")
-            .filter(task_entity::Column::CrawlId.eq(crawl_id))
-            .filter(task_entity::Column::Status.is_in(vec![
-                TaskStatus::Queued.to_string(),
-                TaskStatus::Active.to_string(),
-            ]))
-            .into_tuple()
-            .all(conn)
-            .await
-            .map_err(|e| RepositoryError::Database(e.into()))?;
-
-        if task_ids.is_empty() {
-            return Ok(0);
-        }
-
-        // 批量更新所有任务为取消状态
-        let update_count = task_entity::Entity::update_many()
+        let update_result = task_entity::Entity::update_many()
             .col_expr(
                 task_entity::Column::Status,
                 Expr::value(TaskStatus::Cancelled.to_string()),
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
-            .filter(task_entity::Column::Id.is_in(task_ids.iter().copied()))
+            .filter(task_entity::Column::CrawlId.eq(crawl_id))
+            .filter(task_entity::Column::Status.is_in(vec![
+                TaskStatus::Queued.to_string(),
+                TaskStatus::Active.to_string(),
+            ]))
             .exec(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        Ok(update_count.rows_affected)
+        Ok(update_result.rows_affected)
     }
 
     async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
         let now = Utc::now();
-        // Stale threshold: tasks queued or active for more than 24h are considered stale
         let stale_threshold = now - Duration::hours(24);
 
         let session = self
@@ -458,56 +493,37 @@ impl TaskRepository for TaskRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        // PERF: 使用批量更新代替 N+1 查询
-        // 获取所有需要过期处理的任务 ID:
-        // 1. Queued tasks with explicit expires_at in the past
-        // 2. Queued tasks older than 24h (stale, no expires_at)
-        // 3. Active tasks started more than 24h ago (stale)
-        let task_ids: Vec<Uuid> = task_entity::Entity::find()
-            .select_only()
-            .column_as(task_entity::Column::Id, "id")
-            .filter(
-                Condition::any()
-                    .add(
-                        Condition::all()
-                            .add(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
-                            .add(task_entity::Column::ExpiresAt.lt(now)),
-                    )
-                    .add(
-                        Condition::all()
-                            .add(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
-                            .add(task_entity::Column::ExpiresAt.is_null())
-                            .add(task_entity::Column::CreatedAt.lt(stale_threshold)),
-                    )
-                    .add(
-                        Condition::all()
-                            .add(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
-                            .add(task_entity::Column::StartedAt.is_not_null())
-                            .add(task_entity::Column::StartedAt.lt(stale_threshold)),
-                    ),
+        let stale_condition = Condition::any()
+            .add(
+                Condition::all()
+                    .add(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
+                    .add(task_entity::Column::ExpiresAt.lt(now)),
             )
-            .into_tuple()
-            .all(conn)
-            .await
-            .map_err(|e| RepositoryError::Database(e.into()))?;
+            .add(
+                Condition::all()
+                    .add(task_entity::Column::Status.eq(TaskStatus::Queued.to_string()))
+                    .add(task_entity::Column::ExpiresAt.is_null())
+                    .add(task_entity::Column::CreatedAt.lt(stale_threshold)),
+            )
+            .add(
+                Condition::all()
+                    .add(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
+                    .add(task_entity::Column::StartedAt.is_not_null())
+                    .add(task_entity::Column::StartedAt.lt(stale_threshold)),
+            );
 
-        if task_ids.is_empty() {
-            return Ok(0);
-        }
-
-        // 批量更新所有过期任务为失败状态
-        let update_count = task_entity::Entity::update_many()
+        let update_result = task_entity::Entity::update_many()
             .col_expr(
                 task_entity::Column::Status,
                 Expr::value(TaskStatus::Failed.to_string()),
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
-            .filter(task_entity::Column::Id.is_in(task_ids.iter().copied()))
+            .filter(stale_condition)
             .exec(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        Ok(update_count.rows_affected)
+        Ok(update_result.rows_affected)
     }
 
     async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
@@ -698,6 +714,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_with_real_db_succeeds() {
+        // 序列化：防止并行的 acquire_next 测试偷走本测试创建的 queued 任务，
+        // 导致 find_by_id 读回 status=Active 而非 Queued（测试隔离修复）
+        let _guard = acquire_next_test_mutex().lock().await;
         let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
         let task = make_test_task();
         let result = repo.create(&task).await;

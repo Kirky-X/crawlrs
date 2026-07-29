@@ -441,10 +441,51 @@ impl ScraperEngine for ReqwestEngine {
         &self,
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
-        // SSRF protection: validate all URLs to prevent access to internal services
-        validators::validate_url(&request.url)
+        let validator = validators::SsrfValidator::new();
+        let validated_url = validator
+            .validate(&request.url)
             .await
             .map_err(|e| EngineError::Other(format!("SSRF protection: {}", e)))?;
+        let host = validated_url.parsed_url.host_str().unwrap_or("").to_string();
+        let _port = validated_url.port;
+        let resolved_first = validated_url
+            .resolved_ips
+            .first()
+            .copied()
+            .ok_or_else(|| EngineError::Other("SSRF: no resolved IPs".to_string()))?;
+        let mut rewritten = validated_url.parsed_url.clone();
+        let _ = rewritten.set_host(Some(&resolved_first.to_string()));
+        let need_tls_bypass = rewritten.scheme() == "https";
+        let handle = self.get_client(
+            &request.proxy,
+            request.skip_tls_verification,
+            request.session_id.as_deref(),
+        );
+        let temp_client: Option<reqwest::Client> = if need_tls_bypass {
+            let mut b = reqwest::Client::builder()
+                .timeout(Duration::from_secs(self.timeout_seconds))
+                .cookie_store(true)
+                .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
+                .danger_accept_invalid_certs(true);
+            if let Some(p) = &handle.used_proxy_url {
+                if let Ok(px) = reqwest::Proxy::http(p) {
+                    b = b.proxy(px);
+                }
+            }
+            match b.build() {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    return Err(EngineError::Other(format!(
+                        "Failed build temp client: {}",
+                        e
+                    )))
+                }
+            }
+        } else {
+            None
+        };
+        let effective_client: &reqwest::Client =
+            temp_client.as_ref().unwrap_or(&handle.client);
 
         // Build headers
         let mut headers = HeaderMap::new();
@@ -456,16 +497,6 @@ impl ScraperEngine for ReqwestEngine {
                 headers.insert(header_name, header_value);
             }
         }
-
-        // Use shared HTTP client for connection reuse, with proxy support
-        // 传入 skip_tls_verification 以支持开发环境跳过 TLS 验证（生产环境由 builder 拒绝）
-        // H3 修复：get_client 返回 ClientHandle，封装代理 URL 状态；
-        // 通过 report_failure / report_success 回填 ProxyProvider，无需调用方感知代理 URL。
-        let handle = self.get_client(
-            &request.proxy,
-            request.skip_tls_verification,
-            request.session_id.as_deref(),
-        );
 
         // R-identity-001: 从 UaPool 取一致的 UA + Accept-Language + sec-ch-ua profile
         // 替换原固定 DEFAULT_USER_AGENT / 固定移动 UA 分支；
@@ -479,9 +510,16 @@ impl ScraperEngine for ReqwestEngine {
         // bot-identified requests with a 227-byte JS-redirect error page
         // instead of returning actual search results.
         let mut request_builder = match request.method {
-            crate::engines::engine_client::HttpMethod::Get => handle.client.get(&request.url),
-            crate::engines::engine_client::HttpMethod::Post => handle.client.post(&request.url),
+            crate::engines::engine_client::HttpMethod::Get => {
+                effective_client.get(rewritten.as_str())
+            }
+            crate::engines::engine_client::HttpMethod::Post => {
+                effective_client.post(rewritten.as_str())
+            }
         };
+        if let Ok(hv) = HeaderValue::from_str(&host) {
+            request_builder = request_builder.header(reqwest::header::HOST, hv);
+        }
 
         // 应用 UA 绑定 headers（User-Agent + Accept-Language + sec-ch-ua）
         // - User-Agent: 所有 profile 必设

@@ -26,6 +26,8 @@ services:
       - POSTGRES_USER=${DB_USER:-crawlrs}
       - POSTGRES_PASSWORD=${DB_PASSWORD:-password}
       - POSTGRES_DB=${DB_NAME:-crawlrs}_test
+    # 并行测试时每个 DbPool 占用多个连接，默认 100 易耗尽导致 test_create_with_real_db_succeeds 失败
+    command: postgres -c max_connections=300
     ports:
       - "5443:5432"
     volumes:

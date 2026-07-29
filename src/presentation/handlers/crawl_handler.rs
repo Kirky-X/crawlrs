@@ -1013,7 +1013,7 @@ mod tests {
     // these tests focus on handler-specific concerns.
 
     use crate::domain::auth::ApiKeyScope;
-    use crate::domain::models::scrape_result::ScrapeResult;
+    use crate::domain::models::ScrapeResult;
     use crate::domain::models::{Crawl, CrawlStatus, Task, TaskStatus, TaskType};
     // R-wh-003 / T027：webhook feature 关闭时不导入 Webhook 模型
     #[cfg(feature = "webhook")]

@@ -111,6 +111,26 @@ impl MmapBloom {
         Self::new(DEFAULT_CAPACITY)
     }
 
+    /// View the entire backing region as an immutable byte slice.
+    ///
+    /// All bounds-checked operations use this helper so pointer arithmetic
+    /// and dereferences are encapsulated in a single `unsafe` location.
+    #[inline(always)]
+    fn as_slice(&self) -> &[u8] {
+        // SAFETY: `ptr` is valid for `len_bytes` bytes (our allocation
+        // invariant). The returned borrow is tied to `&self` — no mutable
+        // references can coexist.
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len_bytes) }
+    }
+
+    /// View the entire backing region as a mutable byte slice.
+    #[inline(always)]
+    fn as_slice_mut(&mut self) -> &mut [u8] {
+        // SAFETY: same invariant as `as_slice`; the `&mut self` borrow
+        // guarantees exclusive access for the lifetime of the slice.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len_bytes) }
+    }
+
     /// Allocate `len` bytes.  Tries mmap (with hugepages on Linux), then heap.
     fn alloc(len: usize) -> (*mut u8, AllocKind) {
         #[cfg(unix)]
@@ -215,15 +235,12 @@ impl MmapBloom {
         let (h1, h2) = Self::hash_seeds(item);
         let mask = self.mask;
         let mut composite = h1;
+        let bytes = self.as_slice_mut();
         for i in 0..NUM_HASHES as u64 {
             let pos = composite & mask;
             let byte_idx = (pos >> 3) as usize;
             let bit_idx = (pos & 7) as u8;
-            // SAFETY: pos < num_bits (mask guarantees), num_bits == len_bytes * 8.
-            unsafe {
-                let byte = &mut *self.ptr.add(byte_idx);
-                *byte |= 1 << bit_idx;
-            }
+            bytes[byte_idx] |= 1 << bit_idx;
             // Enhanced double hashing: next = h1 + (i+1)*h2 + (i+1)*i/2
             //   = composite + h2 + i
             composite = composite.wrapping_add(h2).wrapping_add(i);
@@ -240,16 +257,12 @@ impl MmapBloom {
         let (h1, h2) = Self::hash_seeds(item);
         let mask = self.mask;
         let mut composite = h1;
+        let bytes = self.as_slice();
         for i in 0..NUM_HASHES as u64 {
             let pos = composite & mask;
             let byte_idx = (pos >> 3) as usize;
             let bit_idx = (pos & 7) as u8;
-            // SAFETY: same invariant as `insert`.
-            let set = unsafe {
-                let byte = *self.ptr.add(byte_idx);
-                byte & (1 << bit_idx) != 0
-            };
-            if !set {
+            if bytes[byte_idx] & (1 << bit_idx) == 0 {
                 return false;
             }
             composite = composite.wrapping_add(h2).wrapping_add(i);
@@ -271,11 +284,7 @@ impl MmapBloom {
 
     /// Reset the filter — zero all bits and reset the counter.
     pub fn clear(&mut self) {
-        // SAFETY: `ptr` is valid for `len_bytes` bytes (our allocation
-        // invariant). write_bytes is equivalent to memset(0).
-        unsafe {
-            std::ptr::write_bytes(self.ptr, 0, self.len_bytes);
-        }
+        self.as_slice_mut().fill(0);
         self.count = 0;
     }
 
@@ -295,7 +304,7 @@ impl Drop for MmapBloom {
             #[cfg(unix)]
             AllocKind::Mmap { mapped_bytes } => {
                 // SAFETY: `ptr` was returned by mmap with size `mapped_bytes`.
-                // 规则12：munmap 失败需显性化记录（Drop 不能返回错误，用 log::error）
+                // munmap 失败需显性化记录（Drop 不能返回错误，用 log::error）
                 let rc = unsafe { libc::munmap(self.ptr as *mut libc::c_void, mapped_bytes) };
                 if rc != 0 {
                     log::error!(
@@ -339,31 +348,24 @@ impl std::fmt::Debug for MmapBloom {
 impl Clone for MmapBloom {
     fn clone(&self) -> Self {
         let (ptr, alloc_kind) = Self::alloc(self.len_bytes);
-        // SAFETY: both `self.ptr` and `ptr` are valid for `self.len_bytes`
-        // bytes. The regions don't overlap (fresh allocation).
-        unsafe {
-            std::ptr::copy_nonoverlapping(self.ptr, ptr, self.len_bytes);
-        }
-        Self {
+        let mut cloned = Self {
             ptr,
             len_bytes: self.len_bytes,
             mask: self.mask,
             count: self.count,
             alloc_kind,
-        }
+        };
+        // Safe copy via slices: source & target are both valid, non-overlapping.
+        cloned.as_slice_mut().copy_from_slice(self.as_slice());
+        cloned
     }
 }
 
 impl PartialEq for MmapBloom {
     fn eq(&self, other: &Self) -> bool {
-        if self.len_bytes != other.len_bytes || self.count != other.count {
-            return false;
-        }
-        // SAFETY: both pointers are valid for `len_bytes` bytes.
-        unsafe {
-            std::slice::from_raw_parts(self.ptr, self.len_bytes)
-                == std::slice::from_raw_parts(other.ptr, other.len_bytes)
-        }
+        self.len_bytes == other.len_bytes
+            && self.count == other.count
+            && self.as_slice() == other.as_slice()
     }
 }
 

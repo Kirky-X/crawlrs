@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-use crate::domain::models::scrape_result::ScrapeResult;
+use crate::domain::models::ScrapeResult;
 use anyhow::Result;
 use async_trait::async_trait;
 

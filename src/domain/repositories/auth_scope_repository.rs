@@ -10,32 +10,10 @@ use uuid::Uuid;
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
     #[error("Database error: {0}")]
-    Database(#[from] sea_orm::DbErr),
+    Database(anyhow::Error),
 
     #[error("Not found: {0}")]
     NotFound(String),
-}
-
-/// 实现 From<dbnexus::DbError> trait，支持 ? 操作符自动转换
-impl From<dbnexus::DbError> for RepositoryError {
-    fn from(err: dbnexus::DbError) -> Self {
-        use dbnexus::DbError;
-        match err {
-            DbError::Connection(db_err) => RepositoryError::Database(db_err),
-            DbError::Config(msg) => {
-                RepositoryError::Database(sea_orm::DbErr::Custom(format!("Config: {}", msg)))
-            }
-            DbError::Permission(msg) => {
-                RepositoryError::Database(sea_orm::DbErr::Custom(format!("Permission: {}", msg)))
-            }
-            DbError::Transaction(msg) => {
-                RepositoryError::Database(sea_orm::DbErr::Custom(format!("Transaction: {}", msg)))
-            }
-            DbError::Migration(msg) => {
-                RepositoryError::Database(sea_orm::DbErr::Custom(format!("Migration: {}", msg)))
-            }
-        }
-    }
 }
 
 /// 旧作用域仓库 trait（已弃用）。

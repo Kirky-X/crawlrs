@@ -13,9 +13,10 @@
 //! Per AGENTS.md: no mock library — tests use real trait impls with
 //! test-specific behavior and `Arc<AtomicBool>`/`Arc<Mutex<>>` for state.
 //!
-//! Task9: rate-limiting feature removed; limiteron is non-optional, tests always run.
+//! R-rl-001 / T017：limiteron_service 模块由 `rate-limit` feature 门控；
+//! rate-limit-off 时整个测试文件不编译（limiteron_service 不存在）。
 
-#![cfg(test)]
+#![cfg(all(test, feature = "rate-limit"))]
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};

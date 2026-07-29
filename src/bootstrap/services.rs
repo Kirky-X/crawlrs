@@ -17,7 +17,7 @@ use crate::config::settings::Settings;
 use crate::bootstrap::error::BootstrapError;
 #[cfg(feature = "auth")]
 use crate::infrastructure::auth::{
-    build_garrison_config, init_garrison_dao, set_audit_service, set_garrison_dao,
+    build_garrison_config, get_garrison_dao, init_garrison_dao, set_audit_service, set_garrison_dao,
     CrawlrsGarrisonInterface,
 };
 // garrison prelude 提供 GarrisonDao / GarrisonInterface / GarrisonManager trait 与类型。
@@ -449,6 +449,164 @@ pub async fn init_garrison_auth(
         use garrison::BruteForceStrategy as _FwAssert;
         // 引用类型做编译期检查（无运行时开销）
         let _ = std::marker::PhantomData::<_FwAssert>;
+    }
+
+    // 6. 注入 bootstrap admin API key（若环境变量存在）。
+    //
+    // ## 设计背景
+    //
+    // garrison DAO 默认是内存实现（`GarrisonDaoOxcache`），进程间不共享数据。
+    // 外部工具（`cargo run --bin gen_admin_key`）签发的 API Key 写入工具进程的
+    // 独立 DAO 实例，server 进程无法读取 → 所有认证请求均 401。
+    //
+    // 标准解法：server 启动时读取环境变量 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY`，
+    // 若存在则直接用 garrison `ApiKeyHandler::generate_with_namespace` 签发到
+    // server 自己的 DAO（内存共享），同时写入 crawlrs `api_keys`/`teams` 表保留
+    // `api_key_id → team_id` 映射（auth_middleware 反查依赖）。
+    //
+    // ## 安全（CWE-532 / CWE-798）
+    //
+    // - 明文 key 仅通过环境变量注入一次，从不写入日志或配置文件；
+    // - garrison 侧仅存 `sha256(key_secret)`（CWE-916 与 generate_internal 一致）；
+    // - 环境变量不存在或为空时完全跳过此分支（不影响部署未启用 bootstrap 的场景）。
+    //
+    // ## 格式
+    //
+    // `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` = `<team_id_uuid>`（可选）；
+    //   不传 team_id 时自动创建 `"bootstrap-admin-team"` team。
+    // 内部签发双段格式：`key_id.key_secret`（`ApiKeyHandler::generate_with_namespace`），
+    // key_id / key_secret 各 32 hex，TTL 30 天，scope `crawlrs:admin`。
+    let bootstrap_cfg = match std::env::var("CRAWLRS__BOOTSTRAP_ADMIN_API_KEY") {
+        Ok(v) if !v.is_empty() => Some(v),
+        _ => None,
+    };
+    if let Some(cfg_val) = bootstrap_cfg {
+        use crate::common::time_utils;
+        use crate::infrastructure::database::entities::api_key::{
+            ActiveModel as ApiKeyActiveModel, Entity as ApiKeyEntity,
+        };
+        use crate::infrastructure::database::entities::team::{
+            ActiveModel as TeamActiveModel, Entity as TeamEntity,
+        };
+        use garrison::protocol::apikey::ApiKeyHandler;
+        use sea_orm::{ActiveValue, EntityTrait};
+        use uuid::Uuid;
+
+        const GARRISON_NS: &str = "crawlrs";
+        const PERM_ADMIN: &str = "crawlrs:admin";
+        const DEFAULT_TEAM_NAME: &str = "bootstrap-admin-team";
+        const TTL_SECS: i64 = 30 * 24 * 60 * 60;
+
+        let wrap_db =
+            |ctx: &'static str| move |e: sea_orm::DbErr| BootstrapError::GarrisonManager(format!("{}: db: {}", ctx, e));
+
+        // `cfg_val` 可选格式：`team_id_uuid`（非空 uuid 时用作目标 team）
+        let team_id_arg: Option<Uuid> = if cfg_val.len() == 36 {
+            Uuid::parse_str(&cfg_val).ok()
+        } else {
+            None
+        };
+        let team_id = team_id_arg.unwrap_or_else(Uuid::new_v4);
+        let api_key_id = Uuid::new_v4();
+
+        // 确保 team 存在（bootstrap 首次启动时 team 表为空）
+        let now = time_utils::to_db_datetime(chrono::Utc::now());
+        let session = pool
+            .get_session("admin")
+            .await
+            .map_err(|e| {
+                BootstrapError::GarrisonManager(format!(
+                    "bootstrap_admin_key: db session: {e}"
+                ))
+            })?;
+        let conn = session.connection().map_err(|e| {
+            BootstrapError::GarrisonManager(format!("bootstrap_admin_key: db conn: {e}"))
+        })?;
+        if TeamEntity::find_by_id(team_id)
+            .one(conn)
+            .await
+            .map_err(wrap_db("bootstrap_admin_key: find team"))?
+            .is_none()
+        {
+            let team_active = TeamActiveModel {
+                id: ActiveValue::Set(team_id),
+                name: ActiveValue::Set(DEFAULT_TEAM_NAME.to_string()),
+                allowed_countries: ActiveValue::Set(None),
+                blocked_countries: ActiveValue::Set(None),
+                ip_whitelist: ActiveValue::Set(None),
+                domain_blacklist: ActiveValue::Set(None),
+                enable_geo_restrictions: ActiveValue::Set(false),
+                created_at: ActiveValue::Set(now),
+                updated_at: ActiveValue::Set(now),
+            };
+            TeamEntity::insert(team_active)
+                .exec(conn)
+                .await
+                .map_err(wrap_db("bootstrap_admin_key: insert team"))?;
+        }
+
+        // 用 `set_garrison_dao` 注入的全局 DAO 签发 key（与 server 进程共享内存）
+        let dao_for_gen = get_garrison_dao().ok_or_else(|| {
+            BootstrapError::GarrisonManager(
+                "bootstrap_admin_key: get_garrison_dao returned None".to_string(),
+            )
+        })?;
+        let handler = ApiKeyHandler::new(Arc::clone(&dao_for_gen));
+        let plaintext_key = handler
+            .generate_with_namespace(
+                api_key_id.to_string(),
+                GARRISON_NS,
+                vec![PERM_ADMIN.to_string()],
+                TTL_SECS,
+            )
+            .await
+            .map_err(|e| {
+                BootstrapError::GarrisonManager(format!(
+                    "bootstrap_admin_key: garrison generate: {e}"
+                ))
+            })?;
+
+        let garrison_key_id = plaintext_key
+            .split_once('.')
+            .map(|(k, _)| k.to_string())
+            .ok_or_else(|| {
+                BootstrapError::GarrisonManager(
+                    "bootstrap_admin_key: garrison returned malformed key".to_string(),
+                )
+            })?;
+
+        // 写入 crawlrs `api_keys` 表保留映射，auth_middleware 反查 team_id
+        let api_key_active = ApiKeyActiveModel {
+            id: ActiveValue::Set(api_key_id),
+            team_id: ActiveValue::Set(team_id),
+            key: ActiveValue::Set(garrison_key_id),
+            key_hash: ActiveValue::Set(None),
+            created_at: ActiveValue::Set(now),
+            updated_at: ActiveValue::Set(None),
+        };
+        #[allow(deprecated)]
+        ApiKeyEntity::insert(api_key_active)
+            .exec(conn)
+            .await
+            .map_err(wrap_db("bootstrap_admin_key: insert api_key"))?;
+
+        info!(
+            "Bootstrap admin API key injected: team_id={}, api_key_id={} (TTY: use \
+             `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY={}` to reuse team ID)",
+            team_id, api_key_id, team_id
+        );
+        // 明文 key 只打印到 stdout——生产运维保存；不写入 log/DB。
+        println!(
+            "\n\
+            ====================================================\n\
+            BOOTSTRAP ADMIN API KEY (save this now!):\n\
+            {}\n\
+            TEAM_ID:      {}\n\
+            API_KEY_ID:   {}\n\
+            Valid for:    30 days\n\
+            ====================================================\n",
+            plaintext_key, team_id, api_key_id
+        );
     }
 
     info!("Garrison authentication manager initialized (token_style=jwt, HS256, firewall=enabled)");

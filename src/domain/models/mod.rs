@@ -16,6 +16,7 @@
 // Pure domain models (no ORM annotations)
 pub mod crawl_model;
 pub mod credits_model;
+pub mod scrape_result_model;
 pub mod task_model;
 pub mod team_model;
 pub mod webhook_model;
@@ -23,19 +24,15 @@ pub mod webhook_model;
 // Domain types (enums, errors)
 pub mod task_domain;
 
-// Legacy modules kept for compatibility
-pub mod scrape_result;
-pub mod scrape_result_entity;
 pub mod search_result;
 
 // Re-export pure domain models
 pub use crawl_model::{Crawl, CrawlStatus};
 pub use credits_model::{Credits, CreditsError, CreditsTransaction, CreditsTransactionType};
+pub use scrape_result_model::ScrapeResult;
 pub use task_domain::{DomainError, TaskStatus, TaskType};
 pub use task_model::Task;
 pub use team_model::{Team, TeamError};
 pub use webhook_model::{Webhook, WebhookError, WebhookEvent, WebhookEventType, WebhookStatus};
 
-// Legacy re-exports for backward compatibility
-pub use scrape_result_entity::{Entity as ScrapeResultEntity, Model as ScrapeResult};
 pub use search_result::SearchResult;

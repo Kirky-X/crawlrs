@@ -7,6 +7,10 @@
 //!
 //! Tests DTO serialization (TeamInfoResponse, TeamUsageResponse) and
 //! the GeoRestriction DTOs used by get/update team geo restriction handlers.
+//!
+//! R-teams-002 / T012：team_handler 模块由 `teams` feature 门控；
+//! teams-off 时整个测试文件不编译（与 src/presentation/handlers/mod.rs 一致）。
+#![cfg(feature = "teams")]
 
 use chrono::Utc;
 use uuid::Uuid;

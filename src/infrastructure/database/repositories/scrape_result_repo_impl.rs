@@ -50,7 +50,6 @@ impl ScrapeResultRepositoryImpl {
             response_time_ms: Set(result.response_time_ms),
             created_at: Set(result
                 .created_at
-                .and_utc()
                 .with_timezone(&FixedOffset::east_opt(0).unwrap())),
         }
     }
@@ -68,7 +67,7 @@ impl ScrapeResultRepositoryImpl {
             meta_data: model.meta_data.unwrap_or(serde_json::json!({})),
             screenshot: model.screenshot,
             response_time_ms: model.response_time_ms,
-            created_at: model.created_at.naive_utc(),
+            created_at: model.created_at.with_timezone(&chrono::Utc),
         }
     }
 }
@@ -196,8 +195,7 @@ mod tests {
             screenshot: Some("base64screenshot".to_string()),
             response_time_ms: 150,
             created_at: chrono::DateTime::from_timestamp(1_700_000_000, 0)
-                .expect("valid timestamp")
-                .naive_utc(),
+                .expect("valid timestamp"),
         }
     }
 

@@ -287,7 +287,7 @@ impl HandlerState for CrawlHandlerState {
 mod tests {
     use super::*;
     use crate::domain::models::credits_model::CreditsTransactionType;
-    use crate::domain::models::scrape_result::ScrapeResult;
+    use crate::domain::models::ScrapeResult;
     use crate::domain::models::{Crawl, Task};
     // R-wh-003 / T027：webhook feature 关闭时不导入 Webhook 模型
     #[cfg(feature = "webhook")]

@@ -207,11 +207,10 @@ fn hash_token(token: &str) -> String {
 /// 下游 `limiteron_rate_limit_middleware` 的 `Extension<String>` 提取器拿到的是 hash，
 /// 不会在限速日志中泄露明文 token。
 fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash: &str) {
-    let team_id = auth_state.team_id;
-    let api_key_id = auth_state.api_key_id;
+    // 注意：`team_id` 和 `api_key_id` 均为 `Uuid` 类型，若同时 `insert` 会发生类型冲突
+    // （后者覆盖前者）。生产代码通过 `Extension<AuthState>` 读取，无需裸 `Uuid` 扩展。
+    // 此处仅注入 `AuthState`（包含 team_id/api_key_id/scope）+ `token_hash`（限速器消费）。
     req.extensions_mut().insert(auth_state);
-    req.extensions_mut().insert(team_id);
-    req.extensions_mut().insert(api_key_id);
     req.extensions_mut().insert(token_hash.to_string());
 }
 
@@ -253,7 +252,7 @@ pub async fn auth_middleware_inner(
 ) -> Response {
     use crate::presentation::middleware::auth_bridge::{bridge_to_auth_state, extract_bearer};
 
-    let path = req.uri().path();
+    let path = req.uri().path().to_string();
     debug!("AuthMiddleware (garrison) processing path: {}", path);
 
     // 1. 公开端点跳过认证（LOW-4 修复：规范化尾部斜杠后比较，/health/ 也匹配）
@@ -269,21 +268,109 @@ pub async fn auth_middleware_inner(
         Err(e) => return e.into_response(),
     };
 
-    // 3. garrison 校验 + 提取 login_id / perms（在 with_current_token 作用域内）
-    let (login_id, perms) = match garrison::stp::with_current_token(raw.clone(), async {
-        garrison::stp::GarrisonUtil::check_api_key("crawlrs").await?;
-        let login_id = garrison::stp::GarrisonUtil::get_login_id()
-            .await?
-            .ok_or_else(|| {
-                garrison::error::GarrisonError::NotLogin("login_id missing".to_string())
-            })?;
-        let perms = garrison::stp::GarrisonUtil::get_permission_list().await?;
-        Ok::<_, garrison::error::GarrisonError>((login_id, perms))
-    })
-    .await
-    {
-        Ok(t) => t,
-        Err(e) => return AuthError::from_garrison(e).into_response(),
+    // 3. garrison 校验 + 提取 login_id / scopes
+    //
+    // ## 决策：直接用 `ApiKeyHandler::verify_with_namespace` 而非 `stp::check_api_key`
+    //
+    // garrison 0.8.x 的 `check_api_key("crawlrs")` 内部用 verify 验证后丢弃
+    // `ApiKeyInfo`，不写入 TokenSession（ApiKey 与 Password/JWT 是两套会话机制）。
+    // 后续 `get_login_id()` → `session.get_token_session(token)` 因没有 session 而
+    // 返回 `None` → auth_middleware 误报 `NotLogin("login_id missing")` → 401。
+    //
+    // 修复（规则5 简洁 + 规则12 显性化）：跳过 stp 会话层的中间间接查询，
+    // 直接 `handler.verify_with_namespace(raw, "crawlrs")` 一步拿到
+    // `ApiKeyInfo { login_id, scopes, expire_at, ... }`，避免 O(3) DAO roundtrip
+    // 且消除 session/notfound 误报。
+    //
+    // CWE-307 保护（firewall-bruteforce）保留：在 verify 前后显式调用。
+    //
+    // DAO 来源优先级：优先 `get_garrison_dao()`（bootstrap 注入的全局共享 DAO），
+    // 与 GarrisonManager::init 传入的 dao 是同一 Arc 实例（见 services.rs
+    // init_garrison_auth: `set_garrison_dao(Arc::clone(&dao))`；`GarrisonManager::init(dao,...)`）。
+    let (login_id, perms) = {
+        use garrison::protocol::apikey::ApiKeyHandler;
+
+        let dao = match crate::infrastructure::auth::get_garrison_dao() {
+            Some(d) => d,
+            None => {
+                let e = garrison::error::GarrisonError::Session(
+                    "auth-middleware: garrison dao not initialized".to_string(),
+                );
+                return AuthError::from_garrison(e).into_response();
+            }
+        };
+
+        // CWE-307: IP 级暴力破解防护（对齐 check_api_key 内部实现，fail-open 兼容）
+        // garrison firewall-bruteforce feature: 若编译期类型缺失则在运行时零成本失效。
+        let ip_ctx = garrison::stp::current_ip();
+        if let Some(ip) = &ip_ctx {
+            use garrison::strategy::firewall::brute_force::{
+                BruteForceConfig, BruteForceStrategy,
+            };
+            use garrison::strategy::firewall::FirewallContext;
+            let strategy = BruteForceStrategy::new(
+                BruteForceConfig::default(),
+                Arc::clone(&dao),
+            );
+            let fw_ctx = FirewallContext::new(ip);
+            match strategy.is_blocked(&fw_ctx).await {
+                Ok(true) => {
+                    let e = garrison::error::GarrisonError::FirewallBlocked(format!(
+                        "auth-middleware-ip-blocked::{}",
+                        ip
+                    ));
+                    return AuthError::from_garrison(e).into_response();
+                }
+                Ok(false) | Err(_) => { /* unblocked 或瞬时 DAO 故障：fail-open 继续 */ }
+            }
+        }
+
+        let handler = ApiKeyHandler::new(Arc::clone(&dao));
+        let info = match handler.verify_with_namespace(&raw, "crawlrs").await {
+            Ok(i) => i,
+            Err(e) => {
+                // [DEBUG BOOTSTRAP 专用]：直接 stderr 打印 garrison 内部错误。
+                // 发布 v0.2.0 验收完成后删除。
+                eprintln!(
+                    "[BOOTSTRAP-DIAG] verify failed: raw_token_len={}, err_debug={:?}, err_display={}",
+                    raw.len(),
+                    e,
+                    e
+                );
+                // 额外加 dao 健康检查：读 garrison:apikey:crawlrs:* 列表（最多 5 条）
+                // 检查 dao 是否真的有数据
+                if let Ok(Some(dump_check)) = dao.get("garrison:apikey:crawlrs:__diag_probe__").await {
+                    eprintln!("[BOOTSTRAP-DIAG] dao-get probe ok: {}", &dump_check[..0.min(dump_check.len())]);
+                }
+                // 列 key_id 头部
+                let key_id_from_raw = raw.split_once('.').map(|(k,_)| k).unwrap_or("no-dot");
+                let probe_dao_key = format!("garrison:apikey:crawlrs:{}", key_id_from_raw);
+                match dao.get(&probe_dao_key).await {
+                    Ok(Some(v)) => eprintln!("[BOOTSTRAP-DIAG] dao found {} -> {} bytes", probe_dao_key, v.len()),
+                    Ok(None) => eprintln!("[BOOTSTRAP-DIAG] dao NOT FOUND: {}", probe_dao_key),
+                    Err(err2) => eprintln!("[BOOTSTRAP-DIAG] dao GET ERROR: {:?}", err2),
+                }
+                if let Some(ip) = &ip_ctx {
+                    use garrison::strategy::firewall::brute_force::{
+                        BruteForceConfig, BruteForceStrategy,
+                    };
+                    use garrison::strategy::firewall::FirewallContext;
+                    let strategy = BruteForceStrategy::new(
+                        BruteForceConfig::default(),
+                        Arc::clone(&dao),
+                    );
+                    let fw_ctx = FirewallContext::new(ip);
+                    if let Err(rec_err) = strategy.record_failure(&fw_ctx).await {
+                        debug!(
+                            "brute force record_failure failed (ip={}, err={})",
+                            ip, rec_err
+                        );
+                    }
+                }
+                return AuthError::from_garrison(e).into_response();
+            }
+        };
+        (info.login_id, info.scopes)
     };
 
     // 4. 解析 login_id → api_key_id (Uuid)
@@ -602,24 +689,19 @@ mod tests {
             middleware::from_fn_with_state, response::IntoResponse, routing::get, Extension, Router,
         };
         use tower::ServiceExt;
-        use uuid::Uuid;
 
         async fn reflect_extensions(
             Extension(auth_state): Extension<AuthState>,
-            Extension(team_id_ext): Extension<Uuid>,
-            Extension(api_key_id_ext): Extension<Uuid>,
         ) -> impl IntoResponse {
             (
                 StatusCode::OK,
                 format!(
-                    "auth_team={}\nauth_key={}\nread={}\nwrite={}\nadmin={}\nteam_ext={}\nkey_ext={}",
+                    "auth_team={}\nauth_key={}\nread={}\nwrite={}\nadmin={}",
                     auth_state.team_id,
                     auth_state.api_key_id,
                     auth_state.scope.read,
                     auth_state.scope.write,
                     auth_state.scope.admin,
-                    team_id_ext,
-                    api_key_id_ext,
                 ),
             )
         }
@@ -663,8 +745,6 @@ mod tests {
             assert!(body.contains("read=true"));
             assert!(body.contains("write=true"));
             assert!(body.contains("admin=true"));
-            assert!(body.contains(&format!("team_ext={}", DEFAULT_TEAM_ID)));
-            assert!(body.contains(&format!("key_ext={}", DEFAULT_API_KEY_ID)));
         }
 
         #[tokio::test]

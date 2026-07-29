@@ -249,7 +249,7 @@ pub async fn get_scrape_status(
                         headers: Some(result.headers),
                         meta_data: Some(result.meta_data),
                         screenshot: result.screenshot,
-                        created_at: result.created_at,
+                        created_at: result.created_at.naive_utc(),
                     }),
                     Ok(None) => {
                         error!("No scrape result found for completed task {}", task.id);
@@ -1094,7 +1094,7 @@ mod tests {
 
     use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::auth::ApiKeyScope;
-    use crate::domain::models::scrape_result::ScrapeResult;
+    use crate::domain::models::ScrapeResult;
     use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
     use crate::domain::services::rate_limiting_service::{
         BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
@@ -1594,7 +1594,7 @@ mod tests {
             content: "<html>test</html>".to_string(),
             content_type: "text/html".to_string(),
             response_time_ms: 100,
-            created_at: chrono::Utc::now().naive_utc(),
+            created_at: chrono::Utc::now(),
             headers: serde_json::json!({"content-length": "100"}),
             meta_data: serde_json::json!({"key": "value"}),
             screenshot: None,

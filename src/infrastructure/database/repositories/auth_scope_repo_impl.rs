@@ -6,7 +6,7 @@
 use crate::common::time_utils;
 use chrono::Utc;
 use dbnexus::DbPool;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ColumnTrait, DbErr, EntityTrait, QueryFilter, Set};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -22,6 +22,35 @@ use crate::infrastructure::database::entities::api_key::{
 use crate::infrastructure::database::entities::auth::scope::{
     Column as ScopeColumn, Entity as ScopeEntity,
 };
+
+#[allow(deprecated)]
+impl From<DbErr> for RepositoryError {
+    fn from(err: DbErr) -> Self {
+        RepositoryError::Database(anyhow::anyhow!(err))
+    }
+}
+
+#[allow(deprecated)]
+impl From<dbnexus::DbError> for RepositoryError {
+    fn from(err: dbnexus::DbError) -> Self {
+        use dbnexus::DbError;
+        match err {
+            DbError::Connection(db_err) => RepositoryError::Database(anyhow::anyhow!(db_err)),
+            DbError::Config(msg) => RepositoryError::Database(anyhow::anyhow!(
+                DbErr::Custom(format!("Config: {}", msg))
+            )),
+            DbError::Permission(msg) => RepositoryError::Database(anyhow::anyhow!(
+                DbErr::Custom(format!("Permission: {}", msg))
+            )),
+            DbError::Transaction(msg) => RepositoryError::Database(anyhow::anyhow!(
+                DbErr::Custom(format!("Transaction: {}", msg))
+            )),
+            DbError::Migration(msg) => RepositoryError::Database(anyhow::anyhow!(
+                DbErr::Custom(format!("Migration: {}", msg))
+            )),
+        }
+    }
+}
 
 /// 旧作用域仓库实现（已弃用，R-key-lifecycle-003 / T028）。
 ///
@@ -279,9 +308,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_database_display() {
-        let err = RepositoryError::Database(sea_orm::DbErr::RecordNotFound(
-            "scope not found".to_string(),
-        ));
+        let err = RepositoryError::Database(
+            sea_orm::DbErr::RecordNotFound("scope not found".to_string()).into(),
+        );
         assert!(format!("{}", err).contains("Database error"));
         assert!(format!("{}", err).contains("scope not found"));
     }
@@ -305,66 +334,110 @@ mod tests {
 
     // ========== From<dbnexus::DbError> exhaustive coverage ==========
 
+    #[allow(deprecated)]
     #[test]
     fn test_repository_error_from_dbnexus_db_error_connection() {
         use sea_orm::ConnAcquireErr;
         let inner = sea_orm::DbErr::ConnectionAcquire(ConnAcquireErr::Timeout);
         let db_err = dbnexus::DbError::Connection(inner);
         let repo_err: RepositoryError = db_err.into();
-        // Connection variant should map to Database variant preserving the inner DbErr
         match repo_err {
-            RepositoryError::Database(sea_orm::DbErr::ConnectionAcquire(_)) => {}
+            RepositoryError::Database(ref err) => {
+                let db_err = err
+                    .downcast_ref::<sea_orm::DbErr>()
+                    .expect("expected DbErr wrapped by anyhow");
+                match db_err {
+                    sea_orm::DbErr::ConnectionAcquire(_) => {}
+                    other => panic!("expected ConnectionAcquire, got {:?}", other),
+                }
+            }
             other => panic!("expected Database(ConnectionAcquire), got {:?}", other),
         }
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_repository_error_from_dbnexus_db_error_config() {
         let db_err = dbnexus::DbError::Config("invalid url".to_string());
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
-            RepositoryError::Database(sea_orm::DbErr::Custom(msg)) => {
-                assert!(msg.contains("Config"));
-                assert!(msg.contains("invalid url"));
+            RepositoryError::Database(ref err) => {
+                let db_err = err
+                    .downcast_ref::<sea_orm::DbErr>()
+                    .expect("expected DbErr wrapped by anyhow");
+                match db_err {
+                    sea_orm::DbErr::Custom(msg) => {
+                        assert!(msg.contains("Config"));
+                        assert!(msg.contains("invalid url"));
+                    }
+                    other => panic!("expected Custom, got {:?}", other),
+                }
             }
             other => panic!("expected Database(Custom), got {:?}", other),
         }
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_repository_error_from_dbnexus_db_error_permission() {
         let db_err = dbnexus::DbError::Permission("forbidden".to_string());
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
-            RepositoryError::Database(sea_orm::DbErr::Custom(msg)) => {
-                assert!(msg.contains("Permission"));
-                assert!(msg.contains("forbidden"));
+            RepositoryError::Database(ref err) => {
+                let db_err = err
+                    .downcast_ref::<sea_orm::DbErr>()
+                    .expect("expected DbErr wrapped by anyhow");
+                match db_err {
+                    sea_orm::DbErr::Custom(msg) => {
+                        assert!(msg.contains("Permission"));
+                        assert!(msg.contains("forbidden"));
+                    }
+                    other => panic!("expected Custom, got {:?}", other),
+                }
             }
             other => panic!("expected Database(Custom), got {:?}", other),
         }
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_repository_error_from_dbnexus_db_error_transaction() {
         let db_err = dbnexus::DbError::Transaction("deadlock".to_string());
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
-            RepositoryError::Database(sea_orm::DbErr::Custom(msg)) => {
-                assert!(msg.contains("Transaction"));
-                assert!(msg.contains("deadlock"));
+            RepositoryError::Database(ref err) => {
+                let db_err = err
+                    .downcast_ref::<sea_orm::DbErr>()
+                    .expect("expected DbErr wrapped by anyhow");
+                match db_err {
+                    sea_orm::DbErr::Custom(msg) => {
+                        assert!(msg.contains("Transaction"));
+                        assert!(msg.contains("deadlock"));
+                    }
+                    other => panic!("expected Custom, got {:?}", other),
+                }
             }
             other => panic!("expected Database(Custom), got {:?}", other),
         }
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_repository_error_from_dbnexus_db_error_migration() {
         let db_err = dbnexus::DbError::Migration("schema mismatch".to_string());
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
-            RepositoryError::Database(sea_orm::DbErr::Custom(msg)) => {
-                assert!(msg.contains("Migration"));
-                assert!(msg.contains("schema mismatch"));
+            RepositoryError::Database(ref err) => {
+                let db_err = err
+                    .downcast_ref::<sea_orm::DbErr>()
+                    .expect("expected DbErr wrapped by anyhow");
+                match db_err {
+                    sea_orm::DbErr::Custom(msg) => {
+                        assert!(msg.contains("Migration"));
+                        assert!(msg.contains("schema mismatch"));
+                    }
+                    other => panic!("expected Custom, got {:?}", other),
+                }
             }
             other => panic!("expected Database(Custom), got {:?}", other),
         }

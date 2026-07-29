@@ -6,7 +6,7 @@
 use crate::{
     application::dto::crawl_request::CrawlRequestDto,
     domain::{
-        models::{scrape_result::ScrapeResult, Crawl, CrawlStatus, Task, TaskStatus, TaskType},
+        models::{Crawl, CrawlStatus, ScrapeResult, Task, TaskStatus, TaskType},
         repositories::{
             crawl_repository::CrawlRepository,
             scrape_result_repository::ScrapeResultRepository,
@@ -440,7 +440,7 @@ impl CrawlUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::scrape_result::ScrapeResult;
+    use crate::domain::models::ScrapeResult;
     // R-teams-004 / T014：teams feature 关闭时不导入 teams 相关类型
     // （teams-only 测试已门控，mock 类型也门控）
     #[cfg(feature = "teams")]
@@ -1002,7 +1002,7 @@ mod tests {
             meta_data: json!({}),
             screenshot: None,
             response_time_ms: 100,
-            created_at: Utc::now().naive_utc(),
+            created_at: Utc::now(),
         }
     }
 

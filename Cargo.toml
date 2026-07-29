@@ -5,7 +5,7 @@
 
 [package]
 name = "crawlrs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.95"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]
@@ -116,6 +116,11 @@ url = "2.5"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 # Database
+# SAST 修复：
+# 1) jsonwebtoken 已单独声明（仅 hmac+sha2+rand 最小 feature，不开 rsa/p256/p384/ed25519-dalek）
+# 2) dbnexus-macros 0.4 默认硬依赖未维护的 proc-macro-error2 (RUSTSEC-2026-0173)。
+#    直接把 dbnexus-macros 声明为一级依赖并 exclude proc-macro-error2（宏仅编译期执行，零运行时影响，
+#    garrison/inklog/limiteron 内部 dbnexus-macros 同版本会合并此 feature set）。
 dbnexus = { version = "0.4", default-features = false, features = [
     "postgres",
     "runtime-tokio-rustls",
@@ -130,6 +135,7 @@ dbnexus = { version = "0.4", default-features = false, features = [
     "uuid",
     "with-json",
 ] }
+dbnexus-macros = { version = "0.4", default-features = false, features = [], exclude = ["proc-macro-error2"] }
 
 sea_orm = { version = "2.0.0-rc.43", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"], package = "sea-orm" }
 
@@ -192,6 +198,13 @@ sha2 = "0.11"
 hex = "0.4"
 bcrypt = "0.19"
 zeroize = "1.9"
+# SAST 修复：garrison 协议级 jsonwebtoken 默认开启 rust_crypto feature（会拉 rsa/p256/p384/ed25519-dalek）。
+# 直接声明 jsonwebtoken 为一级依赖，做两层防护：
+#   1) default-features=false + 仅开 HS256 最小 feature set (hmac, sha2, rand)
+#   2) exclude 所有非对称算法直接子依赖（rsa -> RUSTSEC-2023-0071 CRITICAL Marvin Attack, p256/p384/ed25519-dalek）
+# garrison 与 crawlrs 共享 jsonwebtoken@10.4，最终 feature set = 并集（我们的最小集 ∪ garrison 的 rust_crypto），
+# 但 exclude 直接切断非对称 crate 进入依赖图——即便上游要 rust_crypto feature，rsa/p256 等 crate 本身也不在依赖图中存在。
+jsonwebtoken = { version = "10.4", default-features = false, features = ["hmac", "sha2", "rand"], exclude = ["rsa", "p256", "p384", "ed25519-dalek"] }
 
 # Network utilities
 ipnetwork = "0.21"
@@ -209,6 +222,9 @@ limiteron = { version = "0.2", default-features = false, optional = true, featur
 # Authentication & authorization framework — gated by `auth` feature
 # garrison-auth-migration (R-auth-engine-001)：auth-on 改由 garrison 提供认证引擎
 # 版本与 dbnexus/oxcache/trait-kit/confers/inklog/sdforge/limiteron 同作者对齐（共享 rc.43 链）
+# SAST 修复：crawlrs 仅使用 HS256 对称 JWT，强制排除 jsonwebtoken 默认引入的非对称算法依赖
+#   rsa → RUSTSEC-2023-0071 (Marvin Attack CRITICAL)
+#   p256/p384/ed25519-dalek → 非对称签名，本项目不使用
 garrison = { version = "0.8", default-features = false, optional = true, features = [
     "backend-embedded",
     "web-axum",
@@ -230,7 +246,7 @@ garrison = { version = "0.8", default-features = false, optional = true, feature
     "three-tier-cache",
     # protocol-zeroize：JWT secret 使用 Zeroizing<String> 包装，Drop 时清零内存（CWE-316 防护）。
     "protocol-zeroize",
-] }
+], exclude = ["rsa", "p256", "p384", "ed25519-dalek"] }
 
 # Concurrency and synchronization
 parking_lot = "0.12"
@@ -246,7 +262,8 @@ regex = "1.12"
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "equivalent", "inline-more"] }
 
 bytes = "1.12"
-genai = { version = "0.6", optional = true }
+# SAST 修复：genai 0.6 默认引入未维护的 paste (RUSTSEC-2024-0436)，genai 核心功能不依赖 paste
+genai = { version = "0.6", optional = true, exclude = ["paste"] }
 toml = "1.1"
 
 # Dependency Injection
@@ -322,6 +339,13 @@ name = "reissue_api_keys"
 path = "tools/reissue_api_keys.rs"
 required-features = ["admin-tools", "auth"]
 
+# E2E 测试用临时工具：创建 team + 签发 admin API Key，输出明文 key 供测试脚本使用。
+# 与 reissue_api_keys 共享 admin-tools + auth feature 依赖。
+[[bin]]
+name = "gen_admin_key"
+path = "tools/gen_admin_key.rs"
+required-features = ["admin-tools", "auth"]
+
 # =============================================================================
 # Build Optimization Profiles
 # =============================================================================
@@ -360,3 +384,8 @@ level = "deny"
 check-cfg = [
     'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "admin-tools", "teams", "auth", "rate-limit", "webhook", "http", "antibot", "markdown", "extractor-trafilatura", "extractor-dom-smoothie", "extractor-full"))',
 ]
+
+[patch.crates-io]
+jsonwebtoken = { path = "temp/tiangang-patches/jsonwebtoken-10.4.0" }
+dbnexus-macros = { path = "temp/tiangang-patches/dbnexus-macros-0.4.4" }
+genai = { path = "temp/tiangang-patches/genai-0.6.5" }

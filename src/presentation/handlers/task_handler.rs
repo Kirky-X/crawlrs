@@ -385,7 +385,7 @@ async fn fetch_scrape_results(
     tasks: &[crate::domain::models::Task],
 ) -> Result<
     Option<
-        std::collections::HashMap<uuid::Uuid, crate::domain::models::scrape_result::ScrapeResult>,
+        std::collections::HashMap<uuid::Uuid, crate::domain::models::ScrapeResult>,
     >,
     CrawlRsError,
 > {
@@ -403,7 +403,7 @@ async fn fetch_scrape_results(
 fn build_task_infos(
     tasks: &[crate::domain::models::Task],
     results_map: Option<
-        &std::collections::HashMap<uuid::Uuid, crate::domain::models::scrape_result::ScrapeResult>,
+        &std::collections::HashMap<uuid::Uuid, crate::domain::models::ScrapeResult>,
     >,
 ) -> Vec<TaskInfoDto> {
     tasks
@@ -442,7 +442,7 @@ fn build_task_infos(
 
 /// 构建抓取结果信息
 fn build_scrape_result_json(
-    scrape_result: &crate::domain::models::scrape_result::ScrapeResult,
+    scrape_result: &crate::domain::models::ScrapeResult,
 ) -> ScrapeResultInfoDto {
     let escaped_content = html_escape::encode_text(&scrape_result.content);
     ScrapeResultInfoDto {
@@ -1245,8 +1245,8 @@ mod tests {
     // 构造测试用 ScrapeResult
     fn make_test_scrape_result(
         task_id: Uuid,
-    ) -> crate::domain::models::scrape_result::ScrapeResult {
-        crate::domain::models::scrape_result_entity::Model {
+    ) -> crate::domain::models::ScrapeResult {
+        crate::domain::models::ScrapeResult {
             id: Uuid::new_v4(),
             task_id,
             url: "https://example.com".to_string(),
@@ -1257,7 +1257,7 @@ mod tests {
             meta_data: serde_json::json!({"key": "value"}),
             screenshot: None,
             response_time_ms: 150,
-            created_at: chrono::Utc::now().naive_utc(),
+            created_at: chrono::Utc::now(),
         }
     }
 
@@ -1405,7 +1405,7 @@ mod tests {
         ];
         let results_map: std::collections::HashMap<
             Uuid,
-            crate::domain::models::scrape_result::ScrapeResult,
+            crate::domain::models::ScrapeResult,
         > = std::collections::HashMap::new();
 
         let infos = build_task_infos(&tasks, Some(&results_map));

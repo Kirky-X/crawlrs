@@ -320,7 +320,7 @@ mod tests {
                     meta_data: serde_json::json!({}),
                     screenshot: None,
                     response_time_ms: 0,
-                    created_at: Utc::now().naive_utc(),
+                    created_at: Utc::now(),
                 }))
             } else {
                 Ok(None)

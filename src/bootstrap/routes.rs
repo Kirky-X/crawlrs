@@ -391,7 +391,24 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
         .layer(Extension(task_repo.clone()))
         .layer(Extension(result_repo.clone()));
 
-    // 认证中间件层（条件编译，T009）
+    // team_semaphore_middleware（inner — auth 注入 AuthState 后执行）
+    //
+    // 注意中间件顺序：Axum 中后 .layer() = 外层 = 先执行。
+    // auth_middleware 必须在 team_semaphore_middleware 之外（之后 .layer()），
+    // 确保 AuthState 已注入 extensions，team_semaphore_middleware 才能读取 team_id。
+    let app = app
+        .layer(axum::middleware::from_fn(team_semaphore_middleware))
+        .layer(Extension(team_semaphore))
+        .layer(Extension(task_repo.clone()))
+        .layer(Extension(result_repo.clone()))
+        .layer(Extension(crawl_repo.clone()));
+    // R-wh-001 / T028：webhook Extension 层在 webhook-off 时不装配
+    #[cfg(feature = "webhook")]
+    let app = app
+        .layer(Extension(webhook_repo.clone()))
+        .layer(Extension(webhook_event_repo.clone()));
+
+    // 认证中间件层（outermost — 最先执行，注入 AuthState）
     //
     // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool。
     // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
@@ -410,17 +427,6 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
         ))
     };
 
-    let app = app
-        .layer(axum::middleware::from_fn(team_semaphore_middleware))
-        .layer(Extension(team_semaphore))
-        .layer(Extension(task_repo.clone()))
-        .layer(Extension(result_repo.clone()))
-        .layer(Extension(crawl_repo.clone()));
-    // R-wh-001 / T028：webhook Extension 层在 webhook-off 时不装配
-    #[cfg(feature = "webhook")]
-    let app = app
-        .layer(Extension(webhook_repo.clone()))
-        .layer(Extension(webhook_event_repo.clone()));
     app
 }
 

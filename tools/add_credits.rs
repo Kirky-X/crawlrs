@@ -22,7 +22,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|_| std::env::var("TEST_DATABASE_URL"))
         .map_err(|_| "DATABASE_URL or TEST_DATABASE_URL must be set")?;
 
-    let args: Vec<String> = std::env::args().collect();
+    // Safe argument parsing: use args_os + explicit UTF-8 validation.
+    // Avoids `std::env::args()` which silently panics on non-UTF8 OS args.
+    let args: Vec<String> = std::env::args_os()
+        .enumerate()
+        .map(|(i, os)| match os.into_string() {
+            Ok(s) => s,
+            Err(utf8_err) => {
+                eprintln!(
+                    "add_credits: argument {} contains invalid UTF-8: {:?}",
+                    i, utf8_err
+                );
+                std::process::exit(2);
+            }
+        })
+        .collect();
     if args.len() < 3 {
         eprintln!(
             "Usage: {} <team-uuid> <amount> [description]",

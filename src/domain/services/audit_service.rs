@@ -27,13 +27,18 @@ pub enum AuditServiceError {
 impl From<AuditServiceError> for CrawlRsError {
     fn from(error: AuditServiceError) -> Self {
         match error {
-            AuditServiceError::RepositoryError(repo_err) => {
-                // 尝试将 RepositoryError 转换为更具体的 CrawlRsError
-                match repo_err {
-                    AuditRepositoryError::DatabaseError(db_err) => CrawlRsError::Database(db_err),
-                    _ => CrawlRsError::Other(repo_err.to_string()),
+            AuditServiceError::RepositoryError(repo_err) => match repo_err {
+                AuditRepositoryError::DatabaseError(anyhow_err) => {
+                    if let Some(db_err) = anyhow_err.downcast_ref::<sea_orm::DbErr>().cloned() {
+                        CrawlRsError::Database(db_err)
+                    } else {
+                        CrawlRsError::Other(format!("Database error: {}", anyhow_err))
+                    }
                 }
-            }
+                AuditRepositoryError::NotFound => {
+                    CrawlRsError::Other(repo_err.to_string())
+                }
+            },
         }
     }
 }
@@ -114,9 +119,9 @@ mod tests {
             entry: &AuditLogEntry,
         ) -> Result<AuditLogEntry, AuditRepositoryError> {
             if self.fail_all {
-                return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                    "mock create failure".to_string(),
-                )));
+                return Err(AuditRepositoryError::DatabaseError(
+                    sea_orm::DbErr::Custom("mock create failure".to_string()).into(),
+                ));
             }
             self.created
                 .lock()
@@ -132,9 +137,9 @@ mod tests {
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
             if self.fail_all {
-                return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                    "mock find failure".to_string(),
-                )));
+                return Err(AuditRepositoryError::DatabaseError(
+                    sea_orm::DbErr::Custom("mock find failure".to_string()).into(),
+                ));
             }
             Ok(self.find_results.lock().expect("find lock").clone())
         }
@@ -146,9 +151,9 @@ mod tests {
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
             if self.fail_all {
-                return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                    "mock find failure".to_string(),
-                )));
+                return Err(AuditRepositoryError::DatabaseError(
+                    sea_orm::DbErr::Custom("mock find failure".to_string()).into(),
+                ));
             }
             Ok(self.find_results.lock().expect("find lock").clone())
         }
@@ -159,9 +164,9 @@ mod tests {
             _limit: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
             if self.fail_all {
-                return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                    "mock find failure".to_string(),
-                )));
+                return Err(AuditRepositoryError::DatabaseError(
+                    sea_orm::DbErr::Custom("mock find failure".to_string()).into(),
+                ));
             }
             Ok(self.find_results.lock().expect("find lock").clone())
         }
@@ -171,9 +176,9 @@ mod tests {
             _retention_days: i64,
         ) -> Result<u64, AuditRepositoryError> {
             if self.fail_all {
-                return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                    "mock cleanup failure".to_string(),
-                )));
+                return Err(AuditRepositoryError::DatabaseError(
+                    sea_orm::DbErr::Custom("mock cleanup failure".to_string()).into(),
+                ));
             }
             Ok(self.cleanup_count)
         }
@@ -561,8 +566,7 @@ mod tests {
     #[test]
     fn test_audit_service_error_from_repository_db_error_to_app_error() {
         let repo_err = AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-            "repo db failure".to_string(),
-        ));
+            "repo db failure".to_string(),).into());
         let service_err: AuditServiceError = repo_err.into();
         let app_err: CrawlRsError = service_err.into();
         // DatabaseError variant of AuditRepositoryError should map to CrawlRsError::Database

@@ -14,11 +14,15 @@ use axum::{
 };
 
 use crate::domain::services::team_semaphore::TeamSemaphore;
+use crate::presentation::middleware::auth_types::AuthState;
 
-/// 从请求扩展中提取team_id
-/// 认证中间件会将team_id注入到请求扩展中
+/// 从请求扩展中提取 team_id。
+///
+/// `auth_middleware` 注入 `AuthState`（包含 team_id/api_key_id/scope），
+/// 此处从 `AuthState` 读取 team_id（不再读取裸 `Uuid` 扩展——
+/// garrison-auth-migration 后 `inject_auth_state` 不再注入裸 `Uuid`）。
 fn extract_team_id(request: &Request) -> Option<uuid::Uuid> {
-    request.extensions().get::<uuid::Uuid>().copied()
+    request.extensions().get::<AuthState>().map(|s| s.team_id)
 }
 
 pub async fn team_semaphore_middleware(
@@ -45,43 +49,65 @@ pub async fn team_semaphore_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::test_helpers::create_test_db_pool;
+    use crate::domain::auth::ApiKeyScope;
     use axum::{body::Body, http::StatusCode, routing::get, Router};
     use std::sync::Arc;
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    fn build_request_with_team_id(team_id: Option<Uuid>) -> Request {
+    fn skip_if_no_test_db() -> bool {
+        if std::env::var("TEST_DATABASE_URL").is_err() {
+            eprintln!("[skip] TEST_DATABASE_URL not set — test requires real DbPool for AuthState");
+            return true;
+        }
+        false
+    }
+
+    /// 构造带 `AuthState`（含 team_id）的测试请求。
+    fn build_request_with_auth_state(team_id: Option<Uuid>) -> Request {
         let mut builder = Request::builder()
             .uri("/test")
             .body(Body::empty())
             .expect("body should build");
         if let Some(id) = team_id {
-            builder.extensions_mut().insert(id);
+            let pool = create_test_db_pool();
+            let auth_state = AuthState::new(pool, id, Uuid::new_v4(), ApiKeyScope::full_access());
+            builder.extensions_mut().insert(auth_state);
         }
         builder
     }
 
     #[test]
     fn test_extract_team_id_returns_some_when_present() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
-        let request = build_request_with_team_id(Some(team_id));
+        let request = build_request_with_auth_state(Some(team_id));
         assert_eq!(extract_team_id(&request), Some(team_id));
     }
 
     #[test]
     fn test_extract_team_id_returns_none_when_absent() {
-        let request = build_request_with_team_id(None);
+        if skip_if_no_test_db() {
+            return;
+        }
+        let request = build_request_with_auth_state(None);
         assert_eq!(extract_team_id(&request), None);
     }
 
     #[test]
     fn test_extract_team_id_ignores_other_extension_types() {
-        // Extensions with non-Uuid types should not satisfy the lookup
+        if skip_if_no_test_db() {
+            return;
+        }
+        // Extensions with non-AuthState types should not satisfy the lookup
         let mut request = Request::builder()
             .uri("/test")
             .body(Body::empty())
             .expect("body should build");
-        request.extensions_mut().insert("not-a-uuid".to_string());
+        request.extensions_mut().insert("not-an-auth-state".to_string());
         assert_eq!(extract_team_id(&request), None);
     }
 
@@ -96,19 +122,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_middleware_unauthorized_when_no_team_id() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let semaphore = Arc::new(TeamSemaphore::new(1));
         let app = test_router(semaphore);
-        let request = build_request_with_team_id(None);
+        let request = build_request_with_auth_state(None);
         let response = app.oneshot(request).await.expect("oneshot should succeed");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
     async fn test_middleware_passes_through_when_team_id_present() {
+        if skip_if_no_test_db() {
+            return;
+        }
         let semaphore = Arc::new(TeamSemaphore::new(1));
         let app = test_router(semaphore);
         let team_id = Uuid::new_v4();
-        let request = build_request_with_team_id(Some(team_id));
+        let request = build_request_with_auth_state(Some(team_id));
         let response = app.oneshot(request).await.expect("oneshot should succeed");
         assert_eq!(response.status(), StatusCode::OK);
     }

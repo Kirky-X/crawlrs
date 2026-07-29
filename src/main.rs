@@ -29,10 +29,24 @@ fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
 
 impl ServiceType {
     /// Parse service type from command line arguments.
+    /// Uses safe `args_os()` + explicit UTF-8 handling instead of `env::args()`,
+    /// which panics on non-UTF-8 OS arguments without a user-facing error.
     fn from_args() -> Self {
         use log::error;
         use std::{env, process};
-        let args: Vec<String> = env::args().collect();
+        let args: Vec<String> = env::args_os()
+            .enumerate()
+            .map(|(i, os)| match os.into_string() {
+                Ok(s) => s,
+                Err(utf8_err) => {
+                    eprintln!(
+                        "crawlrs: argument {} contains invalid UTF-8: {:?}",
+                        i, utf8_err
+                    );
+                    process::exit(2);
+                }
+            })
+            .collect();
         let arg = args.get(1).map(String::as_str);
         match parse_service_type(arg) {
             Ok(st) => st,

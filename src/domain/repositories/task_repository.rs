@@ -6,27 +6,19 @@
 use crate::domain::models::{Task, TaskStatus, TaskType};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sea_orm::DbErr;
 use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
-/// 仓库错误类型
+/// 仓库错误类型（纯领域定义，不依赖具体存储技术）
 #[derive(Error, Debug)]
 pub enum RepositoryError {
-    /// 数据库错误
+    /// 底层存储或连接错误
     #[error("Database error: {0}")]
     Database(anyhow::Error),
-    /// 记录未找到
+    /// 指定记录不存在
     #[error("Record not found")]
     NotFound,
-}
-
-/// 实现 From<sea_orm::DbErr> trait，支持 ? 操作符自动转换
-impl From<DbErr> for RepositoryError {
-    fn from(err: DbErr) -> Self {
-        RepositoryError::Database(anyhow::anyhow!(err))
-    }
 }
 
 /// 任务查询参数

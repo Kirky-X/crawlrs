@@ -1553,6 +1553,9 @@ mod tests {
     struct CapturingAuditService {
         entries: std::sync::Mutex<Vec<AuditLogEntry>>,
         fail_on_log: bool,
+        // 确定性同步：log() 完成后 notify_one，测试端 notified().await 替代 500ms 轮询，
+        // 消除并行测试下 spawn task 未及时调度导致的 flaky 失败。
+        notify: Arc<tokio::sync::Notify>,
     }
 
     impl CapturingAuditService {
@@ -1560,6 +1563,7 @@ mod tests {
             Self {
                 entries: std::sync::Mutex::new(Vec::new()),
                 fail_on_log: false,
+                notify: Arc::new(tokio::sync::Notify::new()),
             }
         }
 
@@ -1567,6 +1571,7 @@ mod tests {
             Self {
                 entries: std::sync::Mutex::new(Vec::new()),
                 fail_on_log: true,
+                notify: Arc::new(tokio::sync::Notify::new()),
             }
         }
 
@@ -1577,19 +1582,26 @@ mod tests {
         fn entry_count(&self) -> usize {
             self.entries.lock().unwrap().len()
         }
+
+        /// 返回 `Notify` 引用，测试端 `notify.notified().await` 确定性等待 `log()` 完成。
+        fn notify(&self) -> &tokio::sync::Notify {
+            &self.notify
+        }
     }
 
     #[async_trait]
     impl AuditServiceTrait for CapturingAuditService {
         async fn log(&self, entry: AuditLogEntry) -> Result<(), AuditServiceError> {
             if self.fail_on_log {
+                self.notify.notify_one();
                 return Err(AuditServiceError::RepositoryError(
                     crate::domain::repositories::audit_log_repository::AuditRepositoryError::DatabaseError(
-                        sea_orm::DbErr::Custom("mock failure".to_string()),
+                        sea_orm::DbErr::Custom("mock failure".to_string()).into(),
                     ),
                 ));
             }
             self.entries.lock().unwrap().push(entry);
+            self.notify.notify_one();
             Ok(())
         }
 
@@ -1692,17 +1704,16 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_on_event_persists_entry_via_audit_service() {
-        // setup: 持有串行化锁，避免并行测试污染 AUDIT_SERVICE
-        let mock = {
-            let _guard = test_lock().await;
-            reset_audit_service_for_test();
-            let mock = Arc::new(CapturingAuditService::new());
-            match set_audit_service(mock.clone() as Arc<dyn AuditServiceTrait>) {
-                Ok(()) => {}
-                Err(_) => panic!("setup: set_audit_service should succeed"),
-            }
-            mock
-        }; // guard drop，await 期间不持有锁（spawn task 持有 Arc clone，安全）
+        // 串行化：全程持有 test_lock，防止并行测试在 setup 与 on_event 之间
+        // reset AUDIT_SERVICE，导致 on_event 的 get_audit_service() 返回 None 或其他 mock。
+        // 先检查后 notified().await 模式处理 notify_one 早于 notified() 注册的竞态。
+        let _guard = test_lock().await;
+        reset_audit_service_for_test();
+        let mock = Arc::new(CapturingAuditService::new());
+        match set_audit_service(mock.clone() as Arc<dyn AuditServiceTrait>) {
+            Ok(()) => {}
+            Err(_) => panic!("setup: set_audit_service should succeed"),
+        }
 
         let listener = CrawlrsAuditListener::new();
         let api_key_id = Uuid::new_v4();
@@ -1719,10 +1730,33 @@ mod tests {
         // assert: on_event 不传播错误
         assert!(result.is_ok(), "on_event should never propagate errors");
 
-        // 等待 spawn task 完成（poll mock.entries 直到非空或超时）
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-        while mock.entry_count() == 0 && std::time::Instant::now() < deadline {
-            tokio::task::yield_now().await;
+        // 确定性等待 spawn task 完成：notify.notified().await 替代 500ms 轮询，
+        // 消除并行测试下 spawn task 未及时调度导致的 flaky 失败。
+        // 安全超时 5s 作为兜底（避免 mock 实现错误时无限挂起）。
+        let notify_fut = mock.notify().notified();
+        tokio::pin!(notify_fut);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            // 先检查是否已写入（可能 spawn task 在 await 前已完成）
+            if mock.entry_count() > 0 {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "timed out waiting for audit log entry: entry_count={}",
+                    mock.entry_count()
+                );
+            }
+            // 竞态：notify_one 在 notified() 注册前调用会丢失，故用 timeout 兜底
+            tokio::select! {
+                _ = &mut notify_fut => {}
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+                    panic!(
+                        "timed out waiting for audit log entry: entry_count={}",
+                        mock.entry_count()
+                    );
+                }
+            }
         }
 
         // assert: entry 被持久化，且字段正确
@@ -1737,11 +1771,8 @@ mod tests {
         assert_eq!(entry.decision, AuditDecision::Allow);
         assert_eq!(entry.api_key_id, Some(api_key_id));
 
-        // teardown: 持有锁重置全局态
-        {
-            let _guard = test_lock().await;
-            reset_audit_service_for_test();
-        }
+        // teardown: 仍持有 _guard，直接 reset
+        reset_audit_service_for_test();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

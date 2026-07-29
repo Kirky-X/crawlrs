@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use dbnexus::DbPool;
-use sea_orm::{ColumnTrait, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Set};
+use sea_orm::{ColumnTrait, DbErr, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Set};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -15,6 +15,35 @@ use crate::domain::repositories::audit_log_repository::{AuditLogRepository, Audi
 use crate::infrastructure::database::entities::auth::audit_log::{
     Column as AuditColumn, Entity as AuditEntity,
 };
+
+impl From<DbErr> for AuditRepositoryError {
+    fn from(err: DbErr) -> Self {
+        AuditRepositoryError::DatabaseError(anyhow::anyhow!(err))
+    }
+}
+
+impl From<dbnexus::DbError> for AuditRepositoryError {
+    fn from(err: dbnexus::DbError) -> Self {
+        use dbnexus::DbError;
+        match err {
+            DbError::Connection(db_err) => {
+                AuditRepositoryError::DatabaseError(anyhow::anyhow!(db_err))
+            }
+            DbError::Config(msg) => AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                DbErr::Custom(format!("Config: {}", msg))
+            )),
+            DbError::Permission(msg) => AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                DbErr::Custom(format!("Permission: {}", msg))
+            )),
+            DbError::Transaction(msg) => AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                DbErr::Custom(format!("Transaction: {}", msg))
+            )),
+            DbError::Migration(msg) => AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                DbErr::Custom(format!("Migration: {}", msg))
+            )),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AuditLogRepositoryImpl {
@@ -266,8 +295,7 @@ mod tests {
     #[test]
     fn test_audit_repository_error_database_error_display() {
         let err = AuditRepositoryError::DatabaseError(sea_orm::DbErr::RecordNotFound(
-            "audit log missing".to_string(),
-        ));
+            "audit log missing".to_string(),).into());
         let msg = format!("{}", err);
         assert!(msg.contains("Database error"));
         assert!(msg.contains("audit log missing"));
@@ -330,7 +358,15 @@ mod tests {
         let db_err = dbnexus::DbError::Connection(inner);
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
-            AuditRepositoryError::DatabaseError(sea_orm::DbErr::ConnectionAcquire(_)) => {}
+            AuditRepositoryError::DatabaseError(ref err) => {
+                let db_err = err
+                    .downcast_ref::<sea_orm::DbErr>()
+                    .expect("expected DbErr wrapped by anyhow");
+                match db_err {
+                    sea_orm::DbErr::ConnectionAcquire(_) => {}
+                    other => panic!("expected ConnectionAcquire, got {:?}", other),
+                }
+            }
             other => panic!("expected DatabaseError(ConnectionAcquire), got {:?}", other),
         }
     }
@@ -340,9 +376,17 @@ mod tests {
         let db_err = dbnexus::DbError::Config("invalid url".to_string());
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
-            AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(msg)) => {
-                assert!(msg.contains("Config"));
-                assert!(msg.contains("invalid url"));
+            AuditRepositoryError::DatabaseError(ref err) => {
+                let db_err = err
+                    .downcast_ref::<sea_orm::DbErr>()
+                    .expect("expected DbErr wrapped by anyhow");
+                match db_err {
+                    sea_orm::DbErr::Custom(msg) => {
+                        assert!(msg.contains("Config"));
+                        assert!(msg.contains("invalid url"));
+                    }
+                    other => panic!("expected Custom, got {:?}", other),
+                }
             }
             other => panic!("expected DatabaseError(Custom), got {:?}", other),
         }
@@ -353,9 +397,17 @@ mod tests {
         let db_err = dbnexus::DbError::Permission("forbidden".to_string());
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
-            AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(msg)) => {
-                assert!(msg.contains("Permission"));
-                assert!(msg.contains("forbidden"));
+            AuditRepositoryError::DatabaseError(ref err) => {
+                let db_err = err
+                    .downcast_ref::<sea_orm::DbErr>()
+                    .expect("expected DbErr wrapped by anyhow");
+                match db_err {
+                    sea_orm::DbErr::Custom(msg) => {
+                        assert!(msg.contains("Permission"));
+                        assert!(msg.contains("forbidden"));
+                    }
+                    other => panic!("expected Custom, got {:?}", other),
+                }
             }
             other => panic!("expected DatabaseError(Custom), got {:?}", other),
         }
@@ -366,9 +418,17 @@ mod tests {
         let db_err = dbnexus::DbError::Transaction("deadlock".to_string());
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
-            AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(msg)) => {
-                assert!(msg.contains("Transaction"));
-                assert!(msg.contains("deadlock"));
+            AuditRepositoryError::DatabaseError(ref err) => {
+                let db_err = err
+                    .downcast_ref::<sea_orm::DbErr>()
+                    .expect("expected DbErr wrapped by anyhow");
+                match db_err {
+                    sea_orm::DbErr::Custom(msg) => {
+                        assert!(msg.contains("Transaction"));
+                        assert!(msg.contains("deadlock"));
+                    }
+                    other => panic!("expected Custom, got {:?}", other),
+                }
             }
             other => panic!("expected DatabaseError(Custom), got {:?}", other),
         }
@@ -379,9 +439,17 @@ mod tests {
         let db_err = dbnexus::DbError::Migration("schema mismatch".to_string());
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
-            AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(msg)) => {
-                assert!(msg.contains("Migration"));
-                assert!(msg.contains("schema mismatch"));
+            AuditRepositoryError::DatabaseError(ref err) => {
+                let db_err = err
+                    .downcast_ref::<sea_orm::DbErr>()
+                    .expect("expected DbErr wrapped by anyhow");
+                match db_err {
+                    sea_orm::DbErr::Custom(msg) => {
+                        assert!(msg.contains("Migration"));
+                        assert!(msg.contains("schema mismatch"));
+                    }
+                    other => panic!("expected Custom, got {:?}", other),
+                }
             }
             other => panic!("expected DatabaseError(Custom), got {:?}", other),
         }

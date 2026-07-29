@@ -9,43 +9,20 @@
 //! 具体实现由基础设施层提供。
 
 use async_trait::async_trait;
-use dbnexus::DbError;
 use uuid::Uuid;
 
 use crate::domain::auth::AuditLogEntry;
 
-/// 仓储操作错误
+/// 仓储操作错误（纯领域定义，不依赖具体存储技术）
 #[derive(Debug, thiserror::Error)]
 pub enum AuditRepositoryError {
-    /// 数据库错误
+    /// 数据库或连接层错误
     #[error("Database error: {0}")]
-    DatabaseError(#[from] sea_orm::DbErr),
+    DatabaseError(anyhow::Error),
 
     /// 审计日志未找到
     #[error("Audit log not found")]
     NotFound,
-}
-
-/// 实现 From<dbnexus::DbError> trait，支持 ? 操作符自动转换
-impl From<DbError> for AuditRepositoryError {
-    fn from(err: DbError) -> Self {
-        use dbnexus::DbError;
-        match err {
-            DbError::Connection(db_err) => AuditRepositoryError::DatabaseError(db_err),
-            DbError::Permission(msg) => AuditRepositoryError::DatabaseError(
-                sea_orm::DbErr::Custom(format!("Permission error: {}", msg)),
-            ),
-            DbError::Transaction(msg) => AuditRepositoryError::DatabaseError(
-                sea_orm::DbErr::Custom(format!("Transaction error: {}", msg)),
-            ),
-            DbError::Migration(msg) => AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                format!("Migration error: {}", msg),
-            )),
-            DbError::Config(msg) => AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                format!("Config error: {}", msg),
-            )),
-        }
-    }
 }
 
 /// 审计日志仓储接口

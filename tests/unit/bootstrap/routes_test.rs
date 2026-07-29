@@ -103,15 +103,26 @@ impl PgContainer {
 /// reading another test's URL.
 static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
+/// 测试用 JWT secret（HS256 要求 >=32 字节，与 `auth_garrison_test.rs` 一致）。
+///
+/// `auth` feature 启用时，`bootstrap::services::init_garrison_auth` 会调用
+/// `build_garrison_config`，若 `jwt_secret` 为空或 < 32 字节返回 `EmptySecret` /
+/// `WeakSecret` 错误。测试环境必须注入强密钥避免 panic。
+const TEST_JWT_SECRET: &str = "test-strong-secret-key-for-garrison-integration-32-bytes!!";
+
 /// Build app `Settings` patched with the given database URL.
 ///
 /// `DatabaseSettings.url` is `pub(crate)` (sensitive), so external tests
 /// cannot construct the struct directly. Instead we set the confers env var
 /// `CRAWLRS__DATABASE__URL` before calling `load_settings()`, which the
 /// confers `Config` derive picks up via `#[config(env_prefix = "CRAWLRS__DATABASE__")]`.
+///
+/// 同时注入 `CRAWLRS__AUTH__JWT_SECRET`：`auth` feature 启用时 `init_garrison_auth`
+/// 强制要求 >=32 字节的 HS256 密钥，否则 bootstrap 阶段 panic。
 fn settings_with_db_url(db_url: &str) -> anyhow::Result<Arc<crawlrs::config::Settings>> {
     let _guard = ENV_MUTEX.lock().expect("ENV_MUTEX poisoned");
     std::env::set_var("CRAWLRS__DATABASE__URL", db_url);
+    std::env::set_var("CRAWLRS__AUTH__JWT_SECRET", TEST_JWT_SECRET);
     let settings = load_settings()?;
     Ok(Arc::new(settings))
 }
@@ -366,6 +377,7 @@ async fn test_protected_routes_builds_without_panic() {
     let _app = create_protected_routes_with_state(&state, settings);
 }
 
+#[cfg(feature = "auth")]
 #[tokio::test]
 async fn test_protected_routes_scrape_post_is_registered() {
     if !docker_available().await {
@@ -402,6 +414,7 @@ async fn test_protected_routes_scrape_get_by_id_is_registered() {
     assert_ne!(status, StatusCode::NOT_FOUND);
 }
 
+#[cfg(feature = "auth")]
 #[tokio::test]
 async fn test_protected_routes_extract_post_is_registered() {
     if !docker_available().await {
@@ -419,6 +432,7 @@ async fn test_protected_routes_extract_post_is_registered() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+#[cfg(all(feature = "auth", feature = "webhook"))]
 #[tokio::test]
 async fn test_protected_routes_webhooks_post_and_list_get_registered() {
     if !docker_available().await {
@@ -475,6 +489,7 @@ async fn test_protected_routes_crawl_post_get_delete_registered() {
     assert_ne!(s4, StatusCode::NOT_FOUND);
 }
 
+#[cfg(feature = "auth")]
 #[tokio::test]
 async fn test_protected_routes_search_post_is_registered() {
     if !docker_available().await {
@@ -492,6 +507,7 @@ async fn test_protected_routes_search_post_is_registered() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+#[cfg(all(feature = "auth", feature = "teams"))]
 #[tokio::test]
 async fn test_protected_routes_team_endpoints_registered() {
     if !docker_available().await {
@@ -541,6 +557,7 @@ async fn test_protected_routes_audit_endpoints_registered() {
     assert_ne!(s2, StatusCode::NOT_FOUND);
 }
 
+#[cfg(feature = "auth")]
 #[tokio::test]
 async fn test_protected_routes_scrape_get_rejected_by_auth_before_method_check() {
     if !docker_available().await {
@@ -563,6 +580,7 @@ async fn test_protected_routes_scrape_get_rejected_by_auth_before_method_check()
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+#[cfg(feature = "auth")]
 #[tokio::test]
 async fn test_protected_routes_search_get_rejected_by_auth_before_method_check() {
     if !docker_available().await {
@@ -581,6 +599,7 @@ async fn test_protected_routes_search_get_rejected_by_auth_before_method_check()
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+#[cfg(feature = "auth")]
 #[tokio::test]
 async fn test_protected_routes_unknown_path_rejected_by_auth() {
     if !docker_available().await {
@@ -601,6 +620,7 @@ async fn test_protected_routes_unknown_path_rejected_by_auth() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+#[cfg(feature = "auth")]
 #[tokio::test]
 async fn test_protected_routes_requires_auth_header() {
     if !docker_available().await {
@@ -779,6 +799,7 @@ async fn test_full_app_version_endpoint_accessible() {
     assert_eq!(body_str, env!("CARGO_PKG_VERSION"));
 }
 
+#[cfg(feature = "auth")]
 #[tokio::test]
 async fn test_full_app_protected_route_requires_auth() {
     if !docker_available().await {
@@ -811,6 +832,7 @@ async fn test_full_app_v2_task_route_requires_auth() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+#[cfg(feature = "auth")]
 #[tokio::test]
 async fn test_full_app_unknown_route_rejected_by_middleware() {
     if !docker_available().await {
@@ -1030,6 +1052,7 @@ async fn test_full_app_body_limit_rejects_oversized_payload() {
     assert_ne!(status, StatusCode::OK);
 }
 
+#[cfg(feature = "auth")]
 #[tokio::test]
 async fn test_full_app_body_limit_accepts_normal_payload() {
     if !docker_available().await {
@@ -1079,14 +1102,22 @@ async fn test_app_state_accessors_return_valid_arcs() {
     assert!(Arc::strong_count(&state.task_repo()) >= 1);
     assert!(Arc::strong_count(&state.result_repo()) >= 1);
     assert!(Arc::strong_count(&state.crawl_repo()) >= 1);
-    assert!(Arc::strong_count(&state.webhook_repo()) >= 1);
-    assert!(Arc::strong_count(&state.webhook_event_repo()) >= 1);
+    // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+    #[cfg(feature = "webhook")]
+    {
+        assert!(Arc::strong_count(&state.webhook_repo()) >= 1);
+        assert!(Arc::strong_count(&state.webhook_event_repo()) >= 1);
+    }
     assert!(Arc::strong_count(&state.task_queue()) >= 1);
     assert!(Arc::strong_count(&state.rate_limiting_service()) >= 1);
-    assert!(Arc::strong_count(&state.team_service()) >= 1);
+    // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+    #[cfg(feature = "teams")]
+    {
+        assert!(Arc::strong_count(&state.team_service()) >= 1);
+        assert!(Arc::strong_count(&state.geo_location_service()) >= 1);
+    }
     assert!(Arc::strong_count(&state.search_client()) >= 1);
     assert!(Arc::strong_count(&state.search_service()) >= 1);
-    assert!(Arc::strong_count(&state.geo_location_service()) >= 1);
     assert!(Arc::strong_count(&state.credits_repo()) >= 1);
     assert!(Arc::strong_count(&state.audit_service()) >= 1);
     assert!(Arc::strong_count(&state.team_semaphore()) >= 1);
