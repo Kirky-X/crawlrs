@@ -280,7 +280,7 @@ impl PlaywrightBrowserManagerComponent {
     async fn download_browser_if_needed(&self) -> Result<Option<PathBuf>, EngineError> {
         // 首先检查系统是否有浏览器
         if let Some(path) = crate::engines::browser_downloader::find_system_browser().await {
-            log::info!("使用系统浏览器");
+            log::info!("Using system browser");
             return Ok(Some(path));
         }
 
@@ -289,19 +289,19 @@ impl PlaywrightBrowserManagerComponent {
             let path = crate::engines::browser_downloader::get_browser_executable_path(
                 self.download_manager.get_cache_dir(),
             );
-            log::info!("使用已下载的浏览器: {:?}", path);
+            log::info!("Using downloaded browser: {:?}", path);
             return Ok(Some(path));
         }
 
         // 自动下载浏览器
-        log::info!("未检测到可用浏览器，开始自动下载...");
+        log::info!("No browser detected, starting auto-download...");
         match self.download_manager.download_browser().await {
             Ok(path) => {
-                log::info!("浏览器下载成功: {:?}", path);
+                log::info!("Browser downloaded successfully: {:?}", path);
                 Ok(Some(path))
             }
             Err(e) => {
-                log::warn!("浏览器下载失败: {}，将尝试使用系统路径", e);
+                log::warn!("Browser download failed: {}, falling back to system path", e);
                 Ok(None)
             }
         }
