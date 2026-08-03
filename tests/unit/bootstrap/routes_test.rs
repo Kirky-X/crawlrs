@@ -184,13 +184,11 @@ static SHARED_STATE: OnceCell<Option<(CrawlRsState, Arc<crawlrs::config::Setting
 /// On first call, boots PostgreSQL and builds `CrawlRsState` (initializing
 /// the garrison singleton in the process). On subsequent calls, returns
 /// references to the cached instance — so all tests share one garrison DAO.
-async fn get_or_init_state() -> Option<
-    (
-        &'static CrawlRsState,
-        Arc<crawlrs::config::Settings>,
-        &'static PgContainer,
-    ),
-> {
+async fn get_or_init_state() -> Option<(
+    &'static CrawlRsState,
+    Arc<crawlrs::config::Settings>,
+    &'static PgContainer,
+)> {
     let cell = SHARED_STATE
         .get_or_init(|| async {
             let pg = match PgContainer::start().await {

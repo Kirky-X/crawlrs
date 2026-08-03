@@ -166,7 +166,10 @@ fn build_auth_test_app(pool: Arc<DbPool>) -> Router {
         .route("/health", get(|| async { "ok" }))
         .route("/metrics", get(|| async { "ok" }))
         .route("/protected", get(|| async { "ok" }))
-        .layer(from_fn_with_state(pool, auth_middleware::auth_middleware_inner))
+        .layer(from_fn_with_state(
+            pool,
+            auth_middleware::auth_middleware_inner,
+        ))
 }
 
 // ============================================================================
