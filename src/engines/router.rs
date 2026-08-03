@@ -18,11 +18,13 @@ use crate::utils::hedge::HedgeController;
 use crate::utils::retry::{RetryDirective, RetryReason, RetryTracker};
 use crate::utils::ua_pool::UaPool;
 use dashmap::DashMap;
-use log::{info, warn};
+use log::{debug, info, warn};
 use rand::seq::SliceRandom;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+pub use crate::engines::router_metrics::{EngineStats, RouterMetrics};
 
 // === Section: EngineRouterTrait Definition ===
 
@@ -49,202 +51,6 @@ pub trait EngineRouterTrait: Send + Sync {
 
     /// Get list of registered engine names
     fn registered_engines(&self) -> Vec<String>;
-}
-
-/// 路由层指标收集器
-///
-/// 收集引擎路由过程中的各种指标，用于监控和优化
-///
-/// # 安全提示
-///
-/// 所有字段都是内部实现细节，仅对 crate 可见。
-/// 外部模块应使用提供的公共方法访问聚合统计数据。
-#[derive(Debug, Default)]
-pub struct RouterMetrics {
-    /// 总请求数
-    pub(crate) total_requests: AtomicU64,
-    /// 成功请求数
-    pub(crate) successful_requests: AtomicU64,
-    /// 失败请求数
-    pub(crate) failed_requests: AtomicU64,
-    /// 候选引擎数量统计
-    pub(crate) candidate_count_total: AtomicU64,
-    /// 尝试次数统计
-    pub(crate) attempt_count_total: AtomicU64,
-    /// 引擎选择次数
-    pub(crate) engine_selection_total: AtomicU64,
-    /// 按引擎名称的延迟统计 (引擎名 -> 总延迟纳秒) - 使用 DashMap 优化并发性能
-    pub(crate) engine_latencies: Arc<DashMap<String, u64>>,
-    /// 按引擎名称的成功次数 - 使用 DashMap 优化并发性能
-    pub(crate) engine_success_count: Arc<DashMap<String, u64>>,
-    /// 按引擎名称的失败次数 - 使用 DashMap 优化并发性能
-    pub(crate) engine_failure_count: Arc<DashMap<String, u64>>,
-    /// 失败类型统计 (错误类型 -> 次数) - 使用 DashMap 优化并发性能
-    pub(crate) failure_classification: Arc<DashMap<String, u64>>,
-}
-
-impl RouterMetrics {
-    /// 创建新的指标收集器
-    pub fn new() -> Self {
-        Self {
-            total_requests: AtomicU64::new(0),
-            successful_requests: AtomicU64::new(0),
-            failed_requests: AtomicU64::new(0),
-            candidate_count_total: AtomicU64::new(0),
-            attempt_count_total: AtomicU64::new(0),
-            engine_selection_total: AtomicU64::new(0),
-            engine_latencies: Arc::new(DashMap::with_capacity(8)),
-            engine_success_count: Arc::new(DashMap::with_capacity(8)),
-            engine_failure_count: Arc::new(DashMap::with_capacity(8)),
-            failure_classification: Arc::new(DashMap::with_capacity(8)),
-        }
-    }
-
-    /// 安全获取 latencies (DashMap 不需要 async 锁)
-    fn latencies(&self) -> &DashMap<String, u64> {
-        &self.engine_latencies
-    }
-
-    /// 安全获取 success_count (DashMap 不需要 async 锁)
-    fn success_count(&self) -> &DashMap<String, u64> {
-        &self.engine_success_count
-    }
-
-    /// 安全获取 failure_count (DashMap 不需要 async 锁)
-    fn failure_count(&self) -> &DashMap<String, u64> {
-        &self.engine_failure_count
-    }
-
-    /// 安全获取 classification (DashMap 不需要 async 锁)
-    fn classification(&self) -> &DashMap<String, u64> {
-        &self.failure_classification
-    }
-
-    /// 对错误进行分类
-    fn classify_error(error_type: &str) -> String {
-        let lower = error_type.to_lowercase();
-        if lower.contains("timeout") {
-            "timeout".to_string()
-        } else if lower.contains("ssrf") {
-            "ssrf_protection".to_string()
-        } else if lower.contains("network") {
-            "network_error".to_string()
-        } else if lower.contains("circuit") {
-            "circuit_breaker".to_string()
-        } else if lower.contains("browser") {
-            "browser_error".to_string()
-        } else {
-            "other".to_string()
-        }
-    }
-
-    /// 记录候选引擎数量
-    pub fn record_candidates(&self, count: usize) {
-        self.candidate_count_total
-            .fetch_add(count as u64, Ordering::Relaxed);
-    }
-
-    /// 记录单次尝试
-    pub fn record_attempt(&self) {
-        self.attempt_count_total.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// 记录引擎选择
-    ///
-    /// 仅累加 selection 计数；延迟/成功/失败统计各自在 `record_engine_*` 中用 `entry().or_insert(0)`
-    /// 自动初始化，避免重置已累计的值（架构审查 HIGH-1 修复）。
-    ///
-    /// 注：`engine_name` 参数保留以维持 API 兼容（调用方按语义传入），但本方法不再使用它
-    /// 来初始化 latencies（原 bug：insert(..., 0) 会重置累计延迟）。
-    pub fn record_engine_selection(&self, _engine_name: &str) {
-        self.engine_selection_total.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// 记录引擎延迟
-    ///
-    /// 使用 `entry().or_insert(0)` 自动初始化首次记录，避免依赖 `record_engine_selection` 预初始化
-    /// （原实现 `record_engine_selection` 调用 `insert(..., 0)` 会重置累计延迟，架构审查 HIGH-1 bug）。
-    pub fn record_engine_latency(&self, engine_name: &str, duration: Duration) {
-        let total_ns = duration.as_nanos() as u64;
-        self.latencies()
-            .entry(engine_name.to_string())
-            .and_modify(|c| *c += total_ns)
-            .or_insert(total_ns);
-    }
-
-    /// 记录引擎成功
-    ///
-    /// 使用 `entry().or_insert(0)` 自动初始化，避免依赖外部预初始化。
-    pub fn record_engine_success(&self, engine_name: &str) {
-        self.success_count()
-            .entry(engine_name.to_string())
-            .and_modify(|c| *c += 1)
-            .or_insert(1);
-    }
-
-    /// 记录引擎失败
-    ///
-    /// 使用 `entry().or_insert(0)` 自动初始化 failure_count 与 failure_classification，
-    /// 避免依赖外部预初始化。
-    pub fn record_engine_failure(&self, engine_name: &str, error_type: &str) {
-        self.failure_count()
-            .entry(engine_name.to_string())
-            .and_modify(|c| *c += 1)
-            .or_insert(1);
-
-        let error_category = Self::classify_error(error_type);
-        self.classification()
-            .entry(error_category)
-            .and_modify(|c| *c += 1)
-            .or_insert(1);
-    }
-
-    /// 获取按引擎名称的平均延迟（纳秒）
-    pub fn get_avg_latency_ns(&self, engine_name: &str) -> Option<u64> {
-        // DashMap: 并发读取
-        let latencies = self.latencies();
-        let success_count = self.success_count();
-
-        if let (Some(total_ns), Some(count)) =
-            (latencies.get(engine_name), success_count.get(engine_name))
-        {
-            return total_ns.checked_div(*count);
-        }
-        None
-    }
-
-    /// 获取成功率
-    pub fn get_success_rate(&self) -> f64 {
-        let total = self.total_requests.load(Ordering::Relaxed);
-        if total == 0 {
-            return 1.0;
-        }
-        self.successful_requests.load(Ordering::Relaxed) as f64 / total as f64
-    }
-}
-
-/// 引擎性能统计
-#[derive(Debug, Clone)]
-pub struct EngineStats {
-    /// 成功率 (0.0 - 1.0)
-    pub success_rate: f64,
-    /// 平均响应时间
-    pub avg_response_time: Duration,
-    /// 最近使用时间
-    pub last_used: Option<Instant>,
-    /// 使用次数
-    pub usage_count: u64,
-}
-
-impl Default for EngineStats {
-    fn default() -> Self {
-        Self {
-            success_rate: 1.0,
-            avg_response_time: Duration::from_millis(500),
-            last_used: None,
-            usage_count: 0,
-        }
-    }
 }
 
 /// 负载均衡策略
@@ -761,7 +567,7 @@ impl EngineRouter {
             candidates.rotate_left(start_index);
         }
 
-        info!(
+        debug!(
             "Selected {} candidate engines using {:?} strategy",
             candidates.len(),
             self.strategy
@@ -800,7 +606,7 @@ impl EngineRouter {
             self.metrics.record_engine_selection(engine_name);
             self.metrics.record_attempt();
 
-            info!(
+            debug!(
                 "Trying engine {} with score {:.2} for request to {}",
                 engine_name, score, request.url
             );
@@ -851,7 +657,7 @@ impl EngineRouter {
                 } else {
                     headers.insert("sec-ch-ua".to_string(), profile.sec_ch_ua.to_string());
                 }
-                info!(
+                debug!(
                     "Attempt {}: rotated UA via pick_seeded(seed={}) -> {} ({}, AL={}, sec-ch-ua={})",
                     total_attempts,
                     total_attempts - 1,
@@ -967,7 +773,7 @@ impl EngineRouter {
                                 engine_name,
                                 &format!("js-upgrade-probe: {}", verdict.reason),
                             );
-                            info!(
+                            debug!(
                                 "Engine {} returned SPA shell (probe score={}, reason={}); \
                                  re-routing with needs_js=true to dispatch browser engine",
                                 engine_name, verdict.score, verdict.reason
@@ -1140,7 +946,7 @@ impl EngineRouter {
         // 限制竞速引擎数量
         let race_candidates: Vec<_> = candidates.into_iter().take(3).collect();
 
-        info!(
+        debug!(
             "Race mode: launching {} engines concurrently for {}",
             race_candidates.len(),
             request.url
@@ -1476,6 +1282,7 @@ mod tests {
     use crate::engines::client::reqwest::ReqwestEngine;
     use async_trait::async_trait;
     use std::collections::HashMap;
+    use std::sync::atomic::AtomicU64;
 
     #[tokio::test]
     async fn test_engine_router_creation() {
@@ -2080,8 +1887,9 @@ mod tests {
         metrics.record_engine_latency("engine1", Duration::from_millis(100));
         metrics.record_engine_latency("engine1", Duration::from_millis(200));
         // 累计延迟应为 100+200=300ms = 300_000_000ns
-        let total = metrics.engine_latencies.get("engine1").unwrap();
-        assert_eq!(*total, 300_000_000);
+        // PERF-004: AtomicU64 load 读取
+        let total_ref = metrics.engine_latencies.get("engine1").unwrap();
+        assert_eq!(total_ref.load(Ordering::Relaxed), 300_000_000);
         // avg 需要 success_count 同步存在（get_avg_latency_ns 检查两者）
         // 单独记录 latency 不更新 success_count，故 avg 仍为 None
         let avg = metrics.get_avg_latency_ns("engine1");
@@ -2095,8 +1903,8 @@ mod tests {
         // 不再需要测试手动 insert 0 预初始化
         metrics.record_engine_success("engine1");
         metrics.record_engine_success("engine1");
-        let count = metrics.engine_success_count.get("engine1").unwrap();
-        assert_eq!(*count, 2);
+        let count_ref = metrics.engine_success_count.get("engine1").unwrap();
+        assert_eq!(count_ref.load(Ordering::Relaxed), 2);
     }
 
     #[test]
@@ -2106,8 +1914,8 @@ mod tests {
         // failure_count 和 failure_classification 都不再需要测试手动 insert 0 预初始化
         metrics.record_engine_failure("engine1", "timeout error");
         metrics.record_engine_failure("engine1", "network error");
-        let count = metrics.engine_failure_count.get("engine1").unwrap();
-        assert_eq!(*count, 2);
+        let count_ref = metrics.engine_failure_count.get("engine1").unwrap();
+        assert_eq!(count_ref.load(Ordering::Relaxed), 2);
         let timeout_count = metrics.failure_classification.get("timeout").unwrap();
         assert_eq!(*timeout_count, 1);
         let network_count = metrics.failure_classification.get("network_error").unwrap();
@@ -2157,10 +1965,10 @@ mod tests {
         // Manually populate both latencies and success_count
         metrics
             .engine_latencies
-            .insert("engine1".to_string(), 1_000_000);
+            .insert("engine1".to_string(), AtomicU64::new(1_000_000));
         metrics
             .engine_success_count
-            .insert("engine1".to_string(), 10);
+            .insert("engine1".to_string(), AtomicU64::new(10));
         let avg = metrics.get_avg_latency_ns("engine1");
         assert_eq!(avg, Some(100_000));
     }
@@ -2172,11 +1980,25 @@ mod tests {
         // 导致 success_count 永远为 0，与"成功必须被计数"的业务语义冲突)。
         let metrics = RouterMetrics::new();
         metrics.record_engine_success("engine1");
-        assert_eq!(*metrics.engine_success_count.get("engine1").unwrap(), 1u64);
+        assert_eq!(
+            metrics
+                .engine_success_count
+                .get("engine1")
+                .unwrap()
+                .load(Ordering::Relaxed),
+            1u64
+        );
 
         // 二次调用应递增，不应重置
         metrics.record_engine_success("engine1");
-        assert_eq!(*metrics.engine_success_count.get("engine1").unwrap(), 2u64);
+        assert_eq!(
+            metrics
+                .engine_success_count
+                .get("engine1")
+                .unwrap()
+                .load(Ordering::Relaxed),
+            2u64
+        );
     }
 
     // === calculate_engine_score edge cases ===
