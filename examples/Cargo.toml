@@ -21,51 +21,33 @@ crawlrs = { path = "..", default-features = false, features = [
 ] }
 
 # 异步运行时
-tokio = { version = "1.52", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 
 # 日志记录（使用 log facade，inklog 在 crawlrs 主项目中初始化）
-log = "0.4"
+log.workspace = true
 
 # 其他常用依赖
-anyhow = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-regex = "1.12"
-base64 = "0.22"
-uuid = { version = "1.23", features = ["v4"] }
-chrono = { version = "0.4", features = ["std"] }
-rand = "0.10"
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+base64.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+chrono = { workspace = true, default-features = false, features = ["std"] }
+rand.workspace = true
 
 # 数据库示例依赖（与主项目保持版本一致）
-dbnexus = { version = "0.4", default-features = false, features = [
-    "postgres",
-    "runtime-tokio-rustls",
-    "permission",
-    "cache",
-    "migration",
-    "auto-migrate",
-    "config-toml",
-    "config-env",
-    "chrono",
-    "uuid",
-    "with-json",
-] }
-sea-orm = { version = "2.0.0-rc.43", default-features = false, features = [
-    "runtime-tokio-rustls",
-    "macros",
-    "with-chrono",
-    "with-uuid",
-    "with-json",
-] }
+dbnexus = { workspace = true, features = ["permission", "auto-migrate"] }
+sea-orm.workspace = true
 
 # 配置示例依赖
-confers = { version = "0.4", default-features = false, features = ["validation", "toml", "env"] }
-figment = { version = "0.10", default-features = false, features = ["toml", "json", "yaml", "env"] }
-validator = { version = "0.20", features = ["derive"] }
+confers.workspace = true
+figment.workspace = true
+validator.workspace = true
 
 # SDK 示例依赖
-sdforge = { version = "0.4", default-features = false, features = ["http"] }
-axum = "0.8"
+sdforge.workspace = true
+axum.workspace = true
 
 # Advanced examples
 [[bin]]

@@ -81,31 +81,22 @@ admin-tools = []
 
 [dependencies]
 # Async runtime and web framework
-tokio = { version = "1.52", features = [
-    "rt-multi-thread",
-    "macros",
-    "net",
-    "fs",
-    "io-util",
-    "signal",
-    "sync",
-    "time",
-] }
-axum = "0.8"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
+axum.workspace = true
 futures = "0.3"
 async-trait = "0.1"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["trace", "cors"] }
 
 # Serialization and configuration
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-confers = { version = "0.4", default-features = false, features = ["validation", "watch", "toml", "env"] }
-figment = { version = "0.10", default-features = false, features = ["toml", "json", "yaml", "env"] }
+serde.workspace = true
+serde_json.workspace = true
+confers.workspace = true
+figment.workspace = true
 
 # Error handling
 thiserror = "2.0"
-anyhow = "1.0"
+anyhow.workspace = true
 
 # Security — constant-time comparison for HMAC signature verification
 subtle = "2.6"
@@ -117,40 +108,27 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 
 # Database
 # SAST 修复：jsonwebtoken 已单独声明（仅 hmac+sha2+rand 最小 feature，不开 rsa/p256/p384/ed25519-dalek）
-dbnexus = { version = "0.4", default-features = false, features = [
-    "postgres",
-    "runtime-tokio-rustls",
-    "cache",
-    "macros",
-    "migration",
-    "sql-parser",
-    "metrics",
-    "config-env",
-    "config-toml",
-    "chrono",
-    "uuid",
-    "with-json",
-] }
+dbnexus.workspace = true
 dbnexus-macros = { version = "0.4", default-features = false, features = [] }
 
-sea_orm = { version = "2.0.0-rc.43", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"], package = "sea-orm" }
+sea-orm = { workspace = true }
 
 # Caching and state management
-dashmap = "6.1"
+dashmap = "6.2"
 once_cell = "1.21"
 
 # Utilities
-uuid = { version = "1.23", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-rand = "0.10"
-validator = { version = "0.20", features = ["derive"] }
+uuid.workspace = true
+chrono.workspace = true
+rand.workspace = true
+validator.workspace = true
 sysinfo = { version = "0.39", optional = true }
 dirs = "6.0"
 
 # Logging and observability
-log = "0.4"
+log.workspace = true
 inklog = { version = "0.1", default-features = false, features = ["cli", "http", "postgres"] }
-sdforge = { version = "0.4", default-features = false, features = ["http"] }
+sdforge.workspace = true
 metrics = { version = "0.24", optional = true }
 metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"], optional = true }
 # inventory：编译期监听器注册（garrison GarrisonListenerEntry 需要，crawlrs 直接使用以注册 CrawlrsAuditListener）
@@ -169,13 +147,13 @@ aho-corasick = { version = "1.1", optional = true }
 
 # Markdown conversion — gated by `markdown` feature (T039/R-content-001)
 # htmd: HTML→Markdown 转换主路径（Stage2 P1）
-htmd = { version = "0.2", optional = true }
+htmd = { version = "0.5", optional = true }
 
 # Content extraction — gated by `extractor-*` features (T043/R-content-003)
 # rs-trafilatura: 主路径，移植自 trafilatura（提取文章正文 + 元数据）
 rs-trafilatura = { version = "0.2", default-features = false, optional = true }
 # dom_smoothie: 性能回退，移植自 readability.js（DOM 启发式提取）
-dom_smoothie = { version = "0.16", default-features = false, optional = true }
+dom_smoothie = { version = "0.18", default-features = false, optional = true }
 
 # Text processing and encoding
 chardetng = { version = "1.0" }
@@ -188,13 +166,15 @@ serde_urlencoded = "0.7"
 urlencoding = "2.1"
 
 # Cryptography and encoding
-base64 = "0.22"
+base64.workspace = true
 hmac = "0.13"
 sha2 = "0.11"
 hex = "0.4"
 bcrypt = "0.19"
 zeroize = "1.9"
-jsonwebtoken = { version = "10.4", default-features = false, features = ["hmac", "sha2", "rand"] }
+# SAST 修复：jsonwebtoken v11 将 features 重组为加密后端选择
+# rustCrypto: 纯 Rust 加密后端（替代旧版独立的 hmac/sha2/rand features）
+jsonwebtoken = { version = "11.0", default-features = false, features = ["rust_crypto"] }
 
 # Network utilities
 ipnetwork = "0.21"
@@ -239,7 +219,7 @@ garrison = { version = "0.8", default-features = false, optional = true, feature
 parking_lot = "0.12"
 
 # Regular expressions
-regex = "1.12"
+regex.workspace = true
 
 # Bloom filter & interner — URL 分层去重（T050-T053/R-frontier-001）
 # ahash: bloom 双哈希种子（已存在，复用）
@@ -254,12 +234,12 @@ toml = "1.1"
 
 # Dependency Injection
 trait-kit = { version = "0.3", features = ["async", "confers"] }
-oxcache = { version = "0.3", default-features = false, features = ["memory", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing", "futures"] }
+oxcache = { version = "0.3", default-features = false, features = ["memory", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing"] }
 ahash = "0.8"
 
 # Internationalization (i18n) — Mozilla Fluent system
-fluent-bundle = "0.15"
-fluent-syntax = "0.11"
+fluent-bundle = "0.16"
+fluent-syntax = "0.12"
 intl-memoizer = "0.5"
 unic-langid = "0.9"
 
@@ -267,26 +247,16 @@ unic-langid = "0.9"
 # 'openapi' is a cfg flag generated by sdforge_macros, declared in [lints.rust.unexpected_cfgs].
 
 [dev-dependencies]
-tokio = { version = "1.52", features = [
-    "rt-multi-thread",
-    "macros",
-    "net",
-    "fs",
-    "io-util",
-    "signal",
-    "sync",
-    "time",
-    "test-util",
-] }
+tokio = { workspace = true, features = ["test-util"] }
 tokio-test = "0.4"
 wiremock = "0.6"
 reqwest = { version = "0.13", features = ["json"] }
-serde_json = "1.0"
+serde_json.workspace = true
 cucumber = { version = "0.23", features = ["macros"] }
 axum-test = "21.0"
 futures = "0.3"
 tempfile = "3.27"
-uuid = { version = "1.23", features = ["v4"] }
+uuid = { workspace = true, features = ["v4"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 
 testcontainers = "0.27"
@@ -360,6 +330,36 @@ debug = true
 
 [workspace]
 members = ["examples"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Configuration
+confers = { version = "0.4", default-features = false, features = ["validation", "toml", "env"] }
+figment = { version = "0.10", default-features = false, features = ["toml", "json", "yaml", "env"] }
+# Error handling
+anyhow = "1.0"
+# Logging
+log = "0.4"
+# Utilities
+uuid = { version = "1.24", features = ["v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["serde"] }
+rand = "0.10"
+validator = { version = "0.21", features = ["derive"] }
+# Text processing
+regex = "1.13"
+# Encoding
+base64 = "0.23"
+# Database
+dbnexus = { version = "0.4", default-features = false, features = ["postgres", "runtime-tokio-rustls", "cache", "macros", "migration", "config-env", "config-toml", "chrono", "uuid", "with-json"] }
+sea-orm = { version = "2.0.1", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
+# SDK
+sdforge = { version = "0.4", default-features = false, features = ["http"] }
+# Web framework
+axum = "0.8"
 
 # =============================================================================
 # Target-Specific Dependencies
