@@ -37,8 +37,6 @@ chrono = { version = "0.4", features = ["std"] }
 rand = "0.10"
 
 # 数据库示例依赖（与主项目保持版本一致）
-# SAST 修复：dbnexus 0.4 传递依赖 proc-macro-error2 (RUSTSEC-2026-0173 unmaintained)，
-# 但 crawlrs 示例不涉及宏展开期安全性，显式 exclude 移除未维护传递依赖。
 dbnexus = { version = "0.4", default-features = false, features = [
     "postgres",
     "runtime-tokio-rustls",
@@ -51,14 +49,14 @@ dbnexus = { version = "0.4", default-features = false, features = [
     "chrono",
     "uuid",
     "with-json",
-], exclude = ["proc-macro-error2"] }
+] }
 sea-orm = { version = "2.0.0-rc.43", default-features = false, features = [
     "runtime-tokio-rustls",
     "macros",
     "with-chrono",
     "with-uuid",
     "with-json",
-], exclude = ["proc-macro-error2"] }
+] }
 
 # 配置示例依赖
 confers = { version = "0.4", default-features = false, features = ["validation", "toml", "env"] }
