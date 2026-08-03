@@ -337,10 +337,7 @@ pub async fn auth_middleware_inner(
                 if let Ok(Some(dump_check)) =
                     dao.get("garrison:apikey:crawlrs:__diag_probe__").await
                 {
-                    eprintln!(
-                        "[BOOTSTRAP-DIAG] dao-get probe ok: {}",
-                        &dump_check[..0]
-                    );
+                    eprintln!("[BOOTSTRAP-DIAG] dao-get probe ok: {}", &dump_check[..0]);
                 }
                 // 列 key_id 头部
                 let key_id_from_raw = raw.split_once('.').map(|(k, _)| k).unwrap_or("no-dot");
