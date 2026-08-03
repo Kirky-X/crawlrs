@@ -14,6 +14,7 @@ pub mod health_monitor;
 pub mod provider; // H2 修复：ProxyProvider trait 抽象（DIP）
 pub mod proxy_pool; // T054：代理轮换池（R-identity-003）
 pub mod router;
+pub mod router_metrics; // ARC-003: 路由指标收集器
 pub mod upgrade_probe; // T014：流式 HTTP→Chrome 升级探测
 pub mod validators;
 
@@ -43,6 +44,7 @@ pub mod shared;
 // New unified EngineClient API
 pub mod engine_client;
 pub mod traits;
+pub mod types; // ARC-002: 引擎层 DTO 类型
 
 pub use engine_client::{
     EngineClient, EngineError, EngineHealthStatus, PageAction, ScrapeOptions, ScrapeRequest,
