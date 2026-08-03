@@ -404,8 +404,9 @@ mod tests {
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             if self.should_fail {
                 return Err(AuditServiceError::RepositoryError(
-                    AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                        "mock error".to_string(),).into()),
+                    AuditRepositoryError::DatabaseError(
+                        sea_orm::DbErr::Custom("mock error".to_string()).into(),
+                    ),
                 ));
             }
             Ok(self.logs.lock().unwrap().clone())
@@ -419,8 +420,9 @@ mod tests {
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             if self.should_fail {
                 return Err(AuditServiceError::RepositoryError(
-                    AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                        "mock error".to_string(),).into()),
+                    AuditRepositoryError::DatabaseError(
+                        sea_orm::DbErr::Custom("mock error".to_string()).into(),
+                    ),
                 ));
             }
             Ok(self.logs.lock().unwrap().clone())
@@ -433,8 +435,9 @@ mod tests {
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             if self.should_fail {
                 return Err(AuditServiceError::RepositoryError(
-                    AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                        "mock error".to_string(),).into()),
+                    AuditRepositoryError::DatabaseError(
+                        sea_orm::DbErr::Custom("mock error".to_string()).into(),
+                    ),
                 ));
             }
             Ok(self

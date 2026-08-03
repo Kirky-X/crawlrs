@@ -304,14 +304,9 @@ pub async fn auth_middleware_inner(
         // garrison firewall-bruteforce feature: 若编译期类型缺失则在运行时零成本失效。
         let ip_ctx = garrison::stp::current_ip();
         if let Some(ip) = &ip_ctx {
-            use garrison::strategy::firewall::brute_force::{
-                BruteForceConfig, BruteForceStrategy,
-            };
+            use garrison::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
             use garrison::strategy::firewall::FirewallContext;
-            let strategy = BruteForceStrategy::new(
-                BruteForceConfig::default(),
-                Arc::clone(&dao),
-            );
+            let strategy = BruteForceStrategy::new(BruteForceConfig::default(), Arc::clone(&dao));
             let fw_ctx = FirewallContext::new(ip);
             match strategy.is_blocked(&fw_ctx).await {
                 Ok(true) => {
@@ -339,14 +334,23 @@ pub async fn auth_middleware_inner(
                 );
                 // 额外加 dao 健康检查：读 garrison:apikey:crawlrs:* 列表（最多 5 条）
                 // 检查 dao 是否真的有数据
-                if let Ok(Some(dump_check)) = dao.get("garrison:apikey:crawlrs:__diag_probe__").await {
-                    eprintln!("[BOOTSTRAP-DIAG] dao-get probe ok: {}", &dump_check[..0.min(dump_check.len())]);
+                if let Ok(Some(dump_check)) =
+                    dao.get("garrison:apikey:crawlrs:__diag_probe__").await
+                {
+                    eprintln!(
+                        "[BOOTSTRAP-DIAG] dao-get probe ok: {}",
+                        &dump_check[..0]
+                    );
                 }
                 // 列 key_id 头部
-                let key_id_from_raw = raw.split_once('.').map(|(k,_)| k).unwrap_or("no-dot");
+                let key_id_from_raw = raw.split_once('.').map(|(k, _)| k).unwrap_or("no-dot");
                 let probe_dao_key = format!("garrison:apikey:crawlrs:{}", key_id_from_raw);
                 match dao.get(&probe_dao_key).await {
-                    Ok(Some(v)) => eprintln!("[BOOTSTRAP-DIAG] dao found {} -> {} bytes", probe_dao_key, v.len()),
+                    Ok(Some(v)) => eprintln!(
+                        "[BOOTSTRAP-DIAG] dao found {} -> {} bytes",
+                        probe_dao_key,
+                        v.len()
+                    ),
                     Ok(None) => eprintln!("[BOOTSTRAP-DIAG] dao NOT FOUND: {}", probe_dao_key),
                     Err(err2) => eprintln!("[BOOTSTRAP-DIAG] dao GET ERROR: {:?}", err2),
                 }
@@ -355,10 +359,8 @@ pub async fn auth_middleware_inner(
                         BruteForceConfig, BruteForceStrategy,
                     };
                     use garrison::strategy::firewall::FirewallContext;
-                    let strategy = BruteForceStrategy::new(
-                        BruteForceConfig::default(),
-                        Arc::clone(&dao),
-                    );
+                    let strategy =
+                        BruteForceStrategy::new(BruteForceConfig::default(), Arc::clone(&dao));
                     let fw_ctx = FirewallContext::new(ip);
                     if let Err(rec_err) = strategy.record_failure(&fw_ctx).await {
                         debug!(

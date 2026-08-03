@@ -11,6 +11,10 @@
 //!
 //! Gate: only compiled when the `api-sdk` feature is enabled.
 
+// sdforge #[forge] macro generates callers for these functions at compile time;
+// they appear unused to the compiler but are wired into the HTTP router.
+#![allow(dead_code)]
+
 use sdforge::prelude::*;
 use std::sync::Arc;
 use uuid::Uuid;

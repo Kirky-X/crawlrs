@@ -107,7 +107,9 @@ mod tests {
             .uri("/test")
             .body(Body::empty())
             .expect("body should build");
-        request.extensions_mut().insert("not-an-auth-state".to_string());
+        request
+            .extensions_mut()
+            .insert("not-an-auth-state".to_string());
         assert_eq!(extract_team_id(&request), None);
     }
 

@@ -384,9 +384,7 @@ async fn fetch_scrape_results(
     scrape_result_repo: &ScrapeResultRepositoryImpl,
     tasks: &[crate::domain::models::Task],
 ) -> Result<
-    Option<
-        std::collections::HashMap<uuid::Uuid, crate::domain::models::ScrapeResult>,
-    >,
+    Option<std::collections::HashMap<uuid::Uuid, crate::domain::models::ScrapeResult>>,
     CrawlRsError,
 > {
     let task_ids = extract_task_ids(tasks);
@@ -1243,9 +1241,7 @@ mod tests {
     // ========== build_scrape_result_json tests ==========
 
     // 构造测试用 ScrapeResult
-    fn make_test_scrape_result(
-        task_id: Uuid,
-    ) -> crate::domain::models::ScrapeResult {
+    fn make_test_scrape_result(task_id: Uuid) -> crate::domain::models::ScrapeResult {
         crate::domain::models::ScrapeResult {
             id: Uuid::new_v4(),
             task_id,
@@ -1403,10 +1399,8 @@ mod tests {
             make_test_task(task1_id, TaskStatus::Completed),
             make_test_task(task2_id, TaskStatus::Failed),
         ];
-        let results_map: std::collections::HashMap<
-            Uuid,
-            crate::domain::models::ScrapeResult,
-        > = std::collections::HashMap::new();
+        let results_map: std::collections::HashMap<Uuid, crate::domain::models::ScrapeResult> =
+            std::collections::HashMap::new();
 
         let infos = build_task_infos(&tasks, Some(&results_map));
 

@@ -22,9 +22,44 @@ use axum::{
     middleware::Next,
 };
 
-/// Enhanced Content-Security-Policy value
+/// Enhanced Content-Security-Policy value (Strict — API routes)
 /// Includes comprehensive restrictions for better XSS protection
-const CSP_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+const CSP_STRICT: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+
+/// Relaxed Content-Security-Policy value (SDK/preview routes)
+/// Allows `img-src data:` for screenshot/preview responses
+const CSP_RELAXED: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+
+/// CSP 策略级别（SEC-006）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CspPolicy {
+    /// 严格 CSP — API 路由（禁止 `img-src data:`）
+    Strict,
+    /// 宽松 CSP — SDK/preview 路由（允许 `img-src data:` 用于截图/预览）
+    Relaxed,
+}
+
+impl CspPolicy {
+    /// 根据请求路径推断 CSP 策略
+    ///
+    /// - `/sdk/*`, `/preview/*` → Relaxed
+    /// - 其他 → Strict
+    pub fn from_path(path: &str) -> Self {
+        if path.starts_with("/sdk/") || path.starts_with("/preview/") {
+            Self::Relaxed
+        } else {
+            Self::Strict
+        }
+    }
+
+    /// 获取 CSP 策略字符串
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Strict => CSP_STRICT,
+            Self::Relaxed => CSP_RELAXED,
+        }
+    }
+}
 
 /// Permissions-Policy value - disables sensitive browser features
 const PERMISSIONS_POLICY: &str = "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()";
@@ -61,10 +96,11 @@ pub async fn security_headers_middleware(req: Request<Body>, next: Next) -> Resp
     );
 
     // Content-Security-Policy
-    // Comprehensive CSP to prevent XSS and data injection attacks
+    // SEC-006: 根据请求路径选择 CSP 策略（API=Strict, SDK/preview=Relaxed）
+    let csp = CspPolicy::from_path(uri.path());
     response.headers_mut().insert(
         "content-security-policy",
-        HeaderValue::from_static(CSP_POLICY),
+        HeaderValue::from_static(csp.as_str()),
     );
 
     // Referrer-Policy: strict-origin-when-cross-origin
@@ -328,9 +364,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_csp_policy_constant_value() {
-        assert!(CSP_POLICY.contains("default-src 'self'"));
-        assert!(CSP_POLICY.contains("base-uri 'self'"));
-        assert!(CSP_POLICY.contains("form-action 'self'"));
+        assert!(CSP_STRICT.contains("default-src 'self'"));
+        assert!(CSP_STRICT.contains("base-uri 'self'"));
+        assert!(CSP_STRICT.contains("form-action 'self'"));
+        // Strict 不应包含 img-src data:
+        assert!(!CSP_STRICT.contains("img-src 'self' data:"));
+        // Relaxed 应包含 img-src data:
+        assert!(CSP_RELAXED.contains("img-src 'self' data:"));
     }
 
     #[tokio::test]

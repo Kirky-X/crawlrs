@@ -59,7 +59,7 @@ pub async fn create_crawl(
     // 2. SSRF 验证 - 使用完整的异步 DNS 验证
     match validate_url(&payload.url).await {
         Ok(validated) => {
-            log::debug!(
+            log::trace!(
                 "URL passed SSRF validation url={} team_id={} resolved_ips={:?}",
                 payload.url,
                 team_id,
