@@ -13,9 +13,10 @@ use crate::engines::validators;
 use crate::utils::proxy::redact_proxy_url;
 use crate::utils::ua_pool::UaPool;
 use async_trait::async_trait;
-use dashmap::DashMap;
 use log::error;
+use lru::LruCache;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -72,7 +73,9 @@ pub struct ReqwestEngine {
     /// - fallback client 不缓存（避免缓存注入的 http_client 反复 clone）
     ///
     /// 缓存键为代理 URL（池数量有限，缓存大小有界）。
-    proxy_client_cache: DashMap<String, reqwest::Client>,
+    /// PERF-007: LRU 缓存替代 DashMap，容量 64，parking_lot Mutex 短临界区保护。
+    /// 代理池数量有限，LRU 淘汰确保缓存有界且热代理常驻。
+    proxy_client_cache: parking_lot::Mutex<LruCache<String, reqwest::Client>>,
 }
 
 impl ReqwestEngine {
@@ -115,7 +118,9 @@ impl ReqwestEngine {
             timeout_seconds,
             mrt,
             ua_pool: UaPool::default(),
-            proxy_client_cache: DashMap::new(),
+            proxy_client_cache: parking_lot::Mutex::new(LruCache::new(
+                NonZeroUsize::new(64).unwrap(),
+            )),
         }
     }
 
@@ -180,7 +185,9 @@ impl ReqwestEngine {
             timeout_seconds,
             mrt,
             ua_pool: UaPool::default(),
-            proxy_client_cache: DashMap::new(),
+            proxy_client_cache: parking_lot::Mutex::new(LruCache::new(
+                NonZeroUsize::new(64).unwrap(),
+            )),
         }
     }
 
@@ -404,22 +411,28 @@ impl ReqwestEngine {
         // 缓存大小有界（池中代理 URL 数量有限），不会无限增长。
         //
         // 仅缓存 is_fallback=false 的 client；fallback 路径直接用注入的 http_client（避免缓存 fallback）
-        let (client, is_fallback) = if let Some(cached) = self.proxy_client_cache.get(&url) {
-            // 缓存命中：clone 即可（reqwest::Client::clone 内部 Arc 共享）
-            (cached.clone(), false)
-        } else {
-            // 缓存未命中：构建新 client
-            let (client, is_fallback) = Self::build_custom_client(
-                Some(&url),
-                false,
-                &self.http_client,
-                self.timeout_seconds,
-            );
-            // 仅缓存成功构建的 client（fallback 不缓存，避免缓存注入的 http_client 反复 clone）
-            if !is_fallback {
-                self.proxy_client_cache.insert(url.clone(), client.clone());
+        let (client, is_fallback) = {
+            let mut cache = self.proxy_client_cache.lock();
+            if let Some(cached) = cache.get(&url) {
+                // 缓存命中：clone 即可（reqwest::Client::clone 内部 Arc 共享）
+                (cached.clone(), false)
+            } else {
+                drop(cache); // 释放锁后再构建 client
+                             // 缓存未命中：构建新 client
+                let (client, is_fallback) = Self::build_custom_client(
+                    Some(&url),
+                    false,
+                    &self.http_client,
+                    self.timeout_seconds,
+                );
+                // 仅缓存成功构建的 client（fallback 不缓存）
+                if !is_fallback {
+                    self.proxy_client_cache
+                        .lock()
+                        .put(url.clone(), client.clone());
+                }
+                (client, is_fallback)
             }
-            (client, is_fallback)
         };
         ClientHandle::new(client, Some(url), is_fallback)
     }
@@ -446,7 +459,11 @@ impl ScraperEngine for ReqwestEngine {
             .validate(&request.url)
             .await
             .map_err(|e| EngineError::Other(format!("SSRF protection: {}", e)))?;
-        let host = validated_url.parsed_url.host_str().unwrap_or("").to_string();
+        let host = validated_url
+            .parsed_url
+            .host_str()
+            .unwrap_or("")
+            .to_string();
         let _port = validated_url.port;
         let resolved_first = validated_url
             .resolved_ips
@@ -484,8 +501,7 @@ impl ScraperEngine for ReqwestEngine {
         } else {
             None
         };
-        let effective_client: &reqwest::Client =
-            temp_client.as_ref().unwrap_or(&handle.client);
+        let effective_client: &reqwest::Client = temp_client.as_ref().unwrap_or(&handle.client);
 
         // Build headers
         let mut headers = HeaderMap::new();

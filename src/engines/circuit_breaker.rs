@@ -3,14 +3,14 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use dashmap::DashMap;
 #[cfg(feature = "metrics")]
 use metrics::{counter, gauge};
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-use std::collections::VecDeque;
 
 /// 熔断器配置
 #[derive(Clone, Debug)]
@@ -80,10 +80,13 @@ pub struct CircuitStats {
 /// 熔断器
 ///
 /// 实现熔断器模式，防止系统因故障而崩溃
+///
+/// PERF-009: 使用 `DashMap<String, RwLock<CircuitState>>` 实现按引擎粒度锁，
+/// 不同引擎的状态变更互不干扰，消除全局锁竞争。
 #[derive(Clone)]
 pub struct CircuitBreaker {
-    /// 状态映射
-    states: Arc<RwLock<HashMap<String, CircuitState>>>,
+    /// 按引擎名称的熔断状态（DashMap per-shard 锁 + 每引擎 RwLock）
+    states: Arc<DashMap<String, RwLock<CircuitState>>>,
     /// 配置映射
     configs: Arc<RwLock<HashMap<String, CircuitConfig>>>,
     /// 默认配置
@@ -104,7 +107,7 @@ impl CircuitBreaker {
     /// 返回新的熔断器实例
     pub fn new() -> Self {
         Self {
-            states: Arc::new(RwLock::new(HashMap::with_capacity(8))),
+            states: Arc::new(DashMap::with_capacity(8)),
             configs: Arc::new(RwLock::new(HashMap::with_capacity(8))),
             default_config: CircuitConfig::default(),
         }
@@ -121,7 +124,7 @@ impl CircuitBreaker {
     /// 返回新的熔断器实例
     pub fn with_default_config(config: CircuitConfig) -> Self {
         Self {
-            states: Arc::new(RwLock::new(HashMap::with_capacity(8))),
+            states: Arc::new(DashMap::with_capacity(8)),
             configs: Arc::new(RwLock::new(HashMap::with_capacity(8))),
             default_config: config,
         }
@@ -179,10 +182,11 @@ impl CircuitBreaker {
     pub fn is_open(&self, engine_name: &str) -> bool {
         let config = self.get_config(engine_name);
 
-        let mut states = self.states.write();
-        let state = states
+        let state_guard = self
+            .states
             .entry(engine_name.to_string())
-            .or_insert(Self::create_default_state());
+            .or_insert_with(|| RwLock::new(Self::create_default_state()));
+        let mut state = state_guard.write();
 
         match state.status {
             Status::Closed => false,
@@ -209,10 +213,11 @@ impl CircuitBreaker {
     ///
     /// * `engine_name` - 引擎名称
     pub fn record_success(&self, engine_name: &str) {
-        let mut states = self.states.write();
-        let state = states
+        let state_guard = self
+            .states
             .entry(engine_name.to_string())
-            .or_insert(Self::create_default_state());
+            .or_insert_with(|| RwLock::new(Self::create_default_state()));
+        let mut state = state_guard.write();
         state.total_requests += 1;
         state.total_successes += 1;
 
@@ -238,10 +243,11 @@ impl CircuitBreaker {
     pub fn record_failure(&self, engine_name: &str) {
         let config = self.get_config(engine_name);
 
-        let mut states = self.states.write();
-        let state = states
+        let state_guard = self
+            .states
             .entry(engine_name.to_string())
-            .or_insert(Self::create_default_state());
+            .or_insert_with(|| RwLock::new(Self::create_default_state()));
+        let mut state = state_guard.write();
 
         let now = Instant::now();
         state.total_requests += 1;
@@ -290,8 +296,8 @@ impl CircuitBreaker {
     ///
     /// 统计信息
     pub async fn get_stats(&self, engine_name: &str) -> CircuitStats {
-        let states = self.states.read();
-        if let Some(state) = states.get(engine_name) {
+        if let Some(state_guard) = self.states.get(engine_name) {
+            let state = state_guard.read();
             CircuitStats {
                 is_open: state.status == Status::Open,
                 failure_count: state.failure_timestamps.len() as u32,

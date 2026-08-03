@@ -220,6 +220,7 @@ impl PlaywrightBrowserManagerComponent {
             // 设置浏览器路径（如果 chromiumoxide 支持）
             if let Some(ref path) = browser_path {
                 log::info!("Using browser at: {:?}", path);
+                builder = builder.chrome_executable(path);
             }
 
             builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
@@ -394,7 +395,8 @@ impl PlaywrightEngine {
         }
 
         // 创建临时池（不推荐，应该使用全局池）
-        let config = BrowserPoolConfig::default();
+        // SEC-001: 使用 docker_safe_args() 确保容器环境下自动添加 --no-sandbox
+        let config = BrowserPoolConfig::docker_safe_args();
         let browser_config = Arc::new(
             crate::infrastructure::services::config_service::BrowserConfigComponent::default(),
         );

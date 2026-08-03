@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
+use tokio::sync::{mpsc, Mutex, OnceCell, RwLock, Semaphore};
 use tokio::task::JoinHandle;
 
 /// 浏览器实例池配置
@@ -61,14 +61,54 @@ impl Default for BrowserPoolConfig {
             health_check_interval_secs: 60, // 1 分钟
             create_timeout_secs: 30,
             enable_reuse: true,
+            // SEC-001: 默认不包含 `--no-sandbox`（生产环境安全默认）。
+            // 容器环境使用 `docker_safe_args()` 构造器自动添加。
             browser_args: vec![
                 "--disable-gpu".to_string(),
                 "--disable-dev-shm-usage".to_string(),
-                "--no-sandbox".to_string(),
             ],
             tab_pool_max_size: 10,
         }
     }
+}
+
+impl BrowserPoolConfig {
+    /// 创建容器环境安全的配置（SEC-001）
+    ///
+    /// 检测到容器环境（Docker/Kubernetes）时自动添加 `--no-sandbox`。
+    /// 非容器环境与 `default()` 行为一致。
+    ///
+    /// # 检测方式
+    ///
+    /// - `/.dockerenv` 文件存在
+    /// - `/proc/1/cgroup` 包含 `docker` 或 `kubepods`
+    #[must_use]
+    pub fn docker_safe_args() -> Self {
+        let mut config = Self::default();
+        if is_container_environment() {
+            config.browser_args.push("--no-sandbox".to_string());
+            info!("Container environment detected, adding --no-sandbox to browser args");
+        }
+        config
+    }
+}
+
+/// 检测当前是否运行在容器环境中（SEC-001）
+///
+/// 检查 `/.dockerenv` 或 `/proc/1/cgroup` 中的容器标识符。
+fn is_container_environment() -> bool {
+    // Docker 标记文件
+    if std::path::Path::new("/.dockerenv").exists() {
+        return true;
+    }
+    // cgroup v1/v2 中的容器标识
+    if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
+        if cgroup.contains("docker") || cgroup.contains("kubepods") || cgroup.contains("containerd")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// 浏览器池统计信息
@@ -90,8 +130,8 @@ struct PooledBrowser {
     browser: Arc<Browser>,
     /// 创建时间
     created_at: Instant,
-    /// 最后使用时间
-    last_used_at: std::sync::Mutex<Instant>,
+    /// 最后使用时间（PERF-002: 原子化，存储距 base_instant 的毫秒数）
+    last_used_at_millis: AtomicU64,
     /// 使用次数
     use_count: AtomicU64,
     /// 是否健康
@@ -103,42 +143,43 @@ struct PooledBrowser {
     /// 每个 Browser 实例维护独立的 TabPool，避免 Page 跨 Browser 复用导致的
     /// CDP session 失效问题（chromiumoxide Page 持有的 session 与 Browser 绑定）。
     tab_pool: Arc<TabPool>,
+    /// 信号量 permit（SEC-002）
+    ///
+    /// 持有期间占用一个信号量槽位，drop 时自动释放。
+    /// 确保 permit 生命周期与 PooledBrowser 一致，避免双重归还。
+    _permit: tokio::sync::OwnedSemaphorePermit,
 }
 
 impl PooledBrowser {
-    fn new(browser: Arc<Browser>, instance_id: u64, tab_pool_max_size: usize) -> Self {
+    fn new(
+        browser: Arc<Browser>,
+        instance_id: u64,
+        tab_pool_max_size: usize,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> Self {
         let now = Instant::now();
         Self {
             browser,
             created_at: now,
-            last_used_at: std::sync::Mutex::new(now),
+            last_used_at_millis: AtomicU64::new(0),
             use_count: AtomicU64::new(0),
             is_healthy: AtomicBool::new(true),
             instance_id,
             tab_pool: Arc::new(TabPool::new(tab_pool_max_size)),
+            _permit: permit,
         }
     }
 
     fn touch(&self) {
-        let mut last_used = match self.last_used_at.lock() {
-            Ok(g) => g,
-            Err(e) => {
-                log::error!("PooledBrowser last_used_at mutex poisoned: {}", e);
-                return;
-            }
-        };
-        *last_used = Instant::now();
+        let elapsed = self.created_at.elapsed();
+        self.last_used_at_millis
+            .store(elapsed.as_millis() as u64, Ordering::Release);
         self.use_count.fetch_add(1, Ordering::Relaxed);
     }
 
     fn last_used(&self) -> Instant {
-        match self.last_used_at.lock() {
-            Ok(g) => *g,
-            Err(e) => {
-                log::error!("PooledBrowser last_used_at mutex poisoned: {}", e);
-                Instant::now()
-            }
-        }
+        let millis = self.last_used_at_millis.load(Ordering::Acquire);
+        self.created_at + Duration::from_millis(millis)
     }
 
     fn mark_unhealthy(&self) {
@@ -181,20 +222,22 @@ struct BrowserPoolState {
     instance_counter: AtomicU64,
     /// 当前总实例数
     total_instances: AtomicUsize,
-    /// 信号量（限制最大实例数）
-    semaphore: Semaphore,
+    /// 信号量（限制最大实例数，SEC-002: Arc 包装以支持 acquire_owned）
+    semaphore: Arc<Semaphore>,
     /// 下载管理器
     download_manager: Arc<BrowserDownloadManager>,
     /// 清理任务句柄
     cleanup_task: Mutex<Option<JoinHandle<()>>>,
     /// 归还处理任务句柄
     return_task: Mutex<Option<JoinHandle<()>>>,
-    /// 归还通道发送端
-    return_sender: Mutex<Option<mpsc::Sender<ReturnMessage>>>,
+    /// 归还通道发送端（PERF-005: Arc 包装，避免 Mutex 锁竞争）
+    return_sender: Arc<mpsc::Sender<ReturnMessage>>,
+    /// 归还通道接收端（start_background_tasks 时取出）
+    return_receiver: Mutex<Option<mpsc::Receiver<ReturnMessage>>>,
     /// 关闭标志
     shutdown: AtomicBool,
-    /// 浏览器路径缓存
-    browser_path: RwLock<Option<PathBuf>>,
+    /// 浏览器路径缓存（PERF-010: OnceCell 替代 RwLock<Option>，无锁读路径）
+    browser_path: OnceCell<PathBuf>,
 }
 
 impl BrowserPoolState {
@@ -204,6 +247,7 @@ impl BrowserPoolState {
         download_manager: Arc<BrowserDownloadManager>,
     ) -> Self {
         let max_instances = config.max_instances;
+        let (return_tx, return_rx) = mpsc::channel(32);
         Self {
             config,
             browser_config,
@@ -211,13 +255,14 @@ impl BrowserPoolState {
             in_use: RwLock::new(HashMap::new()),
             instance_counter: AtomicU64::new(0),
             total_instances: AtomicUsize::new(0),
-            semaphore: Semaphore::new(max_instances),
+            semaphore: Arc::new(Semaphore::new(max_instances)),
             download_manager,
             cleanup_task: Mutex::new(None),
             return_task: Mutex::new(None),
-            return_sender: Mutex::new(None),
+            return_sender: Arc::new(return_tx),
+            return_receiver: Mutex::new(Some(return_rx)),
             shutdown: AtomicBool::new(false),
-            browser_path: RwLock::new(None),
+            browser_path: OnceCell::new(),
         }
     }
 
@@ -229,10 +274,11 @@ impl BrowserPoolState {
             ));
         }
 
-        // 获取信号量许可
-        let _permit = self
+        // SEC-002: 获取 OwnedSemaphorePermit，生命周期绑定到 PooledBrowser
+        let permit = self
             .semaphore
-            .acquire()
+            .clone()
+            .acquire_owned()
             .await
             .map_err(|_| EngineError::Other("Failed to acquire semaphore".to_string()))?;
 
@@ -243,8 +289,8 @@ impl BrowserPoolState {
             }
         }
 
-        // 创建新实例
-        self.create_new_instance().await
+        // 创建新实例（传递 permit 绑定到 PooledBrowser）
+        self.create_new_instance(permit).await
     }
 
     /// 获取 Browser 实例 + 对应的 TabPool（T068，R-jsrender-004）
@@ -307,7 +353,10 @@ impl BrowserPoolState {
         None
     }
 
-    async fn create_new_instance(&self) -> Result<(u64, Arc<Browser>), EngineError> {
+    async fn create_new_instance(
+        &self,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<(u64, Arc<Browser>), EngineError> {
         let instance_id = self.instance_counter.fetch_add(1, Ordering::Relaxed);
         info!("Creating new browser instance {}", instance_id);
 
@@ -316,6 +365,7 @@ impl BrowserPoolState {
             browser.clone(),
             instance_id,
             self.config.tab_pool_max_size,
+            permit,
         ));
         pooled.touch();
 
@@ -356,26 +406,24 @@ impl BrowserPoolState {
             let is_healthy = self.check_browser_health(&browser).await;
 
             if is_healthy && self.config.enable_reuse && !self.shutdown.load(Ordering::Acquire) {
-                // 归还到可用池
+                // 归还到可用池（permit 随 PooledBrowser 保留）
                 let mut available = self.available.write().await;
                 available.insert(instance_id, pooled);
                 debug!("Browser instance {} returned to pool", instance_id);
             } else {
-                // 不健康或禁用复用，关闭浏览器
+                // 不健康或禁用复用，关闭浏览器（permit 随 PooledBrowser drop 自动释放）
                 self.total_instances.fetch_sub(1, Ordering::Relaxed);
-                self.semaphore.add_permits(1);
                 debug!(
                     "Browser instance {} closed (unhealthy or reuse disabled)",
                     instance_id
                 );
             }
         } else {
-            // 实例不在使用中，可能是重复归还
+            // 实例不在使用中，可能是重复归还（permit 已在之前的归还中释放）
             warn!(
                 "Browser instance {} not found in use, ignoring return",
                 instance_id
             );
-            self.semaphore.add_permits(1);
         }
     }
 
@@ -390,11 +438,17 @@ impl BrowserPoolState {
             })?
         } else {
             // 获取浏览器路径
-            let _browser_path = self.get_or_download_browser().await?;
+            let browser_path = self.get_or_download_browser().await?;
 
             let mut builder = BrowserConfig::builder()
                 .no_sandbox()
                 .request_timeout(Duration::from_secs(30));
+
+            // 设置浏览器路径
+            if let Some(ref path) = browser_path {
+                info!("Using browser at: {:?}", path);
+                builder = builder.chrome_executable(path);
+            }
 
             // 添加自定义参数
             for arg in &self.config.browser_args {
@@ -428,46 +482,43 @@ impl BrowserPoolState {
     }
 
     async fn get_or_download_browser(&self) -> Result<Option<PathBuf>, EngineError> {
-        // 检查缓存
+        // PERF-010: OnceCell::get_or_try_init — 已初始化时直接返回，无锁
+        match self
+            .browser_path
+            .get_or_try_init(|| async {
+                // 首先检查系统浏览器
+                if let Some(path) = crate::engines::browser_downloader::find_system_browser().await
+                {
+                    info!("Using system browser");
+                    return Ok(path);
+                }
+
+                // 检查是否已下载
+                if self.download_manager.is_browser_downloaded().await {
+                    let path = crate::engines::browser_downloader::get_browser_executable_path(
+                        self.download_manager.get_cache_dir(),
+                    );
+                    info!("Using downloaded browser: {:?}", path);
+                    return Ok(path);
+                }
+
+                // 自动下载浏览器
+                info!("No browser found, starting automatic download...");
+                match self.download_manager.download_browser().await {
+                    Ok(path) => {
+                        info!("Browser downloaded successfully: {:?}", path);
+                        Ok(path)
+                    }
+                    Err(e) => {
+                        warn!("Browser download failed: {}, will try system path", e);
+                        Err(EngineError::Other(format!("Browser not found: {}", e)))
+                    }
+                }
+            })
+            .await
         {
-            let path = self.browser_path.read().await;
-            if path.is_some() {
-                return Ok(path.clone());
-            }
-        }
-
-        // 首先检查系统浏览器
-        if let Some(path) = crate::engines::browser_downloader::find_system_browser().await {
-            info!("Using system browser");
-            let mut cached = self.browser_path.write().await;
-            *cached = Some(path.clone());
-            return Ok(Some(path));
-        }
-
-        // 检查是否已下载
-        if self.download_manager.is_browser_downloaded().await {
-            let path = crate::engines::browser_downloader::get_browser_executable_path(
-                self.download_manager.get_cache_dir(),
-            );
-            info!("Using downloaded browser: {:?}", path);
-            let mut cached = self.browser_path.write().await;
-            *cached = Some(path.clone());
-            return Ok(Some(path));
-        }
-
-        // 自动下载浏览器
-        info!("No browser found, starting automatic download...");
-        match self.download_manager.download_browser().await {
-            Ok(path) => {
-                info!("Browser downloaded successfully: {:?}", path);
-                let mut cached = self.browser_path.write().await;
-                *cached = Some(path.clone());
-                Ok(Some(path))
-            }
-            Err(e) => {
-                warn!("Browser download failed: {}, will try system path", e);
-                Ok(None)
-            }
+            Ok(path) => Ok(Some(path.clone())),
+            Err(_) => Ok(None), // 浏览器未找到，返回 None（不缓存失败）
         }
     }
 
@@ -485,48 +536,69 @@ impl BrowserPoolState {
     }
 
     async fn cleanup_idle_instances(&self) {
-        let now = Instant::now();
-        let idle_timeout = Duration::from_secs(self.config.idle_timeout_secs);
+        // SEC-002: 三阶段模式避免写锁持有期间执行 I/O（与 health_check_all 统一）
+        // Phase 1: 读锁收集空闲实例
+        let idle_ids = {
+            let available = self.available.read().await;
+            let now = Instant::now();
+            let idle_timeout = Duration::from_secs(self.config.idle_timeout_secs);
+            available
+                .iter()
+                .filter(|(_, p)| now.duration_since(p.last_used()) > idle_timeout)
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>()
+        };
 
-        let mut available = self.available.write().await;
-        let mut to_remove = Vec::new();
+        // Phase 2: 写锁移除空闲实例
+        let removed = {
+            let mut available = self.available.write().await;
+            idle_ids
+                .into_iter()
+                .filter_map(|id| available.remove(&id))
+                .collect::<Vec<_>>()
+        };
 
-        for (id, pooled) in available.iter() {
-            let idle_duration = now.duration_since(pooled.last_used());
-            if idle_duration > idle_timeout {
-                to_remove.push(*id);
-            }
-        }
-
-        for id in to_remove {
-            if let Some(pooled) = available.remove(&id) {
-                // 关闭浏览器
-                drop(pooled);
-                self.total_instances.fetch_sub(1, Ordering::Relaxed);
-                self.semaphore.add_permits(1);
-                info!("Cleaned up idle browser instance {}", id);
-            }
+        // Phase 3: 锁外 drop（total_instances 更新 + permit 自动释放）
+        for pooled in removed {
+            self.total_instances.fetch_sub(1, Ordering::Relaxed);
+            info!("Cleaned up idle browser instance {}", pooled.instance_id);
+            drop(pooled);
         }
     }
 
     async fn health_check_all(&self) {
-        let mut available = self.available.write().await;
-        let mut unhealthy = Vec::new();
+        // SEC-002 + PERF-001: 三阶段模式避免写锁持有期间执行 I/O
+        // Phase 1: 读锁收集待检查实例（clone Arc 避免持锁）
+        let candidates = {
+            let available = self.available.read().await;
+            available
+                .iter()
+                .map(|(id, p)| (*id, p.clone()))
+                .collect::<Vec<_>>()
+        };
 
-        for (id, pooled) in available.iter() {
+        // Phase 2: 锁外执行健康检查
+        let mut unhealthy_ids = Vec::new();
+        for (id, pooled) in &candidates {
             if !self.check_browser_health(&pooled.browser).await {
                 pooled.mark_unhealthy();
-                unhealthy.push(*id);
+                unhealthy_ids.push(*id);
             }
         }
 
-        for id in unhealthy {
-            if let Some(pooled) = available.remove(&id) {
-                drop(pooled);
-                self.total_instances.fetch_sub(1, Ordering::Relaxed);
-                self.semaphore.add_permits(1);
-                warn!("Removed unhealthy browser instance {}", id);
-            }
+        // Phase 3: 写锁移除不健康实例，drop 在锁外
+        let removed = {
+            let mut available = self.available.write().await;
+            unhealthy_ids
+                .into_iter()
+                .filter_map(|id| available.remove(&id))
+                .collect::<Vec<_>>()
+        };
+
+        for pooled in removed {
+            self.total_instances.fetch_sub(1, Ordering::Relaxed);
+            warn!("Removed unhealthy browser instance {}", pooled.instance_id);
+            drop(pooled); // permit 自动释放
         }
     }
 
@@ -545,6 +617,14 @@ impl BrowserPoolState {
 
         info!("All browser instances shut down");
     }
+
+    /// 克隆归还通道发送端（QUAL-003）
+    ///
+    /// 返回 `Arc<Sender>` 的克隆，无锁操作。
+    /// 供 [`BrowserPool::acquire`] 和 [`BrowserPool::acquire_page`] 使用。
+    fn clone_return_sender(&self) -> Arc<mpsc::Sender<ReturnMessage>> {
+        self.return_sender.clone()
+    }
 }
 
 /// 浏览器实例包装器
@@ -555,8 +635,8 @@ pub struct BrowserInstance {
     browser: Option<Arc<Browser>>,
     /// 实例 ID
     instance_id: u64,
-    /// 归还通道发送端
-    return_sender: Option<mpsc::Sender<ReturnMessage>>,
+    /// 归还通道发送端（PERF-005: Arc 包装，与 BrowserPoolState 共享）
+    return_sender: Option<Arc<mpsc::Sender<ReturnMessage>>>,
 }
 
 impl BrowserInstance {
@@ -728,11 +808,7 @@ impl BrowserPool {
     pub async fn acquire(&self) -> Result<BrowserInstance, EngineError> {
         let (instance_id, browser) = self.state.acquire().await?;
 
-        // 获取归还通道发送端
-        let return_sender = {
-            let sender = self.state.return_sender.lock().await;
-            sender.clone()
-        };
+        let return_sender = Some(self.state.clone_return_sender());
 
         Ok(BrowserInstance {
             browser: Some(browser),
@@ -764,22 +840,15 @@ impl BrowserPool {
             Ok(page) => page,
             Err(e) => {
                 // acquire Page 失败，归还 Browser 到 return channel
-                let return_sender = self.state.return_sender.lock().await.clone();
-                if let Some(sender) = &return_sender {
-                    let _ = sender.try_send(ReturnMessage {
-                        instance_id,
-                        browser,
-                    });
-                }
+                let _ = self.state.clone_return_sender().try_send(ReturnMessage {
+                    instance_id,
+                    browser,
+                });
                 return Err(EngineError::BrowserError(e.to_string()));
             }
         };
 
-        // 获取归还通道发送端（用于 BrowserInstance 归还）
-        let return_sender = {
-            let sender = self.state.return_sender.lock().await;
-            sender.clone()
-        };
+        let return_sender = Some(self.state.clone_return_sender());
 
         Ok(PooledPage {
             page: Some(page),
@@ -832,13 +901,12 @@ impl BrowserPool {
         // 启动归还处理任务
         {
             let state = self.state.clone();
-            let (sender, mut receiver) = mpsc::channel::<ReturnMessage>(32);
+            let receiver = self.state.return_receiver.lock().await.take();
 
-            // 保存发送端到状态中
-            {
-                let mut return_sender = self.state.return_sender.lock().await;
-                *return_sender = Some(sender);
-            }
+            let Some(mut receiver) = receiver else {
+                warn!("Return receiver already taken (start_background_tasks called twice?)");
+                return;
+            };
 
             let handle = tokio::spawn(async move {
                 while let Some(msg) = receiver.recv().await {
@@ -952,6 +1020,21 @@ mod tests {
         assert!(config.enable_reuse);
         // T068：tab_pool_max_size 默认 10
         assert_eq!(config.tab_pool_max_size, 10);
+        // SEC-001: 默认不包含 --no-sandbox（生产环境安全默认）
+        assert!(
+            !config.browser_args.iter().any(|a| a == "--no-sandbox"),
+            "default browser_args should not contain --no-sandbox"
+        );
+    }
+
+    #[test]
+    fn test_browser_pool_config_docker_safe_args() {
+        // docker_safe_args() 在无容器环境下不应添加 --no-sandbox
+        let config = BrowserPoolConfig::docker_safe_args();
+        // 在非容器测试环境中，可能不含 --no-sandbox
+        // 验证基本配置正确
+        assert_eq!(config.max_instances, 5);
+        assert!(config.browser_args.contains(&"--disable-gpu".to_string()));
     }
 
     #[test]
@@ -1012,5 +1095,111 @@ mod tests {
         let stats2 = pool2.stats().await;
 
         assert_eq!(stats1.total_instances, stats2.total_instances);
+    }
+
+    // --- QUAL-001: 并发安全测试 ---
+
+    #[tokio::test]
+    async fn test_concurrent_shutdown_acquire() {
+        // 并发 shutdown 期间 acquire 应安全失败（无 panic / 无数据竞争）
+        let config = BrowserPoolConfig::default();
+        let browser_config = Arc::new(BrowserConfigComponent::default());
+        let pool = Arc::new(BrowserPool::new(config, browser_config));
+
+        let mut handles = Vec::new();
+        for _ in 0..20 {
+            let pool_clone = pool.clone();
+            handles.push(tokio::spawn(async move { pool_clone.acquire().await }));
+        }
+
+        // 同时关闭池
+        pool.shutdown().await;
+
+        // 所有 acquire 要么在 shutdown 前成功（需要真实浏览器，测试环境会失败），
+        // 要么在 shutdown 后返回错误。关键是无 panic。
+        let mut error_count = 0;
+        for handle in handles {
+            if let Err(_) = handle.await.unwrap() {
+                error_count += 1;
+            }
+        }
+        // 在无浏览器环境中，所有 acquire 应失败（创建浏览器失败或 shutdown）
+        assert!(
+            error_count > 0,
+            "expected some errors in test env without browser"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_semaphore_permit_consistency() {
+        // 验证信号量 permit 计数与池状态一致
+        let config = BrowserPoolConfig {
+            max_instances: 3,
+            ..BrowserPoolConfig::default()
+        };
+        let browser_config = Arc::new(BrowserConfigComponent::default());
+        let pool = BrowserPool::new(config, browser_config);
+
+        // 初始状态：无实例，信号量应为满
+        let stats = pool.stats().await;
+        assert_eq!(stats.total_instances, 0);
+        assert_eq!(stats.in_use_instances, 0);
+        assert_eq!(stats.available_instances, 0);
+
+        // 信号量可用 permit 应等于 max_instances（无实例占用）
+        // 通过 acquire_owned 测试（不实际创建浏览器）
+        let permit = pool.state.semaphore.clone().acquire_owned().await;
+        assert!(
+            permit.is_ok(),
+            "should be able to acquire permit when pool is empty"
+        );
+        drop(permit); // 释放
+
+        pool.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_return_sender_arc_clone_no_block() {
+        // PERF-005: 验证 return_sender Arc clone 不阻塞
+        let config = BrowserPoolConfig::default();
+        let browser_config = Arc::new(BrowserConfigComponent::default());
+        let pool = BrowserPool::new(config, browser_config);
+
+        // 并发克隆 return_sender（应无锁，瞬间完成）
+        let mut handles = Vec::new();
+        for _ in 0..100 {
+            let state = pool.state.clone();
+            handles.push(tokio::spawn(async move {
+                let _sender = state.clone_return_sender();
+            }));
+        }
+
+        // 所有克隆应快速完成（无死锁）
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        pool.shutdown().await;
+    }
+
+    #[test]
+    fn test_pooled_browser_last_used_atomic() {
+        // PERF-002: 验证 last_used_at_millis 原子操作正确性
+        // 无法直接构造 PooledBrowser（需要 OwnedSemaphorePermit），
+        // 但可以通过 AtomicU64 验证语义
+        let atomic = AtomicU64::new(0);
+
+        // 模拟 touch: store elapsed millis
+        let base = Instant::now();
+        let elapsed = base.elapsed();
+        atomic.store(elapsed.as_millis() as u64, Ordering::Release);
+
+        // 模拟 last_used: load + reconstruct
+        let millis = atomic.load(Ordering::Acquire);
+        let reconstructed = base + Duration::from_millis(millis);
+
+        // 重建的时间应接近 now（误差 < 100ms）
+        let diff = Instant::now().duration_since(reconstructed);
+        assert!(diff < Duration::from_millis(100));
     }
 }

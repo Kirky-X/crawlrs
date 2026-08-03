@@ -137,6 +137,11 @@ pub struct ProxyPool {
     /// 超限时清理过期绑定；仍超限则拒绝新绑定（降级：返回代理 URL 但不绑定）。
     /// 默认 [`MAX_STICKY_BINDINGS`]，可通过 [`Self::with_sticky_max_capacity`] 调整。
     sticky_max_capacity: usize,
+    /// 上次清理时间（epoch 毫秒，SEC-007 节流）
+    ///
+    /// 防止高并发下频繁触发 `evict_expired_sticky`（DashMap `retain` 需全 shard 锁）。
+    /// 仅当 `now - last_cleanup > 60s` 时才执行清理。
+    last_cleanup_millis: AtomicU64,
 }
 
 impl ProxyPool {
@@ -165,6 +170,7 @@ impl ProxyPool {
             sticky_ttl,
             default_cooldown,
             sticky_max_capacity,
+            last_cleanup_millis: AtomicU64::new(0),
         }
     }
 
@@ -230,8 +236,14 @@ impl ProxyPool {
         let idx = self.rr_pick(ProxyCategory::Html)?;
 
         // LOW-1 修复：容量限制 — 超限时清理过期绑定
+        // SEC-007: 节流 — 仅当距上次清理 > 60s 时执行（避免高并发下频繁 retain）
         if self.sticky.len() >= self.sticky_max_capacity {
-            self.evict_expired_sticky();
+            let now = now_ms();
+            let last = self.last_cleanup_millis.load(Ordering::Relaxed);
+            if now.saturating_sub(last) > 60_000 {
+                self.evict_expired_sticky();
+                self.last_cleanup_millis.store(now, Ordering::Relaxed);
+            }
         }
 
         // 在 entry() 之前检查容量，避免在 entry 锁内调用 len() 导致死锁

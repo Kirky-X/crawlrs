@@ -7,7 +7,7 @@
 //!
 //! 移植 spider `tab_pool.rs`，提供 [`chromiumoxide::Page`]（tab）级复用：
 //!
-//! - **DashMap + CAS LIFO 栈**：无 Mutex/RwLock，per-shard 锁 + 原子索引
+//! - **parking_lot Mutex + Vec LIFO 栈**：短临界区锁，尾端 push/pop
 //! - **acquire**：优先从池中弹出最近归还的 Page（LIFO），池空时调用
 //!   `browser.new_page("about:blank")` 新建
 //! - **release**：将 Page 导航到 `about:blank` 清理状态（5s 超时），再压回栈
@@ -35,8 +35,6 @@
 //! - design.md §17
 
 use chromiumoxide::{Browser, Page};
-use dashmap::DashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 /// Page 导航到 `about:blank` 清理状态的超时时间
@@ -47,8 +45,8 @@ const RESET_NAVIGATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Chrome CDP Tab 池（T068，R-jsrender-004）
 ///
-/// Lock-free 设计：[`DashMap`] 作为并发栈（push/pop 由原子索引驱动），
-/// 无 Mutex、无 RwLock。
+/// parking_lot::Mutex 保护 Vec 尾端 push/pop 实现 LIFO，
+/// 短临界区锁（无 await 在锁内），性能优于 DashMap per-shard 开销。
 ///
 /// # 示例
 ///
@@ -64,10 +62,8 @@ const RESET_NAVIGATION_TIMEOUT: Duration = Duration::from_secs(5);
 /// pool.release(page).await;
 /// ```
 pub struct TabPool {
-    /// 按 slot 索引存储 Page。DashMap 提供 per-shard 无锁访问。
-    slots: DashMap<usize, Page>,
-    /// 下一个写入位置（单调递增的栈顶指针）
-    head: AtomicUsize,
+    /// LIFO 栈：尾端 push/pop。Mutex 保护并发访问。
+    pages: parking_lot::Mutex<Vec<Page>>,
     /// 最大池容量
     max_size: usize,
 }
@@ -82,8 +78,7 @@ impl TabPool {
     #[must_use]
     pub fn new(max_size: usize) -> Self {
         Self {
-            slots: DashMap::with_capacity(max_size),
-            head: AtomicUsize::new(0),
+            pages: parking_lot::Mutex::new(Vec::with_capacity(max_size)),
             max_size,
         }
     }
@@ -96,29 +91,14 @@ impl TabPool {
     ///
     /// 池空且 `browser.new_page` 失败时返回 [`chromiumoxide::error::CdpError`]。
     pub async fn acquire(&self, browser: &Browser) -> Result<Page, chromiumoxide::error::CdpError> {
-        // LIFO 弹出循环
-        loop {
-            let current = self.head.load(Ordering::Acquire);
-            if current == 0 {
-                break; // 池空
+        // 短临界区锁：pop 后立即释放
+        {
+            let mut pages = self.pages.lock();
+            if let Some(page) = pages.pop() {
+                return Ok(page);
             }
-            let target = current - 1;
-            // CAS 抢占该 slot
-            if self
-                .head
-                .compare_exchange(current, target, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-            {
-                // 抢占成功 — 取出 Page
-                if let Some((_, page)) = self.slots.remove(&target) {
-                    return Ok(page);
-                }
-                // slot 为空（不应发生，CAS 成功但 slot 已被其他线程取走）
-                // 退出循环走 new_page 路径
-                break;
-            }
-            // CAS 失败 — 其他线程已弹出，重试
         }
+        // 池空 — 锁已释放，安全 await
         browser.new_page("about:blank").await
     }
 
@@ -137,8 +117,11 @@ impl TabPool {
     /// 上层应通过 channel + 后台 task 的方式异步调用（参考 [`super::playwright_pool::BrowserInstance`]）。
     pub async fn release(&self, page: Page) {
         // 容量检查：已达上限直接 drop
-        if self.head.load(Ordering::Relaxed) >= self.max_size {
-            return; // page drop 在函数返回时
+        {
+            let pages = self.pages.lock();
+            if pages.len() >= self.max_size {
+                return; // page drop 在函数返回时
+            }
         }
 
         // 导航到 about:blank 清理状态（5s 超时）
@@ -151,38 +134,27 @@ impl TabPool {
             return; // 导航失败/超时，drop Page
         }
 
-        // CAS 压栈循环
-        loop {
-            let current = self.head.load(Ordering::Acquire);
-            if current >= self.max_size {
-                return; // 压栈期间池已满，drop Page
-            }
-            if self
-                .head
-                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-            {
-                self.slots.insert(current, page);
-                return;
-            }
-            // CAS 失败 — 其他线程已压栈，重试
+        // 短临界区锁：push 后立即释放
+        let mut pages = self.pages.lock();
+        if pages.len() < self.max_size {
+            pages.push(page);
         }
+        // 锁在作用域结束时自动释放
     }
 
     /// 清空池中所有 Page（drop 全部缓存 tab）
     ///
-    /// 重置 head 指针并清空 DashMap。正在被 acquire 的 Page 不受影响（已被取出）。
+    /// 正在被 acquire 的 Page 不受影响（已被取出）。
     pub fn clear(&self) {
-        self.head.store(0, Ordering::Release);
-        self.slots.clear();
+        self.pages.lock().clear();
     }
 
     /// 当前池中缓存（空闲）的 Page 数量
     ///
-    /// 返回 [`AtomicUsize::load`] 的快照值，并发场景下仅供参考。
+    /// 返回 Mutex 保护下的快照值，并发场景下仅供参考。
     #[must_use]
     pub fn pool_size(&self) -> usize {
-        self.head.load(Ordering::Relaxed)
+        self.pages.lock().len()
     }
 
     /// 池的最大容量
