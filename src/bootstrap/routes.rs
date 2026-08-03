@@ -498,6 +498,11 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
         .layer(Extension(state.crawl_repo.clone()));
 
     let app = app.layer(cors_layer)
+        // i18n 中间件：从 Accept-Language 协商 locale，注入 Extension<Locale>
+        .layer(axum::middleware::from_fn(
+            crate::i18n::i18n_middleware,
+        ))
+        .layer(Extension(state.i18n_bundle.clone()))
         // Security headers middleware - should be applied early in the middleware chain
         .layer(axum::middleware::from_fn(
             crate::presentation::middleware::security_headers_middleware::security_headers_middleware,

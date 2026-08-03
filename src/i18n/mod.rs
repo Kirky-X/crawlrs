@@ -10,8 +10,10 @@
 
 mod bundle;
 mod locale;
+mod middleware;
 mod translate;
 
 pub use bundle::{I18nBundle, Locale};
 pub use locale::{negotiate_locale, parse_accept_language};
+pub use middleware::i18n_middleware;
 pub use translate::{t, t_with_args};
