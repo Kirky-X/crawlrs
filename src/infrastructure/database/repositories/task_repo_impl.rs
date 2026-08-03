@@ -43,9 +43,9 @@ impl From<dbnexus::DbError> for RepositoryError {
             DbError::Permission(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
                 format!("Permission: {}", msg)
             ))),
-            DbError::Transaction(msg) => RepositoryError::Database(anyhow::anyhow!(
-                DbErr::Custom(format!("Transaction: {}", msg))
-            )),
+            DbError::Transaction(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
+                format!("Transaction: {}", msg)
+            ))),
             DbError::Migration(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
                 format!("Migration: {}", msg)
             ))),
@@ -266,10 +266,7 @@ impl TaskRepository for TaskRepositoryImpl {
                 Expr::value(TaskStatus::Completed.to_string()),
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
-            .col_expr(
-                task_entity::Column::CompletedAt,
-                Expr::value(Utc::now()),
-            )
+            .col_expr(task_entity::Column::CompletedAt, Expr::value(Utc::now()))
             .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
             .col_expr(
                 task_entity::Column::LockExpiresAt,
@@ -304,10 +301,7 @@ impl TaskRepository for TaskRepositoryImpl {
                 Expr::value(TaskStatus::Failed.to_string()),
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
-            .col_expr(
-                task_entity::Column::CompletedAt,
-                Expr::value(Utc::now()),
-            )
+            .col_expr(task_entity::Column::CompletedAt, Expr::value(Utc::now()))
             .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
             .col_expr(
                 task_entity::Column::LockExpiresAt,
@@ -342,10 +336,7 @@ impl TaskRepository for TaskRepositoryImpl {
                 Expr::value(TaskStatus::Cancelled.to_string()),
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
-            .col_expr(
-                task_entity::Column::CompletedAt,
-                Expr::value(Utc::now()),
-            )
+            .col_expr(task_entity::Column::CompletedAt, Expr::value(Utc::now()))
             .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
             .col_expr(
                 task_entity::Column::LockExpiresAt,

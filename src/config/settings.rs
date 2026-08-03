@@ -96,6 +96,9 @@ pub struct Settings {
 
     /// 认证配置（R-auth-engine-002 / T011：garrison JWT 密钥等）
     pub auth: AuthSettings,
+
+    /// 国际化配置（i18n）
+    pub i18n: I18nSettings,
 }
 
 // =============================================================================
@@ -630,6 +633,82 @@ impl TrustedProxySettings {
 }
 
 // =============================================================================
+// 国际化配置（i18n）
+// =============================================================================
+
+/// 国际化配置设置
+///
+/// 配置 Fluent 翻译系统的默认语言、支持语言列表和翻译文件目录。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__I18N__")]
+pub struct I18nSettings {
+    /// 默认 locale（BCP 47 格式，如 "en-US"）
+    #[config(default = "en-US".to_string())]
+    pub default_locale: String,
+
+    /// 支持的 locale 列表
+    #[config(default = vec!["en-US".to_string(), "zh-CN".to_string()])]
+    pub supported_locales: Vec<String>,
+
+    /// 翻译文件根目录路径
+    #[config(default = "locales".to_string())]
+    pub locales_dir: String,
+}
+
+/// 验证 i18n 配置有效性
+///
+/// - `default_locale` 必须是有效 BCP 47 语言标识符
+/// - `supported_locales` 必须包含 `default_locale`
+/// - `locales_dir` 必须存在且至少包含一个有效 locale 子目录
+pub fn validate_i18n(settings: &I18nSettings) -> Result<(), validator::ValidationError> {
+    use unic_langid::LanguageIdentifier;
+
+    // default_locale 必须是有效 BCP 47
+    settings
+        .default_locale
+        .parse::<LanguageIdentifier>()
+        .map_err(|_| validator::ValidationError::new("i18n_invalid_default_locale"))?;
+
+    // supported_locales 每个都必须是有效 BCP 47
+    for locale in &settings.supported_locales {
+        locale
+            .parse::<LanguageIdentifier>()
+            .map_err(|_| validator::ValidationError::new("i18n_invalid_supported_locale"))?;
+    }
+
+    // supported_locales 必须包含 default_locale
+    if !settings
+        .supported_locales
+        .contains(&settings.default_locale)
+    {
+        return Err(validator::ValidationError::new(
+            "i18n_default_locale_not_in_supported",
+        ));
+    }
+
+    // locales_dir 必须存在
+    let dir = std::path::Path::new(&settings.locales_dir);
+    if !dir.exists() {
+        return Err(validator::ValidationError::new(
+            "i18n_locales_dir_not_found",
+        ));
+    }
+
+    // 至少包含一个有效 locale 子目录
+    let has_valid_subdir = settings
+        .supported_locales
+        .iter()
+        .any(|l| dir.join(l).exists());
+    if !has_valid_subdir {
+        return Err(validator::ValidationError::new(
+            "i18n_no_valid_locale_directory",
+        ));
+    }
+
+    Ok(())
+}
+
+// =============================================================================
 // 自定义验证函数
 // =============================================================================
 
@@ -763,11 +842,14 @@ mod tests {
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
             auth: AuthSettings::default(),
+            i18n: I18nSettings::default(),
         };
 
         assert_eq!(settings.server.port, 8899);
         assert!(settings.rate_limiting.enabled);
         assert!(settings.trusted_proxies.enabled);
+        assert_eq!(settings.i18n.default_locale, "en-US");
+        assert_eq!(settings.i18n.supported_locales.len(), 2);
     }
 
     /// R-auth-engine-002：AuthSettings Debug 输出对 jwt_secret 脱敏（CWE-532 防护）。
@@ -1424,6 +1506,7 @@ mod tests {
             auth: AuthSettings {
                 jwt_secret: "a-very-strong-and-secure-jwt-secret-key-32+chars".to_string(),
             },
+            i18n: I18nSettings::default(),
         }
     }
 

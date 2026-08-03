@@ -35,9 +35,7 @@ impl From<AuditServiceError> for CrawlRsError {
                         CrawlRsError::Other(format!("Database error: {}", anyhow_err))
                     }
                 }
-                AuditRepositoryError::NotFound => {
-                    CrawlRsError::Other(repo_err.to_string())
-                }
+                AuditRepositoryError::NotFound => CrawlRsError::Other(repo_err.to_string()),
             },
         }
     }
@@ -565,8 +563,9 @@ mod tests {
 
     #[test]
     fn test_audit_service_error_from_repository_db_error_to_app_error() {
-        let repo_err = AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-            "repo db failure".to_string(),).into());
+        let repo_err = AuditRepositoryError::DatabaseError(
+            sea_orm::DbErr::Custom("repo db failure".to_string()).into(),
+        );
         let service_err: AuditServiceError = repo_err.into();
         let app_err: CrawlRsError = service_err.into();
         // DatabaseError variant of AuditRepositoryError should map to CrawlRsError::Database

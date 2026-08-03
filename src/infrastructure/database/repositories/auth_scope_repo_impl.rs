@@ -36,18 +36,18 @@ impl From<dbnexus::DbError> for RepositoryError {
         use dbnexus::DbError;
         match err {
             DbError::Connection(db_err) => RepositoryError::Database(anyhow::anyhow!(db_err)),
-            DbError::Config(msg) => RepositoryError::Database(anyhow::anyhow!(
-                DbErr::Custom(format!("Config: {}", msg))
-            )),
-            DbError::Permission(msg) => RepositoryError::Database(anyhow::anyhow!(
-                DbErr::Custom(format!("Permission: {}", msg))
-            )),
-            DbError::Transaction(msg) => RepositoryError::Database(anyhow::anyhow!(
-                DbErr::Custom(format!("Transaction: {}", msg))
-            )),
-            DbError::Migration(msg) => RepositoryError::Database(anyhow::anyhow!(
-                DbErr::Custom(format!("Migration: {}", msg))
-            )),
+            DbError::Config(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
+                format!("Config: {}", msg)
+            ))),
+            DbError::Permission(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
+                format!("Permission: {}", msg)
+            ))),
+            DbError::Transaction(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
+                format!("Transaction: {}", msg)
+            ))),
+            DbError::Migration(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
+                format!("Migration: {}", msg)
+            ))),
         }
     }
 }

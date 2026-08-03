@@ -1,16 +1,18 @@
 // 临时工具：生成 admin API Key 用于 E2E 测试
 // 用法：DATABASE_URL=... CRAWLRS__AUTH__JWT_SECRET=... cargo run --bin gen_admin_key
 
-use std::sync::Arc;
 use chrono::Utc;
+use crawlrs::bootstrap::config::load_settings;
 use crawlrs::bootstrap::services::init_garrison_auth;
 use crawlrs::common::time_utils;
 use crawlrs::infrastructure::auth::get_garrison_dao;
 use crawlrs::infrastructure::database::entities::api_key::{ActiveModel, Entity};
-use crawlrs::infrastructure::database::entities::team::{ActiveModel as TeamActiveModel, Entity as TeamEntity};
-use crawlrs::bootstrap::config::load_settings;
+use crawlrs::infrastructure::database::entities::team::{
+    ActiveModel as TeamActiveModel, Entity as TeamEntity,
+};
 use dbnexus::{DbConfig, DbPool};
 use sea_orm::{ActiveValue, EntityTrait};
+use std::sync::Arc;
 use uuid::Uuid;
 
 const GARRISON_NAMESPACE: &str = "crawlrs";
@@ -24,7 +26,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "DATABASE_URL or TEST_DATABASE_URL must be set")?;
 
     println!("Connecting to database...");
-    let cfg = DbConfig { url, ..Default::default() };
+    let cfg = DbConfig {
+        url,
+        ..Default::default()
+    };
     let pool = Arc::new(DbPool::with_config(cfg).await?);
 
     println!("Loading settings...");

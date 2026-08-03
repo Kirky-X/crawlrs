@@ -294,8 +294,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_database_error_display() {
-        let err = AuditRepositoryError::DatabaseError(sea_orm::DbErr::RecordNotFound(
-            "audit log missing".to_string(),).into());
+        let err = AuditRepositoryError::DatabaseError(
+            sea_orm::DbErr::RecordNotFound("audit log missing".to_string()).into(),
+        );
         let msg = format!("{}", err);
         assert!(msg.contains("Database error"));
         assert!(msg.contains("audit log missing"));

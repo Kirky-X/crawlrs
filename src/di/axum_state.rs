@@ -17,7 +17,9 @@ use std::sync::Arc;
 use trait_kit::{AsyncKit, AsyncReady};
 
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
-use crate::di::modules::{EngineModule, InfrastructureModule, ModuleBuildError, ServiceModule};
+use crate::di::modules::{
+    EngineModule, InfrastructureModule, ModuleBuildError, ServiceModule, SettingsModule,
+};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 // R-teams-004 / T014：teams-off 时不导入 teams 相关类型
@@ -47,6 +49,7 @@ use crate::domain::services::team_service::TeamService;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::router::EngineRouter;
+use crate::i18n::I18nBundle;
 use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClient;
 // T059/R-cache-002：高级缓存服务（scrape_worker 读写抓取结果缓存）
@@ -166,6 +169,11 @@ pub struct CrawlRsState {
     /// teams-off 模式下，无地理限制数据访问，不需要 `GeoRestrictionRepository`。
     #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
+    /// i18n 翻译 bundle
+    ///
+    /// 从配置加载，提供多语言翻译接口。
+    /// 通过 `kit.require::<SettingsModule>()` 获取 i18n 配置并加载 FTL 文件。
+    pub i18n_bundle: Arc<I18nBundle>,
 }
 
 impl CrawlRsState {
@@ -184,8 +192,32 @@ impl CrawlRsState {
         let infra = kit.require::<InfrastructureModule>()?;
         let engines = kit.require::<EngineModule>()?;
         let services = kit.require::<ServiceModule>()?;
+        let settings = kit.require::<SettingsModule>()?;
 
         let search_client = Arc::new(SearchClient::new(engines.engine_client.clone()));
+
+        // 加载 i18n 翻译 bundle
+        let supported: Vec<&str> = settings
+            .i18n
+            .supported_locales
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let i18n_bundle = Arc::new(
+            I18nBundle::load(
+                &settings.i18n.default_locale,
+                &supported,
+                &settings.i18n.locales_dir,
+            )
+            .map_err(|e| {
+                ModuleBuildError::SettingsNotConfigured(format!("i18n load failed: {e}"))
+            })?,
+        );
+        // 启动时验证 key 一致性（warn on mismatches）
+        let warnings = i18n_bundle.validate_key_consistency();
+        for w in &warnings {
+            log::warn!("i18n key consistency: {w}");
+        }
 
         Ok(CrawlRsState {
             db_pool: infra.db.inner().clone(),
@@ -225,6 +257,7 @@ impl CrawlRsState {
             geo_location_service: services.geo_location_service.clone(),
             #[cfg(feature = "teams")]
             geo_restriction_repo: infra.repositories.geo_restriction_repo.clone(),
+            i18n_bundle,
         })
     }
 }
@@ -320,6 +353,8 @@ pub trait CrawlRsStateExt {
     /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
     #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository>;
+    /// Get i18n translation bundle
+    fn i18n_bundle(&self) -> Arc<I18nBundle>;
 }
 
 impl CrawlRsStateExt for CrawlRsState {
@@ -452,6 +487,10 @@ impl CrawlRsStateExt for CrawlRsState {
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
         self.geo_restriction_repo.clone()
     }
+
+    fn i18n_bundle(&self) -> Arc<I18nBundle> {
+        self.i18n_bundle.clone()
+    }
 }
 
 impl CrawlRsStateExt for Arc<CrawlRsState> {
@@ -583,6 +622,10 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
     #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository> {
         self.as_ref().geo_restriction_repo()
+    }
+
+    fn i18n_bundle(&self) -> Arc<I18nBundle> {
+        self.as_ref().i18n_bundle()
     }
 }
 

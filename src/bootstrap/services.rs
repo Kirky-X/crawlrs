@@ -17,8 +17,8 @@ use crate::config::settings::Settings;
 use crate::bootstrap::error::BootstrapError;
 #[cfg(feature = "auth")]
 use crate::infrastructure::auth::{
-    build_garrison_config, get_garrison_dao, init_garrison_dao, set_audit_service, set_garrison_dao,
-    CrawlrsGarrisonInterface,
+    build_garrison_config, get_garrison_dao, init_garrison_dao, set_audit_service,
+    set_garrison_dao, CrawlrsGarrisonInterface,
 };
 // garrison prelude 提供 GarrisonDao / GarrisonInterface / GarrisonManager trait 与类型。
 use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
@@ -497,8 +497,9 @@ pub async fn init_garrison_auth(
         const DEFAULT_TEAM_NAME: &str = "bootstrap-admin-team";
         const TTL_SECS: i64 = 30 * 24 * 60 * 60;
 
-        let wrap_db =
-            |ctx: &'static str| move |e: sea_orm::DbErr| BootstrapError::GarrisonManager(format!("{}: db: {}", ctx, e));
+        let wrap_db = |ctx: &'static str| {
+            move |e: sea_orm::DbErr| BootstrapError::GarrisonManager(format!("{}: db: {}", ctx, e))
+        };
 
         // `cfg_val` 可选格式：`team_id_uuid`（非空 uuid 时用作目标 team）
         let team_id_arg: Option<Uuid> = if cfg_val.len() == 36 {
@@ -511,14 +512,9 @@ pub async fn init_garrison_auth(
 
         // 确保 team 存在（bootstrap 首次启动时 team 表为空）
         let now = time_utils::to_db_datetime(chrono::Utc::now());
-        let session = pool
-            .get_session("admin")
-            .await
-            .map_err(|e| {
-                BootstrapError::GarrisonManager(format!(
-                    "bootstrap_admin_key: db session: {e}"
-                ))
-            })?;
+        let session = pool.get_session("admin").await.map_err(|e| {
+            BootstrapError::GarrisonManager(format!("bootstrap_admin_key: db session: {e}"))
+        })?;
         let conn = session.connection().map_err(|e| {
             BootstrapError::GarrisonManager(format!("bootstrap_admin_key: db conn: {e}"))
         })?;

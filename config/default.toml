@@ -284,3 +284,13 @@ proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1", "::1"]
 # 开发环境可通过环境变量注入：export CRAWLRS__AUTH__JWT_SECRET="test-jwt-secret-32-bytes-or-more!!"
 jwt_secret = ""
 
+# Internationalization (i18n) Configuration
+# 国际化配置，基于 Mozilla Fluent 系统
+[i18n]
+# 默认 locale（BCP 47 格式）
+default_locale = "en-US"
+# 支持的 locale 列表
+supported_locales = ["en-US", "zh-CN"]
+# 翻译文件根目录路径（相对于工作目录）
+locales_dir = "locales"
+

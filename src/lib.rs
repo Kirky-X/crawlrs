@@ -74,3 +74,8 @@ pub mod bootstrap;
 ///
 /// 提供基于 trait-kit 的依赖注入框架
 pub mod di;
+
+/// 国际化模块
+///
+/// 提供多语言翻译支持（基于 Mozilla Fluent 系统）
+pub mod i18n;

@@ -998,6 +998,7 @@ json = "J"
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
             auth: AuthSettings::default(),
+            i18n: I18nSettings::default(),
         }
     }
 
