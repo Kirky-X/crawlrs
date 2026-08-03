@@ -14,7 +14,9 @@
 //!
 //! | 模块 | 职责 |
 //! |------|------|
-//! | [`env_var_security`] | 环境变量安全读取与验证 |
+//! | [`env_injection`] | 环境变量注入检测、白名单、脱敏 |
+//! | [`env_validation`] | 环境变量值验证、过滤、安全审计 |
+//! | [`env_var_security`] | 向后兼容 re-export shim |
 //! | [`secure_ip`] | 受信代理下的客户端 IP 提取 |
 //! | [`constant_time_compare`] | 常量时间字符串比较（防时序侧信道） |
 //! | [`api_key_hash`] | API Key 的 bcrypt 哈希与验证 |
@@ -22,6 +24,8 @@
 // 子模块声明
 pub mod api_key_hash;
 pub mod constant_time_compare;
+pub mod env_injection;
+pub mod env_validation;
 pub mod env_var_security;
 pub mod secure_ip;
 
