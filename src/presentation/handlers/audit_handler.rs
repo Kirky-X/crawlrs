@@ -6,6 +6,7 @@
 use crate::common::constants::server_config;
 use crate::domain::auth::ScopePermission;
 use crate::domain::services::audit_service::AuditServiceTrait;
+use crate::i18n::{I18nBundle, Locale};
 use crate::presentation::handlers::response_builder::{error_response, ApiResponse};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{
@@ -52,6 +53,8 @@ pub struct DeniedRequestsResponseDto<T> {
 pub async fn get_audit_logs(
     Extension(audit_service): Extension<Arc<dyn AuditServiceTrait>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(locale): Extension<Locale>,
+    Extension(bundle): Extension<Arc<I18nBundle>>,
     Query(query): Query<AuditLogsQuery>,
 ) -> impl IntoResponse {
     let limit = query
@@ -67,7 +70,7 @@ pub async fn get_audit_logs(
         if req_key_id != auth_state.api_key_id && !is_admin {
             return error_response(
                 StatusCode::FORBIDDEN,
-                "Insufficient permissions to query other API keys' audit logs",
+                crate::i18n::t(&locale, &bundle, "api-insufficient-permissions-api-key"),
             );
         }
     }
@@ -75,7 +78,7 @@ pub async fn get_audit_logs(
         if req_team_id != auth_state.team_id && !is_admin {
             return error_response(
                 StatusCode::FORBIDDEN,
-                "Insufficient permissions to query other teams' audit logs",
+                crate::i18n::t(&locale, &bundle, "api-insufficient-permissions-team"),
             );
         }
     }
@@ -321,6 +324,15 @@ mod tests {
         AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default())
     }
 
+    fn test_locale() -> Locale {
+        "en-US".parse().unwrap()
+    }
+
+    fn test_bundle() -> Arc<I18nBundle> {
+        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
+    }
+
     fn make_auth_state_with_key(api_key_id: Uuid) -> AuthState {
         let pool = create_test_db_pool();
         AuthState::new(pool, Uuid::new_v4(), api_key_id, ApiKeyScope::default())
@@ -530,7 +542,7 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -550,7 +562,7 @@ mod tests {
             team_id: Some(team_id),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -569,7 +581,7 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -588,7 +600,7 @@ mod tests {
             team_id: Some(Uuid::new_v4()),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -606,7 +618,7 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -624,7 +636,7 @@ mod tests {
             team_id: Some(Uuid::new_v4()),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -642,7 +654,7 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -660,7 +672,7 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -679,7 +691,7 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -704,7 +716,7 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -724,7 +736,7 @@ mod tests {
             team_id: Some(Uuid::new_v4()),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -745,7 +757,7 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -766,7 +778,7 @@ mod tests {
             team_id: Some(team_id),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -786,7 +798,7 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -806,7 +818,7 @@ mod tests {
             team_id: Some(Uuid::new_v4()),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 
@@ -827,7 +839,7 @@ mod tests {
             team_id: Some(Uuid::new_v4()),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Query(query))
+        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
             .await
             .into_response();
 

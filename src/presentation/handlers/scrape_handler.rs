@@ -24,7 +24,8 @@ use crate::{
         scrape_result_repository::ScrapeResultRepository, task_repository::TaskRepository,
     },
     domain::services::rate_limiting_service::RateLimitingService,
-    presentation::handlers::response_builder::{errors, success_response, ApiResponse},
+    i18n::{I18nBundle, Locale},
+    presentation::handlers::response_builder::{errors, errors_locale, success_response, ApiResponse},
     presentation::handlers::task_handler::handle_sync_wait_and_get_status,
     presentation::helpers::rate_limit_helper::check_rate_limit,
     presentation::helpers::ssrf::validate_url,
@@ -195,32 +196,34 @@ pub async fn cancel_scrape(
     Path(id): Path<Uuid>,
     Extension(repository): Extension<Arc<dyn TaskRepository>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(locale): Extension<Locale>,
+    Extension(bundle): Extension<Arc<I18nBundle>>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     match repository.find_by_id(id).await {
         Ok(Some(task)) => {
             if task.team_id != team_id {
-                return errors::forbidden("Access denied");
+                return errors_locale::forbidden(&locale, &bundle, "api-access-denied");
             }
 
             // Update task status to cancelled
             match repository.mark_cancelled(id).await {
                 Ok(_) => {
                     let response = CancelScrapeResponseDto {
-                        message: "Scrape task cancelled".to_string(),
+                        message: crate::i18n::t(&locale, &bundle, "api-scrape-cancelled"),
                     };
                     (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
                 }
                 Err(e) => {
                     error!("Failed to cancel task {}: {}", id, e);
-                    errors::internal_server_error("Internal server error")
+                    errors_locale::internal_server_error(&locale, &bundle, "api-internal-error")
                 }
             }
         }
-        Ok(None) => errors::not_found("Task not found"),
+        Ok(None) => errors_locale::not_found(&locale, &bundle, "api-task-not-found"),
         Err(e) => {
             error!("Failed to get task {} for cancellation: {}", id, e);
-            errors::internal_server_error("Internal server error")
+            errors_locale::internal_server_error(&locale, &bundle, "api-internal-error")
         }
     }
 }
@@ -230,12 +233,14 @@ pub async fn get_scrape_status(
     Extension(task_repository): Extension<Arc<dyn TaskRepository>>,
     Extension(result_repository): Extension<Arc<dyn ScrapeResultRepository>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(locale): Extension<Locale>,
+    Extension(bundle): Extension<Arc<I18nBundle>>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     match task_repository.find_by_id(id).await {
         Ok(Some(task)) => {
             if task.team_id != team_id {
-                return errors::forbidden("Access denied");
+                return errors_locale::forbidden(&locale, &bundle, "api-access-denied");
             }
 
             // Fetch scrape result if task is completed
@@ -277,7 +282,7 @@ pub async fn get_scrape_status(
                         .get("error")
                         .and_then(|e| e.as_str())
                         .map(|s| s.to_string())
-                        .or(Some("Task failed".to_string()))
+                        .or(Some(crate::i18n::t(&locale, &bundle, "api-task-failed")))
                 } else {
                     None
                 },
@@ -285,10 +290,10 @@ pub async fn get_scrape_status(
 
             (StatusCode::OK, Json(ApiResponse::success(response))).into_response()
         }
-        Ok(None) => errors::not_found("Task not found"),
+        Ok(None) => errors_locale::not_found(&locale, &bundle, "api-task-not-found"),
         Err(e) => {
             error!("Failed to get task status {}: {}", id, e);
-            errors::internal_server_error("Internal server error")
+            errors_locale::internal_server_error(&locale, &bundle, "api-internal-error")
         }
     }
 }
@@ -1550,6 +1555,15 @@ mod tests {
         )
     }
 
+    fn test_locale() -> Locale {
+        "en-US".parse().unwrap()
+    }
+
+    fn test_bundle() -> Arc<I18nBundle> {
+        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
+    }
+
     fn make_auth_state_with_team(team_id: Uuid) -> AuthState {
         AuthState::new(
             create_test_db_pool(),
@@ -1852,7 +1866,7 @@ mod tests {
         let repo = Arc::new(MockTaskRepository::with_task(task));
         let auth = make_auth_state_with_team(team_id);
 
-        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth))
+        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth), Extension(test_locale()), Extension(test_bundle()))
             .await
             .into_response();
 
@@ -1865,7 +1879,7 @@ mod tests {
         let auth = make_auth_state();
         let task_id = Uuid::new_v4();
 
-        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth))
+        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth), Extension(test_locale()), Extension(test_bundle()))
             .await
             .into_response();
 
@@ -1880,7 +1894,7 @@ mod tests {
         // Different team_id
         let auth = make_auth_state_with_team(Uuid::new_v4());
 
-        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth))
+        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth), Extension(test_locale()), Extension(test_bundle()))
             .await
             .into_response();
 
@@ -1893,7 +1907,7 @@ mod tests {
         let auth = make_auth_state();
         let task_id = Uuid::new_v4();
 
-        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth))
+        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth), Extension(test_locale()), Extension(test_bundle()))
             .await
             .into_response();
 
@@ -1913,7 +1927,7 @@ mod tests {
         }
         let auth = make_auth_state_with_team(team_id);
 
-        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth))
+        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth), Extension(test_locale()), Extension(test_bundle()))
             .await
             .into_response();
 
@@ -1936,6 +1950,8 @@ mod tests {
             Extension(task_repo),
             Extension(result_repo),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
         )
         .await
         .into_response();
@@ -1959,6 +1975,8 @@ mod tests {
             Extension(task_repo),
             Extension(result_repo),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
         )
         .await
         .into_response();
@@ -1981,6 +1999,8 @@ mod tests {
             Extension(task_repo),
             Extension(result_repo),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
         )
         .await
         .into_response();
@@ -2003,6 +2023,8 @@ mod tests {
             Extension(task_repo),
             Extension(result_repo),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
         )
         .await
         .into_response();
@@ -2027,6 +2049,8 @@ mod tests {
             Extension(task_repo),
             Extension(result_repo),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
         )
         .await
         .into_response();
@@ -2050,6 +2074,8 @@ mod tests {
             Extension(task_repo),
             Extension(result_repo),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
         )
         .await
         .into_response();
@@ -2069,6 +2095,8 @@ mod tests {
             Extension(task_repo),
             Extension(result_repo),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
         )
         .await
         .into_response();
@@ -2090,6 +2118,8 @@ mod tests {
             Extension(task_repo),
             Extension(result_repo),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
         )
         .await
         .into_response();
@@ -2109,6 +2139,8 @@ mod tests {
             Extension(task_repo),
             Extension(result_repo),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
         )
         .await
         .into_response();

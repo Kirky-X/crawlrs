@@ -18,8 +18,9 @@ use crate::application::use_cases::crawl_use_case::CrawlUseCaseError;
 use crate::common::constants::crawl_task::CRAWL_TASK_CREDITS_COST;
 use crate::common::constants::crawl_task::DEFAULT_TIMEOUT_MS;
 use crate::presentation::handlers::extract_task_ids;
+use crate::i18n::{I18nBundle, Locale};
 use crate::presentation::handlers::response_builder::errors;
-use crate::presentation::handlers::response_builder::{error_response, success_response};
+use crate::presentation::handlers::response_builder::{error_response, errors_locale, success_response};
 use crate::presentation::handlers::task_handler::handle_sync_wait_and_get_status;
 use crate::presentation::handlers::task_handler::SyncWaitResult;
 use crate::presentation::helpers::rate_limit_helper::check_rate_limit;
@@ -173,6 +174,8 @@ pub async fn create_crawl(
 pub async fn get_crawl(
     Extension(state): Extension<Arc<CrawlHandlerState>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(locale): Extension<Locale>,
+    Extension(bundle): Extension<Arc<I18nBundle>>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
@@ -180,7 +183,7 @@ pub async fn get_crawl(
 
     match use_case.get_crawl(crawl_id, team_id).await {
         Ok(Some(crawl)) => success_response(StatusCode::OK, crawl),
-        Ok(None) => errors::not_found("Crawl not found"),
+        Ok(None) => errors_locale::not_found(&locale, &bundle, "api-crawl-not-found"),
         Err(e) => {
             let (status, msg): (StatusCode, String) = e.into();
             error_response(status, msg)
@@ -1564,6 +1567,15 @@ mod tests {
         )
     }
 
+    fn test_locale() -> Locale {
+        "en-US".parse().unwrap()
+    }
+
+    fn test_bundle() -> Arc<I18nBundle> {
+        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
+    }
+
     fn make_socket_addr() -> SocketAddr {
         "203.0.113.1:8080".parse().expect("valid SocketAddr")
     }
@@ -1965,7 +1977,7 @@ mod tests {
         );
         let auth = make_auth_state_with_team(team_id);
 
-        let response = get_crawl(Extension(state), Extension(auth), Path(crawl_id))
+        let response = get_crawl(Extension(state), Extension(auth), Extension(test_locale()), Extension(test_bundle()), Path(crawl_id))
             .await
             .into_response();
 
@@ -1982,7 +1994,7 @@ mod tests {
         );
         let auth = make_auth_state();
 
-        let response = get_crawl(Extension(state), Extension(auth), Path(Uuid::new_v4()))
+        let response = get_crawl(Extension(state), Extension(auth), Extension(test_locale()), Extension(test_bundle()), Path(Uuid::new_v4()))
             .await
             .into_response();
 
@@ -2002,7 +2014,7 @@ mod tests {
         // Different team_id → use_case returns Ok(None) → 404
         let auth = make_auth_state_with_team(Uuid::new_v4());
 
-        let response = get_crawl(Extension(state), Extension(auth), Path(crawl_id))
+        let response = get_crawl(Extension(state), Extension(auth), Extension(test_locale()), Extension(test_bundle()), Path(crawl_id))
             .await
             .into_response();
 
@@ -2019,7 +2031,7 @@ mod tests {
         );
         let auth = make_auth_state();
 
-        let response = get_crawl(Extension(state), Extension(auth), Path(Uuid::new_v4()))
+        let response = get_crawl(Extension(state), Extension(auth), Extension(test_locale()), Extension(test_bundle()), Path(Uuid::new_v4()))
             .await
             .into_response();
 
