@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crawlrs::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crawlrs::config::settings::Settings;
-use crawlrs::domain::models::scrape_result::ScrapeResult;
+use crawlrs::domain::models::ScrapeResult;
 use crawlrs::domain::models::{
     Crawl, CrawlStatus, CreditsTransaction, CreditsTransactionType, Task,
 };

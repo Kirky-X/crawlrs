@@ -90,8 +90,8 @@ impl Default for MockAuditLogRepository {
 impl AuditLogRepository for MockAuditLogRepository {
     async fn create(&self, entry: &AuditLogEntry) -> Result<AuditLogEntry, AuditRepositoryError> {
         if self.fail_all {
-            return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                "mock create failure".to_string(),
+            return Err(AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                "mock create failure"
             )));
         }
         self.created
@@ -108,8 +108,8 @@ impl AuditLogRepository for MockAuditLogRepository {
         _offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         if self.fail_all {
-            return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                "mock find failure".to_string(),
+            return Err(AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                "mock find failure"
             )));
         }
         Ok(self.find_results.lock().expect("find lock").clone())
@@ -122,8 +122,8 @@ impl AuditLogRepository for MockAuditLogRepository {
         _offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         if self.fail_all {
-            return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                "mock find failure".to_string(),
+            return Err(AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                "mock find failure"
             )));
         }
         Ok(self.find_results.lock().expect("find lock").clone())
@@ -135,8 +135,8 @@ impl AuditLogRepository for MockAuditLogRepository {
         _limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         if self.fail_all {
-            return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                "mock find failure".to_string(),
+            return Err(AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                "mock find failure"
             )));
         }
         Ok(self.find_results.lock().expect("find lock").clone())
@@ -144,8 +144,8 @@ impl AuditLogRepository for MockAuditLogRepository {
 
     async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditRepositoryError> {
         if self.fail_all {
-            return Err(AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom(
-                "mock cleanup failure".to_string(),
+            return Err(AuditRepositoryError::DatabaseError(anyhow::anyhow!(
+                "mock cleanup failure"
             )));
         }
         Ok(self.cleanup_count)
@@ -667,7 +667,7 @@ fn test_builder_chaining_all_methods() {
 
 #[test]
 fn test_audit_service_error_from_repository_db_error() {
-    let repo_err = AuditRepositoryError::DatabaseError(sea_orm::DbErr::Custom("x".to_string()));
+    let repo_err = AuditRepositoryError::DatabaseError(anyhow::anyhow!("x"));
     let service_err: AuditServiceError = repo_err.into();
     match service_err {
         AuditServiceError::RepositoryError(_) => {}

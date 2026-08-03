@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crawlrs::application::use_cases::crawl_use_case::CrawlUseCase;
 use crawlrs::domain::models::credits_model::CreditsTransactionType;
-use crawlrs::domain::models::scrape_result::ScrapeResult;
+use crawlrs::domain::models::ScrapeResult;
 use crawlrs::domain::models::{Crawl, Task, Webhook};
 use crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crawlrs::domain::repositories::task_repository::{

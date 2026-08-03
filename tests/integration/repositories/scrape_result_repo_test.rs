@@ -35,7 +35,7 @@ fn make_scrape_result(
         meta_data: serde_json::json!({"timestamp": "2025-01-01T00:00:00Z"}),
         screenshot: None,
         response_time_ms,
-        created_at: chrono::Utc::now().naive_utc(),
+        created_at: chrono::Utc::now(),
     }
 }
 

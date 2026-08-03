@@ -8,6 +8,7 @@ pub mod bootstrap;
 pub mod di;
 pub mod domain;
 pub mod engines;
+pub mod i18n;
 pub mod infrastructure;
 pub mod presentation;
 pub mod queue;
