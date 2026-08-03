@@ -345,6 +345,27 @@ impl I18nBundle {
             "validation-field-required",
         ]);
 
+        // domain-error keys (17 keys)
+        keys.extend([
+            "domain-error-crawl-config",
+            "domain-error-depth-exceeded",
+            "domain-error-path-filtered",
+            "domain-error-task-not-found",
+            "domain-error-invalid-task-state",
+            "domain-error-task-expired",
+            "domain-error-team-not-found",
+            "domain-error-insufficient-credits",
+            "domain-error-concurrency-limit",
+            "domain-error-invalid-url",
+            "domain-error-domain-blacklisted",
+            "domain-error-robots-forbidden",
+            "domain-error-webhook-delivery-failed",
+            "domain-error-invalid-webhook-url",
+            "domain-error-llm-extraction-failed",
+            "domain-error-invalid-css-selector",
+            "domain-error-validation",
+        ]);
+
         keys.into_iter().map(String::from).collect()
     }
 }

@@ -14,6 +14,9 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use crate::i18n::{I18nBundle, Locale};
 
 /// Unified API response wrapper
 ///
@@ -315,6 +318,81 @@ pub fn resource_not_found(resource: impl Into<String>) -> Response {
 #[inline]
 pub fn access_denied() -> Response {
     errors::forbidden("Access denied")
+}
+
+// =============================================================================
+// Locale-aware error helpers
+// =============================================================================
+
+/// Locale-aware error response
+///
+/// Uses the i18n bundle to translate the FTL `key` into the request's locale.
+#[inline]
+pub fn error_response_locale(
+    status: StatusCode,
+    locale: &Locale,
+    bundle: &Arc<I18nBundle>,
+    key: &str,
+) -> Response {
+    let message = crate::i18n::t(locale, bundle, key);
+    error_response(status, message)
+}
+
+/// Locale-aware error response with arguments
+#[inline]
+pub fn error_response_locale_with_args(
+    status: StatusCode,
+    locale: &Locale,
+    bundle: &Arc<I18nBundle>,
+    key: &str,
+    args: &[(&str, fluent_bundle::FluentValue)],
+) -> Response {
+    let message = crate::i18n::t_with_args(locale, bundle, key, args);
+    error_response(status, message)
+}
+
+/// Locale-aware error helpers module
+pub mod errors_locale {
+    use super::*;
+
+    /// Forbidden response with locale
+    #[inline]
+    pub fn forbidden(locale: &Locale, bundle: &Arc<I18nBundle>, key: &str) -> Response {
+        let message = crate::i18n::t(locale, bundle, key);
+        errors::forbidden(message)
+    }
+
+    /// Not found response with locale
+    #[inline]
+    pub fn not_found(locale: &Locale, bundle: &Arc<I18nBundle>, key: &str) -> Response {
+        let message = crate::i18n::t(locale, bundle, key);
+        errors::not_found(message)
+    }
+
+    /// Internal server error response with locale
+    #[inline]
+    pub fn internal_server_error(
+        locale: &Locale,
+        bundle: &Arc<I18nBundle>,
+        key: &str,
+    ) -> Response {
+        let message = crate::i18n::t(locale, bundle, key);
+        errors::internal_server_error(message)
+    }
+
+    /// Too many requests response with locale
+    #[inline]
+    pub fn too_many_requests(locale: &Locale, bundle: &Arc<I18nBundle>, key: &str) -> Response {
+        let message = crate::i18n::t(locale, bundle, key);
+        errors::too_many_requests(message)
+    }
+
+    /// Bad request response with locale
+    #[inline]
+    pub fn bad_request(locale: &Locale, bundle: &Arc<I18nBundle>, key: &str) -> Response {
+        let message = crate::i18n::t(locale, bundle, key);
+        errors::bad_request(message)
+    }
 }
 
 /// Standard error codes for API responses

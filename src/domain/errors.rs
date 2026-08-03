@@ -9,6 +9,8 @@
 
 use thiserror::Error;
 
+use crate::i18n::{I18nBundle, Locale};
+
 /// Domain层错误类型
 ///
 /// 表示业务逻辑层面的错误，这些错误是可预期的，
@@ -94,6 +96,114 @@ impl DomainError {
         DomainError::ValidationError {
             field: field.into(),
             message: message.into(),
+        }
+    }
+
+    /// 获取本地化的用户可见错误消息
+    ///
+    /// 根据请求的 locale 返回对应语言的错误消息。
+    pub fn user_message_locale(&self, locale: &Locale, bundle: &I18nBundle) -> String {
+        use fluent_bundle::FluentValue;
+
+        match self {
+            DomainError::CrawlConfigError { message, .. } => bundle.translate_with_args(
+                locale,
+                "domain-error-crawl-config",
+                &[("message", FluentValue::from(message.as_str()))],
+            ),
+            DomainError::CrawlDepthExceeded { max, requested } => bundle.translate_with_args(
+                locale,
+                "domain-error-depth-exceeded",
+                &[
+                    ("max", FluentValue::from(*max as i64)),
+                    ("requested", FluentValue::from(*requested as i64)),
+                ],
+            ),
+            DomainError::PathFiltered { path } => bundle.translate_with_args(
+                locale,
+                "domain-error-path-filtered",
+                &[("path", FluentValue::from(path.as_str()))],
+            ),
+            DomainError::TaskNotFound { task_id } => bundle.translate_with_args(
+                locale,
+                "domain-error-task-not-found",
+                &[("task_id", FluentValue::from(task_id.to_string()))],
+            ),
+            DomainError::InvalidTaskState { current, expected } => bundle.translate_with_args(
+                locale,
+                "domain-error-invalid-task-state",
+                &[
+                    ("current", FluentValue::from(current.as_str())),
+                    ("expected", FluentValue::from(expected.as_str())),
+                ],
+            ),
+            DomainError::TaskExpired { .. } => {
+                bundle.translate(locale, "domain-error-task-expired")
+            }
+            DomainError::TeamNotFound { team_id } => bundle.translate_with_args(
+                locale,
+                "domain-error-team-not-found",
+                &[("team_id", FluentValue::from(team_id.to_string()))],
+            ),
+            DomainError::InsufficientCredits { required, available } => {
+                bundle.translate_with_args(
+                    locale,
+                    "domain-error-insufficient-credits",
+                    &[
+                        ("required", FluentValue::from(*required)),
+                        ("available", FluentValue::from(*available)),
+                    ],
+                )
+            }
+            DomainError::ConcurrencyLimitExceeded { current, limit } => {
+                bundle.translate_with_args(
+                    locale,
+                    "domain-error-concurrency-limit",
+                    &[
+                        ("current", FluentValue::from(*current as i64)),
+                        ("limit", FluentValue::from(*limit as i64)),
+                    ],
+                )
+            }
+            DomainError::InvalidUrl { url } => bundle.translate_with_args(
+                locale,
+                "domain-error-invalid-url",
+                &[("url", FluentValue::from(url.as_str()))],
+            ),
+            DomainError::DomainBlacklisted { domain } => bundle.translate_with_args(
+                locale,
+                "domain-error-domain-blacklisted",
+                &[("domain", FluentValue::from(domain.as_str()))],
+            ),
+            DomainError::RobotsForbidden { url } => bundle.translate_with_args(
+                locale,
+                "domain-error-robots-forbidden",
+                &[("url", FluentValue::from(url.as_str()))],
+            ),
+            DomainError::WebhookDeliveryFailed { .. } => {
+                bundle.translate(locale, "domain-error-webhook-delivery-failed")
+            }
+            DomainError::InvalidWebhookUrl { url } => bundle.translate_with_args(
+                locale,
+                "domain-error-invalid-webhook-url",
+                &[("url", FluentValue::from(url.as_str()))],
+            ),
+            DomainError::LLMExtractionFailed { .. } => {
+                bundle.translate(locale, "domain-error-llm-extraction-failed")
+            }
+            DomainError::InvalidCssSelector { selector } => bundle.translate_with_args(
+                locale,
+                "domain-error-invalid-css-selector",
+                &[("selector", FluentValue::from(selector.as_str()))],
+            ),
+            DomainError::ValidationError { field, message } => bundle.translate_with_args(
+                locale,
+                "domain-error-validation",
+                &[
+                    ("field", FluentValue::from(field.as_str())),
+                    ("message", FluentValue::from(message.as_str())),
+                ],
+            ),
         }
     }
 }

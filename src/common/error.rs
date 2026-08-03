@@ -13,6 +13,8 @@ use log::error;
 use regex::Regex;
 use serde::Serialize;
 
+use crate::i18n::{I18nBundle, Locale};
+
 /// 应用程序错误类型
 ///
 /// 统一所有应用级别的错误，提供清晰的错误分类和上下文信息
@@ -132,6 +134,9 @@ impl CrawlRsError {
     ///
     /// 此方法返回适合展示给最终用户的错误消息，不包含敏感的内部实现细节。
     /// 用于生产环境中的错误响应。
+    ///
+    /// 注意：此方法始终返回英文消息（向后兼容）。要获取本地化消息，
+    /// 请使用 `user_message_locale()`。
     pub fn user_message(&self) -> String {
         match self {
             CrawlRsError::Database(_) => {
@@ -160,6 +165,47 @@ impl CrawlRsError {
                 "Rate limit exceeded. Please slow down your requests.".to_string()
             }
             CrawlRsError::Other(_) => "Internal server error. Please try again later.".to_string(),
+        }
+    }
+
+    /// 获取本地化的用户可见错误消息
+    ///
+    /// 根据请求的 locale 返回对应语言的错误消息。如果翻译 key 不存在，
+    /// 回退到 default locale；如果 default locale 也不存在，返回 key 本身。
+    pub fn user_message_locale(&self, locale: &Locale, bundle: &I18nBundle) -> String {
+        use fluent_bundle::FluentValue;
+
+        match self {
+            CrawlRsError::Database(_) => bundle.translate(locale, "error-database"),
+            CrawlRsError::Network(_) => bundle.translate(locale, "error-network"),
+            CrawlRsError::Config(_) => bundle.translate(locale, "error-config"),
+            CrawlRsError::Validation(msg) => bundle.translate_with_args(
+                locale,
+                "error-validation",
+                &[("message", FluentValue::from(msg.as_str()))],
+            ),
+            CrawlRsError::NotFound(msg) => bundle.translate_with_args(
+                locale,
+                "error-not-found",
+                &[("resource", FluentValue::from(msg.as_str()))],
+            ),
+            CrawlRsError::Authentication(msg) => bundle.translate_with_args(
+                locale,
+                "error-auth",
+                &[("reason", FluentValue::from(msg.as_str()))],
+            ),
+            CrawlRsError::PermissionDenied(_) => bundle.translate(locale, "error-permission"),
+            CrawlRsError::ServiceUnavailable(_) => {
+                bundle.translate(locale, "error-service-unavailable")
+            }
+            CrawlRsError::Timeout(_) => bundle.translate(locale, "error-timeout"),
+            CrawlRsError::Io(_) => bundle.translate(locale, "error-io"),
+            CrawlRsError::Json(_) => bundle.translate(locale, "error-json"),
+            CrawlRsError::Engine(_) => bundle.translate(locale, "error-engine"),
+            CrawlRsError::Cache(_) => bundle.translate(locale, "error-cache"),
+            CrawlRsError::Task(_) => bundle.translate(locale, "error-task"),
+            CrawlRsError::RateLimit(_) => bundle.translate(locale, "error-rate-limit"),
+            CrawlRsError::Other(_) => bundle.translate(locale, "error-internal"),
         }
     }
 
