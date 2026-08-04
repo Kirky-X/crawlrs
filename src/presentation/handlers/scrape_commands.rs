@@ -47,8 +47,8 @@ pub async fn create_scrape(
         queue,
         settings: _settings,
         task_repo: task_repository,
-        rate_limit: rate_limiting_service,
-        auth: auth_state,
+        rate_limiting_service,
+        auth_state,
     }: AppDeps,
     Json(payload): Json<ScrapeRequestDto>,
 ) -> impl IntoResponse {

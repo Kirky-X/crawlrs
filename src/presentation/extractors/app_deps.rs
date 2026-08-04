@@ -13,7 +13,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! async fn my_handler(AppDeps { queue, settings, task_repo, rate_limit, auth }: AppDeps) -> impl IntoResponse {
+//! async fn my_handler(AppDeps { queue, settings, task_repo, rate_limiting_service, auth_state }: AppDeps) -> impl IntoResponse {
 //!     // ...
 //! }
 //! ```
@@ -39,15 +39,15 @@ use crate::queue::task_queue::TaskQueue;
 /// * `queue` - The task queue for enqueueing work items.
 /// * `settings` - Application settings / configuration.
 /// * `task_repo` - Repository for task persistence.
-/// * `rate_limit` - Rate-limiting service for quota / concurrency checks.
-/// * `auth` - Authenticated caller state (team id, api key id).
+/// * `rate_limiting_service` - Rate-limiting service for quota / concurrency checks.
+/// * `auth_state` - Authenticated caller state (team id, api key id).
 #[derive(Clone)]
 pub struct AppDeps {
     pub queue: Arc<dyn TaskQueue>,
     pub settings: Arc<Settings>,
     pub task_repo: Arc<dyn TaskRepository>,
-    pub rate_limit: Arc<dyn RateLimitingService>,
-    pub auth: AuthState,
+    pub rate_limiting_service: Arc<dyn RateLimitingService>,
+    pub auth_state: AuthState,
 }
 
 /// Rejection type returned when a required extension is missing.
@@ -82,13 +82,13 @@ where
             .cloned()
             .ok_or_else(|| missing_extension("TaskRepository"))?;
 
-        let rate_limit = parts
+        let rate_limiting_service = parts
             .extensions
             .get::<Arc<dyn RateLimitingService>>()
             .cloned()
             .ok_or_else(|| missing_extension("RateLimitingService"))?;
 
-        let auth = parts
+        let auth_state = parts
             .extensions
             .get::<AuthState>()
             .cloned()
@@ -98,8 +98,8 @@ where
             queue,
             settings,
             task_repo,
-            rate_limit,
-            auth,
+            rate_limiting_service,
+            auth_state,
         })
     }
 }
@@ -475,8 +475,8 @@ mod tests {
             queue: Arc::new(MockTaskQueue),
             settings: Arc::new(Settings::default()),
             task_repo: Arc::new(MockTaskRepo),
-            rate_limit: Arc::new(MockRateLimitService),
-            auth: AuthState::new(
+            rate_limiting_service: Arc::new(MockRateLimitService),
+            auth_state: AuthState::new(
                 create_test_db_pool(),
                 Uuid::new_v4(),
                 Uuid::new_v4(),
@@ -484,8 +484,8 @@ mod tests {
             ),
         };
         let cloned = deps.clone();
-        assert_eq!(cloned.auth.team_id, deps.auth.team_id);
-        assert_eq!(cloned.auth.api_key_id, deps.auth.api_key_id);
+        assert_eq!(cloned.auth_state.team_id, deps.auth_state.team_id);
+        assert_eq!(cloned.auth_state.api_key_id, deps.auth_state.api_key_id);
     }
 
     #[test]
@@ -494,8 +494,8 @@ mod tests {
             queue: Arc::new(MockTaskQueue),
             settings: Arc::new(Settings::default()),
             task_repo: Arc::new(MockTaskRepo),
-            rate_limit: Arc::new(MockRateLimitService),
-            auth: AuthState::new(
+            rate_limiting_service: Arc::new(MockRateLimitService),
+            auth_state: AuthState::new(
                 create_test_db_pool(),
                 Uuid::new_v4(),
                 Uuid::new_v4(),
@@ -506,7 +506,7 @@ mod tests {
         let _ = &deps.queue;
         let _ = &deps.settings;
         let _ = &deps.task_repo;
-        let _ = &deps.rate_limit;
-        let _ = &deps.auth;
+        let _ = &deps.rate_limiting_service;
+        let _ = &deps.auth_state;
     }
 }
