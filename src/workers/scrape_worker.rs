@@ -54,7 +54,11 @@ use crate::workers::markdown_post_processor::MarkdownPostProcessor;
 // H-4 职责拆分：仍需 RequestCoalescer 用于构造 CoalesceCoordinator（ScrapeWorkerBuilder.build 中使用）
 use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::retry_policy::RetryPolicy;
+// T028/R-identity-002：重试指令与分类器（消费 RetryTracker + RetryDirective）
+use crate::utils::retry::{RetryDirective, RetryTracker};
+// T067/R-frontier-004：自适应爬取停止条件
 use crate::utils::robots::RobotsCheckerTrait;
+use crate::workers::crawl::adaptive::{CrawlStats, StopCondition};
 // T019（R-runtime-001）：内存感知调度器接入 scrape_worker
 // MemoryScheduler 依赖 SystemMonitorTrait（metrics 特性门控），故整块接入由 metrics 门控
 #[cfg(feature = "metrics")]
@@ -576,6 +580,15 @@ impl ScrapeWorker {
                 error!("Scrape failed: {}", e);
                 debug!("error: {}", e);
 
+                // T028/R-identity-002：分类错误并计算重试指令（observability + reason-specific 限制）
+                let retry_reason = e.retry_reason();
+                let directive =
+                    RetryDirective::for_attempt(retry_reason, task.attempt_count as u32);
+                debug!(
+                    "T028 retry classification: reason={:?} attempt={} directive={:?}",
+                    retry_reason, task.attempt_count, directive
+                );
+
                 // If it's a timeout error, mark as failed immediately instead of rescheduling
                 let err_str = e.to_string().to_lowercase();
                 if err_str.contains("timeout")
@@ -596,7 +609,34 @@ impl ScrapeWorker {
                         self.repository.update(&t).await?;
                     }
                 } else {
-                    self.handle_failure(&mut task).await?;
+                    // T028/R-identity-002：reason-specific 重试限制检查
+                    // RetryTracker 各 reason 独立计数——AntiBot/FeatureToggle 达上限后
+                    // 即使总 max_retries 未耗尽也立即标记失败，避免无谓重试。
+                    let mut tracker = RetryTracker::new_default();
+                    for _ in 0..task.attempt_count {
+                        tracker.record(retry_reason);
+                    }
+                    if !tracker.should_retry(retry_reason) {
+                        info!(
+                            "T028: reason {:?} retry limit reached (attempt={}), \
+                             marking task {} as failed",
+                            retry_reason, task.attempt_count, task.id
+                        );
+                        if let Ok(Some(mut t)) = self.repository.find_by_id(task.id).await {
+                            t.status = TaskStatus::Failed;
+                            t.completed_at = Some(Utc::now());
+                            if let Some(obj) = t.payload.as_object_mut() {
+                                obj.insert("error".to_string(), json!(e.to_string()));
+                                obj.insert(
+                                    "retry_limit_reason".to_string(),
+                                    json!(format!("{:?}", retry_reason)),
+                                );
+                            }
+                            self.repository.update(&t).await?;
+                        }
+                    } else {
+                        self.handle_failure(&mut task).await?;
+                    }
                 }
 
                 // 触发失败 Webhook
@@ -700,20 +740,6 @@ impl ScrapeWorker {
         )
         .await?;
 
-        if depth < config.max_depth {
-            extract_and_queue_links_fn(
-                task,
-                &processed_response,
-                crawl_id,
-                depth,
-                config,
-                self.repository.as_ref(),
-                self.crawl_repository.as_ref(),
-                &self.deduplicator,
-            )
-            .await?;
-        }
-
         self.repository.mark_completed(task.id).await?;
         if let Err(e) = self
             .crawl_repository
@@ -726,7 +752,82 @@ impl ScrapeWorker {
             );
         }
 
-        update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
+        // T067/R-frontier-004：自适应停止条件检查
+        //
+        // 每完成一个爬取步骤后，评估是否应提前终止整个 crawl：
+        // - `MaxPagesReached`: completed_tasks >= max_pages（可配置上限）
+        // - `NoPendingLinks`: total_tasks 已全部完成（无待处理链接）
+        //
+        // 命中时直接标记 crawl 为 Completed，跳过后续链接提取。
+        // 注：完整 `AdaptiveStrategy::evaluate`（BM25/覆盖率/饱和度）
+        // 需 CrawlConfigDto 扩展 keywords 字段后接入（当前 DTO 无 keywords）。
+        if let Ok(Some(crawl_state)) = self.crawl_repository.find_by_id(crawl_id).await {
+            let pages_crawled = crawl_state.completed_tasks() as usize;
+            let total = crawl_state.total_tasks() as usize;
+            let pending = total.saturating_sub(pages_crawled + crawl_state.failed_tasks() as usize);
+
+            // 可配置上限：后续从 CrawlConfigDto.max_pages 读取，当前用 1000 兜底
+            let max_pages = 1000usize;
+            let stop_condition = StopCondition::new().with_max_pages(max_pages);
+            let stats = CrawlStats::new()
+                .with_pages(pages_crawled)
+                .with_pending(pending);
+
+            if let Some(reason) = stop_condition.should_stop(&stats) {
+                info!(
+                    "T067: adaptive stop for crawl {}: {} (pages={}, pending={})",
+                    crawl_id,
+                    reason.description(),
+                    pages_crawled,
+                    pending
+                );
+                if let Err(e) = self
+                    .crawl_repository
+                    .update_status(
+                        crawl_id,
+                        crate::domain::models::crawl_model::CrawlStatus::Completed,
+                    )
+                    .await
+                {
+                    error!(
+                        "Failed to update crawl status after adaptive stop for {}: {}",
+                        crawl_id, e
+                    );
+                }
+            } else {
+                // 未触发停止条件，继续正常流程
+                if depth < config.max_depth {
+                    extract_and_queue_links_fn(
+                        task,
+                        &processed_response,
+                        crawl_id,
+                        depth,
+                        config,
+                        self.repository.as_ref(),
+                        self.crawl_repository.as_ref(),
+                        &self.deduplicator,
+                    )
+                    .await?;
+                }
+                update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
+            }
+        } else {
+            // crawl 查询失败，回退到原流程（继续提取链接 + 更新状态）
+            if depth < config.max_depth {
+                extract_and_queue_links_fn(
+                    task,
+                    &processed_response,
+                    crawl_id,
+                    depth,
+                    config,
+                    self.repository.as_ref(),
+                    self.crawl_repository.as_ref(),
+                    &self.deduplicator,
+                )
+                .await?;
+            }
+            update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
+        }
 
         self.deduct_feature_credits(
             task.team_id,
