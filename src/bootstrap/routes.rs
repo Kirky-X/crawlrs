@@ -13,22 +13,11 @@ use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepos
 #[cfg(feature = "teams")]
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 // R-wh-001 / T028：webhook feature 关闭时不导入 WebhookRepoImpl
-// （/v1/webhooks 路由不注册，webhook_handler 模块也不编译）
 #[cfg(feature = "webhook")]
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
-    audit_handler, crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
+    metrics_handler,
 };
-// R-wh-001 / T028：webhook-off 时 webhook_handler 模块不编译
-#[cfg(feature = "webhook")]
-use crate::presentation::handlers::webhook_handler;
-// R-teams-002 / T012：teams-off 时 team_handler 模块不编译
-#[cfg(feature = "teams")]
-use crate::presentation::handlers::team_handler;
-// R-key-lifecycle-001 / T027-4：api_key_handler 仅在 auth-on 时编译
-// （依赖 garrison 全局 DAO，auth-off 时 handler 模块不编译，路由不注册）
-#[cfg(feature = "auth")]
-use crate::presentation::handlers::api_key_handler;
 #[cfg(not(feature = "auth"))]
 use crate::presentation::middleware::auth_types::AuthState;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
@@ -37,15 +26,11 @@ use crate::presentation::routes;
 use crate::presentation::routes::task::task_routes;
 use crate::presentation::state::CrawlHandlerState;
 use axum::{
-    routing::{delete, get, post},
     Extension, Router,
+    routing::get,
 };
-// R-teams-002 / T012：put 仅在 teams-on 时被使用（/v1/teams/geo-restrictions PUT）
-#[cfg(feature = "teams")]
-use axum::routing::put;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-// 导入常量
 use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
 
 // auth feature 关闭时需要的默认身份常量与 scope 构造器（T009）
@@ -53,6 +38,11 @@ use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
 use crate::common::constants::default_identity::{DEFAULT_API_KEY_ID, DEFAULT_TEAM_ID};
 #[cfg(not(feature = "auth"))]
 use crate::domain::auth::ApiKeyScope;
+
+// 路由分组
+use crate::bootstrap::route_groups::{
+    scrape_routes, crawl_routes, search_routes, management_routes,
+};
 
 /// 创建 CORS 中间件层
 ///
@@ -219,89 +209,14 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     //   `default_identity_middleware` 通过 `State<AuthState>` 提取器读取；
     //   模板在下方 `.layer()` 调用处构造（携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope）。
 
-    let app: Router = Router::new()
-        .route("/v1/scrape", post(scrape_handler::create_scrape))
-        .route("/v1/scrape/{id}", get(scrape_handler::get_scrape_status))
-        .route("/v1/crawl", post(crawl_handler::create_crawl))
-        .route("/v1/crawl/{id}", get(crawl_handler::get_crawl))
-        .route(
-            "/v1/crawl/{id}/results",
-            get(crawl_handler::get_crawl_results),
-        )
-        .route("/v1/crawl/{id}", delete(crawl_handler::cancel_crawl))
-        .route("/v1/search", post(search_handler::search));
-
-    // R-wh-001 / T028：/v1/webhooks (POST/GET) 路由按 webhook feature 分裂
-    //
-    // webhook-on：注册 create_webhook / list_webhooks 两条路由（使用泛型 WebhookRepoImpl）
-    // webhook-off：跳过注册（端点不存在，返回 404 而非编译失败）
-    //
-    // 注意：webhook-off 时 webhook_handler 模块本身不编译（见 handlers/mod.rs 的 cfg 门控），
-    // 所以这里引用 webhook_handler::* 必须 cfg 门控避免 unresolved import。
-    #[cfg(feature = "webhook")]
-    let app = app
-        .route(
-            "/v1/webhooks",
-            post(webhook_handler::create_webhook::<WebhookRepoImpl>),
-        )
-        .route(
-            "/v1/webhooks",
-            get(webhook_handler::list_webhooks::<WebhookRepoImpl>),
-        );
-
-    // R-teams-003 / T013：extract 路由按 teams feature 分裂
-    //
-    // teams-on：保留 GR 泛型（`extract::<DatabaseGeoRestrictionRepository>`），
-    //   handler 需要 `Extension<Arc<GR>>` 与 `Extension<Arc<TeamService>>` 参数
-    // teams-off：移除 GR 泛型，handler 不接收 GR/TeamService 参数
-    #[cfg(feature = "teams")]
-    let app = app.route(
-        "/v1/extract",
-        post(extract_handler::extract::<DatabaseGeoRestrictionRepository>),
-    );
-    #[cfg(not(feature = "teams"))]
-    let app = app.route("/v1/extract", post(extract_handler::extract));
-
-    // R-teams-002 / T012：teams 路由组单独 cfg 门控
-    //
-    // teams-on：注册 /v1/teams/me、/v1/teams/me/usage、/v1/teams/geo-restrictions (GET/PUT) 4 条路由
-    // teams-off：跳过注册（端点不存在，返回 404 而非编译失败）
-    //
-    // 注意：teams-off 时 team_handler 模块本身不编译（见 handlers/mod.rs 的 cfg 门控），
-    // 所以这里引用 team_handler::* 必须 cfg 门控避免 unresolved import。
-    #[cfg(feature = "teams")]
-    let app = app
-        .route("/v1/teams/me", get(team_handler::get_team_info))
-        .route("/v1/teams/me/usage", get(team_handler::get_team_usage))
-        .route(
-            "/v1/teams/geo-restrictions",
-            get(team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
-        )
-        .route(
-            "/v1/teams/geo-restrictions",
-            put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>),
-        );
-
-    let app = app
-        .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
-        .route("/v1/audit/denied", get(audit_handler::get_denied_requests));
-
-    // R-key-lifecycle-001 / T027-4：注册 POST /v1/admin/api-keys 路由
-    //
-    // auth-on：注册 `api_key_handler::create_api_key`（调用 garrison `ApiKeyHandler` 签发）
-    // auth-off：路由不注册（返回 404），`api_key_handler` 模块不编译
-    //
-    // 鉴权防御说明（安全审查 [MEDIUM] 修复）：
-    //
-    // 全局 `auth_middleware_inner` layer 仅校验 API Key 有效性（garrison `check_api_key`），
-    // **不强制 admin scope**——`scope_middleware` 虽存在但仅在测试 Router 中注册，
-    // 未挂载到生产路由。故 handler 内 `has_permission(Admin)` 是 admin 权限校验的
-    // **唯一防御点**（CWE-862 IDOR 防护，详见 `api_key_handler.rs` 文档）。
-    //
-    // 后续若需引入纵深防御，应在 `determine_required_scope` 中覆盖 `/v1/admin/api-keys`
-    // 路径并注册 `scope_middleware` 到本路由层（属独立变更，不在本次范围）。
-    #[cfg(feature = "auth")]
-    let app = app.route("/v1/admin/api-keys", post(api_key_handler::create_api_key));
+    let app: Router = scrape_routes::register_scrape_routes()
+        .merge(crawl_routes::register_crawl_routes())
+        .merge(search_routes::register_search_routes())
+        .merge(management_routes::register_webhook_routes())
+        .merge(management_routes::register_extract_routes())
+        .merge(management_routes::register_teams_routes())
+        .merge(management_routes::register_audit_routes())
+        .merge(management_routes::register_admin_routes());
 
     // 认证中间件层（条件编译，T009）
     //
