@@ -25,7 +25,7 @@ exclude = []
 default = ["teams", "auth", "rate-limit", "webhook"]
 
 standard = ["engine-playwright", "metrics", "antibot", "markdown"]
-full = ["standard", "engine-flaresolverr", "extractor-full"]
+full = ["standard", "engine-flaresolverr", "extractor-full", "http"]
 
 genai-llm = ["dep:genai"]
 

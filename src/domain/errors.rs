@@ -581,4 +581,216 @@ mod tests {
             assert_error(err);
         }
     }
+
+    // ============ user_message_locale tests ============
+
+    fn make_test_locale() -> Locale {
+        "en-US".parse().unwrap()
+    }
+
+    fn make_test_bundle() -> I18nBundle {
+        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+        I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap()
+    }
+
+    #[test]
+    fn test_user_message_locale_crawl_config() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::crawl_config("test error");
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_depth_exceeded() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::CrawlDepthExceeded {
+            max: 5,
+            requested: 10,
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_path_filtered() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::PathFiltered {
+            path: "/secret".into(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_task_not_found() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::TaskNotFound {
+            task_id: uuid::Uuid::nil(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_invalid_task_state() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::InvalidTaskState {
+            current: "running".into(),
+            expected: "completed".into(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_task_expired() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::TaskExpired {
+            created_at: chrono::Utc::now(),
+            timeout_seconds: 60,
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_team_not_found() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::TeamNotFound {
+            team_id: uuid::Uuid::nil(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_insufficient_credits() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::InsufficientCredits {
+            required: 100,
+            available: 50,
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_concurrency_limit() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::ConcurrencyLimitExceeded {
+            current: 10,
+            limit: 5,
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_invalid_url() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::InvalidUrl {
+            url: "not-a-url".into(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_domain_blacklisted() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::DomainBlacklisted {
+            domain: "evil.com".into(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_robots_forbidden() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::RobotsForbidden {
+            url: "http://example.com/secret".into(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_webhook_delivery_failed() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::WebhookDeliveryFailed {
+            url: "http://hook.example.com".into(),
+            status: 500,
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_invalid_webhook_url() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::InvalidWebhookUrl {
+            url: "bad-url".into(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_llm_extraction_failed() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::LLMExtractionFailed {
+            model: "gpt-4".into(),
+            message: "parse error".into(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_invalid_css_selector() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::InvalidCssSelector {
+            selector: "[[[bad".into(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_validation() {
+        let locale = make_test_locale();
+        let bundle = make_test_bundle();
+        let err = DomainError::validation("email", "invalid format");
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_user_message_locale_zh_cn() {
+        let locale: Locale = "zh-CN".parse().unwrap();
+        let bundle = make_test_bundle();
+        let err = DomainError::TaskNotFound {
+            task_id: uuid::Uuid::nil(),
+        };
+        let msg = err.user_message_locale(&locale, &bundle);
+        assert!(!msg.is_empty());
+    }
 }
