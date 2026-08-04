@@ -194,6 +194,7 @@ mod tests {
         let crawl_id = Uuid::new_v4();
         let payload = json!({
             "crawl_id": crawl_id.to_string(),
+            "config": { "max_depth": 5 }
         });
         let task = make_task(payload);
         let (id, depth, _config) = parse_crawl_payload(&task).unwrap();

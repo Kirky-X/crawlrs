@@ -34,8 +34,8 @@ use crate::utils::regex_cache::RegexCache;
 use crate::utils::dedup::Deduplicator;
 
 use crate::common::CacheContext;
-use crate::common::HttpMethod;
 use crate::common::CacheMode;
+use crate::common::HttpMethod;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::engines::engine_client::{
     EngineClient, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse, ScreenshotConfig,
@@ -61,17 +61,23 @@ use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::scheduler::memory_scheduler::{Admission, MemoryScheduler};
 
 // T026 拆分：提取到独立模块的函数导入
-use super::scrape_response_builder::{
-    build_crawl_request as build_crawl_request_fn, build_extract_request as build_extract_request_fn,
-    parse_crawl_payload, parse_extract_payload,
-};
-use super::scrape_executor::{
-    process_text_encoding, save_result, try_read_scrape_cache, try_write_scrape_cache,
-};
 use super::crawl_link_extractor::{
     check_robots_txt as check_robots_txt_fn, extract_and_queue_links as extract_and_queue_links_fn,
     update_crawl_completion_status as update_crawl_completion_status_fn,
 };
+use super::scrape_executor::{
+    process_text_encoding, save_result, try_read_scrape_cache, try_write_scrape_cache,
+};
+use super::scrape_response_builder::{
+    build_crawl_request as build_crawl_request_fn,
+    build_extract_request as build_extract_request_fn, parse_crawl_payload, parse_extract_payload,
+};
+
+// Test-only imports for cfg(test) wrappers and functions
+#[cfg(test)]
+use crate::application::dto::extract_request::ExtractRequestDto;
+#[cfg(test)]
+use crate::workers::errors::ScrapeWorkerError;
 
 /// 从缓存获取正则表达式
 ///
@@ -522,7 +528,8 @@ impl ScrapeWorker {
                             r,
                             self.cache_service.as_ref(),
                             self.settings.cache.types.search.ttl_seconds,
-                        ).await
+                        )
+                        .await
                         {
                             // 规则12：缓存写失败不吞，记录但不影响抓取结果
                             // T062 安全审查 MEDIUM-2：日志使用脱敏 URL
@@ -598,7 +605,6 @@ impl ScrapeWorker {
             }
         }
     }
-
 
     // H-4 职责拆分：`try_coalesce` 方法已迁移至 `CoalesceCoordinator`（独立组件）。
     // 原 `request_coalescer` 字段已替换为 `coalesce_coordinator: Arc<CoalesceCoordinator>`。
@@ -686,8 +692,13 @@ impl ScrapeWorker {
             .extract_data_with_rules(task, &processed_response, config)
             .await;
 
-        save_result(task, &processed_response, extracted_data, self.result_repository.as_ref())
-            .await?;
+        save_result(
+            task,
+            &processed_response,
+            extracted_data,
+            self.result_repository.as_ref(),
+        )
+        .await?;
 
         if depth < config.max_depth {
             extract_and_queue_links_fn(
@@ -805,10 +816,8 @@ impl ScrapeWorker {
         }
 
         // 2. 构建并执行 Scrape 请求
-        let scrape_req = build_extract_request_fn(
-            &url,
-            self.settings.timeouts.engines.default_timeout_seconds,
-        );
+        let scrape_req =
+            build_extract_request_fn(&url, self.settings.timeouts.engines.default_timeout_seconds);
         let scrape_resp = self.engine_client.scrape(&scrape_req).await?;
 
         // 3. 文本编码处理
@@ -1338,6 +1347,102 @@ impl ScrapeWorker {
     }
 }
 
+// ===== Test-only wrappers for extracted free functions =====
+// 测试代码通过 `worker.xxx()` 调用这些包装方法，
+// 生产代码直接调用提取后的自由函数。
+#[cfg(test)]
+impl ScrapeWorker {
+    async fn parse_crawl_payload(&self, task: &Task) -> Result<(Uuid, u32, CrawlConfigDto)> {
+        parse_crawl_payload(task)
+    }
+
+    async fn check_robots_txt(&self, task: &Task) -> bool {
+        check_robots_txt_fn(task, self.robots_checker.as_ref()).await
+    }
+
+    fn build_crawl_request(&self, task: &Task, config: &CrawlConfigDto) -> ScrapeRequest {
+        build_crawl_request_fn(
+            task,
+            config,
+            self.settings.timeouts.engines.default_timeout_seconds,
+        )
+    }
+
+    async fn update_crawl_completion_status(&self, crawl_id: Uuid) {
+        update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await
+    }
+
+    async fn parse_extract_payload(&self, task: &Task) -> Result<(ExtractRequestDto, String)> {
+        parse_extract_payload(task)
+    }
+
+    fn build_extract_request(&self, url: &str) -> ScrapeRequest {
+        build_extract_request_fn(url, self.settings.timeouts.engines.default_timeout_seconds)
+    }
+
+    async fn try_read_scrape_cache(
+        &self,
+        ctx: &CacheContext,
+        key: &str,
+    ) -> Result<Option<ScrapeResponse>> {
+        try_read_scrape_cache(ctx, key, self.cache_service.as_ref()).await
+    }
+
+    async fn try_write_scrape_cache(
+        &self,
+        ctx: &CacheContext,
+        key: &str,
+        response: &ScrapeResponse,
+    ) -> Result<()> {
+        try_write_scrape_cache(
+            ctx,
+            key,
+            response,
+            self.cache_service.as_ref(),
+            self.settings.cache.types.search.ttl_seconds,
+        )
+        .await
+    }
+
+    async fn save_result(
+        &self,
+        task: &Task,
+        response: &ScrapeResponse,
+        extra_data: Option<Value>,
+    ) -> Result<()> {
+        save_result(task, response, extra_data, self.result_repository.as_ref()).await
+    }
+
+    async fn extract_and_queue_links(
+        &self,
+        task: &Task,
+        response: &ScrapeResponse,
+        crawl_id: Uuid,
+        current_depth: u32,
+        config: &CrawlConfigDto,
+    ) -> Result<()> {
+        extract_and_queue_links_fn(
+            task,
+            response,
+            crawl_id,
+            current_depth,
+            config,
+            self.repository.as_ref(),
+            self.crawl_repository.as_ref(),
+            &self.deduplicator,
+        )
+        .await
+    }
+
+    async fn process_text_encoding<'a>(
+        &self,
+        task: &Task,
+        response: &'a ScrapeResponse,
+    ) -> Result<std::borrow::Cow<'a, str>> {
+        crate::workers::scrape_executor::process_text_encoding(task, response).await
+    }
+}
+
 /// ScrapeWorker 构建器
 ///
 /// 使用 Builder 模式简化复杂对象的创建过程
@@ -1581,9 +1686,17 @@ impl ScrapeWorkerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::dto::extract_request::ExtractRequestDto;
+    use crate::domain::models::{CrawlStatus, TaskType};
     use crate::engines::EngineError;
     use crate::infrastructure::oxcache::RegexCacheType;
+    use crate::utils::dedup::DedupResult;
     use crate::workers::cache_utils::{filter_sensitive_headers, generate_scrape_cache_key};
+    use crate::workers::crawl::{
+        FilterContext, Frontier, PathDepthScorer, ScoringContext, UrlFilter, UrlPatternFilter,
+        UrlScorer,
+    };
+    use crate::workers::errors::ScrapeWorkerError;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::AtomicU64;

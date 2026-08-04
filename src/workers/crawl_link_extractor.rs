@@ -114,6 +114,7 @@ pub async fn update_crawl_completion_status(
 /// * `repository` - 任务仓库
 /// * `crawl_repository` - 爬取仓库
 /// * `deduplicator` - URL 去重器
+#[allow(clippy::too_many_arguments)]
 pub async fn extract_and_queue_links(
     task: &Task,
     response: &ScrapeResponse,
@@ -144,8 +145,8 @@ pub async fn extract_and_queue_links(
 
     let unique_links = {
         let document = Html::parse_document(&response.content);
-        let selector = Selector::parse("a")
-            .map_err(|e| ScrapeWorkerError::SelectorError(e.to_string()))?;
+        let selector =
+            Selector::parse("a").map_err(|e| ScrapeWorkerError::SelectorError(e.to_string()))?;
         let base_url = Url::parse(&task.url)?;
 
         let mut links = HashSet::new();
@@ -306,9 +307,7 @@ pub async fn extract_and_queue_links(
             };
 
             repository.create(&new_task).await?;
-            crawl_repository
-                .increment_total_tasks(crawl_id)
-                .await?;
+            crawl_repository.increment_total_tasks(crawl_id).await?;
         }
     }
 
@@ -319,6 +318,7 @@ pub async fn extract_and_queue_links(
 mod tests {
     use super::*;
     use crate::domain::models::Crawl;
+    use crate::domain::repositories::task_repository::RepositoryError;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn make_task(url: &str) -> Task {
@@ -373,37 +373,41 @@ mod tests {
 
     #[async_trait::async_trait]
     impl CrawlRepository for MockCrawlRepo {
-        async fn create(&self, _crawl: &Crawl) -> Result<Crawl> {
+        async fn create(&self, _crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             unimplemented!()
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>> {
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
             Ok(None)
         }
-        async fn update(&self, _crawl: &Crawl) -> Result<Crawl> {
+        async fn update(&self, _crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             unimplemented!()
         }
-        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<()> {
+        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<()> {
+        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn update_status(&self, _id: Uuid, _status: CrawlStatus) -> Result<()> {
+        async fn update_status(
+            &self,
+            _id: Uuid,
+            _status: CrawlStatus,
+        ) -> Result<(), RepositoryError> {
             self.update_status_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-        async fn increment_total_tasks(&self, _id: Uuid) -> Result<()> {
+        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn find_by_team_id_paginated(
             &self,
             _team_id: Uuid,
-            _page: u64,
-            _per_page: u64,
-        ) -> Result<Vec<Crawl>> {
+            _limit: u32,
+            _offset: u32,
+        ) -> Result<Vec<Crawl>, RepositoryError> {
             Ok(vec![])
         }
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64> {
+        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
             Ok(0)
         }
     }

@@ -221,10 +221,10 @@ pub async fn try_write_scrape_cache(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::CacheMode;
     use crate::domain::models::{TaskStatus, TaskType};
     use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
     use crate::infrastructure::oxcache::CacheService;
-    use crate::common::CacheMode;
     use chrono::Utc;
     use serde_json::json;
     use std::collections::HashMap;
@@ -293,6 +293,9 @@ mod tests {
         }
     }
 
+    use std::future::Future;
+    use std::pin::Pin;
+
     #[derive(Default)]
     struct MockCacheService {
         get_count: AtomicU32,
@@ -301,19 +304,33 @@ mod tests {
 
     #[async_trait::async_trait]
     impl CacheService for MockCacheService {
-        async fn get(&self, _key: &str) -> Result<Option<String>> {
+        fn get(
+            &self,
+            _key: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<String>>> + Send + '_>> {
             self.get_count.fetch_add(1, Ordering::SeqCst);
-            Ok(None)
+            Box::pin(async { Ok(None) })
         }
-        async fn set(&self, _key: &str, _value: &str, _ttl: u64) -> Result<()> {
+        fn set(
+            &self,
+            _key: &str,
+            _value: &str,
+            _ttl_seconds: u64,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
             self.set_count.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Box::pin(async { Ok(()) })
         }
-        async fn delete(&self, _key: &str) -> Result<()> {
-            Ok(())
+        fn delete(
+            &self,
+            _key: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
         }
-        async fn exists(&self, _key: &str) -> Result<bool> {
-            Ok(false)
+        fn exists(
+            &self,
+            _key: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + '_>> {
+            Box::pin(async { Ok(false) })
         }
     }
 
@@ -427,7 +444,7 @@ mod tests {
             cache_mode: None,
             wait_for: None,
         };
-        let key = cache_utils::generate_scrape_cache_key(&ctx, &options);
+        let key = crate::workers::cache_utils::generate_scrape_cache_key(&ctx, &options);
         assert!(key.contains("example.com"));
     }
 }
