@@ -451,19 +451,6 @@ fn build_scrape_result_json(
     }
 }
 
-/// 确定同步状态
-#[allow(dead_code)]
-fn determine_sync_status(sync_mode: bool, waited_time_ms: u64, sync_wait_ms: u32) -> String {
-    if !sync_mode {
-        return "async".to_string();
-    }
-    if waited_time_ms >= sync_wait_ms as u64 {
-        "sync_timeout".to_string()
-    } else {
-        "sync_completed".to_string()
-    }
-}
-
 /// 统一任务取消处理器
 pub async fn cancel_tasks<T: TaskRepository>(
     Extension(auth_state): Extension<AuthState>,
@@ -789,27 +776,6 @@ mod tests {
         };
         let (limit, _, _, _) = apply_defaults(&request);
         assert_eq!(limit, server_config::MAX_PAGE_LIMIT);
-    }
-
-    // ========== determine_sync_status tests ==========
-
-    #[test]
-    fn test_determine_sync_status_async_mode() {
-        assert_eq!(determine_sync_status(false, 0, 5000), "async");
-        assert_eq!(determine_sync_status(false, 100, 5000), "async");
-    }
-
-    #[test]
-    fn test_determine_sync_status_timeout() {
-        assert_eq!(determine_sync_status(true, 5000, 5000), "sync_timeout");
-        assert_eq!(determine_sync_status(true, 6000, 5000), "sync_timeout");
-    }
-
-    #[test]
-    fn test_determine_sync_status_completed() {
-        assert_eq!(determine_sync_status(true, 3000, 5000), "sync_completed");
-        assert_eq!(determine_sync_status(true, 0, 5000), "sync_completed");
-        assert_eq!(determine_sync_status(true, 4999, 5000), "sync_completed");
     }
 
     // ========== build_task_infos tests ==========
@@ -1444,8 +1410,9 @@ mod tests {
                     .build()
                     .expect("failed to build tokio runtime for DbPool construction");
                 let _guard = rt.enter();
-                let url = std::env::var("TEST_DATABASE_URL")
-                    .expect("TEST_DATABASE_URL must be set; no hardcoded fallback");
+                let url = crate::common::test_helpers::resolve_test_database_url().expect(
+                    "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
+                );
                 rt.block_on(async {
                     let cfg = dbnexus::DbConfig {
                         url,
@@ -2172,8 +2139,7 @@ mod tests {
     async fn test_fetch_scrape_results_empty_tasks() {
         // 空 tasks 时 fetch_scrape_results 提前返回，理论上不需要 DB；
         // 但 make_test_scrape_result_repo 仍会构造 DbPool，需 TEST_DATABASE_URL。
-        if std::env::var("TEST_DATABASE_URL").is_err() {
-            eprintln!("skipping: TEST_DATABASE_URL not set (test constructs a DbPool via make_test_scrape_result_repo)");
+        if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
         let repo = make_test_scrape_result_repo();

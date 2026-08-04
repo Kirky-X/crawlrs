@@ -161,11 +161,11 @@ pub struct RateLimitingSettings {
 pub struct ConcurrencySettings {
     /// 默认团队并发限制
     #[config(default = 10)]
-    pub default_team_limit: i64,
+    pub default_team_limit: u64,
 
     /// 任务锁持续时间（秒）
     #[config(default = 300)]
-    pub task_lock_duration_seconds: i64,
+    pub task_lock_duration_seconds: u64,
 
     /// 内存使用率进入 Pressure 状态的阈值（0.0 - 1.0）
     ///
@@ -196,6 +196,32 @@ pub struct ConcurrencySettings {
     /// 默认关闭以保留向后兼容；开启后增强固定并发为动态带宽利用。
     #[config(default = false)]
     pub adaptive_enabled: bool,
+}
+
+impl ConcurrencySettings {
+    /// Validate cross-field invariants.
+    ///
+    /// Must be called after config loading to catch environment variable misconfiguration.
+    /// Panics with a clear message if invariants are violated.
+    pub fn validate(&self) {
+        assert!(
+            self.mem_pressure_threshold > 0.0 && self.mem_pressure_threshold < 1.0,
+            "concurrency.mem_pressure_threshold must be in (0.0, 1.0), got {}",
+            self.mem_pressure_threshold
+        );
+        assert!(
+            self.mem_critical_threshold > 0.0 && self.mem_critical_threshold < 1.0,
+            "concurrency.mem_critical_threshold must be in (0.0, 1.0), got {}",
+            self.mem_critical_threshold
+        );
+        assert!(
+            self.mem_pressure_threshold < self.mem_critical_threshold,
+            "concurrency.mem_pressure_threshold ({}) must be strictly less than \
+             mem_critical_threshold ({})",
+            self.mem_pressure_threshold,
+            self.mem_critical_threshold
+        );
+    }
 }
 
 #[cfg(test)]

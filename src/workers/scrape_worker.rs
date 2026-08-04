@@ -7,25 +7,21 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use dashmap::DashMap;
 use log::{debug, error, info, warn};
-use scraper::{Html, Selector};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::sleep;
-use url::Url;
 use uuid::Uuid;
 
 use crate::application::dto::crawl_request::CrawlConfigDto;
-use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::config::settings::Settings;
-use crate::domain::models::CrawlStatus;
 use crate::domain::models::ScrapeResult;
-use crate::domain::models::{Task, TaskStatus, TaskType};
+use crate::domain::models::{Task, TaskStatus};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
@@ -35,15 +31,11 @@ use crate::domain::services::retry_handler::RetryHandler;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::utils::regex_cache::RegexCache;
 // T053/R-frontier-001：URL 分层去重器（Bloom 预筛 + DB 保权威）
-use crate::utils::dedup::{DedupResult, Deduplicator};
-// T066/R-frontier-002/003：深度爬取过滤 + 评分 + 优先级队列
-use crate::workers::crawl::{
-    FilterContext, Frontier, PathDepthScorer, ScoringContext, UrlFilter, UrlPatternFilter,
-    UrlScorer,
-};
+use crate::utils::dedup::Deduplicator;
 
+use crate::common::CacheContext;
 use crate::common::HttpMethod;
-use crate::common::{CacheContext, CacheMode};
+use crate::common::CacheMode;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::engines::engine_client::{
     EngineClient, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse, ScreenshotConfig,
@@ -54,21 +46,32 @@ use crate::presentation::helpers::ssrf::is_internal_url;
 use crate::queue::task_queue::TaskQueue;
 // H-4 职责拆分：请求合并协调器（替代原 request_coalescer 字段 + try_coalesce 方法）
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
-// HIGH-2 SRP 拆分：cache key 生成、URL 脱敏、敏感头过滤、borrowed 序列化
-use crate::workers::cache_utils::{self, redact_url_for_log, SanitizedScrapeResponse};
+// HIGH-2 SRP 拆分：cache key 生成、URL 脱敏
+use crate::workers::cache_utils::{self, redact_url_for_log};
 // H-4 职责拆分：Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
 #[cfg(feature = "markdown")]
 use crate::workers::markdown_post_processor::MarkdownPostProcessor;
 // H-4 职责拆分：仍需 RequestCoalescer 用于构造 CoalesceCoordinator（ScrapeWorkerBuilder.build 中使用）
 use crate::utils::coalesce::RequestCoalescer;
-use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
 use crate::utils::retry_policy::RetryPolicy;
 use crate::utils::robots::RobotsCheckerTrait;
-use crate::workers::errors::ScrapeWorkerError;
 // T019（R-runtime-001）：内存感知调度器接入 scrape_worker
 // MemoryScheduler 依赖 SystemMonitorTrait（metrics 特性门控），故整块接入由 metrics 门控
 #[cfg(feature = "metrics")]
 use crate::workers::scheduler::memory_scheduler::{Admission, MemoryScheduler};
+
+// T026 拆分：提取到独立模块的函数导入
+use super::scrape_response_builder::{
+    build_crawl_request as build_crawl_request_fn, build_extract_request as build_extract_request_fn,
+    parse_crawl_payload, parse_extract_payload,
+};
+use super::scrape_executor::{
+    process_text_encoding, save_result, try_read_scrape_cache, try_write_scrape_cache,
+};
+use super::crawl_link_extractor::{
+    check_robots_txt as check_robots_txt_fn, extract_and_queue_links as extract_and_queue_links_fn,
+    update_crawl_completion_status as update_crawl_completion_status_fn,
+};
 
 /// 从缓存获取正则表达式
 ///
@@ -476,7 +479,7 @@ impl ScrapeWorker {
 
         // 读缓存门控
         let cached_response = if cache_ctx.is_cacheable() && cache_ctx.should_read() {
-            match self.try_read_scrape_cache(&cache_ctx, &cache_key).await {
+            match try_read_scrape_cache(&cache_ctx, &cache_key, self.cache_service.as_ref()).await {
                 Ok(Some(cached)) => {
                     // 性能审查 LOW-1：debug 禁用时跳过 redact_url_for_log 调用（~1μs）
                     // log crate 的 debug! 宏本身已 lazy format_args，但函数参数在宏调用前已求值，
@@ -513,7 +516,13 @@ impl ScrapeWorker {
                 // 写缓存门控：仅抓取成功且 should_write() 时写回
                 if let Ok(ref r) = resp {
                     if cache_ctx.is_cacheable() && cache_ctx.should_write() {
-                        if let Err(e) = self.try_write_scrape_cache(&cache_ctx, &cache_key, r).await
+                        if let Err(e) = try_write_scrape_cache(
+                            &cache_ctx,
+                            &cache_key,
+                            r,
+                            self.cache_service.as_ref(),
+                            self.settings.cache.types.search.ttl_seconds,
+                        ).await
                         {
                             // 规则12：缓存写失败不吞，记录但不影响抓取结果
                             // T062 安全审查 MEDIUM-2：日志使用脱敏 URL
@@ -590,137 +599,14 @@ impl ScrapeWorker {
         }
     }
 
-    // T059/R-cache-002：缓存读写辅助方法
-    //
-    // 这两个方法封装 `CacheService` 的调用细节（key 生成、序列化、TTL），
-    // `process_scrape_task` 仅负责门控决策（是否调用它们）。
-    // 失败时不阻塞抓取流程——调用方已处理错误降级（规则12：失败显性化）。
-
-    /// 读抓取结果缓存（T059/R-cache-002）
-    ///
-    /// 由调用方先用 [`cache_utils::generate_scrape_cache_key`] 计算 cache key
-    /// （纳入 ScrapeOptions 影响字段，HIGH-1 改进），传入本方法查 `CacheService`。
-    ///
-    /// 返回 `Ok(None)` 表示缓存未命中；`Ok(Some)` 表示命中；`Err` 表示缓存故障。
-    ///
-    /// T062 安全审查 MEDIUM-2：日志使用脱敏 URL（key 含完整 URL，可能含 query 参数中的 token）。
-    async fn try_read_scrape_cache(
-        &self,
-        ctx: &CacheContext,
-        key: &str,
-    ) -> Result<Option<ScrapeResponse>> {
-        match self.cache_service.get(key).await {
-            Ok(Some(json)) => match serde_json::from_str::<ScrapeResponse>(&json) {
-                Ok(resp) => Ok(Some(resp)),
-                Err(e) => {
-                    // 反序列化失败：缓存数据损坏，记录后视为 miss（不阻塞抓取）
-                    // T062 安全审查 MEDIUM-2：日志输出脱敏 URL 而非完整 key（key 含 URL）
-                    warn!(
-                        "Cache deserialize failed, treating as miss url={} error={}",
-                        redact_url_for_log(&ctx.url),
-                        e
-                    );
-                    Ok(None)
-                }
-            },
-            Ok(None) => Ok(None),
-            Err(e) => Err(anyhow::anyhow!("cache get failed: {}", e)),
-        }
-    }
-
-    /// 写抓取结果缓存（T059/R-cache-002）
-    ///
-    /// 由调用方先用 [`cache_utils::generate_scrape_cache_key`] 计算 cache key 传入。
-    /// 序列化 `ScrapeResponse` → JSON → 写入 `CacheService`（带 TTL）。
-    /// TTL 从 `settings.cache.types.search.ttl_seconds` 读取（默认 300s，
-    /// 由 `CacheTypeSettings::ttl_seconds` 的 `#[config(default = 300)]` 保证非零）。
-    ///
-    /// T062 安全审查 LOW-2：序列化时通过 [`SanitizedScrapeResponse`] 自定义 Serialize
-    /// 跳过敏感响应头（Set-Cookie、Authorization 等），防止凭证泄露到缓存（CWE-200）。
-    ///
-    /// 性能 HIGH-1：原实现 `response.clone()` 完整克隆 ScrapeResponse（含 content
-    /// 可能数 MB、screenshot 可能 100KB+），仅用于过滤 headers 后序列化。改为
-    /// [`SanitizedScrapeResponse::from_response`] 借用原 response，零克隆序列化。
-    ///
-    /// T062 安全审查 MEDIUM-2：日志使用脱敏 URL（key 含完整 URL）。
-    async fn try_write_scrape_cache(
-        &self,
-        ctx: &CacheContext,
-        key: &str,
-        response: &ScrapeResponse,
-    ) -> Result<()> {
-        // 性能 HIGH-1：借用序列化，避免克隆整个 ScrapeResponse
-        let sanitized = SanitizedScrapeResponse::from_response(response);
-        let json = serde_json::to_string(&sanitized)
-            .context("Failed to serialize ScrapeResponse for cache")?;
-        let ttl = self.settings.cache.types.search.ttl_seconds;
-        self.cache_service
-            .set(key, &json, ttl)
-            .await
-            .map_err(|e| anyhow::anyhow!("cache set failed: {}", e))?;
-        // 性能审查 LOW-1：debug 禁用时跳过 redact_url_for_log 调用（~1μs）
-        if log::log_enabled!(log::Level::Debug) {
-            debug!(
-                "Cache written url={} ttl={}s mode={:?}",
-                redact_url_for_log(&ctx.url),
-                ttl,
-                ctx.mode
-            );
-        }
-        Ok(())
-    }
 
     // H-4 职责拆分：`try_coalesce` 方法已迁移至 `CoalesceCoordinator`（独立组件）。
     // 原 `request_coalescer` 字段已替换为 `coalesce_coordinator: Arc<CoalesceCoordinator>`。
     // 调用方在 `process_scrape_task` 中通过 `self.coalesce_coordinator.try_coalesce(...)` 触发。
 
-    /// 解析 Crawl 任务特定的 Payload
-    async fn parse_crawl_payload(&self, task: &Task) -> Result<(Uuid, u32, CrawlConfigDto)> {
-        let payload = &task.payload;
-        let crawl_id = match payload.get("crawl_id").and_then(|v| v.as_str()) {
-            Some(id) => Uuid::parse_str(id).unwrap_or_default(),
-            None => {
-                return Err(anyhow::anyhow!("Missing crawl_id in task payload"));
-            }
-        };
-
-        let depth = payload.get("depth").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let config: CrawlConfigDto =
-            serde_json::from_value(payload.get("config").cloned().unwrap_or(json!({})))?;
-
-        Ok((crawl_id, depth, config))
-    }
-
-    /// 检查 Robots.txt 并返回是否允许访问
-    async fn check_robots_txt(&self, task: &Task) -> bool {
-        let user_agent = "crawlrs-bot";
-
-        if !self
-            .robots_checker
-            .is_allowed(&task.url, user_agent)
-            .await
-            .unwrap_or(true)
-        {
-            info!("Access denied by robots.txt for {}", task.url);
-            return false;
-        }
-
-        if let Some(delay) = self
-            .robots_checker
-            .get_crawl_delay(&task.url, user_agent)
-            .await
-            .unwrap_or(None)
-        {
-            info!("Respecting crawl delay of {:?} for {}", delay, task.url);
-            sleep(delay).await;
-        }
-
-        true
-    }
-
     async fn process_crawl_task(&self, mut task: Task) -> Result<()> {
         // 1. 解析 Crawl 任务特定的 Payload
-        let (crawl_id, depth, config) = match self.parse_crawl_payload(&task).await {
+        let (crawl_id, depth, config) = match parse_crawl_payload(&task) {
             Ok(result) => result,
             Err(e) => {
                 error!("Failed to parse crawl payload: {}", e);
@@ -730,14 +616,12 @@ impl ScrapeWorker {
         };
 
         // 2. Robots.txt Check
-        if !self.check_robots_txt(&task).await {
+        if !check_robots_txt_fn(&task, self.robots_checker.as_ref()).await {
             self.repository.mark_failed(task.id).await?;
             return Ok(());
         }
 
-        // 2.5 SSRF 防护 (CWE-918)：静态校验 crawl_config.proxy 不指向内部网络（防御纵深）。
-        // handler 层已通过 validate_url 完成完整 DNS 解析校验，
-        // 此处仅用静态检查拦截直接入队的恶意任务（如 private IP / localhost），不依赖网络。
+        // 2.5 SSRF 防护 (CWE-918)
         if let Some(ref proxy_url) = config.proxy {
             if is_internal_url(proxy_url) {
                 warn!(
@@ -750,7 +634,11 @@ impl ScrapeWorker {
         }
 
         // 3. 构建并执行抓取请求
-        let request = self.build_crawl_request(&task, &config);
+        let request = build_crawl_request_fn(
+            &task,
+            &config,
+            self.settings.timeouts.engines.default_timeout_seconds,
+        );
         let response = self.engine_client.scrape(&request).await;
 
         // 4. 处理结果
@@ -764,42 +652,6 @@ impl ScrapeWorker {
                     .await
             }
         }
-    }
-
-    /// 构建 Crawl 任务的 ScrapeRequest
-    fn build_crawl_request(&self, task: &Task, config: &CrawlConfigDto) -> ScrapeRequest {
-        let mut headers = HashMap::with_capacity(16);
-        if let Some(h) = &config.headers {
-            if let Some(obj) = h.as_object() {
-                for (k, v) in obj {
-                    if let Some(s) = v.as_str() {
-                        headers.insert(k.clone(), s.to_string());
-                    }
-                }
-            }
-        }
-
-        ScrapeRequest::new(task.url.clone()).with_options(ScrapeOptions {
-            method: HttpMethod::Get,
-            body: None,
-            headers,
-            timeout: Duration::from_secs(self.settings.timeouts.engines.default_timeout_seconds),
-            needs_js: false,
-            needs_screenshot: false,
-            screenshot_config: None,
-            mobile: false,
-            proxy: config.proxy.clone(),
-            skip_tls_verification: false,
-            needs_tls_fingerprint: false,
-            use_fire_engine: false,
-            actions: Vec::new(),
-            sync_wait_ms: 0,
-            block_ads: false,
-            block_media: false,
-            session_id: None,
-            cache_mode: None,
-            wait_for: None,
-        })
     }
 
     /// 处理 Crawl 任务成功响应
@@ -817,8 +669,7 @@ impl ScrapeWorker {
             task.url, response.status_code
         );
 
-        // 文本编码处理
-        let processed_content = match self.process_text_encoding(task, &response).await {
+        let processed_content = match process_text_encoding(task, &response).await {
             Ok(content) => content.into_owned(),
             Err(e) => {
                 warn!("文本编码处理失败，使用原始内容: {}", e);
@@ -831,22 +682,27 @@ impl ScrapeWorker {
             ..response
         };
 
-        // 执行数据提取（如果配置了提取规则）
         let extracted_data = self
             .extract_data_with_rules(task, &processed_response, config)
             .await;
 
-        // 保存结果
-        self.save_result(task, &processed_response, extracted_data)
+        save_result(task, &processed_response, extracted_data, self.result_repository.as_ref())
             .await?;
 
-        // 如果深度未达上限，解析链接并生成子任务
         if depth < config.max_depth {
-            self.extract_and_queue_links(task, &processed_response, crawl_id, depth, config)
-                .await?;
+            extract_and_queue_links_fn(
+                task,
+                &processed_response,
+                crawl_id,
+                depth,
+                config,
+                self.repository.as_ref(),
+                self.crawl_repository.as_ref(),
+                &self.deduplicator,
+            )
+            .await?;
         }
 
-        // 更新任务状态和 Crawl 统计
         self.repository.mark_completed(task.id).await?;
         if let Err(e) = self
             .crawl_repository
@@ -859,10 +715,8 @@ impl ScrapeWorker {
             );
         }
 
-        // 检查是否所有任务都已完成
-        self.update_crawl_completion_status(crawl_id).await;
+        update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
 
-        // 扣除高级功能费用
         self.deduct_feature_credits(
             task.team_id,
             task.id,
@@ -915,7 +769,6 @@ impl ScrapeWorker {
         crawl_id: Uuid,
         request: &ScrapeRequest,
     ) -> Result<()> {
-        // 扣除代理费用（即使失败）
         self.deduct_feature_credits(
             task.team_id,
             task.id,
@@ -934,96 +787,32 @@ impl ScrapeWorker {
             );
         }
 
-        // 检查是否所有任务都已完成
-        self.update_crawl_completion_status(crawl_id).await;
+        update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
 
-        // 触发失败 Webhook
         self.trigger_webhook(task, Some(error.to_string())).await;
 
         Ok(())
-    }
-
-    /// 更新 Crawl 完成状态（检查是否所有任务都已完成）
-    async fn update_crawl_completion_status(&self, crawl_id: Uuid) {
-        match self.crawl_repository.find_by_id(crawl_id).await {
-            Ok(Some(c)) => {
-                if c.completed_tasks() + c.failed_tasks() == c.total_tasks() {
-                    info!(
-                        "All tasks completed for crawl {}, marking as completed",
-                        crawl_id
-                    );
-                    if let Err(e) = self
-                        .crawl_repository
-                        .update_status(crawl_id, CrawlStatus::Completed)
-                        .await
-                    {
-                        error!(
-                            "Failed to update crawl status to completed for crawl {}: {}",
-                            crawl_id, e
-                        );
-                    }
-                }
-            }
-            Ok(None) => {
-                error!("Crawl not found for id {}", crawl_id);
-            }
-            Err(e) => {
-                error!("Failed to fetch crawl {}: {}", crawl_id, e);
-            }
-        }
-    }
-
-    /// 解析 Extract 任务特定的 Payload
-    async fn parse_extract_payload(&self, task: &Task) -> Result<(ExtractRequestDto, String)> {
-        let payload: ExtractRequestDto = serde_json::from_value(task.payload.clone())
-            .context("Failed to parse extract task input")?;
-
-        let url = payload.urls.first().context("No URL provided")?.clone();
-
-        Ok((payload, url))
-    }
-
-    /// 构建 Extract 任务的 ScrapeRequest
-    fn build_extract_request(&self, url: &str) -> ScrapeRequest {
-        ScrapeRequest::new(url.to_string()).with_options(ScrapeOptions {
-            method: HttpMethod::Get,
-            body: None,
-            headers: HashMap::new(),
-            timeout: Duration::from_secs(self.settings.timeouts.engines.default_timeout_seconds),
-            needs_js: false,
-            needs_screenshot: false,
-            screenshot_config: None,
-            mobile: false,
-            proxy: None,
-            skip_tls_verification: true,
-            needs_tls_fingerprint: false,
-            use_fire_engine: false,
-            actions: vec![],
-            sync_wait_ms: 0,
-            block_ads: false,
-            block_media: false,
-            session_id: None,
-            cache_mode: None,
-            wait_for: None,
-        })
     }
 
     async fn process_extract_task(&self, mut task: Task) -> Result<()> {
         info!("Processing extract task {}", task.id);
 
         // 1. 解析 Payload
-        let (payload, url) = self.parse_extract_payload(&task).await?;
+        let (payload, url) = parse_extract_payload(&task)?;
         debug!("has_rules: {}", payload.rules.is_some());
         if let Some(ref rules) = payload.rules {
             debug!("rules_count: {}", rules.len());
         }
 
         // 2. 构建并执行 Scrape 请求
-        let scrape_req = self.build_extract_request(&url);
+        let scrape_req = build_extract_request_fn(
+            &url,
+            self.settings.timeouts.engines.default_timeout_seconds,
+        );
         let scrape_resp = self.engine_client.scrape(&scrape_req).await?;
 
         // 3. 文本编码处理
-        let processed_content = match self.process_text_encoding(&task, &scrape_resp).await {
+        let processed_content = match process_text_encoding(&task, &scrape_resp).await {
             Ok(content) => content.into_owned(),
             Err(e) => {
                 warn!("文本编码处理失败，使用原始内容: {}", e);
@@ -1181,247 +970,6 @@ impl ScrapeWorker {
         Ok(())
     }
 
-    async fn extract_and_queue_links(
-        &self,
-        task: &Task,
-        response: &ScrapeResponse,
-        crawl_id: Uuid,
-        current_depth: u32,
-        config: &CrawlConfigDto,
-    ) -> Result<()> {
-        // 只解析 HTML 内容
-        if !response.content_type.contains("text/html") {
-            return Ok(());
-        }
-
-        // 性能审查 H-3 修复：循环外构造一次 UrlPatternFilter，循环内复用引用
-        // 原实现每个链接都 clone include/exclude Vec + 重建 UrlPatternFilter（含 Regex 编译）
-        //
-        // 边界：include_patterns == Some(vec![]) → 空 include 视为"拒绝所有"（vacuous truth）
-        // UrlPatternFilter 将空 include 视为"无限制"（返回 true），需在外层显式短路
-        let empty_include_short_circuit =
-            matches!(&config.include_patterns, Some(patterns) if patterns.is_empty());
-        let pattern_filter = if empty_include_short_circuit {
-            None // 短路：所有 URL 都被拒绝
-        } else {
-            Some(UrlPatternFilter::new(
-                config.include_patterns.clone().unwrap_or_default(),
-                config.exclude_patterns.clone().unwrap_or_default(),
-            ))
-        };
-        let filter_ctx = FilterContext::default();
-
-        let unique_links = {
-            let document = Html::parse_document(&response.content);
-            let selector = Selector::parse("a")
-                .map_err(|e| ScrapeWorkerError::SelectorError(e.to_string()))?;
-            let base_url = Url::parse(&task.url)?;
-
-            let mut links = HashSet::new();
-
-            for element in document.select(&selector) {
-                if let Some(href) = element.value().attr("href") {
-                    // 转换相对路径为绝对路径
-                    if let Ok(absolute_url) = base_url.join(href) {
-                        let url_str = absolute_url.to_string();
-
-                        // 过滤非 http/https 协议
-                        if !url_str.starts_with("http") {
-                            continue;
-                        }
-
-                        // 过滤自身
-                        if url_str == task.url {
-                            continue;
-                        }
-
-                        // 检查包含/排除模式（复用循环外构造的 pattern_filter）
-                        if let Some(filter) = &pattern_filter {
-                            if !filter.accept(&url_str, &filter_ctx) {
-                                continue;
-                            }
-                        } else if empty_include_short_circuit {
-                            // include_patterns=Some(empty) 边界：拒绝所有
-                            continue;
-                        }
-
-                        links.insert(url_str);
-                    }
-                }
-            }
-            links
-        };
-
-        info!("Found {} unique links on {}", unique_links.len(), task.url);
-
-        // T053/R-frontier-001：URL 分层去重
-        //
-        // 两阶段预筛（TOCTOU 修复：DefinitelyNew 路径用 check_and_insert 原子化）：
-        // 1. 对每个候选 URL 调用 `deduplicator.check_and_insert(url)`（写锁串行）：
-        //    - DefinitelyNew（Bloom 全阴性）→ 立即 insert + 加入 to_enqueue（无 race）
-        //    - MaybeExisting（Bloom 至少一个阳性）→ 仅加入 db_check（normalized 形式）
-        // 2. 对 db_check 列表调用 `find_existing_urls` 批量 DB 校验（保权威）：
-        //    DB 未命中 → check_and_insert 二次确认（防 race）→ 入队
-        //
-        // 安全审查修复：
-        // - HIGH-3：db_check 仅存 normalized，不再 extend variants（避免 6x 膨胀）
-        // - 性能严重1：check_and_insert 原子化，消除 TOCTOU 竞态
-        // - 性能严重2：避免 to_enqueue.clone()，分离 enqueue 与 insert 路径
-        let mut to_enqueue: Vec<String> = Vec::with_capacity(unique_links.len());
-        let mut db_check: Vec<String> = Vec::with_capacity(unique_links.len());
-
-        // 收集 Bloom 预筛结果 + 原子 insert（避免 TOCTOU）
-        {
-            let mut dedup = self.deduplicator.write();
-            for link in &unique_links {
-                match dedup.check_and_insert(link) {
-                    Ok(DedupResult::DefinitelyNew { normalized }) => {
-                        // 立即 insert 完成，无 race，可直接入队
-                        to_enqueue.push(normalized);
-                    }
-                    Ok(DedupResult::MaybeExisting { normalized, .. }) => {
-                        // 仅收集 normalized 用于 DB 校验（不再 extend variants）
-                        // variants 仅用于 Bloom 查询，DB 已存 normalized 形式
-                        db_check.push(normalized);
-                    }
-                    Err(e) => {
-                        // 规则 12：去重错误显性化，不静默跳过
-                        return Err(anyhow::anyhow!(
-                            "URL dedup check failed for {}: {}",
-                            link,
-                            e
-                        ));
-                    }
-                }
-            }
-        }
-
-        // T066/R-frontier-003：收集新 URL，统一经 Frontier 评分排序后入队
-        // 性能审查 M-2 修复：用 std::mem::take 消费 to_enqueue，避免 iter().cloned() 重复 clone
-        let mut new_urls: Vec<String> = Vec::with_capacity(unique_links.len());
-        new_urls.extend(std::mem::take(&mut to_enqueue));
-
-        // 对 db_check 列表进行 DB 批量校验（保权威层）
-        if !db_check.is_empty() {
-            // 去重 db_check 列表（normalized 已是规范形式，sort+dedup 即可）
-            db_check.sort_unstable();
-            db_check.dedup();
-
-            let existing_urls = self.repository.find_existing_urls(&db_check).await?;
-            let existing_url_set: std::collections::HashSet<String> =
-                existing_urls.into_iter().collect();
-
-            // 收集 DB 未命中的 normalized URL（需二次 check_and_insert 防 race）
-            let mut to_db_insert: Vec<&String> = Vec::with_capacity(db_check.len());
-            for normalized in &db_check {
-                if !existing_url_set.contains(normalized) {
-                    to_db_insert.push(normalized);
-                }
-            }
-
-            // 二次 check_and_insert（防 race：DB 校验期间另一 worker 可能已 insert）
-            // + 入队 DB 未命中且 Bloom 也未命中的 URL
-            let mut to_db_enqueue: Vec<String> = Vec::with_capacity(to_db_insert.len());
-            if !to_db_insert.is_empty() {
-                let mut dedup = self.deduplicator.write();
-                for normalized in &to_db_insert {
-                    // check_and_insert：若 Bloom 已阳性（被其他 worker insert）→ MaybeExisting，跳过
-                    // 若 Bloom 仍阴性 → DefinitelyNew + insert，加入入队列表
-                    match dedup.check_and_insert(normalized) {
-                        Ok(DedupResult::DefinitelyNew { normalized: n }) => {
-                            to_db_enqueue.push(n);
-                        }
-                        Ok(DedupResult::MaybeExisting { .. }) => {
-                            // 另一 worker 已 insert，跳过避免重复入队
-                            continue;
-                        }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!(
-                                "URL dedup check_and_insert failed for {}: {}",
-                                normalized,
-                                e
-                            ));
-                        }
-                    }
-                }
-            }
-
-            // 收集 DB 校验后确认为新的 URL（性能审查 M-2：用 take 消费 to_db_enqueue）
-            new_urls.extend(std::mem::take(&mut to_db_enqueue));
-        }
-
-        // T066/R-frontier-003：用 Frontier 按 URL 评分 + 域名 round-robin 排序入队
-        //
-        // 浅路径（hub/index 页面）评分更高，优先出队以提升爬取覆盖效率。
-        // 域名 round-robin 避免单域名饥饿。
-        if !new_urls.is_empty() {
-            let scorer = PathDepthScorer::new();
-            let scoring_ctx = ScoringContext::default();
-            let frontier = Frontier::new();
-
-            for url in &new_urls {
-                let score = scorer.score(url, &scoring_ctx);
-                match crate::workers::crawl::ScoredUrl::new(url.clone(), score) {
-                    Ok(scored) => frontier.push(scored),
-                    Err(e) => {
-                        // URL 域名提取失败（不应到达，links 已过滤 http/https）
-                        warn!("task_id: {}, URL 评分失败跳过: {} ({})", task.id, url, e);
-                    }
-                }
-            }
-
-            info!(
-                "task_id: {}, {} URLs 入 Frontier（{} 域名），按评分出队",
-                task.id,
-                frontier.len(),
-                frontier.domain_count()
-            );
-
-            while let Some(scored) = frontier.pop() {
-                let mut priority = task.priority;
-                if let Some(strategy) = &config.strategy {
-                    if strategy.to_lowercase() == "dfs" {
-                        priority = priority.saturating_add(1);
-                    }
-                }
-
-                let new_task = Task {
-                    id: Uuid::new_v4(),
-                    task_type: TaskType::Crawl,
-                    status: TaskStatus::Queued,
-                    priority,
-                    team_id: task.team_id,
-                    api_key_id: task.api_key_id,
-                    url: scored.url,
-                    payload: json!({
-                        "crawl_id": crawl_id.to_string(),
-                        "depth": current_depth + 1,
-                        "config": config
-                    }),
-                    retry_count: 0,
-                    attempt_count: 0,
-                    max_retries: 3,
-                    scheduled_at: None,
-                    created_at: Utc::now(),
-                    started_at: None,
-                    completed_at: None,
-                    crawl_id: Some(crawl_id),
-                    updated_at: Utc::now(),
-                    lock_token: None,
-                    lock_expires_at: None,
-                    expires_at: None,
-                };
-
-                self.repository.create(&new_task).await?;
-                self.crawl_repository
-                    .increment_total_tasks(crawl_id)
-                    .await?;
-            }
-        }
-
-        Ok(())
-    }
-
     async fn handle_scrape_success(
         &self,
         task: &Task,
@@ -1432,7 +980,7 @@ impl ScrapeWorker {
 
         // 文本编码处理 - 集成文本处理功能
         // 性能审查 H-2 修复：process_text_encoding 返回 Cow<'_, str>，禁用路径零 clone
-        let processed_content = match self.process_text_encoding(task, &response).await {
+        let processed_content = match process_text_encoding(task, &response).await {
             Ok(content) => content.into_owned(),
             Err(e) => {
                 warn!("文本编码处理失败，使用原始内容: {}", e);
@@ -1535,8 +1083,13 @@ impl ScrapeWorker {
             }
         }
 
-        self.save_result(task, &processed_response, extracted_data)
-            .await?;
+        save_result(
+            task,
+            &processed_response,
+            extracted_data,
+            self.result_repository.as_ref(),
+        )
+        .await?;
         debug!("task_id: {}, About to mark task as completed", task.id);
         self.repository.mark_completed(task.id).await?;
         debug!(
@@ -1551,134 +1104,6 @@ impl ScrapeWorker {
     // H-4 职责拆分：`maybe_generate_markdown` 方法已迁移至 `MarkdownPostProcessor`（独立组件）。
     // 原 `HtmdMarkdownService` 调用已替换为 `self.markdown_post_processor.generate(...)`，
     // 由 `handle_scrape_success` 中调用。
-
-    /// 处理文本编码转换
-    ///
-    /// 性能审查 H-2 修复：禁用路径短路，避免不必要的 `as_bytes().to_vec()`
-    /// 与 `String::from_utf8_lossy` 重复分配。
-    ///
-    /// 性能审查 H-2 修复：返回 `Cow<'_, str>` 而非 `String`，
-    /// 禁用路径（`CrawlTextIntegration::new(false)`）返回 `Cow::Borrowed(&response.content)`，
-    /// 避免每次抓取都 clone 整个 content（可能数 MB）。
-    async fn process_text_encoding<'a>(
-        &self,
-        task: &Task,
-        response: &'a ScrapeResponse,
-    ) -> Result<std::borrow::Cow<'a, str>> {
-        use log::{info, warn};
-
-        info!(
-            "开始处理文本编码转换，任务ID: {}, URL: {}",
-            task.id, task.url
-        );
-
-        // 创建文本处理集成器
-        let text_integration = CrawlTextIntegration::new(false); // Disable by default for now
-
-        // 性能审查 H-2 修复：禁用时返回借用引用，避免 clone 整个 content（数 MB）
-        if !text_integration.is_enabled() {
-            return Ok(std::borrow::Cow::Borrowed(&response.content));
-        }
-
-        // 准备输入数据
-        let input = ScrapeResponseInput {
-            content: response.content.as_bytes().to_vec(),
-            url: task.url.clone(),
-            content_type: Some(response.content_type.clone()),
-            status_code: response.status_code,
-        };
-
-        // 处理响应内容
-        match text_integration
-            .process_scrape_response(
-                &input.content,
-                &input.url,
-                input.content_type.as_deref(),
-                input.status_code,
-            )
-            .await
-        {
-            Ok(processed_response) => {
-                if processed_response.processing_success {
-                    info!(
-                        "文本编码处理成功，检测到的编码: {:?}, 处理时间: {}ms, 质量评分: {}",
-                        processed_response.encoding_detected,
-                        processed_response.processing_success as u32,
-                        processed_response.processing_error.is_none() as u32
-                    );
-                    Ok(std::borrow::Cow::Owned(
-                        processed_response.processed_content,
-                    ))
-                } else {
-                    let error_msg = processed_response
-                        .processing_error
-                        .unwrap_or_else(|| "未知错误".to_string());
-                    warn!("文本编码处理失败: {}", error_msg);
-                    Err(anyhow::anyhow!("文本编码处理失败: {}", error_msg))
-                }
-            }
-            Err(e) => {
-                warn!("文本编码处理异常: {}", e);
-                Err(anyhow::anyhow!("文本编码处理异常: {}", e))
-            }
-        }
-    }
-
-    async fn save_result(
-        &self,
-        task: &Task,
-        response: &ScrapeResponse,
-        extra_data: Option<Value>,
-    ) -> Result<()> {
-        let mut meta_data = Value::Null;
-        if let Some(data) = extra_data {
-            meta_data = data;
-        }
-
-        // T042/R-content-001：将 response.markdown 合并到 meta_data JSON
-        // ScrapeResult 实体无独立 markdown 列，统一存入 meta_data：
-        // - Null → {"markdown": "..."}
-        // - Object → 插入 "markdown" 键
-        // - 其他（数组/标量）→ 包装为 {"extracted": <原值>, "markdown": "..."}
-        if let Some(ref markdown) = response.markdown {
-            match &mut meta_data {
-                Value::Null => {
-                    meta_data = serde_json::json!({ "markdown": markdown });
-                }
-                Value::Object(map) => {
-                    map.insert("markdown".to_string(), Value::String(markdown.clone()));
-                }
-                _ => {
-                    let original = std::mem::replace(&mut meta_data, Value::Null);
-                    meta_data = serde_json::json!({
-                        "extracted": original,
-                        "markdown": markdown,
-                    });
-                }
-            }
-        }
-
-        // Content and screenshot from response
-        let content_to_store = response.content.clone();
-
-        // Create result entity
-        let result = ScrapeResult {
-            id: Uuid::new_v4(),
-            task_id: task.id,
-            url: task.url.clone(),
-            status_code: response.status_code as i32,
-            content: content_to_store,
-            content_type: response.content_type.clone(),
-            headers: serde_json::to_value(&response.headers).unwrap_or(Value::Null),
-            meta_data,
-            screenshot: response.screenshot.clone(),
-            response_time_ms: response.response_time_ms as i64,
-            created_at: Utc::now(),
-        };
-
-        self.result_repository.save(result).await?;
-        Ok(())
-    }
 
     async fn trigger_webhook(&self, task: &Task, error_msg: Option<String>) {
         let result = match error_msg {

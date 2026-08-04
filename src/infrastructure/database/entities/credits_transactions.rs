@@ -21,12 +21,15 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
+    // Relation is via team_id (shared attribute), not a direct FK to api_keys.
+    // Removed on_delete/on_update Cascade to prevent unintended data loss:
+    // - Deleting a transaction must never destroy an API key
+    // - Deleting an API key should not implicitly destroy transaction history
+    // Cascade lifecycle is managed through the team entity.
     #[sea_orm(
         belongs_to = "super::api_key::Entity",
         from = "Column::TeamId",
-        to = "super::api_key::Column::TeamId",
-        on_update = "Cascade",
-        on_delete = "Cascade"
+        to = "super::api_key::Column::TeamId"
     )]
     ApiKeys,
 }

@@ -284,12 +284,17 @@ impl FlareSolverrEngine {
     /// 生产环境应从 `settings.timeouts.engines.cdp_seconds` 注入 `mrt`（Full 模式属 CDP 类）。
     /// URL 必须为 http/https 协议，否则使用默认占位符（避免 SSRF 风险）。
     #[must_use]
-    pub fn with_url_and_mrt(client: Arc<Client>, url: impl Into<String>, mrt: Duration) -> Self {
+    pub fn with_url_and_mrt(
+        client: Arc<Client>,
+        url: impl Into<String>,
+        mrt: Duration,
+        timeout_seconds: u64,
+    ) -> Self {
         let validated = validate_flaresolverr_url(&url.into())
             .unwrap_or_else(|_| "http://localhost:8191".to_string());
         let config = FlareSolverrConfig {
             url: validated,
-            timeout_seconds: 60,
+            timeout_seconds,
             session_id: None,
             mode: FlareSolverrMode::Full,
             proxy_url: None,
@@ -308,12 +313,13 @@ impl FlareSolverrEngine {
         base_url: &str,
         proxy_url: Option<&str>,
         mrt: Duration,
+        timeout_seconds: u64,
     ) -> Self {
         let validated = validate_flaresolverr_url(base_url)
             .unwrap_or_else(|_| "http://localhost:8191".to_string());
         let config = FlareSolverrConfig {
             url: validated,
-            timeout_seconds: 60,
+            timeout_seconds,
             session_id: None,
             mode: FlareSolverrMode::Cdp,
             proxy_url: proxy_url.map(|s| s.to_string()),
@@ -332,12 +338,13 @@ impl FlareSolverrEngine {
         base_url: &str,
         proxy_url: Option<&str>,
         mrt: Duration,
+        timeout_seconds: u64,
     ) -> Self {
         let validated = validate_flaresolverr_url(base_url)
             .unwrap_or_else(|_| "http://localhost:8191".to_string());
         let config = FlareSolverrConfig {
             url: validated,
-            timeout_seconds: 60,
+            timeout_seconds,
             session_id: None,
             mode: FlareSolverrMode::Tls,
             proxy_url: proxy_url.map(|s| s.to_string()),

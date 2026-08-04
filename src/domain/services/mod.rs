@@ -42,8 +42,10 @@ pub mod content_extractor;
 pub mod extraction_service;
 pub mod extraction_utils;
 pub mod geo_location;
+pub mod llm;
 pub mod llm_provider_strategy;
-pub mod llm_service;
+/// Backward-compatible re-export: existing code uses `llm_service::` paths
+pub use llm as llm_service;
 /// Markdown 转换服务（content-processing R1，T040/R-content-001）
 ///
 /// gated `markdown` 特性（依赖 `htmd`）。`markdown` 已加入 `standard`/`full`。
@@ -62,6 +64,7 @@ pub mod retry_handler;
 pub mod search_service;
 pub mod team_semaphore;
 pub mod team_service;
+pub mod webhook_event_builder;
 /// R-wh-001 / T026：webhook feature 关闭时不编译此模块
 /// （`WebhookSender` trait 只在 `WebhookServiceImpl` 中使用，后者已被门控）
 #[cfg(feature = "webhook")]

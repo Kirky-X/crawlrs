@@ -35,6 +35,8 @@ use log::error;
 pub async fn create_crawl(
     Extension(state): Extension<Arc<CrawlHandlerState>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(locale): Extension<Locale>,
+    Extension(bundle): Extension<Arc<I18nBundle>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<CrawlRequestDto>,
 ) -> impl IntoResponse {
@@ -165,10 +167,15 @@ pub async fn create_crawl(
 
             success_response(status_code, crawl)
         }
-        Err(e) => {
-            let (status, msg): (StatusCode, String) = e.into();
-            error_response(status, msg)
-        }
+        Err(e) => match e {
+            CrawlUseCaseError::NotFound => {
+                errors_locale::not_found(&locale, &bundle, "api-crawl-not-found")
+            }
+            e => {
+                let (status, msg): (StatusCode, String) = e.into();
+                error_response(status, msg)
+            }
+        },
     }
 }
 
@@ -186,10 +193,15 @@ pub async fn get_crawl(
     match use_case.get_crawl(crawl_id, team_id).await {
         Ok(Some(crawl)) => success_response(StatusCode::OK, crawl),
         Ok(None) => errors_locale::not_found(&locale, &bundle, "api-crawl-not-found"),
-        Err(e) => {
-            let (status, msg): (StatusCode, String) = e.into();
-            error_response(status, msg)
-        }
+        Err(e) => match e {
+            CrawlUseCaseError::NotFound => {
+                errors_locale::not_found(&locale, &bundle, "api-crawl-not-found")
+            }
+            e => {
+                let (status, msg): (StatusCode, String) = e.into();
+                error_response(status, msg)
+            }
+        },
     }
 }
 
@@ -197,6 +209,8 @@ pub async fn get_crawl(
 pub async fn get_crawl_results(
     Extension(state): Extension<Arc<CrawlHandlerState>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(locale): Extension<Locale>,
+    Extension(bundle): Extension<Arc<I18nBundle>>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
@@ -204,10 +218,15 @@ pub async fn get_crawl_results(
 
     match use_case.get_crawl_results(crawl_id, team_id).await {
         Ok(results) => success_response(StatusCode::OK, results),
-        Err(e) => {
-            let (status, msg): (StatusCode, String) = e.into();
-            error_response(status, msg)
-        }
+        Err(e) => match e {
+            CrawlUseCaseError::NotFound => {
+                errors_locale::not_found(&locale, &bundle, "api-crawl-not-found")
+            }
+            e => {
+                let (status, msg): (StatusCode, String) = e.into();
+                error_response(status, msg)
+            }
+        },
     }
 }
 
@@ -215,6 +234,8 @@ pub async fn get_crawl_results(
 pub async fn cancel_crawl(
     Extension(state): Extension<Arc<CrawlHandlerState>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(locale): Extension<Locale>,
+    Extension(bundle): Extension<Arc<I18nBundle>>,
     Path(crawl_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
@@ -222,10 +243,15 @@ pub async fn cancel_crawl(
 
     match use_case.cancel_crawl(crawl_id, team_id).await {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => {
-            let (status, msg): (StatusCode, String) = e.into();
-            error_response(status, msg)
-        }
+        Err(e) => match e {
+            CrawlUseCaseError::NotFound => {
+                errors_locale::not_found(&locale, &bundle, "api-crawl-not-found")
+            }
+            e => {
+                let (status, msg): (StatusCode, String) = e.into();
+                error_response(status, msg)
+            }
+        },
     }
 }
 
@@ -1713,6 +1739,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -1736,6 +1764,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -1763,6 +1793,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -1790,6 +1822,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -1814,6 +1848,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -1838,6 +1874,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -1862,6 +1900,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -1885,6 +1925,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -1908,6 +1950,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -1932,6 +1976,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -1955,6 +2001,8 @@ mod tests {
         let response = create_crawl(
             Extension(state),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
             Json(payload),
         )
@@ -2080,9 +2128,15 @@ mod tests {
         );
         let auth = make_auth_state_with_team(team_id);
 
-        let response = get_crawl_results(Extension(state), Extension(auth), Path(crawl_id))
-            .await
-            .into_response();
+        let response = get_crawl_results(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(crawl_id),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -2097,9 +2151,15 @@ mod tests {
         );
         let auth = make_auth_state();
 
-        let response = get_crawl_results(Extension(state), Extension(auth), Path(Uuid::new_v4()))
-            .await
-            .into_response();
+        let response = get_crawl_results(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(Uuid::new_v4()),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -2118,9 +2178,15 @@ mod tests {
         );
         let auth = make_auth_state_with_team(team_id);
 
-        let response = get_crawl_results(Extension(state), Extension(auth), Path(crawl_id))
-            .await
-            .into_response();
+        let response = get_crawl_results(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(crawl_id),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -2140,9 +2206,15 @@ mod tests {
         );
         let auth = make_auth_state_with_team(team_id);
 
-        let response = cancel_crawl(Extension(state), Extension(auth), Path(crawl_id))
-            .await
-            .into_response();
+        let response = cancel_crawl(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(crawl_id),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
@@ -2157,9 +2229,15 @@ mod tests {
         );
         let auth = make_auth_state();
 
-        let response = cancel_crawl(Extension(state), Extension(auth), Path(Uuid::new_v4()))
-            .await
-            .into_response();
+        let response = cancel_crawl(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(Uuid::new_v4()),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -2176,9 +2254,15 @@ mod tests {
         );
         let auth = make_auth_state_with_team(Uuid::new_v4());
 
-        let response = cancel_crawl(Extension(state), Extension(auth), Path(crawl_id))
-            .await
-            .into_response();
+        let response = cancel_crawl(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(crawl_id),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -2196,9 +2280,15 @@ mod tests {
         );
         let auth = make_auth_state_with_team(team_id);
 
-        let response = cancel_crawl(Extension(state), Extension(auth), Path(crawl_id))
-            .await
-            .into_response();
+        let response = cancel_crawl(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(crawl_id),
+        )
+        .await
+        .into_response();
 
         // Already completed → use_case returns Ok(()) → 204
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
@@ -2214,9 +2304,15 @@ mod tests {
         );
         let auth = make_auth_state();
 
-        let response = cancel_crawl(Extension(state), Extension(auth), Path(Uuid::new_v4()))
-            .await
-            .into_response();
+        let response = cancel_crawl(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(Uuid::new_v4()),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -2234,9 +2330,15 @@ mod tests {
         );
         let auth = make_auth_state_with_team(team_id);
 
-        let response = cancel_crawl(Extension(state), Extension(auth), Path(crawl_id))
-            .await
-            .into_response();
+        let response = cancel_crawl(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(crawl_id),
+        )
+        .await
+        .into_response();
 
         // find_by_id ok but update fails → RepositoryError → 500
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);

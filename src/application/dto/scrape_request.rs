@@ -6,6 +6,8 @@
 //! Scrape request DTO with input validation
 
 use crate::common::CacheMode;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use validator::Validate;
@@ -19,6 +21,38 @@ pub const MAX_ACTION_COUNT: usize = 20;
 /// Maximum metadata object depth
 pub const MAX_METADATA_DEPTH: usize = 5;
 
+/// URL scheme validation: only http and https are allowed (SSRF mitigation).
+static HTTP_URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^https?://").unwrap());
+
+fn is_http_url(value: &str) -> Result<(), validator::ValidationError> {
+    if HTTP_URL_RE.is_match(value) {
+        Ok(())
+    } else {
+        Err(validator::ValidationError::new("invalid_url_scheme")
+            .with_message("URL must start with http:// or https://".into()))
+    }
+}
+
+/// T029: Validate that metadata JSON nesting depth does not exceed MAX_METADATA_DEPTH.
+fn validate_metadata_depth(value: &serde_json::Value) -> Result<(), validator::ValidationError> {
+    fn depth(v: &serde_json::Value) -> usize {
+        match v {
+            serde_json::Value::Object(map) => 1 + map.values().map(depth).max().unwrap_or(0),
+            serde_json::Value::Array(arr) => 1 + arr.iter().map(depth).max().unwrap_or(0),
+            _ => 0,
+        }
+    }
+    if depth(value) > MAX_METADATA_DEPTH {
+        Err(
+            validator::ValidationError::new("metadata_too_deep").with_message(
+                format!("metadata JSON depth must not exceed {}", MAX_METADATA_DEPTH).into(),
+            ),
+        )
+    } else {
+        Ok(())
+    }
+}
+
 /// 爬取请求数据传输对象
 ///
 /// 用于封装客户端发起的网页爬取请求的相关参数
@@ -28,12 +62,18 @@ pub const MAX_METADATA_DEPTH: usize = 5;
 pub struct ScrapeRequestDto {
     /// 要爬取的网页URL (仅支持 http/https)
     #[validate(length(min = 1, max = 2048))]
+    #[validate(custom(
+        function = "is_http_url",
+        message = "URL must start with http:// or https://"
+    ))]
     pub url: String,
     /// 请求的数据格式列表
     pub formats: Option<Vec<String>>,
     /// 包含的HTML标签列表
+    #[validate(length(max = 50, message = "include_tags must have at most 50 entries"))]
     pub include_tags: Option<Vec<String>>,
     /// 排除的HTML标签列表
+    #[validate(length(max = 50, message = "exclude_tags must have at most 50 entries"))]
     pub exclude_tags: Option<Vec<String>>,
     /// 回调Webhook地址
     pub webhook: Option<String>,
@@ -45,10 +85,13 @@ pub struct ScrapeRequestDto {
         >,
     >,
     /// 页面交互动作
+    #[validate(length(max = 20, message = "actions must have at most 20 entries"))]
     pub actions: Option<Vec<ScrapeActionDto>>,
     /// 抓取选项
+    #[validate(nested)]
     pub options: Option<ScrapeOptionsDto>,
     /// 自定义元数据
+    #[validate(custom(function = "validate_metadata_depth"))]
     pub metadata: Option<serde_json::Value>,
     /// 同步等待时长（毫秒，默认 5000，最大 30000）
     #[validate(range(
@@ -59,14 +102,16 @@ pub struct ScrapeRequestDto {
     pub sync_wait_ms: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct ScrapeOptionsDto {
     /// 自定义HTTP请求头
     pub headers: Option<Value>,
     /// 等待时间（毫秒）
+    #[validate(range(max = 60000, message = "wait_for must be at most 60000ms"))]
     pub wait_for: Option<u64>,
     /// 超时时间（秒）
+    #[validate(range(max = 300, message = "timeout must be at most 300s"))]
     pub timeout: Option<u64>,
     /// 是否需要JavaScript渲染
     pub js_rendering: Option<bool>,

@@ -13,11 +13,10 @@ use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepos
 #[cfg(feature = "teams")]
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 // R-wh-001 / T028：webhook feature 关闭时不导入 WebhookRepoImpl
+use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
 #[cfg(feature = "webhook")]
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
-use crate::presentation::handlers::{
-    metrics_handler,
-};
+use crate::presentation::handlers::metrics_handler;
 #[cfg(not(feature = "auth"))]
 use crate::presentation::middleware::auth_types::AuthState;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
@@ -25,13 +24,9 @@ use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_m
 use crate::presentation::routes;
 use crate::presentation::routes::task::task_routes;
 use crate::presentation::state::CrawlHandlerState;
-use axum::{
-    Extension, Router,
-    routing::get,
-};
+use axum::{routing::get, Extension, Router};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
 
 // auth feature 关闭时需要的默认身份常量与 scope 构造器（T009）
 #[cfg(not(feature = "auth"))]
@@ -41,7 +36,7 @@ use crate::domain::auth::ApiKeyScope;
 
 // 路由分组
 use crate::bootstrap::route_groups::{
-    scrape_routes, crawl_routes, search_routes, management_routes,
+    crawl_routes, management_routes, scrape_routes, search_routes,
 };
 
 /// 创建 CORS 中间件层
@@ -1232,8 +1227,11 @@ mod tests {
     ///
     /// Returns Err if `TEST_DATABASE_URL` is not set or kit construction fails.
     async fn build_test_state() -> anyhow::Result<CrawlRsState> {
-        let db_url = std::env::var("TEST_DATABASE_URL")
-            .map_err(|_| anyhow::anyhow!("TEST_DATABASE_URL not set"))?;
+        let db_url = crate::common::test_helpers::resolve_test_database_url().ok_or_else(|| {
+            anyhow::anyhow!(
+                "No test database available: set TEST_DATABASE_URL or ensure Docker is running"
+            )
+        })?;
         let settings = Arc::new(tcf::settings_with_urls(&db_url)?);
 
         let mut kit = AsyncKit::new();
@@ -1265,11 +1263,7 @@ mod tests {
 
     /// Skip helper for tests that require `TEST_DATABASE_URL`.
     fn skip_if_no_test_db() -> bool {
-        if std::env::var("TEST_DATABASE_URL").is_err() {
-            eprintln!("[skip] TEST_DATABASE_URL not set — test requires real DbPool");
-            return true;
-        }
-        false
+        crate::common::test_helpers::skip_if_no_test_db()
     }
 
     /// Load default Settings from `config/default.toml`.

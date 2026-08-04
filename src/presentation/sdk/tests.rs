@@ -34,11 +34,7 @@ use uuid::Uuid;
 /// 检查 TEST_DATABASE_URL 是否设置；未设置时测试应早期返回。
 /// sdk 测试需要 AuthState，而 AuthState 需要 DbPool，DbPool 构造需要真实 DB URL。
 fn skip_if_no_db() -> bool {
-    if std::env::var("TEST_DATABASE_URL").is_err() {
-        eprintln!("[skip] TEST_DATABASE_URL not set — sdk tests require real DbPool");
-        return true;
-    }
-    false
+    crate::common::test_helpers::skip_if_no_test_db()
 }
 
 // `make_db_pool` helper 已集中到 `src/common/test_helpers.rs::create_test_db_pool`，

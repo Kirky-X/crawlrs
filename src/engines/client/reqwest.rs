@@ -472,7 +472,7 @@ impl ScraperEngine for ReqwestEngine {
             .ok_or_else(|| EngineError::Other("SSRF: no resolved IPs".to_string()))?;
         let mut rewritten = validated_url.parsed_url.clone();
         let _ = rewritten.set_host(Some(&resolved_first.to_string()));
-        let need_tls_bypass = rewritten.scheme() == "https";
+        let need_tls_bypass = request.skip_tls_verification;
         let handle = self.get_client(
             &request.proxy,
             request.skip_tls_verification,

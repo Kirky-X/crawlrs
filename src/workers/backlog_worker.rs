@@ -372,7 +372,7 @@ mod tests {
 
     // ========== Test Settings factory ==========
 
-    fn make_test_settings(default_team_limit: i64) -> Arc<Settings> {
+    fn make_test_settings(default_team_limit: u64) -> Arc<Settings> {
         use crate::config::settings::*;
         let settings = Settings {
             server: ServerSettings::default(),

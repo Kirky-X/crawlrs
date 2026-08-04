@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// `api_key` 字段包含 LLM API 密钥，泄露可能导致未经授权的访问。
 /// 该字段仅对 crate 可见，外部模块应使用 `api_key()` 方法访问。
-#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[derive(Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__LLM__")]
 pub struct LLMSettings {
     /// LLM 提供商 (openai, ollama, anthropic, etc)
@@ -39,6 +39,17 @@ pub struct LLMSettings {
     /// LLM API 基础 URL
     #[config(default = Some("https://api.openai.com/v1".to_string()))]
     pub api_base_url: Option<String>,
+}
+
+impl std::fmt::Debug for LLMSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LLMSettings")
+            .field("provider", &self.provider)
+            .field("api_key", &"[REDACTED]")
+            .field("model", &self.model)
+            .field("api_base_url", &self.api_base_url)
+            .finish()
+    }
 }
 
 impl LLMSettings {
@@ -177,6 +188,12 @@ mod tests {
         assert!(
             debug.contains("LLMSettings"),
             "Debug should contain struct name"
+        );
+        // T002: api_key must be redacted in Debug output
+        assert!(debug.contains("[REDACTED]"), "Debug should redact api_key");
+        assert!(
+            !debug.contains("debug-key"),
+            "Debug must not contain actual api_key value"
         );
     }
 }

@@ -14,6 +14,8 @@ pub mod llm;
 pub mod logging;
 pub mod runtime;
 pub mod search;
+pub mod security;
+pub mod validation;
 
 // 重新导出子模块中的类型，保持向后兼容
 pub use app::ConcurrencySettings;

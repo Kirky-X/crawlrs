@@ -3,50 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Configuration loading, validation, and port detection.
-//!
-//! 此模块负责在应用启动早期进行配置和环境变量的安全验证
+//! 配置验证 — 安全验证、环境变量检查、启动编排。
 
+use super::config_loader::{detect_available_port, load_settings};
 use crate::config::settings::Settings;
 use crate::infrastructure::security::env_var_security::{EnvVarSecurityMonitor, EnvVarValidator};
 use anyhow::Result;
-use confers::{ConfigBuilder, EnvSource};
 use log::{debug, error, info, warn};
-use validator::Validate;
-
-/// Load application configuration from the standard settings file and environment.
-///
-/// Uses confers 0.4 `ConfigBuilder` to merge `config/default.toml` with
-/// environment variables prefixed by `CRAWLRS__` (nested via `__`).
-/// Note: confers 0.4's `load_sync()` only applies field-level defaults and env
-/// vars; it no longer auto-discovers config files (breaking change from 0.2.2).
-///
-/// # 安全验证（T062 安全审查 CRITICAL-1 修复）
-///
-/// confers 0.4 `#[config(validate)]` 集成的是 `garde::Validate`，而 `Settings` 用的是
-/// `validator::Validate`，两者不兼容——`#[validate(range(...))]` 等注解不会被
-/// confers 自动触发。本函数在 `build()` 后显式调用 `Settings::validate()`，
-/// 覆盖所有 `#[validate(...)]` 注解（EngineTimeoutSettings 的 range、TaskQueryRequestDto
-/// 的 range 等），防止环境变量注入 `CRAWLRS__TIMEOUTS__ENGINES__DEFAULT_TIMEOUT_SECONDS=0`
-/// 绕过校验触发 DoS（CWE-400 + CWE-20 + 配置注入）。
-pub fn load_settings() -> Result<Settings> {
-    let settings = ConfigBuilder::<Settings>::new()
-        .file("config/default.toml")
-        .source(Box::new(
-            EnvSource::with_prefix("CRAWLRS__").separator("__"),
-        ))
-        .build()
-        .map_err(|e| anyhow::anyhow!("Configuration load failed: {}", e))?;
-
-    // T062 安全审查 CRITICAL-1 修复：显式调用 validator::Validate::validate()
-    // 防止环境变量绕过 #[validate(range(min = 1, max = 600))] 等约束
-    settings
-        .validate()
-        .map_err(|e| anyhow::anyhow!("Configuration validation failed: {}", e))?;
-
-    info!("Configuration loaded and validated successfully from config sources");
-    Ok(settings)
-}
 
 /// Validate configuration security settings.
 ///
@@ -181,46 +144,6 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
     Ok(())
 }
 
-/// Detect and configure an available port.
-///
-/// This function attempts to use the configured port, and if it's unavailable,
-/// it will find and use an alternative port.
-///
-/// # Arguments
-///
-/// * `settings` - The settings to modify with the detected port
-///
-/// # Returns
-///
-/// Returns the port that will be used, along with any informational logs.
-pub fn detect_available_port(settings: &mut Settings) -> Result<u16> {
-    let port_result = crate::utils::port_sniffer::PortSniffer::find_available_port(
-        settings.server.port,
-        settings.server.enable_port_detection,
-        50,
-    );
-
-    match port_result {
-        Ok(result) => {
-            if result.port != settings.server.port {
-                info!(
-                    "Default port {} is occupied, switching to port {}",
-                    settings.server.port, result.port
-                );
-                settings.server.port = result.port;
-            }
-            for log in result.logs {
-                info!("{}", log);
-            }
-            Ok(result.port)
-        }
-        Err(e) => {
-            error!("Port detection failed: {}", e);
-            Err(anyhow::anyhow!("Failed to find available port: {}", e))
-        }
-    }
-}
-
 /// Load, validate, and configure settings for application startup.
 ///
 /// This is a convenience function that combines loading, security validation,
@@ -258,6 +181,7 @@ pub fn load_and_configure(is_production: bool) -> Result<(Settings, u16)> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::config_loader::load_settings;
     use super::*;
     use crate::common::test_support::ENV_MUTEX;
 
@@ -277,12 +201,69 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_security_does_not_modify_settings() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = settings1.clone();
+        let _ = validate_security(&settings1, false);
+        // Settings should be unchanged after validation
+        assert_eq!(settings1.server.port, settings2.server.port);
+        assert_eq!(settings1.server.host, settings2.server.host);
+    }
+
+    #[test]
+    fn test_validate_security_preserves_cors_settings() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = settings1.clone();
+        let _ = validate_security(&settings1, true);
+        assert_eq!(
+            settings1.cors.allowed_origins,
+            settings2.cors.allowed_origins
+        );
+    }
+
+    #[test]
+    fn test_validate_security_preserves_database_settings() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = settings1.clone();
+        let _ = validate_security(&settings1, false);
+        assert_eq!(
+            settings1.database.max_connections,
+            settings2.database.max_connections
+        );
+    }
+
+    #[test]
+    fn test_validate_security_preserves_rate_limiting_settings() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = settings1.clone();
+        let _ = validate_security(&settings1, true);
+        assert_eq!(
+            settings1.rate_limiting.enabled,
+            settings2.rate_limiting.enabled
+        );
+        assert_eq!(
+            settings1.rate_limiting.default_rpm,
+            settings2.rate_limiting.default_rpm
+        );
+    }
+
+    #[test]
+    fn test_settings_clone_is_equal() {
+        let settings1 = load_settings().expect("Failed to load settings");
+        let settings2 = settings1.clone();
+        assert_eq!(settings1.server.port, settings2.server.port);
+        assert_eq!(settings1.server.host, settings2.server.host);
+        assert_eq!(
+            settings1.cors.allowed_origins,
+            settings2.cors.allowed_origins
+        );
+    }
+
+    // ========== validate_environment tests ==========
+
+    #[test]
     fn test_validate_environment_non_production_returns_ok() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        // In non-production mode, validate_environment should return Ok(())
-        // even if required env vars are missing (only warns).
-        // Use test mode to avoid interference from forbidden env vars set by
-        // parallel tests (e.g. LD_PRELOAD from other test cases).
         let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
         std::env::set_var("CRAWLRS__TEST_MODE", "true");
         let result = validate_environment(false);
@@ -295,124 +276,19 @@ mod tests {
     }
 
     #[test]
-    fn test_load_settings_returns_valid_config() {
-        let settings = load_settings();
-        assert!(
-            settings.is_ok(),
-            "load_settings failed: {:?}",
-            settings.err()
-        );
-        let settings = settings.unwrap();
-        // Verify some default values from config/default.toml
-        assert_eq!(settings.server.port, 8899);
-        assert_eq!(settings.server.host, "0.0.0.0");
-    }
-
-    #[test]
-    fn test_load_settings_has_database_config() {
-        let settings = load_settings().expect("Failed to load settings");
-        // max_connections may be overridden by env var; just verify field exists
-        let _max_conn = &settings.database.max_connections;
-    }
-
-    #[test]
-    fn test_load_settings_has_rate_limiting_config() {
-        let settings = load_settings().expect("Failed to load settings");
-        // Rate limiting config should be present (values may be overridden by env)
-        let _enabled = settings.rate_limiting.enabled;
-        let _rpm = settings.rate_limiting.default_rpm;
-    }
-
-    #[test]
-    fn test_load_settings_has_cors_config() {
-        let settings = load_settings().expect("Failed to load settings");
-        assert_eq!(settings.cors.allowed_origins, "*");
-    }
-
-    #[test]
-    fn test_validate_security_does_not_modify_settings() {
-        let settings1 = load_settings().expect("Failed to load settings");
-        let settings2 = settings1.clone();
-        let _ = validate_security(&settings1, false);
-        // Settings should be unchanged after validation
-        assert_eq!(settings1.server.port, settings2.server.port);
-        assert_eq!(settings1.server.host, settings2.server.host);
-    }
-
-    // ========== detect_available_port tests ==========
-
-    #[test]
-    fn test_detect_available_port_with_detection_disabled_returns_ok() {
-        // Use a high port number likely to be free, with detection disabled.
-        let mut settings = load_settings().expect("Failed to load settings");
-        settings.server.port = 0; // port 0 lets OS assign a free port; but detection disabled means we check this port
-        settings.server.enable_port_detection = false;
-        // Port 0 is reserved; with detection disabled, the sniffer checks if it's in use.
-        // Since port 0 is never bindable, this may behave specially. Use a high port instead.
-        settings.server.port = 49999;
-        let result = detect_available_port(&mut settings);
-        assert!(
-            result.is_ok(),
-            "detect_available_port should return Ok for a free high port with detection disabled"
-        );
-    }
-
-    #[test]
-    fn test_detect_available_port_returns_configured_port_when_free() {
-        let mut settings = load_settings().expect("Failed to load settings");
-        settings.server.port = 49998;
-        settings.server.enable_port_detection = false;
-        let port = detect_available_port(&mut settings).expect("Should find available port");
-        assert_eq!(
-            port, 49998,
-            "Should return the configured port when it is free"
-        );
-    }
-
-    #[test]
-    fn test_detect_available_port_updates_settings_port() {
-        let mut settings = load_settings().expect("Failed to load settings");
-        settings.server.port = 49997;
-        settings.server.enable_port_detection = false;
-        let _ = detect_available_port(&mut settings).expect("Should find available port");
-        assert_eq!(
-            settings.server.port, 49997,
-            "settings.server.port should match the detected port"
-        );
-    }
-
-    #[test]
-    fn test_detect_available_port_with_detection_enabled_returns_ok() {
-        let mut settings = load_settings().expect("Failed to load settings");
-        settings.server.port = 49996;
-        settings.server.enable_port_detection = true;
-        let result = detect_available_port(&mut settings);
-        assert!(
-            result.is_ok(),
-            "detect_available_port should return Ok with detection enabled"
-        );
-    }
-
-    // ========== validate_environment production mode tests ==========
-
-    #[test]
     fn test_validate_environment_production_missing_required_returns_error() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Save current values
         let saved_app_env = std::env::var("APP_ENVIRONMENT").ok();
         let saved_db_url = std::env::var("DATABASE_URL").ok();
         let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
 
-        // Remove required env vars to trigger missing-required error in production
         std::env::remove_var("APP_ENVIRONMENT");
         std::env::remove_var("DATABASE_URL");
-        // Enable test mode to skip forbidden variable check
         std::env::set_var("CRAWLRS__TEST_MODE", "true");
 
         let result = validate_environment(true);
 
-        // Restore saved values
         if let Some(v) = saved_app_env {
             std::env::set_var("APP_ENVIRONMENT", v);
         }
@@ -474,37 +350,6 @@ mod tests {
         );
     }
 
-    // ========== load_and_configure tests ==========
-
-    #[test]
-    fn test_load_and_configure_non_production_succeeds() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
-        std::env::set_var("CRAWLRS__TEST_MODE", "true");
-
-        let result = load_and_configure(false);
-
-        if let Some(v) = saved_test_mode {
-            std::env::set_var("CRAWLRS__TEST_MODE", v);
-        } else {
-            std::env::remove_var("CRAWLRS__TEST_MODE");
-        }
-
-        assert!(
-            result.is_ok(),
-            "load_and_configure in non-production mode should succeed, got err: {:?}",
-            result.err()
-        );
-        let (settings, port) = result.expect("load_and_configure should succeed");
-        assert!(port > 0, "Detected port should be greater than 0");
-        assert_eq!(
-            settings.server.port, port,
-            "settings.server.port should match the detected port"
-        );
-    }
-
-    // ========== validate_environment test mode detection ==========
-
     #[test]
     fn test_validate_environment_test_mode_skips_forbidden_check() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
@@ -519,7 +364,6 @@ mod tests {
         std::env::set_var("CRAWLRS__TEST_MODE", "true");
         std::env::remove_var("CRAWLRS_ENV");
 
-        // In test mode, forbidden variables check is skipped
         let result = validate_environment(false);
 
         if let Some(v) = saved_app_env {
@@ -562,7 +406,6 @@ mod tests {
         std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
         std::env::remove_var("CRAWLRS__TEST_MODE");
 
-        // CRAWLRS_ENV=test should trigger is_test=true
         let result = validate_environment(false);
 
         if let Some(v) = saved_crawlrs_env {
@@ -591,113 +434,6 @@ mod tests {
             "validate_environment with CRAWLRS_ENV=test should succeed"
         );
     }
-
-    // ========== validate_security with different settings ==========
-
-    #[test]
-    fn test_validate_security_preserves_cors_settings() {
-        let settings1 = load_settings().expect("Failed to load settings");
-        let settings2 = settings1.clone();
-        let _ = validate_security(&settings1, true);
-        assert_eq!(
-            settings1.cors.allowed_origins,
-            settings2.cors.allowed_origins
-        );
-    }
-
-    #[test]
-    fn test_validate_security_preserves_database_settings() {
-        let settings1 = load_settings().expect("Failed to load settings");
-        let settings2 = settings1.clone();
-        let _ = validate_security(&settings1, false);
-        assert_eq!(
-            settings1.database.max_connections,
-            settings2.database.max_connections
-        );
-    }
-
-    #[test]
-    fn test_validate_security_preserves_rate_limiting_settings() {
-        let settings1 = load_settings().expect("Failed to load settings");
-        let settings2 = settings1.clone();
-        let _ = validate_security(&settings1, true);
-        assert_eq!(
-            settings1.rate_limiting.enabled,
-            settings2.rate_limiting.enabled
-        );
-        assert_eq!(
-            settings1.rate_limiting.default_rpm,
-            settings2.rate_limiting.default_rpm
-        );
-    }
-
-    // ========== load_settings returns consistent results ==========
-
-    #[test]
-    fn test_load_settings_returns_consistent_port() {
-        let settings1 = load_settings().expect("Failed to load settings");
-        let settings2 = load_settings().expect("Failed to load settings");
-        assert_eq!(settings1.server.port, settings2.server.port);
-    }
-
-    #[test]
-    fn test_load_settings_returns_consistent_host() {
-        let settings1 = load_settings().expect("Failed to load settings");
-        let settings2 = load_settings().expect("Failed to load settings");
-        assert_eq!(settings1.server.host, settings2.server.host);
-    }
-
-    // ========== detect_available_port with different ports ==========
-
-    #[test]
-    fn test_detect_available_port_does_not_change_when_port_free() {
-        let mut settings = load_settings().expect("Failed to load settings");
-        settings.server.port = 49995;
-        settings.server.enable_port_detection = false;
-        let original_port = settings.server.port;
-        let _ = detect_available_port(&mut settings).expect("Should find available port");
-        assert_eq!(
-            settings.server.port, original_port,
-            "Port should not change when the configured port is free"
-        );
-    }
-
-    #[test]
-    fn test_detect_available_port_with_detection_enabled_finds_port() {
-        let mut settings = load_settings().expect("Failed to load settings");
-        settings.server.port = 49994;
-        settings.server.enable_port_detection = true;
-        let result = detect_available_port(&mut settings);
-        assert!(
-            result.is_ok(),
-            "detect_available_port with detection enabled should find a port"
-        );
-        let port = result.unwrap();
-        assert!(port > 0, "Detected port should be greater than 0");
-    }
-
-    // ========== load_and_configure returns consistent settings ==========
-
-    #[test]
-    fn test_load_and_configure_returns_valid_settings() {
-        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
-        std::env::set_var("CRAWLRS__TEST_MODE", "true");
-
-        let result = load_and_configure(false);
-
-        if let Some(v) = saved_test_mode {
-            std::env::set_var("CRAWLRS__TEST_MODE", v);
-        } else {
-            std::env::remove_var("CRAWLRS__TEST_MODE");
-        }
-
-        assert!(result.is_ok());
-        let (settings, _port) = result.unwrap();
-        assert_eq!(settings.server.host, "0.0.0.0");
-    }
-
-    // ========== validate_environment non-production with required vars ==========
 
     #[test]
     fn test_validate_environment_non_production_with_required_vars_succeeds() {
@@ -735,38 +471,6 @@ mod tests {
         );
     }
 
-    // ========== Settings clone and equality ==========
-
-    #[test]
-    fn test_settings_clone_is_equal() {
-        let settings1 = load_settings().expect("Failed to load settings");
-        let settings2 = settings1.clone();
-        assert_eq!(settings1.server.port, settings2.server.port);
-        assert_eq!(settings1.server.host, settings2.server.host);
-        assert_eq!(
-            settings1.cors.allowed_origins,
-            settings2.cors.allowed_origins
-        );
-    }
-
-    // ========== load_settings server config ==========
-
-    #[test]
-    fn test_load_settings_server_enable_port_detection_exists() {
-        let settings = load_settings().expect("Failed to load settings");
-        // Just verify the field exists and is a bool
-        let _ = settings.server.enable_port_detection;
-    }
-
-    #[test]
-    fn test_load_settings_has_server_config() {
-        let settings = load_settings().expect("Failed to load settings");
-        assert!(!settings.server.host.is_empty());
-        assert!(settings.server.port > 0);
-    }
-
-    // ========== validate_environment forbidden variables path ==========
-
     #[test]
     fn test_validate_environment_forbidden_vars_in_non_test_mode_returns_error() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
@@ -777,9 +481,7 @@ mod tests {
         let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
         let saved_ld_preload = std::env::var("LD_PRELOAD").ok();
 
-        // Set a forbidden env var (LD_PRELOAD is in the forbidden list)
         std::env::set_var("LD_PRELOAD", "/tmp/fake_lib.so");
-        // Ensure we are NOT in test mode
         std::env::set_var("APP_ENVIRONMENT", "development");
         std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
         std::env::remove_var("CRAWLRS__TEST_MODE");
@@ -787,7 +489,6 @@ mod tests {
 
         let result = validate_environment(false);
 
-        // Restore saved values
         if let Some(v) = saved_app_env {
             std::env::set_var("APP_ENVIRONMENT", v);
         } else {
@@ -837,9 +538,7 @@ mod tests {
         let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
         let saved_ld_preload = std::env::var("LD_PRELOAD").ok();
 
-        // Set a forbidden env var
         std::env::set_var("LD_PRELOAD", "/tmp/fake_lib.so");
-        // Set test mode via CRAWLRS__TEST_MODE
         std::env::set_var("APP_ENVIRONMENT", "development");
         std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
         std::env::set_var("CRAWLRS__TEST_MODE", "true");
@@ -847,7 +546,6 @@ mod tests {
 
         let result = validate_environment(false);
 
-        // Restore saved values
         if let Some(v) = saved_app_env {
             std::env::set_var("APP_ENVIRONMENT", v);
         } else {
@@ -891,9 +589,7 @@ mod tests {
         let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
         let saved_ld_preload = std::env::var("LD_PRELOAD").ok();
 
-        // Set a forbidden env var
         std::env::set_var("LD_PRELOAD", "/tmp/fake_lib.so");
-        // CRAWLRS_ENV=test triggers is_test=true
         std::env::set_var("CRAWLRS_ENV", "test");
         std::env::set_var("APP_ENVIRONMENT", "development");
         std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
@@ -901,7 +597,6 @@ mod tests {
 
         let result = validate_environment(false);
 
-        // Restore saved values
         if let Some(v) = saved_app_env {
             std::env::set_var("APP_ENVIRONMENT", v);
         } else {
@@ -946,7 +641,6 @@ mod tests {
         let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
         let saved_ssrf = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").ok();
 
-        // 生产环境 + SSRF 禁用 → 应触发 warn 但仍返回 Ok
         std::env::set_var("APP_ENVIRONMENT", "production");
         std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
         std::env::set_var("CRAWLRS__TEST_MODE", "true");
@@ -981,7 +675,6 @@ mod tests {
             std::env::remove_var("CRAWLRS_DISABLE_SSRF_PROTECTION");
         }
 
-        // validate_environment 应返回 Ok（warn 不阻断启动），告警由日志验证
         assert!(
             result.is_ok(),
             "validate_environment should succeed with SSRF disabled (warn only), got err: {:?}",
@@ -999,7 +692,6 @@ mod tests {
         let saved_crawlrs_env = std::env::var("CRAWLRS_ENV").ok();
         let saved_ssrf = std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").ok();
 
-        // 开发环境 + SSRF 禁用 → 不应触发风险告警（开发/测试场景允许）
         std::env::set_var("APP_ENVIRONMENT", "development");
         std::env::set_var("DATABASE_URL", "postgresql://test:test@localhost/test");
         std::env::set_var("CRAWLRS__TEST_MODE", "true");
@@ -1037,88 +729,51 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ========== Test logger for covering log::info!/log::error! paths ==========
-
-    use log::{LevelFilter, Log, Metadata, Record};
-    use std::sync::Once;
-
-    static LOGGER_INIT: Once = Once::new();
-
-    struct CapturingLogger;
-
-    impl Log for CapturingLogger {
-        fn enabled(&self, metadata: &Metadata) -> bool {
-            metadata.level() <= log::Level::Debug
-        }
-        fn log(&self, _record: &Record) {}
-        fn flush(&self) {}
-    }
-
-    fn ensure_debug_logger() {
-        LOGGER_INIT.call_once(|| {
-            static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
-            let _ = log::set_logger(&CAPTURING_LOGGER);
-            log::set_max_level(LevelFilter::Debug);
-        });
-    }
-
-    // ========== detect_available_port: port switching path (covers lines 168-177) ==========
+    // ========== load_and_configure tests ==========
 
     #[test]
-    fn test_detect_available_port_switches_when_configured_port_occupied() {
-        ensure_debug_logger();
-        // Bind a port to make it occupied, then verify detect_available_port
-        // switches to a different port when enable_port_detection is true.
-        // Covers the `result.port != settings.server.port` branch (lines 168-174)
-        // and the `for log in result.logs { info!("{}", log); }` loop (lines 175-177).
-        let listener = std::net::TcpListener::bind("0.0.0.0:0").expect("Failed to bind listener");
-        let occupied_port = listener.local_addr().unwrap().port();
+    fn test_load_and_configure_non_production_succeeds() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
 
-        let mut settings = load_settings().expect("Failed to load settings");
-        settings.server.port = occupied_port;
-        settings.server.enable_port_detection = true;
+        let result = load_and_configure(false);
 
-        let result = detect_available_port(&mut settings);
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+
         assert!(
             result.is_ok(),
-            "detect_available_port should succeed by switching ports"
+            "load_and_configure in non-production mode should succeed, got err: {:?}",
+            result.err()
         );
-        let detected_port = result.unwrap();
-        assert_ne!(
-            detected_port, occupied_port,
-            "detected port should differ from occupied configured port"
-        );
+        let (settings, port) = result.expect("load_and_configure should succeed");
+        assert!(port > 0, "Detected port should be greater than 0");
         assert_eq!(
-            settings.server.port, detected_port,
-            "settings.server.port should be updated to the detected port"
+            settings.server.port, port,
+            "settings.server.port should match the detected port"
         );
-        drop(listener);
     }
 
     #[test]
-    fn test_detect_available_port_error_at_65535_boundary() {
-        ensure_debug_logger();
-        // When port is 65535 and it's occupied, PortSniffer returns PortOutOfRange,
-        // which triggers the Err(e) branch in detect_available_port (lines 180-183)
-        // and the error!() log call.
-        // Bind 65535 to ensure it's occupied; if bind fails (already occupied by
-        // environment), the PortOutOfRange path is still triggered.
-        let _listener = std::net::TcpListener::bind("0.0.0.0:65535").ok();
+    fn test_load_and_configure_returns_valid_settings() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        std::env::set_var("CRAWLRS__TEST_MODE", "true");
 
-        let mut settings = load_settings().expect("Failed to load settings");
-        settings.server.port = 65535;
-        settings.server.enable_port_detection = true;
+        let result = load_and_configure(false);
 
-        let result = detect_available_port(&mut settings);
-        assert!(
-            result.is_err(),
-            "detect_available_port should return error when 65535 is occupied"
-        );
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("Failed to find available port"),
-            "error should mention port detection failure, got: {}",
-            err_msg
-        );
+        if let Some(v) = saved_test_mode {
+            std::env::set_var("CRAWLRS__TEST_MODE", v);
+        } else {
+            std::env::remove_var("CRAWLRS__TEST_MODE");
+        }
+
+        assert!(result.is_ok());
+        let (settings, _port) = result.unwrap();
+        assert_eq!(settings.server.host, "0.0.0.0");
     }
 }

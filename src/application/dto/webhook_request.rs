@@ -33,9 +33,31 @@ pub struct WebhookResponse {
     pub secret: Option<String>,
 }
 
+/// Webhook 列表条目（不含密钥，防止列表接口泄露 secret）
+#[derive(Debug, Clone, Serialize)]
+pub struct WebhookListEntry {
+    pub id: Uuid,
+    pub team_id: Uuid,
+    pub url: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub is_active: bool,
+}
+
+impl From<WebhookResponse> for WebhookListEntry {
+    fn from(resp: WebhookResponse) -> Self {
+        Self {
+            id: resp.id,
+            team_id: resp.team_id,
+            url: resp.url,
+            created_at: resp.created_at,
+            is_active: resp.is_active,
+        }
+    }
+}
+
 /// Webhook 列表响应 DTO
 #[derive(Debug, Clone, Serialize)]
 pub struct WebhookListResponse {
-    pub webhooks: Vec<WebhookResponse>,
+    pub webhooks: Vec<WebhookListEntry>,
     pub total: usize,
 }

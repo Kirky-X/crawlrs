@@ -61,13 +61,13 @@ impl ServiceType {
 mod app {
     use super::ServiceType;
     use crawlrs::bootstrap::routes::build_api_app_with_state;
+    use crawlrs::bootstrap::workers::spawn_common_workers;
     use crawlrs::di::modules::{
         CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule,
         RepositoryModule, ServiceModule, SettingsModule,
     };
     use crawlrs::di::{CrawlRsState, CrawlRsStateExt};
     use crawlrs::workers::manager::{WorkerManager, WorkerManagerConfig};
-    use crawlrs::workers::{AbstractWorker, Worker};
     use std::env;
     use std::sync::Arc;
     use tokio::net::TcpListener;
@@ -80,36 +80,8 @@ mod app {
     ) -> anyhow::Result<()> {
         log::info!("Starting API service...");
 
-        // R-wh-003 / T029：webhook worker 仅在 webhook feature 启用时启动
-        // webhook-off：webhook_worker accessor 不编译，跳过 spawn
-        #[cfg(feature = "webhook")]
-        {
-            let webhook_worker = AbstractWorker::new(
-                app_state.webhook_worker(),
-                std::time::Duration::from_secs(5),
-            );
-            tokio::spawn(async move {
-                webhook_worker.run().await;
-            });
-        }
-
-        // Start backlog worker
-        let backlog_worker = AbstractWorker::new(
-            app_state.backlog_worker(),
-            std::time::Duration::from_secs(settings.timeouts.workers.backlog_interval_seconds),
-        );
-        tokio::spawn(async move {
-            backlog_worker.run().await;
-        });
-
-        // Start expiration worker
-        let expiration_worker = AbstractWorker::new(
-            app_state.expiration_worker(),
-            std::time::Duration::from_secs(3600), // Run every hour
-        );
-        tokio::spawn(async move {
-            expiration_worker.run().await;
-        });
+        // 启动通用 worker（webhook / backlog / expiration）
+        spawn_common_workers(app_state, &settings).await;
 
         // Build API app with dependencies
         let app = build_api_app_with_state(app_state, settings.clone());
@@ -136,18 +108,8 @@ mod app {
     ) -> anyhow::Result<()> {
         log::info!("Starting Worker service...");
 
-        // R-wh-003 / T029：webhook worker 仅在 webhook feature 启用时启动
-        // webhook-off：webhook_worker accessor 不编译，跳过 spawn
-        #[cfg(feature = "webhook")]
-        {
-            let webhook_worker = AbstractWorker::new(
-                app_state.webhook_worker(),
-                std::time::Duration::from_secs(5),
-            );
-            tokio::spawn(async move {
-                webhook_worker.run().await;
-            });
-        }
+        // 启动通用 worker（webhook / backlog / expiration）
+        spawn_common_workers(app_state, &settings).await;
 
         // Create worker manager with dependencies (使用 DI 注入的服务)
         let deps = crawlrs::workers::manager::WorkerManagerDeps {
@@ -179,24 +141,6 @@ mod app {
         let worker_count = settings.workers.count.resolve();
         log::info!("Starting {} worker(s)", worker_count);
         worker_manager.start_workers(worker_count).await;
-
-        // Start backlog worker
-        let backlog_worker = AbstractWorker::new(
-            app_state.backlog_worker(),
-            std::time::Duration::from_secs(settings.timeouts.workers.backlog_interval_seconds),
-        );
-        tokio::spawn(async move {
-            backlog_worker.run().await;
-        });
-
-        // Start expiration worker
-        let expiration_worker = AbstractWorker::new(
-            app_state.expiration_worker(),
-            std::time::Duration::from_secs(3600), // Run every hour
-        );
-        tokio::spawn(async move {
-            expiration_worker.run().await;
-        });
 
         // Keep the main thread alive
         tokio::signal::ctrl_c().await?;

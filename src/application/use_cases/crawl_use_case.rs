@@ -3,10 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use super::crawl_link_processor::{build_crawl_entity, build_initial_crawl_task};
+use super::crawl_state_machine;
 use crate::{
     application::dto::crawl_request::CrawlRequestDto,
     domain::{
-        models::{Crawl, CrawlStatus, ScrapeResult, Task, TaskStatus, TaskType},
+        models::{Crawl, CrawlStatus, ScrapeResult},
         repositories::{
             crawl_repository::CrawlRepository,
             scrape_result_repository::ScrapeResultRepository,
@@ -28,7 +30,6 @@ use chrono::Utc;
 // R-teams-004 / T014: error! 仅在 teams-on 地理限制块中使用，teams-off 时不导入
 #[cfg(feature = "teams")]
 use log::error;
-use serde_json::json;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -199,20 +200,12 @@ impl CrawlUseCase {
         dto: CrawlRequestDto,
         client_ip: &str,
     ) -> Result<Crawl, CrawlUseCaseError> {
-        // 1. 验证请求参数 (URL 验证在 handler 中进行)
-
-        // 简化 config 验证
-        if dto.config.max_depth > 5 {
-            return Err(CrawlUseCaseError::ValidationError(
-                "max_depth must be between 0 and 5".to_string(),
-            ));
-        }
-        if let Some(concurrency) = dto.config.max_concurrency {
-            if concurrency > 100 {
-                return Err(CrawlUseCaseError::ValidationError(
-                    "max_concurrency must be between 1 and 100".to_string(),
-                ));
-            }
+        // 1. 验证请求参数
+        if let Err(reason) = crawl_state_machine::validate_crawl_config(
+            dto.config.max_depth,
+            dto.config.max_concurrency,
+        ) {
+            return Err(CrawlUseCaseError::ValidationError(reason));
         }
 
         // 2. 检查地理限制
@@ -295,54 +288,20 @@ impl CrawlUseCase {
         let now = Utc::now();
 
         // 3. 创建爬取任务实体
-        let url = dto.url.clone();
-        let crawl = Crawl::with_all_fields(
-            crawl_id,
-            team_id,
-            dto.name.unwrap_or_else(|| "Untitled Crawl".to_string()),
-            url.clone(),
-            url,
-            CrawlStatus::Queued,
-            json!(dto.config),
-            1, // total_tasks
-            0, // completed_tasks
-            0, // failed_tasks
-            now,
-            now,
-            None,
-        );
+        let crawl = build_crawl_entity(crawl_id, team_id, &dto, now);
 
         // 4. 保存爬取任务到数据库
         self.crawl_repo.create(&crawl).await?;
 
         // 5. 创建初始任务
-        let initial_task = Task {
-            id: Uuid::new_v4(),         // 生成任务 ID
-            task_type: TaskType::Crawl, // 任务类型为爬取
-            status: TaskStatus::Queued, // 任务状态为排队中
-            priority: 100,              // 默认优先级 100
+        let initial_task = build_initial_crawl_task(
             team_id,
-            api_key_id,   // API密钥ID
-            url: dto.url, // 爬取目标 URL
-            payload: json!({
-                            "crawl_id": crawl_id,
-                            "depth": 0,
-                            "config": dto.config,
-                            "domain_blacklist": restrictions.domain_blacklist
-            }),
-            retry_count: 0,     // 重试次数 0
-            attempt_count: 0,   // 尝试次数 0
-            max_retries: 3,     // 最大重试次数 3
-            scheduled_at: None, // 尚未调度
-            created_at: now,
-            started_at: None,         // 尚未开始
-            completed_at: None,       // 尚未完成
-            crawl_id: Some(crawl_id), // 关联的爬取任务 ID
-            updated_at: now,
-            lock_token: None,           // 尚未加锁
-            lock_expires_at: None,      // 锁未过期
-            expires_at: dto.expires_at, // 任务过期时间
-        };
+            api_key_id,
+            crawl_id,
+            &dto,
+            restrictions.domain_blacklist.unwrap_or_default(),
+            now,
+        );
 
         // 6. 保存初始任务到数据库
         self.task_repo.create(&initial_task).await?;
@@ -415,10 +374,7 @@ impl CrawlUseCase {
                 }
 
                 // 如果任务已完成、失败或已取消，则无需操作
-                if c.status == CrawlStatus::Completed
-                    || c.status == CrawlStatus::Failed
-                    || c.status == CrawlStatus::Cancelled
-                {
+                if !crawl_state_machine::can_cancel(&c.status) {
                     return Ok(()); // 任务已结束
                 }
 
@@ -440,7 +396,8 @@ impl CrawlUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::ScrapeResult;
+    use crate::domain::models::{ScrapeResult, Task, TaskStatus, TaskType};
+    use serde_json::json;
     // R-teams-004 / T014：teams feature 关闭时不导入 teams 相关类型
     // （teams-only 测试已门控，mock 类型也门控）
     #[cfg(feature = "teams")]

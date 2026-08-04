@@ -172,18 +172,21 @@ impl RelevanceScorer {
             .collect();
 
         // Calculate TF-IDF-like weights for query terms
+        // T021: single-pass HashMap counting instead of O(N²) iter().filter().count()
         let total_terms = terms.len();
-        let unique_terms = terms.iter().collect::<std::collections::HashSet<_>>().len();
-        let mut term_weights = HashMap::with_capacity(unique_terms);
+        let mut term_counts: HashMap<&String, f64> = HashMap::new();
+        for term in &terms {
+            *term_counts.entry(term).or_insert(0.0) += 1.0;
+        }
 
         let total_terms_f64 = total_terms as f64;
+        let mut term_weights = HashMap::with_capacity(term_counts.len());
 
-        for term in &terms {
-            let count = terms.iter().filter(|t| t == &term).count() as f64;
+        for (term, count) in &term_counts {
             let tf = count / total_terms_f64;
             // Simple IDF approximation (logarithmic scale)
             let idf = (1.0 + total_terms_f64 / count).ln();
-            term_weights.insert(term.clone(), tf * idf);
+            term_weights.insert((*term).clone(), tf * idf);
         }
 
         Self {

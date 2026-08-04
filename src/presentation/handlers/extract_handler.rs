@@ -1127,8 +1127,9 @@ mod tests {
                     .build()
                     .expect("failed to build tokio runtime for DbPool construction");
                 let _guard = rt.enter();
-                let url = std::env::var("TEST_DATABASE_URL")
-                    .expect("TEST_DATABASE_URL must be set; no hardcoded fallback");
+                let url = crate::common::test_helpers::resolve_test_database_url().expect(
+                    "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
+                );
                 rt.block_on(async {
                     let cfg = dbnexus::DbConfig {
                         url,

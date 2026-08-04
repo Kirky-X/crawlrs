@@ -7,6 +7,15 @@
 //!
 //! This module is only compiled under `#[cfg(test)]` and provides shared
 //! utilities that would otherwise be duplicated across 16+ `src/` modules.
+//!
+//! ## Database resolution order
+//!
+//! 1. `TEST_DATABASE_URL` environment variable (preferred)
+//! 2. `DATABASE_URL` environment variable (CI convention)
+//! 3. **Automatic testcontainers PostgreSQL** — when neither env var is set
+//!    and Docker is available, a PostgreSQL 16-alpine container is started
+//!    automatically with the project's SQL migrations applied. The container
+//!    is shared process-wide and stopped on exit.
 
 #![cfg(test)]
 
@@ -16,33 +25,155 @@ use std::sync::OnceLock;
 use dbnexus::{DbConfig, DbPool};
 use tokio::sync::Mutex;
 
-/// Resolve the test database URL from the environment.
+use testcontainers::core::IntoContainerPort;
+use testcontainers::runners::AsyncRunner;
+use testcontainers::ImageExt;
+use testcontainers_modules::postgres::Postgres;
+
+// ---------------------------------------------------------------------------
+// Testcontainers PostgreSQL — process-wide shared container
+// ---------------------------------------------------------------------------
+
+/// Holds the running testcontainers PostgreSQL instance.
 ///
-/// Tries `TEST_DATABASE_URL` first (preferred), then falls back to
-/// `DATABASE_URL` (CI convention) so the same tests run in both local
-/// and CI environments without duplicate configuration.
+/// Stored in a `OnceLock` so the container lives for the entire test process
+/// and is shared across all tests that need a database.
+static TC_CONTAINER: OnceLock<testcontainers::ContainerAsync<Postgres>> = OnceLock::new();
+
+/// Cached database URL from the testcontainers container.
+static TC_URL: OnceLock<String> = OnceLock::new();
+
+/// Check whether Docker is available on the host.
+fn docker_available() -> bool {
+    std::process::Command::new("docker")
+        .arg("info")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Start a testcontainers PostgreSQL, run SQL migrations, and return the URL.
 ///
-/// Returns `None` when neither variable is set, signaling the caller to
-/// skip the test rather than panic.
+/// Called at most once per process (cached via `OnceLock`).
+fn start_testcontainers_pg() -> String {
+    // Use a dedicated thread with its own tokio runtime to avoid conflicts
+    // with the test runner's runtime.
+    std::thread::scope(|s| {
+        let handle = s.spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build tokio runtime for testcontainers");
+            rt.block_on(async {
+                // Start PostgreSQL 16-alpine container
+                let image = Postgres::default().with_tag("16-alpine");
+                let container = image
+                    .start()
+                    .await
+                    .expect("failed to start testcontainers PostgreSQL");
+                let port = container
+                    .get_host_port_ipv4(5432.tcp())
+                    .await
+                    .expect("failed to get postgres port");
+                let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+
+                // Connect and run SQL migrations
+                use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+                let mut opt = ConnectOptions::new(&url);
+                opt.sqlx_logging(false);
+                let conn = Database::connect(opt)
+                    .await
+                    .expect("failed to connect to testcontainers PostgreSQL for migration");
+
+                let migration_files = [
+                    "migrations/001_initial_schema.sql",
+                    "migrations/002_add_crawl_url_fields.sql",
+                    "migrations/003_add_acquire_next_indexes.sql",
+                    "migrations/004_drop_feature_flags.sql",
+                    "migrations/005_deprecate_legacy_api_keys.sql",
+                ];
+                for file in &migration_files {
+                    let sql = std::fs::read_to_string(file)
+                        .unwrap_or_else(|e| panic!("failed to read migration {file}: {e}"));
+                    conn.execute_unprepared(&sql)
+                        .await
+                        .unwrap_or_else(|e| panic!("failed to run migration {file}: {e}"));
+                }
+
+                // Store container handle (kept alive for process lifetime)
+                let _ = TC_CONTAINER.set(container);
+
+                eprintln!(
+                    "[testcontainers] PostgreSQL started at 127.0.0.1:{} with migrations applied",
+                    port
+                );
+                url
+            })
+        });
+        handle.join().expect("testcontainers thread panicked")
+    })
+}
+
+/// Ensure the testcontainers URL is available, starting the container if needed.
+///
+/// Returns `None` if Docker is not available or container startup fails.
+fn ensure_testcontainers_url() -> Option<&'static str> {
+    if !docker_available() {
+        return None;
+    }
+    TC_URL.get_or_init(start_testcontainers_pg);
+    TC_URL.get().map(|s| s.as_str())
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Resolve the test database URL from the environment or testcontainers.
+///
+/// Resolution order:
+/// 1. `TEST_DATABASE_URL` environment variable (preferred)
+/// 2. `DATABASE_URL` environment variable (CI convention)
+/// 3. Automatic testcontainers PostgreSQL (when Docker is available)
+///
+/// Returns `None` only when no database source is available (no env var AND
+/// no Docker), signaling the caller to skip the test.
 pub fn resolve_test_database_url() -> Option<String> {
-    std::env::var("TEST_DATABASE_URL")
-        .or_else(|_| std::env::var("DATABASE_URL"))
-        .ok()
+    // 1. Try environment variables first (fast path, no container needed)
+    if let Ok(url) = std::env::var("TEST_DATABASE_URL") {
+        return Some(url);
+    }
+    if let Ok(url) = std::env::var("DATABASE_URL") {
+        return Some(url);
+    }
+    // 2. Fall back to testcontainers (starts container on first call)
+    ensure_testcontainers_url().map(|s| s.to_string())
 }
 
 /// Returns `true` when no test database is available and the caller should
 /// skip execution. Prints a `[skip]` notice to stderr so skipped tests are
 /// visible in CI logs.
+///
+/// A database is considered available when either:
+/// - `TEST_DATABASE_URL` / `DATABASE_URL` is set, OR
+/// - Docker is available (testcontainers will auto-start PostgreSQL)
 pub fn skip_if_no_test_db() -> bool {
     if resolve_test_database_url().is_none() {
-        eprintln!("[skip] TEST_DATABASE_URL/DATABASE_URL not set — test requires real DbPool");
+        eprintln!(
+            "[skip] No test database available (TEST_DATABASE_URL not set and Docker unavailable)"
+        );
         return true;
     }
     false
 }
 
-/// Build a real `DbPool` against the URL provided by `TEST_DATABASE_URL`
-/// (or `DATABASE_URL` as fallback).
+/// Build a real `DbPool` against the resolved test database URL.
+///
+/// The URL is resolved in the following order:
+/// 1. `TEST_DATABASE_URL` / `DATABASE_URL` environment variables
+/// 2. Automatic testcontainers PostgreSQL (when Docker is available)
 ///
 /// All repositories in this project consistently use the `admin` role
 /// (see `src/infrastructure/database/repositories/*.rs`), which dbnexus
@@ -52,9 +183,8 @@ pub fn skip_if_no_test_db() -> bool {
 ///
 /// # Panics
 ///
-/// Panics if neither `TEST_DATABASE_URL` nor `DATABASE_URL` is set, or if
-/// pool construction fails. No hardcoded fallback is provided to avoid
-/// credential leaks.
+/// Panics if no database source is available (no env var AND no Docker),
+/// or if pool construction fails.
 pub fn create_test_db_pool() -> Arc<DbPool> {
     std::thread::scope(|s| {
         let handle = s.spawn(|| {
@@ -63,8 +193,9 @@ pub fn create_test_db_pool() -> Arc<DbPool> {
                 .build()
                 .expect("failed to build tokio runtime for DbPool construction");
             let _guard = rt.enter();
-            let url = resolve_test_database_url()
-                .expect("TEST_DATABASE_URL or DATABASE_URL must be set; no hardcoded fallback");
+            let url = resolve_test_database_url().expect(
+                "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
+            );
             rt.block_on(async {
                 let cfg = DbConfig {
                     url,

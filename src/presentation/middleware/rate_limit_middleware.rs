@@ -45,11 +45,15 @@ const IP_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 /// Rate limiting service fail-open behavior
 ///
 /// When the rate limiting service encounters an error:
-/// - If true: Allow the request to pass (fail open) - default for availability
-/// - If false: Reject the request with 503 Service Unavailable - default for security
+/// - If true: Allow the request to pass (fail open) - for availability
+/// - If false: Reject the request with 503 Service Unavailable - for security (default)
 ///
-/// This can be controlled via RATE_LIMIT_FAIL_OPEN environment variable.
-const RATE_LIMIT_FAIL_OPEN: bool = true;
+/// Controlled via RATE_LIMIT_FAIL_OPEN environment variable at startup.
+static RATE_LIMIT_FAIL_OPEN: once_cell::sync::Lazy<bool> = once_cell::sync::Lazy::new(|| {
+    std::env::var("RATE_LIMIT_FAIL_OPEN")
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false)
+});
 
 /// 简单的内存速率限制器（用于测试和 IP 限流）
 #[derive(Clone)]
@@ -377,7 +381,7 @@ pub async fn rate_limit_middleware(
         }
         Err(e) => {
             // SEC-003: 可配置的 fail-open/fail-closed 行为
-            if RATE_LIMIT_FAIL_OPEN {
+            if *RATE_LIMIT_FAIL_OPEN {
                 // Fail-open: 允许请求通过，但记录严重警告
                 // 注意：这可能导致在服务故障时无法限流
                 // 在生产环境中应考虑使用 fail-closed 模式
@@ -914,7 +918,8 @@ mod tests {
         use axum::routing::get;
         use tower::ServiceExt;
 
-        // RATE_LIMIT_FAIL_OPEN is true, so errors should allow the request through
+        // T003: RATE_LIMIT_FAIL_OPEN defaults to false (fail-closed),
+        // so service errors should reject the request with 503
         let mock = Arc::new(MockRateLimitingService::error()) as Arc<dyn RateLimitingService>;
         let app = axum::Router::new()
             .route("/v1/test", get(|| async { "OK" }))
@@ -934,8 +939,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Fail-open: request should pass through
-        assert_eq!(response.status(), StatusCode::OK);
+        // Fail-closed: request should be rejected when rate limit service errors
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]

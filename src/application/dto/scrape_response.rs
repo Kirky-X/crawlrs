@@ -8,6 +8,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+/// Sensitive HTTP header names that must be redacted before returning to clients.
+const SENSITIVE_HEADERS: &[&str] = &[
+    "set-cookie",
+    "authorization",
+    "x-auth-token",
+    "proxy-authorization",
+    "cookie",
+];
+
 /// 爬取响应数据传输对象
 ///
 /// 用于封装服务器对爬取请求的响应结果
@@ -43,6 +52,19 @@ pub struct ScrapeResultDto {
     pub screenshot: Option<String>,
     /// 创建时间
     pub created_at: NaiveDateTime,
+}
+
+impl ScrapeResultDto {
+    /// Remove sensitive headers (e.g. Set-Cookie, Authorization) from the `headers` field.
+    ///
+    /// This prevents accidental leakage of credentials to API consumers.
+    pub fn filter_sensitive_headers(&mut self) {
+        if let Some(Value::Object(ref mut map)) = self.headers {
+            for key in SENSITIVE_HEADERS {
+                map.remove(*key);
+            }
+        }
+    }
 }
 
 /// 爬取状态响应数据传输对象

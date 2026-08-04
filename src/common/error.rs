@@ -10,6 +10,7 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use log::error;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
 
@@ -274,74 +275,57 @@ fn should_show_detailed_errors() -> bool {
 /// - IP 地址
 /// - 端口号
 /// - URL 中的敏感参数
+///
+/// T020: 所有 regex 预编译为模块级 Lazy 静态变量，避免每次调用重新编译。
 fn sanitize_engine_error(error: &str) -> String {
+    static RE_FILE_PATH: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"/[a-zA-Z0-9_/.-]+\.(rs|toml|env|yml|json|txt)").unwrap());
+    static RE_LINE_NUMBER: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"[a-zA-Z0-9_/.-]+\.rs:\d+").unwrap());
+    static RE_INTERNAL_IP: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+        r"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b"
+    ).unwrap()
+    });
+    static RE_INTERNAL_SERVICE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(localhost|127\.0\.0\.1):\d+").unwrap());
+    static RE_PUBLIC_IP: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"\b(?:[0-9]{1,2}|1[01][0-9]|12[0-689]|1[3-9][0-9]|2[0-4][0-9]|25[0-5])\.(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){2}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap()
+    });
+    static RE_URL_PARAMS: Lazy<Regex> = Lazy::new(|| Regex::new(r"\?[^#\s]+").unwrap());
+    static RE_URL_CREDS: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(https?://)[^:]+:[^@]+@").unwrap());
+    static RE_DB_PASSWORD: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(postgres|mysql|mongodb|redis)://[^:]+:[^@]+@").unwrap());
+    static RE_API_KEY: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)(api[_-]?key|token|secret|password|auth)[=:\s]+[^\s&]+").unwrap()
+    });
+
     let mut sanitized = error.to_string();
 
-    // 移除文件路径 (如 /home/dev/crawlrs/src/..., /app/...)
-    let file_path_pattern = Regex::new(r"/[a-zA-Z0-9_/.-]+\.(rs|toml|env|yml|json|txt)")
-        .expect("Invalid regex pattern for file paths");
-    sanitized = file_path_pattern
+    sanitized = RE_FILE_PATH
         .replace_all(&sanitized, "[FILE_PATH]")
         .to_string();
-
-    // 移除行号信息 (如 "at line 42", "src/file.rs:42")
-    let line_number_pattern =
-        Regex::new(r"[a-zA-Z0-9_/.-]+\.rs:\d+").expect("Invalid regex pattern for line numbers");
-    sanitized = line_number_pattern
+    sanitized = RE_LINE_NUMBER
         .replace_all(&sanitized, "[LOCATION]")
         .to_string();
-
-    // 移除内部 IP 地址（私有 IP 段）
-    let internal_ip_pattern = Regex::new(
-        r"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b"
-    ).expect("Invalid regex pattern for internal IPs");
-    sanitized = internal_ip_pattern
+    sanitized = RE_INTERNAL_IP
         .replace_all(&sanitized, "[INTERNAL_IP]")
         .to_string();
-
-    // 移除 localhost 和 127.0.0.1 后的端口号
-    let internal_service_pattern = Regex::new(r"(localhost|127\.0\.0\.1):\d+")
-        .expect("Invalid regex pattern for internal services");
-    sanitized = internal_service_pattern
+    sanitized = RE_INTERNAL_SERVICE
         .replace_all(&sanitized, "$1:[PORT]")
         .to_string();
-
-    // 移除公网 IP 地址（保留格式但不暴露具体 IP）
-    // 排除 127.x.x.x（loopback 已由 internal_service_pattern 处理端口脱敏）
-    // Rust regex crate 不支持 look-ahead，用 alternation 排除首段为 127 的情况：
-    //   首段匹配 0-126 或 128-255（[0-9]{1,2}=0-99, 1[01][0-9]=100-119,
-    //   12[0-689]=120-126/128/129, 1[3-9][0-9]=130-199, 2[0-4][0-9]=200-249, 25[0-5]=250-255）
-    let public_ip_pattern = Regex::new(r"\b(?:[0-9]{1,2}|1[01][0-9]|12[0-689]|1[3-9][0-9]|2[0-4][0-9]|25[0-5])\.(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){2}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b")
-        .expect("Invalid regex pattern for public IPs");
-    sanitized = public_ip_pattern
-        .replace_all(&sanitized, "[IP]")
-        .to_string();
-
-    // 移除 URL 中的查询参数（可能包含敏感信息）
-    let url_params_pattern =
-        Regex::new(r"\?[^#\s]+").expect("Invalid regex pattern for URL parameters");
-    sanitized = url_params_pattern
+    sanitized = RE_PUBLIC_IP.replace_all(&sanitized, "[IP]").to_string();
+    sanitized = RE_URL_PARAMS
         .replace_all(&sanitized, "?[PARAMS_REDACTED]")
         .to_string();
-
-    // 移除 URL 中的用户名和密码
-    let url_credentials_pattern =
-        Regex::new(r"(https?://)[^:]+:[^@]+@").expect("Invalid regex pattern for URL credentials");
-    sanitized = url_credentials_pattern
+    sanitized = RE_URL_CREDS
         .replace_all(&sanitized, "$1[CREDENTIALS_REDACTED]@")
         .to_string();
-
-    // 移除数据库连接字符串中的密码
-    let db_password_pattern = Regex::new(r"(postgres|mysql|mongodb|redis)://[^:]+:[^@]+@")
-        .expect("Invalid regex pattern for database passwords");
-    sanitized = db_password_pattern
+    sanitized = RE_DB_PASSWORD
         .replace_all(&sanitized, "$1://[USER]:[PASSWORD]@")
         .to_string();
-
-    // 移除 API 密钥模式（如 api_key=xxx, token=xxx）
-    let api_key_pattern = Regex::new(r"(?i)(api[_-]?key|token|secret|password|auth)[=:\s]+[^\s&]+")
-        .expect("Invalid regex pattern for API keys");
-    sanitized = api_key_pattern
+    sanitized = RE_API_KEY
         .replace_all(&sanitized, "$1=[REDACTED]")
         .to_string();
 
@@ -349,52 +333,6 @@ fn sanitize_engine_error(error: &str) -> String {
     if sanitized.trim().is_empty() || sanitized.len() < 5 {
         return "Engine error occurred".to_string();
     }
-
-    sanitized
-}
-
-/// 脱敏通用错误信息
-///
-/// 对所有错误消息进行脱敏处理，移除敏感信息
-#[allow(dead_code)]
-fn sanitize_error_message(msg: &str) -> String {
-    let mut sanitized = msg.to_string();
-
-    // 移除表名和列名模式 (如 "table: users", "column: email")
-    let table_column_pattern = Regex::new(r#"(?i)(table|column|field):\s*[\w."']+"#)
-        .expect("Invalid regex pattern for table/column names");
-    sanitized = table_column_pattern
-        .replace_all(&sanitized, "[REDACTED]")
-        .to_string();
-
-    // 移除 SQL 查询片段
-    let sql_pattern = Regex::new(r#"(?i)(SQL|query|statement):\s*[^,\]\}]+"#)
-        .expect("Invalid regex pattern for SQL queries");
-    sanitized = sql_pattern
-        .replace_all(&sanitized, "[SQL_REDACTED]")
-        .to_string();
-
-    // 移除文件路径
-    let file_path_pattern = Regex::new(r"/[a-zA-Z0-9_/.-]+\.(rs|toml|env|yml|json)")
-        .expect("Invalid regex pattern for file paths");
-    sanitized = file_path_pattern
-        .replace_all(&sanitized, "[FILE_PATH_REDACTED]")
-        .to_string();
-
-    // 移除内部 IP 地址
-    let internal_ip_pattern = Regex::new(
-        r"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b"
-    ).expect("Invalid regex pattern for internal IPs");
-    sanitized = internal_ip_pattern
-        .replace_all(&sanitized, "[INTERNAL_IP_REDACTED]")
-        .to_string();
-
-    // 移除数据库连接字符串中的密码
-    let db_password_pattern = Regex::new(r"(postgres|mysql|mongodb)://[^:]+:[^@]+@")
-        .expect("Invalid regex pattern for database passwords");
-    sanitized = db_password_pattern
-        .replace_all(&sanitized, "$1://[USER]:[PASSWORD]@")
-        .to_string();
 
     sanitized
 }
@@ -855,40 +793,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_error_message_removes_table_names() {
-        let msg = "Database error: table: users column: email not found";
-        let sanitized = sanitize_error_message(msg);
-        assert!(sanitized.contains("[REDACTED]"));
-        assert!(!sanitized.contains("users"));
-        assert!(!sanitized.contains("email"));
-    }
-
-    #[test]
-    fn test_sanitize_error_message_removes_sql_queries() {
-        let msg = "Error: SQL: SELECT * FROM users WHERE password = 'secret'";
-        let sanitized = sanitize_error_message(msg);
-        assert!(sanitized.contains("[SQL_REDACTED]"));
-        assert!(!sanitized.contains("SELECT"));
-        assert!(!sanitized.contains("password"));
-    }
-
-    #[test]
-    fn test_sanitize_error_message_removes_db_passwords() {
-        let msg = "Connection failed: postgres://user:password123@localhost:5432";
-        let sanitized = sanitize_error_message(msg);
-        assert!(!sanitized.contains("password123"));
-        assert!(sanitized.contains("[PASSWORD]"));
-    }
-
-    #[test]
-    fn test_sanitize_error_message_preserves_safe_content() {
-        let msg = "Invalid input: email format is incorrect";
-        let sanitized = sanitize_error_message(msg);
-        assert!(sanitized.contains("Invalid input"));
-        assert!(sanitized.contains("email format"));
-    }
-
-    #[test]
     fn test_should_show_detailed_errors_in_dev() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("CRAWLRS_ENV");
@@ -953,21 +857,6 @@ mod tests {
         assert!(sanitized.contains("[FILE_PATH]") || sanitized.contains("[LOCATION]"));
         assert!(sanitized.contains("[INTERNAL_IP]"));
         assert!(sanitized.contains("[REDACTED]"));
-    }
-
-    #[test]
-    fn test_sanitize_error_message_empty_input() {
-        let msg = "";
-        let sanitized = sanitize_error_message(msg);
-        assert_eq!(sanitized, "");
-    }
-
-    #[test]
-    fn test_sanitize_error_message_very_long_input() {
-        let msg = "A".repeat(10000);
-        let sanitized = sanitize_error_message(&msg);
-        // 应该仍然处理长输入
-        assert!(sanitized.contains('A'));
     }
 
     // =============================================================================

@@ -82,13 +82,12 @@ pub trait GeoLocationService: Send + Sync {
 ///
 /// * `bool` - 如果IP在CIDR范围内返回true，否则返回false
 pub fn is_ip_in_cidr(ip: &IpAddr, cidr: &str) -> bool {
-    let parts: Vec<&str> = cidr.split('/').collect();
-    if parts.len() != 2 {
-        return false;
-    }
-
-    let network_str = parts[0];
-    let prefix_length = parts[1].parse::<u8>().unwrap_or(0);
+    // T023: use split_once instead of split().collect::<Vec>()
+    let (network_str, prefix_str) = match cidr.split_once('/') {
+        Some(pair) => pair,
+        None => return false,
+    };
+    let prefix_length = prefix_str.parse::<u8>().unwrap_or(0);
 
     match (ip, network_str.parse::<IpAddr>()) {
         (IpAddr::V4(ip_v4), Ok(IpAddr::V4(network_v4))) => {

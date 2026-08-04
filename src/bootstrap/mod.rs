@@ -22,6 +22,8 @@ pub mod config;
 pub mod engines;
 pub mod error;
 pub mod infrastructure;
+pub mod route_groups;
 pub mod routes;
 pub mod services;
 pub mod telemetry;
+pub mod workers;

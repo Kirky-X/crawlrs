@@ -107,6 +107,7 @@ pub fn init_engines(
             &engine_config.flaresolverr_tls.url,
             proxy_url,
             tls_mrt,
+            timeout_seconds,
         )));
     }
 
@@ -121,6 +122,7 @@ pub fn init_engines(
             &engine_config.flaresolverr_cdp.url,
             proxy_url,
             cdp_mrt,
+            timeout_seconds,
         )));
     }
 
@@ -134,6 +136,7 @@ pub fn init_engines(
             http_client.clone(),
             &engine_config.flaresolverr.url,
             cdp_mrt,
+            timeout_seconds,
         )));
     }
 

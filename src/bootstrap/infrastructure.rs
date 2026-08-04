@@ -139,7 +139,13 @@ pub fn init_http_client(
 pub fn init_repositories(db: Arc<DatabasePool>, settings: &Settings) -> Repositories {
     let task_repo = Arc::new(TaskRepositoryImpl::new(
         db.inner().clone(),
-        chrono::Duration::seconds(settings.concurrency.task_lock_duration_seconds),
+        chrono::Duration::seconds(
+            settings
+                .concurrency
+                .task_lock_duration_seconds
+                .try_into()
+                .expect("task_lock_duration_seconds exceeds i64 range"),
+        ),
     ));
     let result_repo = Arc::new(ScrapeResultRepositoryImpl::new(db.inner().clone()));
     let crawl_repo = Arc::new(CrawlRepositoryImpl::new(db.inner().clone()));
@@ -228,6 +234,15 @@ pub async fn init_oxcache(settings: &Settings) -> Result<Option<Arc<SearchCache>
 ///
 /// Returns an initialized cache service as a trait object.
 pub async fn init_cache_service(settings: &Settings) -> Result<Arc<dyn CacheService>> {
+    // T027: skip cache initialization when cache is disabled, consistent with init_oxcache
+    if !settings.cache.enabled {
+        info!("Cache is disabled, skipping cache service initialization");
+        // Return a no-op cache service that always misses
+        let service = OxcacheService::build(1, std::time::Duration::from_secs(1))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to build minimal cache service: {e}"))?;
+        return Ok(Arc::new(service));
+    }
     let capacity = settings.cache.memory.capacity;
     let ttl = std::time::Duration::from_secs(settings.cache.memory.ttl_seconds);
     let service = OxcacheService::build(capacity, ttl)
@@ -289,16 +304,19 @@ async fn init_dns_cache_service(settings: &Settings) -> Option<Arc<DnsCacheServi
     )
     .await
     {
-        Ok(cache) => {
-            info!(
-                "DNS cache initialized for IPv4 resolver (capacity: {}, ttl: {}s)",
-                settings.cache.memory.capacity, settings.cache.memory.ttl_seconds
-            );
-            Some(Arc::new(DnsCacheService::new(
-                cache,
-                settings.cache.memory.ttl_seconds,
-            )))
-        }
+        Ok(cache) => match DnsCacheService::new(cache, settings.cache.memory.ttl_seconds) {
+            Ok(service) => {
+                info!(
+                    "DNS cache initialized for IPv4 resolver (capacity: {}, ttl: {}s)",
+                    settings.cache.memory.capacity, settings.cache.memory.ttl_seconds
+                );
+                Some(Arc::new(service))
+            }
+            Err(e) => {
+                log::warn!("Failed to create DNS resolver: {}. Using system DNS.", e);
+                None
+            }
+        },
         Err(e) => {
             log::warn!("Failed to create DNS cache: {}. Using system DNS.", e);
             None

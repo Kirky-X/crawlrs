@@ -400,8 +400,7 @@ mod tests {
     async fn test_falls_back_to_auth_state_api_key_id() {
         // When no token_str extension is present but AuthState is, the middleware
         // should use api_key_id from AuthState as the API key.
-        if std::env::var("TEST_DATABASE_URL").is_err() {
-            eprintln!("skipping: TEST_DATABASE_URL not set (test constructs AuthState with a real DbPool)");
+        if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
         let service = Arc::new(MockRateLimitingService::new(RateLimitResult::Allowed));
@@ -419,8 +418,7 @@ mod tests {
     #[tokio::test]
     async fn test_token_str_takes_precedence_over_auth_state() {
         // When both token_str and AuthState are present, token_str wins.
-        if std::env::var("TEST_DATABASE_URL").is_err() {
-            eprintln!("skipping: TEST_DATABASE_URL not set (test constructs AuthState with a real DbPool)");
+        if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
         let service = Arc::new(MockRateLimitingService::new(RateLimitResult::Allowed));

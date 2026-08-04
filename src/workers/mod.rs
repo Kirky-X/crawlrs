@@ -21,6 +21,10 @@ pub mod coalesce_coordinator;
 ///
 /// URL 过滤、评分、优先级队列与自适应停止条件。
 pub mod crawl;
+/// 爬取链接提取器（T026 拆分）
+///
+/// 从 `scrape_worker.rs` 提取的 robots.txt 检查、完成状态更新和链接提取入队。
+pub mod crawl_link_extractor;
 pub mod errors;
 pub mod expiration_worker;
 pub mod manager;
@@ -30,6 +34,8 @@ pub mod manager;
 #[cfg(feature = "markdown")]
 pub mod markdown_post_processor;
 pub mod scheduler;
+pub mod scrape_executor;
+pub mod scrape_response_builder;
 pub mod scrape_worker;
 pub mod task_state_machine;
 /// R-wh-001 / T026：webhook feature 关闭时不编译此模块

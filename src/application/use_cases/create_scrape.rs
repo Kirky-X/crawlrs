@@ -18,7 +18,7 @@ use crate::application::dto::scrape_request::{ScrapeActionDto, ScrapeRequestDto}
 use crate::domain::models::DomainError;
 use crate::engines::engine_client::{
     EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
-    ScreenshotConfig, ScrollDirection,
+    ScreenshotConfig, ScrollDirection, WaitFor,
 };
 
 // === Section: Use Case Definition ===
@@ -115,7 +115,9 @@ impl CreateScrapeUseCase {
             block_media: false,
             session_id: None,
             cache_mode,
-            wait_for: None,
+            wait_for: options
+                .wait_for
+                .map(|ms| WaitFor::DomStable(Duration::from_millis(ms))),
         };
 
         Ok(ScrapeRequest::new(dto.url).with_options(scrape_options))

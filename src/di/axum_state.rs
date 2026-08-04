@@ -864,8 +864,11 @@ mod tests {
     ///
     /// Returns Err if `TEST_DATABASE_URL` is not set or kit construction fails.
     async fn build_app_state_with_test_db() -> anyhow::Result<CrawlRsState> {
-        let db_url = std::env::var("TEST_DATABASE_URL")
-            .map_err(|_| anyhow::anyhow!("TEST_DATABASE_URL not set"))?;
+        let db_url = crate::common::test_helpers::resolve_test_database_url().ok_or_else(|| {
+            anyhow::anyhow!(
+                "No test database available: set TEST_DATABASE_URL or ensure Docker is running"
+            )
+        })?;
         let settings = Arc::new(tcf::settings_with_urls(&db_url)?);
 
         let mut kit = AsyncKit::new();
@@ -897,11 +900,7 @@ mod tests {
 
     /// Skip helper for tests that require `TEST_DATABASE_URL`.
     fn skip_if_no_test_db() -> bool {
-        if std::env::var("TEST_DATABASE_URL").is_err() {
-            eprintln!("[skip] TEST_DATABASE_URL not set — test requires real DbPool");
-            return true;
-        }
-        false
+        crate::common::test_helpers::skip_if_no_test_db()
     }
 
     /// Cover the `impl CrawlRsStateExt for Arc<CrawlRsState>` delegation block.

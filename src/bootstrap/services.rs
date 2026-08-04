@@ -231,7 +231,7 @@ pub async fn init_rate_limiting_service(
             strategy: ConcurrencyStrategy::DistributedSemaphore,
             max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
             max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
-            lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds as u64,
+            lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds,
             enabled: true,
         };
 
@@ -1012,7 +1012,7 @@ mod tests {
     // ========== init_team_semaphore tests ==========
 
     /// 构造测试用 Settings（ConcurrencySettings 自定义字段）
-    fn make_test_settings(default_team_limit: i64, adaptive_enabled: bool) -> Settings {
+    fn make_test_settings(default_team_limit: u64, adaptive_enabled: bool) -> Settings {
         let mut settings = Settings::default();
         settings.concurrency.default_team_limit = default_team_limit;
         settings.concurrency.adaptive_enabled = adaptive_enabled;

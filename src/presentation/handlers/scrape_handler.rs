@@ -248,16 +248,21 @@ pub async fn get_scrape_status(
             // Fetch scrape result if task is completed
             let result_data = if task.status == TaskStatus::Completed {
                 match result_repository.find_by_task_id(task.id).await {
-                    Ok(Some(result)) => Some(ScrapeResultDto {
-                        content: result.content,
-                        status_code: result.status_code as u16,
-                        content_type: Some(result.content_type),
-                        response_time_ms: result.response_time_ms,
-                        headers: Some(result.headers),
-                        meta_data: Some(result.meta_data),
-                        screenshot: result.screenshot,
-                        created_at: result.created_at.naive_utc(),
-                    }),
+                    Ok(Some(result)) => {
+                        let mut dto = ScrapeResultDto {
+                            content: result.content,
+                            status_code: result.status_code as u16,
+                            content_type: Some(result.content_type),
+                            response_time_ms: result.response_time_ms,
+                            headers: Some(result.headers),
+                            meta_data: Some(result.meta_data),
+                            screenshot: result.screenshot,
+                            created_at: result.created_at.naive_utc(),
+                        };
+                        // T010: redact sensitive headers before returning to client
+                        dto.filter_sensitive_headers();
+                        Some(dto)
+                    }
                     Ok(None) => {
                         error!("No scrape result found for completed task {}", task.id);
                         None

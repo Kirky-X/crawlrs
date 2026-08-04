@@ -57,11 +57,7 @@ mod tests {
     use uuid::Uuid;
 
     fn skip_if_no_test_db() -> bool {
-        if std::env::var("TEST_DATABASE_URL").is_err() {
-            eprintln!("[skip] TEST_DATABASE_URL not set — test requires real DbPool for AuthState");
-            return true;
-        }
-        false
+        crate::common::test_helpers::skip_if_no_test_db()
     }
 
     /// 构造带 `AuthState`（含 team_id）的测试请求。
