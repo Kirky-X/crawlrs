@@ -391,6 +391,8 @@ Scrape a single web page.
 | `use_fire_engine` | boolean | false | Force use FlareSolverr engine |
 | `cache_mode` | string | `"enabled"` | Cache read/write mode: `enabled` (default, normal R/W), `disabled` (cache fully off), `read_only` (hit returns, miss fetches without writing), `bypass` (skip read, normal write — emergency untrusted-cache scenario) |
 | `bypass_cache` | boolean | false | Emergency cache bypass shortcut. `true` overrides `cache_mode` to `bypass` (skip cache read, normal write-back). Use when runtime cache data is untrusted |
+| `block_ads` | boolean | false | **0.2.0** Block ad/tracker domain requests via CDP interception (browser engines only). Matches `intercept::AD_DOMAIN_BLACKLIST` |
+| `block_media` | boolean | false | **0.2.0** Block media resources (image/media/font) via CDP interception (browser engines only) |
 
 **Action Types:**
 

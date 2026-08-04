@@ -1119,6 +1119,15 @@ gated `engine-playwright`：
 - `injector.rs`：`InjectPhase{BeforeLoad,AfterLoad}` + `JsInjector::stealth()`/`cleanup()`/`apply(page,phase)`
 - Playwright 引擎导航前注入 stealth，加载后注入 cleanup
 
+### Request Interception (`src/engines/intercept.rs`)
+
+gated `engine-playwright`，T033 / R-jsrender-003：
+
+- 广告/追踪域名黑名单（`AD_DOMAIN_BLACKLIST`）：命中请求经 CDP `Fetch.failRequest` 中止
+- 可选媒体资源拦截（`ResourceType::{Image, Media, Font}`）：由 `ScrapeOptions.block_media` 开关
+- 拦截计数可观测
+- `ScrapeOptions.block_ads` / `ScrapeOptions.block_media` 控制开关，经 `InternalScrapeRequest` 桥接至 Playwright 引擎
+
 ### Request Coalescing (`src/utils/coalesce.rs`)
 
 移植 spider `coalesce.rs`：`RequestCoalescer{ in_flight: Arc<DashMap<String, InFlightEntry>> }`：
