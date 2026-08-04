@@ -12,13 +12,19 @@ pub mod api_key_handler;
 /// 包含各个API端点的具体处理逻辑
 /// 每个处理器负责处理特定类型的HTTP请求并返回响应
 pub mod audit_handler;
+pub mod crawl_commands;
 pub mod crawl_handler;
+pub mod crawl_queries;
 pub mod extract_handler;
 pub mod metrics_handler;
 pub mod response_builder;
+pub mod scrape_commands;
 pub mod scrape_handler;
+pub mod scrape_queries;
 pub mod search_handler;
+pub mod task_commands;
 pub mod task_handler;
+pub mod task_queries;
 // R-teams-002 / T012：teams feature 关闭时不编译 team_handler 模块
 // （/v1/teams/* 路由也不会注册，见 bootstrap::routes）
 #[cfg(feature = "teams")]

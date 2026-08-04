@@ -3,8 +3,11 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+pub mod app_deps;
 /// 请求提取器模块
 ///
 /// 提供从HTTP请求中提取数据的工具
 /// 用于解析和验证请求中的参数和数据
 pub mod team_id;
+
+pub use app_deps::AppDeps;
