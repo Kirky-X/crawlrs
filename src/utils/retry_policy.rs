@@ -16,7 +16,7 @@ pub struct RetryPolicy {
     /// 最大退避时间
     pub max_backoff: Duration,
     /// 退避乘数（仅在 `exponential_backoff=true` 时生效；目前固定 2.0，
-    /// 因 `backoff::backoff_delay` 用 `2^attempt` 标准 full-jitter 公式，
+    /// 因 backon `ExponentialBuilder` 用 `2^attempt` 标准指数退避公式，
     /// 此字段保留用于未来自定义乘数扩展）
     pub backoff_multiplier: f64,
     /// 抖动因子 (0.0-1.0)；保留用于向后兼容字段读取，
@@ -74,10 +74,10 @@ impl RetryPolicy {
         }
     }
 
-    /// 计算下次重试的退避时间（T024：改用 full-jitter）
+    /// 计算下次重试的退避时间（T024：基于 backon ExponentialBuilder）
     ///
-    /// - `attempt=0` 退化为 `initial_backoff`（保护边界，spider 公式 attempt-1 不合法）
-    /// - 启用 jitter 时调用 [`backoff::backoff_delay`]（full-jitter：`[0, cap]` 均匀采样）
+    /// - `attempt=0` 退化为 `initial_backoff`（保护边界）
+    /// - 启用 jitter 时调用 [`backoff::backoff_delay`]（backon 指数退避 + jitter）
     /// - 禁用 jitter 时返回 deterministic cap（指数 + max cap，无随机）
     ///
     /// 调用方约定：`attempt=1` 表示第一次重试，对应 spider 公式 `attempt=0`。
@@ -170,22 +170,22 @@ mod tests {
 
     #[test]
     fn test_calculate_backoff_with_jitter() {
-        // T024: 改用 full-jitter（[0, cap] 均匀采样）替代对称 ±10% jitter
+        // T024：backon 使用 multiplicative jitter（非 full-jitter），
+        // 结果可超过原始指数值，但严格 cap 在 max_backoff（由 backoff_delay 保证）。
         let mut policy = RetryPolicy::standard();
         policy.enable_jitter = true;
 
-        // attempt=2 → spider_attempt=1 → cap = min(1000*2^1, 60000) = 2000ms
-        // full-jitter: 均匀采样 [0, 2000ms]
-        let expected_cap = Duration::from_millis(2000);
+        // 硬上限 = max_backoff = 60s
+        let max_backoff = policy.max_backoff;
 
-        // 采样多次验证结果 ∈ [0, cap]（Duration 本身非负，只需校验上界）
+        // 采样多次验证结果 ∈ [0, max_backoff]
         for _ in 0..1000 {
             let backoff = policy.calculate_backoff(2);
             assert!(
-                backoff <= expected_cap,
-                "full-jitter backoff {:?} exceeds cap {:?}",
+                backoff <= max_backoff,
+                "backoff {:?} exceeds max_backoff {:?}",
                 backoff,
-                expected_cap
+                max_backoff
             );
         }
     }
