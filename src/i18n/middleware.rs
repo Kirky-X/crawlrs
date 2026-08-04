@@ -9,12 +9,7 @@
 
 use std::sync::Arc;
 
-use axum::{
-    extract::Request,
-    middleware::Next,
-    response::Response,
-    Extension,
-};
+use axum::{extract::Request, middleware::Next, response::Response, Extension};
 
 use super::bundle::I18nBundle;
 use super::locale::{negotiate_locale, parse_accept_language};
@@ -36,7 +31,11 @@ pub async fn i18n_middleware(
         .and_then(|v| v.to_str().ok())
         .map(|header| {
             let preferred = parse_accept_language(header);
-            negotiate_locale(&preferred, bundle.supported_locales(), bundle.default_locale())
+            negotiate_locale(
+                &preferred,
+                bundle.supported_locales(),
+                bundle.default_locale(),
+            )
         })
         .unwrap_or_else(|| bundle.default_locale().clone());
 

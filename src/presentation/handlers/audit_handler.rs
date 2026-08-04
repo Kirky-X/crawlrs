@@ -542,9 +542,15 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -562,9 +568,15 @@ mod tests {
             team_id: Some(team_id),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -581,9 +593,15 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -600,9 +618,15 @@ mod tests {
             team_id: Some(Uuid::new_v4()),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -618,9 +642,15 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -636,9 +666,15 @@ mod tests {
             team_id: Some(Uuid::new_v4()),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -654,9 +690,15 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -672,9 +714,15 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -691,9 +739,15 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -716,9 +770,15 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
@@ -736,9 +796,15 @@ mod tests {
             team_id: Some(Uuid::new_v4()),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
@@ -757,9 +823,15 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -778,9 +850,15 @@ mod tests {
             team_id: Some(team_id),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -798,9 +876,15 @@ mod tests {
             team_id: None,
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -818,9 +902,15 @@ mod tests {
             team_id: Some(Uuid::new_v4()),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -839,9 +929,15 @@ mod tests {
             team_id: Some(Uuid::new_v4()),
         };
 
-        let response = get_audit_logs(Extension(mock), Extension(auth_state), Extension(test_locale()), Extension(test_bundle()), Query(query))
-            .await
-            .into_response();
+        let response = get_audit_logs(
+            Extension(mock),
+            Extension(auth_state),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Query(query),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }

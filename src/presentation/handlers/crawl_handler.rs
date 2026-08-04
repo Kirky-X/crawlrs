@@ -17,10 +17,12 @@ use crate::application::dto::crawl_request::CrawlRequestDto;
 use crate::application::use_cases::crawl_use_case::CrawlUseCaseError;
 use crate::common::constants::crawl_task::CRAWL_TASK_CREDITS_COST;
 use crate::common::constants::crawl_task::DEFAULT_TIMEOUT_MS;
-use crate::presentation::handlers::extract_task_ids;
 use crate::i18n::{I18nBundle, Locale};
+use crate::presentation::handlers::extract_task_ids;
 use crate::presentation::handlers::response_builder::errors;
-use crate::presentation::handlers::response_builder::{error_response, errors_locale, success_response};
+use crate::presentation::handlers::response_builder::{
+    error_response, errors_locale, success_response,
+};
 use crate::presentation::handlers::task_handler::handle_sync_wait_and_get_status;
 use crate::presentation::handlers::task_handler::SyncWaitResult;
 use crate::presentation::helpers::rate_limit_helper::check_rate_limit;
@@ -1977,9 +1979,15 @@ mod tests {
         );
         let auth = make_auth_state_with_team(team_id);
 
-        let response = get_crawl(Extension(state), Extension(auth), Extension(test_locale()), Extension(test_bundle()), Path(crawl_id))
-            .await
-            .into_response();
+        let response = get_crawl(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(crawl_id),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -1994,9 +2002,15 @@ mod tests {
         );
         let auth = make_auth_state();
 
-        let response = get_crawl(Extension(state), Extension(auth), Extension(test_locale()), Extension(test_bundle()), Path(Uuid::new_v4()))
-            .await
-            .into_response();
+        let response = get_crawl(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(Uuid::new_v4()),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -2014,9 +2028,15 @@ mod tests {
         // Different team_id → use_case returns Ok(None) → 404
         let auth = make_auth_state_with_team(Uuid::new_v4());
 
-        let response = get_crawl(Extension(state), Extension(auth), Extension(test_locale()), Extension(test_bundle()), Path(crawl_id))
-            .await
-            .into_response();
+        let response = get_crawl(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(crawl_id),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -2031,9 +2051,15 @@ mod tests {
         );
         let auth = make_auth_state();
 
-        let response = get_crawl(Extension(state), Extension(auth), Extension(test_locale()), Extension(test_bundle()), Path(Uuid::new_v4()))
-            .await
-            .into_response();
+        let response = get_crawl(
+            Extension(state),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            Path(Uuid::new_v4()),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }

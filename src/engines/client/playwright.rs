@@ -301,7 +301,10 @@ impl PlaywrightBrowserManagerComponent {
                 Ok(Some(path))
             }
             Err(e) => {
-                log::warn!("Browser download failed: {}, falling back to system path", e);
+                log::warn!(
+                    "Browser download failed: {}, falling back to system path",
+                    e
+                );
                 Ok(None)
             }
         }

@@ -25,7 +25,9 @@ use crate::{
     },
     domain::services::rate_limiting_service::RateLimitingService,
     i18n::{I18nBundle, Locale},
-    presentation::handlers::response_builder::{errors, errors_locale, success_response, ApiResponse},
+    presentation::handlers::response_builder::{
+        errors, errors_locale, success_response, ApiResponse,
+    },
     presentation::handlers::task_handler::handle_sync_wait_and_get_status,
     presentation::helpers::rate_limit_helper::check_rate_limit,
     presentation::helpers::ssrf::validate_url,
@@ -1866,9 +1868,15 @@ mod tests {
         let repo = Arc::new(MockTaskRepository::with_task(task));
         let auth = make_auth_state_with_team(team_id);
 
-        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth), Extension(test_locale()), Extension(test_bundle()))
-            .await
-            .into_response();
+        let response = cancel_scrape(
+            Path(task_id),
+            Extension(repo),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -1879,9 +1887,15 @@ mod tests {
         let auth = make_auth_state();
         let task_id = Uuid::new_v4();
 
-        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth), Extension(test_locale()), Extension(test_bundle()))
-            .await
-            .into_response();
+        let response = cancel_scrape(
+            Path(task_id),
+            Extension(repo),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -1894,9 +1908,15 @@ mod tests {
         // Different team_id
         let auth = make_auth_state_with_team(Uuid::new_v4());
 
-        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth), Extension(test_locale()), Extension(test_bundle()))
-            .await
-            .into_response();
+        let response = cancel_scrape(
+            Path(task_id),
+            Extension(repo),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
@@ -1907,9 +1927,15 @@ mod tests {
         let auth = make_auth_state();
         let task_id = Uuid::new_v4();
 
-        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth), Extension(test_locale()), Extension(test_bundle()))
-            .await
-            .into_response();
+        let response = cancel_scrape(
+            Path(task_id),
+            Extension(repo),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -1927,9 +1953,15 @@ mod tests {
         }
         let auth = make_auth_state_with_team(team_id);
 
-        let response = cancel_scrape(Path(task_id), Extension(repo), Extension(auth), Extension(test_locale()), Extension(test_bundle()))
-            .await
-            .into_response();
+        let response = cancel_scrape(
+            Path(task_id),
+            Extension(repo),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+        )
+        .await
+        .into_response();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }

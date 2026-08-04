@@ -145,26 +145,25 @@ impl DomainError {
                 "domain-error-team-not-found",
                 &[("team_id", FluentValue::from(team_id.to_string()))],
             ),
-            DomainError::InsufficientCredits { required, available } => {
-                bundle.translate_with_args(
-                    locale,
-                    "domain-error-insufficient-credits",
-                    &[
-                        ("required", FluentValue::from(*required)),
-                        ("available", FluentValue::from(*available)),
-                    ],
-                )
-            }
-            DomainError::ConcurrencyLimitExceeded { current, limit } => {
-                bundle.translate_with_args(
-                    locale,
-                    "domain-error-concurrency-limit",
-                    &[
-                        ("current", FluentValue::from(*current as i64)),
-                        ("limit", FluentValue::from(*limit as i64)),
-                    ],
-                )
-            }
+            DomainError::InsufficientCredits {
+                required,
+                available,
+            } => bundle.translate_with_args(
+                locale,
+                "domain-error-insufficient-credits",
+                &[
+                    ("required", FluentValue::from(*required)),
+                    ("available", FluentValue::from(*available)),
+                ],
+            ),
+            DomainError::ConcurrencyLimitExceeded { current, limit } => bundle.translate_with_args(
+                locale,
+                "domain-error-concurrency-limit",
+                &[
+                    ("current", FluentValue::from(*current as i64)),
+                    ("limit", FluentValue::from(*limit as i64)),
+                ],
+            ),
             DomainError::InvalidUrl { url } => bundle.translate_with_args(
                 locale,
                 "domain-error-invalid-url",

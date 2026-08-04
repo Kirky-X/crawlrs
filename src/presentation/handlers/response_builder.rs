@@ -371,11 +371,7 @@ pub mod errors_locale {
 
     /// Internal server error response with locale
     #[inline]
-    pub fn internal_server_error(
-        locale: &Locale,
-        bundle: &Arc<I18nBundle>,
-        key: &str,
-    ) -> Response {
+    pub fn internal_server_error(locale: &Locale, bundle: &Arc<I18nBundle>, key: &str) -> Response {
         let message = crate::i18n::t(locale, bundle, key);
         errors::internal_server_error(message)
     }
