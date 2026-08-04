@@ -144,6 +144,13 @@ pub struct ScrapeOptionsDto {
     ///
     /// 详见 [`crate::common::CacheMode::Bypass`]。
     pub bypass_cache: Option<bool>,
+    /// 仅转换正文内容（T074/T075，R-content-001/R-content-002）
+    ///
+    /// `Some(true)` 时 Markdown 转换前先经 `ContentExtractionFacade` 提取正文 HTML，
+    /// 去除 nav/footer/sidebar/ads 等非主体内容。`None` 或 `Some(false)` 时整页转换。
+    ///
+    /// 需要 `markdown` 特性 + `formats` 含 `"markdown"` 生效。
+    pub only_main_content: Option<bool>,
 }
 
 impl ScrapeOptionsDto {

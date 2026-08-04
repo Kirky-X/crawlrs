@@ -26,6 +26,7 @@
 #![cfg(feature = "markdown")]
 
 use crate::application::dto::scrape_request::ScrapeRequestDto;
+use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::markdown_service::{MarkdownError, MarkdownServiceTrait};
 use log::{debug, warn};
 use std::sync::Arc;
@@ -69,21 +70,33 @@ pub enum MarkdownPostProcessorError {
 /// # use crawlrs::application::dto::scrape_request::ScrapeRequestDto;
 /// # use crawlrs::workers::markdown_post_processor::MarkdownPostProcessor;
 /// # use crawlrs::domain::services::markdown_service::HtmdMarkdownService;
+/// # use crawlrs::domain::services::content_extractor::ContentExtractionFacade;
 /// # use serde_json::json;
 /// # use std::sync::Arc;
 /// # use uuid::Uuid;
-/// let processor = MarkdownPostProcessor::new(Arc::new(HtmdMarkdownService::new()));
+/// let processor = MarkdownPostProcessor::new(
+///     Arc::new(HtmdMarkdownService::new()),
+///     Some(Arc::new(ContentExtractionFacade::new(None))),
+/// );
 /// let req: ScrapeRequestDto = serde_json::from_value(json!({
 ///     "url": "https://example.com",
 ///     "formats": ["markdown"]
 /// })).unwrap();
-/// let md = processor.generate(Uuid::new_v4(), &req, "<html><body><h1>Hi</h1></body></html>");
+/// // generate is async — use .await in async context
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+/// let md = processor.generate(Uuid::new_v4(), &req, "<html><body><h1>Hi</h1></body></html>").await;
 /// assert!(md.is_some());
+/// # });
 /// ```
 #[derive(Clone)]
 pub struct MarkdownPostProcessor {
     /// 注入的 Markdown 转换服务（DIP：依赖抽象而非具体实现）
     markdown_service: Arc<dyn MarkdownServiceTrait>,
+    /// 可选的正文提取门面（T074/R-content-001）
+    ///
+    /// `only_main_content=true` 时先经此提取正文，再转 Markdown。
+    /// `None` 时跳过正文提取，整页转 Markdown。
+    content_extractor: Option<Arc<ContentExtractionFacade>>,
 }
 
 impl MarkdownPostProcessor {
@@ -94,9 +107,17 @@ impl MarkdownPostProcessor {
     /// - `markdown_service`：Markdown 转换服务（实现 [`MarkdownServiceTrait`] trait），
     ///   由调用方注入具体实现（如 [`crate::domain::services::markdown_service::HtmdMarkdownService`]）。
     ///   通过 `Arc` 共享，多个 worker 可共用同一实例。
+    /// - `content_extractor`：可选的正文提取门面（T074/R-content-001）。
+    ///   `only_main_content=true` 时先提取正文再转 Markdown；`None` 时跳过。
     #[must_use]
-    pub fn new(markdown_service: Arc<dyn MarkdownServiceTrait>) -> Self {
-        Self { markdown_service }
+    pub fn new(
+        markdown_service: Arc<dyn MarkdownServiceTrait>,
+        content_extractor: Option<Arc<ContentExtractionFacade>>,
+    ) -> Self {
+        Self {
+            markdown_service,
+            content_extractor,
+        }
     }
 
     /// 根据任务请求生成 Markdown（如 `formats` 含 `"markdown"`）
@@ -127,7 +148,7 @@ impl MarkdownPostProcessor {
     ///     }
     /// }
     /// ```
-    pub fn generate(
+    pub async fn generate(
         &self,
         task_id: Uuid,
         req: &ScrapeRequestDto,
@@ -143,7 +164,49 @@ impl MarkdownPostProcessor {
             return Ok(None);
         }
 
-        match self.markdown_service.to_markdown(content, false) {
+        // T074/R-content-001：only_main_content=true 时先提取正文
+        let only_main = req
+            .options
+            .as_ref()
+            .and_then(|o| o.only_main_content)
+            .unwrap_or(false);
+
+        let content_for_md: std::borrow::Cow<'_, str> =
+            if only_main {
+                if let Some(extractor) = &self.content_extractor {
+                    match extractor.extract(content, &req.url).await {
+                        Ok(extracted) if !extracted.text.trim().is_empty() => {
+                            debug!(
+                                "task_id: {}, main content extracted (confidence={:.2}, {} bytes)",
+                                task_id,
+                                extracted.confidence,
+                                extracted.text.len()
+                            );
+                            std::borrow::Cow::Owned(extracted.text)
+                        }
+                        Ok(_) => {
+                            warn!(
+                                "task_id: {}, content extraction returned empty, falling back to full HTML",
+                                task_id
+                            );
+                            std::borrow::Cow::Borrowed(content)
+                        }
+                        Err(e) => {
+                            warn!(
+                                "task_id: {}, content extraction failed: {}, falling back to full HTML",
+                                task_id, e
+                            );
+                            std::borrow::Cow::Borrowed(content)
+                        }
+                    }
+                } else {
+                    std::borrow::Cow::Borrowed(content)
+                }
+            } else {
+                std::borrow::Cow::Borrowed(content)
+            };
+
+        match self.markdown_service.to_markdown(content_for_md.as_ref(), false) {
             Ok(md) if !md.trim().is_empty() => {
                 debug!(
                     "task_id: {}, Markdown generated ({} bytes)",
@@ -180,12 +243,12 @@ mod tests {
     }
 
     fn make_processor() -> MarkdownPostProcessor {
-        MarkdownPostProcessor::new(Arc::new(HtmdMarkdownService::new()))
+        MarkdownPostProcessor::new(Arc::new(HtmdMarkdownService::new()), None)
     }
 
     /// formats 含 "markdown" 时应生成 Markdown（返回 Ok(Some)）
-    #[test]
-    fn generates_markdown_when_formats_contains_markdown() {
+    #[tokio::test]
+    async fn generates_markdown_when_formats_contains_markdown() {
         let p = make_processor();
         let req = make_req(json!({
             "url": "https://example.com",
@@ -195,7 +258,7 @@ mod tests {
             Uuid::new_v4(),
             &req,
             "<html><body><h1>Title</h1></body></html>",
-        );
+        ).await;
         let md = result.expect("expected Ok, got Err");
         assert!(md.is_some(), "expected Some(markdown)");
         let md = md.expect("some markdown");
@@ -206,14 +269,14 @@ mod tests {
     }
 
     /// formats 不含 "markdown" 时返回 Ok(None)（非错误）
-    #[test]
-    fn returns_ok_none_when_formats_does_not_contain_markdown() {
+    #[tokio::test]
+    async fn returns_ok_none_when_formats_does_not_contain_markdown() {
         let p = make_processor();
         let req = make_req(json!({
             "url": "https://example.com",
             "formats": ["html"]
         }));
-        let result = p.generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>");
+        let result = p.generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>").await;
         assert!(result.is_ok(), "expected Ok, got Err: {:?}", result.err());
         assert!(
             result.unwrap().is_none(),
@@ -222,11 +285,11 @@ mod tests {
     }
 
     /// formats 为 None 时返回 Ok(None)（非错误）
-    #[test]
-    fn returns_ok_none_when_formats_is_none() {
+    #[tokio::test]
+    async fn returns_ok_none_when_formats_is_none() {
         let p = make_processor();
         let req = make_req(json!({"url": "https://example.com"}));
-        let result = p.generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>");
+        let result = p.generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>").await;
         assert!(result.is_ok(), "expected Ok, got Err: {:?}", result.err());
         assert!(
             result.unwrap().is_none(),
@@ -238,14 +301,14 @@ mod tests {
     ///
     /// 原实现：返回 `None`（与"未请求 markdown"混淆）
     /// 现实现：返回 `Err(EmptyResult)`（让调用方区分语义）
-    #[test]
-    fn returns_err_empty_result_for_empty_html_when_markdown_requested() {
+    #[tokio::test]
+    async fn returns_err_empty_result_for_empty_html_when_markdown_requested() {
         let p = make_processor();
         let req = make_req(json!({
             "url": "https://example.com",
             "formats": ["markdown"]
         }));
-        let result = p.generate(Uuid::new_v4(), &req, "");
+        let result = p.generate(Uuid::new_v4(), &req, "").await;
         match result {
             Err(MarkdownPostProcessorError::EmptyResult) => {}
             other => panic!("expected Err(EmptyResult), got {other:?}"),
@@ -253,14 +316,14 @@ mod tests {
     }
 
     /// 纯空白内容（仅空格/换行）在请求 markdown 时也应返回 Err(EmptyResult)
-    #[test]
-    fn returns_err_empty_result_for_whitespace_only_html() {
+    #[tokio::test]
+    async fn returns_err_empty_result_for_whitespace_only_html() {
         let p = make_processor();
         let req = make_req(json!({
             "url": "https://example.com",
             "formats": ["markdown"]
         }));
-        let result = p.generate(Uuid::new_v4(), &req, "   \n\t  \n  ");
+        let result = p.generate(Uuid::new_v4(), &req, "   \n\t  \n  ").await;
         match result {
             Err(MarkdownPostProcessorError::EmptyResult) => {}
             other => panic!("expected Err(EmptyResult), got {other:?}"),
@@ -270,13 +333,13 @@ mod tests {
     /// 确认 Ok(None) 与 Err(EmptyResult) 在调用方正确处理（模拟 scrape_worker 行为）
     ///
     /// 调用方策略：markdown 为增强字段，失败不阻断主流程（design.md §10）
-    #[test]
-    fn caller_strategy_continues_on_markdown_error() {
+    #[tokio::test]
+    async fn caller_strategy_continues_on_markdown_error() {
         let p = make_processor();
 
         // 未请求 markdown → Ok(None) → 继续无 markdown
         let req = make_req(json!({"url": "https://example.com"}));
-        let result = p.generate(Uuid::new_v4(), &req, "<html></html>");
+        let result = p.generate(Uuid::new_v4(), &req, "<html></html>").await;
         let generated: Option<String> = match result {
             Ok(md) => md,
             Err(e) => {
@@ -295,7 +358,7 @@ mod tests {
             "url": "https://example.com",
             "formats": ["markdown"]
         }));
-        let result = p.generate(Uuid::new_v4(), &req, "");
+        let result = p.generate(Uuid::new_v4(), &req, "").await;
         let generated: Option<String> = match result {
             Ok(md) => md,
             Err(e) => {

@@ -51,6 +51,9 @@ use crate::workers::cache_utils::{self, redact_url_for_log};
 // H-4 职责拆分：Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
 #[cfg(feature = "markdown")]
 use crate::workers::markdown_post_processor::MarkdownPostProcessor;
+// T074/R-content-001：正文提取门面（与 markdown 特性配合，only_main_content 前置提取）
+#[cfg(feature = "markdown")]
+use crate::domain::services::content_extractor::ContentExtractionFacade;
 // H-4 职责拆分：仍需 RequestCoalescer 用于构造 CoalesceCoordinator（ScrapeWorkerBuilder.build 中使用）
 use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::retry_policy::RetryPolicy;
@@ -206,9 +209,10 @@ impl ScrapeWorker {
             team_semaphore,
             coalesce_coordinator,
             #[cfg(feature = "markdown")]
-            markdown_post_processor: MarkdownPostProcessor::new(Arc::new(
-                crate::domain::services::markdown_service::HtmdMarkdownService::new(),
-            )),
+            markdown_post_processor: MarkdownPostProcessor::new(
+                Arc::new(crate::domain::services::markdown_service::HtmdMarkdownService::new()),
+                Some(Arc::new(ContentExtractionFacade::new(None))),
+            ),
             token_usage: Arc::new(DashMap::new()),
             robots_checker,
             settings,
@@ -1110,10 +1114,12 @@ impl ScrapeWorker {
         // 区分"未请求 markdown"（Ok(None)）与"转换失败/空结果"（Err）。
         // 调用方策略（design.md §10）：markdown 为增强字段，失败不阻断基础抓取结果，
         // 错误时记录告警并继续（generated_markdown = None）。
+        // T074/R-content-001：generate() 改为 async，支持 only_main_content 前置正文提取
         #[cfg(feature = "markdown")]
-        let generated_markdown: Option<String> = parsed_req.as_ref().and_then(|req| {
+        let generated_markdown: Option<String> = if let Some(req) = parsed_req.as_ref() {
             self.markdown_post_processor
                 .generate(task.id, req, &processed_content)
+                .await
                 .unwrap_or_else(|e| {
                     warn!(
                         "task_id: {}, markdown post-processing failed: {}",
@@ -1121,7 +1127,9 @@ impl ScrapeWorker {
                     );
                     None
                 })
-        });
+        } else {
+            None
+        };
         #[cfg(not(feature = "markdown"))]
         let generated_markdown: Option<String> = None;
 
