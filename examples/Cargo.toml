@@ -316,5 +316,7 @@ name = "crawlrs_examples"
 path = "src/lib.rs"
 
 # 与主 crate 保持一致的 lints 配置（sdforge_macros 的 forge 宏会生成 cfg(feature = "openapi")）
+# forge 宏生成的路由注册代码不直接被 dead_code 分析识别，示例代码允许未引用项
 [lints.rust]
 unexpected_cfgs = "allow"
+dead_code = "allow"
