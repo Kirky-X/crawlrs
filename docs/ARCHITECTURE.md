@@ -1070,6 +1070,122 @@ All three modes share the same FlareSolverr API client implementation, differing
 
 ---
 
+## Crawl Capability Enhancement Modules
+
+> 以下模块由 `crawler-capability-absorption` 变更引入（0.2.0）。
+
+### Anti-bot Detection (`src/engines/antibot/`)
+
+三层分类器移植自 crawl4ai `antibot_detector.py`，gated `antibot` 特性：
+
+- `patterns.rs`：Tier1（20+ WAF 结构标记：Cloudflare/Akamai/PerimeterX/DataDome 等）+ Tier2（通用词字面量集，构建 `aho_corasick::AhoCorasick`）+ Tier3 结构正则
+- `classifier.rs`：`AntiBotTech` 枚举 + `Detection{tech,reason,needs_browser}` + `classify(status,body,headers,url)->Option<Detection>`
+- 路由集成：`EngineRouter::route_internal` 在引擎成功分支调用 `classify`，命中 `needs_browser` 时强制后续 attempt `needs_js=true` 改派浏览器引擎
+
+### HTTP→Chrome Upgrade Probe (`src/engines/upgrade_probe.rs`)
+
+`JsUpgradeProbe` 通过强/弱信号评分探测 SPA 空壳：
+
+- 强信号（score+=10）：`__NUXT_DATA__`/`__NEXT_DATA__`/`window.__INITIAL_STATE__`/空 root+hydration
+- 弱信号（score+=1）：非追踪 `<script src>`（排除 ga/gtm/analytics/pixel）
+- `score>=threshold` 时 `EngineRouter` 以 `needs_js=true` 重新改派 Playwright
+
+### Memory-aware Scheduler (`src/workers/scheduler/`)
+
+- `memory_scheduler.rs`：`MemoryState{Normal,Pressure,Critical}` + `MemoryScheduler` 复用 `SystemMonitorTrait`，`admit()` 返回 `Admission::{Proceed,Defer,Reschedule}`
+- `priority_queue.rs`：`BinaryHeap<ScheduledTask>` 按 `effective_priority = base + waited_secs/aging_factor` 排序，防饿死
+- 接入 `scrape_worker::process_task`：获取并发许可前调用 `admit()`
+
+### UA Pool (`src/utils/ua_pool.rs`)
+
+`UaProfile{ua,accept_language,sec_ch_ua,platform,viewport,mobile}` + `UaPool{desktop,mobile}`：
+
+- 内置 20+ 桌面 + 移动真实 profile，每 profile 绑定一致的 UA/Accept-Language/sec-ch-ua/viewport
+- `pick(mobile)`/`pick_seeded(seed,mobile)`：同 seed 稳定返回
+- 已集成到 `ReqwestEngine`（header 设置）和 `PlaywrightEngine`（UA + viewport 设置）
+
+### Smart Retry (`src/utils/retry/` + `src/utils/backoff.rs`)
+
+- `tracker.rs`：`RetryReason{Transient,FeatureToggle,AntiBot}` + `RetryTracker` 各 reason 独立计数与上限
+- `directive.rs`：`RetryDirective{rotate_proxy,rotate_ua,change_viewport,enable_stealth,force_browser}` + `for_attempt(reason,attempt)` 递增升级
+- `backoff.rs`：full-jitter 退避（`cap = min(base*2^attempt, max)`，均匀 `[0, cap]`）
+- 已集成到 `scrape_worker` 错误路径：分类错误 → 计算指令 → reason-specific 限制检查
+
+### JS Injection (`src/engines/js_inject/`)
+
+gated `engine-playwright`：
+
+- `scripts/`：`flatten_shadow_dom.js`/`navigator_overrider.js`/`remove_consent_popups.js`/`remove_overlay_elements.js`（源自 crawl4ai，`include_str!` 嵌入）
+- `injector.rs`：`InjectPhase{BeforeLoad,AfterLoad}` + `JsInjector::stealth()`/`cleanup()`/`apply(page,phase)`
+- Playwright 引擎导航前注入 stealth，加载后注入 cleanup
+
+### Request Coalescing (`src/utils/coalesce.rs`)
+
+移植 spider `coalesce.rs`：`RequestCoalescer{ in_flight: Arc<DashMap<String, InFlightEntry>> }`：
+
+- `try_start(url) -> Proceed(CoalesceGuard) | Wait(broadcast::Receiver)`
+- `STALE_TIMEOUT=120s` + `purge_stale()`
+- 经 `CoalesceCoordinator` 接入 `scrape_worker`，同 URL 并发仅 1 次实际 fetch
+
+### AIMD Adaptive Concurrency (`src/utils/adaptive_concurrency.rs`)
+
+移植 spider `adaptive_concurrency.rs`：
+
+- `AIMDController`：`AtomicUsize` 无锁，连续 N 次成功 +1，失败减半 clamp min
+- `AdaptiveSemaphore`：桥接 `tokio::sync::Semaphore`，`set_target` 经 `add_permits`/`forget_permits`
+- 集成 `TeamSemaphore::with_adaptive(...)`，默认关闭（`concurrency.adaptive_enabled=false`）
+
+### Markdown Conversion (`src/domain/services/markdown_service.rs`)
+
+gated `markdown` 特性：
+
+- `MarkdownServiceTrait::to_markdown(html,only_main_content)->Result<String>` + `HtmdMarkdownService`
+- `ScrapeResponse.markdown: Option<String>`
+- `scrape_worker` 经 `MarkdownPostProcessor` 在 formats 含 `"markdown"` 时生成
+
+### Content Extraction (`src/domain/services/content_extractor/`)
+
+gated `extractor-trafilatura`/`extractor-dom-smoothie`/`extractor-full`：
+
+- `traits.rs`：`ContentExtractor` trait + `ExtractedContent{text,title,author,confidence,page_type}`
+- `trafilatura_extractor.rs`（主路径）→ `dom_smoothie_extractor.rs`（回退）→ `css_rule_extractor.rs`（兆底）
+- `facade.rs`：`ContentExtractionFacade` 按优先级路由，`confidence<0.7` 触发 LLM 回退
+
+### URL Normalization & Layered Dedup (`src/utils/url_normalizer.rs` + `src/utils/dedup/`)
+
+- `url_normalizer.rs`：小写 host/去 fragment/统一 trailing slash/query 排序/可选去 query/`permutations`
+- `dedup/bloom.rs` + `dedup/interner.rs`：Bloom⊕Interner 分层去重
+- 接入 `scrape_worker::extract_and_queue_links`：Bloom 阴性直接入队，阳性回落 DB 精确校验
+
+### Proxy Pool (`src/engines/proxy_pool.rs`)
+
+- `ProxyEntry{url,healthy,cooldown,category}` + `ProxyPool`（RR `next(category)` + `sticky(session_id)`+TTL + `mark_failure/success`）
+- 实现 `ProxyProvider` trait，`ReqwestEngine` 依赖抽象 trait
+- `ProxySettings` 扩展 `urls: Vec<String>` + `strategy`（保留单 `url` 向后兼容）
+
+### Advanced Cache Modes (`src/common/cache_mode.rs`)
+
+- `CacheMode{Enabled,Disabled,ReadOnly,WriteOnly,Bypass}` + `CacheContext{url,method,mode}`
+- `should_read()`/`should_write()`/`is_cacheable()`（data:/blob:/非幂等→false）
+- `ScrapeOptions.cache_mode: Option<CacheMode>` + DTO `cache_mode`/`bypass_cache` 桥接
+- `scrape_worker` 读写缓存前经 `CacheContext` 门控
+
+### Waterfall/MRT Timeout
+
+- `ScraperEngine::max_response_time() -> Duration`：各引擎覆写（fetch:5s/playwright:30s/cdp:30s/tls:15s）
+- `EngineRouter::route_internal` 用 `min(remaining, engine.mrt())` 包裹单引擎调用，超 MRT 切下一引擎
+- `EngineError::EngineMrtExceeded{engine,mrt}` 变体，`is_retryable()=true`
+
+### Deep Crawling (`src/workers/crawl/`)
+
+- `filters.rs`：`UrlFilter` trait + `FilterChain` + `DomainFilter`/`ContentTypeFilter`/`UrlPatternFilter`
+- `scorers.rs`：`UrlScorer` trait + `CompositeScorer` + `KeywordRelevanceScorer`/`PathDepthScorer`
+- `frontier.rs`：`ScoredUrl` + `BinaryHeap` 优先级 + 域名 round-robin
+- `adaptive.rs`：`AdaptiveStrategy`（BM25/覆盖率/饱和度）+ `StopCondition`（最大页数/置信度/饱和度/无待处理链接）
+- `scrape_worker::handle_crawl_success` 集成 `StopCondition` 检查，命中时提前终止 crawl
+
+---
+
 ## Queue System
 
 ### Architecture

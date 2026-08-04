@@ -89,9 +89,24 @@
 
 | 特性 | 描述 | 任务 |
 |------|------|------|
-| **TabPool** | Chrome CDP Tab 池复用（DashMap + AtomicUsize LIFO 栈），消除 50-200ms tab 创建开销 | T068 |
-| **WaitFor 策略** | 条件式等待（NetworkIdle/Selector/DomStable）替代固定 sleep，页面就绪即返回 | T069 |
-| **Hedge 控制器** | EMA + 方差估算 P84 延迟阈值，race 模式胜出延迟记录，未来用于慢请求副本触发 | T070 |
+| **反爬虫检测** | Aho-Corasick + 20+ WAF 指纹三层分类器，检测驱动路由自动改派浏览器引擎 | T009-T013 |
+| **HTTP→Chrome 升级** | JsUpgradeProbe 强/弱信号评分，SPA 空壳自动改派 Playwright | T014-T015 |
+| **内存感知调度** | sysinfo 状态机 + 动态并发 + 优先级队列 + 临界超时保护 | T016-T019 |
+| **UA 池** | 20+ 真实 profile，UA↔Header↔Viewport 一致性绑定，重试时 seed 轮换 | T020-T022 |
+| **智能重试** | RetryTracker 按类型独立上限 + Full-jitter 退避 + RetryDirective 身份轮换 | T023-T028 |
+| **JS 注入** | BeforeLoad/AfterLoad 两阶段 + stealth/cleanup 脚本 + 广告/媒体拦截 | T029-T033 |
+| **请求合并** | DashMap 单飞 + broadcast 通知，同 URL 并发仅 1 次实际 fetch | T034-T035 |
+| **AIMD 自适应并发** | AtomicUsize 无锁 + AdaptiveSemaphore，连续失败减半/成功递增 | T036-T038 |
+| **Markdown 转换** | htmd 集成，ScrapeResponse 增 `markdown` 字段 | T039-T042 |
+| **正文提取** | ContentExtractor trait + Trafilatura/DomSmoothie/CssRule + Facade + LLM 回退 | T043-T049 |
+| **URL 归一化与去重** | UrlNormalizer + Bloom⊕Interner 分层去重，降 DB 查询量 | T050-T053 |
+| **代理轮换** | RoundRobin 池 + 粘性会话 + 按类别路由 + 健康检查 | T054-T056 |
+| **高级缓存模式** | 5 模式（Enabled/Disabled/ReadOnly/WriteOnly/Bypass）+ CacheContext 门控 | T057-T059 |
+| **Waterfall/MRT 超时** | per-engine MRT + 瀑布式切换，超 MRT 即切下一引擎 | T060-T062 |
+| **深度爬取** | UrlFilter+FilterChain / UrlScorer+CompositeScorer / Frontier 优先级队列 / 自适应停止 | T063-T067 |
+| **TabPool** | Chrome CDP Tab 池复用（DashMap + AtomicUsize LIFO 栈），消除 tab 创建开销 | T068 |
+| **WaitFor 策略** | 条件式等待（NetworkIdle/Selector/DomStable）替代固定 sleep | T069 |
+| **Hedge 控制器** | EMA + 方差估算 P84 延迟阈值，race 模式胜出延迟记录 | T070 |
 
 > **详细架构:** [ARCHITECTURE.md → 引擎性能优化](docs/ARCHITECTURE.md#hedge-请求副本控制器)
 
@@ -169,6 +184,11 @@ cargo build --release --features "engine-playwright,metrics"
 | `webhook` | Webhook 投递与管理；关闭时注入 `NoopWebhookService` 并移除 `/v1/webhooks` 路由 | ✅ 是 |
 | `engine-playwright` | 基于 chromiumoxide 的浏览器自动化 | ❌ 否 |
 | `engine-flaresolverr` | FlareSolverr 反爬虫保护（FlareSolverrMode 枚举区分 Full/Cdp/Tls 三模式） | ❌ 否 |
+| `antibot` | 反爬虫检测（Aho-Corasick + 20+ WAF 指纹 + 三层分类器 + 路由驱动） | ❌ 否 |
+| `markdown` | HTML→Markdown 转换（htmd），ScrapeResponse 增 `markdown` 字段 | ❌ 否 |
+| `extractor-trafilatura` | 正文提取主路径（rs-trafilatura） | ❌ 否 |
+| `extractor-dom-smoothie` | 正文提取回退路径（dom_smoothie） | ❌ 否 |
+| `extractor-full` | 正文提取全启用（trafilatura + dom_smoothie） | ❌ 否 |
 | `metrics` | Prometheus 指标导出 | ❌ 否 |
 | `genai-llm` | 基于 genai 的 LLM 抽取 | ❌ 否 |
 | `browser-download` | 自动下载 Playwright 浏览器 | ❌ 否 |
@@ -184,8 +204,8 @@ cargo build --release --features "engine-playwright,metrics"
 | 预设 | 特性组合 | 二进制大小 | 适用场景 |
 |-----|---------|-----------|---------|
 | default | `teams, auth, rate-limit, webhook` | ~30MB | 单租户/多租户全功能（业务能力默认开） |
-| standard | `default + engine-playwright, metrics` | ~35MB | 需要 JS 渲染（核心栈默认包含） |
-| full | `standard + engine-flaresolverr` | ~52MB | 所有功能 |
+| standard | `default + engine-playwright, metrics, antibot, markdown` | ~40MB | 生产推荐（JS 渲染 + 反爬 + Markdown） |
+| full | `standard + engine-flaresolverr + extractor-full` | ~55MB | 所有功能 |
 | no-default | `--no-default-features` | ~22MB | 单租户/无认证部署（业务能力全关，Noop 实现） |
 
 > **注意：** `default` 包含业务能力特性，因此预设表已包含业务能力。如需关闭业务能力，使用 `--no-default-features` 显式列出所需特性（如 `--no-default-features --features rate-limit`）。

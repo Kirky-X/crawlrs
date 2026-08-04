@@ -389,6 +389,8 @@ Scrape a single web page.
 | `skip_tls_verification` | boolean | false | Skip TLS certificate verification |
 | `needs_tls_fingerprint` | boolean | false | Require TLS fingerprint adversarial engine |
 | `use_fire_engine` | boolean | false | Force use FlareSolverr engine |
+| `cache_mode` | string | `"enabled"` | Cache read/write mode: `enabled` (default, normal R/W), `disabled` (cache fully off), `read_only` (hit returns, miss fetches without writing), `bypass` (skip read, normal write — emergency untrusted-cache scenario) |
+| `bypass_cache` | boolean | false | Emergency cache bypass shortcut. `true` overrides `cache_mode` to `bypass` (skip cache read, normal write-back). Use when runtime cache data is untrusted |
 
 **Action Types:**
 
@@ -1368,6 +1370,7 @@ func Scrape(url string) error {
 - 新增 `POST /v1/admin/api-keys` 端点：管理员为指定 team 签发 garrison API Key
 - 新增 [Garrison 认证](#garrison-认证) 与 [迁移指南](#迁移指南020-garrison-auth-migration) 章节
 - 401/429 触发逻辑由 garrison `firewall-bruteforce` 接管（5 次/60 秒/300 秒锁定）
+- Scrape API `options` 新增 `cache_mode`（5 种缓存读写模式）和 `bypass_cache`（应急缓存绕过）字段
 - Added `GET /v1/webhooks` to list webhooks
 - Added `GET /v1/teams/me` and `GET /v1/teams/me/usage` team endpoints
 - Added SDK API section (`/api/v1/sdk/*` endpoints)

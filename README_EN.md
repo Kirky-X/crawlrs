@@ -94,6 +94,29 @@ Compared to Node.js implementations:
 | Auto deduplication | Remove duplicate results |
 | Result aggregation | Unified output format |
 
+### ⚡ Crawl Capability Enhancements (0.2.0)
+
+| Feature | Description |
+|---------|-------------|
+| **Anti-bot Detection** | Aho-Corasick + 20+ WAF fingerprint 3-tier classifier, detection-driven route auto-dispatches to browser engine |
+| **HTTP→Chrome Upgrade** | JsUpgradeProbe strong/weak signal scoring, SPA shell auto-dispatches to Playwright |
+| **Memory-aware Scheduling** | sysinfo state machine + dynamic concurrency + priority queue + critical timeout protection |
+| **UA Pool** | 20+ real profiles, UA↔Header↔Viewport consistency binding, seed rotation on retry |
+| **Smart Retry** | RetryTracker per-reason independent limits + Full-jitter backoff + RetryDirective identity rotation |
+| **JS Injection** | BeforeLoad/AfterLoad 2-phase + stealth/cleanup scripts + ad/media interception |
+| **Request Coalescing** | DashMap single-flight + broadcast notification, same URL concurrent only 1 actual fetch |
+| **AIMD Adaptive Concurrency** | AtomicUsize lock-free + AdaptiveSemaphore, halve on failure / increment on success |
+| **Markdown Conversion** | htmd integration, ScrapeResponse adds `markdown` field |
+| **Content Extraction** | ContentExtractor trait + Trafilatura/DomSmoothie/CssRule + Facade + LLM fallback |
+| **URL Normalization & Dedup** | UrlNormalizer + Bloom⊕Interner layered dedup, reduces DB query volume |
+| **Proxy Rotation** | RoundRobin pool + sticky sessions + category routing + health check |
+| **Advanced Cache Modes** | 5 modes (Enabled/Disabled/ReadOnly/WriteOnly/Bypass) + CacheContext gating |
+| **Waterfall/MRT Timeout** | per-engine MRT + waterfall fallback, switch engine on MRT exceed |
+| **Deep Crawling** | UrlFilter+FilterChain / UrlScorer+CompositeScorer / Frontier priority queue / Adaptive stop |
+| **TabPool** | Chrome CDP tab pool reuse (DashMap + AtomicUsize LIFO stack) |
+| **WaitFor Strategy** | Conditional wait (NetworkIdle/Selector/DomStable) replacing fixed sleep |
+| **Hedge Controller** | EMA + variance estimation P84 latency threshold, race mode latency recording |
+
 ### 📊 Enterprise Features
 
 | Feature | Description |
@@ -159,6 +182,11 @@ cargo build --release --features "engine-playwright,metrics"
 | `webhook` | Webhook delivery and management; when disabled, `NoopWebhookService` is injected and `/v1/webhooks` route removed | ✅ Yes |
 | `engine-playwright` | chromiumoxide-based browser automation | ❌ No |
 | `engine-flaresolverr` | FlareSolverr anti-bot protection (FlareSolverrMode enum distinguishes Full/Cdp/Tls modes) | ❌ No |
+| `antibot` | Anti-bot detection (Aho-Corasick + 20+ WAF fingerprints + 3-tier classifier + route-driven) | ❌ No |
+| `markdown` | HTML→Markdown conversion (htmd), adds `markdown` field to ScrapeResponse | ❌ No |
+| `extractor-trafilatura` | Content extraction main path (rs-trafilatura) | ❌ No |
+| `extractor-dom-smoothie` | Content extraction fallback path (dom_smoothie) | ❌ No |
+| `extractor-full` | Content extraction full (trafilatura + dom_smoothie) | ❌ No |
 | `metrics` | Prometheus metrics export | ❌ No |
 | `genai-llm` | genai-based LLM extraction | ❌ No |
 | `browser-download` | Auto-download Playwright browser | ❌ No |
@@ -174,8 +202,8 @@ The core stack (oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scr
 | Preset | Feature Set | Binary Size | Use Case |
 |-----|---------|-----------|---------|
 | default | `teams, auth, rate-limit, webhook` | ~30MB | Single/multi-tenant full features (business capabilities on by default) |
-| standard | `default + engine-playwright, metrics` | ~35MB | JS rendering needed (core stack included by default) |
-| full | `standard + engine-flaresolverr` | ~52MB | All features |
+| standard | `default + engine-playwright, metrics, antibot, markdown` | ~40MB | Production recommended (JS rendering + anti-bot + Markdown) |
+| full | `standard + engine-flaresolverr + extractor-full` | ~55MB | All features |
 | no-default | `--no-default-features` | ~22MB | Single-tenant/no-auth deployment (all business capabilities off, Noop implementations) |
 
 > **Note:** `default` includes business capability features, so the preset table already includes them. To disable business capabilities, use `--no-default-features` and list required features explicitly (e.g. `--no-default-features --features rate-limit`).
