@@ -98,6 +98,9 @@ figment.workspace = true
 thiserror = "2.0"
 anyhow.workspace = true
 
+# Retry with exponential backoff
+backon = { version = "1.6", default-features = false, features = ["tokio-sleep"] }
+
 # Security — constant-time comparison for HMAC signature verification
 subtle = "2.6"
 
@@ -172,12 +175,16 @@ sha2 = "0.11"
 hex = "0.4"
 bcrypt = "0.19"
 zeroize = "1.9"
+# Standard Webhooks — webhook 签名/验签标准化（T-webhook-001）
+standardwebhooks = { version = "1.0", default-features = false }
 # SAST 修复：jsonwebtoken v11 将 features 重组为加密后端选择
 # rustCrypto: 纯 Rust 加密后端（替代旧版独立的 hmac/sha2/rand features）
 jsonwebtoken = { version = "11.0", default-features = false, features = ["rust_crypto"] }
 
 # Network utilities
 ipnetwork = "0.21"
+# Hickory DNS resolver — 异步 DNS 解析（T-dns-001）
+hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
 
 # Rate limiting and circuit breaking — gated by `rate-limit` feature
 limiteron = { version = "0.2", default-features = false, optional = true, features = [
