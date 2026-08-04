@@ -26,6 +26,15 @@ pub mod task_domain;
 
 pub mod search_result;
 
+// Validation helpers
+pub mod validations;
+
+// Builder pattern constructors
+pub mod builders;
+
+// Re-export builders
+pub use builders::TaskBuilder;
+
 // Re-export pure domain models
 pub use crawl_model::{Crawl, CrawlStatus};
 pub use credits_model::{Credits, CreditsError, CreditsTransaction, CreditsTransactionType};
