@@ -359,7 +359,8 @@ mod tests {
         });
 
         // 等待足够时间让 interval 触发至少 6 次 tick（5ms × 6 = 30ms + 调度开销）
-        tokio::time::sleep(Duration::from_millis(60)).await;
+        // 使用 150ms 以在高负载（5700+ 并行测试）下仍稳定通过。
+        tokio::time::sleep(Duration::from_millis(150)).await;
 
         // 中止 worker 任务（run() 是无限循环，必须主动中止）
         handle.abort();

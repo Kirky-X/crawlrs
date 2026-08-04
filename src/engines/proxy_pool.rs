@@ -232,9 +232,6 @@ impl ProxyPool {
             drop(binding);
         }
 
-        // 2. 慢路径：重选
-        let idx = self.rr_pick(ProxyCategory::Html)?;
-
         // LOW-1 修复：容量限制 — 超限时清理过期绑定
         // SEC-007: 节流 — 仅当距上次清理 > 60s 时执行（避免高并发下频繁 retain）
         if self.sticky.len() >= self.sticky_max_capacity {
@@ -251,18 +248,21 @@ impl ProxyPool {
         // 这是一个软限制：检查后到 entry() 之间可能有其他线程插入，偶尔超出几个条目可接受
         let at_capacity = self.sticky.len() >= self.sticky_max_capacity;
 
-        // 3. LOW-2 修复：使用 entry API 原子 check-and-update
-        //    在 entry 锁内重新检查，避免 TOCTOU 竞态：
-        //    另一线程可能在我们调用 rr_pick 期间已更新绑定
+        // 2. LOW-2 修复：使用 entry API 原子 check-and-update
+        //    rr_pick() 在 entry 锁内调用，确保同一 session 只有一个线程
+        //    执行 rr_pick + insert，彻底消除 TOCTOU 竞态。
+        //    修复前：rr_pick 在锁外，多线程各自选不同 idx 后互相覆盖。
         match self.sticky.entry(session_id.to_string()) {
             Entry::Occupied(mut occ) => {
+                // 双重检查：另一线程可能已在锁内完成重选
                 let binding = occ.get();
                 if binding.expires_at > Instant::now()
                     && self.entries[binding.entry_idx].is_available()
                 {
                     return Some(self.entries[binding.entry_idx].url.clone());
                 }
-                // 绑定仍过期/冷却中 → 用新选的 idx 更新
+                // 绑定仍过期 → 在锁内重选并更新
+                let idx = self.rr_pick(ProxyCategory::Html)?;
                 occ.insert(StickyBinding {
                     entry_idx: idx,
                     expires_at: Instant::now() + self.sticky_ttl,
@@ -270,6 +270,7 @@ impl ProxyPool {
                 Some(self.entries[idx].url.clone())
             }
             Entry::Vacant(vac) => {
+                let idx = self.rr_pick(ProxyCategory::Html)?;
                 // LOW-1 修复：超容量时不绑定（降级：返回代理 URL，仅失去粘性语义）
                 if !at_capacity {
                     vac.insert(StickyBinding {
