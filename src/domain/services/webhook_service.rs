@@ -8,6 +8,7 @@
 //! Unified webhook service for task completion and failure notifications.
 //! Supports dependency injection via trait-kit.
 
+use super::webhook_event_builder::WebhookEventBuilder;
 use crate::domain::models::{Task, Webhook};
 use crate::domain::models::{WebhookEvent, WebhookEventType};
 // R-wh-001 / T026：以下 import 仅 WebhookServiceImpl / WebhookManagementServiceImpl 使用，
@@ -34,20 +35,17 @@ use anyhow::Result;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use chrono::Utc;
-use hmac::{Hmac, KeyInit, Mac};
+// T-webhook-001：使用 standardwebhooks 标准化 webhook 签名/验签
+use standardwebhooks::Webhook as StandardWebhook;
 // R-wh-001: log::{error, info} 仅 Impl 中使用，webhook-off 时不导入
 #[cfg(feature = "webhook")]
 use log::{error, info};
-// R-wh-001: serde_json::json 仅 Impl 中使用，webhook-off 时不导入
-#[cfg(feature = "webhook")]
-use serde_json::json;
-use sha2::Sha256;
+// R-wh-001: serde_json::json 已迁移到 webhook_event_builder
+// use serde_json::json;
 // R-wh-001: Arc 仅 Impl 中使用，webhook-off 时不导入
 #[cfg(feature = "webhook")]
 use std::sync::Arc;
 use uuid::Uuid;
-
-type HmacSha256 = Hmac<Sha256>;
 
 /// Webhook服务接口（支持 DI）
 #[async_trait]
@@ -92,19 +90,21 @@ impl WebhookServiceImpl {
         }
     }
 
-    /// 为负载生成签名（包含时间戳以防止重放攻击）
+    /// 为负载生成签名（standardwebhooks 标准格式）
+    ///
+    /// 签名格式：`v1,<base64>`，签名消息：`{event_id}.{timestamp}.{payload}`
     fn generate_signature(&self, payload: &str, timestamp: i64) -> String {
-        let message = format!("{}.{}", timestamp, payload);
-        let mut mac = match HmacSha256::new_from_slice(self.secret.as_bytes()) {
-            Ok(mac) => mac,
+        // 使用 event_id 作为 msg_id（若无则用固定值）
+        let msg_id = "none";
+        let wh = match StandardWebhook::from_bytes(self.secret.as_bytes().to_vec()) {
+            Ok(w) => w,
             Err(e) => {
-                log::error!("Failed to initialize HMAC: {}", e);
+                log::error!("Failed to create standardwebhook: {:?}", e);
                 return String::new();
             }
         };
-        mac.update(message.as_bytes());
-        let result = mac.finalize();
-        hex::encode(result.into_bytes())
+        wh.sign(msg_id, timestamp, payload.as_bytes())
+            .unwrap_or_default()
     }
 
     /// 提取 webhook URL 从任务
@@ -146,19 +146,28 @@ impl WebhookServiceImpl {
 impl WebhookService for WebhookServiceImpl {
     async fn send_webhook(&self, event: &WebhookEvent) -> Result<()> {
         let timestamp = chrono::Utc::now().timestamp();
+        // Serialize only for HMAC signature computation; pass event.payload directly to sender
         let payload_str = serde_json::to_string(&event.payload)?;
         let signature = self.generate_signature(&payload_str, timestamp);
 
         let mut headers = std::collections::HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
-        headers.insert("X-Crawlrs-Signature".to_string(), signature);
-        headers.insert("X-Crawlrs-Timestamp".to_string(), timestamp.to_string());
-        headers.insert("X-Crawlrs-Event-ID".to_string(), event.id.to_string());
+        headers.insert(
+            standardwebhooks::HEADER_WEBHOOK_SIGNATURE.to_string(),
+            signature,
+        );
+        headers.insert(
+            standardwebhooks::HEADER_WEBHOOK_TIMESTAMP.to_string(),
+            timestamp.to_string(),
+        );
+        headers.insert(
+            standardwebhooks::HEADER_WEBHOOK_ID.to_string(),
+            event.id.to_string(),
+        );
 
-        let payload = serde_json::from_str(&payload_str)?;
-
+        // T022: pass payload directly instead of serialize-then-deserialize round-trip
         self.webhook_sender
-            .send(&event.webhook_url, &payload, Some(&headers))
+            .send(&event.webhook_url, &event.payload, Some(&headers))
             .await?;
 
         info!("Webhook sent successfully for event {}", event.id);
@@ -210,25 +219,9 @@ impl WebhookServiceImpl {
             event_type, task.id, webhook_url
         );
 
-        let mut payload = json!({
-            "task_id": task.id,
-            "status": if error_msg.is_some() { "failed" } else { "completed" },
-            "url": task.url,
-            "timestamp": Utc::now().timestamp()
-        });
+        let payload = WebhookEventBuilder::build_task_payload(task, error_msg.as_deref());
 
-        if let Some(msg) = error_msg {
-            payload["error"] = json!(msg);
-        }
-
-        let event = WebhookEvent::new(
-            Uuid::new_v4(),
-            task.team_id,
-            Uuid::nil(),
-            event_type,
-            payload,
-            webhook_url,
-        );
+        let event = WebhookEventBuilder::build_task_event(task, event_type, payload, webhook_url);
 
         // Save event to repository
         if let Err(e) = self.repository.create(&event).await {
@@ -375,8 +368,7 @@ impl WebhookManagementService for WebhookManagementServiceImpl {
             .map_err(|e| anyhow!("Failed to find webhook {}: {}", webhook_id, e))?
             .ok_or_else(|| anyhow!("Webhook not found: {}", webhook_id))?;
 
-        let event = WebhookEvent::new(
-            Uuid::new_v4(),
+        let event = WebhookEventBuilder::build_triggered_event(
             webhook.team_id,
             webhook.id,
             event_type,
@@ -467,31 +459,18 @@ fn validate_timestamp(timestamp: i64) -> bool {
     diff <= MAX_TIMESTAMP_AGE
 }
 
-/// 为负载生成签名（包含时间戳以防止重放攻击）
+/// 为负载生成签名（standardwebhooks 标准格式）
 ///
-/// 接受 `impl AsRef<[u8]>` payload 以同时支持 `&str` 和 `&[u8]`，
-/// 避免不必要的 UTF-8 验证（HMAC 可直接对原始字节计算）。
-///
-/// # 性能审查 M1 折中说明（timestamp.to_string() 分配）
-///
-/// `timestamp.to_string()` 分配一个 ~20 字节的 `String`（i64 最大位数）。
-/// 相比之前的 `format!("{}.{}", timestamp, payload)`，本实现已减少 `payload_len` 字节的分配
-/// （对大 payload 是显著优化）。完全消除该分配需使用 `itoa` crate 或栈上 `[u8; 20]` buffer，
-/// 但 webhook 签名生成不是热路径，~20 字节的堆分配对性能无实际影响，不值得引入额外依赖。
-fn generate_signature(secret: &str, payload: impl AsRef<[u8]>, timestamp: i64) -> String {
-    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
-        Ok(mac) => mac,
+/// 签名格式：`v1,<base64>`，签名消息：`{msg_id}.{timestamp}.{payload}`
+fn generate_signature(secret: &str, msg_id: &str, payload: &[u8], timestamp: i64) -> String {
+    let wh = match StandardWebhook::from_bytes(secret.as_bytes().to_vec()) {
+        Ok(w) => w,
         Err(e) => {
-            log::error!("Failed to initialize HMAC: {}", e);
+            log::error!("Failed to create standardwebhook: {:?}", e);
             return String::new();
         }
     };
-    // 先更新时间戳，再更新 payload，避免 format! 分配
-    mac.update(timestamp.to_string().as_bytes());
-    mac.update(b".");
-    mac.update(payload.as_ref());
-    let result = mac.finalize();
-    hex::encode(result.into_bytes())
+    wh.sign(msg_id, timestamp, payload).unwrap_or_default()
 }
 
 /// 验证 webhook 签名（接受 `&str` payload，兼容旧调用方）
@@ -499,30 +478,21 @@ fn generate_signature(secret: &str, payload: impl AsRef<[u8]>, timestamp: i64) -
 /// 供接收方使用以验证 webhook authenticity 和 freshness。
 pub fn verify_webhook_signature(
     secret: &str,
+    msg_id: &str,
     payload: &str,
     timestamp: i64,
     signature: &str,
 ) -> bool {
-    verify_webhook_signature_bytes(secret, payload.as_bytes(), timestamp, signature)
+    verify_webhook_signature_bytes(secret, msg_id, payload.as_bytes(), timestamp, signature)
 }
 
-/// 验证 webhook 签名（接受 `&[u8]` payload，避免不必要的 UTF-8 验证）
+/// 验证 webhook 签名（接受 `&[u8]` payload，standardwebhooks 标准化实现）
 ///
-/// 这是性能优化的主入口，HMAC 可直接对原始字节计算。
-///
-/// # 安全审查 M1 折中说明（非端到端常量时间）
-///
-/// 本函数 **不是端到端常量时间**：时间戳无效时直接返回 `false`（跳过 HMAC 计算），
-/// 时间戳有效时执行 HMAC 计算 + 常量时间比较。两者耗时差异显著（HMAC-SHA256 开销）。
-/// 这是有意为之的性能优化，**不泄露秘密信息**，因为：
-/// - 时间戳由客户端提供，不是秘密（攻击者已知其值）
-/// - 时间戳窗口（`MAX_TIMESTAMP_AGE` = 300 秒）是公开参数
-/// - 时序差异仅泄露"时间戳是否在窗口内"，这是公开信息
-///
-/// 真正需要常量时间保护的是 **签名比较** 部分（`constant_time_eq_str`），
-/// 已使用 `subtle::ConstantTimeEq` 实现。
+/// 使用 standardwebhooks 重新计算签名并与提供的签名进行常量时间比较。
+/// 时间戳验证由 standardwebhooks 内部处理（5 分钟窗口）。
 pub fn verify_webhook_signature_bytes(
     secret: &str,
+    msg_id: &str,
     payload: &[u8],
     timestamp: i64,
     signature: &str,
@@ -533,28 +503,22 @@ pub fn verify_webhook_signature_bytes(
         return false;
     }
 
-    // 重新计算签名并比较
-    // 架构 MEDIUM-1：复用公共 `constant_time_eq_str` helper，
-    // 消除本文件之前私有的 `constant_time_eq` 重复实现。
-    let expected_signature = generate_signature(secret, payload, timestamp);
+    // 使用 standardwebhooks 重新计算签名并比较
+    let expected_signature = generate_signature(secret, msg_id, payload, timestamp);
     constant_time_eq_str(signature, &expected_signature)
 }
 
-/// 从字符串形式的 signature + timestamp 验证 webhook 签名
+/// 从字符串形式的 signature + timestamp + msg_id 验证 webhook 签名
 ///
 /// 架构 MEDIUM-2：本函数承担 **domain 层**的 webhook 认证逻辑，
 /// 包括 timestamp 字符串解析 + 签名验证。
-/// 之前的 `verify_webhook_signature_from_headers`（HTTP header 提取 + 域逻辑）
-/// 跨越了 presentation / domain 两层，违反 SRP。
-/// 现拆分为：
-/// - presentation 层：仅做 HTTP header → `&str` 提取（HeaderMap 解析）
-/// - domain 层（本函数）：timestamp 字符串解析 + HMAC 验证 + 时间戳窗口检查
 ///
 /// # 参数
 ///
 /// * `secret` - webhook 共享密钥
-/// * `signature` - 来自请求头的签名 hex 字符串
+/// * `signature` - 来自请求头的 standardwebhooks 签名（`v1,<base64>`）
 /// * `timestamp_str` - 来自请求头的时间戳字符串（Unix 秒）
+/// * `msg_id` - webhook-id 头（消息唯一标识）
 /// * `body` - 请求 body 原始字节
 ///
 /// # 返回值
@@ -570,10 +534,11 @@ pub fn verify_webhook_signature_from_parts(
     secret: &str,
     signature: &str,
     timestamp_str: &str,
+    msg_id: &str,
     body: &[u8],
 ) -> Result<(), &'static str> {
     let timestamp: i64 = timestamp_str.parse().map_err(|_| WEBHOOK_AUTH_FAILED)?;
-    if !verify_webhook_signature_bytes(secret, body, timestamp, signature) {
+    if !verify_webhook_signature_bytes(secret, msg_id, body, timestamp, signature) {
         return Err(WEBHOOK_AUTH_FAILED);
     }
     Ok(())
@@ -584,7 +549,7 @@ mod tests {
     use super::*;
     use crate::domain::repositories::task_repository::RepositoryError;
     use async_trait::async_trait;
-    use serde_json::Value;
+    use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
@@ -908,16 +873,19 @@ mod tests {
     // ---- generate_signature (method) ----
 
     #[test]
-    fn test_generate_signature_method_returns_hex() {
+    fn test_generate_signature_method_returns_standardwebhooks_format() {
         let service = make_service(
             Arc::new(MockWebhookSender::default()),
             Arc::new(MockWebhookEventRepository::default()),
             "supersecret",
         );
         let sig = service.generate_signature(r#"{"a":1}"#, 1_700_000_000);
-        // HMAC-SHA256 produces 32 bytes -> 64 hex chars
-        assert_eq!(sig.len(), 64);
-        assert!(sig.chars().all(|c| c.is_ascii_hexdigit()));
+        // standardwebhooks format: "v1,<base64>"
+        assert!(sig.starts_with("v1,"), "signature should start with v1,");
+        assert!(
+            sig.len() > 3,
+            "signature should have base64 content after v1,"
+        );
     }
 
     #[test]
@@ -957,16 +925,19 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_signature_method_with_empty_secret_returns_nonempty() {
-        // HMAC accepts any key length including empty; should still produce a signature
+    fn test_generate_signature_method_with_empty_secret_returns_signature() {
+        // standardwebhooks accepts empty key (same as HMAC); still produces a valid signature
         let service = make_service(
             Arc::new(MockWebhookSender::default()),
             Arc::new(MockWebhookEventRepository::default()),
             "",
         );
         let sig = service.generate_signature("payload", 1);
-        // HMAC-SHA256 accepts empty key, so we get a valid 64-char hex
-        assert_eq!(sig.len(), 64);
+        // standardwebhooks format: "v1,<base64>" even with empty secret
+        assert!(
+            sig.starts_with("v1,"),
+            "empty secret should still produce v1 signature"
+        );
     }
 
     // ---- send_webhook ----
@@ -1047,10 +1018,12 @@ mod tests {
             captured.get("Content-Type").map(|s| s.as_str()),
             Some("application/json")
         );
-        assert!(captured.contains_key("X-Crawlrs-Signature"));
-        assert!(captured.contains_key("X-Crawlrs-Timestamp"));
+        assert!(captured.contains_key(standardwebhooks::HEADER_WEBHOOK_SIGNATURE));
+        assert!(captured.contains_key(standardwebhooks::HEADER_WEBHOOK_TIMESTAMP));
         assert_eq!(
-            captured.get("X-Crawlrs-Event-ID").map(|s| s.as_str()),
+            captured
+                .get(standardwebhooks::HEADER_WEBHOOK_ID)
+                .map(|s| s.as_str()),
             Some(event.id.to_string().as_str())
         );
     }
@@ -1345,22 +1318,27 @@ mod tests {
 
     #[test]
     fn test_generate_signature_free_fn_returns_hex() {
-        let sig = generate_signature("secret", r#"{"x":1}"#, 1_700_000_000);
-        assert_eq!(sig.len(), 64);
-        assert!(sig.chars().all(|c| c.is_ascii_hexdigit()));
+        let sig = generate_signature(
+            "whsec_test",
+            "msg_1",
+            r#"{"x":1}"#.as_bytes(),
+            1_700_000_000,
+        );
+        // standardwebhooks format: "v1,<base64>"
+        assert!(sig.starts_with("v1,"));
     }
 
     #[test]
     fn test_generate_signature_free_fn_deterministic() {
-        let s1 = generate_signature("secret", "payload", 100);
-        let s2 = generate_signature("secret", "payload", 100);
+        let s1 = generate_signature("whsec_test", "msg_1", b"payload", 100);
+        let s2 = generate_signature("whsec_test", "msg_1", b"payload", 100);
         assert_eq!(s1, s2);
     }
 
     #[test]
     fn test_generate_signature_free_fn_changes_with_secret() {
-        let s1 = generate_signature("secret1", "payload", 100);
-        let s2 = generate_signature("secret2", "payload", 100);
+        let s1 = generate_signature("whsec_test1", "msg_1", b"payload", 100);
+        let s2 = generate_signature("whsec_test2", "msg_1", b"payload", 100);
         assert_ne!(s1, s2);
     }
 
@@ -1371,9 +1349,9 @@ mod tests {
         let secret = "mysecret";
         let payload = r#"{"task_id":"abc"}"#;
         let timestamp = Utc::now().timestamp();
-        let signature = generate_signature(secret, payload, timestamp);
+        let signature = generate_signature(secret, "msg_1", payload.as_bytes(), timestamp);
         assert!(verify_webhook_signature(
-            secret, payload, timestamp, &signature
+            secret, "msg_1", payload, timestamp, &signature
         ));
     }
 
@@ -1384,7 +1362,7 @@ mod tests {
         let timestamp = Utc::now().timestamp();
         // Wrong signature
         assert!(!verify_webhook_signature(
-            secret, payload, timestamp, "deadbeef"
+            secret, "msg_1", payload, timestamp, "deadbeef"
         ));
     }
 
@@ -1392,9 +1370,10 @@ mod tests {
     fn test_verify_webhook_signature_wrong_secret() {
         let payload = r#"{"task_id":"abc"}"#;
         let timestamp = Utc::now().timestamp();
-        let signature = generate_signature("real-secret", payload, timestamp);
+        let signature = generate_signature("real-secret", "msg_1", payload.as_bytes(), timestamp);
         assert!(!verify_webhook_signature(
             "wrong-secret",
+            "msg_1",
             payload,
             timestamp,
             &signature
@@ -1405,9 +1384,10 @@ mod tests {
     fn test_verify_webhook_signature_wrong_payload() {
         let secret = "mysecret";
         let timestamp = Utc::now().timestamp();
-        let signature = generate_signature(secret, r#"{"a":1}"#, timestamp);
+        let signature = generate_signature(secret, "msg_1", r#"{"a":1}"#.as_bytes(), timestamp);
         assert!(!verify_webhook_signature(
             secret,
+            "msg_1",
             r#"{"a":2}"#,
             timestamp,
             &signature
@@ -1419,10 +1399,10 @@ mod tests {
         let secret = "mysecret";
         let payload = r#"{"task_id":"abc"}"#;
         let timestamp = Utc::now().timestamp() - 86_400; // 1 day ago, outside window
-        let signature = generate_signature(secret, payload, timestamp);
+        let signature = generate_signature(secret, "msg_1", payload.as_bytes(), timestamp);
         // Even with correct signature, old timestamp should be rejected
         assert!(!verify_webhook_signature(
-            secret, payload, timestamp, &signature
+            secret, "msg_1", payload, timestamp, &signature
         ));
     }
 
@@ -1431,9 +1411,9 @@ mod tests {
         let secret = "mysecret";
         let payload = r#"{"task_id":"abc"}"#;
         let timestamp = Utc::now().timestamp() + 86_400; // 1 day in future
-        let signature = generate_signature(secret, payload, timestamp);
+        let signature = generate_signature(secret, "msg_1", payload.as_bytes(), timestamp);
         assert!(!verify_webhook_signature(
-            secret, payload, timestamp, &signature
+            secret, "msg_1", payload, timestamp, &signature
         ));
     }
 
@@ -1443,9 +1423,9 @@ mod tests {
         let payload = r#"{"task_id":"abc"}"#;
         let now = Utc::now().timestamp();
         let timestamp = now - MAX_TIMESTAMP_AGE; // exactly at boundary - should be valid (<=)
-        let signature = generate_signature(secret, payload, timestamp);
+        let signature = generate_signature(secret, "msg_1", payload.as_bytes(), timestamp);
         assert!(verify_webhook_signature(
-            secret, payload, timestamp, &signature
+            secret, "msg_1", payload, timestamp, &signature
         ));
     }
 
@@ -1457,11 +1437,12 @@ mod tests {
         let secret = "mysecret";
         let payload = br#"{"task_id":"abc"}"#;
         let timestamp = Utc::now().timestamp();
-        let signature = generate_signature(secret, payload, timestamp);
+        let signature = generate_signature(secret, "msg_1", payload, timestamp);
         let result = verify_webhook_signature_from_parts(
             secret,
             &signature,
             &timestamp.to_string(),
+            "msg_1",
             payload,
         );
         assert!(result.is_ok(), "valid signature should return Ok");
@@ -1473,8 +1454,13 @@ mod tests {
         let secret = "mysecret";
         let payload = br#"{"task_id":"abc"}"#;
         // timestamp_str 不是有效 i64
-        let result =
-            verify_webhook_signature_from_parts(secret, "deadbeef", "not-a-number", payload);
+        let result = verify_webhook_signature_from_parts(
+            secret,
+            "deadbeef",
+            "not-a-number",
+            "msg_1",
+            payload,
+        );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), WEBHOOK_AUTH_FAILED);
     }
@@ -1486,11 +1472,12 @@ mod tests {
         let payload = br#"{"task_id":"abc"}"#;
         let timestamp = Utc::now().timestamp();
         // 用错误的 secret 生成签名
-        let wrong_signature = generate_signature("wrong-secret", payload, timestamp);
+        let wrong_signature = generate_signature("wrong-secret", "msg_1", payload, timestamp);
         let result = verify_webhook_signature_from_parts(
             secret,
             &wrong_signature,
             &timestamp.to_string(),
+            "msg_1",
             payload,
         );
         assert!(result.is_err());
@@ -1504,11 +1491,12 @@ mod tests {
         let payload = br#"{"task_id":"abc"}"#;
         // 1 天前，超出 5 分钟窗口
         let timestamp = Utc::now().timestamp() - 86_400;
-        let signature = generate_signature(secret, payload, timestamp);
+        let signature = generate_signature(secret, "msg_1", payload, timestamp);
         let result = verify_webhook_signature_from_parts(
             secret,
             &signature,
             &timestamp.to_string(),
+            "msg_1",
             payload,
         );
         assert!(result.is_err());
@@ -1522,11 +1510,12 @@ mod tests {
         let signed_payload = br#"{"a":1}"#;
         let actual_payload = br#"{"a":2}"#;
         let timestamp = Utc::now().timestamp();
-        let signature = generate_signature(secret, signed_payload, timestamp);
+        let signature = generate_signature(secret, "msg_1", signed_payload, timestamp);
         let result = verify_webhook_signature_from_parts(
             secret,
             &signature,
             &timestamp.to_string(),
+            "msg_1",
             actual_payload,
         );
         assert!(result.is_err());

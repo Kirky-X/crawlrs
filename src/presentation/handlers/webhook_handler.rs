@@ -4,7 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::application::dto::webhook_request::{
-    CreateWebhookRequest, WebhookListResponse, WebhookResponse,
+    CreateWebhookRequest, WebhookListEntry, WebhookListResponse,
 };
 use crate::config::settings::Settings;
 use crate::domain::models::Webhook;
@@ -30,9 +30,10 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::{Extension, Json};
 use std::sync::Arc;
 
-/// Webhook 签名验证相关的 HTTP 头名称（HTTP 协议层常量）
-const SIGNATURE_HEADER: &str = "X-Crawlrs-Signature";
-const TIMESTAMP_HEADER: &str = "X-Crawlrs-Timestamp";
+/// Webhook 签名验证相关的 HTTP 头名称（standardwebhooks 标准头）
+const SIGNATURE_HEADER: &str = standardwebhooks::HEADER_WEBHOOK_SIGNATURE;
+const TIMESTAMP_HEADER: &str = standardwebhooks::HEADER_WEBHOOK_TIMESTAMP;
+const MSG_ID_HEADER: &str = standardwebhooks::HEADER_WEBHOOK_ID;
 
 /// 构造统一的 webhook 认证失败错误
 ///
@@ -63,8 +64,13 @@ fn verify_webhook_signature_from_headers(
         .and_then(|h| h.to_str().ok())
         .ok_or_else(auth_error)?;
 
-    // 委托给 domain 层：timestamp 解析 + HMAC 验证 + 时间戳窗口检查
-    verify_webhook_signature_from_parts(secret, signature, timestamp_str, body)
+    let msg_id = headers
+        .get(MSG_ID_HEADER)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("none");
+
+    // 委托给 domain 层：timestamp 解析 + standardwebhooks 签名验证 + 时间戳窗口检查
+    verify_webhook_signature_from_parts(secret, signature, timestamp_str, msg_id, body)
         .map_err(|_| auth_error())
 }
 
@@ -137,20 +143,19 @@ pub async fn list_webhooks<R: WebhookRepository>(
 ) -> Result<Json<ApiResponse<WebhookListResponse>>, CrawlRsError> {
     let team_id = auth_state.team_id;
     let webhooks = repo.find_by_team_id(team_id).await?;
-    let webhook_responses: Vec<WebhookResponse> = webhooks
+    let webhook_entries: Vec<WebhookListEntry> = webhooks
         .into_iter()
-        .map(|w| WebhookResponse {
+        .map(|w| WebhookListEntry {
             id: w.id,
             team_id: w.team_id,
             url: w.url,
             created_at: w.created_at,
             is_active: true,
-            secret: None,
         })
         .collect();
-    let total = webhook_responses.len();
+    let total = webhook_entries.len();
     Ok(Json(ApiResponse::success(WebhookListResponse {
-        webhooks: webhook_responses,
+        webhooks: webhook_entries,
         total,
     })))
 }
@@ -158,6 +163,7 @@ pub async fn list_webhooks<R: WebhookRepository>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::dto::webhook_request::WebhookResponse;
     use crate::domain::auth::ApiKeyScope;
     use crate::domain::repositories::task_repository::RepositoryError;
     use crate::domain::services::rate_limiting_service::{
@@ -167,12 +173,9 @@ mod tests {
     use async_trait::async_trait;
     use chrono::Utc;
     use dbnexus::DbPool;
-    use hmac::{Hmac, KeyInit, Mac};
-    use sha2::Sha256;
+    use standardwebhooks::Webhook as StandardWebhook;
     use std::sync::Mutex;
     use uuid::Uuid;
-
-    type HmacSha256 = Hmac<Sha256>;
 
     /// 测试用 webhook 签名密钥
     ///
@@ -201,18 +204,19 @@ mod tests {
         Arc::new(settings)
     }
 
-    /// 使用与生产相同的算法生成测试签名：HMAC-SHA256("{timestamp}.{payload}")
-    fn make_test_signature(secret: &str, payload: &str, timestamp: i64) -> String {
-        let message = format!("{}.{}", timestamp, payload);
-        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC key error");
-        mac.update(message.as_bytes());
-        hex::encode(mac.finalize().into_bytes())
+    /// 使用 standardwebhooks 生成测试签名（与生产算法一致）
+    fn make_test_signature(secret: &str, msg_id: &str, payload: &str, timestamp: i64) -> String {
+        let wh = StandardWebhook::from_bytes(secret.as_bytes().to_vec())
+            .expect("valid standardwebhook key");
+        wh.sign(msg_id, timestamp, payload.as_bytes())
+            .expect("signing should succeed")
     }
 
-    /// 构造包含有效签名 + 时间戳的 HeaderMap
+    /// 构造包含有效签名 + 时间戳 + msg_id 的 HeaderMap
     fn make_signed_headers(secret: &str, payload: &str) -> HeaderMap {
         let timestamp = Utc::now().timestamp();
-        let signature = make_test_signature(secret, payload, timestamp);
+        let msg_id = Uuid::new_v4().to_string();
+        let signature = make_test_signature(secret, &msg_id, payload, timestamp);
         let mut headers = HeaderMap::new();
         headers.insert(
             SIGNATURE_HEADER,
@@ -222,6 +226,10 @@ mod tests {
             TIMESTAMP_HEADER,
             axum::http::HeaderValue::from_str(&timestamp.to_string())
                 .expect("timestamp is valid header"),
+        );
+        headers.insert(
+            MSG_ID_HEADER,
+            axum::http::HeaderValue::from_str(&msg_id).expect("msg_id is valid header"),
         );
         headers
     }
@@ -338,21 +346,19 @@ mod tests {
 
     #[test]
     fn test_webhook_list_response_with_items() {
-        let webhook1 = WebhookResponse {
+        let webhook1 = WebhookListEntry {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
             url: "https://hook1.example.com".to_string(),
             created_at: Utc::now(),
             is_active: true,
-            secret: None,
         };
-        let webhook2 = WebhookResponse {
+        let webhook2 = WebhookListEntry {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
             url: "https://hook2.example.com".to_string(),
             created_at: Utc::now(),
             is_active: false,
-            secret: None,
         };
         let response = WebhookListResponse {
             webhooks: vec![webhook1, webhook2],
@@ -368,14 +374,13 @@ mod tests {
 
     #[test]
     fn test_webhook_list_response_total_matches_count() {
-        let webhooks: Vec<WebhookResponse> = (0..5)
-            .map(|_| WebhookResponse {
+        let webhooks: Vec<WebhookListEntry> = (0..5)
+            .map(|_| WebhookListEntry {
                 id: Uuid::new_v4(),
                 team_id: Uuid::new_v4(),
                 url: "https://example.com".to_string(),
                 created_at: Utc::now(),
                 is_active: true,
-                secret: None,
             })
             .collect();
         let count = webhooks.len();
@@ -422,8 +427,9 @@ mod tests {
                     .build()
                     .expect("failed to build tokio runtime for DbPool construction");
                 let _guard = rt.enter();
-                let url = std::env::var("TEST_DATABASE_URL")
-                    .expect("TEST_DATABASE_URL must be set; no hardcoded fallback");
+                let url = crate::common::test_helpers::resolve_test_database_url().expect(
+                    "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
+                );
                 rt.block_on(async {
                     let cfg = dbnexus::DbConfig {
                         url,
@@ -1119,7 +1125,8 @@ mod tests {
         // 时间戳为 10 分钟前（超出 MAX_TIMESTAMP_AGE = 300 秒窗口）
         let expired_timestamp = Utc::now().timestamp() - 600;
         let payload_str = std::str::from_utf8(&payload_bytes).expect("utf8");
-        let signature = make_test_signature(TEST_WEBHOOK_SECRET, payload_str, expired_timestamp);
+        let signature =
+            make_test_signature(TEST_WEBHOOK_SECRET, "none", payload_str, expired_timestamp);
         let headers = make_headers_with_signature_and_timestamp(&signature, expired_timestamp);
 
         let result = create_webhook(
@@ -1162,7 +1169,7 @@ mod tests {
         let settings = make_test_settings_with_secret(server_secret);
         let payload_str = std::str::from_utf8(&payload_bytes).expect("utf8");
         let timestamp = Utc::now().timestamp();
-        let signature = make_test_signature(client_secret, payload_str, timestamp);
+        let signature = make_test_signature(client_secret, "none", payload_str, timestamp);
         let headers = make_headers_with_signature_and_timestamp(&signature, timestamp);
 
         let result = create_webhook(

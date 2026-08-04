@@ -40,7 +40,7 @@ async fn make_dns_cache_service(ttl_seconds: u64) -> DnsCacheService {
             .await
             .expect("failed to build oxcache for test"),
     );
-    DnsCacheService::new(cache, ttl_seconds)
+    DnsCacheService::new(cache, ttl_seconds).expect("failed to create DnsCacheService")
 }
 
 /// 解析 IP 地址字符串为 IpAddr

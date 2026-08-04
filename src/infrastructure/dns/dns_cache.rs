@@ -3,29 +3,35 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! DNS缓存模块（使用 oxcache）
+//! DNS缓存模块（使用 oxcache + hickory-resolver）
 
 use crate::infrastructure::oxcache::{generate_dns_key, DnsCache, DnsCacheEntry};
+use hickory_resolver::Resolver;
 use log::{debug, warn};
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::lookup_host;
 
-/// 线程安全的DNS缓存（使用 oxcache）
+/// 线程安全的DNS缓存（使用 oxcache + hickory-resolver）
 #[derive(Debug, Clone)]
 pub struct DnsCacheService {
     cache: Arc<DnsCache>,
+    resolver: Resolver<hickory_resolver::net::runtime::TokioRuntimeProvider>,
     default_ttl: Duration,
 }
 
 impl DnsCacheService {
     /// 创建新的DNS缓存
-    pub fn new(cache: Arc<DnsCache>, default_ttl_seconds: u64) -> Self {
-        Self {
+    pub fn new(
+        cache: Arc<DnsCache>,
+        default_ttl_seconds: u64,
+    ) -> Result<Self, hickory_resolver::net::NetError> {
+        let resolver = Resolver::builder_tokio()?.build()?;
+        Ok(Self {
             cache,
+            resolver,
             default_ttl: Duration::from_secs(default_ttl_seconds),
-        }
+        })
     }
 
     /// 解析主机名（使用缓存）
@@ -50,12 +56,11 @@ impl DnsCacheService {
             }
         }
 
-        // 缓存未命中，执行DNS解析
-        let addr_str = format!("{}:{}", hostname, port);
-        let ips: Vec<IpAddr> = lookup_host(&addr_str)
-            .await?
-            .map(|socket_addr| socket_addr.ip())
-            .collect();
+        // 缓存未命中，执行DNS解析（hickory-resolver）
+        let lookup = self.resolver.lookup_ip(hostname).await.map_err(|e| {
+            std::io::Error::other(format!("DNS resolution failed for {}: {}", hostname, e))
+        })?;
+        let ips: Vec<IpAddr> = lookup.iter().collect();
 
         if ips.is_empty() {
             return Err(std::io::Error::new(
@@ -155,7 +160,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let dns_cache = DnsCacheService::new(cache, 300);
+        let dns_cache = DnsCacheService::new(cache, 300).unwrap();
         assert_eq!(dns_cache.default_ttl.as_secs(), 300);
     }
 
@@ -178,7 +183,7 @@ mod tests {
                 .await
                 .expect("cache build failed"),
         );
-        DnsCacheService::new(cache, ttl_seconds)
+        DnsCacheService::new(cache, ttl_seconds).expect("failed to create DnsCacheService")
     }
 
     // =========================================================================

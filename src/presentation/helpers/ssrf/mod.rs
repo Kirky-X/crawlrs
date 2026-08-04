@@ -589,7 +589,7 @@ mod tests {
                 .await
                 .expect("Failed to build oxcache for test"),
         );
-        Arc::new(DnsCacheService::new(cache, 300))
+        Arc::new(DnsCacheService::new(cache, 300).expect("failed to create DnsCacheService"))
     }
 
     #[tokio::test]

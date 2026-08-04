@@ -140,7 +140,7 @@ mod tests {
                     .await
                     .unwrap(),
             );
-            Arc::new(DnsCacheService::new(cache, 300))
+            Arc::new(DnsCacheService::new(cache, 300).unwrap())
         });
         // 验证 Ipv4OnlyResolver::with_cache 接受 Arc<DnsCacheService>
         let _resolver = Ipv4OnlyResolver::with_cache(dns_cache.clone());
@@ -188,7 +188,7 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let dns_cache = Arc::new(DnsCacheService::new(cache, 300));
+        let dns_cache = Arc::new(DnsCacheService::new(cache, 300).unwrap());
 
         // 预置缓存：example.com -> 203.0.113.5
         let test_ip: std::net::IpAddr = "203.0.113.5".parse().unwrap();
@@ -215,7 +215,7 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let dns_cache = Arc::new(DnsCacheService::new(cache, 300));
+        let dns_cache = Arc::new(DnsCacheService::new(cache, 300).unwrap());
 
         let resolver = Ipv4OnlyResolver::with_cache(dns_cache);
         // localhost 不在缓存中，应该 fallback 到系统 DNS
