@@ -8,9 +8,7 @@
 //! 覆盖：locale 文件加载、Accept-Language 协商、错误响应本地化、
 //! 回退链、缺失 key 处理、参数替换、key 一致性验证。
 
-use crawlrs::i18n::{
-    negotiate_locale, parse_accept_language, t, t_with_args, I18nBundle, Locale,
-};
+use crawlrs::i18n::{negotiate_locale, parse_accept_language, t, t_with_args, I18nBundle, Locale};
 use fluent_bundle::FluentValue;
 use std::sync::Arc;
 
@@ -70,7 +68,10 @@ fn test_translate_en_us() {
         bundle.translate(&locale, "error-database"),
         "Database operation failed. Please try again later."
     );
-    assert_eq!(bundle.translate(&locale, "error-permission"), "Permission denied.");
+    assert_eq!(
+        bundle.translate(&locale, "error-permission"),
+        "Permission denied."
+    );
     assert_eq!(
         bundle.translate(&locale, "error-timeout"),
         "Request timed out. Please try again later."
@@ -94,7 +95,10 @@ fn test_translate_api_keys() {
     let bundle = test_bundle();
     let locale = en_locale();
 
-    assert_eq!(bundle.translate(&locale, "api-access-denied"), "Access denied.");
+    assert_eq!(
+        bundle.translate(&locale, "api-access-denied"),
+        "Access denied."
+    );
     assert_eq!(
         bundle.translate(&locale, "api-internal-error"),
         "Internal server error."
@@ -156,10 +160,7 @@ fn test_translate_with_args_zh() {
         "error-validation",
         &[("message", FluentValue::from("无效邮箱"))],
     );
-    assert!(
-        msg.contains("无效邮箱"),
-        "Expected '无效邮箱' in: {msg}"
-    );
+    assert!(msg.contains("无效邮箱"), "Expected '无效邮箱' in: {msg}");
     assert!(msg.starts_with("验证错误"));
 }
 
@@ -228,7 +229,10 @@ fn test_fallback_with_args_unknown_locale() {
         "error-validation",
         &[("message", FluentValue::from("bad input"))],
     );
-    assert!(msg.contains("bad input"), "Expected fallback to en-US, got: {msg}");
+    assert!(
+        msg.contains("bad input"),
+        "Expected fallback to en-US, got: {msg}"
+    );
     assert!(msg.starts_with("Validation error:"));
 }
 
@@ -417,12 +421,21 @@ fn test_crawlrs_error_locale_all_simple_variants_en() {
 
     // 测试所有无参数（simple translate）变体
     let cases: Vec<(CrawlRsError, &str)> = vec![
-        (CrawlRsError::Network("x".into()), "External service unavailable."),
+        (
+            CrawlRsError::Network("x".into()),
+            "External service unavailable.",
+        ),
         (CrawlRsError::Config("x".into()), "Configuration error."),
         (CrawlRsError::Timeout("x".into()), "Request timed out."),
-        (CrawlRsError::ServiceUnavailable("x".into()), "Service unavailable."),
+        (
+            CrawlRsError::ServiceUnavailable("x".into()),
+            "Service unavailable.",
+        ),
         (CrawlRsError::RateLimit("x".into()), "Rate limit exceeded."),
-        (CrawlRsError::Cache("x".into()), "Cache service unavailable."),
+        (
+            CrawlRsError::Cache("x".into()),
+            "Cache service unavailable.",
+        ),
         (CrawlRsError::Task("x".into()), "Task processing error."),
         (CrawlRsError::Other("x".into()), "Internal server error."),
     ];
@@ -450,7 +463,10 @@ fn test_domain_error_locale_crawl_config_en() {
     let err = DomainError::crawl_config("missing field");
 
     let msg = err.user_message_locale(&locale, &bundle);
-    assert!(msg.contains("missing field"), "Expected 'missing field' in: {msg}");
+    assert!(
+        msg.contains("missing field"),
+        "Expected 'missing field' in: {msg}"
+    );
     assert!(
         msg.contains("configuration error") || msg.contains("Crawler configuration"),
         "Expected 'configuration error' in: {msg}"
