@@ -13,6 +13,15 @@
 //!
 //! - R-session-jwt-001：`build_garrison_config` 在 `jwt_secret` 为空/弱（<32 字节）时返回 `Err`；
 //!   `token_style` 为 `jwt`。
+//!
+//! ## R-session-jwt-002 取舍决策
+//!
+//! **不暴露 HTTP 刷新端点**（不新增 `POST /v1/auth/token/refresh` 路由）。
+//! 仅保留 garrison 内部 `token_style=jwt` 签发能力，JWT 校验由 garrison
+//! `check_api_key` 自动处理。理由：
+//! - crawlrs 当前无会话管理 UI，刷新端点无消费者
+//! - API Key 本身即长期凭据，JWT 仅用于内部校验，无需独立刷新流程
+//! - 后续若需暴露，新增路由 + handler 即可（garrison `protocol-jwt` 已支持）
 
 use garrison::prelude::GarrisonConfig;
 use thiserror::Error;

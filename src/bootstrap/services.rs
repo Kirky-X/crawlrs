@@ -443,6 +443,13 @@ pub async fn init_garrison_auth(
     //
     // 注：Cargo feature 是统一效应，此处断言仅防止"误关闭 features"配置错误，
     // 不防恶意依赖（见 auth_middleware.rs `reset_global_auth_state` 注释）。
+    //
+    // ## R-audit-firewall-002 / T025 阈值配置限制
+    //
+    // garrison 0.8.1 在 `check_api_key` 内部硬编码 `BruteForceConfig::default()`
+    // （5 次失败 / 60s 窗口 / 300s 锁定），不通过 `GarrisonConfig` 暴露自定义入口。
+    // 当前使用 garrison 默认值；若需自定义阈值，需等 garrison 后续版本暴露配置接口
+    // 或在 crawlrs 侧实现自定义 `check_api_key` wrapper（暂不实施，规则5 简洁优先）。
     #[cfg(feature = "auth")]
     {
         // garrison 顶层 re-export（lib.rs:621，gated on `firewall-bruteforce` feature）
