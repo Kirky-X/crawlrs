@@ -22,7 +22,10 @@ enabled = false
 default_team_limit = 10
 
 [webhook]
-secret = "test-secret"
+secret = "<your-webhook-secret-min-32-chars>"
 
 [logging]
 level = "info"
+
+[auth]
+jwt_secret = "<your-jwt-secret-min-32-chars>"
