@@ -86,13 +86,7 @@ async fn main() {
                 );
             }
             Err(e) => {
-                info!(
-                    "  [{}/{}] ❌ {} — {}",
-                    processed,
-                    urls.len(),
-                    result.url,
-                    e
-                );
+                info!("  [{}/{}] ❌ {} — {}", processed, urls.len(), result.url, e);
             }
         }
     }

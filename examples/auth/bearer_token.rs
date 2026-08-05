@@ -28,13 +28,16 @@ async fn main() {
     info!("=====================================\n");
 
     let base_url = "http://localhost:8899";
-    let api_key = std::env::var("CRAWLRS_API_KEY")
-        .unwrap_or_else(|_| "your-api-key-here".to_string());
+    let api_key =
+        std::env::var("CRAWLRS_API_KEY").unwrap_or_else(|_| "your-api-key-here".to_string());
 
     // 1. Bearer Token 格式
     info!("1️⃣  Bearer Token 格式");
     info!("-----------------------------");
-    info!("  Authorization: Bearer {}", &api_key[..api_key.len().min(8)]);
+    info!(
+        "  Authorization: Bearer {}",
+        &api_key[..api_key.len().min(8)]
+    );
     info!("  ...");
     info!("");
     info!("  crawlrs 支持两种等效的认证头:");

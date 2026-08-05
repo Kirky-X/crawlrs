@@ -51,8 +51,8 @@ async fn main() {
     info!("-----------------------------");
 
     // 极短超时触发 Timeout
-    let request = ScrapeRequest::new("https://httpbin.org/delay/10")
-        .timeout(Duration::from_millis(100));
+    let request =
+        ScrapeRequest::new("https://httpbin.org/delay/10").timeout(Duration::from_millis(100));
 
     match client.scrape(&request).await {
         Ok(response) => {
@@ -99,7 +99,10 @@ async fn main() {
 
         match client.scrape(&request).await {
             Ok(response) => {
-                info!("  ✅ 第 {} 次尝试成功: HTTP {}", attempt, response.status_code);
+                info!(
+                    "  ✅ 第 {} 次尝试成功: HTTP {}",
+                    attempt, response.status_code
+                );
                 last_error = None;
                 break;
             }

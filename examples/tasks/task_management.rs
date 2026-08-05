@@ -82,7 +82,9 @@ async fn main() {
     info!("    \"total_cancelled\": 2,");
     info!("    \"total_failed\": 0,");
     info!("    \"cancelled_tasks\": [");
-    info!("      {{ \"task_id\": \"<uuid>\", \"status\": \"cancelled\", \"cancelled_at\": \"...\" }}");
+    info!(
+        "      {{ \"task_id\": \"<uuid>\", \"status\": \"cancelled\", \"cancelled_at\": \"...\" }}"
+    );
     info!("    ],");
     info!("    \"failed_tasks\": []");
     info!("  }}");

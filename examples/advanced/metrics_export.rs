@@ -30,8 +30,8 @@ async fn main() {
     info!("-----------------------------");
 
     let client = EngineClient::new();
-    let metrics_request = ScrapeRequest::new("http://localhost:8899/metrics")
-        .timeout(Duration::from_secs(5));
+    let metrics_request =
+        ScrapeRequest::new("http://localhost:8899/metrics").timeout(Duration::from_secs(5));
 
     match client.scrape(&metrics_request).await {
         Ok(response) => {
@@ -54,16 +54,18 @@ async fn main() {
     info!("-----------------------------");
 
     // 执行几次爬取操作产生指标
-    let urls = vec![
-        "https://example.com",
-        "https://httpbin.org/html",
-    ];
+    let urls = vec!["https://example.com", "https://httpbin.org/html"];
 
     for url in &urls {
         let request = ScrapeRequest::new(*url).timeout(Duration::from_secs(10));
         match client.scrape(&request).await {
             Ok(response) => {
-                info!("  ✅ {} — HTTP {}, {} 字节", url, response.status_code, response.content.len());
+                info!(
+                    "  ✅ {} — HTTP {}, {} 字节",
+                    url,
+                    response.status_code,
+                    response.content.len()
+                );
             }
             Err(e) => {
                 info!("  ❌ {} — {:?}", url, e);

@@ -66,7 +66,10 @@ async fn main() {
                 success_count += 1;
                 info!(
                     "  ✅ [{}] {} — 状态码: {}, 内容: {} 字节",
-                    idx, url, response.status_code, response.content.len()
+                    idx,
+                    url,
+                    response.status_code,
+                    response.content.len()
                 );
             }
             Ok((idx, url, Err(e))) => {

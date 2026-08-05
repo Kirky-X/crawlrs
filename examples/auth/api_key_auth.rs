@@ -40,7 +40,8 @@ impl ApiRequest {
     }
 
     fn with_api_key(mut self, key: &str) -> Self {
-        self.headers.insert("x-api-key".to_string(), key.to_string());
+        self.headers
+            .insert("x-api-key".to_string(), key.to_string());
         self
     }
 

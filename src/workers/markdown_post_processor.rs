@@ -171,42 +171,44 @@ impl MarkdownPostProcessor {
             .and_then(|o| o.only_main_content)
             .unwrap_or(false);
 
-        let content_for_md: std::borrow::Cow<'_, str> =
-            if only_main {
-                if let Some(extractor) = &self.content_extractor {
-                    match extractor.extract(content, &req.url).await {
-                        Ok(extracted) if !extracted.text.trim().is_empty() => {
-                            debug!(
-                                "task_id: {}, main content extracted (confidence={:.2}, {} bytes)",
-                                task_id,
-                                extracted.confidence,
-                                extracted.text.len()
-                            );
-                            std::borrow::Cow::Owned(extracted.text)
-                        }
-                        Ok(_) => {
-                            warn!(
+        let content_for_md: std::borrow::Cow<'_, str> = if only_main {
+            if let Some(extractor) = &self.content_extractor {
+                match extractor.extract(content, &req.url).await {
+                    Ok(extracted) if !extracted.text.trim().is_empty() => {
+                        debug!(
+                            "task_id: {}, main content extracted (confidence={:.2}, {} bytes)",
+                            task_id,
+                            extracted.confidence,
+                            extracted.text.len()
+                        );
+                        std::borrow::Cow::Owned(extracted.text)
+                    }
+                    Ok(_) => {
+                        warn!(
                                 "task_id: {}, content extraction returned empty, falling back to full HTML",
                                 task_id
                             );
-                            std::borrow::Cow::Borrowed(content)
-                        }
-                        Err(e) => {
-                            warn!(
-                                "task_id: {}, content extraction failed: {}, falling back to full HTML",
-                                task_id, e
-                            );
-                            std::borrow::Cow::Borrowed(content)
-                        }
+                        std::borrow::Cow::Borrowed(content)
                     }
-                } else {
-                    std::borrow::Cow::Borrowed(content)
+                    Err(e) => {
+                        warn!(
+                            "task_id: {}, content extraction failed: {}, falling back to full HTML",
+                            task_id, e
+                        );
+                        std::borrow::Cow::Borrowed(content)
+                    }
                 }
             } else {
                 std::borrow::Cow::Borrowed(content)
-            };
+            }
+        } else {
+            std::borrow::Cow::Borrowed(content)
+        };
 
-        match self.markdown_service.to_markdown(content_for_md.as_ref(), false) {
+        match self
+            .markdown_service
+            .to_markdown(content_for_md.as_ref(), false)
+        {
             Ok(md) if !md.trim().is_empty() => {
                 debug!(
                     "task_id: {}, Markdown generated ({} bytes)",
@@ -254,11 +256,13 @@ mod tests {
             "url": "https://example.com",
             "formats": ["markdown"]
         }));
-        let result = p.generate(
-            Uuid::new_v4(),
-            &req,
-            "<html><body><h1>Title</h1></body></html>",
-        ).await;
+        let result = p
+            .generate(
+                Uuid::new_v4(),
+                &req,
+                "<html><body><h1>Title</h1></body></html>",
+            )
+            .await;
         let md = result.expect("expected Ok, got Err");
         assert!(md.is_some(), "expected Some(markdown)");
         let md = md.expect("some markdown");
@@ -276,7 +280,9 @@ mod tests {
             "url": "https://example.com",
             "formats": ["html"]
         }));
-        let result = p.generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>").await;
+        let result = p
+            .generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>")
+            .await;
         assert!(result.is_ok(), "expected Ok, got Err: {:?}", result.err());
         assert!(
             result.unwrap().is_none(),
@@ -289,7 +295,9 @@ mod tests {
     async fn returns_ok_none_when_formats_is_none() {
         let p = make_processor();
         let req = make_req(json!({"url": "https://example.com"}));
-        let result = p.generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>").await;
+        let result = p
+            .generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>")
+            .await;
         assert!(result.is_ok(), "expected Ok, got Err: {:?}", result.err());
         assert!(
             result.unwrap().is_none(),

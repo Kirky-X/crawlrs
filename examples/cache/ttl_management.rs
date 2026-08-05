@@ -33,9 +33,21 @@ async fn main() {
 
     let cache_ttls = vec![
         ("搜索结果缓存", Duration::from_secs(60), "搜索时效性要求高"),
-        ("DNS 解析缓存", Duration::from_secs(300), "DNS 记录通常 TTL 300s+"),
-        ("正则编译缓存", Duration::from_secs(600), "正则不常变化，可长期缓存"),
-        ("页面内容缓存", Duration::from_secs(300), "页面内容 5 分钟内视为有效"),
+        (
+            "DNS 解析缓存",
+            Duration::from_secs(300),
+            "DNS 记录通常 TTL 300s+",
+        ),
+        (
+            "正则编译缓存",
+            Duration::from_secs(600),
+            "正则不常变化，可长期缓存",
+        ),
+        (
+            "页面内容缓存",
+            Duration::from_secs(300),
+            "页面内容 5 分钟内视为有效",
+        ),
     ];
 
     for (name, ttl, reason) in &cache_ttls {
