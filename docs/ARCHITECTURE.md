@@ -389,7 +389,6 @@ domain/
 │   ├── credits_repository.rs
 │   ├── geo_restriction_repository.rs
 │   ├── audit_log_repository.rs
-│   ├── auth_scope_repository.rs
 │   └── tasks_backlog_repository.rs
 ├── services/               # Domain services
 │   ├── mod.rs
@@ -404,7 +403,7 @@ domain/
 │   ├── audit_log_builder.rs
 │   ├── geo_location.rs
 │   ├── llm_service.rs
-│   ├── llm_provider_strategy.rs  # T006/R-sec-006: ProviderStrategy 策略模式（OllamaStrategy/OpenAiStrategy）
+│   ├── llm_provider_strategy.rs  # T006/R-sec-006: ProviderStrategy 策略模式（OllamaStrategy）
 │   ├── relevance_scorer.rs
 │   └── retry_handler.rs
 ├── auth/                   # Authentication models
@@ -514,9 +513,7 @@ infrastructure/
 │       ├── webhook_repo_impl.rs
 │       ├── webhook_event_repo_impl.rs
 │       ├── database_geo_restriction_repo.rs
-│       ├── geo_restriction_repo_impl.rs
 │       ├── audit_log_repo_impl.rs
-│       ├── auth_scope_repo_impl.rs
 │       └── tasks_backlog_repo_impl.rs
 ├── oxcache/                # Unified cache (oxcache-backed)
 │   ├── mod.rs

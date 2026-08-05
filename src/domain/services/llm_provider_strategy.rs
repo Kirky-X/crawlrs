@@ -69,17 +69,6 @@ impl ProviderStrategy for OllamaStrategy {
     }
 }
 
-/// 标准 OpenAI 策略
-///
-/// 始终返回 "openai"，用于显式指定走 OpenAI 路径的场景。
-pub struct OpenAiStrategy;
-
-impl ProviderStrategy for OpenAiStrategy {
-    fn resolve_provider(&self, _api_base_url: Option<&str>) -> String {
-        "openai".to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,22 +141,6 @@ mod tests {
         assert_eq!(
             strategy.resolve_provider(Some("https://api.anthropic.com")),
             "anthropic"
-        );
-    }
-
-    // ========== OpenAiStrategy ==========
-
-    #[test]
-    fn test_openai_strategy_always_returns_openai() {
-        let strategy = OpenAiStrategy;
-        assert_eq!(strategy.resolve_provider(None), "openai");
-        assert_eq!(
-            strategy.resolve_provider(Some("https://api.openai.com")),
-            "openai"
-        );
-        assert_eq!(
-            strategy.resolve_provider(Some("http://localhost:11434")),
-            "openai"
         );
     }
 
