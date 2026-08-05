@@ -301,7 +301,6 @@ impl Default for RedirectValidator {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,7 +408,6 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("loop"));
     }
 
-
     #[test]
     fn test_redirect_validator_reset() {
         let mut validator = RedirectValidator::new();
@@ -511,7 +509,6 @@ mod tests {
         // visited_hosts should contain the host (set by with_original_url + validate)
         assert!(validator.visited_hosts().contains("example.com"));
     }
-
 
     // =========================================================================
     // Supplementary tests: validate edge cases, scheme/host validation
@@ -669,7 +666,6 @@ mod tests {
         validator.validate("http://example.org", 1).unwrap();
         assert!(validator.visited_hosts().contains("example.org"));
     }
-
 
     #[test]
     fn test_redirect_validator_default_impl() {
