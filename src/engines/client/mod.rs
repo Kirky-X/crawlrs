@@ -33,6 +33,13 @@ pub mod tab_pool;
 #[cfg(feature = "engine-flaresolverr")]
 pub mod flare_solverr;
 
+/// Wreq TLS 指纹引擎（Phase 1 / D4，feature-gated）
+///
+/// 基于 `wreq`（BoringSSL 后端，Apache-2.0）实现真实 JA3/JA4 指纹伪装，
+/// 为 `needs_tls_fingerprint` 请求提供专业引擎。不依赖 GPL 的 wreq-util。
+#[cfg(feature = "engine-tls-fingerprint")]
+pub mod wreq_engine;
+
 // Re-exports
 
 /// Reqwest 引擎 (始终可用)
@@ -69,3 +76,7 @@ pub use self::tab_pool::TabPool;
 pub use self::flare_solverr::{
     FlareSolverrConfig, FlareSolverrEngine, FlareSolverrEngineBuilder, FlareSolverrMode,
 };
+
+/// Wreq TLS 指纹引擎
+#[cfg(feature = "engine-tls-fingerprint")]
+pub use self::wreq_engine::{emulation_provider, WreqEngine};

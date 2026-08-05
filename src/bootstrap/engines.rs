@@ -12,6 +12,8 @@ use crate::engines::client::flare_solverr::FlareSolverrEngine;
 #[cfg(feature = "engine-playwright")]
 use crate::engines::client::playwright::PlaywrightEngine;
 use crate::engines::client::reqwest::ReqwestEngine;
+#[cfg(feature = "engine-tls-fingerprint")]
+use crate::engines::client::wreq_engine::WreqEngine;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::engine_client::ScraperEngine;
 use crate::engines::provider::ProxyProvider;
@@ -69,6 +71,10 @@ pub fn init_engines(
     let fetch_mrt = std::time::Duration::from_secs(engine_timeouts.fetch_seconds);
     let tls_mrt = std::time::Duration::from_secs(engine_timeouts.tls_seconds);
     let cdp_mrt = std::time::Duration::from_secs(engine_timeouts.cdp_seconds);
+
+    // T021：WreqEngine 需要代理提供者的克隆（下方 match 会 move 掉 proxy_provider）
+    #[cfg(feature = "engine-tls-fingerprint")]
+    let wreq_proxy_provider = proxy_provider.clone();
 
     // T056/R-identity-003 + H1/H2 修复 + T060/T061：ReqwestEngine 接入 ProxyProvider + 策略 + MRT
     // - provider 为 Some 时 with_provider_strategy_timeout_and_mrt 注入
@@ -140,6 +146,39 @@ pub fn init_engines(
             cdp_mrt,
             flaresolverr_timeout,
         )));
+    }
+
+    // T017-T023 / Phase 1 D4：WreqEngine 接入 ProxyProvider + 策略 + MRT
+    // - enabled 经 [engines.tls_fingerprint].enabled 显式开启（默认 false）
+    // - timeout_seconds 注入自 tls_fingerprint.timeout_seconds（默认 15）
+    // - MRT 注入 tls_seconds（与 FlareSolverr Tls 模式同源）
+    #[cfg(feature = "engine-tls-fingerprint")]
+    if engine_config.tls_fingerprint.enabled {
+        log::info!(
+            "WreqEngine (TLS fingerprint) enabled with timeout={}s",
+            engine_config.tls_fingerprint.timeout_seconds
+        );
+        let wreq_timeout = u64::from(engine_config.tls_fingerprint.timeout_seconds);
+        match wreq_proxy_provider {
+            Some(provider) => match WreqEngine::with_provider(
+                Arc::new(crate::utils::ua_pool::UaPool::new()),
+                provider,
+                proxy_strategy,
+                tls_mrt,
+                wreq_timeout,
+            ) {
+                Ok(engine) => engines.push(Arc::new(engine)),
+                Err(e) => log::error!("WreqEngine init failed, skipping: {e}"),
+            },
+            None => match WreqEngine::new(
+                Arc::new(crate::utils::ua_pool::UaPool::new()),
+                tls_mrt,
+                wreq_timeout,
+            ) {
+                Ok(engine) => engines.push(Arc::new(engine)),
+                Err(e) => log::error!("WreqEngine init failed, skipping: {e}"),
+            },
+        }
     }
 
     engines
@@ -311,6 +350,47 @@ mod tests {
             &make_engine_timeouts(),
         );
         assert!(!engines.is_empty());
+    }
+
+    #[test]
+    fn test_init_engines_tls_fingerprint_disabled_by_default() {
+        // T021：tls_fingerprint.enabled 默认 false → 不注册 WreqEngine
+        let http_client = make_http_client();
+        let engine_config = EngineSettings::default();
+        let engines = init_engines(
+            http_client,
+            None,
+            ProxyStrategy::RoundRobin,
+            None,
+            &engine_config,
+            &make_engine_timeouts(),
+        );
+        assert!(
+            !engines.iter().any(|e| e.name() == "wreq"),
+            "tls_fingerprint.enabled=false 时不应注册 WreqEngine"
+        );
+    }
+
+    #[cfg(feature = "engine-tls-fingerprint")]
+    #[test]
+    fn test_init_engines_registers_wreq_when_enabled() {
+        // T021：tls_fingerprint.enabled=true → 注册 WreqEngine（含代理提供者 + Sticky 策略）
+        let http_client = make_http_client();
+        let mut engine_config = EngineSettings::default();
+        engine_config.tls_fingerprint.enabled = true;
+        engine_config.tls_fingerprint.timeout_seconds = 15;
+        let engines = init_engines(
+            http_client,
+            Some(make_proxy_provider()),
+            ProxyStrategy::Sticky,
+            None,
+            &engine_config,
+            &make_engine_timeouts(),
+        );
+        assert!(
+            engines.iter().any(|e| e.name() == "wreq"),
+            "tls_fingerprint.enabled=true 时应注册 WreqEngine"
+        );
     }
 
     // ========== init_engine_components tests ==========

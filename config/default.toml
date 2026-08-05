@@ -193,12 +193,23 @@ url = "http://localhost:8191/v1"
 enabled = false
 url = "http://localhost:8191/v1"
 
+# Wreq TLS 指纹引擎（Phase 1 / D4）
+# 基于 BoringSSL（wreq）实现真实 JA3/JA4 指纹伪装，用于 needs_tls_fingerprint 请求。
+# 依赖 C 编译器 + cmake 构建 boringssl；默认关闭，需显式开启。
+[engines.tls_fingerprint]
+enabled = false
+timeout_seconds = 15
+
 # Worker Configuration
 # Configure background worker processes
 [workers]
 # Worker count: "auto" to detect CPU cores, or a fixed number
 count = "auto"
 # Alternative: count = 5
+# Graceful shutdown grace period (seconds, R-security-004/005):
+# after SIGTERM/SIGINT, workers stop accepting new tasks and wait up to this
+# long for in-flight tasks to finish before forced exit + rollback.
+graceful_shutdown_seconds = 30
 
 # Timeout Configuration
 # Configure operation timeouts

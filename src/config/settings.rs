@@ -320,6 +320,12 @@ impl ProxySettings {
 pub struct WorkerSettings {
     /// Worker数量配置
     pub count: WorkerCount,
+    /// 优雅退出宽限期（秒，R-security-004/005，design.md D3）
+    ///
+    /// 收到 SIGTERM/SIGINT 后，worker 停止接受新任务并等待进行中任务完成的
+    /// 最大时长；超时后强制退出并回滚未完成任务。默认 30 秒。
+    #[config(default = 30)]
+    pub graceful_shutdown_seconds: u64,
 }
 
 /// Worker数量配置
@@ -1054,6 +1060,7 @@ mod tests {
     fn test_worker_settings_construction_fixed() {
         let settings = WorkerSettings {
             count: WorkerCount::Fixed(16),
+            graceful_shutdown_seconds: 30,
         };
         assert_eq!(settings.count.resolve(), 16);
     }

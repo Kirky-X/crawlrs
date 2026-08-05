@@ -32,6 +32,10 @@ genai-llm = ["dep:genai"]
 # --- 引擎特性 ---
 engine-playwright = ["dep:chromiumoxide"]
 engine-flaresolverr = []
+# TLS 指纹一致性伪装引擎（Phase 1 / D4）：引入 wreq（BoringSSL 后端）实现 WreqEngine。
+# 注意：wreq-util（Emulation 便捷枚举）为 GPL-3.0，违反 deny.toml license 白名单，
+# 故 TlsEmulation 由本项目自有枚举映射到 wreq 的 EmulationProvider（Apache-2.0 API），不引入 wreq-util。
+engine-tls-fingerprint = ["dep:wreq"]
 
 # --- 反爬虫检测特性（antibot-detection, T008/R-antibot-002） ---
 # aho-corasick 用于 Tier2 通用词字面量集的多模式匹配（AC 自动机）
@@ -103,6 +107,10 @@ subtle = "2.6"
 
 # HTTP client and networking
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs", "cookies", "http2", "charset", "system-proxy", "gzip", "brotli"] }
+# TLS 指纹引擎（Phase 1 / D4）：BoringSSL 后端 HTTP 客户端，Apache-2.0。
+# wreq 5.x 稳定版（6.0.0-rc 为预发布，不选）。EmulationProvider/EmulationProviderFactory/TlsConfig
+# 均为 wreq 自有 API，无需引入 GPL 的 wreq-util。构建需 cmake + C 编译器（BoringSSL）。
+wreq = { version = "5.3", default-features = false, optional = true }
 url = "2.5"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
@@ -366,7 +374,7 @@ libc = "0.2"
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "http", "antibot", "markdown", "extractor-trafilatura", "extractor-dom-smoothie", "extractor-full"))'
+    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "http", "antibot", "markdown", "extractor-trafilatura", "extractor-dom-smoothie", "extractor-full"))'
 ]
 
 

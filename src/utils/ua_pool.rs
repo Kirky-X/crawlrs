@@ -17,12 +17,36 @@
 
 use rand::seq::IndexedRandom;
 
+/// TLS 指纹模拟类型（Phase 1 / D4，R-identity-001）
+///
+/// 决定抓取时使用的浏览器 TLS/JA4 + HTTP/2 指纹模板。映射到 `wreq::EmulationProvider`
+/// （`src/engines/client/wreq_engine.rs::emulation_provider()`），由 WreqEngine 消费。
+///
+/// 变体覆盖现有 44 个 UA profile 的浏览器家族；非精确版本映射到最近可用变体
+/// （如 Chrome 125/127/128 → `Chrome120`，Firefox 128/130/131 → `Firefox133`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TlsEmulation {
+    /// Google Chrome 131
+    Chrome131,
+    /// Google Chrome 130
+    Chrome130,
+    /// Google Chrome 120（Chrome ≤128 与 Samsung Internet 的最近可用变体）
+    Chrome120,
+    /// Mozilla Firefox 133
+    Firefox133,
+    /// Apple Safari 17
+    Safari17,
+    /// Microsoft Edge 131
+    Edge131,
+}
+
 /// 单个 User-Agent profile — 所有字段为 `&'static str`，编译期常量
 ///
 /// 字段绑定关系（避免指纹矛盾）：
 /// - `ua` 决定 `sec_ch_ua`（仅 Chromium-based 浏览器发送 Client Hints）
 /// - `ua` 决定 `platform`（UA 字符串中的 OS 标识）
 /// - `mobile` 决定 `viewport` 范围（mobile 用窄屏，desktop 用宽屏）
+/// - `ua` 决定 `tls_emulation`（TLS 指纹必须与 UA 声明的浏览器一致）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UaProfile {
     /// User-Agent 字符串
@@ -37,6 +61,8 @@ pub struct UaProfile {
     pub viewport: (u32, u32),
     /// 是否移动端 profile
     pub mobile: bool,
+    /// TLS 指纹模拟类型（Phase 1 / D4）：必须与 `ua` 声明的浏览器家族一致
+    pub tls_emulation: TlsEmulation,
 }
 
 /// UA 池 — 桌面 / 移动分组
@@ -136,6 +162,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         // === Chrome on Windows ===
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome131,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_CHROME_131,
             platform: "Windows",
@@ -144,6 +171,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome130,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_CHROME_130,
             platform: "Windows",
@@ -152,6 +180,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome120,
             accept_language: AL_EN_US,
             sec_ch_ua: "\"Chromium\";v=\"128\", \"Not_A Brand\";v=\"24\", \"Google Chrome\";v=\"128\"",
             platform: "Windows",
@@ -161,6 +190,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         // === Chrome on macOS ===
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome131,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_CHROME_131,
             platform: "macOS",
@@ -169,6 +199,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome130,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_CHROME_130,
             platform: "macOS",
@@ -177,6 +208,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome120,
             accept_language: AL_EN_GB,
             sec_ch_ua: "\"Chromium\";v=\"125\", \"Not_A Brand\";v=\"24\", \"Google Chrome\";v=\"125\"",
             platform: "macOS",
@@ -186,6 +218,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         // === Chrome on Linux ===
         UaProfile {
             ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome131,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_CHROME_131,
             platform: "Linux",
@@ -194,6 +227,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome130,
             accept_language: AL_EN_GB,
             sec_ch_ua: SEC_CHROME_130,
             platform: "Linux",
@@ -203,6 +237,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         // === Firefox on Windows ===
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_NONE,
             platform: "Windows",
@@ -211,6 +246,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_NONE,
             platform: "Windows",
@@ -220,6 +256,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         // === Firefox on macOS ===
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_NONE,
             platform: "macOS",
@@ -228,6 +265,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_EN_GB,
             sec_ch_ua: SEC_NONE,
             platform: "macOS",
@@ -237,6 +275,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         // === Firefox on Linux ===
         UaProfile {
             ua: "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_NONE,
             platform: "Linux",
@@ -245,6 +284,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_NONE,
             platform: "Linux",
@@ -254,6 +294,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         // === Safari on macOS (无 sec-ch-ua) ===
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+            tls_emulation: TlsEmulation::Safari17,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_NONE,
             platform: "macOS",
@@ -262,6 +303,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+            tls_emulation: TlsEmulation::Safari17,
             accept_language: AL_EN_GB,
             sec_ch_ua: SEC_NONE,
             platform: "macOS",
@@ -270,6 +312,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+            tls_emulation: TlsEmulation::Safari17,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_NONE,
             platform: "macOS",
@@ -279,6 +322,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         // === Edge on Windows ===
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+            tls_emulation: TlsEmulation::Edge131,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_EDGE_131,
             platform: "Windows",
@@ -287,6 +331,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+            tls_emulation: TlsEmulation::Edge131,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_EDGE_130,
             platform: "Windows",
@@ -296,6 +341,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         // === Edge on macOS ===
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+            tls_emulation: TlsEmulation::Edge131,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_EDGE_131,
             platform: "macOS",
@@ -304,6 +350,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0",
+            tls_emulation: TlsEmulation::Edge131,
             accept_language: AL_EN_GB,
             sec_ch_ua: "\"Microsoft Edge\";v=\"128\", \"Chromium\";v=\"128\", \"Not_A Brand\";v=\"24\"",
             platform: "macOS",
@@ -313,6 +360,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
         // === Chrome on Windows (补充至 22) ===
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome120,
             accept_language: AL_EN_US,
             sec_ch_ua: "\"Chromium\";v=\"127\", \"Not_A Brand\";v=\"24\", \"Google Chrome\";v=\"127\"",
             platform: "Windows",
@@ -343,6 +391,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         // === Chrome on Android ===
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome131,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_CHROME_131,
             platform: "Android",
@@ -351,6 +400,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome130,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_CHROME_130,
             platform: "Android",
@@ -359,6 +409,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome120,
             accept_language: AL_EN_US,
             sec_ch_ua: "\"Chromium\";v=\"128\", \"Not_A Brand\";v=\"24\", \"Google Chrome\";v=\"128\"",
             platform: "Android",
@@ -367,6 +418,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 14; SM-S928U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome131,
             accept_language: AL_EN_GB,
             sec_ch_ua: SEC_CHROME_131,
             platform: "Android",
@@ -376,6 +428,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         // === Chrome on iOS (iPhone) ===
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/131.0.6778.73 Mobile/15E148 Safari/604.1",
+            tls_emulation: TlsEmulation::Chrome131,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_CHROME_131,
             platform: "iOS",
@@ -384,6 +437,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/130.0.6778.39 Mobile/15E148 Safari/604.1",
+            tls_emulation: TlsEmulation::Chrome130,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_CHROME_130,
             platform: "iOS",
@@ -393,6 +447,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         // === Safari on iOS (iPhone) ===
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+            tls_emulation: TlsEmulation::Safari17,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_NONE,
             platform: "iOS",
@@ -401,6 +456,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+            tls_emulation: TlsEmulation::Safari17,
             accept_language: AL_EN_GB,
             sec_ch_ua: SEC_NONE,
             platform: "iOS",
@@ -409,6 +465,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+            tls_emulation: TlsEmulation::Safari17,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_NONE,
             platform: "iOS",
@@ -417,6 +474,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+            tls_emulation: TlsEmulation::Safari17,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_NONE,
             platform: "iOS",
@@ -426,6 +484,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         // === Safari on iPad ===
         UaProfile {
             ua: "Mozilla/5.0 (iPad; CPU OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+            tls_emulation: TlsEmulation::Safari17,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_NONE,
             platform: "iOS",
@@ -434,6 +493,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            tls_emulation: TlsEmulation::Safari17,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_NONE,
             platform: "iOS",
@@ -443,6 +503,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         // === Firefox on Android ===
         UaProfile {
             ua: "Mozilla/5.0 (Android 14; Mobile; rv:133.0) Gecko/133.0 Firefox/133.0",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_NONE,
             platform: "Android",
@@ -451,6 +512,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Android 13; Mobile; rv:131.0) Gecko/131.0 Firefox/131.0",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_NONE,
             platform: "Android",
@@ -459,6 +521,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Android 12; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_EN_GB,
             sec_ch_ua: SEC_NONE,
             platform: "Android",
@@ -468,6 +531,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         // === Firefox on iOS ===
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/133.0 Mobile/15E148 Safari/605.1.15",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_NONE,
             platform: "iOS",
@@ -476,6 +540,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/130.0 Mobile/15E148 Safari/605.1.15",
+            tls_emulation: TlsEmulation::Firefox133,
             accept_language: AL_ZH_CN,
             sec_ch_ua: SEC_NONE,
             platform: "iOS",
@@ -485,6 +550,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         // === Edge on Android ===
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 14; SM-S928U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36 EdgA/131.0.0.0",
+            tls_emulation: TlsEmulation::Edge131,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_EDGE_131,
             platform: "Android",
@@ -493,6 +559,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         },
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36 EdgA/128.0.0.0",
+            tls_emulation: TlsEmulation::Edge131,
             accept_language: AL_ZH_CN,
             sec_ch_ua: "\"Microsoft Edge\";v=\"128\", \"Chromium\";v=\"128\", \"Not_A Brand\";v=\"24\"",
             platform: "Android",
@@ -502,6 +569,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         // === Edge on iOS ===
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/131.0.2592.73 Mobile/15E148 Safari/605.1.15",
+            tls_emulation: TlsEmulation::Edge131,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_EDGE_131,
             platform: "iOS",
@@ -511,6 +579,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         // === Chrome on Android Tablet ===
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 13; SM-X910N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome130,
             accept_language: AL_EN_GB,
             sec_ch_ua: SEC_CHROME_130,
             platform: "Android",
@@ -520,6 +589,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
         // === Samsung Internet on Android ===
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+            tls_emulation: TlsEmulation::Chrome120,
             accept_language: AL_EN_US,
             sec_ch_ua: SEC_SAMSUNG,
             platform: "Android",
@@ -949,6 +1019,72 @@ mod tests {
                 "viewport must be non-zero: {:?}",
                 p.viewport
             );
+        }
+    }
+
+    // === Phase 1 / D4 (T015-T016): tls_emulation 与 UA 浏览器家族一致性 ===
+
+    /// 从 UA 字符串推导期望的 `TlsEmulation`（与 `tls_emulation` 字段赋值逻辑镜像）。
+    ///
+    /// 分支顺序：Edge > Firefox > Safari > Chromium（Chrome/CriOS/Samsung）。
+    /// 版本优先级：131 → Chrome131；130 → Chrome130；其余 Chromium → Chrome120（最近可用变体）。
+    fn expected_emulation(ua: &str) -> Option<TlsEmulation> {
+        if ua.contains("Edg") || ua.contains("EdgA") || ua.contains("EdgiOS") {
+            return Some(TlsEmulation::Edge131);
+        }
+        if ua.contains("Firefox") || ua.contains("FxiOS") {
+            return Some(TlsEmulation::Firefox133);
+        }
+        // 纯 Safari：含 "Version/" 且非 CriOS/FxiOS/EdgiOS 变体（iOS Chrome/Firefox/Edge 也带 Safari 标记）
+        if ua.contains("Version/") && !ua.contains("CriOS") && !ua.contains("FxiOS") && !ua.contains("EdgiOS")
+        {
+            return Some(TlsEmulation::Safari17);
+        }
+        if ua.contains("Chrome/131") || ua.contains("CriOS/131") {
+            return Some(TlsEmulation::Chrome131);
+        }
+        if ua.contains("Chrome/130") || ua.contains("CriOS/130") {
+            return Some(TlsEmulation::Chrome130);
+        }
+        if ua.contains("Chrome/") || ua.contains("CriOS/") || ua.contains("SamsungBrowser") {
+            return Some(TlsEmulation::Chrome120);
+        }
+        None
+    }
+
+    #[test]
+    fn test_each_profile_tls_emulation_matches_ua() {
+        let pool = UaPool::new();
+        for p in pool.desktop.iter().chain(pool.mobile.iter()) {
+            let expected = expected_emulation(p.ua)
+                .unwrap_or_else(|| panic!("cannot derive tls_emulation from UA: {}", p.ua));
+            assert_eq!(
+                p.tls_emulation, expected,
+                "tls_emulation inconsistent with UA ({}): {}",
+                p.platform, p.ua
+            );
+        }
+    }
+
+    #[test]
+    fn test_tls_emulation_covers_all_variants() {
+        let pool = UaPool::new();
+        let used: std::collections::HashSet<TlsEmulation> = pool
+            .desktop
+            .iter()
+            .chain(pool.mobile.iter())
+            .map(|p| p.tls_emulation)
+            .collect();
+        // 6 个变体均应至少命中一次（覆盖 Chrome/Firefox/Safari/Edge × 多版本）
+        for variant in [
+            TlsEmulation::Chrome131,
+            TlsEmulation::Chrome130,
+            TlsEmulation::Chrome120,
+            TlsEmulation::Firefox133,
+            TlsEmulation::Safari17,
+            TlsEmulation::Edge131,
+        ] {
+            assert!(used.contains(&variant), "variant {:?} not covered by any profile", variant);
         }
     }
 }

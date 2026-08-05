@@ -79,6 +79,27 @@ pub struct FlareSolverrTlsSettings {
     pub url: String,
 }
 
+/// Wreq TLS 指纹引擎配置设置（Phase 1 / D4）
+///
+/// 配置 `wreq`（BoringSSL 后端）TLS 指纹引擎的参数，用于 `needs_tls_fingerprint`
+/// 请求的真实 JA3/JA4 伪装。
+///
+/// # 字段说明
+///
+/// * `enabled` - 是否启用 Wreq TLS 指纹引擎（默认关闭，需显式开启）
+/// * `timeout_seconds` - 引擎级请求超时（秒），默认 15（与 `EngineTimeoutSettings::tls_seconds` 一致）
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ENGINES__TLS_FINGERPRINT__")]
+pub struct TlsFingerprintEngineSettings {
+    /// 是否启用 Wreq TLS 指纹引擎
+    #[config(default = false)]
+    pub enabled: bool,
+
+    /// 引擎级请求超时（秒）
+    #[config(default = 15)]
+    pub timeout_seconds: u32,
+}
+
 /// 引擎配置集合
 ///
 /// 包含所有抓取引擎的配置
@@ -93,4 +114,7 @@ pub struct EngineSettings {
 
     /// FlareSolverr TLS 模式配置
     pub flaresolverr_tls: FlareSolverrTlsSettings,
+
+    /// Wreq TLS 指纹引擎配置
+    pub tls_fingerprint: TlsFingerprintEngineSettings,
 }
