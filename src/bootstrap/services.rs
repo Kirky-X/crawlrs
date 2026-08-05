@@ -32,7 +32,7 @@ use garrison::prelude::{GarrisonDao, GarrisonInterface, GarrisonManager};
 // R-teams-004 / T015：teams-off 时不导入 teams 相关类型
 #[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
-use crate::domain::services::llm_service::{LLMService, LLMServiceTrait};
+use crate::domain::services::llm::{LLMService, LLMServiceTrait};
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 // R-rl-003 / T020：rate-limit feature 关闭时不导入 LimiteronService 相关配置类型
 #[cfg(feature = "rate-limit")]

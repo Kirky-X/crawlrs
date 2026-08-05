@@ -40,7 +40,7 @@ use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
 #[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
-use crate::domain::services::llm_service::LLMServiceTrait;
+use crate::domain::services::llm::LLMServiceTrait;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::services::search_service::SearchServiceTrait;
 use crate::domain::services::team_semaphore::TeamSemaphore;

@@ -44,8 +44,6 @@ pub mod extraction_utils;
 pub mod geo_location;
 pub mod llm;
 pub mod llm_provider_strategy;
-/// Backward-compatible re-export: existing code uses `llm_service::` paths
-pub use llm as llm_service;
 /// Markdown 转换服务（content-processing R1，T040/R-content-001）
 ///
 /// gated `markdown` 特性（依赖 `htmd`）。`markdown` 已加入 `standard`/`full`。

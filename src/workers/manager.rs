@@ -689,7 +689,7 @@ mod tests {
     use crate::domain::repositories::credits_repository::CreditsRepositoryError;
     use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
     use crate::domain::services::extraction_service::{ExtractionRule, ExtractionServiceTrait};
-    use crate::domain::services::llm_service::TokenUsage;
+    use crate::domain::services::llm::TokenUsage;
     use crate::engines::engine_client::ScrapeResponse;
     use crate::queue::task_queue::QueueError;
     use async_trait::async_trait;

@@ -897,10 +897,7 @@ impl ScrapeWorker {
                 None
             }
         } else if let Some(schema) = &config.extraction_schema {
-            match self
-                .extract_with_schema(&response.content, schema)
-                .await
-            {
+            match self.extract_with_schema(&response.content, schema).await {
                 Ok((data, usage)) => {
                     self.deduct_token_credits(
                         task.team_id,
@@ -930,7 +927,7 @@ impl ScrapeWorker {
         html: &str,
         prompt: &str,
         base_url: &str,
-    ) -> Result<(Value, crate::domain::services::llm_service::TokenUsage)> {
+    ) -> Result<(Value, crate::domain::services::llm::TokenUsage)> {
         let mut rules = HashMap::with_capacity(1);
         rules.insert(
             "extracted_data".to_string(),
@@ -956,7 +953,7 @@ impl ScrapeWorker {
         &self,
         html: &str,
         schema: &Value,
-    ) -> Result<(Value, crate::domain::services::llm_service::TokenUsage)> {
+    ) -> Result<(Value, crate::domain::services::llm::TokenUsage)> {
         self.extraction_service
             .extract_with_schema(html, schema)
             .await
@@ -1411,7 +1408,7 @@ impl ScrapeWorker {
         &self,
         team_id: Uuid,
         task_id: Uuid,
-        usage: &crate::domain::services::llm_service::TokenUsage,
+        usage: &crate::domain::services::llm::TokenUsage,
         description: &str,
     ) {
         if usage.total_tokens > 0 {
@@ -3059,7 +3056,7 @@ mod tests {
     use crate::domain::repositories::credits_repository::CreditsRepositoryError;
     use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
     use crate::domain::services::extraction_service::ExtractionRule;
-    use crate::domain::services::llm_service::TokenUsage;
+    use crate::domain::services::llm::TokenUsage;
     use std::collections::HashSet;
 
     // --- Mock trait implementations ---
