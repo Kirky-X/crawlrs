@@ -295,6 +295,11 @@ path = "teams/credits_management.rs"
 name = "geo_restrictions"
 path = "teams/geo_restrictions.rs"
 
+# Task management examples
+[[bin]]
+name = "task_management"
+path = "tasks/task_management.rs"
+
 # Text encoding examples
 
 # Webhooks examples
