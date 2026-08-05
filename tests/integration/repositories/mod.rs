@@ -4,7 +4,6 @@
 // See LICENSE file in the project root for full license information.
 
 mod audit_log_repo_test;
-mod auth_scope_repo_test;
 mod crawl_repo_test;
 mod credits_repo_test;
 mod geo_restriction_repo_test;

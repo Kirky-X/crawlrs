@@ -21,7 +21,6 @@
 /// 这些接口确保了领域层不依赖于具体的数据存储技术，
 /// 提高了系统的可测试性和可维护性.
 pub mod audit_log_repository;
-pub mod auth_scope_repository;
 pub mod crawl_repository;
 pub mod credits_repository;
 pub mod geo_restriction_repository;
