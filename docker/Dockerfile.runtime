@@ -1,17 +1,45 @@
-FROM debian:bullseye-slim
+# =============================================================================
+# Crawlrs 轻量运行时 Dockerfile
+# =============================================================================
+# 适用于已有预编译二进制的场景（如 CI 产物）。
+# 一般使用请使用主 Dockerfile（多阶段构建）。
+#
+# Usage:
+#   Build:  docker build -t crawlrs-runtime:latest -f docker/Dockerfile.runtime .
+#   Run:    docker run -p 8899:8899 crawlrs-runtime:latest
+# =============================================================================
 
-WORKDIR /app
+FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates libssl-dev curl && rm -rf /var/lib/apt/lists/*
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY target/release/crawlrs /app/crawlrs
-RUN chmod +x /app/crawlrs
+# Non-root user for security
+RUN useradd --create-home --uid 1000 crawlrs
+WORKDIR /home/crawlrs
 
-COPY config /app/config
+# Copy pre-built binary
+COPY target/release/crawlrs /usr/local/bin/crawlrs
+
+# Copy default config
+COPY config/ /home/crawlrs/config/
+
+# Ensure config directory is accessible
+RUN chown -R crawlrs:crawlrs /home/crawlrs
 
 ENV RUST_LOG=info
-ENV APP_ENVIRONMENT=docker
+ENV CRAWLRS__ENV_MODE=docker
 
-EXPOSE 3000
+USER crawlrs
 
-ENTRYPOINT ["./crawlrs"]
+EXPOSE 8899
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -sf http://localhost:8899/health || exit 1
+
+ENTRYPOINT ["crawlrs"]
+CMD ["api"]

@@ -4,78 +4,80 @@
 # This is the PRIMARY Dockerfile for building crawlrs from source.
 #
 # Related files:
-#   - Dockerfile.test: For running tests in Docker
 #   - Dockerfile.runtime: Lightweight runtime from pre-built binary
 #
 # Usage:
-#   Build:  docker build -t crawlrs:latest -f Dockerfile .
-#   Run:    docker run -p 3000:3000 crawlrs:latest
+#   Build:  docker build -t crawlrs:latest -f docker/Dockerfile .
+#   Run:    docker run -p 8899:8899 crawlrs:latest
 # =============================================================================
 
-# Unified Dockerfile for crawlrs
+# ---------- Builder ----------
+FROM rust:1.87-slim AS builder
 
-# Stage 1: Builder
-FROM rust:1.92.0-bullseye as builder
+# Install build dependencies (OpenSSL + pkg-config for TLS)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /usr/src/app
+WORKDIR /build
 
-# Configure Alibaba Cloud mirror for apt
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
-    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
-    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian*.sources 2>/dev/null || true
-
-# Install build dependencies
-RUN apt-get update -o Acquire::Retries=5 && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
-
-# Create a dummy project to cache dependencies
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+# Configure Alibaba Cloud mirror for apt (speed up builds in China)
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian*.sources 2>/dev/null || true
 
 # Copy Cargo config for mirror source
 COPY .cargo/config.toml .cargo/config.toml
 COPY Cargo.toml Cargo.lock ./
-COPY migration ./migration
 
-# Build dependencies (this layer is cached if Cargo files don't change)
-RUN cargo build --release --bin crawlrs
+# Cache dependencies: build deps first, then copy source
+RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
+RUN cargo build --features standard --release || true
 RUN rm -rf src
 
-# Copy source code
+# Copy real source and build the actual binary
 COPY src/ src/
-COPY Cargo.toml Cargo.lock ./
 COPY config/ config/
-COPY migration/ migration/
-COPY .cargo/ .cargo/
 
-# Build the application
-RUN touch src/main.rs && cargo build --release --bin crawlrs
+ARG BUILD_FEATURES=standard
+RUN cargo build --features ${BUILD_FEATURES} --release --bin crawlrs
 
-# Stage 2: Runtime
-FROM rust:1.92.0-bullseye
+# ---------- Runtime ----------
+FROM debian:bookworm-slim AS runtime
 
-WORKDIR /app
+# Install runtime dependencies (libssl + ca-certs for HTTPS, curl for healthcheck)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Configure Alibaba Cloud mirror and install runtime dependencies
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
-    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
-    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian*.sources 2>/dev/null || true && \
-    apt-get update -o Acquire::Retries=5 && apt-get install -y --no-install-recommends ca-certificates libssl-dev curl && \
-    rm -rf /var/lib/apt/lists/* && useradd -m crawlrsuser
+# Non-root user for security
+RUN useradd --create-home --uid 1000 crawlrs
+WORKDIR /home/crawlrs
 
 # Copy binary from builder
-COPY --from=builder /usr/src/app/target/release/crawlrs /app/crawlrs
+COPY --from=builder /build/target/release/crawlrs /usr/local/bin/crawlrs
 
-# Copy config directory
-COPY config /app/config
+# Copy default config (can be overridden via volume or env vars)
+COPY --from=builder /build/config/ /home/crawlrs/config/
+
+# Ensure config directory is accessible
+RUN chown -R crawlrs:crawlrs /home/crawlrs
 
 # Default environment variables
 ENV RUST_LOG=info
-ENV APP_ENVIRONMENT=production
+ENV CRAWLRS__ENV_MODE=docker
 
-# Expose API port (used by api service)
-EXPOSE 3000
+USER crawlrs
 
-# Switch to non-root user for security
-USER crawlrsuser
+# Expose API port
+EXPOSE 8899
 
-# Default command
+# Health check via the /health HTTP endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -sf http://localhost:8899/health || exit 1
+
+# Run modes: "api" (default) or "worker"
+ENTRYPOINT ["crawlrs"]
 CMD ["api"]

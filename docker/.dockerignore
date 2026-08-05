@@ -1,17 +1,40 @@
-target
-.git
+# Build artifacts
+target/
+
+# Version control
+.git/
 .gitignore
+
+# IDE and editor files
 *.log
-.DS_Store
 *.swp
 *.swo
 *~
 \#*
 .\#*
 *.orig
-*.rej
 *.bak
+.DS_Store
+
+# Temporary and cache
 temp/
 tmp/
 coverage/
-data/
+
+# Docker data and test results
+docker/data/
+docker/test-results/
+
+# Documentation (not needed in image)
+docs/
+logs/
+strix_runs/
+
+# Spec and archive
+specmark/
+
+# Examples (not needed in production image)
+examples/
+
+# Tools
+tools/

@@ -5,9 +5,12 @@
 
 [package]
 name = "crawlrs-examples"
-version = "0.1.0"
-edition = "2021"
-authors = ["Kirky.X <Kirky-X@outlook.com>"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Example programs demonstrating crawlrs library usage"
 default-run = "basic_scrape"
 publish = false
