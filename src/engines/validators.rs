@@ -41,12 +41,10 @@ pub use crate::presentation::helpers::ssrf::{
     SsrfConfig, SsrfError, SsrfValidationResult, SsrfValidator, ValidatedUrl,
 };
 
-// Re-export shared utilities for backward compatibility
-pub use crate::engines::shared::{is_blocked_hostname, is_private_ip};
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engines::shared::{is_blocked_hostname, is_private_ip};
 
     #[tokio::test]
     async fn test_validate_url_ssrf() {

@@ -60,14 +60,6 @@ use url::Url;
 use crate::infrastructure::dns::DnsCacheService;
 use std::sync::Arc;
 
-/// Maximum URL length to prevent resource exhaustion
-#[allow(dead_code)]
-const MAX_URL_LENGTH: usize = 2048;
-
-/// Maximum number of redirects to follow
-#[allow(dead_code)]
-const MAX_REDIRECTS: u8 = 10;
-
 /// Direct DNS resolution helper (no cache). Used when oxcache-cache feature is disabled
 /// or when SsrfValidator is constructed without a DNS cache.
 async fn resolve_dns_direct(hostname: &str, port: u16) -> Result<Vec<IpAddr>, SsrfError> {
@@ -82,10 +74,6 @@ async fn resolve_dns_direct(hostname: &str, port: u16) -> Result<Vec<IpAddr>, Ss
         .collect();
     Ok(addrs)
 }
-
-/// Default DNS cache TTL in seconds
-#[allow(dead_code)]
-const DEFAULT_DNS_CACHE_TTL: u64 = 300;
 
 /// Unified SSRF protection validator with DNS caching support.
 ///
@@ -346,6 +334,7 @@ pub fn validate_domain_blacklist(url_str: &str, blacklist: &[String]) -> Result<
 
 #[cfg(test)]
 mod tests {
+    use super::types::MAX_URL_LENGTH;
     use super::*;
 
     #[test]

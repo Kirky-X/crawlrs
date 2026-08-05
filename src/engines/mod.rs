@@ -43,7 +43,6 @@ pub mod shared;
 
 // New unified EngineClient API
 pub mod engine_client;
-pub mod traits;
 pub mod types; // ARC-002: 引擎层 DTO 类型
 
 pub use engine_client::{

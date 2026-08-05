@@ -11,12 +11,12 @@
 pub mod prompt_builder;
 pub mod provider_adapter;
 
-// Re-export sub-module public API for backward compatibility
-pub use prompt_builder::{
+#[cfg(test)]
+use prompt_builder::TemplateLoaderTrait;
+use prompt_builder::{
     build_prompt, parse_llm_response, FileTemplateLoader, InMemoryTemplateLoader, TemplateLoader,
-    TemplateLoaderTrait,
 };
-pub use provider_adapter::{create_engine_client, resolve_provider};
+use provider_adapter::{create_engine_client, resolve_provider};
 
 use crate::config::settings::Settings;
 use crate::engines::engine_client::EngineClient;
@@ -49,7 +49,6 @@ pub trait LLMServiceTrait: Send + Sync {
 
 /// LLM服务 - 处理与LLM提供商的交互
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct LLMService {
     engine_client: Arc<EngineClient>,
     /// LLM 客户端
@@ -63,9 +62,6 @@ pub struct LLMService {
     api_base_url: Option<String>,
     /// API 密钥
     api_key: Option<String>,
-    /// 提示模板加载器
-    #[allow(dead_code)]
-    template_loader: TemplateLoader,
     /// 提示模板（缓存）
     templates: HashMap<String, String>,
 }
@@ -96,7 +92,6 @@ impl LLMService {
             provider,
             api_base_url,
             api_key,
-            template_loader,
             templates,
         }
     }
@@ -129,7 +124,6 @@ impl LLMService {
             provider: "openai".to_string(),
             api_base_url: Some(api_base_url),
             api_key: Some(_api_key),
-            template_loader,
             templates,
         }
     }
@@ -154,7 +148,6 @@ impl LLMService {
             provider: "openai".to_string(),
             api_base_url: Some(api_base_url),
             api_key: Some(_api_key),
-            template_loader,
             templates,
         }
     }

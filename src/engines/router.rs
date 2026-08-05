@@ -1157,37 +1157,6 @@ impl EngineRouter {
     pub fn get_engines(&self) -> &Vec<Arc<dyn ScraperEngine>> {
         &self.engines
     }
-
-    /// Public wrapper for route (for backward compatibility)
-    pub async fn route(
-        &self,
-        request: &InternalScrapeRequest,
-    ) -> Result<InternalScrapeResponse, EngineError> {
-        self._route_impl(request).await
-    }
-
-    /// Public wrapper for aggregate (for backward compatibility)
-    pub async fn aggregate(
-        &self,
-        request: &InternalScrapeRequest,
-    ) -> Result<InternalScrapeResponse, EngineError> {
-        self._aggregate_impl(request).await
-    }
-
-    /// Public wrapper for get_engine_stats (for backward compatibility)
-    pub fn get_engine_stats(&self) -> std::collections::HashMap<String, EngineStats> {
-        self._get_engine_stats_impl()
-    }
-
-    /// Public wrapper for reset_engine_stats (for backward compatibility)
-    pub fn reset_engine_stats(&self, engine_name: &str) {
-        self._reset_engine_stats_impl(engine_name)
-    }
-
-    /// Public wrapper for registered_engines (for backward compatibility)
-    pub fn registered_engines(&self) -> Vec<String> {
-        self._registered_engines_impl()
-    }
 }
 
 #[async_trait::async_trait]
