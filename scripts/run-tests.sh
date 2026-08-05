@@ -7,12 +7,10 @@
 # =============================================================================
 # Crawlrs 测试运行脚本
 # =============================================================================
-# 支持本地 Python 测试和 Docker 内 Rust 测试
+# 运行本地 Python 测试
 #
 # 使用方法:
 #   ./scripts/run-tests.sh local    # 本地 Python 测试
-#   ./scripts/run-tests.sh docker   # Docker 内 Rust 测试
-#   ./scripts/run-tests.sh full     # 完整测试流程
 #   ./scripts/run-tests.sh help     # 显示帮助
 # =============================================================================
 
@@ -91,69 +89,6 @@ run_local_tests() {
     log_success "Python 测试完成!"
 }
 
-# Docker 内 Rust 测试
-run_docker_tests() {
-    log_section "运行 Docker 内 Rust 测试"
-
-    if ! docker info >/dev/null 2>&1; then
-        log_error "Docker 未运行，请先启动 Docker"
-        exit 1
-    fi
-
-    # 清理并启动测试环境
-    log_info "启动测试环境..."
-    ./scripts/test-env.sh stop 2>/dev/null || true
-    ./scripts/test-env.sh start
-
-    log_info "运行 Rust 测试..."
-    docker-compose -f docker/docker-compose.test.yml run --rm test-runner
-
-    log_success "Docker 测试完成!"
-
-    log_info "清理测试环境..."
-    ./scripts/test-env.sh stop
-}
-
-# 完整测试流程
-run_full_tests() {
-    log_section "Crawlrs 完整测试流程"
-
-    if ! docker info >/dev/null 2>&1; then
-        log_error "Docker 未运行，请先启动 Docker"
-        exit 1
-    fi
-
-    # 步骤 1: 启动测试环境
-    log_section "步骤 1: 启动测试环境"
-    ./scripts/test-env.sh stop 2>/dev/null || true
-    ./scripts/test-env.sh start
-
-    # 步骤 2: 初始化测试数据
-    log_section "步骤 2: 初始化测试数据"
-    ./scripts/test-env.sh init
-
-    # 步骤 3: 运行 Python 测试
-    log_section "步骤 3: 运行 Python 测试"
-    run_local_tests
-
-    # 步骤 4: 生成测试报告
-    log_section "步骤 4: 生成测试报告"
-    if [ -f test-results/report.json ]; then
-        log_success "测试报告已生成: test-results/report.json"
-    fi
-
-    # 步骤 5: 运行 Rust 测试
-    log_section "步骤 5: 运行 Rust 测试"
-    docker-compose -f docker/docker-compose.test.yml run --rm test-runner cargo test --release --features full
-
-    # 步骤 6: 清理环境
-    log_section "步骤 6: 清理环境"
-    ./scripts/test-env.sh stop
-
-    log_section "完整测试流程完成!"
-    echo ""
-    echo "测试报告: test-results/report.json"
-}
 
 # 显示帮助
 show_help() {
@@ -163,14 +98,10 @@ show_help() {
     echo ""
     echo "命令:"
     echo "  local   运行本地 Python 测试"
-    echo "  docker  运行 Docker 内 Rust 测试"
-    echo "  full    完整测试流程 (推荐)"
     echo "  help    显示此帮助信息"
     echo ""
     echo "示例:"
-    echo "  $0 local   # 仅运行 Python 测试"
-    echo "  $0 docker  # 运行 Docker 内 Rust 测试"
-    echo "  $0 full    # 运行完整测试流程"
+    echo "  $0 local   # 运行 Python 测试"
 }
 
 # 主函数
@@ -180,12 +111,6 @@ main() {
     case $command in
         local)
             run_local_tests
-            ;;
-        docker)
-            run_docker_tests
-            ;;
-        full)
-            run_full_tests
             ;;
         help|--help|-h)
             show_help
