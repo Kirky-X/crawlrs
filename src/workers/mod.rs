@@ -37,6 +37,10 @@ pub mod scheduler;
 pub mod scrape_executor;
 pub mod scrape_response_builder;
 pub mod scrape_worker;
+/// 优雅退出协调器（R-security-003/004/005，design.md D3）
+///
+/// 提供 SIGTERM/SIGINT 监听与 worker 循环的关闭编排。
+pub mod shutdown;
 pub mod task_state_machine;
 /// R-wh-001 / T026：webhook feature 关闭时不编译此模块
 /// （webhook_worker spawn 也会门控，见 main.rs）

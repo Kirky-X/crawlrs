@@ -175,8 +175,41 @@ pub fn load_and_configure(is_production: bool) -> Result<(Settings, u16)> {
     debug!("Step 4/4: Detecting available port...");
     let port = detect_available_port(&mut settings)?;
 
+    // Webhook secret fail-fast（R-security-001）
+    // 当 `webhook` feature 启用且运行在非 test/development 环境时，空的
+    // `webhook.secret` 配置必须阻止服务启动，避免以无签名校验的 Webhook 上生产。
+    validate_webhook_secret_fail_fast(is_production, &settings.webhook.secret)?;
+
     info!("Application configuration completed successfully");
     Ok((settings, port))
+}
+
+/// Webhook secret 启动 fail-fast 校验（R-security-001）。
+///
+/// 当 `webhook` feature 启用且 `is_production=true`（且当前非 test/development 环境）
+/// 时，空的 webhook secret 返回 `Err` 阻止启动。
+#[cfg(feature = "webhook")]
+fn validate_webhook_secret_fail_fast(is_production: bool, secret: &str) -> Result<()> {
+    let env = std::env::var(crate::common::constants::env_vars::ENV)
+        .or_else(|_| std::env::var(crate::common::constants::env_vars::APP_ENVIRONMENT))
+        .unwrap_or_else(|_| "development".to_string());
+    let env_lower = env.to_lowercase();
+    let is_test_env =
+        env_lower == "test" || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
+
+    if is_production && !is_test_env && secret.is_empty() {
+        error!("CRITICAL: webhook.secret must not be empty in production (webhook feature enabled)");
+        return Err(anyhow::anyhow!(
+            "webhook.secret must not be empty in production (webhook feature enabled)"
+        ));
+    }
+    Ok(())
+}
+
+/// 非 `webhook` feature 下的占位：校验直接通过。
+#[cfg(not(feature = "webhook"))]
+fn validate_webhook_secret_fail_fast(_is_production: bool, _secret: &str) -> Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -775,5 +808,88 @@ mod tests {
         assert!(result.is_ok());
         let (settings, _port) = result.unwrap();
         assert_eq!(settings.server.host, "0.0.0.0");
+    }
+
+    // ========== Webhook secret fail-fast tests (R-security-001 / T001-T002) ==========
+
+    #[test]
+    #[cfg(feature = "webhook")]
+    fn test_webhook_secret_empty_in_production_errors() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        std::env::set_var("CRAWLRS_ENV", "production");
+        std::env::remove_var("CRAWLRS__TEST_MODE");
+
+        let result = validate_webhook_secret_fail_fast(true, "");
+
+        match saved_env {
+            Some(v) => std::env::set_var("CRAWLRS_ENV", v),
+            None => std::env::remove_var("CRAWLRS_ENV"),
+        }
+        match saved_test_mode {
+            Some(v) => std::env::set_var("CRAWLRS__TEST_MODE", v),
+            None => std::env::remove_var("CRAWLRS__TEST_MODE"),
+        }
+
+        assert!(
+            result.is_err(),
+            "empty webhook secret in production must fail, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "webhook")]
+    fn test_webhook_secret_empty_in_test_env_passes() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        std::env::set_var("CRAWLRS_ENV", "test");
+        std::env::remove_var("CRAWLRS__TEST_MODE");
+
+        let result = validate_webhook_secret_fail_fast(true, "");
+
+        match saved_env {
+            Some(v) => std::env::set_var("CRAWLRS_ENV", v),
+            None => std::env::remove_var("CRAWLRS_ENV"),
+        }
+        match saved_test_mode {
+            Some(v) => std::env::set_var("CRAWLRS__TEST_MODE", v),
+            None => std::env::remove_var("CRAWLRS__TEST_MODE"),
+        }
+
+        assert!(
+            result.is_ok(),
+            "empty webhook secret in test env should pass, got err: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "webhook")]
+    fn test_webhook_secret_non_empty_in_production_passes() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        std::env::set_var("CRAWLRS_ENV", "production");
+        std::env::remove_var("CRAWLRS__TEST_MODE");
+
+        let result = validate_webhook_secret_fail_fast(true, "non-empty-secret");
+
+        match saved_env {
+            Some(v) => std::env::set_var("CRAWLRS_ENV", v),
+            None => std::env::remove_var("CRAWLRS_ENV"),
+        }
+        match saved_test_mode {
+            Some(v) => std::env::set_var("CRAWLRS__TEST_MODE", v),
+            None => std::env::remove_var("CRAWLRS__TEST_MODE"),
+        }
+
+        assert!(
+            result.is_ok(),
+            "non-empty webhook secret in production should pass, got err: {:?}",
+            result.err()
+        );
     }
 }

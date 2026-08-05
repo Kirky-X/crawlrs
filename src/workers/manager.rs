@@ -20,10 +20,11 @@ use crate::utils::regex_cache::RegexCache;
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 use crate::workers::expiration_worker::ExpirationWorker;
 use crate::workers::scrape_worker::ScrapeWorker;
+// R-security-004/005：优雅退出协调器（design.md D3，T007）
+use crate::workers::shutdown::ShutdownCoordinator;
 use crate::workers::{AbstractWorker, Worker};
-use log::{error, info};
+use log::info;
 use std::sync::Arc;
-use tokio::signal;
 use tokio::task::JoinHandle;
 
 use crate::config::settings::Settings;
@@ -77,6 +78,12 @@ pub struct WorkerManager {
     /// 由 `WorkerManagerDeps` 从 `InfrastructureComponents.cache_service` 注入，
     /// 所有 worker 共享同一实例，用于 `process_scrape_task` 读写抓取结果缓存。
     cache_service: Arc<dyn CacheService>,
+    /// 优雅退出协调器（R-security-004/005，design.md D3）
+    ///
+    /// 由 main.rs 创建并通过 `WorkerManagerDeps` 注入，所有 worker 共享同一实例。
+    /// `start_workers` 注入到每个 `ScrapeWorker`，关闭信号到达后 worker 循环
+    /// 停止接受新任务并在完成当前任务后退出。
+    shutdown_coordinator: Arc<ShutdownCoordinator>,
 }
 
 /// Worker Manager Dependencies
@@ -99,6 +106,8 @@ pub struct WorkerManagerDeps {
     pub regex_cache: RegexCache,
     /// 高级缓存服务（T059/R-cache-002）
     pub cache_service: Arc<dyn CacheService>,
+    /// 优雅退出协调器（R-security-004/005，design.md D3）
+    pub shutdown_coordinator: Arc<ShutdownCoordinator>,
 }
 
 /// Worker Manager Configuration
@@ -164,6 +173,7 @@ impl WorkerManager {
             )),
             // T059/R-cache-002：所有 worker 共享 CacheService 实例
             cache_service: deps.cache_service,
+            shutdown_coordinator: deps.shutdown_coordinator,
         }
     }
 
@@ -221,6 +231,8 @@ impl WorkerManager {
                 #[cfg(feature = "metrics")]
                 self.memory_scheduler.clone(),
             )
+            // R-security-004/005：注入共享优雅退出协调器（design.md D3，T007）
+            .with_shutdown_coordinator(self.shutdown_coordinator.clone())
             // T053/R-frontier-001：注入共享 deduplicator（替换 ScrapeWorker::new 内部默认实例）
             .with_deduplicator_opt(Some(self.deduplicator.clone()));
 
@@ -234,17 +246,27 @@ impl WorkerManager {
         }
     }
 
-    /// 等待关闭信号并关闭工作进程
+    /// 触发优雅退出（R-security-004/005，design.md D3）
     ///
-    /// 监听关闭信号并优雅地关闭所有工作进程
+    /// 等价于信号监听任务（`listen_unix_signals`）收到 SIGTERM/SIGINT 后
+    /// 调用 `ShutdownCoordinator::trigger()`。置位后各 worker 循环停止接受
+    /// 新任务，完成当前任务后退出。
+    pub fn begin_shutdown(&self) {
+        self.shutdown_coordinator.trigger();
+    }
+
+    /// 等待关闭并优雅终止所有工作进程
+    ///
+    /// 依赖注入的 `ShutdownCoordinator`：
+    /// - `wait_for_completion()` 阻塞等待关闭信号，并在关闭后给进行中的任务
+    ///   至多 `graceful_period` 的宽限期完成（R-security-004）；
+    /// - 宽限期结束后 abort 所有剩余句柄（含不检查关闭 flag 的辅助 worker：
+    ///   expiration / purge_stale 等无限循环），强制退出（R-security-005）。
     pub async fn wait_for_shutdown(&mut self) {
-        match signal::ctrl_c().await {
-            Ok(()) => info!("Shutdown signal received"),
-            Err(err) => error!("Unable to listen for shutdown signal: {}", err),
-        }
+        let _ = self.shutdown_coordinator.wait_for_completion().await;
 
         info!("Shutting down workers...");
-        for handle in &self.handles {
+        for handle in std::mem::take(&mut self.handles) {
             handle.abort();
         }
 
@@ -981,6 +1003,7 @@ mod tests {
                 crate::infrastructure::oxcache::RegexCacheType::new(),
             )),
             cache_service: Arc::new(NoopCacheService) as Arc<dyn CacheService>,
+            shutdown_coordinator: Arc::new(ShutdownCoordinator::default()),
         }
     }
 
@@ -1117,14 +1140,18 @@ mod tests {
         }
     }
 
-    // ========== wait_for_shutdown: completes and aborts handles on SIGINT ==========
-    // Covers the Ok(()) => info!("Shutdown signal received") branch and the abort loop
-    // that follows ctrl_c() completing. On Unix, we send SIGINT to the current process
-    // so tokio's signal handler resolves ctrl_c().
+    // ========== wait_for_shutdown: completes and aborts handles on shutdown trigger ==========
+    // Covers the graceful-shutdown branch (R-security-004/005): once the coordinator
+    // is triggered (equivalently: SIGTERM/SIGINT received), wait_for_shutdown drains
+    // handles within the graceful period and aborts leftovers.
+    //
+    // 注：不再向当前进程发送 SIGINT。旧的实现依赖 `wait_for_shutdown` 内部
+    // `ctrl_c().await` 捕获信号；新实现由外部 `listen_unix_signals` / `begin_shutdown`
+    // 触发 coordinator，测试直接调用 `begin_shutdown()` 等价地触发关闭，避免
+    // 对测试进程注入信号（会杀死整个测试 harness）。
 
-    #[cfg(unix)]
     #[tokio::test]
-    async fn test_wait_for_shutdown_completes_on_sigint() {
+    async fn test_wait_for_shutdown_completes_on_trigger() {
         use std::time::Duration;
 
         let mut manager = WorkerManager::new(make_deps(), make_config());
@@ -1132,23 +1159,16 @@ mod tests {
         // start_workers(1) 启动：1 expiration + 1 purge_stale + 1 scrape = 3
         assert_eq!(manager.handles.len(), 3);
 
-        // Spawn a task to send SIGINT after a short delay, giving wait_for_shutdown
-        // time to register the tokio signal handler.
-        let pid = std::process::id();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let _ = std::process::Command::new("kill")
-                .args(["-INT", &pid.to_string()])
-                .spawn();
-        });
+        // 触发优雅退出（等价于收到 SIGTERM/SIGINT）
+        manager.begin_shutdown();
 
-        // wait_for_shutdown should complete after SIGINT (not time out)
+        // wait_for_shutdown should complete after trigger (not time out)
         let result =
-            tokio::time::timeout(Duration::from_secs(3), manager.wait_for_shutdown()).await;
+            tokio::time::timeout(Duration::from_secs(5), manager.wait_for_shutdown()).await;
 
         assert!(
             result.is_ok(),
-            "wait_for_shutdown should complete after SIGINT"
+            "wait_for_shutdown should complete after shutdown trigger"
         );
         // After shutdown, all handles should have been aborted. Give aborted tasks
         // a brief moment to actually finish before checking is_finished().
@@ -1159,5 +1179,13 @@ mod tests {
                 "handles should be aborted after shutdown"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_begin_shutdown_sets_coordinator_flag() {
+        let manager = WorkerManager::new(make_deps(), make_config());
+        assert!(!manager.shutdown_coordinator.is_shutting_down());
+        manager.begin_shutdown();
+        assert!(manager.shutdown_coordinator.is_shutting_down());
     }
 }

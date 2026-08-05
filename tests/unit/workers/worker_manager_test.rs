@@ -480,6 +480,7 @@ fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> 
         extraction_service: Arc::new(MockExtractionService),
         regex_cache: make_regex_cache(),
         cache_service: Arc::new(MockCacheService) as Arc<dyn CacheService>,
+        shutdown_coordinator: Arc::new(crawlrs::workers::shutdown::ShutdownCoordinator::default()),
     }
 }
 

@@ -108,6 +108,26 @@ mod app {
     ) -> anyhow::Result<()> {
         log::info!("Starting Worker service...");
 
+        // R-security-004/005：优雅退出编排（design.md D3，T010）
+        //
+        // 创建共享 ShutdownCoordinator，spawn 信号监听任务（SIGTERM/SIGINT →
+        // trigger），替换裸 `tokio::signal::ctrl_c().await`：
+        // - `worker_manager.wait_for_shutdown()` 内部经 coordinator 阻塞等待信号，
+        //   随后给进行中任务 ≤ graceful_period 的宽限期完成，再终止剩余句柄；
+        // - 宽限期结束后 `rollback_pending_tasks` 把已锁定未完成任务回滚为 Pending。
+        let coordinator = Arc::new(
+            crawlrs::workers::shutdown::ShutdownCoordinator::new(std::time::Duration::from_secs(
+                settings.workers.graceful_shutdown_seconds,
+            )),
+        );
+        let coord_for_signals = coordinator.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crawlrs::workers::shutdown::listen_unix_signals(coord_for_signals).await
+            {
+                log::error!("Failed to listen for shutdown signals: {}", e);
+            }
+        });
+
         // 启动通用 worker（webhook / backlog / expiration）
         spawn_common_workers(app_state, &settings).await;
 
@@ -128,6 +148,7 @@ mod app {
             extraction_service: app_state.extraction_service(),
             regex_cache: (*app_state.regex_cache()).clone(),
             cache_service: app_state.cache_service(),
+            shutdown_coordinator: coordinator.clone(),
         };
 
         let config = WorkerManagerConfig {
@@ -142,9 +163,17 @@ mod app {
         log::info!("Starting {} worker(s)", worker_count);
         worker_manager.start_workers(worker_count).await;
 
-        // Keep the main thread alive
-        tokio::signal::ctrl_c().await?;
+        // Keep the main thread alive until shutdown signal
+        worker_manager.wait_for_shutdown().await;
         log::info!("Shutting down worker service...");
+
+        // Roll back in-flight tasks so they aren't stuck in Active (R-security-005)
+        let repo_for_rollback = app_state.task_repo();
+        crawlrs::workers::shutdown::rollback_pending_tasks(
+            &repo_for_rollback,
+            std::time::Duration::from_secs(settings.workers.graceful_shutdown_seconds),
+        )
+        .await;
 
         Ok(())
     }

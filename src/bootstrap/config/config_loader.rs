@@ -128,6 +128,14 @@ mod tests {
     }
 
     #[test]
+    fn test_load_settings_has_tls_fingerprint_engine_config() {
+        // T020：`[engines.tls_fingerprint]` 配置段应从 default.toml 正确解析
+        let settings = load_settings().expect("Failed to load settings");
+        assert_eq!(settings.engines.tls_fingerprint.enabled, false);
+        assert_eq!(settings.engines.tls_fingerprint.timeout_seconds, 15);
+    }
+
+    #[test]
     fn test_load_settings_returns_consistent_port() {
         let settings1 = load_settings().expect("Failed to load settings");
         let settings2 = load_settings().expect("Failed to load settings");

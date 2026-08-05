@@ -10,3 +10,10 @@
 pub mod auth_garrison_test;
 pub mod helpers;
 pub mod repositories;
+
+/// WreqEngine JA3/JA4 指纹端到端测试（T024）。
+///
+/// 需 `engine-tls-fingerprint` feature（含 BoringSSL 构建）。用例 `#[ignore]`，
+/// 手动运行：`cargo test --test main --features full,engine-tls-fingerprint -- --ignored wreq_fingerprint_test`
+#[cfg(feature = "engine-tls-fingerprint")]
+pub mod wreq_fingerprint_test;
