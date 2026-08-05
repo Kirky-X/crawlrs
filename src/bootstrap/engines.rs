@@ -191,6 +191,7 @@ pub fn init_engine_components(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engines::router::EngineRouterTrait;
     use std::time::Duration;
 
     fn make_http_client() -> Arc<reqwest::Client> {

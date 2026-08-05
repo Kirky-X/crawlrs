@@ -33,9 +33,6 @@ pub mod tab_pool;
 #[cfg(feature = "engine-flaresolverr")]
 pub mod flare_solverr;
 
-/// 共享的 FlareSolverr 类型定义
-#[cfg(feature = "engine-flaresolverr")]
-pub mod flaresolverr_types;
 
 // Re-exports
 

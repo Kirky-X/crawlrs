@@ -529,7 +529,6 @@ impl ScrapeResponse {
 
 /// Internal request type for engine operations
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct InternalScrapeRequest {
     pub url: String,
     pub method: HttpMethod,
@@ -563,7 +562,6 @@ pub struct InternalScrapeRequest {
 
 /// Internal screenshot configuration
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct InternalScreenshotConfig {
     pub full_page: bool,
     pub selector: Option<String>,
@@ -573,7 +571,6 @@ pub struct InternalScreenshotConfig {
 
 /// Internal page action for engine operations
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum InternalPageAction {
     Wait { milliseconds: u64 },
     Click { selector: String },
@@ -584,7 +581,6 @@ pub enum InternalPageAction {
 
 /// Internal response type for engine operations
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct InternalScrapeResponse {
     pub status_code: u16,
     pub content: String,

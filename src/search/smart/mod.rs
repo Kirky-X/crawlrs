@@ -720,7 +720,6 @@ impl SmartSearchEngine {
     }
 
     /// 获取引擎名称
-    #[allow(dead_code)]
     fn engine_name(&self) -> &'static str {
         self.config.engine_type.name()
     }
