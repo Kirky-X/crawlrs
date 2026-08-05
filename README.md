@@ -150,7 +150,7 @@
 | 要求 | 最低版本 | 推荐版本 |
 |-------------|------------------|---------------|
 | Rust | 1.95+ | 最新稳定版 |
-| PostgreSQL | 14+ | 最新稳定版 |
+| PostgreSQL | 16+ | 最新稳定版 |
 | Docker | 20+ | 最新版 |
 
 ### 从源码构建
@@ -251,7 +251,7 @@ cargo build --release --no-default-features --features teams
 | 特性 | 默认 | 依赖关系 | 关闭时行为 | 关联常量/Noop 实现 |
 |------|------|----------|------------|---------------------|
 | `teams` | ✅ 启用 | 隐含 `auth` | 降级为单租户，所有请求归属 `DEFAULT_TEAM_ID`（`Uuid::from_u128(1)`） | `DEFAULT_TEAM_ID` |
-| `auth` | ✅ 启用 | `dep:garrison` | **0.2.0 起 garrison v0.8.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce + audit-log。关闭时走 `default_identity_middleware` 注入固定 `AuthState`（`DEFAULT_API_KEY_ID` + `full_access` scope） | `DEFAULT_API_KEY_ID`（`Uuid::from_u128(2)`）、`default_identity_middleware`、`auth_bridge::map_perms_to_scope` |
+| `auth` | ✅ 启用 | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.8.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce + audit-log。关闭时走 `default_identity_middleware` 注入固定 `AuthState`（`DEFAULT_API_KEY_ID` + `full_access` scope） | `DEFAULT_API_KEY_ID`（`Uuid::from_u128(2)`）、`default_identity_middleware`、`auth_bridge::map_perms_to_scope` |
 | `rate-limit` | ✅ 启用 | `dep:limiteron` | 注入 `NoopRateLimitingService`，`check_rate_limit` 返回 `Allowed`、`check_and_deduct_quota` 返回 `Ok(())`、`get_quota_balance` 返回 `Ok(i64::MAX)` | `NoopRateLimitingService` |
 | `webhook` | ✅ 启用 | 无 | 注入 `NoopWebhookService`，`trigger_completion` / `trigger_failure` 返回 `Ok(())`；移除 `/v1/webhooks` 路由与 `webhook_worker` | `NoopWebhookService` |
 
@@ -581,9 +581,9 @@ flowchart TB
 | 组件 | 技术 | 版本 |
 |-----------|------------|---------|
 | Web 框架 | Axum | 0.8 |
-| 异步运行时 | Tokio | 1.52 |
-| 数据库 ORM | Sea-ORM 2.0.0-rc.43（通过 dbnexus 0.4） | - |
-| 数据库 | PostgreSQL | 14+ |
+| 异步运行时 | Tokio | 1.53 |
+| 数据库 ORM | Sea-ORM 2.0.1（通过 dbnexus 0.4） | - |
+| 数据库 | PostgreSQL | 16+ |
 | 缓存 | oxcache (moka) | 0.3 |
 | HTTP 客户端 | Reqwest | 0.13 |
 | 浏览器自动化 | chromiumoxide | 0.9 |

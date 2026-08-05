@@ -148,7 +148,7 @@ Compared to Node.js implementations:
 | Requirement | Minimum Version | Recommended |
 |-------------|------------------|---------------|
 | Rust | 1.95+ | Latest stable |
-| PostgreSQL | 14+ | Latest stable |
+| PostgreSQL | 16+ | Latest stable |
 | Docker | 20+ | Latest |
 
 ### Build from Source
@@ -249,7 +249,7 @@ cargo build --release --no-default-features --features teams
 | Feature | Default | Dependencies | Behavior when disabled | Related Constants/Noop Implementations |
 |------|------|----------|------------|---------------------|
 | `teams` | ✅ Enabled | Implies `auth` | Degrades to single-tenant; all requests attributed to `DEFAULT_TEAM_ID` (`Uuid::from_u128(1)`) | `DEFAULT_TEAM_ID` |
-| `auth` | ✅ Enabled | `dep:garrison` | **As of 0.2.0 garrison v0.8.1 takes over authentication**: `auth_middleware_inner` calls `GarrisonUtil::check_api_key` + `bridge_to_auth_state` to inject `AuthState`; provides RBAC + JWT + firewall-bruteforce + audit-log. When disabled, uses `default_identity_middleware` to inject fixed `AuthState` (`DEFAULT_API_KEY_ID` + `full_access` scope) | `DEFAULT_API_KEY_ID` (`Uuid::from_u128(2)`), `default_identity_middleware`, `auth_bridge::map_perms_to_scope` |
+| `auth` | ✅ Enabled | `dep:garrison, dep:inventory` | **As of 0.2.0 garrison v0.8.1 takes over authentication**: `auth_middleware_inner` calls `GarrisonUtil::check_api_key` + `bridge_to_auth_state` to inject `AuthState`; provides RBAC + JWT + firewall-bruteforce + audit-log. When disabled, uses `default_identity_middleware` to inject fixed `AuthState` (`DEFAULT_API_KEY_ID` + `full_access` scope) | `DEFAULT_API_KEY_ID` (`Uuid::from_u128(2)`), `default_identity_middleware`, `auth_bridge::map_perms_to_scope` |
 | `rate-limit` | ✅ Enabled | `dep:limiteron` | Injects `NoopRateLimitingService`: `check_rate_limit` returns `Allowed`, `check_and_deduct_quota` returns `Ok(())`, `get_quota_balance` returns `Ok(i64::MAX)` | `NoopRateLimitingService` |
 | `webhook` | ✅ Enabled | None | Injects `NoopWebhookService`: `trigger_completion` / `trigger_failure` return `Ok(())`; removes `/v1/webhooks` route and `webhook_worker` | `NoopWebhookService` |
 
@@ -579,9 +579,9 @@ flowchart TB
 | Component | Technology | Version |
 |-----------|------------|---------|
 | Web Framework | Axum | 0.8 |
-| Async Runtime | Tokio | 1.52 |
-| Database ORM | Sea-ORM 2.0.0-rc.43 (via dbnexus 0.4) | - |
-| Database | PostgreSQL | 14+ |
+| Async Runtime | Tokio | 1.53 |
+| Database ORM | Sea-ORM 2.0.1 (via dbnexus 0.4) | - |
+| Database | PostgreSQL | 16+ |
 | Cache | oxcache (moka) | 0.3 |
 | HTTP Client | Reqwest | 0.13 |
 | Browser Automation | chromiumoxide | 0.9 |
