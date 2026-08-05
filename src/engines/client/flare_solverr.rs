@@ -136,16 +136,32 @@ pub struct FlareSolverrConfig {
     pub mrt: Option<Duration>,
 }
 
+/// FlareSolverr URL 验证失败时的安全降级占位符。
+///
+/// 该 URL 仅用于避免 SSRF 风险（不指向真实服务），
+/// 生产环境必须通过 `config/default.toml` 或 `CRAWLRS__ENGINES__FLARESOLVERR__URL` 配置正确值。
+const FALLBACK_URL: &str = "http://localhost:8191";
+
 impl Default for FlareSolverrConfig {
     fn default() -> Self {
-        let url = std::env::var("FLARESOLVERR_URL")
-            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        // 生产环境应通过 Settings 注入 URL，而非读取遗留环境变量。
+        // 此处仅作为安全降级路径：未配置时记录警告，使用占位符。
+        let url = std::env::var("FLARESOLVERR_URL").unwrap_or_default();
+        if url.is_empty() {
+            log::warn!(
+                "FlareSolverr URL not configured (FLARESOLVERR_URL env var empty or unset). \
+                 Using placeholder '{FALLBACK_URL}'. Set CRAWLRS__ENGINES__FLARESOLVERR__URL \
+                 in config/default.toml or via environment variable."
+            );
+        }
 
-        // Validate URL format and protocol
-        // 与其他构造函数保持一致的失败降级策略：无效 URL 不 panic，fallback 到 localhost
-        // （避免配置错误导致进程崩溃，符合规则 12 失败显性化但不破坏服务可用性）
-        let validated_url =
-            validate_flaresolverr_url(&url).unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let validated_url = validate_flaresolverr_url(&url).unwrap_or_else(|e| {
+            log::warn!(
+                "FlareSolverr URL validation failed ('{url}'): {e}. \
+                 Falling back to placeholder '{FALLBACK_URL}'."
+            );
+            FALLBACK_URL.to_string()
+        });
 
         Self {
             url: validated_url,
@@ -196,8 +212,12 @@ impl FlareSolverrEngine {
     ///
     /// URL 必须为 http/https 协议，否则使用默认占位符（避免 SSRF 风险）。
     pub fn with_url(client: Arc<Client>, url: impl Into<String>) -> Self {
-        let validated = validate_flaresolverr_url(&url.into())
-            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let validated = validate_flaresolverr_url(&url.into()).unwrap_or_else(|e| {
+            log::warn!(
+                "FlareSolverr URL validation failed: {e}. Falling back to '{FALLBACK_URL}'."
+            );
+            FALLBACK_URL.to_string()
+        });
         let config = FlareSolverrConfig {
             url: validated,
             timeout_seconds: 60,
@@ -237,8 +257,12 @@ impl FlareSolverrEngine {
         base_url: &str,
         proxy_url: Option<&str>,
     ) -> Self {
-        let validated = validate_flaresolverr_url(base_url)
-            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let validated = validate_flaresolverr_url(base_url).unwrap_or_else(|e| {
+            log::warn!(
+                "FlareSolverr CDP URL validation failed: {e}. Falling back to '{FALLBACK_URL}'."
+            );
+            FALLBACK_URL.to_string()
+        });
         let config = FlareSolverrConfig {
             url: validated,
             timeout_seconds: 60,
@@ -266,8 +290,12 @@ impl FlareSolverrEngine {
         base_url: &str,
         proxy_url: Option<&str>,
     ) -> Self {
-        let validated = validate_flaresolverr_url(base_url)
-            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let validated = validate_flaresolverr_url(base_url).unwrap_or_else(|e| {
+            log::warn!(
+                "FlareSolverr TLS URL validation failed: {e}. Falling back to '{FALLBACK_URL}'."
+            );
+            FALLBACK_URL.to_string()
+        });
         let config = FlareSolverrConfig {
             url: validated,
             timeout_seconds: 60,
@@ -290,8 +318,12 @@ impl FlareSolverrEngine {
         mrt: Duration,
         timeout_seconds: u64,
     ) -> Self {
-        let validated = validate_flaresolverr_url(&url.into())
-            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let validated = validate_flaresolverr_url(&url.into()).unwrap_or_else(|e| {
+            log::warn!(
+                "FlareSolverr Full URL validation failed: {e}. Falling back to '{FALLBACK_URL}'."
+            );
+            FALLBACK_URL.to_string()
+        });
         let config = FlareSolverrConfig {
             url: validated,
             timeout_seconds,
@@ -315,8 +347,10 @@ impl FlareSolverrEngine {
         mrt: Duration,
         timeout_seconds: u64,
     ) -> Self {
-        let validated = validate_flaresolverr_url(base_url)
-            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let validated = validate_flaresolverr_url(base_url).unwrap_or_else(|e| {
+            log::warn!("FlareSolverr CDP+MRT URL validation failed: {e}. Falling back to '{FALLBACK_URL}'.");
+            FALLBACK_URL.to_string()
+        });
         let config = FlareSolverrConfig {
             url: validated,
             timeout_seconds,
@@ -340,8 +374,10 @@ impl FlareSolverrEngine {
         mrt: Duration,
         timeout_seconds: u64,
     ) -> Self {
-        let validated = validate_flaresolverr_url(base_url)
-            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let validated = validate_flaresolverr_url(base_url).unwrap_or_else(|e| {
+            log::warn!("FlareSolverr TLS+MRT URL validation failed: {e}. Falling back to '{FALLBACK_URL}'.");
+            FALLBACK_URL.to_string()
+        });
         let config = FlareSolverrConfig {
             url: validated,
             timeout_seconds,
@@ -360,10 +396,16 @@ impl FlareSolverrEngine {
         proxy_url: Option<&str>,
     ) -> Self {
         // 环境变量 URL 也需校验协议，避免 SSRF 风险
-        let raw_url = std::env::var("FLARESOLVERR_URL")
-            .unwrap_or_else(|_| "http://localhost:8191".to_string());
-        let validated = validate_flaresolverr_url(&raw_url)
-            .unwrap_or_else(|_| "http://localhost:8191".to_string());
+        let raw_url = std::env::var("FLARESOLVERR_URL").unwrap_or_default();
+        if raw_url.is_empty() {
+            log::warn!("FlareSolverr URL not configured. Using placeholder '{FALLBACK_URL}'.");
+        }
+        let validated = validate_flaresolverr_url(&raw_url).unwrap_or_else(|e| {
+            log::warn!(
+                "FlareSolverr URL validation failed: {e}. Falling back to '{FALLBACK_URL}'."
+            );
+            FALLBACK_URL.to_string()
+        });
         let config = FlareSolverrConfig {
             url: validated,
             timeout_seconds: 60,

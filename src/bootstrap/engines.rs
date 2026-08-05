@@ -64,6 +64,8 @@ pub fn init_engines(
 ) -> Vec<Arc<dyn ScraperEngine>> {
     // T061：从 EngineTimeoutSettings 派生超时与各引擎 MRT，避免硬编码
     let timeout_seconds = engine_timeouts.default_timeout_seconds;
+    // FlareSolverr 引擎使用专属超时（从 engines.flaresolverr.timeout_seconds 配置注入）
+    let flaresolverr_timeout = engine_config.flaresolverr.timeout_seconds;
     let fetch_mrt = std::time::Duration::from_secs(engine_timeouts.fetch_seconds);
     let tls_mrt = std::time::Duration::from_secs(engine_timeouts.tls_seconds);
     let cdp_mrt = std::time::Duration::from_secs(engine_timeouts.cdp_seconds);
@@ -107,7 +109,7 @@ pub fn init_engines(
             &engine_config.flaresolverr_tls.url,
             proxy_url,
             tls_mrt,
-            timeout_seconds,
+            flaresolverr_timeout,
         )));
     }
 
@@ -122,7 +124,7 @@ pub fn init_engines(
             &engine_config.flaresolverr_cdp.url,
             proxy_url,
             cdp_mrt,
-            timeout_seconds,
+            flaresolverr_timeout,
         )));
     }
 
@@ -136,7 +138,7 @@ pub fn init_engines(
             http_client.clone(),
             &engine_config.flaresolverr.url,
             cdp_mrt,
-            timeout_seconds,
+            flaresolverr_timeout,
         )));
     }
 
