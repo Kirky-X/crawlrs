@@ -48,6 +48,8 @@ async fn main() {
         proxy: None,
         headers: None,
         extraction_rules: None,
+        extraction_prompt: None,
+        extraction_schema: None,
     };
 
     info!("📊 预期结果:");
@@ -70,6 +72,8 @@ async fn main() {
         proxy: None,
         headers: None,
         extraction_rules: None,
+        extraction_prompt: None,
+        extraction_schema: None,
     };
 
     info!("📊 预期结果:");
@@ -92,6 +96,8 @@ async fn main() {
         proxy: None,
         headers: None,
         extraction_rules: None,
+        extraction_prompt: None,
+        extraction_schema: None,
     };
 
     info!("📊 预期结果:");
@@ -114,6 +120,8 @@ async fn main() {
         proxy: None,
         headers: None,
         extraction_rules: None,
+        extraction_prompt: None,
+        extraction_schema: None,
     };
 
     info!("📊 预期结果:");
@@ -138,6 +146,8 @@ async fn main() {
         proxy: None,
         headers: None,
         extraction_rules: None,
+        extraction_prompt: None,
+        extraction_schema: None,
     };
 
     info!("📝 博客站点配置:");
@@ -165,6 +175,8 @@ async fn main() {
         proxy: None,
         headers: None,
         extraction_rules: None,
+        extraction_prompt: None,
+        extraction_schema: None,
     };
 
     info!("📝 电商站点配置:");

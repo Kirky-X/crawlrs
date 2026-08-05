@@ -42,6 +42,8 @@ async fn main() {
         proxy: None,                                 // 代理设置
         headers: None,                               // 自定义请求头
         extraction_rules: None,                      // 提取规则
+        extraction_prompt: None,                     // LLM 提取提示词
+        extraction_schema: None,                     // JSON Schema 结构化提取
     };
 
     info!("📋 爬取配置:");

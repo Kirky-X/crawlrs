@@ -83,6 +83,8 @@ async fn main() {
         proxy: None,
         headers: None,
         extraction_rules: None,
+        extraction_prompt: None,
+        extraction_schema: None,
     };
 
     info!("📝 博客配置:");
@@ -119,6 +121,8 @@ async fn main() {
         proxy: None,
         headers: None,
         extraction_rules: None,
+        extraction_prompt: None,
+        extraction_schema: None,
     };
 
     info!("📝 电商配置:");
