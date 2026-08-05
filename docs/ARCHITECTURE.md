@@ -3,10 +3,10 @@
 <div align="center">
 
 ![Documentation](https://img.shields.io/badge/type-architecture-purple)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 
-**Version:** 0.1.0 | **Last Updated:** 2025-07-21 | **Author:** Kirky.X
+**Version:** 0.2.0 | **Last Updated:** 2025-07-21 | **Author:** Kirky.X
 
 </div>
 
@@ -48,9 +48,9 @@ crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, l
 
 | Component | Technology | Version |
 |-----------|-----------|---------|
-| Async Runtime | Tokio | 1.52 |
+| Async Runtime | Tokio | 1.53 |
 | Web Framework | Axum | 0.8 |
-| ORM | Sea-ORM (via dbnexus) | 2.0.0-rc.43 |
+| ORM | Sea-ORM (via dbnexus) | 2.0.1 |
 | HTTP Client | Reqwest | 0.13 |
 | Database | PostgreSQL | 16+ |
 | Cache | oxcache (in-memory) | 0.3 |
@@ -162,7 +162,6 @@ flowchart TD
         D1[Models / Entities]
         D2[Services]
         D3[Repository Interfaces]
-        D4[Domain Events]
     end
 
     subgraph Engines [Engine Layer]
@@ -216,15 +215,23 @@ flowchart TD
 presentation/
 ├── handlers/              # HTTP endpoint handlers
 │   ├── scrape_handler.rs
+│   ├── scrape_commands.rs
+│   ├── scrape_queries.rs
 │   ├── crawl_handler.rs
+│   ├── crawl_commands.rs
+│   ├── crawl_queries.rs
 │   ├── search_handler.rs
 │   ├── extract_handler.rs
 │   ├── task_handler.rs
+│   ├── task_commands.rs
+│   ├── task_queries.rs
 │   ├── webhook_handler.rs
 │   ├── team_handler.rs
 │   ├── audit_handler.rs
 │   ├── metrics_handler.rs
-│   └── response_builder.rs
+│   ├── api_key_handler.rs
+│   ├── response_builder.rs
+│   └── mod.rs
 ├── routes/                # Route definitions
 │   ├── mod.rs             # health, version, base routes
 │   ├── handlers.rs        # Handler route registration
@@ -234,13 +241,15 @@ presentation/
 │   └── task.rs
 ├── middleware/             # HTTP middleware
 │   ├── auth_middleware.rs
+│   ├── auth_bridge.rs
+│   ├── auth_types.rs
 │   ├── rate_limit_middleware.rs          # Basic rate limiting
 │   ├── distributed_rate_limit_middleware.rs
 │   ├── limiteron_rate_limit_middleware.rs
 │   ├── security_headers_middleware.rs
 │   ├── team_semaphore_middleware.rs
-│   ├── team_semaphore.rs
-│   └── scope_validation.rs
+│   ├── scope_validation.rs
+│   └── mod.rs
 ├── sdk/                   # sdforge SDK interface
 │   ├── mod.rs
 │   ├── mocks.rs
@@ -256,7 +265,7 @@ presentation/
 │       └── types.rs
 ├── extractors/            # Request extractors
 │   ├── mod.rs
-│   └── team_id.rs
+│   └── app_deps.rs
 ├── errors.rs
 ├── state.rs
 └── mod.rs
@@ -311,7 +320,9 @@ application/
 ├── use_cases/             # Business use cases
 │   ├── mod.rs
 │   ├── create_scrape.rs
-│   └── crawl_use_case.rs
+│   ├── crawl_use_case.rs
+│   ├── crawl_link_processor.rs
+│   └── crawl_state_machine.rs
 └── dto/                   # Data Transfer Objects
     ├── mod.rs
     ├── scrape_request.rs
@@ -361,7 +372,6 @@ where
 - Business rules and validation
 - Repository interfaces (contracts)
 - Domain services
-- Domain events
 
 **Components:**
 
@@ -369,15 +379,16 @@ where
 domain/
 ├── models/                 # Domain entities
 │   ├── mod.rs
+│   ├── builders.rs
 │   ├── task_domain.rs
 │   ├── task_model.rs
 │   ├── crawl_model.rs
-│   ├── scrape_result.rs
-│   ├── scrape_result_entity.rs
+│   ├── scrape_result_model.rs
 │   ├── search_result.rs
 │   ├── team_model.rs
 │   ├── webhook_model.rs
-│   └── credits_model.rs
+│   ├── credits_model.rs
+│   └── validations.rs
 ├── repositories/           # Repository interfaces
 │   ├── mod.rs
 │   ├── task_repository.rs
@@ -396,25 +407,26 @@ domain/
 │   ├── extraction_service.rs
 │   ├── extraction_utils.rs
 │   ├── team_service.rs
+│   ├── team_semaphore.rs
 │   ├── search_service.rs
 │   ├── webhook_service.rs
 │   ├── webhook_sender.rs
+│   ├── webhook_event_builder.rs
+│   ├── noop_webhook_service.rs
 │   ├── audit_service.rs
 │   ├── audit_log_builder.rs
 │   ├── geo_location.rs
 │   ├── llm_service.rs
 │   ├── llm_provider_strategy.rs  # T006/R-sec-006: ProviderStrategy 策略模式（OllamaStrategy）
+│   ├── llm/                       # LLM 子模块（prompt_builder, provider_adapter）
+│   ├── content_extractor/         # 正文提取（trafilatura/dom_smoothie/css_rule/facade）
+│   ├── markdown_service.rs
 │   ├── relevance_scorer.rs
 │   └── retry_handler.rs
 ├── auth/                   # Authentication models
 │   ├── mod.rs
 │   └── scope.rs
 ├── errors.rs
-├── events/                 # Domain events + event bus
-│   ├── mod.rs
-│   ├── traits.rs
-│   ├── models.rs
-│   └── in_memory.rs
 └── use_cases/              # Domain use cases
     ├── mod.rs
     └── create_webhook.rs
@@ -523,6 +535,8 @@ infrastructure/
 │   ├── api_key_hash.rs
 │   ├── constant_time_compare.rs
 │   ├── env_var_security.rs
+│   ├── env_injection.rs
+│   ├── env_validation.rs
 │   └── secure_ip.rs
 ├── persistence/            # Domain <-> DB entity mappers
 │   ├── mod.rs
@@ -536,6 +550,7 @@ infrastructure/
 │   ├── mod.rs
 │   ├── config_service.rs
 │   ├── limiteron_service.rs
+│   ├── noop_rate_limiting_service.rs
 │   └── webhook_sender_impl.rs
 ├── dns/                    # DNS resolution + caching
 │   ├── mod.rs
@@ -552,7 +567,7 @@ infrastructure/
 
 **Database Layer:**
 
-**Technology:** dbnexus 0.4 (builds on Sea-ORM 2.0.0-rc.43)
+**Technology:** dbnexus 0.4 (builds on Sea-ORM 2.0.1)
 
 dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access. PostgreSQL is the only supported backend.
 
@@ -585,7 +600,7 @@ pub type DnsCache = Cache<String, DnsCacheEntry>;
 pub type RegexCacheType = Cache<String, String>;
 ```
 
-oxcache features activated: memory, serialization, macros, batch-write, metrics, bloom-filter, tracing, futures. Type-specific TTL:
+oxcache features activated: memory, serialization, macros, batch-write, metrics, bloom-filter, tracing. Type-specific TTL:
 - Search cache: configurable (default 60s)
 - DNS cache: configurable (default 300s)
 - Regex cache: configurable (default 600s)
@@ -631,8 +646,11 @@ pub struct CrawlRsState {
     pub search_service: Arc<dyn SearchServiceTrait>,
     pub llm_service: Arc<dyn LLMServiceTrait>,
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
+    pub content_extractor: Arc<ContentExtractionFacade>,
     pub regex_cache: Arc<RegexCache>,
+    pub cache_service: Arc<dyn CacheService>,
     pub audit_service: Arc<dyn AuditServiceTrait>,
+    pub request_coalescer: Arc<RequestCoalescer>,
     #[cfg(feature = "webhook")]
     pub webhook_worker: Arc<WebhookWorker>,
     pub backlog_worker: Arc<BacklogWorker>,
@@ -641,6 +659,7 @@ pub struct CrawlRsState {
     pub geo_location_service: Arc<dyn GeoLocationService>,
     #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
+    pub i18n_bundle: Arc<I18nBundle>,
 }
 ```
 
@@ -679,7 +698,7 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 | Feature | Default | Depends On | Off-mode Behavior |
 |---------|---------|------------|-------------------|
 | `teams` | on | `auth` | `/v1/teams/*` routes not registered; `extract_handler` loses GR generic + geo-restriction block; `CrawlRsState.{team_service, geo_location_service, geo_restriction_repo}` not compiled; `team_id` falls back to `DEFAULT_TEAM_ID` |
-| `auth` | on | `dep:garrison` | **0.2.0 起 garrison v0.8.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`，无 DB 查询、无暴力破解防护 |
+| `auth` | on | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.8.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`，无 DB 查询、无暴力破解防护 |
 | `rate-limit` | on | `dep:limiteron` | `LimiteronService` replaced by `NoopRateLimitingService` (check_rate_limit→Allowed, check_and_deduct_quota→Ok, get_quota_balance→Ok(i64::MAX), process_backlog_tasks→Ok(0)); `limiteron_service`/`distributed_rate_limit_middleware`/`limiteron_rate_limit_middleware` modules not compiled |
 | `webhook` | on | — | `WebhookServiceImpl`/`WebhookManagementServiceImpl`/`webhook_sender`/`webhook_handler`/`webhook_worker` modules not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn blocks skipped; `WebhookService` trait preserved and assembled with `NoopWebhookService` (all ops return `Ok(())`) |
 
@@ -689,9 +708,10 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 [features]
 default = ["teams", "auth", "rate-limit", "webhook"]
 teams   = ["auth"]
-auth    = ["dep:garrison"]   # 0.2.0: garrison v0.8.1 接管认证引擎
+auth    = ["dep:garrison", "dep:inventory"]   # 0.2.0: garrison v0.8.1 接管认证引擎
 rate-limit = ["dep:limiteron"]
 webhook = []
+full    = ["standard", "engine-flaresolverr", "extractor-full", "http"]
 ```
 
 ### Gating pattern examples
