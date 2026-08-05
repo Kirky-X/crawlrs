@@ -1496,19 +1496,8 @@ Scopes: `scrape`, `crawl`, `search`, `extract`, `admin`
 
 **运维步骤：**
 
-```bash
-# 1. 启用 auth + admin-tools 特性
-cargo build --release --features admin-tools,auth
-
-# 2. 运行 reissue_api_keys 工具：
-#    - 预置 garrison RBAC（3 权限 / 3 角色 / 6 角色权限映射，tenant_id=0）
-#    - 枚举所有需重签的 team 清单
-#    - 为每个 team 签发新 garrison API Key（明文 key 仅打印一次）
-./target/release/reissue_api_keys
-
-# 3. 应用数据库迁移（标记旧表弃用，不删表不删列）
-psql -f migrations/005_deprecate_legacy_api_keys.sql
-```
+迁移已完成。新 team 通过 `POST /v1/admin/api-keys` 签发 API Key，无需运维工具介入。
+开发/测试环境可通过 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量自动签发 admin key。
 
 **`migrations/005_deprecate_legacy_api_keys.sql` 行为：**
 - 仅给 `api_keys` 表追加 `deprecated_at` 列并回填 `NOW()`

@@ -193,7 +193,6 @@ cargo build --release --features "engine-playwright,metrics"
 | `genai-llm` | 基于 genai 的 LLM 抽取 | ❌ 否 |
 | `browser-download` | 自动下载 Playwright 浏览器 | ❌ 否 |
 | `test-mocks` | 测试专用 mock 模块（integration test 需显式启用） | ❌ 否 |
-| `admin-tools` | 运维 CLI 工具（如 add_credits） | ❌ 否 |
 
 > **说明：** `openapi` 不是 Cargo feature——它是 `sdforge_macros` 的 `#[forge]` 宏生成的 cfg 标记，用于 OpenAPI 规范输出。用户无需显式启用；sdforge 总是编译，openapi 自动生效。
 
@@ -240,7 +239,6 @@ cargo build --release --no-default-features --features teams
 | `genai-llm` | genai LLM 抽取 | - |
 | `browser-download` | 自动下载 Playwright 浏览器 | - |
 | `test-mocks` | 测试 mock 模块（`#[cfg(any(test, feature = "test-mocks"))]`） | - |
-| `admin-tools` | 运维 CLI 工具（`cargo run --bin add_credits --features admin-tools`） | - |
 
 ### Feature 矩阵（业务能力）
 
@@ -462,24 +460,11 @@ curl -X POST http://localhost:8899/v1/admin/api-keys \
 - `scopes` 表只读（`deprecated_at` 标记），原有 scope 映射不再生效
 - 必填 `CRAWLRS__AUTH__JWT_SECRET`（HS256 ≥32 字节，弱密钥拒绝启动）
 
-**重新领取流程（运维）：**
+**迁移已完成：**
 
-```bash
-# 1. 构建带 admin-tools + auth 的二进制
-cargo build --release --features admin-tools,auth
-
-# 2. 设置 JWT_SECRET 环境变量（≥32 字节，HS256）
-export CRAWLRS__AUTH__JWT_SECRET="your-32-byte-or-longer-secret-key-here"
-
-# 3. 运行 reissue_api_keys 工具：
-#    - 预置 garrison RBAC（3 权限 / 3 角色 / 6 角色权限映射，tenant_id=0）
-#    - 枚举需重签 team 清单
-#    - 为每个 team 签发新 garrison API Key（明文 key 仅打印一次）
-./target/release/reissue_api_keys
-
-# 4. 应用数据库迁移（标记旧表弃用，不删表不删列）
-psql -f migrations/005_deprecate_legacy_api_keys.sql
-```
+- 旧 API Key 已作废，客户端须使用 `Authorization: Bearer <garrison_key_id>.<garrison_secret>` 格式
+- 新 team 通过 `POST /v1/admin/api-keys` 签发 API Key，无需运维工具介入
+- 开发/测试环境可通过 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量自动签发 admin key
 
 **客户端迁移：**
 

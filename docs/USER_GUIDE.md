@@ -174,24 +174,11 @@ curl -H "Authorization: Bearer garrison_key_id.garrison_secret" http://localhost
 - `scopes` 表只读（`deprecated_at` 标记），原有 scope 映射不再生效
 - 必填 `CRAWLRS__AUTH__JWT_SECRET`（HS256 ≥32 字节，弱密钥拒绝启动）
 
-**重新领取流程（运维）：**
+**迁移已完成：**
 
-```bash
-# 1. 构建带 admin-tools + auth 的二进制
-cargo build --release --features admin-tools,auth
-
-# 2. 设置 JWT_SECRET 环境变量（≥32 字节，HS256）
-export CRAWLRS__AUTH__JWT_SECRET="your-32-byte-or-longer-secret-key-here"
-
-# 3. 运行 reissue_api_keys 工具：
-#    - 预置 garrison RBAC（3 权限 / 3 角色 / 6 角色权限映射，tenant_id=0）
-#    - 枚举需重签 team 清单
-#    - 为每个 team 签发新 garrison API Key（明文 key 仅打印一次）
-./target/release/reissue_api_keys
-
-# 4. 应用数据库迁移（标记旧表弃用，不删表不删列）
-psql -f migrations/005_deprecate_legacy_api_keys.sql
-```
+- 旧 API Key 已作废，客户端须使用 `Authorization: Bearer <garrison_key_id>.<garrison_secret>` 格式
+- 新 team 通过 `POST /v1/admin/api-keys` 签发 API Key，无需运维工具介入
+- 开发/测试环境可通过 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量自动签发 admin key
 
 **`migrations/005_deprecate_legacy_api_keys.sql` 行为：**
 
@@ -319,14 +306,11 @@ When features are disabled, the corresponding routes are not registered (return 
 
 > **Important:** When `rate-limit` is enabled but `teams` is disabled, quota deductions still occur against `DEFAULT_TEAM_ID`. You must pre-provision credits for the default tenant before making requests, otherwise `check_and_deduct_quota` will return `PaymentRequired` (402).
 
-Use the `add_credits` CLI tool to provision the default tenant:
+Use direct SQL to provision the default tenant:
 
 ```bash
-# Build with admin-tools feature
-cargo build --release --no-default-features --features rate-limit,admin-tools
-
-# Add 10000 credits to DEFAULT_TEAM_ID (Uuid::from_u128(1))
-./target/release/add_credits --team-id 00000000-0000-0000-0000-000000000001 --amount 10000
+# Add 10000 credits to DEFAULT_TEAM_ID via psql
+psql -d crawlrs -c "SELECT add_credits_safe('00000000-0000-0000-0000-000000000001', 10000, 'credit', 'Initial provisioning', NULL)"
 ```
 
 ### Configuration Example

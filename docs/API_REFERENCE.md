@@ -121,21 +121,10 @@ cargo build --release --features default
 - 客户端无需改动 `Authorization: Bearer` 调用方式，仅需替换为新的 `garrison_key_id.garrison_secret`
 - 401/429 响应语义不变，但触发逻辑由 garrison `firewall-bruteforce` 接管
 
-**运维重签流程：**
+**迁移已完成：**
 
-```bash
-# 1. 构建带 admin-tools + auth 的二进制
-cargo build --release --features admin-tools,auth
-
-# 2. 运行 reissue_api_keys 工具：
-#    - 预置 garrison RBAC（3 权限 / 3 角色 / 6 角色权限映射）
-#    - 枚举需重签 team 清单
-#    - 为每个 team 签发新 garrison API Key（明文 key 仅打印一次）
-./target/release/reissue_api_keys
-
-# 3. 应用数据库迁移（标记旧表弃用，不删表不删列）
-psql -f migrations/005_deprecate_legacy_api_keys.sql
-```
+- 旧 API Key 已作废，客户端须使用 `Authorization: Bearer <garrison_key_id>.<garrison_secret>` 格式
+- 新 team 通过 `POST /v1/admin/api-keys` 签发 API Key，无需运维工具介入
 
 详细架构说明参见 [ARCHITECTURE.md → Garrison 认证引擎](ARCHITECTURE.md#garrison-认证引擎)。
 

@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 基础配置
 BASE_URL = "http://localhost:8899"
-# E2E 测试用 admin API Key（由 tools/gen_admin_key 生成）
+# E2E 测试用 admin API Key（通过 CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 环境变量或 bootstrap 流程生成）
 # Format: <garrison_key_id>.<garrison_key_secret>
 API_KEY = "a4f25379533c4cf8b46a4ae8311b8597.7aa3562119494b549e07a564290cf414"
 HEADERS = {
