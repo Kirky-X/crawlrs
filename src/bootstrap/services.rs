@@ -463,7 +463,7 @@ pub async fn init_garrison_auth(
     // ## 设计背景
     //
     // garrison DAO 默认是内存实现（`GarrisonDaoOxcache`），进程间不共享数据。
-    // 外部工具（`cargo run --bin gen_admin_key`）签发的 API Key 写入工具进程的
+    // 外部工具签发的 API Key 写入工具进程的
     // 独立 DAO 实例，server 进程无法读取 → 所有认证请求均 401。
     //
     // 标准解法：server 启动时读取环境变量 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY`，

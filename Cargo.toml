@@ -76,9 +76,6 @@ http = []
 # --- 测试特性 ---
 test-mocks = []
 
-# --- 运维工具特性 ---
-admin-tools = []
-
 [dependencies]
 # Async runtime and web framework
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
@@ -295,26 +292,6 @@ path = "benches/benchmark.rs"
 name = "crawlrs"
 path = "src/main.rs"
 
-[[bin]]
-name = "add_credits"
-path = "tools/add_credits.rs"
-required-features = ["admin-tools"]
-
-# R-key-lifecycle-002 / T029：一次性运维脚本，读旧 api_keys 表枚举需重签 team 清单，
-# 并在 garrison RBAC 表中预置标准角色/权限（tenant_id=0，所有 crawlrs team 共享）。
-# 依赖 garrison repository trait，故需 auth feature（auth-on 才编译 garrison）。
-[[bin]]
-name = "reissue_api_keys"
-path = "tools/reissue_api_keys.rs"
-required-features = ["admin-tools", "auth"]
-
-# E2E 测试用临时工具：创建 team + 签发 admin API Key，输出明文 key 供测试脚本使用。
-# 与 reissue_api_keys 共享 admin-tools + auth feature 依赖。
-[[bin]]
-name = "gen_admin_key"
-path = "tools/gen_admin_key.rs"
-required-features = ["admin-tools", "auth"]
-
 # =============================================================================
 # Build Optimization Profiles
 # =============================================================================
@@ -337,6 +314,14 @@ debug = true
 
 [workspace]
 members = ["examples"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.95"
+authors = ["Kirky.X <Kirky-X@outlook.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/Kirky-X/crawlrs"
 
 [workspace.dependencies]
 # Async runtime
@@ -381,7 +366,7 @@ libc = "0.2"
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "admin-tools", "teams", "auth", "rate-limit", "webhook", "http", "antibot", "markdown", "extractor-trafilatura", "extractor-dom-smoothie", "extractor-full"))',
+    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "http", "antibot", "markdown", "extractor-trafilatura", "extractor-dom-smoothie", "extractor-full"))'
 ]
 
 
