@@ -301,33 +301,6 @@ impl Default for RedirectValidator {
     }
 }
 
-/// Validate a redirect URL without creating a validator instance.
-///
-/// This is a convenience function for one-off validation.
-#[allow(dead_code)]
-pub fn validate_redirect(redirect_url: &str) -> Result<(), SsrfError> {
-    // Quick static check
-    if is_internal_url(redirect_url) {
-        return Err(SsrfError::RedirectToInternal {
-            url: redirect_url.to_string(),
-        });
-    }
-
-    // Validate scheme
-    if let Ok(url) = Url::parse(redirect_url) {
-        match url.scheme() {
-            "http" | "https" => Ok(()),
-            scheme => Err(SsrfError::InvalidScheme {
-                scheme: scheme.to_string(),
-            }),
-        }
-    } else {
-        Err(SsrfError::InvalidUrl {
-            url: redirect_url.to_string(),
-            reason: "Failed to parse URL".to_string(),
-        })
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -436,20 +409,6 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("loop"));
     }
 
-    #[test]
-    fn test_validate_redirect_function() {
-        // External URLs should pass
-        assert!(validate_redirect("http://example.com").is_ok());
-        assert!(validate_redirect("https://google.com").is_ok());
-
-        // Internal URLs should fail
-        assert!(validate_redirect("http://localhost").is_err());
-        assert!(validate_redirect("http://192.168.1.1").is_err());
-
-        // Invalid schemes should fail
-        assert!(validate_redirect("ftp://example.com").is_err());
-        assert!(validate_redirect("file:///etc/passwd").is_err());
-    }
 
     #[test]
     fn test_redirect_validator_reset() {
@@ -553,13 +512,6 @@ mod tests {
         assert!(validator.visited_hosts().contains("example.com"));
     }
 
-    #[test]
-    fn test_validate_redirect_function_invalid_url() {
-        // Unparseable URL should fail with InvalidUrl (the else branch)
-        let result = validate_redirect("http://[invalid");
-        assert!(result.is_err());
-        assert!(matches!(result, Err(SsrfError::InvalidUrl { .. })));
-    }
 
     // =========================================================================
     // Supplementary tests: validate edge cases, scheme/host validation
@@ -718,22 +670,6 @@ mod tests {
         assert!(validator.visited_hosts().contains("example.org"));
     }
 
-    #[test]
-    fn test_validate_redirect_function_success() {
-        // Explicit success case for validate_redirect function.
-        assert!(validate_redirect("http://example.com").is_ok());
-        assert!(validate_redirect("https://example.com/path?query=1").is_ok());
-    }
-
-    #[test]
-    fn test_validate_redirect_function_all_invalid_schemes() {
-        // All non-http/https schemes should be rejected.
-        assert!(validate_redirect("ftp://example.com").is_err());
-        assert!(validate_redirect("file:///etc/passwd").is_err());
-        assert!(validate_redirect("gopher://example.com").is_err());
-        assert!(validate_redirect("ssh://example.com").is_err());
-        assert!(validate_redirect("telnet://example.com").is_err());
-    }
 
     #[test]
     fn test_redirect_validator_default_impl() {

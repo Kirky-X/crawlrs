@@ -41,9 +41,6 @@ pub async fn docker_available() -> bool {
 ///
 /// The container is stopped when this struct is dropped.
 pub struct PgHandle {
-    /// Host port mapped to PostgreSQL's 5432.
-    #[allow(dead_code)]
-    pub port: u16,
     /// Full connection URL (postgres://postgres:postgres@127.0.0.1:PORT/test).
     pub url: String,
     // Keep the container alive; dropped last.
@@ -70,7 +67,6 @@ impl PgHandle {
         // Use the default `postgres` database created by the image.
         let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
         Ok(Self {
-            port,
             url,
             _container: Some(container),
         })
