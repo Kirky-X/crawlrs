@@ -182,7 +182,7 @@ fn tc_webhook_list_response_with_items() {
         secret: Some("s2".to_string()),
     };
     let response = WebhookListResponse {
-        webhooks: vec![w1, w2],
+        webhooks: vec![w1.into(), w2.into()],
         total: 2,
     };
     let json = serde_json::to_string(&response).expect("must serialize");
@@ -207,7 +207,7 @@ fn tc_webhook_list_response_total_matches_count() {
         .collect();
     let count = webhooks.len();
     let response = WebhookListResponse {
-        webhooks,
+        webhooks: webhooks.into_iter().map(Into::into).collect(),
         total: count,
     };
     assert_eq!(response.total, 3);

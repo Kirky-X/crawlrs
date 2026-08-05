@@ -256,3 +256,52 @@ fn tc_sync_wait_ms_above_max_is_invalid() {
     let over = crawl_task::MAX_SYNC_WAIT_MS + 1;
     assert!(over > crawl_task::MAX_SYNC_WAIT_MS);
 }
+
+// =============================================================================
+// ExtractRequestDto serde alias tests (unify-extraction-api)
+// =============================================================================
+
+#[test]
+fn test_extract_request_alias_extraction_rules() {
+    let json_old = r#"{"urls":["https://example.com"],"rules":{"title":{"selector":"h1","attr":null,"is_array":false}}}"#;
+    let json_new = r#"{"urls":["https://example.com"],"extraction_rules":{"title":{"selector":"h1","attr":null,"is_array":false}}}"#;
+    let old_dto: ExtractRequestDto = serde_json::from_str(json_old).unwrap();
+    let new_dto: ExtractRequestDto = serde_json::from_str(json_new).unwrap();
+    assert_eq!(old_dto.rules.is_some(), new_dto.rules.is_some());
+    assert_eq!(
+        old_dto.rules.as_ref().unwrap().len(),
+        new_dto.rules.as_ref().unwrap().len()
+    );
+}
+
+#[test]
+fn test_extract_request_alias_extraction_prompt() {
+    let json_old = r#"{"urls":["https://example.com"],"prompt":"Extract title"}"#;
+    let json_new = r#"{"urls":["https://example.com"],"extraction_prompt":"Extract title"}"#;
+    let old_dto: ExtractRequestDto = serde_json::from_str(json_old).unwrap();
+    let new_dto: ExtractRequestDto = serde_json::from_str(json_new).unwrap();
+    assert_eq!(old_dto.prompt, new_dto.prompt);
+}
+
+#[test]
+fn test_extract_request_alias_extraction_schema() {
+    let json_old = r#"{"urls":["https://example.com"],"schema":{"type":"object"}}"#;
+    let json_new = r#"{"urls":["https://example.com"],"extraction_schema":{"type":"object"}}"#;
+    let old_dto: ExtractRequestDto = serde_json::from_str(json_old).unwrap();
+    let new_dto: ExtractRequestDto = serde_json::from_str(json_new).unwrap();
+    assert_eq!(old_dto.schema, new_dto.schema);
+}
+
+#[test]
+fn test_extract_request_serialization_uses_original_field_names() {
+    let json = r#"{"urls":["https://example.com"],"prompt":"test","schema":{"type":"object"},"rules":{"title":{"selector":"h1","attr":null,"is_array":false}}}"#;
+    let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
+    let serialized = serde_json::to_string(&dto).unwrap();
+    // Serialization must use original field names, not aliases
+    assert!(serialized.contains("\"prompt\""));
+    assert!(serialized.contains("\"schema\""));
+    assert!(serialized.contains("\"rules\""));
+    assert!(!serialized.contains("\"extraction_prompt\""));
+    assert!(!serialized.contains("\"extraction_schema\""));
+    assert!(!serialized.contains("\"extraction_rules\""));
+}

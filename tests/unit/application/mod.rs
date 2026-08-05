@@ -4,3 +4,4 @@
 // See LICENSE file in project root for full license information.
 
 // Unit tests for application layer use cases
+mod dto_test;

@@ -30,10 +30,13 @@ pub struct ExtractRequestDto {
     #[validate(length(min = 1, max = 100, message = "urls must have 1-100 entries"))]
     #[validate(custom(function = "validate_url_list"))]
     pub urls: Vec<String>,
+    #[serde(alias = "extraction_prompt")]
     pub prompt: Option<String>,
+    #[serde(alias = "extraction_schema")]
     pub schema: Option<Value>,
     pub model: Option<String>,
     /// 提取规则（用于复杂提取场景）
+    #[serde(alias = "extraction_rules")]
     pub rules: Option<HashMap<String, ExtractionRule>>,
     /// 同步等待时长（毫秒，默认 5000，最大 30000）
     #[validate(range(max = 30000, message = "sync_wait_ms must be at most 30000"))]

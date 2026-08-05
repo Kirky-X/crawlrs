@@ -248,6 +248,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: None,
             metadata: None,
@@ -303,6 +305,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: Some(ScrapeOptionsDto {
                 headers: Some(serde_json::json!({"X-Custom": "value"})),
@@ -355,6 +359,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: Some(ScrapeOptionsDto {
                 ..Default::default()
@@ -381,6 +387,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: Some(ScrapeOptionsDto {
                 cache_mode: Some(CacheMode::ReadOnly),
@@ -408,6 +416,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: Some(ScrapeOptionsDto {
                 cache_mode: Some(CacheMode::ReadOnly),
@@ -437,6 +447,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: Some(ScrapeOptionsDto {
                 cache_mode: Some(CacheMode::ReadOnly),
@@ -467,6 +479,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: Some(ScrapeOptionsDto {
                 cache_mode: Some(CacheMode::Bypass),
@@ -493,6 +507,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: Some(ScrapeOptionsDto {
                 headers: None,
@@ -544,6 +560,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: Some(ScrapeOptionsDto {
                 headers: None,
@@ -905,6 +923,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: Some(ScrapeOptionsDto {
                 headers: Some(serde_json::json!(123)),
@@ -945,6 +965,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: Some(vec![
                 ScrapeActionDto::Click {
                     selector: "#x".to_string(),

@@ -1354,6 +1354,8 @@ mod tests {
             exclude_tags: None,
             webhook: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             actions: None,
             options: None,
             metadata: None,

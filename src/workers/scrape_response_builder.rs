@@ -238,6 +238,8 @@ mod tests {
             headers: None,
             proxy: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             strategy: None,
             crawl_delay_ms: None,
         };
@@ -258,6 +260,8 @@ mod tests {
             headers: Some(json!({"X-Custom": "value"})),
             proxy: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
             strategy: None,
             crawl_delay_ms: None,
         };

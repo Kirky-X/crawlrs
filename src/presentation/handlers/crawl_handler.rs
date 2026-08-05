@@ -177,6 +177,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         // Handler checks: payload.config.max_depth > 5
         assert!(config.max_depth <= 5, "max_depth of 5 should pass");
@@ -194,6 +196,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         // Handler checks: payload.config.max_depth > 5
         assert!(config.max_depth > 5, "max_depth of 6 should fail");
@@ -211,6 +215,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         assert!(config.max_depth <= 5);
     }
@@ -229,6 +235,8 @@ mod tests {
             proxy: Some("http://proxy:8080".to_string()),
             headers: Some(serde_json::json!({"Accept": "text/html"})),
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let cloned = config.clone();
         assert_eq!(cloned.max_depth, 3);
@@ -252,6 +260,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: CrawlConfigDto = serde_json::from_str(&json).unwrap();
@@ -273,6 +283,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let debug = format!("{:?}", config);
         assert!(debug.contains("CrawlConfigDto"));
@@ -298,6 +310,8 @@ mod tests {
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
+                extraction_prompt: None,
+                extraction_schema: None,
             },
             sync_wait_ms: Some(5000),
             expires_at: None,
@@ -321,6 +335,8 @@ mod tests {
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
+                extraction_prompt: None,
+                extraction_schema: None,
             },
             sync_wait_ms: None,
             expires_at: None,
@@ -344,6 +360,8 @@ mod tests {
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
+                extraction_prompt: None,
+                extraction_schema: None,
             },
             sync_wait_ms: Some(30001),
             expires_at: None,
@@ -367,6 +385,8 @@ mod tests {
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
+                extraction_prompt: None,
+                extraction_schema: None,
             },
             sync_wait_ms: Some(0),
             expires_at: None,
@@ -759,6 +779,8 @@ mod tests {
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
+                extraction_prompt: None,
+                extraction_schema: None,
             },
             sync_wait_ms: Some(5000),
             expires_at: None,
@@ -788,6 +810,8 @@ mod tests {
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
+                extraction_prompt: None,
+                extraction_schema: None,
             },
             sync_wait_ms: None,
             expires_at: None,
@@ -1433,6 +1457,8 @@ mod tests {
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
+                extraction_prompt: None,
+                extraction_schema: None,
             },
             sync_wait_ms,
             expires_at: None,

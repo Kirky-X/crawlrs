@@ -844,7 +844,7 @@ impl ScrapeWorker {
         Ok(())
     }
 
-    /// 使用配置的规则提取数据
+    /// 使用配置的规则提取数据（支持 rules > prompt > schema 优先级）
     async fn extract_data_with_rules(
         &self,
         task: &Task,
@@ -872,9 +872,94 @@ impl ScrapeWorker {
                     None
                 }
             }
+        } else if let Some(prompt) = &config.extraction_prompt {
+            if !prompt.is_empty() {
+                match self
+                    .extract_with_prompt(&response.content, prompt, &task.url)
+                    .await
+                {
+                    Ok((data, usage)) => {
+                        self.deduct_token_credits(
+                            task.team_id,
+                            task.id,
+                            &usage,
+                            "Tokens used for prompt extraction",
+                        )
+                        .await;
+                        Some(data)
+                    }
+                    Err(e) => {
+                        error!("Prompt extraction failed for url {}: {}", task.url, e);
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else if let Some(schema) = &config.extraction_schema {
+            match self
+                .extract_with_schema(&response.content, schema)
+                .await
+            {
+                Ok((data, usage)) => {
+                    self.deduct_token_credits(
+                        task.team_id,
+                        task.id,
+                        &usage,
+                        "Tokens used for schema extraction",
+                    )
+                    .await;
+                    Some(data)
+                }
+                Err(e) => {
+                    error!("Schema extraction failed for url {}: {}", task.url, e);
+                    None
+                }
+            }
         } else {
             None
         }
+    }
+
+    /// 使用 Prompt 提取数据（共享辅助方法）
+    ///
+    /// 将 prompt 包装为 `ExtractionRule { use_llm: true }` 后调用 `extraction_service.extract()`。
+    /// 供 Scrape 路径（handle_scrape_success）和 Crawl 路径（extract_data_with_rules）共同调用。
+    async fn extract_with_prompt(
+        &self,
+        html: &str,
+        prompt: &str,
+        base_url: &str,
+    ) -> Result<(Value, crate::domain::services::llm_service::TokenUsage)> {
+        let mut rules = HashMap::with_capacity(1);
+        rules.insert(
+            "extracted_data".to_string(),
+            crate::domain::services::extraction_service::ExtractionRule {
+                selector: None,
+                attr: None,
+                is_array: false,
+                use_llm: Some(true),
+                llm_prompt: Some(prompt.to_string()),
+                output_format: None,
+            },
+        );
+        self.extraction_service
+            .extract(html, &rules, Some(base_url))
+            .await
+    }
+
+    /// 使用 Schema 提取数据（共享辅助方法）
+    ///
+    /// 直接调用 `extraction_service.extract_with_schema()`。
+    /// 供 Scrape 路径（handle_scrape_success）和 Crawl 路径（extract_data_with_rules）共同调用。
+    async fn extract_with_schema(
+        &self,
+        html: &str,
+        schema: &Value,
+    ) -> Result<(Value, crate::domain::services::llm_service::TokenUsage)> {
+        self.extraction_service
+            .extract_with_schema(html, schema)
+            .await
     }
 
     /// 处理 Crawl 任务失败响应
@@ -1196,6 +1281,47 @@ impl ScrapeWorker {
                     }
                     Err(e) => {
                         error!("Extraction failed for url {}: {}", task.url, e);
+                    }
+                }
+            } else if let Some(prompt) = &req.extraction_prompt {
+                // extraction_prompt 为空字符串时视为未设置
+                if !prompt.is_empty() {
+                    match self
+                        .extract_with_prompt(&processed_response.content, prompt, &task.url)
+                        .await
+                    {
+                        Ok((data, usage)) => {
+                            extracted_data = Some(data);
+                            self.deduct_token_credits(
+                                task.team_id,
+                                task.id,
+                                &usage,
+                                "Tokens used for prompt extraction",
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            error!("Prompt extraction failed for url {}: {}", task.url, e);
+                        }
+                    }
+                }
+            } else if let Some(schema) = &req.extraction_schema {
+                match self
+                    .extract_with_schema(&processed_response.content, schema)
+                    .await
+                {
+                    Ok((data, usage)) => {
+                        extracted_data = Some(data);
+                        self.deduct_token_credits(
+                            task.team_id,
+                            task.id,
+                            &usage,
+                            "Tokens used for schema extraction",
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        error!("Schema extraction failed for url {}: {}", task.url, e);
                     }
                 }
             }
@@ -3528,6 +3654,8 @@ mod tests {
                 "Authorization": "Bearer token123"
             })),
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let request = worker.build_crawl_request(&task, &config);
         assert_eq!(
@@ -3566,6 +3694,8 @@ mod tests {
                 "X-Valid": "ok"
             })),
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let request = worker.build_crawl_request(&task, &config);
         assert_eq!(request.options.headers.len(), 1);
@@ -3599,6 +3729,8 @@ mod tests {
             proxy: Some("http://proxy:3128".to_string()),
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let request = worker.build_crawl_request(&task, &config);
         assert_eq!(request.options.proxy, Some("http://proxy:3128".to_string()));
@@ -3625,6 +3757,8 @@ mod tests {
             proxy: None,
             headers: Some(json!({})),
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let request = worker.build_crawl_request(&task, &config);
         assert!(request.options.headers.is_empty());
@@ -5060,6 +5194,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         }
     }
 
@@ -5448,6 +5584,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: Some(rules),
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let request = worker.build_crawl_request(&task, &config);
         let result = worker
@@ -5581,6 +5719,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let result = worker
             .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
@@ -5654,6 +5794,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: Some(rules),
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let request = worker.build_crawl_request(&task, &config);
         assert_eq!(request.url, "https://example.com");
@@ -5783,6 +5925,8 @@ mod tests {
             proxy: Some("http://proxy:3128".to_string()),
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         };
         let request = worker.build_crawl_request(&task, &config);
         let result = worker
@@ -8054,6 +8198,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: Some(rules),
+            extraction_prompt: None,
+            extraction_schema: None,
         };
 
         // FailingExtractionService.extract returns Err → lines 509-511
@@ -8509,6 +8655,8 @@ mod tests {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         }
     }
 

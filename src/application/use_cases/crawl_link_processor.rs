@@ -117,6 +117,8 @@ mod tests {
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
+                extraction_prompt: None,
+                extraction_schema: None,
             },
             sync_wait_ms: None,
             expires_at: None,

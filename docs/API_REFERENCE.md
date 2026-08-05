@@ -367,6 +367,8 @@ Scrape a single web page.
 | `exclude_tags` | array | No | HTML tags to exclude from output |
 | `webhook` | string | No | Webhook URL for completion notification |
 | `extraction_rules` | object | No | CSS selector extraction rules |
+| `extraction_prompt` | string | No | LLM prompt for data extraction (free text) |
+| `extraction_schema` | object | No | JSON Schema for structured LLM extraction |
 | `actions` | array | No | Page interaction actions |
 | `options` | object | No | Scraping options (see [Options Parameters](#scrape-options-parameters)) |
 | `metadata` | object | No | Custom metadata for the task |
@@ -503,6 +505,9 @@ Crawl multiple pages from a starting URL.
 | `formats` | array | No | Output formats |
 | `webhook` | string | No | Webhook URL for notifications |
 | `options` | object | No | Scraping options |
+| `extraction_rules` | object | No | CSS selector extraction rules |
+| `extraction_prompt` | string | No | LLM prompt for data extraction on each crawled page |
+| `extraction_schema` | object | No | JSON Schema for structured LLM extraction |
 | `sync_wait_ms` | integer | No | Wait time for synchronous response |
 
 **Response (Success):**
@@ -692,7 +697,9 @@ Extract structured data from HTML.
 | Parameter | Type | Required | Description |
 |-----------|-------|----------|-------------|
 | `html` | string | Yes | HTML content to extract from |
-| `extraction_rules` | object | Yes | CSS selector extraction rules |
+| `extraction_rules` (alias: `rules`) | object | No | CSS selector extraction rules |
+| `extraction_prompt` (alias: `prompt`) | string | No | LLM prompt for data extraction |
+| `extraction_schema` (alias: `schema`) | object | No | JSON Schema for structured LLM extraction |
 | `options` | object | No | Extraction options |
 
 **Response (Success):**

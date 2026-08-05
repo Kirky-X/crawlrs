@@ -341,6 +341,8 @@ fn test_crawl_request_dto_validate_success() {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         },
         sync_wait_ms: Some(5000),
         expires_at: None,
@@ -364,6 +366,8 @@ fn test_crawl_request_dto_validate_empty_url_fails() {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         },
         sync_wait_ms: None,
         expires_at: None,
@@ -387,6 +391,8 @@ fn test_crawl_request_dto_validate_sync_wait_ms_exceeds_max_fails() {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         },
         sync_wait_ms: Some(30001),
         expires_at: None,
@@ -410,6 +416,8 @@ fn test_crawl_request_dto_validate_sync_wait_ms_zero_passes() {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         },
         sync_wait_ms: Some(0),
         expires_at: None,
@@ -433,6 +441,8 @@ fn test_crawl_request_dto_serialization_roundtrip() {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         },
         sync_wait_ms: Some(5000),
         expires_at: None,
@@ -461,6 +471,8 @@ fn test_crawl_request_dto_validated_url_skipped_in_serialization() {
             proxy: None,
             headers: None,
             extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
         },
         sync_wait_ms: None,
         expires_at: None,
@@ -673,6 +685,8 @@ fn test_crawl_config_dto_clone_preserves_fields() {
         proxy: Some("http://proxy:8080".to_string()),
         headers: Some(serde_json::json!({"Accept": "text/html"})),
         extraction_rules: None,
+        extraction_prompt: None,
+        extraction_schema: None,
     };
     let cloned = config.clone();
     assert_eq!(cloned.max_depth, 3);
@@ -696,6 +710,8 @@ fn test_crawl_config_dto_serialization_roundtrip() {
         proxy: None,
         headers: None,
         extraction_rules: None,
+        extraction_prompt: None,
+        extraction_schema: None,
     };
     let json = serde_json::to_string(&config).unwrap();
     let deserialized: CrawlConfigDto = serde_json::from_str(&json).unwrap();

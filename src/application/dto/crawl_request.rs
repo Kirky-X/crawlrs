@@ -72,4 +72,8 @@ pub struct CrawlConfigDto {
             crate::domain::services::extraction_service::ExtractionRule,
         >,
     >,
+    /// LLM Prompt 提取（自由文本描述需要提取的内容）
+    pub extraction_prompt: Option<String>,
+    /// JSON Schema 驱动的结构化提取
+    pub extraction_schema: Option<serde_json::Value>,
 }
