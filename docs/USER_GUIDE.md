@@ -2,10 +2,10 @@
 <div align="center">
 
 ![Guide](https://img.shields.io/badge/type-user%20guide-blue)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 
-**Version:** 1.0.0 | **Last Updated:** 2025-07-21
+**Version:** 0.2.0 | **Last Updated:** 2025-07-21
 
 </div>
 
@@ -56,9 +56,8 @@ Welcome to **crawlrs**, a high-performance self-hosted web scraping platform bui
 | Engine | Description | Best For |
 |--------|-------------|----------|
 | **Reqwest** | Pure Rust HTTP client | Static HTML, fast scraping |
-| **Playwright** | Full browser automation | JavaScript-heavy SPAs |
-| **Playwright (Firefox)** | Firefox-based rendering | Anti-bot bypass |
-| **FlareSolverr** | Cloudflare challenge solver | Sites behind Cloudflare |
+| **Playwright** | Chromium-based browser automation via chromiumoxide | JavaScript-heavy SPAs, interactions |
+| **FlareSolverr** | Cloudflare challenge solver (Full/Cdp/Tls modes) | Sites behind Cloudflare |
 
 **FlareSolverr modes:**
 
@@ -1495,10 +1494,10 @@ const response = await axios.post('http://localhost:8899/v1/scrape', data, {
 ### 8. Use Appropriate Engines
 
 | Scenario | Recommended Engine | Reason |
-|----------|-------------------|---------|
+|----------|-------------------|----------|
 | Static HTML pages | Reqwest | Fastest, lowest overhead |
 | JavaScript-heavy SPAs | Playwright | Renders JS |
-| Anti-bot protection | Playwright (Firefox) | Bypasses detection |
+| Anti-bot protection | FlareSolverr (Full/Cdp) | Bypasses detection |
 | Cloudflare-protected sites | FlareSolverr | Solves challenge |
 | Simple data extraction | Reqwest | Fast, efficient |
 | Screenshots needed | Playwright | Full page rendering |
