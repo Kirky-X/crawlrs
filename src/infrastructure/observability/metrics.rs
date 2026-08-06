@@ -393,6 +393,28 @@ pub fn init_metrics() {
         "circuit_breaker_status",
         "Current status of circuit breaker (0=Closed, 0.5=HalfOpen, 1=Open)"
     );
+
+    // Phase 4a: 增强指标 (T061-T065)
+    describe_gauge!(
+        "crawlrs_queue_depth",
+        "Current number of items in the task queue"
+    );
+    describe_counter!(
+        "crawlrs_engine_success_total",
+        "Total engine routing results by engine and outcome"
+    );
+    describe_histogram!(
+        "crawlrs_engine_duration_seconds",
+        "Engine routing duration in seconds by engine"
+    );
+    describe_counter!(
+        "crawlrs_cache_hit_total",
+        "Total cache lookups by cache_type and result (hit/miss)"
+    );
+    describe_counter!(
+        "crawlrs_webhook_delivery_total",
+        "Total webhook delivery attempts by result and status_code"
+    );
 }
 
 fn update_system_metrics(monitor: &MutableSystemMonitor) {

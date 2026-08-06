@@ -8,6 +8,7 @@
 use crate::infrastructure::oxcache::{generate_dns_key, DnsCache, DnsCacheEntry};
 use hickory_resolver::Resolver;
 use log::{debug, warn};
+use metrics::counter;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,13 +47,33 @@ impl DnsCacheService {
         match self.cache.get(&cache_key).await {
             Ok(Some(entry)) => {
                 debug!("DNS cache hit for {}", cache_key);
+                // Phase 4a: DNS 缓存命中指标 (T064)
+                counter!(
+                    "crawlrs_cache_hit_total",
+                    "cache_type" => "dns",
+                    "result" => "hit"
+                )
+                .increment(1);
                 return Ok(entry.ips);
             }
             Ok(None) => {
                 debug!("DNS cache miss for {}, performing lookup", cache_key);
+                // Phase 4a: DNS 缓存未命中指标 (T064)
+                counter!(
+                    "crawlrs_cache_hit_total",
+                    "cache_type" => "dns",
+                    "result" => "miss"
+                )
+                .increment(1);
             }
             Err(e) => {
                 warn!("DNS cache error for {}: {}", cache_key, e);
+                counter!(
+                    "crawlrs_cache_hit_total",
+                    "cache_type" => "dns",
+                    "result" => "miss"
+                )
+                .increment(1);
             }
         }
 

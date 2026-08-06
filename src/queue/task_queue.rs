@@ -7,6 +7,8 @@ use crate::domain::models::Task;
 use crate::domain::repositories::task_repository::TaskRepository;
 use async_trait::async_trait;
 use log::debug;
+use metrics::gauge;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -44,6 +46,8 @@ pub trait TaskQueue: Send + Sync {
 pub struct PostgresTaskQueue {
     /// 任务仓库
     pub repository: Arc<dyn TaskRepository>,
+    /// 近似队列深度计数器（enqueue +1, dequeue -1）
+    depth: AtomicU64,
 }
 
 impl PostgresTaskQueue {
@@ -57,7 +61,10 @@ impl PostgresTaskQueue {
     ///
     /// 返回新的PostgreSQL任务队列实例
     pub fn new(repository: Arc<dyn TaskRepository>) -> Self {
-        Self { repository }
+        Self {
+            repository,
+            depth: AtomicU64::new(0),
+        }
     }
 }
 
@@ -75,6 +82,8 @@ impl TaskQueue for PostgresTaskQueue {
     /// * `Err(QueueError)` - 入队失败
     async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
         let created = self.repository.create(&task).await?;
+        let new_depth = self.depth.fetch_add(1, Ordering::Relaxed) + 1;
+        gauge!("crawlrs_queue_depth", "queue_type" => "task").set(new_depth as f64);
         Ok(created)
     }
 
@@ -92,6 +101,11 @@ impl TaskQueue for PostgresTaskQueue {
     async fn dequeue(&self, worker_id: Uuid) -> Result<Option<Task>, QueueError> {
         debug!("worker_id={}", worker_id);
         let task = self.repository.acquire_next(worker_id).await?;
+        if task.is_some() {
+            self.depth.fetch_sub(1, Ordering::Relaxed);
+        }
+        let current = self.depth.load(Ordering::Relaxed);
+        gauge!("crawlrs_queue_depth", "queue_type" => "task").set(current as f64);
         debug!("has_task={:?}", task.is_some());
         Ok(task)
     }

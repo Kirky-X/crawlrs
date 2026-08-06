@@ -11,6 +11,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use metrics::counter;
 use oxcache::Cache;
 
 use super::CacheService;
@@ -21,12 +22,22 @@ use super::CacheService;
 /// `oxcache::Cache::insert_with_ttl`.
 pub struct OxcacheService {
     cache: Arc<Cache<String, String>>,
+    /// 缓存类型标签（用于 metric 标签区分 search/dns/regex 等）
+    cache_type: &'static str,
 }
 
 impl OxcacheService {
     /// Create a new `OxcacheService` from an existing cache instance.
     pub fn new(cache: Arc<Cache<String, String>>) -> Self {
-        Self { cache }
+        Self {
+            cache,
+            cache_type: "generic",
+        }
+    }
+
+    /// 创建带类型标签的 OxcacheService（用于 metric 标签区分）
+    pub fn with_cache_type(cache: Arc<Cache<String, String>>, cache_type: &'static str) -> Self {
+        Self { cache, cache_type }
     }
 
     /// Build a fresh `OxcacheService` with the given capacity and default TTL.
@@ -42,12 +53,28 @@ impl OxcacheService {
             .map_err(|e| anyhow::anyhow!("failed to build oxcache: {e}"))?;
         Ok(Self::new(Arc::new(cache)))
     }
+
+    /// 构建带类型标签的 OxcacheService
+    pub async fn build_with_type(
+        capacity: u64,
+        default_ttl: Duration,
+        cache_type: &'static str,
+    ) -> anyhow::Result<Self> {
+        let cache = Cache::builder()
+            .capacity(capacity)
+            .ttl(default_ttl)
+            .build()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to build oxcache: {e}"))?;
+        Ok(Self::with_cache_type(Arc::new(cache), cache_type))
+    }
 }
 
 impl Clone for OxcacheService {
     fn clone(&self) -> Self {
         Self {
             cache: self.cache.clone(),
+            cache_type: self.cache_type,
         }
     }
 }
@@ -62,11 +89,20 @@ impl CacheService for OxcacheService {
     > {
         let cache = self.cache.clone();
         let key = key.to_string();
+        let cache_type = self.cache_type;
         Box::pin(async move {
             let value = cache
                 .get(&key)
                 .await
                 .map_err(|e| anyhow::anyhow!("oxcache get error: {e}"))?;
+            // Phase 4a: Prometheus 缓存命中指标 (T064)
+            let result_label = if value.is_some() { "hit" } else { "miss" };
+            counter!(
+                "crawlrs_cache_hit_total",
+                "cache_type" => cache_type.to_string(),
+                "result" => result_label.to_string()
+            )
+            .increment(1);
             Ok(value)
         })
     }

@@ -13,6 +13,7 @@ use crate::utils::http_client::create_http_client;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use log::{error, warn};
+use metrics::counter;
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -117,15 +118,31 @@ impl WebhookSender for WebhookSenderImpl {
         let request_builder = request_builder.timeout(self.timeout);
 
         // 发送请求
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| anyhow!("Failed to send webhook request: {}", e))?;
+        let response = match request_builder.send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                // Phase 4a: 网络层失败指标 (T065)
+                counter!(
+                    "crawlrs_webhook_delivery_total",
+                    "result" => "failure",
+                    "status_code" => "0"
+                )
+                .increment(1);
+                return Err(anyhow!("Failed to send webhook request: {}", e));
+            }
+        };
 
         let status = response.status().as_u16();
 
         // 检查响应状态
         if Self::is_success_status(status) {
+            // Phase 4a: Prometheus webhook 投递指标 (T065)
+            counter!(
+                "crawlrs_webhook_delivery_total",
+                "result" => "success",
+                "status_code" => status.to_string()
+            )
+            .increment(1);
             Ok(status)
         } else {
             let body = response
@@ -144,6 +161,14 @@ impl WebhookSender for WebhookSenderImpl {
                 "Webhook delivery failed with status {}: {}",
                 status, truncated_body
             );
+
+            // Phase 4a: Prometheus webhook 投递失败指标 (T065)
+            counter!(
+                "crawlrs_webhook_delivery_total",
+                "result" => "failure",
+                "status_code" => status.to_string()
+            )
+            .increment(1);
 
             Err(anyhow!(
                 "Webhook delivery failed with status {}: {}",

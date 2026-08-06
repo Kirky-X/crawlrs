@@ -9,8 +9,18 @@
 
 use crawlrs::domain::models::task_domain::TaskType;
 use crawlrs::domain::models::task_model::Task;
+use crawlrs::engines::engine_client::{
+    HttpMethod, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+};
+use crawlrs::engines::router::{EngineRouter, EngineRouterTrait, LoadBalancingStrategy};
+use crawlrs::infrastructure::oxcache::RegexCacheType;
+use crawlrs::utils::regex_cache::RegexCache;
+use async_trait::async_trait;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use oxcache::Cache;
 use std::hint::black_box;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
 
@@ -199,12 +209,271 @@ fn benchmark_uuid_generation(c: &mut Criterion) {
     group.finish();
 }
 
+// =============================================================================
+// T069: URL 验证基准测试
+// =============================================================================
+
+/// 生成测试 URL 集合
+fn generate_test_urls(count: usize) -> Vec<String> {
+    (0..count)
+        .map(|i| format!("https://example{}.com/path/to/resource?q=search&id={}", i % 100, i))
+        .collect()
+}
+
+/// T069: URL 格式验证性能（domain 层纯函数）
+fn benchmark_url_validation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("url_validation");
+
+    for size in [100, 1000, 10000] {
+        let urls = generate_test_urls(size);
+        group.bench_with_input(
+            BenchmarkId::new("validate_url_format", size),
+            &size,
+            |b, _| {
+                b.iter(|| {
+                    for url in &urls {
+                        let result = crawlrs::domain::models::validations::validate_url(url);
+                        let _ = black_box(result);
+                    }
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// T069: SSRF 内部 URL 检测性能（同步快速检查）
+fn benchmark_ssrf_detection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ssrf_detection");
+
+    // 混合 URL：包含外部 URL、localhost、私有 IP
+    let mixed_urls = [
+        "https://example.com/page",
+        "http://localhost/admin",
+        "http://192.168.1.1/internal",
+        "http://10.0.0.1/secret",
+        "https://google.com/search",
+        "http://127.0.0.1/api",
+        "http://172.16.0.1/data",
+        "https://api.example.com/v1/users",
+    ];
+
+    for size in [100, 1000, 10000] {
+        let urls: Vec<String> = (0..size)
+            .map(|i| {
+                if i % 4 == 0 {
+                    mixed_urls[i % mixed_urls.len()].to_string()
+                } else {
+                    format!("https://host{}.example.com/path", i)
+                }
+            })
+            .collect();
+
+        group.bench_with_input(
+            BenchmarkId::new("is_internal_url", size),
+            &size,
+            |b, _| {
+                b.iter(|| {
+                    for url in &urls {
+                        let is_internal =
+                            crawlrs::engines::validators::is_internal_url(url);
+                        let _ = black_box(is_internal);
+                    }
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// =============================================================================
+// T070: 缓存命中/未命中基准测试
+// =============================================================================
+
+/// T070: RegexCache get_or_insert 性能（命中 vs 未命中）
+fn benchmark_regex_cache(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("regex_cache");
+
+    // 创建 RegexCache
+    let cache: Arc<RegexCacheType> = Arc::new(
+        rt.block_on(async {
+            Cache::builder()
+                .capacity(1000)
+                .ttl(Duration::from_secs(300))
+                .build()
+                .await
+                .unwrap()
+        }),
+    );
+    let regex_cache = RegexCache::new(cache);
+
+    // 预热缓存
+    let patterns: Vec<String> = (0..50).map(|i| format!(r"pattern_{}\d+", i)).collect();
+    for pattern in &patterns {
+        let _ = regex_cache.get_or_insert(pattern);
+    }
+
+    // 命中测试
+    group.bench_function("cache_hit", |b| {
+        b.iter(|| {
+            for pattern in &patterns {
+                let result = regex_cache.get_or_insert(pattern);
+                let _ = black_box(result);
+            }
+        });
+    });
+
+    // 未命中测试（每次用新 pattern）
+    group.bench_function("cache_miss", |b| {
+        let mut counter = 0u64;
+        b.iter(|| {
+            counter += 1;
+            let pattern = format!(r"new_pattern_{}_\d+", counter);
+            let result = regex_cache.get_or_insert(&pattern);
+            let _ = black_box(result);
+        });
+    });
+
+    group.finish();
+}
+
+// =============================================================================
+// T071: 引擎路由决策基准测试
+// =============================================================================
+
+/// 基准测试用 Mock 引擎
+struct BenchMockEngine {
+    engine_name: String,
+    score: u8,
+}
+
+#[async_trait]
+impl ScraperEngine for BenchMockEngine {
+    async fn scrape(
+        &self,
+        _request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, crawlrs::engines::engine_client::EngineError> {
+        Ok(InternalScrapeResponse {
+            status_code: 200,
+            content: "<html><body>Mock</body></html>".to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: std::collections::HashMap::new(),
+            response_time_ms: 10,
+        })
+    }
+
+    fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+        self.score
+    }
+
+    fn name(&self) -> &'static str {
+        // SAFETY: engine_name 生命周期与 engine 相同
+        Box::leak(self.engine_name.clone().into_boxed_str())
+    }
+}
+
+/// 创建 N 个 mock 引擎
+fn create_mock_engines(count: usize) -> Vec<Arc<dyn ScraperEngine>> {
+    (0..count)
+        .map(|i| {
+            Arc::new(BenchMockEngine {
+                engine_name: format!("bench_engine_{}", i),
+                score: (50 + (i % 50)) as u8,
+            }) as Arc<dyn ScraperEngine>
+        })
+        .collect()
+}
+
+/// 创建基准测试请求
+fn make_bench_request() -> InternalScrapeRequest {
+    InternalScrapeRequest {
+        url: "https://example.com".to_string(),
+        method: HttpMethod::Get,
+        headers: std::collections::HashMap::new(),
+        timeout: Duration::from_secs(30),
+        needs_js: false,
+        needs_screenshot: false,
+        screenshot_config: None,
+        mobile: false,
+        proxy: None,
+        skip_tls_verification: false,
+        needs_tls_fingerprint: false,
+        use_fire_engine: false,
+        actions: Vec::new(),
+        body: None,
+        sync_wait_ms: 0,
+        block_ads: false,
+        block_media: false,
+        session_id: None,
+        wait_for: None,
+        needs_mllm: false,
+    }
+}
+
+/// T071: 引擎路由选择性能（select_optimal_engines + route）
+fn benchmark_engine_routing(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut group = c.benchmark_group("engine_routing");
+
+    for engine_count in [10, 50, 100] {
+        let engines = create_mock_engines(engine_count);
+        let router = EngineRouter::new(engines);
+        let request = make_bench_request();
+
+        group.bench_with_input(
+            BenchmarkId::new("route_selection", engine_count),
+            &engine_count,
+            |b, _| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let _result = router.route(&request).await;
+                    });
+                });
+            },
+        );
+    }
+
+    // 不同策略对比
+    for strategy in [
+        LoadBalancingStrategy::RoundRobin,
+        LoadBalancingStrategy::SmartHybrid,
+        LoadBalancingStrategy::LeastConnections,
+    ] {
+        let engines = create_mock_engines(50);
+        let mut router = EngineRouter::new(engines);
+        router.set_strategy(strategy);
+        let request = make_bench_request();
+
+        group.bench_function(
+            BenchmarkId::new("strategy_comparison", format!("{:?}", strategy)),
+            |b| {
+                b.iter(|| {
+                    rt.block_on(async {
+                        let _result = router.route(&request).await;
+                    });
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_task_creation,
     benchmark_task_status_transitions,
     benchmark_json_serialization,
     benchmark_url_parsing,
-    benchmark_uuid_generation
+    benchmark_uuid_generation,
+    // T069-T071 新增
+    benchmark_url_validation,
+    benchmark_ssrf_detection,
+    benchmark_regex_cache,
+    benchmark_engine_routing,
 );
 criterion_main!(benches);

@@ -1906,4 +1906,42 @@ mod tests {
         // 不调用 begin（避免 await），直接 drop
         drop(manager);
     }
+
+    // ============================================================
+    // T067: validate_savepoint_name 直接单元测试 + savepoint_count 边界
+    // ============================================================
+
+    #[test]
+    fn test_validate_savepoint_name_valid_names_direct() {
+        for name in &["sp1", "savepoint_1", "SAVEPOINT_1", "sp123", "_sp", "a"] {
+            assert!(
+                validate_savepoint_name(name).is_ok(),
+                "'{}' should be valid",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_savepoint_name_special_chars_direct() {
+        for name in &["sp@1", "sp.1", "sp/1", "sp-1", "sp!1", "sp#1", "sp 1"] {
+            assert!(
+                validate_savepoint_name(name).is_err(),
+                "'{}' should be rejected",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_savepoint_name_unicode_direct() {
+        assert!(validate_savepoint_name("释放点").is_err());
+    }
+
+    #[test]
+    fn test_savepoint_count_zero_without_active_transaction() {
+        let pool = create_test_db_pool();
+        let manager = TransactionManager::new(pool);
+        assert_eq!(manager.savepoint_count(), 0);
+    }
 }

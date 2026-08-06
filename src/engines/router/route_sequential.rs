@@ -13,6 +13,7 @@ use super::check_antibot_response;
 use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse};
 use crate::utils::retry::{RetryDirective, RetryReason, RetryTracker};
 use log::{debug, info, warn};
+use metrics::{counter, histogram};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -267,6 +268,19 @@ impl EngineRouter {
                     self.update_engine_stats(engine_name, true, response_time);
                     self.circuit_breaker.record_success(engine_name);
 
+                    // Phase 4a: Prometheus 指标埋点 (T062/T063)
+                    counter!(
+                        "crawlrs_engine_success_total",
+                        "engine" => engine_name.to_string(),
+                        "result" => "success"
+                    )
+                    .increment(1);
+                    histogram!(
+                        "crawlrs_engine_duration_seconds",
+                        "engine" => engine_name.to_string()
+                    )
+                    .record(response_time.as_secs_f64());
+
                     // 记录成功指标
                     self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
                     self.metrics
@@ -288,6 +302,19 @@ impl EngineRouter {
                 Ok(Err(e)) => {
                     let response_time = engine_start.elapsed();
                     self.update_engine_stats(engine_name, false, response_time);
+
+                    // Phase 4a: Prometheus 指标埋点 (T062/T063)
+                    counter!(
+                        "crawlrs_engine_success_total",
+                        "engine" => engine_name.to_string(),
+                        "result" => "failure"
+                    )
+                    .increment(1);
+                    histogram!(
+                        "crawlrs_engine_duration_seconds",
+                        "engine" => engine_name.to_string()
+                    )
+                    .record(response_time.as_secs_f64());
 
                     // 记录失败指标
                     self.metrics

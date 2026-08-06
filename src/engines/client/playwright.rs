@@ -842,6 +842,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         };
         assert_eq!(engine.support_score(&request_js), 100);
 
@@ -866,6 +867,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         };
         assert_eq!(engine.support_score(&request_screenshot), 100);
 
@@ -890,6 +892,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         };
         assert_eq!(engine.support_score(&request_basic), 10);
     }

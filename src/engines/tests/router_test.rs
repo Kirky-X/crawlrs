@@ -1999,3 +1999,171 @@
             other => panic!("Expected Timeout, got {:?}", other),
         }
     }
+
+    // === T066: sort_candidates_by_strategy 不同策略排序测试 ===
+
+    #[test]
+    fn test_sort_candidates_fastest_response() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "slow",
+            score: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "fast",
+            score: 100,
+        });
+        let mut router = EngineRouter::new(vec![e1.clone(), e2.clone()]);
+        router.set_strategy(LoadBalancingStrategy::FastestResponse);
+
+        // 预设引擎统计：slow=2s, fast=50ms
+        router
+            .engine_stats
+            .get_mut("slow")
+            .unwrap()
+            .avg_response_time = Duration::from_secs(2);
+        router
+            .engine_stats
+            .get_mut("fast")
+            .unwrap()
+            .avg_response_time = Duration::from_millis(50);
+
+        let stats: std::collections::HashMap<String, EngineStats> = router
+            .engine_stats
+            .iter()
+            .map(|r| (r.key().clone(), r.value().clone()))
+            .collect();
+
+        let mut candidates = vec![(1.0, e1), (1.0, e2)];
+        router.sort_candidates_by_strategy(&mut candidates, &stats);
+
+        assert_eq!(
+            candidates[0].1.name(),
+            "fast",
+            "FastestResponse should put fastest engine first"
+        );
+        assert_eq!(candidates[1].1.name(), "slow");
+    }
+
+    #[test]
+    fn test_sort_candidates_least_connections() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "busy",
+            score: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "idle",
+            score: 100,
+        });
+        let mut router = EngineRouter::new(vec![e1.clone(), e2.clone()]);
+        router.set_strategy(LoadBalancingStrategy::LeastConnections);
+
+        // 预设使用次数：busy=500, idle=5
+        router.engine_stats.get_mut("busy").unwrap().usage_count = 500;
+        router.engine_stats.get_mut("idle").unwrap().usage_count = 5;
+
+        let stats: std::collections::HashMap<String, EngineStats> = router
+            .engine_stats
+            .iter()
+            .map(|r| (r.key().clone(), r.value().clone()))
+            .collect();
+
+        let mut candidates = vec![(1.0, e1), (1.0, e2)];
+        router.sort_candidates_by_strategy(&mut candidates, &stats);
+
+        assert_eq!(
+            candidates[0].1.name(),
+            "idle",
+            "LeastConnections should put least-used engine first"
+        );
+        assert_eq!(candidates[1].1.name(), "busy");
+    }
+
+    #[test]
+    fn test_sort_candidates_smart_hybrid_score_priority() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "low-score",
+            score: 50,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "high-score",
+            score: 100,
+        });
+        let router = EngineRouter::new(vec![e1.clone(), e2.clone()]);
+        // Default strategy is SmartHybrid
+
+        let stats: std::collections::HashMap<String, EngineStats> = router
+            .engine_stats
+            .iter()
+            .map(|r| (r.key().clone(), r.value().clone()))
+            .collect();
+
+        let mut candidates = vec![(0.5, e1), (1.0, e2)];
+        router.sort_candidates_by_strategy(&mut candidates, &stats);
+
+        assert_eq!(
+            candidates[0].1.name(),
+            "high-score",
+            "SmartHybrid should put higher-scored engine first"
+        );
+    }
+
+    // === T066: select_optimal_engines 熔断器过滤测试 ===
+
+    #[test]
+    fn test_select_optimal_engines_circuit_breaker_skips_open() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "open-cb",
+            score: 100,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "closed-cb",
+            score: 100,
+        });
+        let router = EngineRouter::new(vec![e1.clone(), e2.clone()]);
+
+        // 打开 open-cb 的熔断器
+        for _ in 0..10 {
+            router.circuit_breaker.record_failure("open-cb");
+        }
+
+        let request = make_request();
+        let candidates = router.select_optimal_engines(&request);
+
+        let names: Vec<&str> = candidates.iter().map(|(_, e)| e.name()).collect();
+        assert!(
+            !names.contains(&"open-cb"),
+            "circuit breaker open engine should be filtered out"
+        );
+        assert!(
+            names.contains(&"closed-cb"),
+            "closed circuit breaker engine should remain"
+        );
+    }
+
+    #[test]
+    fn test_select_optimal_engines_feature_filter_tls_fingerprint() {
+        let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "no-tls",
+            score: 10,
+        });
+        let e2: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
+            engine_name: "with-tls",
+            score: 100,
+        });
+        let router = EngineRouter::new(vec![e1.clone(), e2.clone()]);
+
+        let mut request = make_request();
+        request.needs_tls_fingerprint = true;
+
+        let candidates = router.select_optimal_engines(&request);
+        let names: Vec<&str> = candidates.iter().map(|(_, e)| e.name()).collect();
+
+        assert!(
+            !names.contains(&"no-tls"),
+            "low-score engine should be filtered when needs_tls_fingerprint=true"
+        );
+        assert!(
+            names.contains(&"with-tls"),
+            "high-score engine should remain"
+        );
+    }

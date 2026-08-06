@@ -10,6 +10,7 @@
 use super::EngineRouter;
 use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine};
 use log::{debug, info, warn};
+use metrics::{counter, histogram};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -106,6 +107,19 @@ impl EngineRouter {
                             .record_engine_latency(&engine_name, response_time);
                         self.metrics.record_engine_success(&engine_name);
 
+                        // Phase 4a: Prometheus 指标埋点 (T062/T063)
+                        counter!(
+                            "crawlrs_engine_success_total",
+                            "engine" => engine_name.clone(),
+                            "result" => "success"
+                        )
+                        .increment(1);
+                        histogram!(
+                            "crawlrs_engine_duration_seconds",
+                            "engine" => engine_name.clone()
+                        )
+                        .record(response_time.as_secs_f64());
+
                         // T070/§17：记录胜出引擎延迟到 Hedge 控制器，
                         // 为未来顺序路径提供 P84 阈值估算（接入 race 路径为可选增强）
                         self.hedge_controller.record_latency(response_time);
@@ -123,6 +137,14 @@ impl EngineRouter {
                     Err((engine_name, e)) => {
                         self.metrics
                             .record_engine_failure(&engine_name, &e.to_string());
+
+                        // Phase 4a: Prometheus 指标埋点 (T062/T063)
+                        counter!(
+                            "crawlrs_engine_success_total",
+                            "engine" => engine_name.clone(),
+                            "result" => "failure"
+                        )
+                        .increment(1);
 
                         if e.is_retryable() {
                             self.circuit_breaker.record_failure(&engine_name);
