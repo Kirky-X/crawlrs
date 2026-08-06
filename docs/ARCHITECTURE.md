@@ -1206,9 +1206,59 @@ gated `extractor-trafilatura`/`extractor-dom-smoothie`/`extractor-full`：
 
 - `filters.rs`：`UrlFilter` trait + `FilterChain` + `DomainFilter`/`ContentTypeFilter`/`UrlPatternFilter`
 - `scorers.rs`：`UrlScorer` trait + `CompositeScorer` + `KeywordRelevanceScorer`/`PathDepthScorer`
-- `frontier.rs`：`ScoredUrl` + `BinaryHeap` 优先级 + 域名 round-robin
-- `adaptive.rs`：`AdaptiveStrategy`（BM25/覆盖率/饱和度）+ `StopCondition`（最大页数/置信度/饱和度/无待处理链接）
+- `frontier.rs`：`ScoredURL` + `BinaryHeap` 优先级 + 域名 round-robin
+- `adaptive.rs`：`AdaptiveStrategy`（BM25/覆盖率/饱和度）+ `StopCondition`（最大页数/置信度/饱和度/无待处理链接/KG 覆盖率）+ `DrlConfig`
+- `knowledge_graph.rs`：`KnowledgeGraphAccumulator` 知识图谱累积 + Chao1 覆盖率估计 + 结构空洞检测
+- `drl_policy.rs`：`DrlPolicy` ONNX 推理 + `HeuristicPolicy` 启发式退化
 - `scrape_worker::handle_crawl_success` 集成 `StopCondition` 检查，命中时提前终止 crawl
+
+### TLS Fingerprint Engine (`src/engines/client/wreq.rs`)
+
+`WreqEngine` 基于 `wreq` crate 实现 TLS 指纹伪装，通过自定义 TLS ClientHello 的 JA3/JA4 指纹模拟真实浏览器。
+
+- **Feature gate**: `engine-tls-fingerprint`
+- **核心能力**: 自定义 TLS 扩展顺序、密码套件、曲线列表，生成与 Chrome/Firefox/Safari 一致的 JA3 指纹
+- **集成路径**: 注册为 `ScraperEngine` 实现，`support_score` 在 `needs_tls_fingerprint=true` 时返回 100
+- **配置**: `[engines.tls_fingerprint]` 控制默认指纹 profile 和启用状态
+
+### MLLM Engine (`src/engines/client/mllm/`)
+
+`MllmEngine` 实现多模态 LLM 自主导航爬取，通过视觉模型理解页面内容并决定下一步动作。
+
+- **Feature gate**: `engine-mllm`
+- **架构**: Vision Adapter（截图→视觉模型）→ Decision（动作决策）→ Action Executor（执行点击/滚动/输入）
+- **Agentic Loop**: 最大 N 轮迭代，每轮截图→分析→动作，直到提取目标内容或达到终止条件
+
+```mermaid
+flowchart LR
+    A[截图] --> B[Vision Adapter]
+    B --> C[MLLM Decision]
+    C --> D[Action Executor]
+    D --> E{目标达成?}
+    E -->|否| A
+    E -->|是| F[返回结果]
+```
+
+### RAG 增强提取 (`src/domain/services/rag_strategy.rs`)
+
+将 HTML 文档按 DOM 语义边界分块，通过向量嵌入 + 相似度检索找到最相关片段，再送 LLM 精确提取。
+
+- **SemanticChunker**: 按 `<article>`, `<section>`, `<div>`, `<table>` 等 DOM 边界分块，表格/列表不截断
+- **EmbeddingProvider**: trait 抽象（HTTP API / 本地模型），支持 oxcache 持久化
+- **VectorStore**: 内存向量存储 + 余弦相似度 top-K 检索
+- **集成**: `ExtractionServiceTrait::extract_with_rag` 作为第三种提取模式（与 CSS/XPath、LLM 直接提取并列）
+
+### 可观测性增强 (Prometheus Metrics)
+
+新增 5 个 Prometheus 指标（`src/infrastructure/observability/metrics.rs`）：
+
+| 指标 | 类型 | 标签 | 说明 |
+|------|------|------|------|
+| `crawlrs_queue_depth` | Gauge | `queue_type` | 任务队列深度（AtomicU64 近似追踪） |
+| `crawlrs_engine_success_total` | Counter | `engine`, `result` | 引擎成功/失败计数 |
+| `crawlrs_engine_duration_seconds` | Histogram | `engine` | 引擎请求耗时分布 |
+| `crawlrs_cache_hit_total` | Counter | `cache_type`, `result` | 缓存命中/未命中（search/dns/regex/generic） |
+| `crawlrs_webhook_delivery_total` | Counter | `result`, `status_code` | Webhook 投递成功/失败 |
 
 ---
 

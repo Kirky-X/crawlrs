@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TLS 指纹伪装引擎** (`engine-tls-fingerprint`): WreqEngine 基于 BoringSSL 实现真实 JA3/JA4 指纹伪装，支持 Chrome/Firefox/Safari/Edge 指纹模拟
+  - `UaProfile` 新增 `tls_emulation` 字段，UA↔TLS 指纹一致性绑定
+  - `needs_tls_fingerprint` 请求参数和 Scrape API options 字段
+  - `[engines.tls_fingerprint]` 配置段
+- **MLLM 自主导航引擎** (`engine-mllm`): 视觉 LLM agentic loop 实现自主页面导航
+  - `MllmDecision` 枚举（Click/Scroll/Input/Wait/Extract/Done）+ JSON 解析器
+  - `VisionAdapter` 视觉适配器（截图→视觉模型请求）
+  - `ActionExecutor` 动作执行器（MLLM 决策→CDP 操作）
+  - `MllmEngine` struct + `ScraperEngine` trait 实现
+  - `[engines.mllm]` 配置段（vision_model/max_iterations/screenshot_quality/max_token_budget/mrt_seconds）
+- **RAG 增强提取**: DOM 语义分块 + 向量嵌入 + 余弦相似度检索 + LLM 精确提取
+  - `SemanticChunker`: 按 DOM 边界（article/section/div/table）分块，表格/列表不截断
+  - `EmbeddingProvider` trait + `VectorStore` 内存向量存储
+  - `RagExtractionStrategy` 作为第三种提取模式（`extract_with_rag`）
+- **知识图谱覆盖感知爬取**: `KnowledgeGraphAccumulator` + Chao1 覆盖率估计 + 结构空洞检测
+  - `KgBoostScorer` 实现 `UrlScorer` trait，结构空洞区域 URL 获得更高优先级
+  - `StopCondition` 新增 `CoverageReached` 停止原因 + `min_coverage` 条件
+- **DRL 自适应爬取策略**: `DrlPolicy` ONNX 推理 + `HeuristicPolicy` 启发式退化
+  - `CrawlState`/`CrawlAction` 状态-动作定义
+  - `DrlConfig` 配置开关（默认关闭）
+  - Python 训练脚本 `scripts/drl/train_policy.py`（gymnasium + stable-baselines3 + ONNX 导出）
+- **可观测性增强**: 5 个新 Prometheus 指标
+  - `crawlrs_queue_depth` Gauge（任务队列深度）
+  - `crawlrs_engine_success_total` Counter（引擎成功/失败计数）
+  - `crawlrs_engine_duration_seconds` Histogram（引擎请求耗时分布）
+  - `crawlrs_cache_hit_total` Counter（缓存命中/未命中）
+  - `crawlrs_webhook_delivery_total` Counter（Webhook 投递成功/失败）
+- **基准测试扩展**: URL 验证/SSRF 检测/RegexCache/引擎路由基准（`benches/benchmark.rs`）
+
+### Changed
+
+- **代码架构优化**:
+  - `router.rs` 拆分为 `engine_selector` / `route_sequential` / `route_race` 子模块
+  - `scrape_worker.rs` 拆分为 `scrape_task` / `crawl_task` / `extract_task` + `builder` + `deps`
+  - `ScrapeWorkerDeps` 参数对象化（消除 16 参数函数签名）
+  - `webhook_service.rs` 拆分出 `webhook/management.rs`
+- **测试代码提取**: 5 个模块内联测试提取到独立文件（scrape_worker/router/engine_client/webhook_service/task_repo）
+- **统一测试 Mock**: `tests/common/mocks/` 共享 MockTaskRepository/MockScraperEngine/MockWebhookService 等
+
+### Fixed
+
+- 删除 `TextEncodingProcessor` dead code（`#[allow(dead_code)]` 标注的未使用结构体）
+- 删除 `make_queue()` 测试 helper（clippy never used 告警）
+
 ## [0.2.0] - 2026-07-29
 
 ### Added

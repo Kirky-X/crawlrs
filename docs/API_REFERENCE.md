@@ -282,7 +282,23 @@ Get system performance metrics (requires `metrics` feature).
 # Prometheus metrics format
 api_requests_total{method="POST",endpoint="/v1/scrape"} 1234
 api_request_duration_seconds{method="POST",endpoint="/v1/scrape",quantile="0.5"} 0.045
+# Platform metrics (requires `metrics` feature)
+crawlrs_queue_depth{queue_type="task"} 42
+crawlrs_engine_success_total{engine="reqwest",result="success"} 5678
+crawlrs_engine_duration_seconds{engine="reqwest",quantile="0.95"} 0.12
+crawlrs_cache_hit_total{cache_type="search",result="hit"} 9012
+crawlrs_webhook_delivery_total{result="success",status_code="200"} 3456
 ```
+
+**Platform Metrics Reference:**
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `crawlrs_queue_depth` | Gauge | `queue_type` | Task queue depth (approximate via AtomicU64) |
+| `crawlrs_engine_success_total` | Counter | `engine`, `result` | Engine success/failure count |
+| `crawlrs_engine_duration_seconds` | Histogram | `engine` | Engine request duration distribution |
+| `crawlrs_cache_hit_total` | Counter | `cache_type`, `result` | Cache hit/miss (search/dns/regex/generic) |
+| `crawlrs_webhook_delivery_total` | Counter | `result`, `status_code` | Webhook delivery success/failure |
 
 ---
 
@@ -337,6 +353,7 @@ Scrape a single web page.
     "proxy": "http://proxy.example.com:8080",
     "skip_tls_verification": false,
     "needs_tls_fingerprint": false,
+    "needs_mllm": false,
     "use_fire_engine": false
   },
   "metadata": {
@@ -378,7 +395,8 @@ Scrape a single web page.
 | `mobile` | boolean | false | Emulate mobile device |
 | `proxy` | string | — | Proxy URL (e.g. `http://proxy:8080`) |
 | `skip_tls_verification` | boolean | false | Skip TLS certificate verification |
-| `needs_tls_fingerprint` | boolean | false | Require TLS fingerprint adversarial engine |
+| `needs_tls_fingerprint` | boolean | false | Require TLS fingerprint adversarial engine (`engine-tls-fingerprint` feature) |
+| `needs_mllm` | boolean | false | Require MLLM autonomous navigation engine (`engine-mllm` feature, implies `engine-playwright` + `genai-llm`) |
 | `use_fire_engine` | boolean | false | Force use FlareSolverr engine |
 | `cache_mode` | string | `"enabled"` | Cache read/write mode: `enabled` (default, normal R/W), `disabled` (cache fully off), `read_only` (hit returns, miss fetches without writing), `bypass` (skip read, normal write — emergency untrusted-cache scenario) |
 | `bypass_cache` | boolean | false | Emergency cache bypass shortcut. `true` overrides `cache_mode` to `bypass` (skip cache read, normal write-back). Use when runtime cache data is untrusted |
@@ -1363,8 +1381,30 @@ func Scrape(url string) error {
 
 ## Changelog
 
+### v0.3.0 (Unreleased — platform-evolution)
+
+**New Engines:**
+- TLS Fingerprint Engine (`engine-tls-fingerprint`): WreqEngine based on BoringSSL, real JA3/JA4 fingerprint spoofing
+- MLLM Autonomous Navigation Engine (`engine-mllm`): Vision LLM agentic loop for autonomous page navigation
+- Scrape API `options` 新增 `needs_mllm` 参数（boolean, default false），启用 MLLM 自主导航引擎
+
+**New Algorithms:**
+- RAG 增强提取：DOM 语义分块 → 向量嵌入 → 余弦相似度检索 → LLM 精确提取（`extract_with_rag` 第三种提取模式）
+- 知识图谱覆盖感知爬取：KnowledgeGraphAccumulator + Chao1 覆盖率估计 + 结构空洞检测 + KgBoostScorer URL 优先级
+- DRL 自适应爬取策略：ONNX 推理 + HeuristicPolicy 启发式退化
+
+**Observability:**
+- 5 个新 Prometheus 指标：`crawlrs_queue_depth` / `crawlrs_engine_success_total` / `crawlrs_engine_duration_seconds` / `crawlrs_cache_hit_total` / `crawlrs_webhook_delivery_total`
+- `/metrics` 端点新增平台级指标输出
+
+**Architecture:**
+- router.rs 拆分为 engine_selector / route_sequential / route_race 子模块
+- scrape_worker.rs 拆分为 scrape_task / crawl_task / extract_task + builder + deps
+- ScrapeWorkerDeps 参数对象化（消除 16 参数函数签名）
+- 统一测试 Mock（tests/common/mocks/）
+
 ### v0.2.0 (2025-07-21)
-- **`garrison-auth-migration`：** 认证引擎由 garrison v0.8.1 接管，Bearer token 格式改为 `garrison_key_id.garrison_secret`
+- **`garrison-auth-migration：** 认证引擎由 garrison v0.8.1 接管，Bearer token 格式改为 `garrison_key_id.garrison_secret`
 - 新增 `POST /v1/admin/api-keys` 端点：管理员为指定 team 签发 garrison API Key
 - 新增 [Garrison 认证](#garrison-认证) 与 [迁移指南](#迁移指南020-garrison-auth-migration) 章节
 - 401/429 触发逻辑由 garrison `firewall-bruteforce` 接管（5 次/60 秒/300 秒锁定）

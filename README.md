@@ -84,6 +84,8 @@
 | **Reqwest** | 静态 HTML、API 响应 | ⚡ 最快 | 💰 最低 |
 | **chromiumoxide** | JavaScript 密集的 SPA、交互 | 🐢 较慢 | 💳 较高 |
 | **FlareSolverr** | 反爬虫保护网站（Full/Cdp/Tls 三种模式） | 🚀 可变 | 💎 可变 |
+| **WreqEngine** | TLS 指纹伪装（JA3/JA4 真实浏览器指纹） | ⚡ 快 | 💰 低 |
+| **MllmEngine** | 视觉 LLM 自主导航（截图→决策→执行） | 🐢 较慢 | 💳 较高 |
 
 ### ⚡ 引擎性能优化（0.2.0）
 
@@ -107,6 +109,12 @@
 | **TabPool** | Chrome CDP Tab 池复用（DashMap + AtomicUsize LIFO 栈），消除 tab 创建开销 | T068 |
 | **WaitFor 策略** | 条件式等待（NetworkIdle/Selector/DomStable）替代固定 sleep | T069 |
 | **Hedge 控制器** | EMA + 方差估算 P84 延迟阈值，race 模式胜出延迟记录 | T070 |
+| **TLS 指纹引擎** | WreqEngine BoringSSL 真实 JA3/JA4 指纹伪装，Chrome/Firefox/Safari/Edge 模拟 | T012-T024 |
+| **MLLM 导航引擎** | 视觉 LLM agentic loop 自主导航（截图→决策→CDP 执行） | T045-T060 |
+| **RAG 增强提取** | DOM 语义分块 + 向量嵌入 + 余弦相似度检索 + LLM 精确提取 | T072-T076 |
+| **知识图谱覆盖感知** | KG 累积 + Chao1 覆盖率估计 + 结构空洞检测 + KgBoostScorer | T077-T082 |
+| **DRL 自适应策略** | ONNX 推理 + 启发式退化，动态调整并发/URL 优先级/引擎选择 | T083-T087 |
+| **可观测性增强** | 5 个 Prometheus 指标（queue_depth/engine_success/engine_duration/cache_hit/webhook_delivery） | T061-T065 |
 
 > **详细架构:** [ARCHITECTURE.md → 引擎性能优化](docs/ARCHITECTURE.md#hedge-请求副本控制器)
 
@@ -184,6 +192,8 @@ cargo build --release --features "engine-playwright,metrics"
 | `webhook` | Webhook 投递与管理；关闭时注入 `NoopWebhookService` 并移除 `/v1/webhooks` 路由 | ✅ 是 |
 | `engine-playwright` | 基于 chromiumoxide 的浏览器自动化 | ❌ 否 |
 | `engine-flaresolverr` | FlareSolverr 反爬虫保护（FlareSolverrMode 枚举区分 Full/Cdp/Tls 三模式） | ❌ 否 |
+| `engine-tls-fingerprint` | TLS 指纹伪装引擎（WreqEngine + BoringSSL JA3/JA4） | ❌ 否 |
+| `engine-mllm` | MLLM 自主导航引擎（视觉 LLM agentic loop，隐含 `engine-playwright` + `genai-llm`） | ❌ 否 |
 | `antibot` | 反爬虫检测（Aho-Corasick + 20+ WAF 指纹 + 三层分类器 + 路由驱动） | ❌ 否 |
 | `markdown` | HTML→Markdown 转换（htmd），ScrapeResponse 增 `markdown` 字段 | ❌ 否 |
 | `extractor-trafilatura` | 正文提取主路径（rs-trafilatura） | ❌ 否 |
@@ -235,6 +245,8 @@ cargo build --release --no-default-features --features teams
 | `webhook` | Webhook 投递与管理 | 关闭时注入 `NoopWebhookService` 并移除 `/v1/webhooks` 路由 |
 | `engine-playwright` | chromiumoxide JS 渲染引擎 | +8MB |
 | `engine-flaresolverr` | FlareSolverr 引擎（通过 FlareSolverrMode 枚举区分 Full/Cdp/Tls 三种模式） | - |
+| `engine-tls-fingerprint` | TLS 指纹伪装引擎（WreqEngine + BoringSSL） | +8MB |
+| `engine-mllm` | MLLM 自主导航引擎（视觉 LLM agentic loop） | - |
 | `metrics` | 指标监控 | - |
 | `genai-llm` | genai LLM 抽取 | - |
 | `browser-download` | 自动下载 Playwright 浏览器 | - |

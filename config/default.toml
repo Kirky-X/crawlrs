@@ -196,6 +196,12 @@ url = "http://localhost:8191/v1"
 # Wreq TLS 指纹引擎（Phase 1 / D4）
 # 基于 BoringSSL（wreq）实现真实 JA3/JA4 指纹伪装，用于 needs_tls_fingerprint 请求。
 # 依赖 C 编译器 + cmake 构建 boringssl；默认关闭，需显式开启。
+#
+# Feature gate: `engine-tls-fingerprint`
+# 安全注意：
+#   - 指纹伪装仅用于合规测试与反爬虫研究，请遵守目标站点 robots.txt 和 ToS
+#   - 启用后二进制体积增加 ~8MB（BoringSSL 静态链接）
+#   - 需要系统安装 cmake 和 C 编译器（gcc/clang）
 [engines.tls_fingerprint]
 enabled = false
 timeout_seconds = 15
@@ -203,8 +209,26 @@ timeout_seconds = 15
 # MLLM Autonomous Navigation Engine (Phase 3)
 # Uses vision LLM to analyze page screenshots and autonomously navigate.
 # Requires 'engine-mllm' feature flag. Depends on engine-playwright + genai-llm.
-# Security note: vision_model calls external LLM API — ensure API key is configured
-# via environment variable (e.g. GEMINI_API_KEY) and not hardcoded.
+#
+# Feature gate: `engine-mllm`
+# 工作原理：
+#   1. Playwright 截图当前页面
+#   2. Vision LLM 分析截图并决定下一步动作（点击/滚动/输入/提取/完成）
+#   3. Action Executor 执行 CDP 操作
+#   4. 循环直到提取目标内容或达到 max_iterations
+#
+# 安全注意：
+#   - vision_model 调用外部 LLM API，确保 API key 通过环境变量配置
+#     （如 GEMINI_API_KEY），禁止硬编码
+#   - max_token_budget 控制单次请求最大 token 消耗，防止成本失控
+#   - mrt_seconds 为单引擎最大响应时间，超时后 router 切换到下一引擎
+#
+# 配置说明：
+#   - vision_model: 视觉模型标识（格式 provider:model_name）
+#   - max_iterations: agentic loop 最大轮次（推荐 5-15）
+#   - screenshot_quality: 截图 JPEG 质量 1-100（越低越省 token）
+#   - max_token_budget: 单次请求最大 token 预算
+#   - mrt_seconds: 单引擎最大响应时间（秒）
 [engines.mllm]
 enabled = false
 vision_model = "gemini:gemini-2.0-flash"
