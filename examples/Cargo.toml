@@ -73,6 +73,10 @@ path = "advanced/error_handling.rs"
 name = "metrics_export"
 path = "advanced/metrics_export.rs"
 
+[[bin]]
+name = "mllm_scrape"
+path = "advanced/mllm_scrape.rs"
+
 # Auth examples
 [[bin]]
 name = "api_key_auth"
