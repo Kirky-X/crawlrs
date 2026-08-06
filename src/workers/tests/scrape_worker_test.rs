@@ -1,8 +1,10 @@
     use super::*;
     use crate::application::dto::extract_request::ExtractRequestDto;
-    use crate::domain::models::{CrawlStatus, TaskType};
+    use crate::domain::models::{CrawlStatus, ScrapeResult, TaskType};
+    use crate::domain::repositories::webhook_repository::WebhookRepository;
     use crate::engines::EngineError;
     use crate::infrastructure::oxcache::RegexCacheType;
+    use crate::utils::coalesce::RequestCoalescer;
     use crate::utils::dedup::DedupResult;
     use crate::workers::cache_utils::{filter_sensitive_headers, generate_scrape_cache_key};
     use crate::workers::crawl::{

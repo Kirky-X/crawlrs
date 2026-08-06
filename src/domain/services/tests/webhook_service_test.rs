@@ -1,6 +1,7 @@
     use super::*;
     use crate::domain::repositories::task_repository::RepositoryError;
     use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+    use crate::domain::repositories::webhook_repository::WebhookRepository;
     use crate::domain::models::WebhookEvent;
     use uuid::Uuid;
     use async_trait::async_trait;
