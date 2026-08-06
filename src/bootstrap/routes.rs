@@ -107,8 +107,14 @@ fn create_cors_layer(settings: &Settings) -> CorsLayer {
 
 /// Create public API routes (no authentication required).
 pub fn create_public_routes(state: &CrawlRsState) -> Router {
+    let ready_routes = Router::new()
+        .route("/ready", get(routes::readiness_check))
+        .layer(Extension(state.db_pool.clone()))
+        .layer(Extension(state.cache_service.clone()));
+
     Router::new()
         .route("/health", get(routes::health_check))
+        .merge(ready_routes)
         .route("/metrics", get(metrics_handler::metrics))
         .route("/v1/version", get(routes::version))
         .with_state(Arc::new(state.clone()))

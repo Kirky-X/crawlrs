@@ -39,11 +39,12 @@ pub mod security_headers_middleware;
 pub mod team_semaphore_middleware;
 
 /// Public endpoints that don't require authentication or rate limiting
-pub const PUBLIC_ENDPOINTS: &[&str] = &["/health", "/metrics", "/v1/version"];
+pub const PUBLIC_ENDPOINTS: &[&str] = &["/health", "/ready", "/metrics", "/v1/version"];
 
 /// Endpoints excluded from rate limiting
 pub const RATE_LIMIT_EXCLUDED_ENDPOINTS: &[&str] = &[
     "/health",
+    "/ready",
     "/metrics",
     "/v1/version",
     "/v1/extract",

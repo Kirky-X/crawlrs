@@ -26,8 +26,12 @@ use crate::presentation::handlers::webhook_handler;
 use crate::presentation::handlers::team_handler;
 use axum::{
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
+use dbnexus::DbPool;
+use sea_orm::ConnectionTrait;
+use std::sync::Arc;
+use std::time::Duration;
 // R-teams-002 / T012：put 仅在 teams-on 时被使用（/v1/teams/geo-restrictions PUT）
 #[cfg(feature = "teams")]
 use axum::routing::put;
@@ -126,4 +130,265 @@ pub async fn health_check() -> Json<serde_json::Value> {
 /// 返回应用版本号
 pub async fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+/// 就绪检查端点（readiness probe）
+///
+/// Kubernetes readiness probe — 检查关键依赖（PostgreSQL、缓存）是否就绪。
+/// 与 liveness probe（`/health`）不同，此端点验证实际依赖可用性。
+///
+/// # 返回值
+///
+/// - 200 OK + `"status": "ready"` — 所有依赖就绪
+/// - 503 Service Unavailable + `"status": "not_ready"` — 任一依赖不可用
+///
+/// # 依赖检查
+///
+/// - PostgreSQL: 执行 `SELECT 1`，超时 3 秒
+/// - 缓存: 执行 `get("__readiness_probe__")`，超时 1 秒
+pub async fn readiness_check(
+    Extension(db_pool): Extension<Arc<DbPool>>,
+    Extension(cache_service): Extension<Arc<dyn crate::infrastructure::oxcache::CacheService>>,
+) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+    use axum::http::StatusCode;
+
+    let mut details = serde_json::Map::new();
+    let mut all_ready = true;
+
+    // Check PostgreSQL
+    let db_check = async {
+        let session = db_pool.get_session("readiness").await.map_err(|e| e.to_string())?;
+        let conn = session.connection().map_err(|e| e.to_string())?;
+        conn.execute_unprepared("SELECT 1")
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>(())
+    };
+
+    let db_status = match tokio::time::timeout(Duration::from_secs(3), db_check).await {
+        Ok(Ok(())) => json!({"status": "up"}),
+        Ok(Err(e)) => {
+            all_ready = false;
+            log::warn!("Readiness check: PostgreSQL down - {e}");
+            json!({"status": "down", "error": e})
+        }
+        Err(_) => {
+            all_ready = false;
+            log::warn!("Readiness check: PostgreSQL timeout (3s)");
+            json!({"status": "down", "error": "timeout"})
+        }
+    };
+    details.insert("database".to_string(), db_status);
+
+    // Check cache
+    let cache_check = async {
+        cache_service
+            .get("__readiness_probe__")
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>(())
+    };
+
+    let cache_status = match tokio::time::timeout(Duration::from_secs(1), cache_check).await {
+        Ok(Ok(())) => json!({"status": "up"}),
+        Ok(Err(e)) => {
+            all_ready = false;
+            log::warn!("Readiness check: cache down - {e}");
+            json!({"status": "down", "error": e})
+        }
+        Err(_) => {
+            all_ready = false;
+            log::warn!("Readiness check: cache timeout (1s)");
+            json!({"status": "down", "error": "timeout"})
+        }
+    };
+    details.insert("cache".to_string(), cache_status);
+
+    let status = if all_ready { "ready" } else { "not_ready" };
+    let status_code = if all_ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        status_code,
+        Json(json!({
+            "status": status,
+            "checks": details,
+            "version": env!("CARGO_PKG_VERSION"),
+        })),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::test_support::testcontainers_fixtures as tcf;
+    use crate::infrastructure::database::dbnexus_connection::create_pool;
+    use crate::infrastructure::oxcache::CacheService;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use axum::routing::get;
+    use axum::Router;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tower::ServiceExt;
+
+    /// Mock CacheService that can be configured to succeed or fail.
+    struct MockCacheService {
+        should_fail: AtomicBool,
+    }
+
+    impl MockCacheService {
+        fn new(should_fail: bool) -> Self {
+            Self {
+                should_fail: AtomicBool::new(should_fail),
+            }
+        }
+    }
+
+    impl CacheService for MockCacheService {
+        fn get(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>,
+        > {
+            let should_fail = self.should_fail.load(Ordering::Relaxed);
+            Box::pin(async move {
+                if should_fail {
+                    Err(anyhow::anyhow!("mock cache error"))
+                } else {
+                    Ok(None)
+                }
+            })
+        }
+
+        fn set(
+            &self,
+            _key: &str,
+            _value: &str,
+            _ttl_seconds: u64,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn exists(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+        {
+            Box::pin(async { Ok(false) })
+        }
+    }
+
+    async fn require_docker() -> bool {
+        tcf::docker_available().await
+    }
+
+    /// Build a test router with readiness_check handler.
+    fn build_ready_router(
+        db_pool: Arc<DbPool>,
+        cache_service: Arc<dyn CacheService>,
+    ) -> Router {
+        Router::new()
+            .route("/ready", get(readiness_check))
+            .layer(Extension(db_pool))
+            .layer(Extension(cache_service))
+    }
+
+    /// Create a DbPool from testcontainers handle.
+    async fn db_pool_from_handle(handle: &tcf::DbHandle) -> Arc<DbPool> {
+        let settings = tcf::database_settings(&handle.pg.url);
+        let pool = create_pool(&settings)
+            .await
+            .expect("failed to create test DbPool");
+        Arc::new(pool)
+    }
+
+    #[tokio::test]
+    async fn tc_readiness_all_up_returns_200() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_readiness_all_up_returns_200");
+            return;
+        }
+        let handle = match tcf::DbHandle::start().await {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[skip] failed to start DB: {e}");
+                return;
+            }
+        };
+        let pool = db_pool_from_handle(&handle).await;
+        let cache = Arc::new(MockCacheService::new(false));
+        let app = build_ready_router(pool, cache);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ready");
+        assert_eq!(json["checks"]["database"]["status"], "up");
+        assert_eq!(json["checks"]["cache"]["status"], "up");
+        assert!(json["version"].is_string());
+    }
+
+    #[tokio::test]
+    async fn tc_readiness_cache_down_returns_503() {
+        if !require_docker().await {
+            eprintln!("[skip] Docker unavailable — tc_readiness_cache_down_returns_503");
+            return;
+        }
+        let handle = match tcf::DbHandle::start().await {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[skip] failed to start DB: {e}");
+                return;
+            }
+        };
+        let pool = db_pool_from_handle(&handle).await;
+        let cache = Arc::new(MockCacheService::new(true)); // fails
+        let app = build_ready_router(pool, cache);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "not_ready");
+        assert_eq!(json["checks"]["database"]["status"], "up");
+        assert_eq!(json["checks"]["cache"]["status"], "down");
+    }
 }

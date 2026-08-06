@@ -6,7 +6,7 @@
 pub mod handlers;
 pub mod task;
 
-pub use handlers::{health_check, routes, version};
+pub use handlers::{health_check, readiness_check, routes, version};
 
 #[cfg(test)]
 mod tests {

@@ -53,6 +53,7 @@ use crate::i18n::I18nBundle;
 use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClient;
 // T059/R-cache-002：高级缓存服务（scrape_worker 读写抓取结果缓存）
+use crate::infrastructure::events::{BroadcastEventBus, EventBus};
 use crate::infrastructure::oxcache::CacheService;
 // T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
@@ -174,6 +175,11 @@ pub struct CrawlRsState {
     /// 从配置加载，提供多语言翻译接口。
     /// 通过 `kit.require::<SettingsModule>()` 获取 i18n 配置并加载 FTL 文件。
     pub i18n_bundle: Arc<I18nBundle>,
+    /// 事件总线
+    ///
+    /// 基于 `tokio::sync::broadcast` 的进程内事件发布/订阅，
+    /// 解耦模块间通信（任务完成/失败、爬取完成/失败等）。
+    pub event_bus: Arc<dyn EventBus>,
 }
 
 impl CrawlRsState {
@@ -258,6 +264,7 @@ impl CrawlRsState {
             #[cfg(feature = "teams")]
             geo_restriction_repo: infra.repositories.geo_restriction_repo.clone(),
             i18n_bundle,
+            event_bus: Arc::new(BroadcastEventBus::new(1024)),
         })
     }
 }
@@ -355,6 +362,8 @@ pub trait CrawlRsStateExt {
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository>;
     /// Get i18n translation bundle
     fn i18n_bundle(&self) -> Arc<I18nBundle>;
+    /// Get event bus
+    fn event_bus(&self) -> Arc<dyn EventBus>;
 }
 
 impl CrawlRsStateExt for CrawlRsState {
@@ -491,6 +500,10 @@ impl CrawlRsStateExt for CrawlRsState {
     fn i18n_bundle(&self) -> Arc<I18nBundle> {
         self.i18n_bundle.clone()
     }
+
+    fn event_bus(&self) -> Arc<dyn EventBus> {
+        self.event_bus.clone()
+    }
 }
 
 impl CrawlRsStateExt for Arc<CrawlRsState> {
@@ -626,6 +639,10 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
 
     fn i18n_bundle(&self) -> Arc<I18nBundle> {
         self.as_ref().i18n_bundle()
+    }
+
+    fn event_bus(&self) -> Arc<dyn EventBus> {
+        self.as_ref().event_bus()
     }
 }
 
