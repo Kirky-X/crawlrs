@@ -40,6 +40,13 @@ pub mod flare_solverr;
 #[cfg(feature = "engine-tls-fingerprint")]
 pub mod wreq_engine;
 
+/// MLLM 自主导航爬取引擎（Phase 3）
+///
+/// 使用视觉大模型分析页面截图，自主决策导航操作，实现 agentic loop 式智能爬取。
+/// 依赖 engine-playwright（浏览器）+ genai-llm（视觉模型）。
+#[cfg(feature = "engine-mllm")]
+pub mod mllm;
+
 // Re-exports
 
 /// Reqwest 引擎 (始终可用)
@@ -80,3 +87,7 @@ pub use self::flare_solverr::{
 /// Wreq TLS 指纹引擎
 #[cfg(feature = "engine-tls-fingerprint")]
 pub use self::wreq_engine::{emulation_provider, WreqEngine};
+
+/// MLLM 自主导航爬取引擎
+#[cfg(feature = "engine-mllm")]
+pub use self::mllm::MllmEngine;

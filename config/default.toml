@@ -200,6 +200,19 @@ url = "http://localhost:8191/v1"
 enabled = false
 timeout_seconds = 15
 
+# MLLM Autonomous Navigation Engine (Phase 3)
+# Uses vision LLM to analyze page screenshots and autonomously navigate.
+# Requires 'engine-mllm' feature flag. Depends on engine-playwright + genai-llm.
+# Security note: vision_model calls external LLM API — ensure API key is configured
+# via environment variable (e.g. GEMINI_API_KEY) and not hardcoded.
+[engines.mllm]
+enabled = false
+vision_model = "gemini:gemini-2.0-flash"
+max_iterations = 10
+screenshot_quality = 70
+max_token_budget = 4096
+mrt_seconds = 60
+
 # Worker Configuration
 # Configure background worker processes
 [workers]

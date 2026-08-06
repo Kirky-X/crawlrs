@@ -118,6 +118,7 @@ impl CreateScrapeUseCase {
             wait_for: options
                 .wait_for
                 .map(|ms| WaitFor::DomStable(Duration::from_millis(ms))),
+            needs_mllm: false,
         };
 
         Ok(ScrapeRequest::new(dto.url).with_options(scrape_options))

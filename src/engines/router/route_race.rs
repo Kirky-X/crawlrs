@@ -72,6 +72,7 @@ impl EngineRouter {
                 block_media: request.block_media,
                 session_id: request.session_id.clone(),
                 wait_for: request.wait_for.clone(),
+                needs_mllm: request.needs_mllm,
             };
 
             let race_future: std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>> =

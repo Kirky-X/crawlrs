@@ -100,6 +100,7 @@
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         };
         let result = router.route(&request).await;
 
@@ -180,6 +181,7 @@
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         }
     }
 
@@ -1420,6 +1422,7 @@
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         };
 
         // The low-score engine should be filtered out, leaving no candidates

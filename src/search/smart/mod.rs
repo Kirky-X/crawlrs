@@ -491,6 +491,7 @@ impl SmartSearchEngine {
                 session_id: None,
                 cache_mode: None,
                 wait_for: None,
+                needs_mllm: false,
             },
         }
     }

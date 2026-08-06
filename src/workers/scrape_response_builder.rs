@@ -102,6 +102,7 @@ pub fn build_crawl_request(
         session_id: None,
         cache_mode: None,
         wait_for: None,
+        needs_mllm: false,
     })
 }
 
@@ -131,6 +132,7 @@ pub fn build_extract_request(url: &str, timeout_seconds: u64) -> ScrapeRequest {
         session_id: None,
         cache_mode: None,
         wait_for: None,
+        needs_mllm: false,
     })
 }
 

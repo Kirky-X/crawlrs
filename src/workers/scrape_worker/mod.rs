@@ -1177,6 +1177,7 @@ impl ScrapeWorker {
                     }
                 },
                 wait_for: None,
+                needs_mllm: false,
             },
         })
     }

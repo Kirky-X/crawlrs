@@ -100,6 +100,47 @@ pub struct TlsFingerprintEngineSettings {
     pub timeout_seconds: u32,
 }
 
+/// MLLM 自主导航爬取引擎配置（Phase 3）
+///
+/// 配置视觉大模型驱动的浏览器自主导航引擎。
+/// 依赖 `engine-playwright`（浏览器）+ `genai-llm`（视觉模型）。
+///
+/// # 字段说明
+///
+/// * `enabled` - 是否启用 MLLM 引擎
+/// * `vision_model` - 视觉模型标识（如 "gemini:gemini-2.0-flash"）
+/// * `max_iterations` - 最大导航迭代次数（防止无限循环）
+/// * `screenshot_quality` - 截图质量 (0-100)
+/// * `max_token_budget` - 单次请求最大 token 预算
+/// * `mrt_seconds` - 引擎级最大响应时间（秒）
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ENGINES__MLLM__")]
+pub struct MllmEngineSettings {
+    /// 是否启用 MLLM 引擎
+    #[config(default = false)]
+    pub enabled: bool,
+
+    /// 视觉模型标识
+    #[config(default = "gemini:gemini-2.0-flash".to_string())]
+    pub vision_model: String,
+
+    /// 最大导航迭代次数
+    #[config(default = 10)]
+    pub max_iterations: u8,
+
+    /// 截图质量 (0-100)
+    #[config(default = 70)]
+    pub screenshot_quality: u8,
+
+    /// 单次请求最大 token 预算
+    #[config(default = 4096)]
+    pub max_token_budget: u32,
+
+    /// 引擎级最大响应时间（秒）
+    #[config(default = 60)]
+    pub mrt_seconds: u64,
+}
+
 /// 引擎配置集合
 ///
 /// 包含所有抓取引擎的配置
@@ -117,4 +158,7 @@ pub struct EngineSettings {
 
     /// Wreq TLS 指纹引擎配置
     pub tls_fingerprint: TlsFingerprintEngineSettings,
+
+    /// MLLM 自主导航引擎配置（Phase 3）
+    pub mllm: MllmEngineSettings,
 }

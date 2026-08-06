@@ -14,6 +14,10 @@ use crate::engines::client::playwright::PlaywrightEngine;
 use crate::engines::client::reqwest::ReqwestEngine;
 #[cfg(feature = "engine-tls-fingerprint")]
 use crate::engines::client::wreq_engine::WreqEngine;
+#[cfg(feature = "engine-mllm")]
+use crate::engines::client::mllm::MllmEngine;
+#[cfg(feature = "engine-mllm")]
+use crate::domain::services::llm::vision_adapter::GenaiVisionAdapter;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::engine_client::ScraperEngine;
 use crate::engines::provider::ProxyProvider;
@@ -179,6 +183,25 @@ pub fn init_engines(
                 Err(e) => log::error!("WreqEngine init failed, skipping: {e}"),
             },
         }
+    }
+
+    // Phase 3：MllmEngine 注册（engine-mllm feature 门控 + engines.mllm.enabled 开启）
+    #[cfg(feature = "engine-mllm")]
+    if engine_config.mllm.enabled {
+        log::info!(
+            "MllmEngine (MLLM autonomous navigation) enabled with model={}",
+            engine_config.mllm.vision_model
+        );
+        let mllm_config = crate::engines::mllm::config::MllmEngineConfig {
+            vision_model: engine_config.mllm.vision_model.clone(),
+            max_iterations: engine_config.mllm.max_iterations,
+            screenshot_quality: engine_config.mllm.screenshot_quality,
+            system_prompt: crate::engines::mllm::config::MllmEngineConfig::default().system_prompt,
+            max_token_budget: engine_config.mllm.max_token_budget,
+            mrt_seconds: engine_config.mllm.mrt_seconds,
+        };
+        let vision_adapter = std::sync::Arc::new(GenaiVisionAdapter::new());
+        engines.push(std::sync::Arc::new(MllmEngine::new(vision_adapter, mllm_config)));
     }
 
     engines

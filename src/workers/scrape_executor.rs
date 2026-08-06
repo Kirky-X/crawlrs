@@ -443,6 +443,7 @@ mod tests {
             session_id: None,
             cache_mode: None,
             wait_for: None,
+            needs_mllm: false,
         };
         let key = crate::workers::cache_utils::generate_scrape_cache_key(&ctx, &options);
         assert!(key.contains("example.com"));

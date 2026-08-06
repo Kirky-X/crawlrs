@@ -70,6 +70,12 @@ impl ScrapeRequest {
         self.options.timeout = duration;
         self
     }
+
+    /// Configure the request to use MLLM autonomous navigation (Phase 3).
+    pub fn needs_mllm(mut self) -> Self {
+        self.options.needs_mllm = true;
+        self
+    }
 }
 
 /// session_id 最大长度（字节）— 防止 DoS（T056 安全审查 MEDIUM-2 修复）
@@ -206,6 +212,10 @@ pub struct ScrapeOptions {
     ///
     /// `sync_wait_ms` 字段保留供非浏览器引擎（如 FlareSolverr）使用。
     pub wait_for: Option<WaitFor>,
+    /// MLLM 自主导航模式（Phase 3）— 由 `engine-mllm` feature 门控
+    ///
+    /// 为 true 时路由优先选择 MllmEngine，通过视觉大模型分析截图自主导航。
+    pub needs_mllm: bool,
 }
 
 impl Default for ScrapeOptions {
@@ -230,6 +240,7 @@ impl Default for ScrapeOptions {
             session_id: None,
             cache_mode: None,
             wait_for: None,
+            needs_mllm: false,
         }
     }
 }
@@ -402,6 +413,14 @@ impl ScrapeOptionsBuilder {
         self.0
     }
 
+    /// 启用 MLLM 自主导航模式（Phase 3）
+    ///
+    /// 为 true 时路由优先选择 MllmEngine，通过视觉大模型分析截图自主导航。
+    pub fn needs_mllm(mut self, enabled: bool) -> Self {
+        self.0.needs_mllm = enabled;
+        self
+    }
+
     /// 设置缓存模式（T058/R-cache-002，design.md §13）
     ///
     /// `None`（默认）等价于 `Some(CacheMode::Enabled)`。
@@ -558,6 +577,8 @@ pub struct InternalScrapeRequest {
     /// 通过 `ScrapeRequest::to_internal` 从 `ScrapeOptions.wait_for` 桥接而来。
     /// 仅浏览器引擎（Playwright）消费；`None` 时 Playwright 使用 [`WaitFor::NetworkIdle`]。
     pub wait_for: Option<WaitFor>,
+    /// MLLM 自主导航模式（Phase 3）
+    pub needs_mllm: bool,
 }
 
 /// Internal screenshot configuration
@@ -672,6 +693,7 @@ impl ScrapeRequest {
             block_media: options.block_media,
             session_id,
             wait_for: options.wait_for.clone(),
+            needs_mllm: options.needs_mllm,
         }
     }
 }

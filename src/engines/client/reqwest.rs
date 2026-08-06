@@ -723,6 +723,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         }
     }
 
@@ -747,6 +748,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         }
     }
 
@@ -776,6 +778,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         }
     }
 
@@ -878,6 +881,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         };
         assert_eq!(engine.support_score(&request), 100);
     }
@@ -924,6 +928,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         };
         assert_eq!(engine.support_score(&request), 10);
     }
@@ -952,6 +957,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         };
         // Mobile without JS should still get 100
         assert_eq!(engine.support_score(&request), 100);
@@ -1109,6 +1115,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         };
         let result = engine.scrape(&request).await;
         assert!(result.is_err());
@@ -1138,6 +1145,7 @@ mod tests {
             block_media: false,
             session_id: None,
             wait_for: None,
+            needs_mllm: false,
         };
         let result = engine.scrape(&request).await;
         assert!(result.is_err());

@@ -38,6 +38,11 @@ pub mod intercept;
 #[cfg(feature = "engine-playwright")]
 pub mod wait;
 
+// MLLM 自主导航爬取引擎（Phase 3）— 由 `engine-mllm` feature 门控
+// 依赖 engine-playwright（浏览器）+ genai-llm（视觉模型）
+#[cfg(feature = "engine-mllm")]
+pub mod mllm;
+
 // Shared validation utilities for SSRF protection
 pub mod shared;
 
