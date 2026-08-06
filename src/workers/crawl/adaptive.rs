@@ -238,6 +238,13 @@ pub enum StopReason {
     },
     /// 无待处理链接（Frontier 为空）
     NoPendingLinks,
+    /// KG 覆盖率达到阈值（Chao1 估计）
+    CoverageReached {
+        /// 当前覆盖率估计
+        coverage: f64,
+        /// 配置的阈值
+        threshold: f64,
+    },
 }
 
 impl StopReason {
@@ -261,6 +268,9 @@ impl StopReason {
                 format!("saturation threshold reached ({saturation:.3} < {threshold:.3})")
             }
             Self::NoPendingLinks => "no pending links".to_string(),
+            Self::CoverageReached { coverage, threshold } => {
+                format!("coverage threshold reached ({coverage:.3} >= {threshold:.3})")
+            }
         }
     }
 }
@@ -280,6 +290,8 @@ pub struct CrawlStats {
     pub pending_links: usize,
     /// 自适应策略评估结果
     pub result: StrategyResult,
+    /// KG 覆盖率估计（Chao1，0.0-1.0，None = 未计算）
+    pub kg_coverage: Option<f64>,
 }
 
 impl CrawlStats {
@@ -307,6 +319,13 @@ impl CrawlStats {
     #[must_use]
     pub fn with_result(mut self, result: StrategyResult) -> Self {
         self.result = result;
+        self
+    }
+
+    /// 设置 KG 覆盖率估计
+    #[must_use]
+    pub fn with_kg_coverage(mut self, coverage: f64) -> Self {
+        self.kg_coverage = Some(coverage);
         self
     }
 }
@@ -352,6 +371,8 @@ pub struct StopCondition {
     min_confidence: Option<f32>,
     /// 饱和度阈值，低于此值停止（None = 不限制）
     saturation_threshold: Option<f32>,
+    /// KG 覆盖率阈值，达到即停止（None = 不限制）
+    min_coverage: Option<f64>,
 }
 
 impl StopCondition {
@@ -379,6 +400,13 @@ impl StopCondition {
     #[must_use]
     pub fn with_saturation_threshold(mut self, threshold: f32) -> Self {
         self.saturation_threshold = Some(threshold.clamp(0.0, 1.0));
+        self
+    }
+
+    /// 设置 KG 覆盖率阈值（达到即停止）
+    #[must_use]
+    pub fn with_min_coverage(mut self, threshold: f64) -> Self {
+        self.min_coverage = Some(threshold.clamp(0.0, 1.0));
         self
     }
 
@@ -423,7 +451,75 @@ impl StopCondition {
             }
         }
 
+        // 5. KG 覆盖率阈值（达到阈值 = 知识图谱已充分覆盖）
+        if let Some(threshold) = self.min_coverage {
+            if let Some(coverage) = stats.kg_coverage {
+                if coverage >= threshold {
+                    return Some(StopReason::CoverageReached {
+                        coverage,
+                        threshold,
+                    });
+                }
+            }
+        }
+
         None
+    }
+}
+
+// =============================================================================
+// DRL 配置（T087）
+// =============================================================================
+
+/// DRL 策略配置
+///
+/// 控制是否启用 DRL 策略替代启发式规则调整并发度和 URL 优先级。
+#[derive(Debug, Clone)]
+pub struct DrlConfig {
+    /// 是否启用 DRL 策略（默认 false）
+    pub drl_policy_enabled: bool,
+    /// ONNX 模型路径（可选，为空时使用启发式策略）
+    pub model_path: Option<String>,
+}
+
+impl Default for DrlConfig {
+    fn default() -> Self {
+        Self {
+            drl_policy_enabled: false,
+            model_path: None,
+        }
+    }
+}
+
+impl DrlConfig {
+    /// 创建默认配置（DRL 关闭）
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 启用 DRL 策略
+    #[must_use]
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.drl_policy_enabled = enabled;
+        self
+    }
+
+    /// 设置 ONNX 模型路径
+    #[must_use]
+    pub fn with_model_path(mut self, path: impl Into<String>) -> Self {
+        self.model_path = Some(path.into());
+        self
+    }
+
+    /// 创建 DrlPolicy 实例
+    pub fn build_policy(&self) -> super::drl_policy::DrlPolicy {
+        if self.drl_policy_enabled {
+            // 如果有模型路径，加载 ONNX 模型
+            // 当前实现使用启发式策略作为退化
+            super::drl_policy::DrlPolicy::heuristic(true)
+        } else {
+            super::drl_policy::DrlPolicy::heuristic(false)
+        }
     }
 }
 

@@ -412,6 +412,15 @@ impl ExtractionServiceTrait for MockExtractionService {
     ) -> anyhow::Result<serde_json::Value> {
         Ok(serde_json::json!({}))
     }
+    async fn extract_with_rag(
+        &self,
+        _html_content: &str,
+        _query: &str,
+        _schema: &serde_json::Value,
+        _rag_strategy: &crawlrs::domain::services::rag_strategy::RagExtractionStrategy,
+    ) -> anyhow::Result<(serde_json::Value, crawlrs::domain::services::llm::TokenUsage)> {
+        Ok((serde_json::json!({}), crawlrs::domain::services::llm::TokenUsage::default()))
+    }
 }
 
 /// Noop CacheService for testing（T059/R-cache-002）。

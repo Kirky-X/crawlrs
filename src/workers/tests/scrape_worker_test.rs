@@ -1442,6 +1442,15 @@
         ) -> Result<Value> {
             Ok(json!({}))
         }
+        async fn extract_with_rag(
+            &self,
+            _html_content: &str,
+            _query: &str,
+            _schema: &Value,
+            _rag_strategy: &crate::domain::services::rag_strategy::RagExtractionStrategy,
+        ) -> Result<(Value, TokenUsage)> {
+            Ok((json!({}), TokenUsage::default()))
+        }
     }
 
     /// Build a ScrapeWorker with all mock/no-op dependencies.
@@ -3565,6 +3574,15 @@
             _base_url: Option<&str>,
         ) -> Result<Value> {
             Ok(json!({}))
+        }
+        async fn extract_with_rag(
+            &self,
+            _html_content: &str,
+            _query: &str,
+            _schema: &Value,
+            _rag_strategy: &crate::domain::services::rag_strategy::RagExtractionStrategy,
+        ) -> Result<(Value, TokenUsage)> {
+            Ok((json!({}), TokenUsage::default()))
         }
     }
 
@@ -5823,6 +5841,15 @@
             _rules: &HashMap<String, ExtractionRule>,
             _base_url: Option<&str>,
         ) -> Result<Value> {
+            Err(anyhow::anyhow!("Mock extraction failure"))
+        }
+        async fn extract_with_rag(
+            &self,
+            _html_content: &str,
+            _query: &str,
+            _schema: &Value,
+            _rag_strategy: &crate::domain::services::rag_strategy::RagExtractionStrategy,
+        ) -> Result<(Value, TokenUsage)> {
             Err(anyhow::anyhow!("Mock extraction failure"))
         }
     }

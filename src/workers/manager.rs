@@ -980,6 +980,15 @@ mod tests {
         ) -> anyhow::Result<Value> {
             Ok(Value::Null)
         }
+        async fn extract_with_rag(
+            &self,
+            _html_content: &str,
+            _query: &str,
+            _schema: &Value,
+            _rag_strategy: &crate::domain::services::rag_strategy::RagExtractionStrategy,
+        ) -> anyhow::Result<(Value, TokenUsage)> {
+            Ok((Value::Null, TokenUsage::default()))
+        }
     }
 
     // ---- Helpers ----

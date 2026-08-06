@@ -16,8 +16,17 @@
 //! - [`adaptive`]：自适应策略 + 停止条件（T067）
 
 pub mod adaptive;
+/// DRL 自适应爬取策略（T083-T087）
+///
+/// ONNX 模型推理 + 启发式退化。
+pub mod drl_policy;
 pub mod filters;
 pub mod frontier;
+/// 知识图谱覆盖感知爬取（T077-T082）
+///
+/// 爬取过程中构建 KG，用 Chao1 估计覆盖率，
+/// 结构空洞检测指导 URL 优先级。
+pub mod knowledge_graph;
 pub mod scorers;
 
 use std::sync::Arc;

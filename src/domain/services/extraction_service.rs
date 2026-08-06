@@ -5,6 +5,7 @@
 use crate::domain::services::extraction_utils::ExtractableRule;
 use crate::domain::services::llm::LLMServiceTrait;
 pub use crate::domain::services::llm::TokenUsage;
+use crate::domain::services::rag_strategy::RagExtractionStrategy;
 use anyhow::Result;
 use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,17 @@ pub trait ExtractionServiceTrait: Send + Sync {
         rules: &HashMap<String, ExtractionRule>,
         base_url: Option<&str>,
     ) -> Result<Value>;
+
+    /// RAG 增强提取（第三种提取模式）
+    ///
+    /// 流程：HTML → 语义分块 → 向量嵌入 → 查询检索 top-K → LLM 精确提取
+    async fn extract_with_rag(
+        &self,
+        html_content: &str,
+        query: &str,
+        schema: &Value,
+        rag_strategy: &RagExtractionStrategy,
+    ) -> Result<(Value, TokenUsage)>;
 }
 
 /// 提取服务
@@ -108,6 +120,33 @@ impl ExtractionServiceTrait for ExtractionService {
         base_url: Option<&str>,
     ) -> Result<Value> {
         Self::extract_with_selectors_internal(html_content, rules, base_url)
+    }
+
+    async fn extract_with_rag(
+        &self,
+        html_content: &str,
+        query: &str,
+        schema: &Value,
+        rag_strategy: &RagExtractionStrategy,
+    ) -> Result<(Value, TokenUsage)> {
+        // 1. RAG 检索：找到与 query 最相关的分块
+        let context = rag_strategy.build_context(query).await?;
+
+        if context.is_empty() {
+            log::warn!("RAG retrieval returned empty context for query: {}", query);
+            // 退化到全页提取
+            let clean_text = Self::get_clean_text(html_content);
+            return self.llm_service.extract_data(&clean_text, schema, "json").await;
+        }
+
+        // 2. 构造增强 prompt：context + 提取指令
+        let enhanced_text = format!(
+            "<retrieved_context>\n{}\n</retrieved_context>\n\nBased on the above context, extract the requested information.",
+            context
+        );
+
+        // 3. LLM 精确提取
+        self.llm_service.extract_data(&enhanced_text, schema, "json").await
     }
 }
 
