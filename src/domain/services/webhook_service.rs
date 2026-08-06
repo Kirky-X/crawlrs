@@ -24,8 +24,6 @@ use crate::application::dto::scrape_request::ScrapeRequestDto;
 #[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 #[cfg(feature = "webhook")]
-use crate::domain::repositories::webhook_repository::WebhookRepository;
-#[cfg(feature = "webhook")]
 use crate::domain::services::webhook_sender::WebhookSender;
 // 架构 MEDIUM-1（审查 M1 折中说明）：本 import 引入 domain → infrastructure 的依赖箭头。
 // `constant_time_eq_str` 是无状态纯函数（无 I/O、无 DB、无全局状态），位于
@@ -304,9 +302,6 @@ pub trait WebhookManagementService: Send + Sync {
     /// * `Err` - 查询失败
     async fn list_webhooks(&self, team_id: Uuid) -> Result<Vec<Webhook>>;
 }
-
-/// Webhook 管理服务实现
-///
 
 /// 统一的 webhook 认证失败错误消息
 ///

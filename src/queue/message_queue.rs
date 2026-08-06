@@ -474,10 +474,6 @@ mod tests {
         }
     }
 
-    fn make_queue() -> DbMessageQueue {
-        DbMessageQueue::new(Arc::new(MockRepository::new()))
-    }
-
     // ========== Message struct tests ==========
 
     #[test]

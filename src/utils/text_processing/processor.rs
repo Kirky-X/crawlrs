@@ -71,29 +71,10 @@ pub trait TextEncodingProcessorTrait: Send + Sync {
     fn trim_newlines(&self, text: &str) -> String;
 }
 
-/// 文本编码处理器组件
-#[allow(dead_code)]
-pub struct TextEncodingProcessorComponent {
-    default_encoding: &'static str,
-    detect_encoding: bool,
-}
+/// 默认文本编码处理器（基于 TextEncodingProcessor）
+struct DefaultTextEncodingProcessor;
 
-impl TextEncodingProcessorComponent {
-    pub fn new() -> Self {
-        Self {
-            default_encoding: "utf-8",
-            detect_encoding: true,
-        }
-    }
-}
-
-impl Default for TextEncodingProcessorComponent {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TextEncodingProcessorTrait for TextEncodingProcessorComponent {
+impl TextEncodingProcessorTrait for DefaultTextEncodingProcessor {
     fn process_text(&self, content: &[u8]) -> Result<String, TextEncodingError> {
         TextEncodingProcessor::new().process_text(content)
     }
@@ -142,7 +123,7 @@ impl WebContentProcessorComponent {
 
 impl Default for WebContentProcessorComponent {
     fn default() -> Self {
-        Self::new(Arc::new(TextEncodingProcessorComponent::default()))
+        Self::new(Arc::new(DefaultTextEncodingProcessor))
     }
 }
 
@@ -823,51 +804,6 @@ mod tests {
         assert!(!detect_html_structure("plain text content"));
         assert!(!detect_html_structure("no html here at all"));
         assert!(!detect_html_structure(""));
-    }
-
-    // ========== TextEncodingProcessorComponent tests ==========
-
-    #[test]
-    fn test_text_encoding_processor_component_default() {
-        let component = TextEncodingProcessorComponent::default();
-        assert_eq!(component.default_encoding, "utf-8");
-        assert!(component.detect_encoding);
-    }
-
-    #[test]
-    fn test_text_encoding_processor_component_new() {
-        let component = TextEncodingProcessorComponent::new();
-        assert_eq!(component.default_encoding, "utf-8");
-        assert!(component.detect_encoding);
-    }
-
-    #[test]
-    fn test_text_encoding_processor_component_process_text_utf8() {
-        let component = TextEncodingProcessorComponent::new();
-        let result = component.process_text(b"hello world").unwrap();
-        assert_eq!(result, "hello world");
-    }
-
-    #[test]
-    fn test_text_encoding_processor_component_process_text_chinese() {
-        let component = TextEncodingProcessorComponent::new();
-        let input = "你好世界".as_bytes();
-        let result = component.process_text(input).unwrap();
-        assert!(result.contains("你好世界"));
-    }
-
-    #[test]
-    fn test_text_encoding_processor_component_trim_newlines() {
-        let component = TextEncodingProcessorComponent::new();
-        let result = component.trim_newlines("hello\nworld\nfoo");
-        assert_eq!(result, "hello world foo");
-    }
-
-    #[test]
-    fn test_text_encoding_processor_component_trim_newlines_single_line() {
-        let component = TextEncodingProcessorComponent::new();
-        let result = component.trim_newlines("hello");
-        assert_eq!(result, "hello");
     }
 
     // ========== WebContentProcessorComponent tests ==========
@@ -1592,7 +1528,7 @@ mod tests {
     #[test]
     fn test_web_content_processor_component_with_custom_processor() {
         let text_processor: Arc<dyn TextEncodingProcessorTrait> =
-            Arc::new(TextEncodingProcessorComponent::new());
+            Arc::new(DefaultTextEncodingProcessor);
         let component = WebContentProcessorComponent::new(text_processor);
         let result = component
             .process_web_content(b"custom processor test", None)
@@ -1617,7 +1553,7 @@ mod tests {
     #[test]
     fn test_text_encoding_processor_component_trait_object() {
         let component: Arc<dyn TextEncodingProcessorTrait> =
-            Arc::new(TextEncodingProcessorComponent::new());
+            Arc::new(DefaultTextEncodingProcessor);
         let result = component.process_text(b"trait object test").unwrap();
         assert_eq!(result, "trait object test");
         let trimmed = component.trim_newlines("line1\nline2");

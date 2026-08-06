@@ -1459,25 +1459,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        ScrapeWorker::new(
-            task_repo,
-            result_repo,
-            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            settings_arc,
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        )
+        ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo,
+                result_repository: result_repo,
+                crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: settings_arc,
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            })
     }
 
     /// T059/R-cache-002：构造使用指定 MockCacheService 的 worker
@@ -1496,25 +1496,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        ScrapeWorker::new(
-            task_repo,
-            result_repo,
-            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            settings_arc,
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            cache as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        )
+        ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo,
+                result_repository: result_repo,
+                crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: settings_arc,
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: cache as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            })
     }
 
     /// T042: 构造使用 CapturingScrapeResultRepository 的 worker
@@ -1536,25 +1536,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        let worker = ScrapeWorker::new(
-            task_repo,
-            result_repo,
-            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            settings_arc,
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        );
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo,
+                result_repository: result_repo,
+                crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: settings_arc,
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            });
         (worker, capturing_repo)
     }
 
@@ -3234,25 +3234,25 @@
         );
 
         // Construct ScrapeWorker via new().
-        let worker = ScrapeWorker::new(
-            infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>,
-            infra.repositories.result_repo.clone() as Arc<dyn ScrapeResultRepository>,
-            infra.repositories.crawl_repo.clone() as Arc<dyn CrawlRepository>,
-            services.webhook_service.clone(),
-            infra.repositories.credits_repo.clone() as Arc<dyn CreditsRepository>,
-            engines.engine_client.clone(),
-            services.create_scrape_use_case.clone(),
-            services.team_semaphore.clone(),
-            coalesce_coordinator,
-            services.robots_checker.clone(),
-            settings_arc,
-            settings.concurrency.default_team_limit as usize,
-            services.extraction_service.clone(),
-            (*services.regex_cache).clone(),
-            infra.cache_service.clone(),
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        );
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>,
+                result_repository: infra.repositories.result_repo.clone() as Arc<dyn ScrapeResultRepository>,
+                crawl_repository: infra.repositories.crawl_repo.clone() as Arc<dyn CrawlRepository>,
+                webhook_service: services.webhook_service.clone(),
+                credits_repository: infra.repositories.credits_repo.clone() as Arc<dyn CreditsRepository>,
+                engine_client: engines.engine_client.clone(),
+                create_scrape_use_case: services.create_scrape_use_case.clone(),
+                team_semaphore: services.team_semaphore.clone(),
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: services.robots_checker.clone(),
+                settings: settings_arc,
+                default_concurrency_limit: settings.concurrency.default_team_limit as usize,
+                extraction_service: services.extraction_service.clone(),
+                regex_cache: (*services.regex_cache).clone(),
+                cache_service: infra.cache_service.clone(),
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            });
 
         Ok(worker)
     }
@@ -3579,25 +3579,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        ScrapeWorker::new(
-            task_repo,
-            result_repo,
-            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            settings_arc,
-            10,
-            Arc::new(MockExtractionServiceWithTokens) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        )
+        ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo,
+                result_repository: result_repo,
+                crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: settings_arc,
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionServiceWithTokens) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            })
     }
 
     // --- Debug impl tests ---
@@ -4626,25 +4626,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        ScrapeWorker::new(
-            task_repo,
-            result_repo,
-            crawl_repo,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            robots_checker,
-            Arc::new(settings),
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        )
+        ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo,
+                result_repository: result_repo,
+                crawl_repository: crawl_repo,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: robots_checker,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            })
     }
 
     // --- Helper: build worker with configurable credits/webhook/result repos ---
@@ -4662,25 +4662,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        ScrapeWorker::new(
-            task_repo,
-            result_repo,
-            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            webhook_service,
-            credits_repo,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            Arc::new(settings),
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        )
+        ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo,
+                result_repository: result_repo,
+                crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+                webhook_service: webhook_service,
+                credits_repository: credits_repo,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            })
     }
 
     // ========== process_task: task expiration tests ==========
@@ -4756,25 +4756,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        let worker = ScrapeWorker::new(
-            task_repo.clone(),
-            result_repo,
-            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            Arc::new(EngineClient::new()),
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            Arc::new(settings),
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        );
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo.clone(),
+                result_repository: result_repo,
+                crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: Arc::new(EngineClient::new()),
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            });
 
         let task = make_task(json!({"url": "https://example.com"}));
         let result = worker.process_task(task).await;
@@ -4834,24 +4834,24 @@
             result_repo.clone(),
         );
 
-        let worker = ScrapeWorker::new(
-            task_repo.clone() as Arc<dyn TaskRepository>,
-            result_repo,
-            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            Arc::new(EngineClient::new()),
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            Arc::new(settings),
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            memory_scheduler,
-        );
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo.clone() as Arc<dyn TaskRepository>,
+                result_repository: result_repo,
+                crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: Arc::new(EngineClient::new()),
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                memory_scheduler,
+            });
 
         let task = make_task(json!({"url": "https://example.com"}));
         let original_scheduled_at = task.scheduled_at;
@@ -4948,24 +4948,24 @@
             result_repo.clone(),
         );
 
-        let worker = ScrapeWorker::new(
-            task_repo.clone() as Arc<dyn TaskRepository>,
-            result_repo,
-            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            Arc::new(EngineClient::new()),
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            Arc::new(settings),
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            memory_scheduler,
-        );
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo.clone() as Arc<dyn TaskRepository>,
+                result_repository: result_repo,
+                crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: Arc::new(EngineClient::new()),
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                memory_scheduler,
+            });
 
         let task = make_task(json!({"url": "https://example.com"}));
         let result = worker.process_task(task).await;
@@ -5532,25 +5532,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        let worker = ScrapeWorker::new(
-            task_repo,
-            result_repo,
-            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            Arc::new(settings),
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        );
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo,
+                result_repository: result_repo,
+                crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            });
 
         let task = make_task(json!({}));
         let response = ScrapeResponse {
@@ -5592,25 +5592,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        let worker = ScrapeWorker::new(
-            task_repo,
-            result_repo,
-            crawl_repo,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            Arc::new(settings),
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        );
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo,
+                result_repository: result_repo,
+                crawl_repository: crawl_repo,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            });
 
         let task = make_task(json!({}));
         let response = ScrapeResponse {
@@ -5650,25 +5650,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        let worker = ScrapeWorker::new(
-            task_repo,
-            result_repo,
-            Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            Arc::new(settings),
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        );
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo,
+                result_repository: result_repo,
+                crawl_repository: Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            });
 
         let mut task = make_task(json!({}));
         let config = make_crawl_config(None, None);
@@ -5702,25 +5702,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        let worker = ScrapeWorker::new(
-            task_repo.clone(),
-            result_repo,
-            Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(DenyingRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            Arc::new(settings),
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        );
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo.clone(),
+                result_repository: result_repo,
+                crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(DenyingRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            });
 
         let crawl_id = Uuid::new_v4();
         let task = make_task(json!({
@@ -5841,25 +5841,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        ScrapeWorker::new(
-            task_repo,
-            result_repo,
-            Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            credits_repo,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            Arc::new(settings),
-            10,
-            extraction_service,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        )
+        ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo,
+                result_repository: result_repo,
+                crawl_repository: Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: credits_repo,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: extraction_service,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            })
     }
 
     // ========== process_scrape_task: success path ==========
@@ -5950,25 +5950,25 @@
         let coalesce_coordinator =
             make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
 
-        let worker = ScrapeWorker::new(
-            task_repo.clone(),
-            result_repo,
-            Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
-            Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
-            Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-            engine_client,
-            Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
-            team_semaphore,
-            coalesce_coordinator,
-            Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
-            Arc::new(settings),
-            10,
-            Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-            regex_cache,
-            Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
-            #[cfg(feature = "metrics")]
-            make_test_memory_scheduler(),
-        );
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: task_repo.clone(),
+                result_repository: result_repo,
+                crawl_repository: Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
+                webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+                credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+                engine_client: engine_client,
+                create_scrape_use_case: Arc::new(MockCreateScrapeUseCase) as Arc<dyn CreateScrapeUseCaseTrait>,
+                team_semaphore: team_semaphore,
+                coalesce_coordinator: coalesce_coordinator,
+                robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+                extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+                regex_cache: regex_cache,
+                cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+                #[cfg(feature = "metrics")]
+                memory_scheduler: make_test_memory_scheduler(),
+            });
 
         let task = make_task(json!({"url": "https://example.com"}));
         let result = worker.process_scrape_task(task).await;

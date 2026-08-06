@@ -9,10 +9,9 @@
 
 use crate::domain::services::webhook_service::{WebhookService, WebhookManagementService};
 use crate::domain::services::webhook_event_builder::WebhookEventBuilder;
-use crate::domain::models::{Webhook, WebhookEvent, WebhookEventType};
+use crate::domain::models::{Webhook, WebhookEventType};
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
-use crate::domain::services::webhook_sender::WebhookSender;
 use async_trait::async_trait;
 use log::{error, info};
 use std::sync::Arc;

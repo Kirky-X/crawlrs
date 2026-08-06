@@ -56,8 +56,6 @@ use crate::workers::markdown_post_processor::MarkdownPostProcessor;
 // T074/R-content-001：正文提取门面（与 markdown 特性配合，only_main_content 前置提取）
 #[cfg(feature = "markdown")]
 use crate::domain::services::content_extractor::ContentExtractionFacade;
-// H-4 职责拆分：仍需 RequestCoalescer 用于构造 CoalesceCoordinator（ScrapeWorkerBuilder.build 中使用）
-use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::retry_policy::RetryPolicy;
 // T028/R-identity-002：重试指令与分类器（消费 RetryTracker + RetryDirective）
 use crate::utils::retry::{RetryDirective, RetryTracker};
@@ -176,64 +174,42 @@ impl std::fmt::Debug for ScrapeWorker {
 impl ScrapeWorker {
     /// 创建新的抓取工作器实例
     ///
-    /// `memory_scheduler` 仅在 `metrics` 特性启用时需要（T019/R-runtime-001）。
-    /// `coalesce_coordinator` 由 `WorkerManager` 从 `repository` +
-    /// `result_repository` + `request_coalescer` 构造注入，
-    /// 所有 worker 共享同一实例（T035/R-runtime-002 + H-4 职责拆分）。
-    /// `cache_service` 由 `WorkerManager` 从 `InfrastructureComponents.cache_service`
-    /// 注入，所有 worker 共享同一实例（T059/R-cache-002）。
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        repository: Arc<dyn TaskRepository>,
-        result_repository: Arc<dyn ScrapeResultRepository>,
-        crawl_repository: Arc<dyn CrawlRepository>,
-        webhook_service: Arc<dyn WebhookService>,
-        credits_repository: Arc<dyn CreditsRepository>,
-        engine_client: Arc<EngineClient>,
-        _create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: Arc<TeamSemaphore>,
-        coalesce_coordinator: Arc<CoalesceCoordinator>,
-        robots_checker: Arc<dyn RobotsCheckerTrait>,
-        settings: Arc<Settings>,
-        default_concurrency_limit: usize,
-        extraction_service: Arc<dyn ExtractionServiceTrait>,
-        regex_cache: RegexCache,
-        cache_service: Arc<dyn CacheService>,
-        #[cfg(feature = "metrics")] memory_scheduler: Arc<MemoryScheduler>,
-    ) -> Self {
+    /// 接受 `ScrapeWorkerDeps` 参数对象，聚合所有外部依赖。
+    /// 由 `ScrapeWorkerBuilder::build()` 或 `WorkerManager` 构造传入。
+    pub fn new(deps: ScrapeWorkerDeps) -> Self {
         // 根据任务类型选择合适的重试策略
         let retry_policy = RetryPolicy::slow(); // 网络请求适合慢速重试策略
-        let retry_handler = RetryHandler::new(repository.clone(), retry_policy.clone());
+        let retry_handler = RetryHandler::new(deps.repository.clone(), retry_policy.clone());
 
         Self {
-            repository,
-            result_repository,
-            crawl_repository,
-            webhook_service,
-            credits_repository,
-            engine_client,
-            _create_scrape_use_case,
-            team_semaphore,
-            coalesce_coordinator,
+            repository: deps.repository,
+            result_repository: deps.result_repository,
+            crawl_repository: deps.crawl_repository,
+            webhook_service: deps.webhook_service,
+            credits_repository: deps.credits_repository,
+            engine_client: deps.engine_client,
+            _create_scrape_use_case: deps.create_scrape_use_case,
+            team_semaphore: deps.team_semaphore,
+            coalesce_coordinator: deps.coalesce_coordinator,
             #[cfg(feature = "markdown")]
             markdown_post_processor: MarkdownPostProcessor::new(
                 Arc::new(crate::domain::services::markdown_service::HtmdMarkdownService::new()),
                 Some(Arc::new(ContentExtractionFacade::new(None))),
             ),
             token_usage: Arc::new(DashMap::new()),
-            robots_checker,
-            settings,
+            robots_checker: deps.robots_checker,
+            settings: deps.settings,
             worker_id: Uuid::new_v4(),
-            default_concurrency_limit,
+            default_concurrency_limit: deps.default_concurrency_limit,
             retry_handler,
-            extraction_service,
-            regex_cache,
+            extraction_service: deps.extraction_service,
+            regex_cache: deps.regex_cache,
             #[cfg(feature = "metrics")]
-            memory_scheduler,
+            memory_scheduler: deps.memory_scheduler,
             // T053/R-frontier-001：默认每 worker 独立 Deduplicator
             // 后续可由 WorkerManager 通过 Builder 注入共享实例优化 DB 查询量
             deduplicator: Arc::new(parking_lot::RwLock::new(Deduplicator::new())),
-            cache_service,
+            cache_service: deps.cache_service,
             // R-security-004/005：默认独立协调器，由 WorkerManager 通过
             // `with_shutdown_coordinator` 注入共享实例。
             shutdown_coordinator: Arc::new(ShutdownCoordinator::default()),
@@ -1706,13 +1682,11 @@ impl ScrapeWorker {
     }
 }
 
-/// ScrapeWorker 构建器
-///
-/// 使用 Builder 模式简化复杂对象的创建过程
-
 // Builder 子模块
 mod builder;
 pub use builder::ScrapeWorkerBuilder;
+mod deps;
+pub use deps::ScrapeWorkerDeps;
 
 #[cfg(test)]
 #[path = "../tests/scrape_worker_test.rs"]

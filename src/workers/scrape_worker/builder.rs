@@ -8,6 +8,7 @@
 //! Provides a fluent API for constructing ScrapeWorker instances.
 
 use super::ScrapeWorker;
+use super::ScrapeWorkerDeps;
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::config::settings::Settings;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
@@ -231,7 +232,6 @@ impl ScrapeWorkerBuilder {
     }
 
     /// 构建 ScrapeWorker 实例
-    #[allow(clippy::too_many_arguments)]
     pub fn build(self) -> Result<ScrapeWorker, &'static str> {
         let repository = self.repository.ok_or("repository is required")?;
         let result_repository = self
@@ -272,7 +272,7 @@ impl ScrapeWorkerBuilder {
             request_coalescer,
         ));
 
-        Ok(ScrapeWorker::new(
+        Ok(ScrapeWorker::new(ScrapeWorkerDeps {
             repository,
             result_repository,
             crawl_repository,
@@ -284,13 +284,13 @@ impl ScrapeWorkerBuilder {
             coalesce_coordinator,
             robots_checker,
             settings,
-            self.default_concurrency_limit,
+            default_concurrency_limit: self.default_concurrency_limit,
             extraction_service,
             regex_cache,
             cache_service,
             #[cfg(feature = "metrics")]
             memory_scheduler,
-        )
+        })
         .with_shutdown_coordinator(shutdown_coordinator)
         .with_deduplicator_opt(self.deduplicator))
     }

@@ -19,7 +19,7 @@ use crate::utils::regex_cache::RegexCache;
 // H-4 职责拆分：CoalesceCoordinator（封装 try_coalesce 逻辑，注入 ScrapeWorker）
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 use crate::workers::expiration_worker::ExpirationWorker;
-use crate::workers::scrape_worker::ScrapeWorker;
+use crate::workers::scrape_worker::{ScrapeWorker, ScrapeWorkerDeps};
 // R-security-004/005：优雅退出协调器（design.md D3，T007）
 use crate::workers::shutdown::ShutdownCoordinator;
 use crate::workers::{AbstractWorker, Worker};
@@ -212,25 +212,25 @@ impl WorkerManager {
         }));
 
         for _ in 0..count {
-            let worker = ScrapeWorker::new(
-                self.repository.clone(),
-                self.result_repository.clone(),
-                self.crawl_repository.clone(),
-                self.webhook_service.clone(),
-                self.credits_repository.clone(),
-                self.engine_client.clone(),
-                self.create_scrape_use_case.clone(),
-                self.team_semaphore.clone(),
-                self.coalesce_coordinator.clone(),
-                self.robots_checker.clone(),
-                self.settings.clone(),
-                self.default_concurrency_limit,
-                self.extraction_service.clone(),
-                self.regex_cache.clone(),
-                self.cache_service.clone(),
+            let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+                repository: self.repository.clone(),
+                result_repository: self.result_repository.clone(),
+                crawl_repository: self.crawl_repository.clone(),
+                webhook_service: self.webhook_service.clone(),
+                credits_repository: self.credits_repository.clone(),
+                engine_client: self.engine_client.clone(),
+                create_scrape_use_case: self.create_scrape_use_case.clone(),
+                team_semaphore: self.team_semaphore.clone(),
+                coalesce_coordinator: self.coalesce_coordinator.clone(),
+                robots_checker: self.robots_checker.clone(),
+                settings: self.settings.clone(),
+                default_concurrency_limit: self.default_concurrency_limit,
+                extraction_service: self.extraction_service.clone(),
+                regex_cache: self.regex_cache.clone(),
+                cache_service: self.cache_service.clone(),
                 #[cfg(feature = "metrics")]
-                self.memory_scheduler.clone(),
-            )
+                memory_scheduler: self.memory_scheduler.clone(),
+            })
             // R-security-004/005：注入共享优雅退出协调器（design.md D3，T007）
             .with_shutdown_coordinator(self.shutdown_coordinator.clone())
             // T053/R-frontier-001：注入共享 deduplicator（替换 ScrapeWorker::new 内部默认实例）
