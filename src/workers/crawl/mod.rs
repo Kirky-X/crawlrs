@@ -142,12 +142,31 @@ impl FilterContext {
 /// - `keywords`: 关键词列表（用于 [`scorers::KeywordRelevanceScorer`]）。
 ///   通常由 CrawlConfigDto 的 `keywords` 字段或 LLM 查询扩展生成。
 /// - `source_url`: 源页面 URL（预留扩展，用于上下文相关评分，如 source 同 path 前缀加分）。
-#[derive(Debug, Clone, Default)]
+/// - `kg_priority_boost`: KG 结构空洞优先级提升因子（T082，R-frontier-006）。
+///   由 [`crate::workers::crawl::knowledge_graph::KnowledgeGraphAccumulator::url_priority_boost`]
+///   计算，默认 1.0（不提升）。>1.0 表示该 URL 可能填补结构空洞，应获得更高优先级。
+#[derive(Debug, Clone)]
 pub struct ScoringContext {
     /// 关键词列表
     pub keywords: Vec<String>,
     /// 源页面 URL（预留扩展）
     pub source_url: Option<String>,
+    /// KG 结构空洞优先级提升因子（默认 1.0，不提升）
+    ///
+    /// 由 `KnowledgeGraphAccumulator::url_priority_boost()` 计算。
+    /// >1.0 表示 URL 可能填补结构空洞，应获得更高优先级。
+    /// 最终分数 = base_score * kg_priority_boost，clamp 到 [0.0, 1.0]。
+    pub kg_priority_boost: f64,
+}
+
+impl Default for ScoringContext {
+    fn default() -> Self {
+        Self {
+            keywords: Vec::new(),
+            source_url: None,
+            kg_priority_boost: 1.0,
+        }
+    }
 }
 
 impl ScoringContext {
@@ -168,6 +187,17 @@ impl ScoringContext {
     #[must_use]
     pub fn with_source_url(mut self, url: impl Into<String>) -> Self {
         self.source_url = Some(url.into());
+        self
+    }
+
+    /// 设置 KG 结构空洞优先级提升因子（T082，R-frontier-006）
+    ///
+    /// 由 `KnowledgeGraphAccumulator::url_priority_boost()` 计算。
+    /// 值 >1.0 表示 URL 可能填补结构空洞，应获得更高优先级。
+    /// 默认 1.0（不提升）。
+    #[must_use]
+    pub fn with_kg_priority_boost(mut self, boost: f64) -> Self {
+        self.kg_priority_boost = boost.max(1.0); // 不允许 <1.0（避免降权）
         self
     }
 }

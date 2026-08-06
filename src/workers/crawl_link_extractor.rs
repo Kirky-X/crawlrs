@@ -255,7 +255,11 @@ pub async fn extract_and_queue_links(
         let frontier = Frontier::new();
 
         for url in &new_urls {
-            let score = scorer.score(url, &scoring_ctx);
+            let base_score = scorer.score(url, &scoring_ctx);
+            // T082 / R-frontier-006：KG 结构空洞提升因子
+            // kg_priority_boost > 1.0 表示 URL 可能填补结构空洞，应获得更高优先级
+            let score =
+                (base_score as f64 * scoring_ctx.kg_priority_boost).clamp(0.0, 1.0) as f32;
             match crate::workers::crawl::ScoredUrl::new(url.clone(), score) {
                 Ok(scored) => frontier.push(scored),
                 Err(e) => {
