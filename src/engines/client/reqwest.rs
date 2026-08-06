@@ -655,6 +655,11 @@ impl ScraperEngine for ReqwestEngine {
         if request.needs_js || request.needs_screenshot {
             return 10; // Low priority for unsupported features
         }
+        // Phase 1 / D4：needs_tls_fingerprint 请求应由专用 TLS 指纹引擎（WreqEngine）处理，
+        // reqwest（rustls 后端）无法伪装 JA4 指纹，返回 10（低分），让 router 优先选 WreqEngine。
+        if request.needs_tls_fingerprint {
+            return 10;
+        }
         100 // Highest priority (fastest)
     }
 
@@ -963,6 +968,29 @@ mod tests {
         let engine = ReqwestEngine::with_provider(client, pool);
         let request = create_basic_request("https://example.com");
         // ProxyProvider shouldn't affect support score
+        assert_eq!(engine.support_score(&request), 100);
+    }
+
+    // === support_score: needs_tls_fingerprint (Phase 1 / D4, T013-T014) ===
+
+    #[test]
+    fn test_support_score_needs_tls_fingerprint_returns_low() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        // needs_tls_fingerprint=true → reqwest 无法伪装 JA4 指纹 → 10（低分，让位 WreqEngine）
+        let request = InternalScrapeRequest {
+            needs_tls_fingerprint: true,
+            ..create_basic_request("https://example.com")
+        };
+        assert_eq!(engine.support_score(&request), 10);
+    }
+
+    #[test]
+    fn test_support_score_no_tls_fingerprint_returns_full() {
+        let client = create_test_client();
+        let engine = ReqwestEngine::new(client);
+        // needs_tls_fingerprint=false（默认）→ 100（最高优先）
+        let request = create_basic_request("https://example.com");
         assert_eq!(engine.support_score(&request), 100);
     }
 

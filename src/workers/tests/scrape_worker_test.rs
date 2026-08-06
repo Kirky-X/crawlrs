@@ -2798,19 +2798,19 @@
     #[tokio::test]
     async fn test_builder_new_creates_default() {
         let builder = ScrapeWorkerBuilder::new();
-        assert_eq!(builder.default_concurrency_limit, 10);
+        assert_eq!(builder.default_concurrency_limit(), 10);
     }
 
     #[tokio::test]
     async fn test_builder_default_impl() {
         let builder = ScrapeWorkerBuilder::default();
-        assert_eq!(builder.default_concurrency_limit, 10);
+        assert_eq!(builder.default_concurrency_limit(), 10);
     }
 
     #[tokio::test]
     async fn test_builder_with_default_concurrency_limit() {
         let builder = ScrapeWorkerBuilder::new().with_default_concurrency_limit(50);
-        assert_eq!(builder.default_concurrency_limit, 50);
+        assert_eq!(builder.default_concurrency_limit(), 50);
     }
 
     #[tokio::test]
