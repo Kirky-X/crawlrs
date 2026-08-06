@@ -10,7 +10,6 @@
 //! create_use_case wiring — all through the crawlrs crate's public exports
 //! with no-op mock implementations of the required traits.
 
-use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -19,129 +18,29 @@ use uuid::Uuid;
 
 use crawlrs::application::use_cases::crawl_use_case::CrawlUseCase;
 use crawlrs::domain::models::credits_model::CreditsTransactionType;
-use crawlrs::domain::models::ScrapeResult;
 use crawlrs::domain::models::{Crawl, Task, Webhook};
 use crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
-use crawlrs::domain::repositories::task_repository::{
-    RepositoryError, TaskQueryParams, TaskRepository,
-};
-use crawlrs::domain::repositories::{
-    crawl_repository::CrawlRepository, scrape_result_repository::ScrapeResultRepository,
-    webhook_repository::WebhookRepository,
-};
+use crawlrs::domain::repositories::task_repository::RepositoryError;
+use crawlrs::domain::repositories::webhook_repository::WebhookRepository;
 use crawlrs::domain::services::geo_location::{GeoLocation, GeoLocationService};
 use crawlrs::domain::services::rate_limiting_service::{
     BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult, QuotaService,
-    RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError, RateLimitingService,
+    RateLimitConfig, RateLimitResult, RateLimitingError, RateLimitingService,
 };
 use crawlrs::domain::services::team_service::{TeamGeoRestrictions, TeamService};
 use crawlrs::presentation::state::{CrawlHandlerState, HandlerState};
 
+// T044: 使用 tests/common/mocks 统一 mock
+use crate::common::mocks::{
+    MockCrawlRepository, MockScrapeResultRepository, MockTaskRepository,
+};
+
 // =============================================================================
-// No-op mock implementations
+// No-op mock implementations (feature-gated only — basic repos use shared mocks)
 // =============================================================================
 
-struct MockCrawlRepository;
-#[async_trait]
-impl CrawlRepository for MockCrawlRepository {
-    async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
-        Ok(crawl.clone())
-    }
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
-        Ok(None)
-    }
-    async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
-        Ok(crawl.clone())
-    }
-    async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
-    }
-    async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
-    }
-    async fn update_status(
-        &self,
-        _id: Uuid,
-        _status: crawlrs::domain::models::CrawlStatus,
-    ) -> Result<(), RepositoryError> {
-        Ok(())
-    }
-    async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
-    }
-    async fn find_by_team_id_paginated(
-        &self,
-        _team_id: Uuid,
-        _limit: u32,
-        _offset: u32,
-    ) -> Result<Vec<Crawl>, RepositoryError> {
-        Ok(vec![])
-    }
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
-        Ok(0)
-    }
-}
-
-struct MockTaskRepository;
-#[async_trait]
-impl TaskRepository for MockTaskRepository {
-    async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
-        Ok(task.clone())
-    }
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
-        Ok(None)
-    }
-    async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
-        Ok(task.clone())
-    }
-    async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
-        Ok(None)
-    }
-    async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
-    }
-    async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
-    }
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
-    }
-    async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
-        Ok(false)
-    }
-    async fn find_existing_urls(
-        &self,
-        _urls: &[String],
-    ) -> Result<HashSet<String>, RepositoryError> {
-        Ok(HashSet::new())
-    }
-    async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> {
-        Ok(0)
-    }
-    async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
-        Ok(0)
-    }
-    async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
-        Ok(0)
-    }
-    async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
-        Ok(vec![])
-    }
-    async fn query_tasks(
-        &self,
-        _params: TaskQueryParams,
-    ) -> Result<(Vec<Task>, u64), RepositoryError> {
-        Ok((vec![], 0))
-    }
-    async fn batch_cancel(
-        &self,
-        _task_ids: Vec<Uuid>,
-        _team_id: Uuid,
-        _force: bool,
-    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
-        Ok((vec![], vec![]))
-    }
-}
+// T044: MockCrawlRepository, MockTaskRepository, MockScrapeResultRepository
+// 已迁移到 tests/common/mocks/mock_repositories.rs
 
 // R-wh-003 / T027：webhook feature 关闭时不编译此 mock
 #[cfg(feature = "webhook")]
@@ -160,22 +59,7 @@ impl WebhookRepository for MockWebhookRepository {
     }
 }
 
-struct MockScrapeResultRepository;
-#[async_trait]
-impl ScrapeResultRepository for MockScrapeResultRepository {
-    async fn save(&self, _result: ScrapeResult) -> anyhow::Result<()> {
-        Ok(())
-    }
-    async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
-        Ok(None)
-    }
-    async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
-        Ok(vec![])
-    }
-    async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
-        Ok(0.0)
-    }
-}
+// T044: MockScrapeResultRepository 已使用 tests/common/mocks 统一定义
 
 // R-teams-004 / T014：teams feature 关闭时不编译此 mock
 #[cfg(feature = "teams")]
