@@ -78,6 +78,19 @@ impl BaiduSearchEngine {
         let json: serde_json::Value = serde_json::from_str(json_str)
             .map_err(|e| SearchError::Parse(format!("Failed to parse Baidu JSON: {}", e)))?;
 
+        // 反爬检测：Baidu JSON 中 antiFlag=1 表示拒绝访问
+        // 参考: searxng/searx/engines/baidu.py line 138
+        if json.get("antiFlag").and_then(|v| v.as_i64()) == Some(1) {
+            let msg = json
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Baidu spider access denied");
+            return Err(SearchError::RateLimited(format!(
+                "Baidu anti-spider: {}",
+                msg
+            )));
+        }
+
         let mut results = Vec::with_capacity(10);
 
         if let Some(entry_array) = json
@@ -175,7 +188,8 @@ impl SearchEngine for BaiduSearchEngine {
         };
 
         // 构建请求头
-        let mut headers = HashMap::with_capacity(4);
+        // 参考 searxng/searx/engines/baidu.py：Baidu JSON 模式需要标准浏览器 UA
+        let mut headers = HashMap::with_capacity(6);
         headers.insert(
             "Accept".to_string(),
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
@@ -187,6 +201,8 @@ impl SearchEngine for BaiduSearchEngine {
         );
         headers.insert("DNT".to_string(), "1".to_string());
         headers.insert("Connection".to_string(), "keep-alive".to_string());
+        headers.insert("Sec-GPC".to_string(), "1".to_string());
+        headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
 
         // 使用 EngineClient 进行请求
         let options = ScrapeOptions {
@@ -215,10 +231,17 @@ impl SearchEngine for BaiduSearchEngine {
 
         let content = scrape_response.content;
 
-        // Try parsing as HTML (Baidu returns HTML by default now)
+        // 反爬检测：Baidu captcha 重定向目标（参考 searxng wappass 检测）
+        if content.contains("wappass.baidu.com/static/captcha")
+            || content.contains("verify your access")
+        {
+            return Err(SearchError::Captcha("Baidu".to_string()));
+        }
+
+        // Try parsing as HTML first, then JSON fallback
         let items = self.parse_search_results(&content, &request.query)?;
 
-        // If items are empty, try JSON as fallback (though unlikely with current URL)
+        // If HTML parsing returned empty, try JSON (tn=json mode)
         let items = if items.is_empty() {
             if let Ok(json_items) = self.parse_baidu_response(&content) {
                 if !json_items.is_empty() {

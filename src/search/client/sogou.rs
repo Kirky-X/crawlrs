@@ -94,6 +94,16 @@ impl SogouSearchEngine {
         let mut results = Vec::with_capacity(10);
 
         for element in document.select(&result_selector) {
+            // 过滤特殊内容容器（广告/推荐等），参考 SearXNG XPath:
+            // `vrwrap and not(.//div[contains(@class, "special-wrap")])`
+            if element
+                .select(&safe_parse_selector("div.special-wrap").expect("special-wrap selector"))
+                .next()
+                .is_some()
+            {
+                continue;
+            }
+
             // 提取标题 - 获取纯文本并清理空白
             let title_node = element.select(&title_selector).next();
             let raw_title = match title_node {
@@ -186,16 +196,23 @@ impl SearchEngine for SogouSearchEngine {
 
         let base_url = "https://www.sogou.com/web";
 
+        // 分页支持（参考 SearXNG sogou.py `page` 参数）
+        let page = if request.offset > 0 {
+            (request.offset / request.limit.max(1)) + 1
+        } else {
+            1
+        };
+
         // 构建带查询参数的完整 URL
         let full_url = format!(
-            "{}?query={}&num={}",
+            "{}?query={}&page={}",
             base_url,
             urlencoding::encode(&request.query),
-            request.limit
+            page,
         );
 
-        // 构建请求头
-        let mut headers = HashMap::with_capacity(4);
+        // 构建请求头（参考 SearXNG + 完整浏览器指纹）
+        let mut headers = HashMap::with_capacity(6);
         headers.insert(
             "Accept".to_string(),
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
@@ -207,6 +224,8 @@ impl SearchEngine for SogouSearchEngine {
         );
         headers.insert("DNT".to_string(), "1".to_string());
         headers.insert("Connection".to_string(), "keep-alive".to_string());
+        headers.insert("Sec-GPC".to_string(), "1".to_string());
+        headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
 
         // 使用 EngineClient 进行请求
         let options = ScrapeOptions {
@@ -234,6 +253,15 @@ impl SearchEngine for SogouSearchEngine {
         }
 
         let html_content = scrape_response.content;
+
+        // 反爬检测：Sogou 302 重定向到 antispider 页面
+        // （参考 SearXNG sogou.py response()：resp.next_request.url starts with antispider）
+        // 由于 EngineClient 自动跟随重定向，最终 content 会是 antispider 页面内容
+        if html_content.contains("www.sogou.com/antispider")
+            || html_content.contains("antispider") && html_content.contains("验证")
+        {
+            return Err(SearchError::Captcha("Sogou".to_string()));
+        }
         let items = self.parse_search_results(&html_content)?;
         let total_count = items.len() as u64;
 

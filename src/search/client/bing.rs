@@ -100,11 +100,32 @@ impl BingSearchEngine {
     }
 
     pub fn build_bing_url(&self, query: &str, page: u32) -> String {
+        self.build_bing_url_with_locale(query, page, None, None)
+    }
+
+    /// Build Bing search URL with locale parameters
+    ///
+    /// 参考 searxng/searx/engines/bing.py：
+    /// - `mkt` 参数：Bing 官方推荐的区域信号，优化结果语言/地区匹配
+    /// - `adlt` 参数：安全搜索过滤（off/moderate/strict）
+    pub fn build_bing_url_with_locale(
+        &self,
+        query: &str,
+        page: u32,
+        lang: Option<&str>,
+        country: Option<&str>,
+    ) -> String {
         // 使用 cn.bing.com：从中国大陆 IP 直连 www.bing.com 时，Bing 返回 JS 渲染壳子
         // （无 b_algo 结果容器），而 cn.bing.com 返回完整 HTML（含 10 条 b_algo 结果）。
         // 两者 HTML 结构一致，解析器无需改动。
         let base_url = "https://cn.bing.com/search";
         let mut params = vec![("q", query.to_string()), ("pq", query.to_string())];
+
+        // 参考 searxng：mkt 参数是 Bing 推荐的"主要信号"
+        if let (Some(lang_code), Some(country_code)) = (lang, country) {
+            let mkt = format!("{}-{}", lang_code, country_code);
+            params.push(("mkt", mkt));
+        }
 
         if page > 1 {
             let first_value = ((page - 1) * 10 + 1).to_string();
@@ -176,19 +197,34 @@ impl SearchEngine for BingSearchEngine {
             ));
         }
 
-        let url = self.build_bing_url(&request.query, 1);
+        let url = self.build_bing_url_with_locale(
+            &request.query,
+            1,
+            request.lang.as_deref(),
+            request.country.as_deref(),
+        );
 
         // 构建请求头
+        // 参考 searxng/searx/engines/bing.py fetch_traits()：
+        // 完整的浏览器指纹 headers 降低反爬检测概率
         let mut headers = HashMap::with_capacity(8);
         headers.insert(
             "Accept".to_string(),
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
                 .to_string(),
         );
-        headers.insert("Accept-Language".to_string(), "en-US,en;q=0.5".to_string());
+        // 根据请求的 language/country 动志化 Accept-Language（参考 searxng override_accept_language）
+        let accept_lang = match (&request.lang, &request.country) {
+            (Some(lang), Some(country)) => format!("{}-{},{};q=0.9,en;q=0.5", lang, country, lang),
+            (Some(lang), None) => format!("{},{};q=0.9,en;q=0.5", lang, lang),
+            _ => "zh-CN,zh;q=0.9,en;q=0.8".to_string(),
+        };
+        headers.insert("Accept-Language".to_string(), accept_lang);
         headers.insert("DNT".to_string(), "1".to_string());
         headers.insert("Connection".to_string(), "keep-alive".to_string());
         headers.insert("Upgrade-Insecure-Requests".to_string(), "1".to_string());
+        headers.insert("Sec-GPC".to_string(), "1".to_string());
+        headers.insert("Cache-Control".to_string(), "max-age=0".to_string());
 
         // 使用 EngineClient 进行请求
         let options = ScrapeOptions {

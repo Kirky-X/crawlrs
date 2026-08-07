@@ -65,6 +65,29 @@ static GOOGLE_STATIC_HEADERS: Lazy<HashMap<String, String>> = Lazy::new(|| {
 /// 已删除 aho-corasick 直接依赖（regex 仍间接引入）。
 const GOOGLE_BOT_PROTECTION_OR_PATTERNS: [&str; 2] = ["/sorry/", "sorry.google.com"];
 
+/// Google 区域子域名映射（参考 SearXNG `google_domains`）
+///
+/// 使用对应国家的 Google 子域名可提高搜索结果的相关性，
+/// 并降低因跨区域请求触发反爬检测的概率。
+fn google_subdomain(country: &str) -> &'static str {
+    match country.to_uppercase().as_str() {
+        "DE" => "www.google.de",
+        "FR" => "www.google.fr",
+        "JP" => "www.google.co.jp",
+        "KR" => "www.google.co.kr",
+        "BR" => "www.google.com.br",
+        "GB" => "www.google.co.uk",
+        "IN" => "www.google.co.in",
+        "AU" => "www.google.com.au",
+        "CA" => "www.google.ca",
+        "IT" => "www.google.it",
+        "ES" => "www.google.es",
+        "RU" => "www.google.ru",
+        "CN" => "www.google.com",
+        _ => "www.google.com",
+    }
+}
+
 /// Google 结果解析的预编译依赖上下文（client 端）
 ///
 /// 移植自 `src/search/smart/mod.rs::GoogleParseContext`，消除 smart 端与
@@ -386,24 +409,40 @@ impl SearchEngine for GoogleSearchEngine {
         let start = (page - 1) * request.limit;
 
         // Build query parameters
-        let query_params: Vec<(&str, String)> = vec![
+        // 参考 SearXNG get_google_info()：添加 hl/lr/cr locale 参数
+        let mut query_params: Vec<(&str, String)> = vec![
             ("q", request.query.clone()),
             ("ie", "utf8".to_string()),
             ("oe", "utf8".to_string()),
             ("start", start.to_string()),
             ("num", request.limit.to_string()),
+            ("filter", "0".to_string()),
             ("asearch", "arc".to_string()),
             ("async", self.get_arc_id(start as usize).await),
         ];
+
+        // Locale 参数（参考 SearXNG get_google_info() lines 189-228）
+        let lang_code = request.lang.as_deref().unwrap_or("en");
+        let country_code = request.country.as_deref().unwrap_or("US");
+        // hl: 界面语言
+        query_params.push(("hl", lang_code.to_string()));
+        // lr: 语言限制（lang_xx 格式）
+        query_params.push(("lr", format!("lang_{}", lang_code)));
+        // cr: 国家限制（countryXX 格式），仅当有明确国家时设置
+        if request.country.is_some() {
+            query_params.push(("cr", format!("country{}", country_code)));
+        }
 
         info!(
             "Google search request: query={}, limit={}",
             request.query, request.limit
         );
 
-        // Build Google search URL
+        // Build Google search URL（使用区域子域名，参考 SearXNG google_info["subdomain"]）
+        let subdomain = google_subdomain(country_code);
         let google_url = format!(
-            "https://www.google.com/search?{}",
+            "https://{}/search?{}",
+            subdomain,
             build_query_string(&query_params)
         );
         info!(
@@ -429,14 +468,17 @@ impl SearchEngine for GoogleSearchEngine {
         //
         // CONSENT cookie: SearXNG sets CONSENT=YES+ to bypass Google's EU
         // consent redirect (see temp/searxng/searx/engines/google.py line 274).
+        // 构造动态 headers：基于 GOOGLE_STATIC_HEADERS + locale-aware Accept-Language
+        let mut headers = GOOGLE_STATIC_HEADERS.clone();
+        let accept_lang = format!("{}-{},{};q=0.9,en;q=0.5", lang_code, country_code, lang_code);
+        headers.insert("Accept-Language".to_string(), accept_lang);
+        headers.insert("Sec-GPC".to_string(), "1".to_string());
+
         let engine_request = EngineScrapeRequest::new(&google_url).with_options(
             crate::engines::engine_client::ScrapeOptions::builder()
                 .needs_js(false)
                 .timeout(Duration::from_secs(60))
-                // 复用静态 headers（Lazy<HashMap>）— 见 GOOGLE_STATIC_HEADERS 注释
-                // 性能 LOW-1：clone 仍分配 6 个 String，与每次新构造等价；
-                // 真正优化需要 ScrapeOptions::headers 接口改造（暂未做）。
-                .headers(GOOGLE_STATIC_HEADERS.clone())
+                .headers(headers)
                 .build(),
         );
 
@@ -469,6 +511,12 @@ impl SearchEngine for GoogleSearchEngine {
         {
             warn!("Google returned CAPTCHA/sorry page — IP likely flagged as bot");
             return Err(SearchError::RateLimited("Google".to_string()));
+        }
+        // 短 HTML 响应 + /sorry/ 模式（参考 SearXNG detect_google_sorry 第 3 种检测）：
+        // Google 有时返回 <2000 字节的 HTML stub，含 meta-refresh 或 JS 重定向到 sorry 页面
+        if content.len() < 2000 && content.contains("/sorry/") {
+            warn!("Google returned short HTML with /sorry/ redirect ({} bytes)", content.len());
+            return Err(SearchError::Captcha("Google".to_string()));
         }
         // noscript 检测保持 2 次 contains（AND 逻辑：两个子串都存在才判定）
         if content.contains("Please click") && content.contains("enablejs") {
