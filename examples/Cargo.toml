@@ -21,6 +21,9 @@ publish = false
 # 此处仅显式启用 metrics 以运行 metrics_export 示例
 crawlrs = { path = "..", default-features = false, features = [
     "metrics",
+    "engine-playwright",
+    "engine-flaresolverr",
+    "engine-tls-fingerprint",
 ] }
 
 # 异步运行时
@@ -53,6 +56,8 @@ sdforge.workspace = true
 axum.workspace = true
 
 # Advanced examples
+async-trait = "0.1"
+reqwest = { version = "0.13", features = ["rustls"] }
 [[bin]]
 name = "async_batch"
 path = "advanced/async_batch.rs"
@@ -307,6 +312,11 @@ path = "teams/geo_restrictions.rs"
 name = "task_management"
 path = "tasks/task_management.rs"
 
+# Engine test
+[[bin]]
+name = "test_all_engines"
+path = "browser/test_all_engines.rs"
+
 # Text encoding examples
 
 # Webhooks examples
@@ -332,3 +342,9 @@ path = "src/lib.rs"
 [lints.rust]
 unexpected_cfgs = "allow"
 dead_code = "allow"
+
+# Feature flags（传递到 crawlrs 依赖，同时供本 crate 的 cfg 条件编译使用）
+[features]
+engine-playwright = ["crawlrs/engine-playwright"]
+engine-flaresolverr = ["crawlrs/engine-flaresolverr"]
+engine-tls-fingerprint = ["crawlrs/engine-tls-fingerprint"]
