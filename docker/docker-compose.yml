@@ -152,6 +152,7 @@ services:
     environment:
       - LOG_LEVEL=${FLARESOLVERR_LOG_LEVEL:-info}
       - CAPTCHA_SOLVER=${FLARESOLVERR_CAPTCHA_SOLVER:-none}
+      - TWOCAPTCHA_API_KEY=${TWOCAPTCHA_API_KEY:-}
     ports:
       - "${FLARESOLVERR_PORT:-8191}:8191"
     restart: unless-stopped
