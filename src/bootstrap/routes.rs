@@ -16,6 +16,8 @@ use crate::infrastructure::database::repositories::database_geo_restriction_repo
 use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
 #[cfg(feature = "webhook")]
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
+use crate::infrastructure::database::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
+use crate::infrastructure::database::repositories::task_repo_impl::TaskRepositoryImpl;
 use crate::presentation::handlers::metrics_handler;
 #[cfg(not(feature = "auth"))]
 use crate::presentation::middleware::auth_types::AuthState;
@@ -296,9 +298,7 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
 /// # Arguments
 ///
 /// * `state` - Application state with resolved dependencies
-pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
-    let task_repo = state.task_repo.clone();
-    let result_repo = state.result_repo.clone();
+pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
     let crawl_repo = state.crawl_repo.clone();
     // R-wh-001 / T028：webhook 相关字段在 webhook-off 时不编译
     #[cfg(feature = "webhook")]
@@ -312,9 +312,26 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
     // auth-on：通过 `from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool（与 protected_routes 一致）。
     // auth-off：不调用全局状态，模板通过下方 `from_fn_with_state` 直接注入。
 
+    // 构造具体实现类型（非 trait object），供泛型 handler 的 Extension 提取。
+    // handler 签名 `Extension<Arc<T>>` 其中 T: TaskRepository 要求具体类型，
+    // 而 CrawlRsState.task_repo 是 Arc<dyn TaskRepository>（trait object），
+    // Axum Extension 按精确类型匹配，trait object 与具体类型不兼容。
+    let task_repo_impl: Arc<TaskRepositoryImpl> = Arc::new(TaskRepositoryImpl::new(
+        state.db_pool.clone(),
+        chrono::Duration::seconds(
+            settings
+                .concurrency
+                .task_lock_duration_seconds
+                .try_into()
+                .expect("task_lock_duration_seconds exceeds i64 range"),
+        ),
+    ));
+    let result_repo_impl: Arc<ScrapeResultRepositoryImpl> =
+        Arc::new(ScrapeResultRepositoryImpl::new(state.db_pool.clone()));
+
     let app = task_routes()
-        .layer(Extension(task_repo.clone()))
-        .layer(Extension(result_repo.clone()));
+        .layer(Extension(task_repo_impl.clone()))
+        .layer(Extension(result_repo_impl.clone()));
 
     // team_semaphore_middleware（inner — auth 注入 AuthState 后执行）
     //
@@ -324,8 +341,8 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
     let app = app
         .layer(axum::middleware::from_fn(team_semaphore_middleware))
         .layer(Extension(team_semaphore))
-        .layer(Extension(task_repo.clone()))
-        .layer(Extension(result_repo.clone()))
+        .layer(Extension(task_repo_impl.clone()))
+        .layer(Extension(result_repo_impl.clone()))
         .layer(Extension(crawl_repo.clone()));
     // R-wh-001 / T028：webhook Extension 层在 webhook-off 时不装配
     #[cfg(feature = "webhook")]
@@ -368,7 +385,7 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState) -> Router {
 pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
     let public_routes = create_public_routes(state);
     let protected_routes = create_protected_routes_with_state(state, settings.clone());
-    let v2_routes = create_v2_routes_with_state(state);
+    let v2_routes = create_v2_routes_with_state(state, settings.clone());
 
     let rate_limiting_service = state.rate_limiting_service.clone();
     let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
@@ -1360,7 +1377,8 @@ mod tests {
                 return;
             }
         };
-        let router = create_v2_routes_with_state(&state);
+        let settings = Arc::new(load_test_settings());
+        let router = create_v2_routes_with_state(&state, settings);
         drop(router);
     }
 
