@@ -73,6 +73,6 @@ BEGIN
         CREATE TRIGGER trigger_update_mq_updated_at
             BEFORE UPDATE ON message_queues
             FOR EACH ROW
-            EXECUTE FUNCTION set_updated_at();
+            EXECUTE FUNCTION update_updated_at_column();
     END IF;
 END $$;
