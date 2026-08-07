@@ -123,10 +123,11 @@ impl WreqEngine {
         })
     }
 
-    /// 构建基础 wreq 客户端（含默认 Chrome 系 TLS 指纹模拟 + 超时）。
+    /// 构建基础 wreq 客户端（含默认 Chrome 系 TLS 指纹模拟 + 超时 + 重定向跟随）。
     fn build_base_client(timeout_seconds: u64) -> Result<wreq::Client, EngineError> {
         wreq::Client::builder()
             .emulation(emulation_provider(TlsEmulation::Chrome131))
+            .redirect(wreq::redirect::Policy::default())
             .timeout(Duration::from_secs(timeout_seconds))
             .build()
             .map_err(|e| EngineError::Internal(format!("wreq client build failed: {e}")))
@@ -151,6 +152,7 @@ impl WreqEngine {
             }
         };
         match wreq::Client::builder()
+            .redirect(wreq::redirect::Policy::default())
             .proxy(proxy)
             .timeout(Duration::from_secs(timeout_seconds))
             .build()
@@ -214,19 +216,31 @@ impl WreqEngine {
         proxy: &Option<String>,
         session_id: Option<&str>,
     ) -> (wreq::Client, Option<String>) {
+        let proxy_url = self.resolve_proxy_url(proxy, session_id);
+        let client = if let Some(ref url) = proxy_url {
+            Self::build_proxy_client(url, self.timeout_seconds)
+                .unwrap_or_else(|| self.client.clone())
+        } else {
+            self.client.clone()
+        };
+        (client, proxy_url)
+    }
+
+    /// 解析本次请求的代理 URL（不构建 client）。
+    ///
+    /// 代理优先级与 `get_client` 一致，仅返回 URL 供 `build_resolve_client` 使用。
+    fn resolve_proxy_url(
+        &self,
+        proxy: &Option<String>,
+        session_id: Option<&str>,
+    ) -> Option<String> {
         // 请求级代理优先
         let request_proxy = proxy.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty());
         if let Some(url) = request_proxy {
-            if let Some(client) = Self::build_proxy_client(url, self.timeout_seconds) {
-                return (client, Some(url.to_string()));
-            }
-            return (self.client.clone(), request_proxy.map(str::to_string));
+            return Some(url.to_string());
         }
 
-        let Some(provider) = &self.proxy_provider else {
-            // 无代理提供者 → 基础 client
-            return (self.client.clone(), None);
-        };
+        let provider = self.proxy_provider.as_ref()?;
 
         let picked = match self.proxy_strategy {
             ProxyStrategy::RoundRobin => provider.next(ProxyCategory::Html),
@@ -243,19 +257,64 @@ impl WreqEngine {
         };
 
         match picked {
-            Some(url) => {
-                let client = Self::build_proxy_client(&url, self.timeout_seconds)
-                    .unwrap_or_else(|| self.client.clone());
-                (client, Some(url))
-            }
+            Some(url) => Some(url),
             None => {
                 log::debug!(
                     "wreq proxy_provider returned None (empty pool or all cooldown); \
-                     using base client"
+                     no proxy for this request"
                 );
-                (self.client.clone(), None)
+                None
             }
         }
+    }
+
+    /// 构建含 SSRF resolve 覆盖的 wreq client。
+    ///
+    /// 保持原始 hostname 不变，通过 `resolve_to_addrs` 将 DNS 解析固定到 SSRF 验证过的 IP，
+    /// 确保 TLS SNI 和 HTTP 虚拟主机路由正确。
+    fn build_resolve_client(
+        host: &str,
+        resolve_addrs: &[std::net::SocketAddr],
+        proxy_url: Option<&str>,
+        skip_tls: bool,
+        timeout_seconds: u64,
+    ) -> Result<wreq::Client, EngineError> {
+        let mut builder = wreq::Client::builder()
+            .emulation(emulation_provider(TlsEmulation::Chrome131))
+            .redirect(wreq::redirect::Policy::default())
+            .timeout(Duration::from_secs(timeout_seconds));
+
+        // SSRF resolve 覆盖：hostname → 验证过的 IP
+        if !host.is_empty() && host.parse::<std::net::IpAddr>().is_err() {
+            builder = builder.resolve_to_addrs(host, resolve_addrs);
+        }
+
+        if skip_tls {
+            log::warn!(
+                "wreq skip_tls_verification=true: TLS certificate validation disabled for this request"
+            );
+            builder = builder.cert_verification(false);
+        }
+
+        if let Some(url) = proxy_url {
+            match wreq::Proxy::http(url) {
+                Ok(px) => {
+                    builder = builder.proxy(px);
+                    log::debug!("Using wreq HTTP proxy: {}", redact_proxy_url(url));
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to configure wreq proxy (url={}): {}",
+                        redact_proxy_url(url),
+                        e
+                    );
+                }
+            }
+        }
+
+        builder
+            .build()
+            .map_err(|e| EngineError::Other(format!("Failed to build wreq resolve client: {e}")))
     }
 }
 
@@ -263,13 +322,13 @@ impl WreqEngine {
 impl ScraperEngine for WreqEngine {
     /// 执行 HTTP 抓取并产出真实 TLS 指纹。
     ///
-    /// 流程：SSRF 校验 + IP 重写 → 选 UA profile（含 tls_emulation）→ 选 client（代理）
+    /// 流程：SSRF 校验 + resolve 固定 IP → 选 UA profile（含 tls_emulation）→ 构建 client（含 resolve 覆盖）
     /// → 组装 headers/body/timeout → 发送 → 返回内部响应。
     async fn scrape(
         &self,
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
-        // SSRF 保护（与 ReqwestEngine 一致）
+        // SSRF 保护：DNS 验证 + resolve 覆盖（保持原始 URL，TLS SNI 和虚拟主机路由正常）
         let validator = validators::SsrfValidator::new();
         let validated_url = validator
             .validate(&request.url)
@@ -280,51 +339,38 @@ impl ScraperEngine for WreqEngine {
             .host_str()
             .unwrap_or("")
             .to_string();
-        let resolved_first = validated_url
+        let port = validated_url.port;
+        // SSRF: pin hostname → validated IPs via wreq resolve override.
+        // Keep the original URL intact so TLS SNI and virtual host routing work correctly.
+        let resolve_addrs: Vec<std::net::SocketAddr> = validated_url
             .resolved_ips
-            .first()
-            .copied()
-            .ok_or_else(|| EngineError::Other("SSRF: no resolved IPs".to_string()))?;
-        let mut rewritten = validated_url.parsed_url.clone();
-        let _ = rewritten.set_host(Some(&resolved_first.to_string()));
+            .iter()
+            .map(|ip| std::net::SocketAddr::new(*ip, port))
+            .collect();
+        if resolve_addrs.is_empty() {
+            return Err(EngineError::Other("SSRF: no resolved IPs".to_string()));
+        }
 
         // R-identity-001：选与请求匹配的 UA profile（ua + accept_language + sec-ch-ua + tls_emulation）
         let profile = self.ua_pool.pick(request.mobile);
 
-        let (mut effective_client, used_proxy_url) =
-            self.get_client(&request.proxy, request.session_id.as_deref());
+        // 确定本次请求使用的代理 URL（与 get_client 逻辑一致）
+        let used_proxy_url = self.resolve_proxy_url(&request.proxy, request.session_id.as_deref());
 
-        // skip_tls_verification：wreq 无法修改已有 client 的 TLS 设置，需重建临时 client
-        if request.skip_tls_verification {
-            log::warn!(
-                "wreq skip_tls_verification=true: TLS certificate validation disabled for this request"
-            );
-            let mut b = wreq::Client::builder()
-                .cert_verification(false)
-                .timeout(Duration::from_secs(self.timeout_seconds));
-            if let Some(p) = &used_proxy_url {
-                if let Ok(px) = wreq::Proxy::http(p) {
-                    b = b.proxy(px);
-                }
-            }
-            effective_client = match b.build() {
-                Ok(c) => c,
-                Err(e) => {
-                    return Err(EngineError::Other(format!(
-                        "Failed to build wreq TLS-bypass client: {e}"
-                    )))
-                }
-            };
-        }
+        // 构建含 SSRF resolve 覆盖的 wreq client（保持原始 hostname → TLS SNI / 虚拟主机路由正确）
+        let effective_client = Self::build_resolve_client(
+            &host,
+            &resolve_addrs,
+            used_proxy_url.as_deref(),
+            request.skip_tls_verification,
+            self.timeout_seconds,
+        )?;
 
+        let request_url = validated_url.parsed_url.as_str();
         let mut request_builder = match request.method {
-            crate::common::HttpMethod::Get => effective_client.get(rewritten.as_str()),
-            crate::common::HttpMethod::Post => effective_client.post(rewritten.as_str()),
+            crate::common::HttpMethod::Get => effective_client.get(request_url),
+            crate::common::HttpMethod::Post => effective_client.post(request_url),
         };
-
-        if let Ok(hv) = wreq::header::HeaderValue::from_str(&host) {
-            request_builder = request_builder.header(wreq::header::HOST, hv);
-        }
 
         // UA 绑定 headers（User-Agent / Accept-Language / sec-ch-ua），用户自定义 headers 随后覆盖
         request_builder = request_builder

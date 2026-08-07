@@ -464,44 +464,66 @@ impl ScraperEngine for ReqwestEngine {
             .host_str()
             .unwrap_or("")
             .to_string();
-        let _port = validated_url.port;
-        let resolved_first = validated_url
+        let port = validated_url.port;
+        // SSRF: pin hostname → validated IPs via reqwest resolve override.
+        // Keep the original URL intact so TLS SNI and virtual host routing work correctly.
+        let resolve_addrs: Vec<std::net::SocketAddr> = validated_url
             .resolved_ips
-            .first()
-            .copied()
-            .ok_or_else(|| EngineError::Other("SSRF: no resolved IPs".to_string()))?;
-        let mut rewritten = validated_url.parsed_url.clone();
-        let _ = rewritten.set_host(Some(&resolved_first.to_string()));
+            .iter()
+            .map(|ip| std::net::SocketAddr::new(*ip, port))
+            .collect();
+        if resolve_addrs.is_empty() {
+            return Err(EngineError::Other("SSRF: no resolved IPs".to_string()));
+        }
         let need_tls_bypass = request.skip_tls_verification;
         let handle = self.get_client(
             &request.proxy,
             request.skip_tls_verification,
             request.session_id.as_deref(),
         );
-        let temp_client: Option<reqwest::Client> = if need_tls_bypass {
+
+        // SSRF DNS pin: build client with resolve override from scratch.
+        // Keeps the original hostname for TLS SNI and HTTP virtual host routing,
+        // while connecting to SSRF-validated IPs.
+        let ssrf_client = if !host.is_empty() && !host.parse::<std::net::IpAddr>().is_ok() {
             let mut b = reqwest::Client::builder()
                 .timeout(Duration::from_secs(self.timeout_seconds))
                 .cookie_store(true)
                 .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
-                .danger_accept_invalid_certs(true);
+                .dns_resolver(crate::infrastructure::dns::create_ipv4_only_resolver())
+                .resolve_to_addrs(&host, &resolve_addrs);
+            if need_tls_bypass {
+                b = b.danger_accept_invalid_certs(true);
+            }
             if let Some(p) = &handle.used_proxy_url {
                 if let Ok(px) = reqwest::Proxy::http(p) {
                     b = b.proxy(px);
                 }
             }
-            match b.build() {
-                Ok(c) => Some(c),
-                Err(e) => {
-                    return Err(EngineError::Other(format!(
-                        "Failed build temp client: {}",
-                        e
-                    )))
-                }
-            }
+            b.build()
+                .map_err(|e| EngineError::Other(format!("Failed to build SSRF resolve client: {}", e)))?
         } else {
-            None
+            // Host is an IP literal (no DNS to override) or empty — use base client
+            let temp_client: Option<reqwest::Client> = if need_tls_bypass {
+                let mut b = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(self.timeout_seconds))
+                    .cookie_store(true)
+                    .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
+                    .danger_accept_invalid_certs(true);
+                if let Some(p) = &handle.used_proxy_url {
+                    if let Ok(px) = reqwest::Proxy::http(p) {
+                        b = b.proxy(px);
+                    }
+                }
+                Some(b.build().map_err(|e| {
+                    EngineError::Other(format!("Failed build temp client: {}", e))
+                })?)
+            } else {
+                None
+            };
+            temp_client.unwrap_or_else(|| handle.client.clone())
         };
-        let effective_client: &reqwest::Client = temp_client.as_ref().unwrap_or(&handle.client);
+        let effective_client = &ssrf_client;
 
         // Build headers
         let mut headers = HeaderMap::new();
@@ -525,17 +547,15 @@ impl ScraperEngine for ReqwestEngine {
         // `crawlrs/*` UA: major search engines (Baidu, Sogou, Bing) reject
         // bot-identified requests with a 227-byte JS-redirect error page
         // instead of returning actual search results.
+        let request_url = validated_url.parsed_url.as_str();
         let mut request_builder = match request.method {
             crate::engines::engine_client::HttpMethod::Get => {
-                effective_client.get(rewritten.as_str())
+                effective_client.get(request_url)
             }
             crate::engines::engine_client::HttpMethod::Post => {
-                effective_client.post(rewritten.as_str())
+                effective_client.post(request_url)
             }
         };
-        if let Ok(hv) = HeaderValue::from_str(&host) {
-            request_builder = request_builder.header(reqwest::header::HOST, hv);
-        }
 
         // 应用 UA 绑定 headers（User-Agent + Accept-Language + sec-ch-ua）
         // - User-Agent: 所有 profile 必设
