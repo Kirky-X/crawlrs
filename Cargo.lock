@@ -1625,6 +1625,7 @@ name = "crawlrs-examples"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "base64 0.23.0",
  "chrono",
@@ -1635,6 +1636,7 @@ dependencies = [
  "log",
  "rand 0.10.2",
  "regex",
+ "reqwest",
  "sdforge",
  "sea-orm",
  "serde",
