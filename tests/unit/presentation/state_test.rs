@@ -18,14 +18,17 @@ use uuid::Uuid;
 
 use crawlrs::application::use_cases::crawl_use_case::CrawlUseCase;
 use crawlrs::domain::models::credits_model::CreditsTransactionType;
-use crawlrs::domain::models::{Crawl, Task, Webhook};
+use crawlrs::domain::models::Webhook;
+use crawlrs::domain::repositories::crawl_repository::CrawlRepository;
 use crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
+use crawlrs::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crawlrs::domain::repositories::task_repository::RepositoryError;
+use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::domain::repositories::webhook_repository::WebhookRepository;
 use crawlrs::domain::services::geo_location::{GeoLocation, GeoLocationService};
 use crawlrs::domain::services::rate_limiting_service::{
     BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult, QuotaService,
-    RateLimitConfig, RateLimitResult, RateLimitingError, RateLimitingService,
+    RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError, RateLimitingService,
 };
 use crawlrs::domain::services::team_service::{TeamGeoRestrictions, TeamService};
 use crawlrs::presentation::state::{CrawlHandlerState, HandlerState};

@@ -651,7 +651,7 @@ async fn test_v2_routes_builds_without_panic() {
         None => return,
     };
 
-    let _app = create_v2_routes_with_state(&state);
+    let _app = create_v2_routes_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
 }
 
 #[tokio::test]
@@ -665,7 +665,7 @@ async fn test_v2_routes_tasks_query_post_is_registered() {
         None => return,
     };
 
-    let app = create_v2_routes_with_state(&state);
+    let app = create_v2_routes_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
     let (status, _, _) = send(app, request(Method::POST, "/v1/tasks/_query")).await;
     assert_ne!(status, StatusCode::NOT_FOUND);
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -682,7 +682,7 @@ async fn test_v2_routes_tasks_cancel_post_is_registered() {
         None => return,
     };
 
-    let app = create_v2_routes_with_state(&state);
+    let app = create_v2_routes_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
     let (status, _, _) = send(app, request(Method::POST, "/v1/tasks/_cancel")).await;
     assert_ne!(status, StatusCode::NOT_FOUND);
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -701,7 +701,7 @@ async fn test_v2_routes_tasks_query_get_rejected_before_method_check() {
         None => return,
     };
 
-    let app = create_v2_routes_with_state(&state);
+    let app = create_v2_routes_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
     // team_semaphore_middleware wraps the router and runs before method
     // matching; without a team_id (injected by auth_middleware, which runs
     // later) it rejects with 401 rather than 405.
@@ -720,7 +720,7 @@ async fn test_v2_routes_unknown_path_rejected_by_middleware() {
         None => return,
     };
 
-    let app = create_v2_routes_with_state(&state);
+    let app = create_v2_routes_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
     // The middleware layer wraps the whole v2 router, so unknown paths are
     // rejected by team_semaphore_middleware (401) before the fallback 404.
     let (status, _, _) = send(app, request(Method::GET, "/v1/tasks/nonexistent")).await;
@@ -738,7 +738,7 @@ async fn test_v2_routes_requires_auth_header() {
         None => return,
     };
 
-    let app = create_v2_routes_with_state(&state);
+    let app = create_v2_routes_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
     let (status, _, _) = send(app, request(Method::POST, "/v1/tasks/_query")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

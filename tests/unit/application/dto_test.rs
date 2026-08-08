@@ -10,7 +10,6 @@
 //! and serde aliases.
 
 use crawlrs::application::dto::crawl_request::CrawlConfigDto;
-use crawlrs::application::dto::extract_request::ExtractRequestDto;
 use crawlrs::application::dto::scrape_request::ScrapeRequestDto;
 use serde_json::json;
 

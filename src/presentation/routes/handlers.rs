@@ -158,7 +158,7 @@ pub async fn readiness_check(
     // Check PostgreSQL
     let db_check = async {
         let session = db_pool
-            .get_session("readiness")
+            .get_session("system")
             .await
             .map_err(|e| e.to_string())?;
         let conn = session.connection().map_err(|e| e.to_string())?;

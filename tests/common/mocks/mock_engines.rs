@@ -13,6 +13,7 @@ use std::time::Duration;
 use crawlrs::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
+use std::collections::HashMap;
 
 /// Configurable mock scraper engine for tests.
 ///
@@ -38,8 +39,10 @@ impl MockScraperEngine {
             response: Some(InternalScrapeResponse {
                 status_code: 200,
                 content: "<html><body>mock</body></html>".to_string(),
-                headers: vec![],
-                url: String::new(),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 0,
             }),
             error: None,
             mrt: Duration::from_secs(30),
@@ -71,15 +74,13 @@ impl Default for MockScraperEngine {
 impl ScraperEngine for MockScraperEngine {
     async fn scrape(
         &self,
-        request: &InternalScrapeRequest,
+        _request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
-        if let Some(ref err) = self.error {
+        if let Some(err) = &self.error {
             return Err(err.clone());
         }
         if let Some(ref resp) = self.response {
-            let mut response = resp.clone();
-            response.url = request.url.to_string();
-            return Ok(response);
+            return Ok(resp.clone());
         }
         Err(EngineError::AllEnginesFailed(
             "MockScraperEngine: no response configured".to_string(),

@@ -346,4 +346,5 @@ pub fn build_sdk_router() -> axum::Router {
 pub mod mocks;
 
 #[cfg(test)]
+#[cfg(feature = "http")]
 mod tests;

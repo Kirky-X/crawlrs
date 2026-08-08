@@ -14,9 +14,10 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 use crawlrs::domain::models::{Crawl, CrawlStatus, ScrapeResult, Task};
+use crawlrs::domain::models::{CreditsTransaction, CreditsTransactionType};
 use crawlrs::domain::repositories::crawl_repository::CrawlRepository;
 use crawlrs::domain::repositories::credits_repository::{
-    CreditsRepository, CreditsRepositoryError, CreditsTransaction, CreditsTransactionType,
+    CreditsRepository, CreditsRepositoryError,
 };
 use crawlrs::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crawlrs::domain::repositories::task_repository::{

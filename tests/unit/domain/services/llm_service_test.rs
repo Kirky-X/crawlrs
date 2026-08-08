@@ -6,7 +6,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crawlrs::domain::services::llm_service::{LLMService, TokenUsage};
+    use crawlrs::domain::services::llm::{LLMService, TokenUsage};
     use serde_json::json;
     use std::sync::Arc;
 
