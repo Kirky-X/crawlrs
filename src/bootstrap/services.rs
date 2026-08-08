@@ -67,14 +67,8 @@ use crate::domain::services::team_semaphore::{AdaptiveParams, TeamSemaphore};
 use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
-use crate::search::ab_test::SearchABTestEngine;
-use crate::search::aggregator::SearchAggregator;
-use crate::search::client::exa::{ExaConfig, ExaSearchEngine};
-use crate::search::client::parallel::{ParallelConfig, ParallelSearchEngine};
-use crate::search::client::tavily::{TavilyConfig, TavilySearchEngine};
-use crate::search::client::SearchClientTrait;
 use crate::search::engine_trait::SearchEngine;
-use crate::search::fallback::FallbackSearchEngine;
+use crate::search::client::SearchClientTrait;
 use crate::search::smart as smart_search;
 // T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
@@ -278,116 +272,23 @@ pub async fn init_rate_limiting_service(
 
 /// Initialize search engine service.
 ///
+/// Returns a SmartSearchEngine that concurrently queries Baidu/Bing/Sogou,
+/// deduplicates via SimHash, fuses with RRF, and applies relevance scoring.
+///
 /// # Arguments
 ///
 /// * `engine_client` - Engine client for making requests
-/// * `settings` - Application settings
+/// * `_settings` - Application settings (unused, kept for API compatibility)
 ///
 /// # Returns
 ///
 /// Returns an initialized search engine.
 pub fn init_search_engine(
     engine_client: Arc<EngineClient>,
-    settings: &Settings,
+    _settings: &Settings,
 ) -> Arc<dyn SearchEngine> {
-    let search_engines: Vec<Arc<dyn SearchEngine>> = vec![
-        smart_search::create_baidu_smart_search(engine_client.clone()),
-        smart_search::create_sogou_smart_search(engine_client.clone()),
-        smart_search::create_bing_smart_search(engine_client.clone()),
-    ];
-
-    let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
-
-    let base_engine: Arc<dyn SearchEngine> = if settings.search.ab_test_enabled {
-        info!(
-            "Search A/B testing enabled, weight: {}",
-            settings.search.variant_b_weight
-        );
-        Arc::new(SearchABTestEngine::new(
-            search_aggregator.clone(),
-            search_aggregator,
-            settings.search.variant_b_weight,
-        ))
-    } else {
-        search_aggregator
-    };
-
-    // Fallback 搜索引擎包装
-    if settings.search.fallback.enabled {
-        let http_client = reqwest::Client::new();
-        let fallback_engines = build_fallback_engines(&http_client, &settings.search.fallback);
-
-        if fallback_engines.is_empty() {
-            log::warn!("Fallback enabled but no fallback engines configured");
-            base_engine
-        } else {
-            info!(
-                "Fallback search enabled with {} engine(s): {:?}",
-                fallback_engines.len(),
-                settings.search.fallback.engines
-            );
-            Arc::new(FallbackSearchEngine::new(base_engine, fallback_engines))
-        }
-    } else {
-        base_engine
-    }
-}
-
-/// 根据配置构建 fallback 搜索引擎列表
-fn build_fallback_engines(
-    http_client: &reqwest::Client,
-    fallback_config: &crate::config::search::SearchFallbackConfig,
-) -> Vec<Arc<dyn SearchEngine>> {
-    let mut engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
-
-    for engine_name in &fallback_config.engines {
-        match engine_name.as_str() {
-            "exa" => {
-                let config = ExaConfig {
-                    api_key: fallback_config.exa.api_key.clone(),
-                    endpoint: if fallback_config.exa.endpoint.is_empty() {
-                        "https://mcp.exa.ai/mcp".to_string()
-                    } else {
-                        fallback_config.exa.endpoint.clone()
-                    },
-                };
-                engines.push(Arc::new(ExaSearchEngine::new(http_client.clone(), config)));
-            }
-            "parallel" => {
-                let config = ParallelConfig {
-                    api_key: fallback_config.parallel.api_key.clone(),
-                    endpoint: if fallback_config.parallel.endpoint.is_empty() {
-                        "https://search.parallel.ai/mcp".to_string()
-                    } else {
-                        fallback_config.parallel.endpoint.clone()
-                    },
-                };
-                engines.push(Arc::new(ParallelSearchEngine::new(
-                    http_client.clone(),
-                    config,
-                )));
-            }
-            "tavily" => {
-                let config = TavilyConfig {
-                    api_key: fallback_config.tavily.api_key.clone(),
-                    endpoint: if fallback_config.tavily.endpoint.is_empty() {
-                        "https://api.tavily.com".to_string()
-                    } else {
-                        fallback_config.tavily.endpoint.clone()
-                    },
-                };
-                engines.push(Arc::new(TavilySearchEngine::new(
-                    http_client.clone(),
-                    config,
-                )));
-            }
-            unknown => {
-                log::warn!("Unknown fallback engine '{}', skipping", unknown);
-            }
-        }
-    }
-
-    engines
+    info!("Initializing SmartSearchEngine (concurrent Baidu+Bing+Sogou + RRF fusion)");
+    smart_search::create_smart_search(engine_client)
 }
 
 /// Initialize search service.
@@ -1217,23 +1118,20 @@ mod tests {
 
     #[test]
     fn test_init_search_engine_with_ab_test_disabled() {
-        let mut settings =
+        let settings =
             crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        settings.search.ab_test_enabled = false;
         let engine_client = make_engine_client();
         let _search_engine = init_search_engine(engine_client, &settings);
-        // Should create without panic; with ab_test disabled, returns SearchAggregator directly
+        // Should create without panic; SmartSearchEngine is always used
     }
 
     #[test]
     fn test_init_search_engine_with_ab_test_enabled() {
-        let mut settings =
+        let settings =
             crate::bootstrap::config::load_settings().expect("Failed to load settings");
-        settings.search.ab_test_enabled = true;
-        settings.search.variant_b_weight = 0.5;
         let engine_client = make_engine_client();
         let _search_engine = init_search_engine(engine_client, &settings);
-        // Should create without panic; with ab_test enabled, wraps in SearchABTestEngine
+        // SmartSearchEngine is always used regardless of ab_test settings
     }
 
     // ========== init_rate_limit_middleware tests ==========

@@ -20,21 +20,18 @@
 //!     .await?;
 //! ```
 
-pub mod ab_test;
-pub mod aggregator;
 pub mod client;
+pub mod dedup;
 pub mod engine_trait;
 pub mod error;
-pub mod fallback;
 pub mod response;
+pub mod rrf;
 pub mod smart;
 pub mod types;
 
-pub use ab_test::SearchABTestEngine;
-pub use aggregator::deduplicator::ResultDeduplicator as Deduplicator;
-pub use aggregator::SearchAggregator;
+pub use dedup::ResultDeduplicator;
 pub use engine_trait::{SearchEngine, SearchRequest};
 pub use error::SearchError;
-pub use fallback::FallbackSearchEngine;
 pub use response::{Response, ResponseItem};
+pub use rrf::RRFFuser;
 pub use types::{EngineHealth, SearchEngineType};

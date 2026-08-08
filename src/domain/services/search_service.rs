@@ -1592,11 +1592,11 @@ mod tests {
                 crate::search::types::EngineHealth::Healthy
             ));
         }
-        // Catch-all branch in name(): Auto, Smart, ABTest
+        // Catch-all branch in name(): Smart, Exa, Tavily
         for engine_type in [
-            SearchEngineType::Auto,
             SearchEngineType::Smart,
-            SearchEngineType::ABTest,
+            SearchEngineType::Exa,
+            SearchEngineType::Tavily,
         ] {
             let engine = MockSearchEngine::success_with_items(engine_type, vec![]);
             assert_eq!(engine.engine_type(), engine_type);

@@ -10,19 +10,17 @@ mod tests {
     fn test_search_service_configuration_structure() {
         // Test that the search configuration structure exists and has expected fields
         // Note: This test validates the configuration structure without loading actual files
-        use crawlrs::config::search::SearchSettings;
+        use crawlrs::config::search::{SearchFallbackConfig, SearchSettings};
 
         let settings = SearchSettings {
-            ab_test_enabled: false,
-            variant_b_weight: 0.1,
             timeout_seconds: 30,
             rate_limiting_enabled: true,
             test_data_enabled: false,
             max_retries: 3,
             retry_delay_ms: 1000,
+            fallback: SearchFallbackConfig::default(),
         };
 
-        assert!(!settings.ab_test_enabled);
         assert_eq!(settings.timeout_seconds, 30);
         assert!(settings.rate_limiting_enabled);
         assert_eq!(settings.max_retries, 3);
