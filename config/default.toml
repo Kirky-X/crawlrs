@@ -85,9 +85,8 @@ critical_timeout_seconds = 30
 adaptive_enabled = false
 
 # Search Configuration
+# Smart engine concurrently queries Baidu+Bing+Sogou with RRF fusion
 [search]
-ab_test_enabled = false
-variant_b_weight = 0.1
 timeout_seconds = 30
 rate_limiting_enabled = true
 test_data_enabled = false

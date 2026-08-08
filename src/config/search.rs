@@ -41,14 +41,6 @@ impl BingSearchSettings {
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__SEARCH__")]
 pub struct SearchSettings {
-    /// 是否启用 A/B 测试
-    #[config(default = false)]
-    pub ab_test_enabled: bool,
-
-    /// Variant B 的流量权重 (0.0 到 1.0)
-    #[config(default = 0.1)]
-    pub variant_b_weight: f64,
-
     /// 搜索超时时间（秒）
     #[config(default = 30)]
     pub timeout_seconds: u64,
@@ -201,24 +193,6 @@ mod tests {
     // ========== SearchSettings tests ==========
 
     #[test]
-    fn test_search_default_ab_test_disabled() {
-        let settings = SearchSettings::default();
-        assert!(
-            !settings.ab_test_enabled,
-            "default ab_test_enabled should be false"
-        );
-    }
-
-    #[test]
-    fn test_search_default_variant_b_weight() {
-        let settings = SearchSettings::default();
-        assert!(
-            (settings.variant_b_weight - 0.1).abs() < f64::EPSILON,
-            "default variant_b_weight should be 0.1"
-        );
-    }
-
-    #[test]
     fn test_search_default_timeout_seconds() {
         let settings = SearchSettings::default();
         assert_eq!(
@@ -266,14 +240,6 @@ mod tests {
         let json = serde_json::to_string(&settings).expect("serialize");
         let back: SearchSettings = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(
-            back.ab_test_enabled, settings.ab_test_enabled,
-            "serde roundtrip should preserve ab_test_enabled"
-        );
-        assert!(
-            (back.variant_b_weight - settings.variant_b_weight).abs() < f64::EPSILON,
-            "serde roundtrip should preserve variant_b_weight"
-        );
-        assert_eq!(
             back.timeout_seconds, settings.timeout_seconds,
             "serde roundtrip should preserve timeout_seconds"
         );
@@ -286,8 +252,6 @@ mod tests {
     #[test]
     fn test_search_serde_roundtrip_custom_values() {
         let settings = SearchSettings {
-            ab_test_enabled: true,
-            variant_b_weight: 0.5,
             timeout_seconds: 60,
             rate_limiting_enabled: false,
             test_data_enabled: true,
@@ -297,14 +261,6 @@ mod tests {
         };
         let json = serde_json::to_string(&settings).expect("serialize");
         let back: SearchSettings = serde_json::from_str(&json).expect("deserialize");
-        assert!(
-            back.ab_test_enabled,
-            "ab_test_enabled should survive roundtrip"
-        );
-        assert!(
-            (back.variant_b_weight - 0.5).abs() < f64::EPSILON,
-            "variant_b_weight should survive roundtrip"
-        );
         assert_eq!(back.timeout_seconds, 60);
         assert!(
             !back.rate_limiting_enabled,
@@ -318,8 +274,6 @@ mod tests {
     #[test]
     fn test_search_clone_preserves_all_fields() {
         let settings = SearchSettings {
-            ab_test_enabled: true,
-            variant_b_weight: 0.3,
             timeout_seconds: 45,
             rate_limiting_enabled: false,
             test_data_enabled: true,
@@ -328,8 +282,6 @@ mod tests {
             fallback: SearchFallbackConfig::default(),
         };
         let cloned = settings.clone();
-        assert_eq!(cloned.ab_test_enabled, settings.ab_test_enabled);
-        assert!((cloned.variant_b_weight - settings.variant_b_weight).abs() < f64::EPSILON);
         assert_eq!(cloned.timeout_seconds, settings.timeout_seconds);
         assert_eq!(cloned.rate_limiting_enabled, settings.rate_limiting_enabled);
         assert_eq!(cloned.test_data_enabled, settings.test_data_enabled);

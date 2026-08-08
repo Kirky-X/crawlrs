@@ -16,11 +16,6 @@ pub fn validate_values(settings: &Settings) -> Result<(), validator::ValidationE
         return Err(validator::ValidationError::new("invalid_port"));
     }
 
-    // 验证 A/B 测试权重范围
-    if settings.search.variant_b_weight < 0.0 || settings.search.variant_b_weight > 1.0 {
-        return Err(validator::ValidationError::new("invalid_variant_b_weight"));
-    }
-
     Ok(())
 }
 
@@ -46,25 +41,5 @@ mod tests {
         let result = validate_values(&settings);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code.to_string(), "invalid_port");
-    }
-
-    #[test]
-    fn test_validate_values_invalid_variant_b_weight_negative() {
-        let mut settings = build_test_settings();
-        settings.search.variant_b_weight = -0.1;
-        let result = validate_values(&settings);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().code.to_string(),
-            "invalid_variant_b_weight"
-        );
-    }
-
-    #[test]
-    fn test_validate_values_invalid_variant_b_weight_above_one() {
-        let mut settings = build_test_settings();
-        settings.search.variant_b_weight = 1.5;
-        let result = validate_values(&settings);
-        assert!(result.is_err());
     }
 }
