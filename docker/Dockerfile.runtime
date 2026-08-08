@@ -9,7 +9,7 @@
 #   Run:    docker run -p 8899:8899 crawlrs-runtime:latest
 # =============================================================================
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,6 +27,9 @@ COPY target/release/crawlrs /usr/local/bin/crawlrs
 
 # Copy default config
 COPY config/ /home/crawlrs/config/
+
+# Copy i18n locale files
+COPY locales/ /home/crawlrs/locales/
 
 # Ensure config directory is accessible
 RUN chown -R crawlrs:crawlrs /home/crawlrs

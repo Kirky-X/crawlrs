@@ -12,13 +12,14 @@
 # =============================================================================
 
 # ---------- Builder ----------
-FROM rust:1.87-slim AS builder
+FROM rust:1.97-slim AS builder
 
 # Install build dependencies (OpenSSL + pkg-config for TLS)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     ca-certificates \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -37,13 +38,14 @@ RUN rm -rf src
 
 # Copy real source and build the actual binary
 COPY src/ src/
+COPY examples/ examples/
 COPY config/ config/
 
 ARG BUILD_FEATURES=standard
 RUN cargo build --features ${BUILD_FEATURES} --release --bin crawlrs
 
 # ---------- Runtime ----------
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 # Install runtime dependencies (libssl + ca-certs for HTTPS, curl for healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -61,6 +63,9 @@ COPY --from=builder /build/target/release/crawlrs /usr/local/bin/crawlrs
 
 # Copy default config (can be overridden via volume or env vars)
 COPY --from=builder /build/config/ /home/crawlrs/config/
+
+# Copy i18n locale files
+COPY --from=builder /build/locales/ /home/crawlrs/locales/
 
 # Ensure config directory is accessible
 RUN chown -R crawlrs:crawlrs /home/crawlrs

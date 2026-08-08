@@ -38,7 +38,7 @@ services:
         BUILD_FEATURES: ${BUILD_FEATURES:-standard}
     image: crawlrs:latest
     container_name: crawlrs
-    command: ["crawlrs", "api"]
+    command: ["api"]
     ports:
       - "${APP_PORT:-8899}:8899"
     environment:
@@ -84,6 +84,12 @@ services:
       # 速率限制配置
       - CRAWLRS__RATE_LIMITING__ENABLED=${RATE_LIMITING_ENABLED:-false}
       - CRAWLRS__RATE_LIMITING__DEFAULT_RPM=${RATE_LIMITING_DEFAULT_RPM:-60}
+
+      # 认证配置（auth feature 必需，JWT 密钥 ≥32 字节）
+      - CRAWLRS__AUTH__JWT_SECRET=${AUTH_JWT_SECRET:-crawlrs_docker_jwt_secret_2026_secure!!}
+
+      # 首次启动自动创建 admin API Key（同进程内 garrison 内存持久化）
+      - CRAWLRS_BOOTSTRAP_ADMIN=${BOOTSTRAP_ADMIN:-true}
 
       # 并发配置
       - CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT=${CONCURRENCY_DEFAULT_TEAM_LIMIT:-10}
@@ -271,7 +277,7 @@ services:
         BUILD_FEATURES: ${BUILD_FEATURES:-standard}
     image: crawlrs:latest
     container_name: crawlrs-worker
-    command: ["crawlrs", "worker"]
+    command: ["worker"]
     environment:
       - CRAWLRS__RUST_LOG=${RUST_LOG:-info}
       - CRAWLRS__ENV_MODE=${ENV_MODE:-docker}
