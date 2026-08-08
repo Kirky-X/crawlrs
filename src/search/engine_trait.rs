@@ -145,8 +145,8 @@ mod tests {
 
     #[test]
     fn test_search_request_with_engine() {
-        let req = SearchRequest::new("test").with_engine(SearchEngineType::Google);
-        assert_eq!(req.engine, Some(SearchEngineType::Google));
+        let req = SearchRequest::new("test").with_engine(SearchEngineType::Bing);
+        assert_eq!(req.engine, Some(SearchEngineType::Bing));
     }
 
     #[test]
@@ -249,7 +249,7 @@ mod tests {
         }
 
         fn engine_type(&self) -> SearchEngineType {
-            SearchEngineType::Google
+            SearchEngineType::Bing
         }
 
         fn health(&self) -> EngineHealth {
@@ -265,13 +265,13 @@ mod tests {
                     title: format!("Result {}", i + 1),
                     url: format!("https://example.com/{}", i + 1),
                     description: format!("Description for result {}", i + 1),
-                    engine: SearchEngineType::Google,
+                    engine: SearchEngineType::Bing,
                 })
                 .collect();
             Ok(Response {
                 items,
                 total_results: Some(request.limit as u64),
-                engine: SearchEngineType::Google,
+                engine: SearchEngineType::Bing,
             })
         }
     }
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn test_mock_engine_type() {
         let engine = MockSearchEngine;
-        assert_eq!(engine.engine_type(), SearchEngineType::Google);
+        assert_eq!(engine.engine_type(), SearchEngineType::Bing);
     }
 
     #[test]
@@ -300,7 +300,7 @@ mod tests {
         let req = SearchRequest::new("test query").with_limit(5);
         let response = engine.search(&req).await.unwrap();
         assert_eq!(response.items.len(), 5);
-        assert_eq!(response.engine, SearchEngineType::Google);
+        assert_eq!(response.engine, SearchEngineType::Bing);
         assert_eq!(response.total_results, Some(5));
     }
 
@@ -326,7 +326,7 @@ mod tests {
     async fn test_search_with_engine_named_engine() {
         let engine = MockSearchEngine;
         let items = engine
-            .search_with_engine("test", 2, None, None, Some("Google"))
+            .search_with_engine("test", 2, None, None, Some("Bing"))
             .await
             .unwrap();
         assert_eq!(items.len(), 2);
@@ -347,7 +347,7 @@ mod tests {
     async fn test_search_with_engine_with_lang_and_country() {
         let engine = MockSearchEngine;
         let items = engine
-            .search_with_engine("test", 5, Some("en"), Some("US"), Some("google"))
+            .search_with_engine("test", 5, Some("en"), Some("US"), Some("bing"))
             .await
             .unwrap();
         assert_eq!(items.len(), 5);
@@ -374,7 +374,7 @@ mod tests {
         }
 
         fn engine_type(&self) -> SearchEngineType {
-            SearchEngineType::Google
+            SearchEngineType::Bing
         }
 
         fn health(&self) -> EngineHealth {
@@ -404,7 +404,7 @@ mod tests {
     async fn test_search_with_engine_error_with_named_engine() {
         let engine = FailingSearchEngine;
         let result = engine
-            .search_with_engine("test", 3, None, None, Some("Google"))
+            .search_with_engine("test", 3, None, None, Some("Bing"))
             .await;
         assert!(result.is_err());
     }
@@ -413,7 +413,7 @@ mod tests {
     async fn test_search_with_engine_error_with_lang_country() {
         let engine = FailingSearchEngine;
         let result = engine
-            .search_with_engine("test", 3, Some("en"), Some("US"), Some("google"))
+            .search_with_engine("test", 3, Some("en"), Some("US"), Some("bing"))
             .await;
         assert!(result.is_err());
     }
@@ -422,7 +422,7 @@ mod tests {
     async fn test_failing_engine_name_and_type() {
         let engine = FailingSearchEngine;
         assert_eq!(engine.name(), "FailingEngine");
-        assert_eq!(engine.engine_type(), SearchEngineType::Google);
+        assert_eq!(engine.engine_type(), SearchEngineType::Bing);
         assert_eq!(engine.health(), EngineHealth::Unhealthy);
     }
 }

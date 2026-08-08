@@ -16,7 +16,7 @@ use crate::engines::engine_client::{
     ScrollDirection,
 };
 use crate::search::client::{
-    BaiduSearchEngine, BingSearchEngine, GoogleSearchEngine, SogouSearchEngine,
+    BaiduSearchEngine, BingSearchEngine, SogouSearchEngine,
 };
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
@@ -68,7 +68,7 @@ impl std::fmt::Debug for SmartSearchEngineConfig {
 impl Default for SmartSearchEngineConfig {
     fn default() -> Self {
         Self {
-            engine_type: SearchEngineType::Google,
+            engine_type: SearchEngineType::Bing,
             rate_limiting_enabled: true,
             rate_limiting_service: None,
             timeout_seconds: 90,
@@ -85,17 +85,14 @@ impl Default for SmartSearchEngineConfig {
 /// 使用EngineClient智能路由，根据目标网站的特征自动选择最适合的抓取引擎
 /// 支持速率限制、超时控制和测试数据加载
 ///
-/// **性能优化（PERF-02）**：缓存 4 个 client 引擎实例（OnceCell），避免每次
-/// `parse_*_results` 都 `new` 一个 client 引擎实例。`GoogleSearchEngine::new`
-/// 会创建 `Arc<RwLock<ArcIdCache>>` + 23 字符随机 ID 生成 + `Utc::now()`；
+/// **性能优化（PERF-02）**：缓存 3 个 client 引擎实例（OnceCell），避免每次
+/// `parse_*_results` 都 `new` 一个 client 引擎实例。
 /// `BingSearchEngine::new`/`BaiduSearchEngine::new` 不再持有 `HtmlParser` 字段，
 /// 改为通过 `HtmlParser::bing()`/`HtmlParser::baidu()` 访问全局 `Lazy` 单例
 /// （见 PERF-05）。缓存后仅在首次解析时构造一次。
 pub struct SmartSearchEngine {
     engine_client: Arc<EngineClient>,
     config: SmartSearchEngineConfig,
-    /// 缓存的 Google client 引擎实例（按需初始化）
-    google_engine: OnceCell<GoogleSearchEngine>,
     /// 缓存的 Bing client 引擎实例（按需初始化）
     bing_engine: OnceCell<BingSearchEngine>,
     /// 缓存的 Baidu client 引擎实例（按需初始化）
@@ -109,21 +106,10 @@ impl SmartSearchEngine {
         Self {
             engine_client,
             config,
-            google_engine: OnceCell::new(),
             bing_engine: OnceCell::new(),
             baidu_engine: OnceCell::new(),
             sogou_engine: OnceCell::new(),
         }
-    }
-
-    /// 获取 Google client 引擎实例（缓存，首次调用时构造）
-    ///
-    /// 性能 PERF-02：避免每次 `parse_google_results` 都 `new` 一个
-    /// `GoogleSearchEngine`，节省 `Arc<RwLock<ArcIdCache>>` + 23 字符
-    /// 随机 ID 生成 + `Utc::now()` 系统调用。
-    fn google_engine(&self) -> &GoogleSearchEngine {
-        self.google_engine
-            .get_or_init(|| GoogleSearchEngine::new(self.engine_client.clone()))
     }
 
     /// 获取 Bing client 引擎实例（缓存，首次调用时构造）
@@ -150,7 +136,7 @@ impl SmartSearchEngine {
 
     /// 获取 Sogou client 引擎实例（缓存，首次调用时构造）
     ///
-    /// 性能 PERF-02：与 Google/Bing/Baidu 一致，缓存实例避免重复构造。
+    /// 性能 PERF-02：与 Bing/Baidu 一致，缓存实例避免重复构造。
     fn sogou_engine(&self) -> &SogouSearchEngine {
         self.sogou_engine
             .get_or_init(|| SogouSearchEngine::new(self.engine_client.clone()))
@@ -226,11 +212,10 @@ impl SmartSearchEngine {
     /// 智能判断是否需要JS和TLS指纹
     fn needs_js_and_tls(&self) -> (bool, bool) {
         match self.config.engine_type {
-            SearchEngineType::Google => (true, false),
             SearchEngineType::Bing => (true, false),
             SearchEngineType::Baidu => (false, false),
             SearchEngineType::Sogou => (true, false), // Sogou需要JS渲染结果
-            // 对于非特定引擎类型，默认使用 Google 的配置
+            // 对于非特定引擎类型，默认使用 Bing 的配置
             _ => (true, false),
         }
     }
@@ -238,45 +223,12 @@ impl SmartSearchEngine {
     /// 构建搜索URL
     fn build_search_url(&self, query: &str, lang: Option<&str>, country: Option<&str>) -> String {
         match self.config.engine_type {
-            SearchEngineType::Google => self.build_google_search_url(query, lang, country),
             SearchEngineType::Bing => self.build_bing_search_url(query, lang, country),
             SearchEngineType::Baidu => self.build_baidu_search_url(query, lang, country),
             SearchEngineType::Sogou => self.build_sogou_search_url(query, lang, country),
-            // 对于非特定引擎类型，默认使用 Google 的 URL 构建方式
-            _ => self.build_google_search_url(query, lang, country),
+            // 对于非特定引擎类型，默认使用 Bing 的 URL 构建方式
+            _ => self.build_bing_search_url(query, lang, country),
         }
-    }
-
-    /// 构建Google搜索URL
-    fn build_google_search_url(
-        &self,
-        query: &str,
-        lang: Option<&str>,
-        country: Option<&str>,
-    ) -> String {
-        let mut query_params: Vec<(&str, String)> = vec![
-            ("q", query.to_string()),
-            ("ie", "utf8".to_string()),
-            ("oe", "utf8".to_string()),
-        ];
-
-        if let Some(l) = lang {
-            let hl_value = if l.contains("-") {
-                l.to_string()
-            } else {
-                format!("{}-{}", l, country.unwrap_or("US"))
-            };
-            query_params.push(("hl", hl_value));
-        }
-
-        if let Some(c) = country {
-            query_params.push(("cr", format!("country{}", c.to_uppercase())));
-        }
-
-        let mut url = "https://www.google.com/search?".to_string();
-        url.push_str(&build_query_string(&query_params));
-
-        url
     }
 
     /// 构建Bing搜索URL
@@ -430,9 +382,6 @@ impl SmartSearchEngine {
                 headers.insert("Referer".to_string(), "https://www.baidu.com/".to_string());
                 headers.insert("Origin".to_string(), "https://www.baidu.com".to_string());
             }
-            SearchEngineType::Google => {
-                headers.insert("Referer".to_string(), "https://www.google.com/".to_string());
-            }
             SearchEngineType::Bing => {
                 headers.insert("Referer".to_string(), "https://www.bing.com/".to_string());
             }
@@ -440,7 +389,7 @@ impl SmartSearchEngine {
                 headers.insert("Referer".to_string(), "https://www.sogou.com/".to_string());
             }
             _ => {
-                headers.insert("Referer".to_string(), "https://www.google.com/".to_string());
+                headers.insert("Referer".to_string(), "https://www.bing.com/".to_string());
             }
         }
 
@@ -520,41 +469,11 @@ impl SmartSearchEngine {
     /// 解析搜索结果（根据搜索引擎类型使用不同的解析器）
     fn parse_search_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
         match self.config.engine_type {
-            SearchEngineType::Google => self.parse_google_results(html),
             SearchEngineType::Bing => self.parse_bing_results(html),
             SearchEngineType::Baidu => self.parse_baidu_results(html),
             SearchEngineType::Sogou => self.parse_sogou_results(html),
-            _ => self.parse_google_results(html),
+            _ => self.parse_bing_results(html),
         }
-    }
-
-    /// 解析 Google 搜索结果
-    ///
-    /// 委托 client 端 `GoogleSearchEngine::parse_results`（R-sec-007）。
-    ///
-    /// **性能 PERF-02**：使用缓存的 `google_engine()` 实例，避免每次解析都 `new`。
-    /// **性能 PERF-03**：不在 parse 阶段计算 score，由 `apply_scoring` 统一设置
-    /// （parse 阶段的 score 会被 `apply_scoring` 完全覆盖，是无效计算）。
-    /// **架构 MEDIUM-1**：engine_name 统一使用 `self.get_engine_name()`
-    /// （"Google"，首字母大写，与 Bing/Baidu/Sogou 一致）。
-    fn parse_google_results(&self, html: &str) -> Result<Vec<SearchResult>, SearchError> {
-        let google_engine = self.google_engine();
-        let items = google_engine.parse_results(html)?;
-        Ok(items
-            .into_iter()
-            .map(|item| {
-                SearchResult::new(
-                    item.title,
-                    item.url,
-                    if item.description.is_empty() {
-                        None
-                    } else {
-                        Some(item.description)
-                    },
-                    self.get_engine_name(),
-                )
-            })
-            .collect())
     }
 
     /// 解析 Bing 搜索结果
@@ -654,7 +573,6 @@ impl SmartSearchEngine {
         if std::env::var("DEBUG_SAVE_HTML").is_ok() {
             let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
             let engine_name = match self.config.engine_type {
-                SearchEngineType::Google => "google",
                 SearchEngineType::Bing => "bing",
                 SearchEngineType::Baidu => "baidu",
                 SearchEngineType::Sogou => "sogou",
@@ -750,7 +668,6 @@ impl SearchEngine for SmartSearchEngine {
     fn name(&self) -> &'static str {
         // 根据 engine_type 返回实际的引擎名称
         match self.config.engine_type {
-            SearchEngineType::Google => "google",
             SearchEngineType::Bing => "bing",
             SearchEngineType::Baidu => "baidu",
             SearchEngineType::Sogou => "sogou",
@@ -902,21 +819,6 @@ impl SearchEngine for SmartSearchEngine {
     }
 }
 
-/// 创建Google智能搜索引擎
-pub fn create_google_smart_search(engine_client: Arc<EngineClient>) -> Arc<dyn SearchEngine> {
-    let config = SmartSearchEngineConfig {
-        engine_type: SearchEngineType::Google,
-        rate_limiting_enabled: true,
-        rate_limiting_service: None,
-        timeout_seconds: 90,
-        test_data_enabled: false,
-        test_data_path: None,
-        max_retries: 3,
-        retry_delay_ms: 1000,
-    };
-    Arc::new(SmartSearchEngine::new(engine_client, config))
-}
-
 /// 创建Bing智能搜索引擎
 pub fn create_bing_smart_search(engine_client: Arc<EngineClient>) -> Arc<dyn SearchEngine> {
     let config = SmartSearchEngineConfig {
@@ -999,7 +901,7 @@ mod tests {
 
     fn create_test_config() -> SmartSearchEngineConfig {
         SmartSearchEngineConfig {
-            engine_type: SearchEngineType::Google,
+            engine_type: SearchEngineType::Bing,
             rate_limiting_enabled: false,
             rate_limiting_service: None,
             timeout_seconds: 30,
@@ -1013,10 +915,6 @@ mod tests {
     #[tokio::test]
     async fn test_smart_search_engine_creation() {
         let client = create_test_client();
-
-        // 测试创建Google智能搜索引擎
-        let google_engine = create_google_smart_search(client.clone());
-        assert_eq!(google_engine.name(), "google");
 
         // 测试创建Bing智能搜索引擎
         let bing_engine = create_bing_smart_search(client.clone());
@@ -1033,7 +931,7 @@ mod tests {
         let config = create_test_config();
 
         let smart_engine = Arc::new(SmartSearchEngine::new(client, config));
-        assert_eq!(smart_engine.name(), "google");
+        assert_eq!(smart_engine.name(), "bing");
     }
 
     #[test]
@@ -1042,34 +940,25 @@ mod tests {
         let config = create_test_config();
         let smart_engine = SmartSearchEngine::new(client.clone(), config);
 
-        // 测试Google搜索URL构建
-        let google_url = smart_engine.build_search_url("rust programming", Some("en"), Some("US"));
-        assert!(google_url.contains("google.com"));
-        assert!(google_url.contains("rust"));
-        assert!(google_url.contains("programming"));
-
         // 测试Bing搜索URL构建
-        let mut bing_config = create_test_config();
-        bing_config.engine_type = SearchEngineType::Bing;
-        let bing_smart_engine = SmartSearchEngine::new(client, bing_config);
-        let bing_url =
-            bing_smart_engine.build_search_url("machine learning", Some("en"), Some("US"));
+        let bing_url = smart_engine.build_search_url("rust programming", Some("en"), Some("US"));
         assert!(bing_url.contains("bing.com"));
-        assert!(bing_url.contains("machine"));
-        assert!(bing_url.contains("learning"));
+        assert!(bing_url.contains("rust"));
+        assert!(bing_url.contains("programming"));
+
+        // 测试百度搜索URL构建
+        let mut baidu_config = create_test_config();
+        baidu_config.engine_type = SearchEngineType::Baidu;
+        let baidu_smart_engine = SmartSearchEngine::new(client, baidu_config);
+        let baidu_url =
+            baidu_smart_engine.build_search_url("machine learning", Some("zh"), None);
+        assert!(baidu_url.contains("baidu.com"));
+        assert!(baidu_url.contains("machine"));
     }
 
     #[test]
     fn test_needs_js_and_tls() {
         let client = create_test_client();
-
-        // 测试Google
-        let mut google_config = create_test_config();
-        google_config.engine_type = SearchEngineType::Google;
-        let google_engine = SmartSearchEngine::new(client.clone(), google_config);
-        let (needs_js_google, needs_tls_google) = google_engine.needs_js_and_tls();
-        assert!(needs_js_google);
-        assert!(!needs_tls_google);
 
         // 测试Bing
         let mut bing_config = create_test_config();
@@ -1102,7 +991,7 @@ mod tests {
     #[test]
     fn test_smart_search_engine_config_default() {
         let config = SmartSearchEngineConfig::default();
-        assert_eq!(config.engine_type, SearchEngineType::Google);
+        assert_eq!(config.engine_type, SearchEngineType::Bing);
         assert!(config.rate_limiting_enabled);
         assert_eq!(config.timeout_seconds, 90);
         assert!(!config.test_data_enabled);
@@ -1116,7 +1005,7 @@ mod tests {
         let config = create_test_config();
 
         let engine = create_smart_search_engine(client, config);
-        assert_eq!(engine.name(), "google");
+        assert_eq!(engine.name(), "bing");
     }
 }
 
@@ -1281,7 +1170,7 @@ mod tests_ext {
 
     fn create_test_config() -> SmartSearchEngineConfig {
         SmartSearchEngineConfig {
-            engine_type: SearchEngineType::Google,
+            engine_type: SearchEngineType::Bing,
             rate_limiting_enabled: false,
             rate_limiting_service: None,
             timeout_seconds: 30,
@@ -1333,7 +1222,7 @@ mod tests_ext {
         assert!(!debug_str.contains("None") || debug_str.contains("rate_limiting_service"));
     }
 
-    // === build_search_url for Baidu and Sogou (Google/Bing covered in existing tests) ===
+    // === build_search_url for Baidu and Sogou (Bing covered in existing tests) ===
 
     #[test]
     fn test_build_search_url_baidu() {
@@ -1351,33 +1240,6 @@ mod tests_ext {
         assert!(url.contains("sogou.com"));
         assert!(url.contains("query="));
         assert!(url.contains("safp=d"));
-    }
-
-    // === build_google_search_url detailed ===
-
-    #[test]
-    fn test_build_google_url_with_dashed_lang() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let url = engine.build_google_search_url("rust", Some("en-US"), Some("US"));
-        assert!(url.contains("hl=en-US"));
-        assert!(url.contains("cr=countryUS"));
-    }
-
-    #[test]
-    fn test_build_google_url_lang_without_dash() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let url = engine.build_google_search_url("rust", Some("en"), Some("US"));
-        assert!(url.contains("hl=en-US"));
-    }
-
-    #[test]
-    fn test_build_google_url_no_lang_no_country() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let url = engine.build_google_search_url("rust", None, None);
-        assert!(url.contains("google.com/search"));
-        assert!(url.contains("q=rust"));
-        assert!(!url.contains("hl="));
-        assert!(!url.contains("cr="));
     }
 
     // === build_bing_search_url detailed ===
@@ -1450,7 +1312,7 @@ mod tests_ext {
 
     #[test]
     fn test_build_scrape_request_needs_js() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         let request = engine.build_scrape_request("https://example.com", true, false);
         assert_eq!(request.url, "https://example.com");
         assert!(request.options.needs_js);
@@ -1474,7 +1336,7 @@ mod tests_ext {
 
     #[test]
     fn test_build_scrape_request_headers_present() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         let request = engine.build_scrape_request("https://example.com", true, false);
         assert!(request.options.headers.contains_key("User-Agent"));
         assert!(request.options.headers.contains_key("Accept"));
@@ -1485,13 +1347,6 @@ mod tests_ext {
 
     #[test]
     fn test_build_scrape_request_engine_specific_referer() {
-        let google_engine = create_engine_with_type(SearchEngineType::Google);
-        let req = google_engine.build_scrape_request("https://example.com", false, false);
-        assert_eq!(
-            req.options.headers.get("Referer").unwrap(),
-            "https://www.google.com/"
-        );
-
         let baidu_engine = create_engine_with_type(SearchEngineType::Baidu);
         let req = baidu_engine.build_scrape_request("https://example.com", false, false);
         assert_eq!(
@@ -1520,20 +1375,12 @@ mod tests_ext {
 
     #[test]
     fn test_build_scrape_request_timeout_from_config() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         let request = engine.build_scrape_request("https://example.com", false, false);
         assert_eq!(request.options.timeout, Duration::from_secs(30));
     }
 
     // === parse_search_results dispatch ===
-
-    #[test]
-    fn test_parse_search_results_dispatch_google() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let html = r#"<html><body><div class="g"><h3>Title</h3><a href="https://example.com">Link</a></div></body></html>"#;
-        let results = engine.parse_search_results(html).unwrap();
-        assert!(!results.is_empty());
-    }
 
     #[test]
     fn test_parse_search_results_dispatch_bing() {
@@ -1558,66 +1405,6 @@ mod tests_ext {
         let results = engine.parse_search_results(html).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Title");
-    }
-
-    // === parse_google_results ===
-
-    #[test]
-    fn test_parse_google_results_with_html() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let html = r#"
-        <html><body>
-        <div class="g">
-            <h3>Rust Programming</h3>
-            <a href="https://www.rust-lang.org">rust-lang.org</a>
-        </div>
-        <div class="g">
-            <h3>Rust Docs</h3>
-            <a href="https://doc.rust-lang.org">doc.rust-lang.org</a>
-        </div>
-        </body></html>
-        "#;
-        let results = engine.parse_google_results(html).unwrap();
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].title, "Rust Programming");
-        assert_eq!(results[0].url, "https://www.rust-lang.org");
-    }
-
-    #[test]
-    fn test_parse_google_results_empty_html() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let results = engine.parse_google_results("").unwrap();
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn test_parse_google_results_no_matching() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let html = "<html><body><p>No results</p></body></html>";
-        let results = engine.parse_google_results(html).unwrap();
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn test_parse_google_results_skips_google_links() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let html = r#"
-        <html><body>
-        <div class="g">
-            <h3>Google Link</h3>
-            <a href="https://google.com/search?q=test">google.com</a>
-        </div>
-        <div class="g">
-            <h3>External Link</h3>
-            <a href="https://example.com">example.com</a>
-        </div>
-        </body></html>
-        "#;
-        let results = engine.parse_google_results(html).unwrap();
-        // The first result has a google.com link which is skipped, but title exists
-        // The second result has a valid external link
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].url, "https://example.com");
     }
 
     // === parse_bing_results ===
@@ -1746,7 +1533,7 @@ mod tests_ext {
 
     #[test]
     fn test_apply_scoring_empty_results() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         let mut results: Vec<SearchResult> = vec![];
         engine.apply_scoring(&mut results, "test");
         assert!(results.is_empty());
@@ -1754,19 +1541,19 @@ mod tests_ext {
 
     #[test]
     fn test_apply_scoring_assigns_scores() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         let mut results = vec![
             SearchResult::new(
                 "Rust Programming".to_string(),
                 "https://rust-lang.org".to_string(),
                 Some("Rust programming language".to_string()),
-                "google".to_string(),
+                "Bing".to_string(),
             ),
             SearchResult::new(
                 "Other Result".to_string(),
                 "https://example.com".to_string(),
                 Some("Unrelated content".to_string()),
-                "google".to_string(),
+                "Bing".to_string(),
             ),
         ];
         engine.apply_scoring(&mut results, "rust programming");
@@ -1778,19 +1565,19 @@ mod tests_ext {
 
     #[test]
     fn test_apply_scoring_sorts_by_score_descending() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         let mut results = vec![
             SearchResult::new(
                 "Unrelated".to_string(),
                 "https://example.com".to_string(),
                 Some("Completely different content".to_string()),
-                "google".to_string(),
+                "Bing".to_string(),
             ),
             SearchResult::new(
                 "Rust Programming Language".to_string(),
                 "https://rust-lang.org".to_string(),
                 Some("Rust is a programming language".to_string()),
-                "google".to_string(),
+                "Bing".to_string(),
             ),
         ];
         engine.apply_scoring(&mut results, "rust programming");
@@ -1801,12 +1588,12 @@ mod tests_ext {
 
     #[test]
     fn test_apply_scoring_extracts_published_date() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         let mut results = vec![SearchResult::new(
             "Test".to_string(),
             "https://example.com".to_string(),
             Some("Published on 2024-01-15 this article".to_string()),
-            "google".to_string(),
+            "Bing".to_string(),
         )];
         engine.apply_scoring(&mut results, "test");
         // Date extraction may or may not find a date depending on the parser,
@@ -1818,10 +1605,6 @@ mod tests_ext {
 
     #[test]
     fn test_engine_name_all_types() {
-        assert_eq!(
-            create_engine_with_type(SearchEngineType::Google).engine_name(),
-            "Google"
-        );
         assert_eq!(
             create_engine_with_type(SearchEngineType::Bing).engine_name(),
             "Bing"
@@ -1847,10 +1630,6 @@ mod tests_ext {
     #[test]
     fn test_get_engine_name_all_types() {
         assert_eq!(
-            create_engine_with_type(SearchEngineType::Google).get_engine_name(),
-            "Google"
-        );
-        assert_eq!(
             create_engine_with_type(SearchEngineType::Bing).get_engine_name(),
             "Bing"
         );
@@ -1868,7 +1647,7 @@ mod tests_ext {
 
     #[test]
     fn test_should_retry_retryable_errors() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         assert!(engine.should_retry(&EngineError::RequestFailed("fail".to_string())));
         assert!(engine.should_retry(&EngineError::Timeout(Duration::from_secs(10))));
         assert!(engine.should_retry(&EngineError::BrowserError("browser crash".to_string())));
@@ -1876,7 +1655,7 @@ mod tests_ext {
 
     #[test]
     fn test_should_retry_non_retryable_errors() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         assert!(!engine.should_retry(&EngineError::NoEnginesAvailable));
         assert!(!engine.should_retry(&EngineError::InvalidUrl("bad".to_string())));
         assert!(!engine.should_retry(&EngineError::SsrfProtection("blocked".to_string())));
@@ -1910,7 +1689,7 @@ mod tests_ext {
 
     #[tokio::test]
     async fn test_check_rate_limit_disabled() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         assert!(engine.check_rate_limit().await.is_ok());
     }
 
@@ -1926,7 +1705,7 @@ mod tests_ext {
     #[tokio::test]
     async fn test_check_rate_limit_allowed() {
         let service = MockRateLimitingService::with_behavior(MockBehavior::Allowed);
-        let config = make_config_with_service(SearchEngineType::Google, service);
+        let config = make_config_with_service(SearchEngineType::Bing, service);
         let engine = SmartSearchEngine::new(create_test_client(), config);
         assert!(engine.check_rate_limit().await.is_ok());
     }
@@ -1936,7 +1715,7 @@ mod tests_ext {
         let service = MockRateLimitingService::with_behavior(MockBehavior::Denied(
             "too many requests".to_string(),
         ));
-        let config = make_config_with_service(SearchEngineType::Google, service);
+        let config = make_config_with_service(SearchEngineType::Bing, service);
         let engine = SmartSearchEngine::new(create_test_client(), config);
         let result = engine.check_rate_limit().await;
         assert!(result.is_err());
@@ -1949,7 +1728,7 @@ mod tests_ext {
     #[tokio::test]
     async fn test_check_rate_limit_retry_after() {
         let service = MockRateLimitingService::with_behavior(MockBehavior::RetryAfter(0));
-        let config = make_config_with_service(SearchEngineType::Google, service);
+        let config = make_config_with_service(SearchEngineType::Bing, service);
         let engine = SmartSearchEngine::new(create_test_client(), config);
         // With 0 seconds wait, should return Ok
         assert!(engine.check_rate_limit().await.is_ok());
@@ -1958,7 +1737,7 @@ mod tests_ext {
     #[tokio::test]
     async fn test_check_rate_limit_other_error_degrades_gracefully() {
         let service = MockRateLimitingService::with_behavior(MockBehavior::OtherError);
-        let config = make_config_with_service(SearchEngineType::Google, service);
+        let config = make_config_with_service(SearchEngineType::Bing, service);
         let engine = SmartSearchEngine::new(create_test_client(), config);
         // Other errors should also degrade gracefully
         assert!(engine.check_rate_limit().await.is_ok());
@@ -1968,7 +1747,7 @@ mod tests_ext {
 
     #[test]
     fn test_load_test_data_disabled() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         assert!(engine.load_test_data("query").is_none());
     }
 
@@ -2046,7 +1825,7 @@ mod tests_ext {
     fn test_save_html_for_debug_without_env_var() {
         // Ensure env var is not set
         std::env::remove_var("DEBUG_SAVE_HTML");
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         // Should do nothing without panicking
         engine.save_html_for_debug("<html>test</html>", "test query");
     }
@@ -2055,10 +1834,6 @@ mod tests_ext {
 
     #[test]
     fn test_search_engine_name_all_types() {
-        assert_eq!(
-            create_engine_with_type(SearchEngineType::Google).name(),
-            "google"
-        );
         assert_eq!(
             create_engine_with_type(SearchEngineType::Bing).name(),
             "bing"
@@ -2084,8 +1859,8 @@ mod tests_ext {
     #[test]
     fn test_search_engine_engine_type() {
         assert_eq!(
-            create_engine_with_type(SearchEngineType::Google).engine_type(),
-            SearchEngineType::Google
+            create_engine_with_type(SearchEngineType::Bing).engine_type(),
+            SearchEngineType::Bing
         );
         assert_eq!(
             create_engine_with_type(SearchEngineType::Bing).engine_type(),
@@ -2103,7 +1878,7 @@ mod tests_ext {
 
     #[test]
     fn test_search_engine_health() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         assert_eq!(engine.health(), EngineHealth::Healthy);
     }
 
@@ -2120,10 +1895,6 @@ mod tests_ext {
     #[test]
     fn test_all_factory_functions() {
         let client = create_test_client();
-        let google = create_google_smart_search(client.clone());
-        assert_eq!(google.name(), "google");
-        assert_eq!(google.engine_type(), SearchEngineType::Google);
-
         let bing = create_bing_smart_search(client.clone());
         assert_eq!(bing.name(), "bing");
         assert_eq!(bing.engine_type(), SearchEngineType::Bing);
@@ -2141,8 +1912,6 @@ mod tests_ext {
     fn test_factory_config_values() {
         let client = create_test_client();
 
-        // Google factory uses timeout 90
-        let google = create_google_smart_search(client.clone());
         // Bing factory uses timeout 90
         let bing = create_bing_smart_search(client.clone());
         // Baidu factory uses timeout 60
@@ -2151,7 +1920,6 @@ mod tests_ext {
         let sogou = create_sogou_smart_search(client);
 
         // All should be healthy
-        assert_eq!(google.health(), EngineHealth::Healthy);
         assert_eq!(bing.health(), EngineHealth::Healthy);
         assert_eq!(baidu.health(), EngineHealth::Healthy);
         assert_eq!(sogou.health(), EngineHealth::Healthy);
@@ -2160,45 +1928,15 @@ mod tests_ext {
     // === search() with test data ===
 
     #[tokio::test]
-    async fn test_search_with_test_data_google() {
-        let temp_dir = TempDir::new().unwrap();
-        let html = r#"
-        <html><body>
-        <div class="g">
-            <h3>Rust Programming Language</h3>
-            <a href="https://www.rust-lang.org">Link</a>
-        </div>
-        <div class="g">
-            <h3>Rust Documentation</h3>
-            <a href="https://doc.rust-lang.org">Docs</a>
-        </div>
-        </body></html>
-        "#;
-        let file_path = temp_dir.path().join("test_data_rust.html");
-        std::fs::write(&file_path, html).unwrap();
-
-        let mut config = create_test_config();
-        config.test_data_enabled = true;
-        config.test_data_path = Some(temp_dir.path().to_path_buf());
-        let engine = SmartSearchEngine::new(create_test_client(), config);
-
-        let request = SearchRequest::new("rust");
-        let response = engine.search(&request).await.unwrap();
-        assert_eq!(response.engine, SearchEngineType::Google);
-        assert_eq!(response.items.len(), 2);
-        assert!(response.items.iter().any(|i| i.title.contains("Rust")));
-    }
-
-    #[tokio::test]
     async fn test_search_with_test_data_truncates_to_limit() {
         let temp_dir = TempDir::new().unwrap();
         let html = r#"
         <html><body>
-        <div class="g"><h3>Result 1</h3><a href="https://example1.com">1</a></div>
-        <div class="g"><h3>Result 2</h3><a href="https://example2.com">2</a></div>
-        <div class="g"><h3>Result 3</h3><a href="https://example3.com">3</a></div>
-        <div class="g"><h3>Result 4</h3><a href="https://example4.com">4</a></div>
-        <div class="g"><h3>Result 5</h3><a href="https://example5.com">5</a></div>
+        <li class="b_algo"><h2>Result 1</h2><a href="https://example1.com">1</a><p>Desc 1</p></li>
+        <li class="b_algo"><h2>Result 2</h2><a href="https://example2.com">2</a><p>Desc 2</p></li>
+        <li class="b_algo"><h2>Result 3</h2><a href="https://example3.com">3</a><p>Desc 3</p></li>
+        <li class="b_algo"><h2>Result 4</h2><a href="https://example4.com">4</a><p>Desc 4</p></li>
+        <li class="b_algo"><h2>Result 5</h2><a href="https://example5.com">5</a><p>Desc 5</p></li>
         </body></html>
         "#;
         let file_path = temp_dir.path().join("generic_search_results.html");
@@ -2248,14 +1986,16 @@ mod tests_ext {
         let temp_dir = TempDir::new().unwrap();
         let html = r#"
         <html><body>
-        <div class="g">
-            <h3>Unrelated Topic</h3>
+        <li class="b_algo">
+            <h2>Unrelated Topic</h2>
             <a href="https://unrelated.com">Link</a>
-        </div>
-        <div class="g">
-            <h3>Rust Programming Guide</h3>
+            <p>Something different</p>
+        </li>
+        <li class="b_algo">
+            <h2>Rust Programming Guide</h2>
             <a href="https://rust-lang.org">Link</a>
-        </div>
+            <p>A comprehensive guide to Rust</p>
+        </li>
         </body></html>
         "#;
         let file_path = temp_dir.path().join("test_data_rust.html");
@@ -2287,7 +2027,7 @@ mod tests_ext {
 
     #[test]
     fn test_save_html_for_debug_writes_file_when_env_var_set() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         std::env::set_var("DEBUG_SAVE_HTML", "1");
         // The function should write a debug file to /tmp without panicking
         engine.save_html_for_debug("<html>debug content</html>", "test query");
@@ -2330,7 +2070,7 @@ mod tests_ext {
 
     #[test]
     fn test_build_scrape_request_with_tls_fingerprint() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         let request = engine.build_scrape_request("https://example.com", true, true);
         assert!(request.options.needs_tls_fingerprint);
         assert!(request.options.needs_js);
@@ -2340,17 +2080,17 @@ mod tests_ext {
     // === parse_search_results dispatch for non-specific engine types ===
 
     #[test]
-    fn test_parse_search_results_dispatch_auto_falls_back_to_google() {
+    fn test_parse_search_results_dispatch_auto_falls_back_to_bing() {
         let engine = create_engine_with_type(SearchEngineType::Auto);
-        let html = r#"<html><body><div class="g"><h3>Title</h3><a href="https://example.com">Link</a></div></body></html>"#;
+        let html = r#"<html><body><li class="b_algo"><h2>Title</h2><a href="https://example.com">L</a><p>Desc</p></li></body></html>"#;
         let results = engine.parse_search_results(html).unwrap();
         assert!(!results.is_empty());
     }
 
     #[test]
-    fn test_parse_search_results_dispatch_smart_falls_back_to_google() {
+    fn test_parse_search_results_dispatch_smart_falls_back_to_bing() {
         let engine = create_engine_with_type(SearchEngineType::Smart);
-        let html = r#"<html><body><div class="g"><h3>Title</h3><a href="https://example.com">Link</a></div></body></html>"#;
+        let html = r#"<html><body><li class="b_algo"><h2>Title</h2><a href="https://example.com">L</a><p>Desc</p></li></body></html>"#;
         let results = engine.parse_search_results(html).unwrap();
         assert!(!results.is_empty());
     }
@@ -2358,16 +2098,16 @@ mod tests_ext {
     // === build_search_url for non-specific engine types ===
 
     #[test]
-    fn test_build_search_url_auto_falls_back_to_google() {
+    fn test_build_search_url_auto_falls_back_to_bing() {
         let engine = create_engine_with_type(SearchEngineType::Auto);
         let url = engine.build_search_url("test", Some("en"), Some("US"));
-        assert!(url.contains("google.com"));
+        assert!(url.contains("bing.com"));
     }
 
     // === needs_js_and_tls for non-specific engine types ===
 
     #[test]
-    fn test_needs_js_and_tls_auto_falls_back_to_google() {
+    fn test_needs_js_and_tls_auto_falls_back_to_bing() {
         let engine = create_engine_with_type(SearchEngineType::Auto);
         let (needs_js, needs_tls) = engine.needs_js_and_tls();
         assert!(needs_js);
@@ -2375,7 +2115,7 @@ mod tests_ext {
     }
 
     #[test]
-    fn test_needs_js_and_tls_smart_falls_back_to_google() {
+    fn test_needs_js_and_tls_smart_falls_back_to_bing() {
         let engine = create_engine_with_type(SearchEngineType::Smart);
         let (needs_js, needs_tls) = engine.needs_js_and_tls();
         assert!(needs_js);
@@ -2383,15 +2123,6 @@ mod tests_ext {
     }
 
     // === factory config values ===
-
-    #[test]
-    fn test_google_factory_config_values() {
-        let client = create_test_client();
-        let engine = create_google_smart_search(client);
-        // Google factory uses timeout 90 and rate_limiting_enabled true
-        assert_eq!(engine.engine_type(), SearchEngineType::Google);
-        assert_eq!(engine.health(), EngineHealth::Healthy);
-    }
 
     #[test]
     fn test_bing_factory_config_values() {
@@ -2407,92 +2138,6 @@ mod tests_ext {
         let engine = create_baidu_smart_search(client);
         assert_eq!(engine.engine_type(), SearchEngineType::Baidu);
         assert_eq!(engine.health(), EngineHealth::Healthy);
-    }
-
-    // === parse_google_results with alternate selectors ===
-
-    #[test]
-    fn test_parse_google_results_with_mjjyud_container() {
-        // Exercises the div.MjjYud result selector fallback (second in the list)
-        // when div.g is absent.
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let html = r#"
-        <html><body>
-        <div class="MjjYud">
-            <h3>Alternate Container Result</h3>
-            <a href="https://example.com/alt">Link</a>
-        </div>
-        </body></html>
-        "#;
-        let results = engine.parse_google_results(html).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title, "Alternate Container Result");
-        assert_eq!(results[0].url, "https://example.com/alt");
-    }
-
-    #[test]
-    fn test_parse_google_results_with_description_from_snippet_selector() {
-        // Exercises the snippet selector fallback chain in extract_google_result.
-        // Uses div.zIBAzf which is the 4th snippet selector.
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let html = r#"
-        <html><body>
-        <div class="g">
-            <h3>Result With Description</h3>
-            <a href="https://example.com">Link</a>
-            <div class="zIBAzf">This is a snippet description.</div>
-        </div>
-        </body></html>
-        "#;
-        let results = engine.parse_google_results(html).unwrap();
-        assert_eq!(results.len(), 1);
-        assert!(results[0].description.is_some());
-        assert!(results[0]
-            .description
-            .as_ref()
-            .unwrap()
-            .contains("snippet description"));
-    }
-
-    #[test]
-    fn test_parse_google_results_with_data_attrid_title_selector() {
-        // Exercises the div[data-attrid='title'] title selector fallback
-        // (second in the title selector list) when h3 is absent.
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let html = r#"
-        <html><body>
-        <div class="g">
-            <div data-attrid="title">Title From Data Attr</div>
-            <a href="https://example.com/data-attr">Link</a>
-        </div>
-        </body></html>
-        "#;
-        let results = engine.parse_google_results(html).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title, "Title From Data Attr");
-    }
-
-    #[test]
-    fn test_parse_google_results_extracts_from_multiple_containers() {
-        // Exercises the loop break logic: results from div.g are found,
-        // so the loop breaks and doesn't check other selectors.
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let html = r#"
-        <html><body>
-        <div class="g">
-            <h3>First Result</h3>
-            <a href="https://first.com">Link</a>
-        </div>
-        <div class="MjjYud">
-            <h3>Second Result</h3>
-            <a href="https://second.com">Link</a>
-        </div>
-        </body></html>
-        "#;
-        let results = engine.parse_google_results(html).unwrap();
-        // Should find 1 result from div.g and stop (break after non-empty results)
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title, "First Result");
     }
 
     // === parse_sogou_results with alternate snippet selectors ===
@@ -2571,7 +2216,7 @@ mod tests_ext {
         // Exercises the RetryAfter branch with a non-zero sleep duration.
         // Uses 1 second to keep the test fast but still exercise the sleep.
         let service = MockRateLimitingService::with_behavior(MockBehavior::RetryAfter(1));
-        let config = make_config_with_service(SearchEngineType::Google, service);
+        let config = make_config_with_service(SearchEngineType::Bing, service);
         let engine = SmartSearchEngine::new(create_test_client(), config);
         let result = engine.check_rate_limit().await;
         assert!(result.is_ok(), "RetryAfter with sleep should return Ok");
@@ -2685,11 +2330,11 @@ mod tests_ext {
         SmartSearchEngine::new(client, config)
     }
 
-    fn large_google_html() -> String {
+    fn large_bing_html() -> String {
         let mut html = String::from("<html><body>");
         for i in 0..15 {
             html.push_str(&format!(
-                r#"<div class="g"><h3>Test Result Number {}</h3><a href="https://example{}.com/page">Link to result {}</a><div class="zIBAzf">This is a description for result number {} with some extra text to increase the HTML length beyond 1000 bytes.</div></div>"#,
+                r#"<li class="b_algo"><h2>Test Result Number {}</h2><a href="https://example{}.com/page">Link to result {}</a><p>This is a description for result number {} with some extra text to increase the HTML length beyond 1000 bytes.</p></li>"#,
                 i, i, i, i
             ));
         }
@@ -2701,14 +2346,14 @@ mod tests_ext {
 
     #[tokio::test]
     async fn test_search_success_with_mock_engine() {
-        let html = large_google_html();
+        let html = large_bing_html();
         let config = create_test_config();
         let engine = create_engine_with_mock(MockScrapeBehavior::Success(html), config);
 
         let mut request = SearchRequest::new("rust");
         request.limit = 5;
         let response = engine.search(&request).await.unwrap();
-        assert_eq!(response.engine, SearchEngineType::Google);
+        assert_eq!(response.engine, SearchEngineType::Bing);
         assert_eq!(response.items.len(), 5);
         assert!(response
             .items
@@ -2813,7 +2458,7 @@ mod tests_ext {
 
     #[tokio::test]
     async fn test_search_retry_then_success() {
-        let html = large_google_html();
+        let html = large_bing_html();
         let mut config = create_test_config();
         config.max_retries = 2;
         config.retry_delay_ms = 0;
@@ -2821,7 +2466,7 @@ mod tests_ext {
 
         let request = SearchRequest::new("rust");
         let response = engine.search(&request).await.unwrap();
-        assert_eq!(response.engine, SearchEngineType::Google);
+        assert_eq!(response.engine, SearchEngineType::Bing);
         assert!(!response.items.is_empty());
     }
 
@@ -2928,50 +2573,6 @@ mod tests_ext {
                 idx, client_item.description, smart_result.description
             );
         }
-    }
-
-    #[test]
-    fn test_r_sec_007_google_smart_delegates_to_client_equivalent() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-        let html = r#"
-        <html><body>
-        <div class="g">
-            <h3>Rust Programming Language</h3>
-            <a href="https://www.rust-lang.org">rust-lang.org</a>
-            <span ae30>Empowering everyone to build reliable software.</span>
-        </div>
-        <div class="g">
-            <h3>Rust Documentation</h3>
-            <a href="https://doc.rust-lang.org">doc.rust-lang.org</a>
-            <span ae30>The Rust programming language documentation.</span>
-        </div>
-        <div class="g">
-            <h3>Google Link (skipped)</h3>
-            <a href="https://google.com/search?q=rust">google.com</a>
-        </div>
-        </body></html>
-        "#;
-
-        // 直接调用 client 端 GoogleSearchEngine::parse_results
-        let google_engine = GoogleSearchEngine::new(engine.engine_client.clone());
-        let client_items = google_engine.parse_results(html).unwrap();
-
-        // 通过 smart 端委托调用
-        let smart_results = engine.parse_google_results(html).unwrap();
-
-        assert_smart_client_parity(&client_items, &smart_results);
-    }
-
-    #[test]
-    fn test_r_sec_007_google_smart_delegates_to_client_empty_html() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
-
-        let google_engine = GoogleSearchEngine::new(engine.engine_client.clone());
-        let client_items = google_engine.parse_results("").unwrap();
-
-        let smart_results = engine.parse_google_results("").unwrap();
-
-        assert_smart_client_parity(&client_items, &smart_results);
     }
 
     #[test]
@@ -3119,7 +2720,7 @@ mod tests_ext {
         let request = engine.build_scrape_request("https://example.com", false, false);
         assert_eq!(
             request.options.headers.get("Referer").unwrap(),
-            "https://www.google.com/"
+            "https://www.bing.com/"
         );
     }
 
@@ -3129,7 +2730,7 @@ mod tests_ext {
         let request = engine.build_scrape_request("https://example.com", false, false);
         assert_eq!(
             request.options.headers.get("Referer").unwrap(),
-            "https://www.google.com/"
+            "https://www.bing.com/"
         );
     }
 
@@ -3140,7 +2741,7 @@ mod tests_ext {
 
     #[test]
     fn test_save_html_for_debug_write_failure_with_slash_in_query() {
-        let engine = create_engine_with_type(SearchEngineType::Google);
+        let engine = create_engine_with_type(SearchEngineType::Bing);
         std::env::set_var("DEBUG_SAVE_HTML", "1");
         // A query containing '/' produces a filename like
         // /tmp/search_debug_google_test/path_...html which references a

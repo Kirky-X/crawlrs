@@ -379,7 +379,7 @@ mod tests {
     fn test_parse_empty_html_returns_empty() {
         // 边界情况：空 HTML 返回空结果
         let parser = HtmlParser::google();
-        let results = parser.parse("", SearchEngineType::Google);
+        let results = parser.parse("", SearchEngineType::Bing);
         assert!(results.is_empty());
     }
 
@@ -400,12 +400,12 @@ mod tests {
         </body></html>
         "#;
 
-        let results = parser.parse(html, SearchEngineType::Google);
+        let results = parser.parse(html, SearchEngineType::Bing);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "First Result");
         assert_eq!(results[0].url, "https://example.com/1");
         assert_eq!(results[0].description, "First snippet text");
-        assert_eq!(results[0].engine, SearchEngineType::Google);
+        assert_eq!(results[0].engine, SearchEngineType::Bing);
     }
 
     #[test]
@@ -413,7 +413,7 @@ mod tests {
         // 边界情况：HTML 不包含匹配的选择器时返回空
         let parser = HtmlParser::google();
         let html = r#"<html><body><div>nothing here</div></body></html>"#;
-        let results = parser.parse(html, SearchEngineType::Google);
+        let results = parser.parse(html, SearchEngineType::Bing);
         assert!(results.is_empty());
     }
 
@@ -432,7 +432,7 @@ mod tests {
         </body></html>
         "#;
 
-        let results = parser.parse(html, SearchEngineType::Google);
+        let results = parser.parse(html, SearchEngineType::Bing);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Valid Result");
     }
@@ -455,7 +455,7 @@ mod tests {
         </body></html>
         "#;
 
-        let results = parser.parse(html, SearchEngineType::Google);
+        let results = parser.parse(html, SearchEngineType::Bing);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].url, "https://example.com/valid");
     }
@@ -478,7 +478,7 @@ mod tests {
         </body></html>
         "#;
 
-        let results = parser.parse(html, SearchEngineType::Google);
+        let results = parser.parse(html, SearchEngineType::Bing);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "First Title");
         assert_eq!(results[1].title, "Unique Title");

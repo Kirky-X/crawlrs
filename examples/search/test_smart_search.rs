@@ -13,7 +13,8 @@
 //! - 自定义配置参数
 //! - 测试数据模式
 
-use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::{EngineClient, ScraperEngine};
 use crawlrs::search::engine_trait::SearchEngine;
 use crawlrs::search::engine_trait::SearchRequest;
 use crawlrs::search::smart::{SmartSearchEngine, SmartSearchEngineConfig};
@@ -29,7 +30,7 @@ const RESULT_LIMIT: u32 = 5;
 
 #[tokio::main]
 async fn main() {
-    log::set_max_level(log::LevelFilter::Info);
+    env_logger::init();
 
     info!("==========================================");
     info!("SmartSearchEngine 智能搜索引擎演示");
@@ -50,9 +51,9 @@ async fn demo_basic_usage() {
     info!("----------------------------------------");
 
     let client = create_test_client();
-    let google_engine = create_google_smart_search(client);
+    let bing_engine = create_bing_smart_search(client);
 
-    info!("✅ 已创建 Google 智能搜索引擎");
+    info!("✅ 已创建 Bing 智能搜索引擎");
 
     let request = SearchRequest {
         query: TEST_QUERY.to_string(),
@@ -62,7 +63,7 @@ async fn demo_basic_usage() {
 
     match timeout(
         Duration::from_secs(TIMEOUT_SECS),
-        google_engine.search(&request),
+        bing_engine.search(&request),
     )
     .await
     {
@@ -98,7 +99,7 @@ async fn demo_configuration() {
     let client = create_test_client();
 
     let config = SmartSearchEngineConfig {
-        engine_type: SearchEngineType::Google,
+        engine_type: SearchEngineType::Baidu, // Baidu 不需要 JS
         rate_limiting_enabled: true,
         rate_limiting_service: None,
         timeout_seconds: 60,
@@ -126,7 +127,7 @@ async fn demo_test_data_mode() {
     let test_data_path = PathBuf::from("test-data/search-engines");
 
     let config = SmartSearchEngineConfig {
-        engine_type: SearchEngineType::Google,
+        engine_type: SearchEngineType::Baidu, // Baidu 不需要 JS
         rate_limiting_enabled: false,
         rate_limiting_service: None,
         timeout_seconds: 30,
@@ -149,12 +150,22 @@ async fn demo_test_data_mode() {
 }
 
 fn create_test_client() -> Arc<EngineClient> {
-    Arc::new(EngineClient::new())
+    let reqwest_engine: Arc<dyn ScraperEngine> = Arc::new(ReqwestEngine::new_with_timeout_and_mrt(
+        Arc::new(
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .unwrap(),
+        ),
+        60,
+        Duration::from_secs(30),
+    ));
+    Arc::new(EngineClient::with_engines(vec![reqwest_engine]))
 }
 
-fn create_google_smart_search(client: Arc<EngineClient>) -> Arc<SmartSearchEngine> {
+fn create_bing_smart_search(client: Arc<EngineClient>) -> Arc<SmartSearchEngine> {
     let config = SmartSearchEngineConfig {
-        engine_type: SearchEngineType::Google,
+        engine_type: SearchEngineType::Bing,
         rate_limiting_enabled: true,
         rate_limiting_service: None,
         timeout_seconds: 90,

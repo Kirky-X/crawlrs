@@ -14,7 +14,7 @@
 //!
 //! let results = SearchClient::global()
 //!     .search("Rust programming")
-//!     .google()
+//!     .bing()
 //!     .limit(10)
 //!     .execute()
 //!     .await?;
@@ -25,6 +25,7 @@ pub mod aggregator;
 pub mod client;
 pub mod engine_trait;
 pub mod error;
+pub mod fallback;
 pub mod response;
 pub mod smart;
 pub mod types;
@@ -34,5 +35,6 @@ pub use aggregator::deduplicator::ResultDeduplicator as Deduplicator;
 pub use aggregator::SearchAggregator;
 pub use engine_trait::{SearchEngine, SearchRequest};
 pub use error::SearchError;
+pub use fallback::FallbackSearchEngine;
 pub use response::{Response, ResponseItem};
 pub use types::{EngineHealth, SearchEngineType};

@@ -418,7 +418,7 @@ mod tests {
             "MockEmpty"
         }
         fn engine_type(&self) -> SearchEngineType {
-            SearchEngineType::Google
+            SearchEngineType::Bing
         }
         fn health(&self) -> EngineHealth {
             EngineHealth::Healthy
@@ -430,7 +430,7 @@ mod tests {
             Ok(Response {
                 items: vec![],
                 total_results: Some(0),
-                engine: SearchEngineType::Google,
+                engine: SearchEngineType::Bing,
             })
         }
     }
@@ -446,7 +446,7 @@ mod tests {
             "MockWithItems"
         }
         fn engine_type(&self) -> SearchEngineType {
-            SearchEngineType::Google
+            SearchEngineType::Bing
         }
         fn health(&self) -> EngineHealth {
             EngineHealth::Healthy
@@ -462,13 +462,13 @@ mod tests {
                     // without making real HTTP requests.
                     url: format!("http://127.0.0.1:1/page-{}", i + 1),
                     description: format!("Description {}", i + 1),
-                    engine: SearchEngineType::Google,
+                    engine: SearchEngineType::Bing,
                 })
                 .collect();
             Ok(Response {
                 items,
                 total_results: Some(self.item_count as u64),
-                engine: SearchEngineType::Google,
+                engine: SearchEngineType::Bing,
             })
         }
     }
@@ -482,7 +482,7 @@ mod tests {
             "MockError"
         }
         fn engine_type(&self) -> SearchEngineType {
-            SearchEngineType::Google
+            SearchEngineType::Bing
         }
         fn health(&self) -> EngineHealth {
             EngineHealth::Healthy
@@ -504,7 +504,7 @@ mod tests {
             "MockTimeout"
         }
         fn engine_type(&self) -> SearchEngineType {
-            SearchEngineType::Google
+            SearchEngineType::Bing
         }
         fn health(&self) -> EngineHealth {
             EngineHealth::Healthy
@@ -518,7 +518,7 @@ mod tests {
             Ok(Response {
                 items: vec![],
                 total_results: Some(0),
-                engine: SearchEngineType::Google,
+                engine: SearchEngineType::Bing,
             })
         }
     }

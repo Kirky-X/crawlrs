@@ -69,8 +69,12 @@ use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
 use crate::search::ab_test::SearchABTestEngine;
 use crate::search::aggregator::SearchAggregator;
+use crate::search::client::exa::{ExaConfig, ExaSearchEngine};
+use crate::search::client::parallel::{ParallelConfig, ParallelSearchEngine};
+use crate::search::client::tavily::{TavilyConfig, TavilySearchEngine};
 use crate::search::client::SearchClientTrait;
 use crate::search::engine_trait::SearchEngine;
+use crate::search::fallback::FallbackSearchEngine;
 use crate::search::smart as smart_search;
 // T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
@@ -287,7 +291,6 @@ pub fn init_search_engine(
     settings: &Settings,
 ) -> Arc<dyn SearchEngine> {
     let search_engines: Vec<Arc<dyn SearchEngine>> = vec![
-        smart_search::create_google_smart_search(engine_client.clone()),
         smart_search::create_baidu_smart_search(engine_client.clone()),
         smart_search::create_sogou_smart_search(engine_client.clone()),
         smart_search::create_bing_smart_search(engine_client.clone()),
@@ -295,7 +298,7 @@ pub fn init_search_engine(
 
     let search_aggregator = Arc::new(SearchAggregator::new(search_engines, 10000));
 
-    if settings.search.ab_test_enabled {
+    let base_engine: Arc<dyn SearchEngine> = if settings.search.ab_test_enabled {
         info!(
             "Search A/B testing enabled, weight: {}",
             settings.search.variant_b_weight
@@ -307,7 +310,78 @@ pub fn init_search_engine(
         ))
     } else {
         search_aggregator
+    };
+
+    // Fallback 搜索引擎包装
+    if settings.search.fallback.enabled {
+        let http_client = reqwest::Client::new();
+        let fallback_engines = build_fallback_engines(&http_client, &settings.search.fallback);
+
+        if fallback_engines.is_empty() {
+            log::warn!("Fallback enabled but no fallback engines configured");
+            base_engine
+        } else {
+            info!(
+                "Fallback search enabled with {} engine(s): {:?}",
+                fallback_engines.len(),
+                settings.search.fallback.engines
+            );
+            Arc::new(FallbackSearchEngine::new(base_engine, fallback_engines))
+        }
+    } else {
+        base_engine
     }
+}
+
+/// 根据配置构建 fallback 搜索引擎列表
+fn build_fallback_engines(
+    http_client: &reqwest::Client,
+    fallback_config: &crate::config::search::SearchFallbackConfig,
+) -> Vec<Arc<dyn SearchEngine>> {
+    let mut engines: Vec<Arc<dyn SearchEngine>> = Vec::new();
+
+    for engine_name in &fallback_config.engines {
+        match engine_name.as_str() {
+            "exa" => {
+                let config = ExaConfig {
+                    api_key: fallback_config.exa.api_key.clone(),
+                    endpoint: if fallback_config.exa.endpoint.is_empty() {
+                        "https://mcp.exa.ai/mcp".to_string()
+                    } else {
+                        fallback_config.exa.endpoint.clone()
+                    },
+                };
+                engines.push(Arc::new(ExaSearchEngine::new(http_client.clone(), config)));
+            }
+            "parallel" => {
+                let config = ParallelConfig {
+                    api_key: fallback_config.parallel.api_key.clone(),
+                    endpoint: if fallback_config.parallel.endpoint.is_empty() {
+                        "https://search.parallel.ai/mcp".to_string()
+                    } else {
+                        fallback_config.parallel.endpoint.clone()
+                    },
+                };
+                engines.push(Arc::new(ParallelSearchEngine::new(http_client.clone(), config)));
+            }
+            "tavily" => {
+                let config = TavilyConfig {
+                    api_key: fallback_config.tavily.api_key.clone(),
+                    endpoint: if fallback_config.tavily.endpoint.is_empty() {
+                        "https://api.tavily.com".to_string()
+                    } else {
+                        fallback_config.tavily.endpoint.clone()
+                    },
+                };
+                engines.push(Arc::new(TavilySearchEngine::new(http_client.clone(), config)));
+            }
+            unknown => {
+                log::warn!("Unknown fallback engine '{}', skipping", unknown);
+            }
+        }
+    }
+
+    engines
 }
 
 /// Initialize search service.

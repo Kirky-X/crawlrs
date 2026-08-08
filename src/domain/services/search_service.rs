@@ -648,7 +648,6 @@ mod tests {
     impl SearchEngine for MockSearchEngine {
         fn name(&self) -> &'static str {
             match self.engine_type {
-                SearchEngineType::Google => "MockGoogle",
                 SearchEngineType::Bing => "MockBing",
                 SearchEngineType::Baidu => "MockBaidu",
                 SearchEngineType::Sogou => "MockSogou",
@@ -699,23 +698,23 @@ mod tests {
     }
 
     impl MockSearchClient {
-        /// Build a client whose default (Google) engine returns `items`.
+        /// Build a client whose default (Bing) engine returns `items`.
         fn new_with_items(items: Vec<ResponseItem>) -> Self {
             let engine: Arc<dyn SearchEngine> = Arc::new(MockSearchEngine::success_with_items(
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
                 items,
             ));
             Self {
-                inner: SearchClient::new_with_engines(vec![engine], SearchEngineType::Google),
+                inner: SearchClient::new_with_engines(vec![engine], SearchEngineType::Bing),
             }
         }
 
         /// Build a client whose default engine always fails.
         fn failing() -> Self {
             let engine: Arc<dyn SearchEngine> =
-                Arc::new(MockSearchEngine::failing(SearchEngineType::Google));
+                Arc::new(MockSearchEngine::failing(SearchEngineType::Bing));
             Self {
-                inner: SearchClient::new_with_engines(vec![engine], SearchEngineType::Google),
+                inner: SearchClient::new_with_engines(vec![engine], SearchEngineType::Bing),
             }
         }
 
@@ -726,12 +725,12 @@ mod tests {
                 make_response_item(
                     "Result 1",
                     "https://example.com/1",
-                    SearchEngineType::Google,
+                    SearchEngineType::Bing,
                 ),
                 make_response_item(
                     "Result 2",
                     "https://example.com/2",
-                    SearchEngineType::Google,
+                    SearchEngineType::Bing,
                 ),
             ])
         }
@@ -752,7 +751,7 @@ mod tests {
         }
 
         fn default_engine(&self) -> SearchEngineType {
-            SearchEngineType::Google
+            SearchEngineType::Bing
         }
     }
 
@@ -1093,17 +1092,17 @@ mod tests {
 
     // ========== engine_param branch tests ==========
     // These tests exercise the sources/engine parameter handling logic in search().
-    // perform_search succeeds with the injected MockSearchEngine (default Google),
+    // perform_search succeeds with the injected MockSearchEngine (default Bing),
     // so each test asserts Ok, proving the code reached perform_search and that the
     // engine_param branches did not short-circuit into ValidationError/InsufficientCredits.
 
     #[tokio::test]
     async fn test_search_with_single_source_passes_source_as_engine() {
-        // sources.len() == 1 → engine_param = Some(sources[0]) = Some("google")
-        // MockSearchEngine (Google) handles the request successfully.
+        // sources.len() == 1 → engine_param = Some(sources[0]) = Some("bing")
+        // MockSearchEngine (Bing) handles the request successfully.
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(10)));
         let query = SearchQuery {
-            sources: Some(vec!["google".to_string()]),
+            sources: Some(vec!["bing".to_string()]),
             ..make_query("rust scraping")
         };
         let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
@@ -1117,10 +1116,10 @@ mod tests {
     #[tokio::test]
     async fn test_search_with_multiple_sources_uses_aggregator() {
         // sources.len() > 1 → engine_param = None (aggregator)
-        // perform_search falls back to the default (Google) mock engine and succeeds.
+        // perform_search falls back to the default (Bing) mock engine and succeeds.
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(10)));
         let query = SearchQuery {
-            sources: Some(vec!["google".to_string(), "bing".to_string()]),
+            sources: Some(vec!["bing".to_string(), "baidu".to_string()]),
             ..make_query("rust scraping")
         };
         let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
@@ -1136,10 +1135,11 @@ mod tests {
         // sources = None, engine = Some → engine_param = Some(engine)
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(10)));
         let query = SearchQuery {
-            engine: Some("bing".to_string()),
+            engine: Some("exa".to_string()),
             ..make_query("rust scraping")
         };
         let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        // Exa engine is not registered in mock, so it should fail with NoEngineAvailable
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::ValidationError(_) => {
@@ -1318,10 +1318,10 @@ mod tests {
         let (service, _, _) = make_service_with_recording(
             credits,
             Arc::new(MockSearchClient::new_with_items(vec![
-                make_response_item("a", "https://a.example", SearchEngineType::Google),
-                make_response_item("b", "https://b.example", SearchEngineType::Google),
-                make_response_item("c", "https://c.example", SearchEngineType::Google),
-                make_response_item("d", "https://d.example", SearchEngineType::Google),
+                make_response_item("a", "https://a.example", SearchEngineType::Bing),
+                make_response_item("b", "https://b.example", SearchEngineType::Bing),
+                make_response_item("c", "https://c.example", SearchEngineType::Bing),
+                make_response_item("d", "https://d.example", SearchEngineType::Bing),
             ])),
         );
         let query = SearchQuery {
@@ -1587,7 +1587,7 @@ mod tests {
     fn test_mock_search_engine_name_engine_type_health_all_variants() {
         // Named branches in name(): Google, Bing, Baidu, Sogou
         for engine_type in [
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             SearchEngineType::Bing,
             SearchEngineType::Baidu,
             SearchEngineType::Sogou,
@@ -1618,7 +1618,7 @@ mod tests {
 
     #[test]
     fn test_mock_search_engine_last_request_is_none_initially() {
-        let engine = MockSearchEngine::success_with_items(SearchEngineType::Google, vec![]);
+        let engine = MockSearchEngine::success_with_items(SearchEngineType::Bing, vec![]);
         assert!(engine.last_request().is_none());
     }
 

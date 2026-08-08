@@ -15,17 +15,21 @@ use super::{
 
 pub mod baidu;
 pub mod bing;
-pub mod google;
+pub mod exa;
 pub mod html_parser;
 pub mod http_client;
+pub mod parallel;
 pub mod shared_utils;
 pub mod sogou;
+pub mod tavily;
 
 pub use baidu::BaiduSearchEngine;
 pub use bing::BingSearchEngine;
-pub use google::GoogleSearchEngine;
+pub use exa::{ExaConfig, ExaSearchEngine};
+pub use parallel::{ParallelConfig, ParallelSearchEngine};
 pub use shared_utils::{parse_first_selector, safe_parse_selector};
 pub use sogou::SogouSearchEngine;
+pub use tavily::{TavilyConfig, TavilySearchEngine};
 
 /// Trait for SearchClient - enables dependency injection
 #[async_trait::async_trait]
@@ -51,7 +55,7 @@ struct SearchClientInner {
 }
 
 fn default_engine_type() -> SearchEngineType {
-    SearchEngineType::Google
+    SearchEngineType::Bing
 }
 
 /// 搜索客户端
@@ -69,9 +73,6 @@ impl SearchClient {
         };
 
         // Register all supported search engines
-        inner
-            .engines
-            .push(Arc::new(GoogleSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
         inner
             .engines
             .push(Arc::new(BingSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
@@ -183,11 +184,6 @@ impl SearchCommand {
         }
     }
 
-    pub fn google(mut self) -> Self {
-        self.engine = Some(SearchEngineType::Google);
-        self
-    }
-
     pub fn bing(mut self) -> Self {
         self.engine = Some(SearchEngineType::Bing);
         self
@@ -255,9 +251,9 @@ mod tests {
     #[tokio::test]
     async fn test_search_command_builder() {
         let client = create_test_search_client();
-        let cmd = client.search("test query").google().limit(5);
+        let cmd = client.search("test query").bing().limit(5);
         assert_eq!(cmd.query, "test query");
-        assert_eq!(cmd.engine, Some(SearchEngineType::Google));
+        assert_eq!(cmd.engine, Some(SearchEngineType::Bing));
         assert_eq!(cmd.limit, 5);
     }
 
@@ -277,7 +273,7 @@ mod tests {
     #[tokio::test]
     async fn test_all_engines_registered() {
         let client = create_test_search_client();
-        assert_eq!(client.inner.engines.len(), 4);
+        assert_eq!(client.inner.engines.len(), 3);
     }
 
     // ========== Mock SearchEngine for client tests ==========
@@ -347,19 +343,19 @@ mod tests {
     fn test_new_with_engines_creates_client_with_custom_engines() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![
             Arc::new(MockClientEngine::new(
-                "google",
-                SearchEngineType::Google,
-                make_mock_items(SearchEngineType::Google, 2),
-            )),
-            Arc::new(MockClientEngine::new(
                 "bing",
                 SearchEngineType::Bing,
-                make_mock_items(SearchEngineType::Bing, 1),
+                make_mock_items(SearchEngineType::Bing, 2),
+            )),
+            Arc::new(MockClientEngine::new(
+                "baidu",
+                SearchEngineType::Baidu,
+                make_mock_items(SearchEngineType::Baidu, 1),
             )),
         ];
-        let client = SearchClient::new_with_engines(engines, SearchEngineType::Google);
+        let client = SearchClient::new_with_engines(engines, SearchEngineType::Bing);
         assert_eq!(client.inner.engines.len(), 2);
-        assert_eq!(client.default_engine(), SearchEngineType::Google);
+        assert_eq!(client.default_engine(), SearchEngineType::Bing);
     }
 
     #[test]
@@ -374,11 +370,11 @@ mod tests {
     #[test]
     fn test_register_engine_adds_to_client() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockClientEngine::new(
-            "google",
-            SearchEngineType::Google,
-            make_mock_items(SearchEngineType::Google, 1),
+            "bing",
+            SearchEngineType::Bing,
+            make_mock_items(SearchEngineType::Bing, 1),
         ))];
-        let mut client = SearchClient::new_with_engines(engines, SearchEngineType::Google);
+        let mut client = SearchClient::new_with_engines(engines, SearchEngineType::Bing);
         assert_eq!(client.inner.engines.len(), 1);
 
         client.register_engine(Arc::new(MockClientEngine::new(
@@ -394,32 +390,32 @@ mod tests {
     #[tokio::test]
     async fn test_search_with_engine_success() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockClientEngine::new(
-            "google",
-            SearchEngineType::Google,
-            make_mock_items(SearchEngineType::Google, 3),
+            "bing",
+            SearchEngineType::Bing,
+            make_mock_items(SearchEngineType::Bing, 3),
         ))];
-        let client = SearchClient::new_with_engines(engines, SearchEngineType::Google);
+        let client = SearchClient::new_with_engines(engines, SearchEngineType::Bing);
 
         let response = client
-            .search_with_engine("test", SearchEngineType::Google)
+            .search_with_engine("test", SearchEngineType::Bing)
             .await
             .expect("search_with_engine should succeed");
         assert_eq!(response.items.len(), 3);
-        assert_eq!(response.engine, SearchEngineType::Google);
+        assert_eq!(response.engine, SearchEngineType::Bing);
         assert_eq!(response.total_results, Some(3));
     }
 
     #[tokio::test]
     async fn test_search_with_engine_no_match_returns_no_engine_available() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockClientEngine::new(
-            "google",
-            SearchEngineType::Google,
-            make_mock_items(SearchEngineType::Google, 1),
+            "bing",
+            SearchEngineType::Bing,
+            make_mock_items(SearchEngineType::Bing, 1),
         ))];
-        let client = SearchClient::new_with_engines(engines, SearchEngineType::Google);
+        let client = SearchClient::new_with_engines(engines, SearchEngineType::Bing);
 
         let result = client
-            .search_with_engine("test", SearchEngineType::Bing)
+            .search_with_engine("test", SearchEngineType::Baidu)
             .await;
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -430,9 +426,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_with_engine_empty_client_returns_no_engine_available() {
-        let client = SearchClient::new_with_engines(vec![], SearchEngineType::Google);
+        let client = SearchClient::new_with_engines(vec![], SearchEngineType::Bing);
         let result = client
-            .search_with_engine("test", SearchEngineType::Google)
+            .search_with_engine("test", SearchEngineType::Bing)
             .await;
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -452,7 +448,7 @@ mod tests {
     #[test]
     fn test_default_engine_from_new_client() {
         let client = create_test_search_client();
-        assert_eq!(client.default_engine(), SearchEngineType::Google);
+        assert_eq!(client.default_engine(), SearchEngineType::Bing);
     }
 
     // ========== SearchCommand builder tests ==========
@@ -502,9 +498,9 @@ mod tests {
     #[tokio::test]
     async fn test_search_command_chained_builders() {
         let client = create_test_search_client();
-        let cmd = client.search("rust").google().limit(15).offset(5);
+        let cmd = client.search("rust").bing().limit(15).offset(5);
         assert_eq!(cmd.query, "rust");
-        assert_eq!(cmd.engine, Some(SearchEngineType::Google));
+        assert_eq!(cmd.engine, Some(SearchEngineType::Bing));
         assert_eq!(cmd.limit, 15);
         assert_eq!(cmd.offset, 5);
     }
@@ -514,32 +510,32 @@ mod tests {
     #[tokio::test]
     async fn test_execute_success_with_matching_engine() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockClientEngine::new(
-            "google",
-            SearchEngineType::Google,
-            make_mock_items(SearchEngineType::Google, 2),
+            "bing",
+            SearchEngineType::Bing,
+            make_mock_items(SearchEngineType::Bing, 2),
         ))];
-        let client = SearchClient::new_with_engines(engines, SearchEngineType::Google);
+        let client = SearchClient::new_with_engines(engines, SearchEngineType::Bing);
 
         let response = client
             .search("test")
-            .google()
+            .bing()
             .execute()
             .await
             .expect("execute should succeed with matching engine");
         assert_eq!(response.items.len(), 2);
-        assert_eq!(response.engine, SearchEngineType::Google);
+        assert_eq!(response.engine, SearchEngineType::Bing);
     }
 
     #[tokio::test]
     async fn test_execute_no_matching_engine_returns_error() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockClientEngine::new(
-            "google",
-            SearchEngineType::Google,
-            make_mock_items(SearchEngineType::Google, 1),
+            "bing",
+            SearchEngineType::Bing,
+            make_mock_items(SearchEngineType::Bing, 1),
         ))];
-        let client = SearchClient::new_with_engines(engines, SearchEngineType::Google);
+        let client = SearchClient::new_with_engines(engines, SearchEngineType::Bing);
 
-        let result = client.search("test").bing().execute().await;
+        let result = client.search("test").baidu().execute().await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchError::NoEngineAvailable => {}
@@ -550,25 +546,25 @@ mod tests {
     #[tokio::test]
     async fn test_execute_uses_default_engine_when_none_specified() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockClientEngine::new(
-            "google",
-            SearchEngineType::Google,
-            make_mock_items(SearchEngineType::Google, 1),
+            "bing",
+            SearchEngineType::Bing,
+            make_mock_items(SearchEngineType::Bing, 1),
         ))];
-        let client = SearchClient::new_with_engines(engines, SearchEngineType::Google);
+        let client = SearchClient::new_with_engines(engines, SearchEngineType::Bing);
 
-        // No engine specified, should use default (Google)
+        // No engine specified, should use default (Bing)
         let response = client
             .search("test")
             .execute()
             .await
             .expect("execute should use default engine");
         assert_eq!(response.items.len(), 1);
-        assert_eq!(response.engine, SearchEngineType::Google);
+        assert_eq!(response.engine, SearchEngineType::Bing);
     }
 
     #[tokio::test]
     async fn test_execute_with_empty_client_returns_no_engine_available() {
-        let client = SearchClient::new_with_engines(vec![], SearchEngineType::Google);
+        let client = SearchClient::new_with_engines(vec![], SearchEngineType::Bing);
         let result = client.search("test").execute().await;
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -589,14 +585,14 @@ mod tests {
     #[tokio::test]
     async fn test_trait_impl_search_with_engine_success() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockClientEngine::new(
-            "google",
-            SearchEngineType::Google,
-            make_mock_items(SearchEngineType::Google, 1),
+            "bing",
+            SearchEngineType::Bing,
+            make_mock_items(SearchEngineType::Bing, 1),
         ))];
-        let client = SearchClient::new_with_engines(engines, SearchEngineType::Google);
+        let client = SearchClient::new_with_engines(engines, SearchEngineType::Bing);
 
         let response =
-            SearchClientTrait::search_with_engine(&client, "test", SearchEngineType::Google)
+            SearchClientTrait::search_with_engine(&client, "test", SearchEngineType::Bing)
                 .await
                 .expect("trait search_with_engine should succeed");
         assert_eq!(response.items.len(), 1);
@@ -605,14 +601,14 @@ mod tests {
     #[tokio::test]
     async fn test_trait_impl_search_with_engine_no_match() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockClientEngine::new(
-            "google",
-            SearchEngineType::Google,
-            make_mock_items(SearchEngineType::Google, 1),
+            "bing",
+            SearchEngineType::Bing,
+            make_mock_items(SearchEngineType::Bing, 1),
         ))];
-        let client = SearchClient::new_with_engines(engines, SearchEngineType::Google);
+        let client = SearchClient::new_with_engines(engines, SearchEngineType::Bing);
 
         let result =
-            SearchClientTrait::search_with_engine(&client, "test", SearchEngineType::Bing).await;
+            SearchClientTrait::search_with_engine(&client, "test", SearchEngineType::Baidu).await;
         assert!(result.is_err());
     }
 

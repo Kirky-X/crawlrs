@@ -7,9 +7,9 @@
 //!
 //! 支持同时测试所有搜索引擎，统一输出格式和 URL 可访问性检查
 
-use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::{EngineClient, ScraperEngine};
 use crawlrs::search::client::BingSearchEngine;
-use crawlrs::search::client::GoogleSearchEngine;
 use crawlrs::search::SearchEngine;
 use crawlrs::search::SearchRequest;
 use log::info;
@@ -22,7 +22,7 @@ const RESULT_LIMIT: u32 = 10;
 
 #[tokio::main]
 async fn main() {
-    log::set_max_level(log::LevelFilter::Info);
+    env_logger::init();
 
     info!("==========================================");
     info!("统一搜索引擎测试");
@@ -30,35 +30,26 @@ async fn main() {
     info!("==========================================");
     info!("");
 
-    let engine_client = Arc::new(EngineClient::new());
-    let google_engine = GoogleSearchEngine::new(engine_client.clone());
+    let reqwest_engine: Arc<dyn ScraperEngine> = Arc::new(ReqwestEngine::new_with_timeout_and_mrt(
+        Arc::new(
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .unwrap(),
+        ),
+        60,
+        Duration::from_secs(30),
+    ));
+    let engine_client = Arc::new(EngineClient::with_engines(vec![reqwest_engine]));
 
     info!(
-        "[1/2] 测试 Google 搜索引擎 (超时 {} 秒)...",
-        ENGINE_TIMEOUT_SECS
-    );
-
-    let timeout_duration = Duration::from_secs(ENGINE_TIMEOUT_SECS);
-    let request = SearchRequest::new(TEST_KEYWORD).with_limit(RESULT_LIMIT);
-
-    match timeout(timeout_duration, google_engine.search(&request)).await {
-        Ok(Ok(response)) => {
-            info!("✅ Google 搜索成功，找到 {} 个结果", response.items.len());
-        }
-        Ok(Err(e)) => {
-            info!("⚠️ Google 搜索出错: {:?}", e);
-        }
-        Err(_) => {
-            info!("[TIMEOUT] Google 搜索超时");
-        }
-    }
-    info!("");
-
-    info!(
-        "[2/2] 测试 Bing 搜索引擎 (超时 {} 秒)...",
+        "[1/1] 测试 Bing 搜索引擎 (超时 {} 秒)...",
         ENGINE_TIMEOUT_SECS
     );
     let bing_engine = BingSearchEngine::new(engine_client.clone());
+
+    let timeout_duration = Duration::from_secs(ENGINE_TIMEOUT_SECS);
+    let request = SearchRequest::new(TEST_KEYWORD).with_limit(RESULT_LIMIT);
 
     match timeout(timeout_duration, bing_engine.search(&request)).await {
         Ok(Ok(response)) => {

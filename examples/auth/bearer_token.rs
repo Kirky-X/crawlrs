@@ -64,7 +64,7 @@ async fn main() {
     info!("  curl -X POST {}/v1/search \\", base_url);
     info!("    -H 'Authorization: Bearer <api-key>' \\");
     info!("    -H 'Content-Type: application/json' \\");
-    info!("    -d '{{\"query\": \"rust web scraping\", \"engines\": [\"google\"]}}'");
+    info!("    -d '{{\"query\": \"rust web scraping\", \"engines\": [\"bing\"]}}'");
     info!("");
 
     // 3. 环境变量安全实践

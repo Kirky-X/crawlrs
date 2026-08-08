@@ -522,7 +522,7 @@ mod tests {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![
             Arc::new(MockAggEngine::healthy(
                 "google",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
                 vec![],
             )),
             Arc::new(MockAggEngine::healthy(
@@ -542,7 +542,7 @@ mod tests {
     fn test_get_engine_found_case_insensitive() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             vec![],
         ))];
         let agg = SearchAggregator::new(engines, 5000);
@@ -565,7 +565,7 @@ mod tests {
     fn test_get_engine_not_found() {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             vec![],
         ))];
         let agg = SearchAggregator::new(engines, 5000);
@@ -588,7 +588,7 @@ mod tests {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![
             Arc::new(MockAggEngine::healthy(
                 "google",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
                 vec![],
             )),
             Arc::new(MockAggEngine::healthy(
@@ -638,7 +638,7 @@ mod tests {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![
             Arc::new(MockAggEngine::healthy(
                 "google",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
                 vec![],
             )),
             Arc::new(MockAggEngine::healthy(
@@ -655,7 +655,7 @@ mod tests {
     fn test_health_majority_unhealthy_is_degraded() {
         // 2 out of 2 engines unhealthy → 100% >= 50% → Degraded
         let engines: Vec<Arc<dyn SearchEngine>> = vec![
-            Arc::new(MockAggEngine::unhealthy("google", SearchEngineType::Google)),
+            Arc::new(MockAggEngine::unhealthy("google", SearchEngineType::Bing)),
             Arc::new(MockAggEngine::unhealthy("bing", SearchEngineType::Bing)),
         ];
         let agg = SearchAggregator::new(engines, 5000);
@@ -668,7 +668,7 @@ mod tests {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![
             Arc::new(MockAggEngine::healthy(
                 "google",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
                 vec![],
             )),
             Arc::new(MockAggEngine::unhealthy("bing", SearchEngineType::Bing)),
@@ -685,7 +685,7 @@ mod tests {
         let engines: Vec<Arc<dyn SearchEngine>> = vec![
             Arc::new(MockAggEngine::healthy(
                 "google",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
                 vec![],
             )),
             Arc::new(MockAggEngine::healthy(
@@ -726,11 +726,11 @@ mod tests {
         let items = vec![make_item(
             "Rust Guide",
             "https://rust-lang.org",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
         )];
         let engines = make_engines(vec![Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             items,
         ))]);
         let agg = SearchAggregator::new(engines, 5000);
@@ -747,7 +747,7 @@ mod tests {
         let items_a = vec![make_item(
             "Rust Guide",
             "https://rust-lang.org",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
         )];
         let items_b = vec![make_item(
             "Rust Guide",
@@ -757,7 +757,7 @@ mod tests {
         let engines = make_engines(vec![
             Arc::new(MockAggEngine::healthy(
                 "google",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
                 items_a,
             )),
             Arc::new(MockAggEngine::healthy(
@@ -783,7 +783,7 @@ mod tests {
         let items_a = vec![make_item(
             "Rust Programming Language Guide",
             "https://a.com",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
         )];
         let items_b = vec![make_item(
             "Rust Programming Language Guide",
@@ -793,7 +793,7 @@ mod tests {
         let engines = make_engines(vec![
             Arc::new(MockAggEngine::healthy(
                 "google",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
                 items_a,
             )),
             Arc::new(MockAggEngine::healthy(
@@ -819,7 +819,7 @@ mod tests {
         let items_a = vec![make_item(
             "Rust Guide",
             "https://rust-lang.org",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
         )];
         let items_b = vec![make_item(
             "Python Guide",
@@ -829,7 +829,7 @@ mod tests {
         let engines = make_engines(vec![
             Arc::new(MockAggEngine::healthy(
                 "google",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
                 items_a,
             )),
             Arc::new(MockAggEngine::healthy(
@@ -856,11 +856,11 @@ mod tests {
         // NOT call the engine again.
         let mock = Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             vec![make_item(
                 "Cached",
                 "https://cached.com",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
             )],
         ));
         let engines = make_engines(vec![mock.clone()]);
@@ -898,11 +898,11 @@ mod tests {
     async fn test_search_different_queries_bypass_cache() {
         let mock = Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             vec![make_item(
                 "Result",
                 "https://r.com",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
             )],
         ));
         let engines = make_engines(vec![mock.clone()]);
@@ -926,7 +926,7 @@ mod tests {
     async fn test_search_continues_when_engine_fails() {
         // One engine fails, the other succeeds → results from the working engine.
         let engines = make_engines(vec![
-            Arc::new(MockAggEngine::failing("google", SearchEngineType::Google)),
+            Arc::new(MockAggEngine::failing("google", SearchEngineType::Bing)),
             Arc::new(MockAggEngine::healthy(
                 "bing",
                 SearchEngineType::Bing,
@@ -952,7 +952,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_all_engines_fail_returns_empty() {
         let engines = make_engines(vec![
-            Arc::new(MockAggEngine::failing("google", SearchEngineType::Google)),
+            Arc::new(MockAggEngine::failing("google", SearchEngineType::Bing)),
             Arc::new(MockAggEngine::failing("bing", SearchEngineType::Bing)),
         ]);
         let agg = SearchAggregator::new(engines, 5000);
@@ -974,7 +974,7 @@ mod tests {
         let google_items = vec![make_item(
             "Google Result",
             "https://google.com",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
         )];
         let bing_items = vec![make_item(
             "Bing Result",
@@ -984,7 +984,7 @@ mod tests {
         let engines = make_engines(vec![
             Arc::new(MockAggEngine::healthy(
                 "google",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
                 google_items,
             )),
             Arc::new(MockAggEngine::healthy(
@@ -1018,11 +1018,11 @@ mod tests {
     async fn test_search_with_engine_not_found_falls_back() {
         let engines = make_engines(vec![Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             vec![make_item(
                 "G Result",
                 "https://g.com",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
             )],
         ))]);
         let agg = SearchAggregator::new(engines, 5000);
@@ -1050,8 +1050,8 @@ mod tests {
         let engines = make_engines(vec![
             Arc::new(MockAggEngine::healthy(
                 "google",
-                SearchEngineType::Google,
-                vec![make_item("A", "https://a.com", SearchEngineType::Google)],
+                SearchEngineType::Bing,
+                vec![make_item("A", "https://a.com", SearchEngineType::Bing)],
             )),
             Arc::new(MockAggEngine::healthy(
                 "bing",
@@ -1080,8 +1080,8 @@ mod tests {
     async fn test_inherent_search_with_engine_specific() {
         let engines = make_engines(vec![Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
-            vec![make_item("G", "https://g.com", SearchEngineType::Google)],
+            SearchEngineType::Bing,
+            vec![make_item("G", "https://g.com", SearchEngineType::Bing)],
         ))]);
         let agg = SearchAggregator::new(engines, 5000);
 
@@ -1099,8 +1099,8 @@ mod tests {
     async fn test_inherent_search_with_engine_none() {
         let engines = make_engines(vec![Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
-            vec![make_item("G", "https://g.com", SearchEngineType::Google)],
+            SearchEngineType::Bing,
+            vec![make_item("G", "https://g.com", SearchEngineType::Bing)],
         ))]);
         let agg = SearchAggregator::new(engines, 5000);
 
@@ -1117,7 +1117,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_circuit_breaker_skips_after_three_failures() {
-        let mock = Arc::new(MockAggEngine::failing("google", SearchEngineType::Google));
+        let mock = Arc::new(MockAggEngine::failing("google", SearchEngineType::Bing));
         let engines = make_engines(vec![mock.clone()]);
         let agg = SearchAggregator::new(engines, 5000);
 
@@ -1177,7 +1177,7 @@ mod tests {
         // 1 >= 1/2=0 → Degraded.
         let engines = make_engines(vec![make_engine_with_health(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             EngineHealth::Degraded,
         )]);
         let agg = SearchAggregator::new(engines, 5000);
@@ -1189,7 +1189,7 @@ mod tests {
         // Isolated health is treated as unhealthy in the health() aggregation.
         let engines = make_engines(vec![make_engine_with_health(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             EngineHealth::Isolated,
         )]);
         let agg = SearchAggregator::new(engines, 5000);
@@ -1201,7 +1201,7 @@ mod tests {
         // Unknown health is treated as healthy in the health() aggregation.
         let engines = make_engines(vec![make_engine_with_health(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             EngineHealth::Unknown,
         )]);
         let agg = SearchAggregator::new(engines, 5000);
@@ -1212,7 +1212,7 @@ mod tests {
     fn test_health_mixed_degraded_and_healthy_majority_healthy() {
         // 1 Degraded out of 4 → 1 < 4/2=2 → Healthy.
         let engines = make_engines(vec![
-            make_engine_with_health("google", SearchEngineType::Google, EngineHealth::Healthy),
+            make_engine_with_health("google", SearchEngineType::Bing, EngineHealth::Healthy),
             make_engine_with_health("bing", SearchEngineType::Bing, EngineHealth::Healthy),
             make_engine_with_health("baidu", SearchEngineType::Baidu, EngineHealth::Healthy),
             make_engine_with_health("sogou", SearchEngineType::Sogou, EngineHealth::Degraded),
@@ -1224,7 +1224,7 @@ mod tests {
     #[test]
     fn test_health_all_unknown_is_healthy() {
         let engines = make_engines(vec![
-            make_engine_with_health("google", SearchEngineType::Google, EngineHealth::Unknown),
+            make_engine_with_health("google", SearchEngineType::Bing, EngineHealth::Unknown),
             make_engine_with_health("bing", SearchEngineType::Bing, EngineHealth::Unknown),
         ]);
         let agg = SearchAggregator::new(engines, 5000);
@@ -1240,15 +1240,15 @@ mod tests {
         // must be used for both searches.
         // Use distinct titles to avoid Jaro-Winkler deduplication.
         let items: Vec<ResponseItem> = vec![
-            make_item("Alpha", "https://alpha.com", SearchEngineType::Google),
-            make_item("Beta", "https://beta.com", SearchEngineType::Google),
-            make_item("Gamma", "https://gamma.com", SearchEngineType::Google),
-            make_item("Delta", "https://delta.com", SearchEngineType::Google),
-            make_item("Epsilon", "https://epsilon.com", SearchEngineType::Google),
+            make_item("Alpha", "https://alpha.com", SearchEngineType::Bing),
+            make_item("Beta", "https://beta.com", SearchEngineType::Bing),
+            make_item("Gamma", "https://gamma.com", SearchEngineType::Bing),
+            make_item("Delta", "https://delta.com", SearchEngineType::Bing),
+            make_item("Epsilon", "https://epsilon.com", SearchEngineType::Bing),
         ];
         let mock = Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             items,
         ));
         let engines = make_engines(vec![mock.clone()]);
@@ -1288,11 +1288,11 @@ mod tests {
         // fall back to aggregator search (search all engines).
         let engines = make_engines(vec![Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
             vec![make_item(
                 "G Result",
                 "https://g.com",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
             )],
         ))]);
         let agg = SearchAggregator::new(engines, 5000);
@@ -1357,11 +1357,11 @@ mod tests {
 
         let flaky = Arc::new(FlakyEngine {
             name: "flaky",
-            engine_type: SearchEngineType::Google,
+            engine_type: SearchEngineType::Bing,
             items: vec![make_item(
                 "Flaky Result",
                 "https://flaky.com",
-                SearchEngineType::Google,
+                SearchEngineType::Bing,
             )],
             should_fail: AtomicBool::new(true),
             call_count: Mutex::new(0),
@@ -1402,7 +1402,7 @@ mod tests {
         // trigger the timeout branch, incrementing the failure count.
         let engines = make_engines(vec![Arc::new(MockAggEngine::slow(
             "slow-google",
-            SearchEngineType::Google,
+            SearchEngineType::Bing,
         ))]);
         // Use a very short timeout (1ms) so the slow engine (5s sleep) times out.
         let agg = SearchAggregator::new(engines, 1);
@@ -1424,8 +1424,8 @@ mod tests {
         // lang/country should bypass the cache and call the engine again.
         let mock = Arc::new(MockAggEngine::healthy(
             "google",
-            SearchEngineType::Google,
-            vec![make_item("R", "https://r.com", SearchEngineType::Google)],
+            SearchEngineType::Bing,
+            vec![make_item("R", "https://r.com", SearchEngineType::Bing)],
         ));
         let engines = make_engines(vec![mock.clone()]);
         let agg = SearchAggregator::new(engines, 5000);

@@ -8,37 +8,43 @@ use serde::{Deserialize, Serialize};
 /// 搜索引擎类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SearchEngineType {
-    Google,
     Bing,
     Baidu,
     Sogou,
     Auto,
     Smart,
     ABTest,
+    Exa,
+    Parallel,
+    Tavily,
 }
 
 impl SearchEngineType {
     pub fn name(&self) -> &'static str {
         match self {
-            SearchEngineType::Google => "Google",
             SearchEngineType::Bing => "Bing",
             SearchEngineType::Baidu => "Baidu",
             SearchEngineType::Sogou => "Sogou",
             SearchEngineType::Auto => "Auto",
             SearchEngineType::Smart => "Smart",
             SearchEngineType::ABTest => "ABTest",
+            SearchEngineType::Exa => "Exa",
+            SearchEngineType::Parallel => "Parallel",
+            SearchEngineType::Tavily => "Tavily",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
-            "Google" | "google" => Some(SearchEngineType::Google),
             "Bing" | "bing" => Some(SearchEngineType::Bing),
             "Baidu" | "baidu" => Some(SearchEngineType::Baidu),
             "Sogou" | "sogou" => Some(SearchEngineType::Sogou),
             "Auto" | "auto" => Some(SearchEngineType::Auto),
             "Smart" | "smart" => Some(SearchEngineType::Smart),
             "ABTest" | "abtest" | "ab_test" => Some(SearchEngineType::ABTest),
+            "Exa" | "exa" => Some(SearchEngineType::Exa),
+            "Parallel" | "parallel" => Some(SearchEngineType::Parallel),
+            "Tavily" | "tavily" => Some(SearchEngineType::Tavily),
             _ => None,
         }
     }
@@ -69,23 +75,21 @@ mod tests {
 
     #[test]
     fn test_name_all_variants() {
-        assert_eq!(SearchEngineType::Google.name(), "Google");
         assert_eq!(SearchEngineType::Bing.name(), "Bing");
         assert_eq!(SearchEngineType::Baidu.name(), "Baidu");
         assert_eq!(SearchEngineType::Sogou.name(), "Sogou");
         assert_eq!(SearchEngineType::Auto.name(), "Auto");
         assert_eq!(SearchEngineType::Smart.name(), "Smart");
         assert_eq!(SearchEngineType::ABTest.name(), "ABTest");
+        assert_eq!(SearchEngineType::Exa.name(), "Exa");
+        assert_eq!(SearchEngineType::Parallel.name(), "Parallel");
+        assert_eq!(SearchEngineType::Tavily.name(), "Tavily");
     }
 
     // ========== SearchEngineType::from_name tests ==========
 
     #[test]
     fn test_from_name_canonical() {
-        assert_eq!(
-            SearchEngineType::from_name("Google"),
-            Some(SearchEngineType::Google)
-        );
         assert_eq!(
             SearchEngineType::from_name("Bing"),
             Some(SearchEngineType::Bing)
@@ -110,14 +114,22 @@ mod tests {
             SearchEngineType::from_name("ABTest"),
             Some(SearchEngineType::ABTest)
         );
+        assert_eq!(
+            SearchEngineType::from_name("Exa"),
+            Some(SearchEngineType::Exa)
+        );
+        assert_eq!(
+            SearchEngineType::from_name("Parallel"),
+            Some(SearchEngineType::Parallel)
+        );
+        assert_eq!(
+            SearchEngineType::from_name("Tavily"),
+            Some(SearchEngineType::Tavily)
+        );
     }
 
     #[test]
     fn test_from_name_lowercase() {
-        assert_eq!(
-            SearchEngineType::from_name("google"),
-            Some(SearchEngineType::Google)
-        );
         assert_eq!(
             SearchEngineType::from_name("bing"),
             Some(SearchEngineType::Bing)
@@ -142,6 +154,18 @@ mod tests {
             SearchEngineType::from_name("abtest"),
             Some(SearchEngineType::ABTest)
         );
+        assert_eq!(
+            SearchEngineType::from_name("exa"),
+            Some(SearchEngineType::Exa)
+        );
+        assert_eq!(
+            SearchEngineType::from_name("parallel"),
+            Some(SearchEngineType::Parallel)
+        );
+        assert_eq!(
+            SearchEngineType::from_name("tavily"),
+            Some(SearchEngineType::Tavily)
+        );
     }
 
     #[test]
@@ -157,19 +181,22 @@ mod tests {
         assert_eq!(SearchEngineType::from_name("DuckDuckGo"), None);
         assert_eq!(SearchEngineType::from_name(""), None);
         assert_eq!(SearchEngineType::from_name("GOOGLE"), None);
+        assert_eq!(SearchEngineType::from_name("google"), None);
         assert_eq!(SearchEngineType::from_name("yahoo"), None);
     }
 
     #[test]
     fn test_name_from_name_roundtrip() {
         for variant in [
-            SearchEngineType::Google,
             SearchEngineType::Bing,
             SearchEngineType::Baidu,
             SearchEngineType::Sogou,
             SearchEngineType::Auto,
             SearchEngineType::Smart,
             SearchEngineType::ABTest,
+            SearchEngineType::Exa,
+            SearchEngineType::Parallel,
+            SearchEngineType::Tavily,
         ] {
             let name = variant.name();
             assert_eq!(
@@ -185,27 +212,29 @@ mod tests {
 
     #[test]
     fn test_search_engine_type_clone_copy() {
-        let a = SearchEngineType::Google;
+        let a = SearchEngineType::Bing;
         let b = a; // Copy
         assert_eq!(a, b);
     }
 
     #[test]
     fn test_search_engine_type_equality() {
-        assert_eq!(SearchEngineType::Google, SearchEngineType::Google);
-        assert_ne!(SearchEngineType::Google, SearchEngineType::Bing);
+        assert_eq!(SearchEngineType::Bing, SearchEngineType::Bing);
+        assert_ne!(SearchEngineType::Bing, SearchEngineType::Baidu);
     }
 
     #[test]
     fn test_search_engine_type_serde_roundtrip() {
         for variant in [
-            SearchEngineType::Google,
             SearchEngineType::Bing,
             SearchEngineType::Baidu,
             SearchEngineType::Sogou,
             SearchEngineType::Auto,
             SearchEngineType::Smart,
             SearchEngineType::ABTest,
+            SearchEngineType::Exa,
+            SearchEngineType::Parallel,
+            SearchEngineType::Tavily,
         ] {
             let json = serde_json::to_string(&variant).expect("serialize");
             let back: SearchEngineType = serde_json::from_str(&json).expect("deserialize");

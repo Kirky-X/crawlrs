@@ -97,10 +97,28 @@ default_engine = "baidu"
 
 # Search Engine Enable/Disable Configuration
 [search.engines]
-google_enabled = true
 bing_enabled = true
 baidu_enabled = true
 sogou_enabled = true
+
+# Fallback Search Engine Configuration
+# When primary search engines all fail, fallback to API-based engines in order
+[search.fallback]
+enabled = false
+# Fallback engine order (tried sequentially)
+engines = ["exa", "parallel", "tavily"]
+
+[search.fallback.exa]
+api_key = ""  # Set via CRAWLRS__SEARCH__FALLBACK__EXA__API_KEY
+endpoint = "https://mcp.exa.ai/mcp"
+
+[search.fallback.parallel]
+api_key = ""  # Set via CRAWLRS__SEARCH__FALLBACK__PARALLEL__API_KEY
+endpoint = "https://search.parallel.ai/mcp"
+
+[search.fallback.tavily]
+api_key = ""  # Set via CRAWLRS__SEARCH__FALLBACK__TAVILY__API_KEY
+endpoint = "https://api.tavily.com"
 
 # FlareSolverr Configuration (for Google search proxy)
 [search.flaresolverr]
