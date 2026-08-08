@@ -93,6 +93,8 @@ test_data_enabled = false
 max_retries = 3
 retry_delay_ms = 1000
 default_engine = "baidu"
+# Maximum number of results per search request (API limit cannot exceed this)
+max_results = 50
 
 # Search Engine Enable/Disable Configuration
 [search.engines]

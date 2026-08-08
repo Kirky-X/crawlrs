@@ -61,6 +61,10 @@ pub struct SearchSettings {
     #[config(default = 1000)]
     pub retry_delay_ms: u64,
 
+    /// 单次搜索最大返回结果数（API 请求的 limit 不得超过此值）
+    #[config(default = 50)]
+    pub max_results: u32,
+
     /// Fallback 搜索引擎配置
     pub fallback: SearchFallbackConfig,
 }
@@ -235,6 +239,15 @@ mod tests {
     }
 
     #[test]
+    fn test_search_default_max_results() {
+        let settings = SearchSettings::default();
+        assert_eq!(
+            settings.max_results, 50,
+            "default max_results should be 50"
+        );
+    }
+
+    #[test]
     fn test_search_serde_roundtrip_default() {
         let settings = SearchSettings::default();
         let json = serde_json::to_string(&settings).expect("serialize");
@@ -257,6 +270,7 @@ mod tests {
             test_data_enabled: true,
             max_retries: 10,
             retry_delay_ms: 2000,
+            max_results: 100,
             fallback: SearchFallbackConfig::default(),
         };
         let json = serde_json::to_string(&settings).expect("serialize");
@@ -269,6 +283,7 @@ mod tests {
         assert!(back.test_data_enabled);
         assert_eq!(back.max_retries, 10);
         assert_eq!(back.retry_delay_ms, 2000);
+        assert_eq!(back.max_results, 100);
     }
 
     #[test]
@@ -279,6 +294,7 @@ mod tests {
             test_data_enabled: true,
             max_retries: 5,
             retry_delay_ms: 500,
+            max_results: 75,
             fallback: SearchFallbackConfig::default(),
         };
         let cloned = settings.clone();
@@ -287,6 +303,7 @@ mod tests {
         assert_eq!(cloned.test_data_enabled, settings.test_data_enabled);
         assert_eq!(cloned.max_retries, settings.max_retries);
         assert_eq!(cloned.retry_delay_ms, settings.retry_delay_ms);
+        assert_eq!(cloned.max_results, settings.max_results);
     }
 
     // ========== SearchFallbackConfig tests ==========

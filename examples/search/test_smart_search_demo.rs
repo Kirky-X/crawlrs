@@ -3,18 +3,22 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+//! Smart 聚合搜索引擎演示
+//!
+//! 并发查询 Baidu + Bing + Sogou → SimHash 去重 → RRF 融合 → 相关度评分
+
 use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::{EngineClient, ScraperEngine};
-use crawlrs::search::smart as smart_search;
-use crawlrs::search::SearchRequest;
+use crawlrs::search::engine_trait::SearchRequest;
+use crawlrs::search::smart::create_smart_search;
 use std::sync::Arc;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
-    println!("🚀 测试智能搜索功能");
+    println!("=== Smart Search Engine Demo ===");
+    println!("Concurrent: Baidu + Bing + Sogou -> Dedup -> RRF -> Scoring\n");
 
-    // 创建引擎客户端
     let reqwest_engine: Arc<dyn ScraperEngine> = Arc::new(ReqwestEngine::new_with_timeout_and_mrt(
         Arc::new(
             reqwest::Client::builder()
@@ -26,21 +30,36 @@ async fn main() {
         Duration::from_secs(30),
     ));
     let engine_client = Arc::new(EngineClient::with_engines(vec![reqwest_engine]));
+    let smart_engine = create_smart_search(engine_client);
 
-    // 创建智能搜索引擎（Baidu 不需要 JS，ReqwestEngine 可处理）
-    let smart_engine = smart_search::create_baidu_smart_search(engine_client);
+    let query = "rust programming language";
+    println!("Query: \"{}\"", query);
+    println!("Engine type: {:?}\n", smart_engine.engine_type());
 
-    println!("🔍 执行搜索测试...");
-    let request = SearchRequest::new("rust programming").with_limit(5);
-    match smart_engine.search(&request).await {
-        Ok(results) => {
-            println!("✅ 搜索成功！找到 {} 个结果", results.items.len());
-            for (i, result) in results.items.iter().enumerate() {
-                println!("  {}. {} - {}", i + 1, result.title, result.url);
+    let request = SearchRequest::new(query).with_limit(10);
+
+    match tokio::time::timeout(Duration::from_secs(90), smart_engine.search(&request)).await {
+        Ok(Ok(response)) => {
+            println!("Results: {} items (engine: {:?})\n", response.items.len(), response.engine);
+            for (i, item) in response.items.iter().enumerate() {
+                println!("  {:2}. [{}] {}", i + 1, item.engine.name(), item.title);
+                println!("      {}", item.url);
+                if !item.description.is_empty() {
+                    let desc = if item.description.chars().count() > 120 {
+                        format!("{}...", item.description.chars().take(120).collect::<String>())
+                    } else {
+                        item.description.clone()
+                    };
+                    println!("      {}", desc);
+                }
+                println!();
             }
         }
-        Err(e) => {
-            println!("❌ 搜索失败: {:?}", e);
+        Ok(Err(e)) => {
+            println!("Search failed: {:?}", e);
+        }
+        Err(_) => {
+            println!("Search timed out (90s)");
         }
     }
 }

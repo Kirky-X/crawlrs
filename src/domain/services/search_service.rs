@@ -120,6 +120,7 @@ pub struct SearchService {
     task_repo: Arc<dyn TaskRepository>,
     credits_repo: Arc<dyn CreditsRepository>,
     search_client: Arc<dyn SearchClientTrait>,
+    max_results: u32,
 }
 
 impl SearchService {
@@ -127,7 +128,7 @@ impl SearchService {
         crawl_repo: Arc<dyn CrawlRepository>,
         task_repo: Arc<dyn TaskRepository>,
         credits_repo: Arc<dyn CreditsRepository>,
-        _settings: Arc<Settings>,
+        settings: Arc<Settings>,
         search_client: Arc<dyn SearchClientTrait>,
     ) -> Self {
         Self {
@@ -135,6 +136,7 @@ impl SearchService {
             task_repo,
             credits_repo,
             search_client,
+            max_results: settings.search.max_results,
         }
     }
 
@@ -178,7 +180,7 @@ impl SearchService {
         let results = self
             .perform_search(
                 &query.query,
-                query.limit.unwrap_or(10),
+                query.limit.unwrap_or(10).min(self.max_results),
                 query.lang.as_deref(),
                 query.country.as_deref(),
                 engine_param,
@@ -755,6 +757,7 @@ mod tests {
             task_repo: Arc::new(MockTaskRepo::new()),
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::new()),
+            max_results: 50,
         }
     }
 
@@ -784,6 +787,7 @@ mod tests {
             task_repo: task_repo.clone(),
             credits_repo: credits,
             search_client,
+            max_results: 50,
         };
         (service, crawl_repo, task_repo)
     }
@@ -795,6 +799,7 @@ mod tests {
             task_repo: Arc::new(MockTaskRepo::new()),
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::failing()),
+            max_results: 50,
         }
     }
 
@@ -1352,6 +1357,7 @@ mod tests {
             task_repo: Arc::new(MockTaskRepo::new()),
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::new()),
+            max_results: 50,
         };
         let query = SearchQuery {
             crawl_results: Some(true),
@@ -1373,6 +1379,7 @@ mod tests {
             task_repo: Arc::new(MockTaskRepo::failing()),
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::new()),
+            max_results: 50,
         };
         let query = SearchQuery {
             crawl_results: Some(true),

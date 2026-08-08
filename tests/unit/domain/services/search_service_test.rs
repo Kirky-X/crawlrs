@@ -18,6 +18,7 @@ mod tests {
             test_data_enabled: false,
             max_retries: 3,
             retry_delay_ms: 1000,
+            max_results: 50,
             fallback: SearchFallbackConfig::default(),
         };
 
