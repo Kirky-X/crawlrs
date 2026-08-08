@@ -7,6 +7,7 @@
 enum ServiceType {
     Api,
     Worker,
+    Bootstrap,
 }
 
 /// Parse service type from an optional argument string.
@@ -20,8 +21,9 @@ fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
     match service_type {
         "api" => Ok(ServiceType::Api),
         "worker" => Ok(ServiceType::Worker),
+        "bootstrap" => Ok(ServiceType::Bootstrap),
         other => Err(format!(
-            "Invalid service type: '{}'. Use 'api' or 'worker'.",
+            "Invalid service type: '{}'. Use 'api', 'worker', or 'bootstrap'.",
             other
         )),
     }
@@ -79,6 +81,17 @@ mod app {
         settings: Arc<crawlrs::config::settings::Settings>,
     ) -> anyhow::Result<()> {
         log::info!("Starting API service...");
+
+        // Auto-bootstrap: create initial admin API key if env var is set.
+        // This must run in the same process as the API server so that garrison's
+        // in-memory oxcache retains the key for auth verification.
+        if env::var("CRAWLRS_BOOTSTRAP_ADMIN")
+            .map(|v| v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("1"))
+            .unwrap_or(false)
+        {
+            log::info!("CRAWLRS_BOOTSTRAP_ADMIN=true, running auto-bootstrap...");
+            run_bootstrap(app_state, &settings).await?;
+        }
 
         // 启动通用 worker（webhook / backlog / expiration）
         spawn_common_workers(app_state, &settings).await;
@@ -176,6 +189,113 @@ mod app {
         Ok(())
     }
 
+    /// Bootstrap: create initial team and admin API key for first-time deployment.
+    async fn run_bootstrap(
+        app_state: &CrawlRsState,
+        _settings: &Arc<crawlrs::config::settings::Settings>,
+    ) -> anyhow::Result<()> {
+        use crawlrs::common::constants::default_identity::DEFAULT_TEAM_ID;
+
+        let pool = app_state.db_pool();
+        let session = pool
+            .get_session("admin")
+            .await
+            .map_err(|e| anyhow::anyhow!("db session: {}", e))?;
+        let conn = session
+            .connection()
+            .map_err(|e| anyhow::anyhow!("db conn: {}", e))?;
+
+        // 1. Ensure default team exists
+        use crawlrs::infrastructure::database::entities::team;
+        use sea_orm::{EntityTrait, Set};
+        let team_id = DEFAULT_TEAM_ID;
+        let existing = team::Entity::find_by_id(team_id).one(conn).await
+            .map_err(|e| anyhow::anyhow!("find team: {}", e))?;
+        if existing.is_none() {
+            let now = chrono::Utc::now();
+            let model = team::ActiveModel {
+                id: Set(team_id),
+                name: Set("default-team".to_string()),
+                allowed_countries: Set(None),
+                blocked_countries: Set(None),
+                ip_whitelist: Set(None),
+                domain_blacklist: Set(None),
+                enable_geo_restrictions: Set(false),
+                created_at: Set(now.into()),
+                updated_at: Set(now.into()),
+            };
+            team::Entity::insert(model).exec(conn).await
+                .map_err(|e| anyhow::anyhow!("insert team: {}", e))?;
+            println!("Created team: {}", team_id);
+        } else {
+            println!("Team already exists: {}", team_id);
+        }
+
+        // 2. Create admin API key via garrison
+        #[cfg(feature = "auth")]
+        {
+            use crawlrs::infrastructure::database::entities::api_key;
+            use garrison::protocol::apikey::ApiKeyHandler;
+
+            let dao = crawlrs::infrastructure::auth::garrison_dao::get_garrison_dao()
+                .ok_or_else(|| anyhow::anyhow!("garrison DAO not initialized"))?;
+            let handler = ApiKeyHandler::new(dao);
+            let api_key_id = uuid::Uuid::new_v4();
+            let login_id = api_key_id.to_string();
+            let scopes = vec![
+                "crawlrs:read".to_string(),
+                "crawlrs:write".to_string(),
+                "crawlrs:admin".to_string(),
+            ];
+            let expires_in_secs: i64 = 365 * 24 * 3600;
+            let plaintext_key = handler
+                .generate_with_namespace(
+                    login_id,
+                    "crawlrs",
+                    scopes,
+                    expires_in_secs,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("garrison generate key: {}", e))?;
+
+            // Extract key_id from "key_id.key_secret" format
+            let garrison_key_id = match plaintext_key.split_once('.') {
+                Some((k_id, _)) => k_id.to_string(),
+                None => return Err(anyhow::anyhow!("garrison returned malformed key")),
+            };
+
+            // 3. Insert api_keys mapping
+            let now_ts = chrono::Utc::now();
+            let key_model = api_key::ActiveModel {
+                id: Set(api_key_id),
+                team_id: Set(team_id),
+                key: Set(garrison_key_id),
+                key_hash: Set(None),
+                created_at: Set(now_ts.into()),
+                updated_at: Set(None),
+            };
+            api_key::Entity::insert(key_model).exec(conn).await
+                .map_err(|e| anyhow::anyhow!("insert api_key: {}", e))?;
+
+            println!("Created admin API key:");
+            println!("  api_key_id: {}", api_key_id);
+            println!("  team_id:    {}", team_id);
+            println!("  api_key:    {}", plaintext_key);
+            println!("  scopes:     read, write, admin");
+            println!();
+            println!("Use this key as Bearer token:");
+            println!("  curl -H 'Authorization: Bearer {}' http://localhost:8899/v1/teams/me", plaintext_key);
+        }
+
+        #[cfg(not(feature = "auth"))]
+        {
+            println!("Auth feature is not enabled in this build.");
+            println!("Rebuild with default features to enable authentication.");
+        }
+
+        Ok(())
+    }
+
     pub(crate) async fn run() -> anyhow::Result<()> {
         // 1. Load and configure settings
         let is_production = env::var("CRAWLRS_ENV")
@@ -235,6 +355,9 @@ mod app {
             }
             ServiceType::Worker => {
                 start_worker_service(&app_state, settings, http_client).await?;
+            }
+            ServiceType::Bootstrap => {
+                run_bootstrap(&app_state, &settings).await?;
             }
         }
 
