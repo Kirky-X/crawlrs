@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,

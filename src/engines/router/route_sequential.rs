@@ -10,10 +10,10 @@
 #[cfg(feature = "antibot")]
 use super::check_antibot_response;
 use super::{check_js_upgrade_probe, EngineRouter, LoadBalancingStrategy};
+use crate::common::metrics_shim::{counter, histogram};
 use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse};
 use crate::utils::retry::{RetryDirective, RetryReason, RetryTracker};
 use log::{debug, info, warn};
-use metrics::{counter, histogram};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 

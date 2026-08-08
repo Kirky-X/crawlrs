@@ -8,12 +8,12 @@
 //! 此模块提供基于 reqwest 的 WebhookSender 实现。
 //! 支持超时控制、错误处理和响应状态检查。
 
+use crate::common::metrics_shim::counter;
 use crate::domain::services::webhook_sender::WebhookSender;
 use crate::utils::http_client::create_http_client;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use log::{error, warn};
-use metrics::counter;
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;

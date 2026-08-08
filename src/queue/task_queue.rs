@@ -3,11 +3,11 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::common::metrics_shim::gauge;
 use crate::domain::models::Task;
 use crate::domain::repositories::task_repository::TaskRepository;
 use async_trait::async_trait;
 use log::debug;
-use metrics::gauge;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use thiserror::Error;

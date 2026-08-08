@@ -11,6 +11,7 @@ pub mod cache_mode;
 pub mod constants;
 pub mod error;
 pub mod http_method;
+pub mod metrics_shim;
 pub mod time_utils;
 
 pub use cache_mode::{CacheContext, CacheMode};

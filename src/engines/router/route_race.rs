@@ -8,11 +8,11 @@
 //! 同时发起多个引擎请求，返回最快成功的结果。
 
 use super::EngineRouter;
+use crate::common::metrics_shim::{counter, histogram};
 use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use log::{debug, info, warn};
-use metrics::{counter, histogram};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

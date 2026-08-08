@@ -26,7 +26,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 /// Engine error types for EngineClient operations.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum EngineError {
     /// Request failed with a specific error message
     #[error("Request failed: {0}")]

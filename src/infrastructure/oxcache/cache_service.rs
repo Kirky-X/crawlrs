@@ -11,7 +11,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use metrics::counter;
+use crate::common::metrics_shim::counter;
 use oxcache::Cache;
 
 use super::CacheService;
@@ -89,6 +89,7 @@ impl CacheService for OxcacheService {
     > {
         let cache = self.cache.clone();
         let key = key.to_string();
+        #[allow(unused_variables)]
         let cache_type = self.cache_type;
         Box::pin(async move {
             let value = cache
@@ -96,6 +97,7 @@ impl CacheService for OxcacheService {
                 .await
                 .map_err(|e| anyhow::anyhow!("oxcache get error: {e}"))?;
             // Phase 4a: Prometheus 缓存命中指标 (T064)
+            #[allow(unused_variables)]
             let result_label = if value.is_some() { "hit" } else { "miss" };
             counter!(
                 "crawlrs_cache_hit_total",

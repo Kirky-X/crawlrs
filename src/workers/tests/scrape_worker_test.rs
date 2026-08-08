@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::domain::models::{CrawlStatus, ScrapeResult, TaskType};

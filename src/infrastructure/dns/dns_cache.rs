@@ -5,10 +5,10 @@
 
 //! DNS缓存模块（使用 oxcache + hickory-resolver）
 
+use crate::common::metrics_shim::counter;
 use crate::infrastructure::oxcache::{generate_dns_key, DnsCache, DnsCacheEntry};
 use hickory_resolver::Resolver;
 use log::{debug, warn};
-use metrics::counter;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
