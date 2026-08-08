@@ -14,6 +14,7 @@ mod webhook;
 #[cfg(feature = "webhook")]
 pub use webhook::WebhookManagementServiceImpl;
 
+#[cfg(feature = "webhook")]
 use super::webhook_event_builder::WebhookEventBuilder;
 use crate::domain::models::{Task, Webhook};
 use crate::domain::models::{WebhookEvent, WebhookEventType};

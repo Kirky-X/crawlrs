@@ -68,6 +68,9 @@ pub fn emulation_provider(_emulation: TlsEmulation) -> wreq::EmulationProvider {
 ///   design.md D4 原写 `Option<Arc<ProxyPool>>`，遵循代码库惯例改用 trait 抽象）
 pub struct WreqEngine {
     /// wreq 客户端（构造时构建，含 TLS 指纹模拟配置）
+    /// 生产路径使用 `build_resolve_client` 静态方法构建 per-request client；
+    /// 此字段保留供测试路径 `get_client` 使用。
+    #[allow(dead_code)]
     client: wreq::Client,
     /// UA 池（R-identity-001）：每请求选一致 UA + Accept-Language + sec-ch-ua + tls_emulation
     ua_pool: Arc<UaPool>,
@@ -141,6 +144,7 @@ impl WreqEngine {
     ///
     /// `Some(client)`：构建成功；`None`：失败（代理 URL 非法或构建失败，已打 error 日志）。
     /// 调用方在 `None` 时回退到基础 client（rule 12：失败显性化到日志，不静默吞掉）。
+    #[cfg(test)]
     fn build_proxy_client(proxy_url: &str, timeout_seconds: u64) -> Option<wreq::Client> {
         let proxy = match wreq::Proxy::http(proxy_url) {
             Ok(p) => p,
@@ -213,6 +217,7 @@ impl WreqEngine {
     ///
     /// 返回 `(client, Option<String> used_proxy_url)`：`used_proxy_url` 用于
     /// `ProxyProvider::mark_failure` / `mark_success` 状态回填。
+    #[cfg(test)]
     fn get_client(
         &self,
         proxy: &Option<String>,
