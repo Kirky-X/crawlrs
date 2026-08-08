@@ -60,6 +60,8 @@ browser-download = ["dep:chromiumoxide_fetcher"]
 
 # --- 基础设施特性 ---
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
+# sdforge #[forge] 宏生成的 observability cfg 门控（相关 ID 注入 / 指标采集）
+observability = []
 
 # --- 业务能力特性（feature-gate-optional-modules） ---
 # 阶段说明：Stage 0 仅声明 feature + 常量；cfg 门控与 Noop* 实现见 Stage 1-4；
@@ -247,8 +249,8 @@ genai = { version = "0.6", optional = true }
 toml = "1.1"
 
 # Dependency Injection
-trait-kit = { version = "0.3", features = ["async", "confers"] }
-oxcache = { version = "0.3", default-features = false, features = ["memory", "serialization", "macros", "batch-write", "metrics", "bloom-filter", "tracing"] }
+trait-kit = { version = "0.4", features = ["async", "confers"] }
+oxcache = { version = "0.4", default-features = false, features = ["memory", "serialization", "macros", "batch", "metrics", "bloom"] }
 ahash = "0.8"
 
 # Internationalization (i18n) — Mozilla Fluent system

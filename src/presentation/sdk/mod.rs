@@ -101,7 +101,7 @@ pub struct SdkCrawlResponse {
 
 #[forge(
     name = "sdk_search",
-    version = "v1",
+    version = "1",
     path = "/sdk/search",
     method = "POST",
     description = "SDK search endpoint"
@@ -158,7 +158,7 @@ async fn sdk_search(
 
 #[forge(
     name = "sdk_create_task",
-    version = "v1",
+    version = "1",
     path = "/sdk/tasks",
     method = "POST",
     description = "SDK create task endpoint"
@@ -228,7 +228,7 @@ async fn sdk_create_task(
 
 #[forge(
     name = "sdk_scrape",
-    version = "v1",
+    version = "1",
     path = "/sdk/scrape",
     method = "POST",
     description = "SDK scrape endpoint"
@@ -285,7 +285,7 @@ async fn sdk_scrape(
 
 #[forge(
     name = "sdk_create_crawl",
-    version = "v1",
+    version = "1",
     path = "/sdk/crawl",
     method = "POST",
     description = "SDK create crawl endpoint"
