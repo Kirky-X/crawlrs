@@ -108,8 +108,7 @@ async fn wreq_engine_emits_tls_ja4_fingerprint() {
         response.status_code
     );
 
-    let ja4 = extract_ja4(&response.content)
-        .expect("服务端应返回含 tls.ja4 字段的 JSON 指纹");
+    let ja4 = extract_ja4(&response.content).expect("服务端应返回含 tls.ja4 字段的 JSON 指纹");
     // 现代 JA4 原始格式：`t<version><4cipher><exts>_<cipher-hash>_<ext-hash>`（三段、下划线分隔）
     assert!(
         ja4.starts_with('t') && ja4.split('_').count() == 3,

@@ -115,11 +115,9 @@ mod app {
         // - `worker_manager.wait_for_shutdown()` 内部经 coordinator 阻塞等待信号，
         //   随后给进行中任务 ≤ graceful_period 的宽限期完成，再终止剩余句柄；
         // - 宽限期结束后 `rollback_pending_tasks` 把已锁定未完成任务回滚为 Pending。
-        let coordinator = Arc::new(
-            crawlrs::workers::shutdown::ShutdownCoordinator::new(std::time::Duration::from_secs(
-                settings.workers.graceful_shutdown_seconds,
-            )),
-        );
+        let coordinator = Arc::new(crawlrs::workers::shutdown::ShutdownCoordinator::new(
+            std::time::Duration::from_secs(settings.workers.graceful_shutdown_seconds),
+        ));
         let coord_for_signals = coordinator.clone();
         tokio::spawn(async move {
             if let Err(e) = crawlrs::workers::shutdown::listen_unix_signals(coord_for_signals).await

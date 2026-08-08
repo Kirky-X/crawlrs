@@ -5,4 +5,5 @@
 
 pub mod baidu_test;
 pub mod bing_real_test;
+pub mod fallback_test;
 pub mod sogou_test;

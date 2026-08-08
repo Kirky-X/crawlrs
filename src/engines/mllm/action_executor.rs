@@ -54,9 +54,7 @@ pub async fn execute_decision(decision: &MllmDecision, page: &Page) -> ActionRes
     match decision {
         MllmDecision::Click { selector, .. } => execute_click(page, selector).await,
         MllmDecision::Scroll { direction, .. } => execute_scroll(page, direction).await,
-        MllmDecision::Input {
-            selector, text, ..
-        } => execute_input(page, selector, text).await,
+        MllmDecision::Input { selector, text, .. } => execute_input(page, selector, text).await,
         MllmDecision::Wait { seconds, .. } => execute_wait(*seconds).await,
         MllmDecision::Extract { .. } => ActionResult::ok("extract_requested"),
         MllmDecision::Done { .. } => ActionResult::ok("done"),
@@ -79,20 +77,13 @@ async fn execute_click(page: &Page, selector: &str) -> ActionResult {
 /// 执行滚动操作 — 通过 JS evaluate 滚动页面
 async fn execute_scroll(page: &Page, direction: &ScrollDirection) -> ActionResult {
     let scroll_expr = match direction {
-        ScrollDirection::Down => {
-            "window.scrollBy(0, window.innerHeight * 0.8)"
-        }
-        ScrollDirection::Up => {
-            "window.scrollBy(0, -(window.innerHeight * 0.8))"
-        }
+        ScrollDirection::Down => "window.scrollBy(0, window.innerHeight * 0.8)",
+        ScrollDirection::Up => "window.scrollBy(0, -(window.innerHeight * 0.8))",
     };
 
     debug!("MLLM action: scroll({:?})", direction);
 
-    match page
-        .evaluate_expression(scroll_expr)
-        .await
-    {
+    match page.evaluate_expression(scroll_expr).await {
         Ok(_) => ActionResult::ok(format!("scrolled: {:?}", direction)),
         Err(e) => ActionResult::err(format!("scroll failed: {}", e)),
     }

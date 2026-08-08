@@ -136,7 +136,10 @@ impl ExtractionServiceTrait for ExtractionService {
             log::warn!("RAG retrieval returned empty context for query: {}", query);
             // 退化到全页提取
             let clean_text = Self::get_clean_text(html_content);
-            return self.llm_service.extract_data(&clean_text, schema, "json").await;
+            return self
+                .llm_service
+                .extract_data(&clean_text, schema, "json")
+                .await;
         }
 
         // 2. 构造增强 prompt：context + 提取指令
@@ -146,7 +149,9 @@ impl ExtractionServiceTrait for ExtractionService {
         );
 
         // 3. LLM 精确提取
-        self.llm_service.extract_data(&enhanced_text, schema, "json").await
+        self.llm_service
+            .extract_data(&enhanced_text, schema, "json")
+            .await
     }
 }
 

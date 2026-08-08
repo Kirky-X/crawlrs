@@ -28,9 +28,9 @@
 
 #![allow(unexpected_cfgs)]
 
-use crawlrs::engines::engine_client::{InternalScrapeRequest, ScraperEngine};
-use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::common::HttpMethod;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::{InternalScrapeRequest, ScraperEngine};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -41,10 +41,18 @@ use std::time::{Duration, Instant};
 // - 浏览器引擎（playwright/flaresolverr）：使用 JS 渲染丰富的站点。
 const TEST_URLS: &[(&str, &str, &str)] = &[
     ("https://github.com", "GitHub", "<title>GitHub"),
-    ("https://en.wikipedia.org/wiki/Web_scraping", "Wikipedia", "Web scraping"),
+    (
+        "https://en.wikipedia.org/wiki/Web_scraping",
+        "Wikipedia",
+        "Web scraping",
+    ),
     ("https://news.ycombinator.com", "Hacker News", "Hacker News"),
     ("https://www.rust-lang.org", "Rust Lang", "Rust"),
-    ("https://stackoverflow.com", "StackOverflow", "Stack Overflow"),
+    (
+        "https://stackoverflow.com",
+        "StackOverflow",
+        "Stack Overflow",
+    ),
 ];
 
 /// 构造基础 InternalScrapeRequest
@@ -167,10 +175,12 @@ async fn main() {
     println!("==========================================================\n");
 
     let mut all_results: Vec<TestResult> = Vec::new();
-    let http_client: Arc<reqwest::Client> = Arc::new(reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
-        .expect("Failed to build HTTP client"));
+    let http_client: Arc<reqwest::Client> = Arc::new(
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .expect("Failed to build HTTP client"),
+    );
 
     // ================================================================
     // 1. ReqwestEngine（基础 HTTP 引擎，始终可用）
@@ -207,10 +217,7 @@ async fn main() {
     {
         println!("\n━━━ 3/5 FlareSolverrEngine Full 模式━━━");
         use crawlrs::engines::client::flare_solverr::FlareSolverrEngine;
-        let engine = FlareSolverrEngine::with_url(
-            http_client.clone(),
-            "http://localhost:8191/v1",
-        );
+        let engine = FlareSolverrEngine::with_url(http_client.clone(), "http://localhost:8191/v1");
         let results = test_engine("flaresolverr_full", &engine, true, false).await;
         all_results.extend(results);
     }
@@ -253,11 +260,7 @@ async fn main() {
         println!("\n━━━ 6/6 WreqEngine（TLS 指纹）━━━");
         use crawlrs::engines::client::wreq_engine::WreqEngine;
         use crawlrs::utils::ua_pool::UaPool;
-        match WreqEngine::new(
-            Arc::new(UaPool::new()),
-            Duration::from_secs(15),
-            15,
-        ) {
+        match WreqEngine::new(Arc::new(UaPool::new()), Duration::from_secs(15), 15) {
             Ok(engine) => {
                 let results = test_engine("wreq", &engine, false, false).await;
                 all_results.extend(results);
@@ -278,8 +281,14 @@ async fn main() {
     println!("==========================================================");
 
     let total = all_results.len();
-    let success_with_content = all_results.iter().filter(|r| r.success && r.has_expected_content).count();
-    let success_no_content = all_results.iter().filter(|r| r.success && !r.has_expected_content).count();
+    let success_with_content = all_results
+        .iter()
+        .filter(|r| r.success && r.has_expected_content)
+        .count();
+    let success_no_content = all_results
+        .iter()
+        .filter(|r| r.success && !r.has_expected_content)
+        .count();
     let failed = all_results.iter().filter(|r| !r.success).count();
 
     println!("总测试数: {}", total);
@@ -297,16 +306,31 @@ async fn main() {
     };
 
     for name in &engine_names {
-        let engine_results: Vec<&TestResult> = all_results.iter().filter(|r| &r.engine_name == name).collect();
-        let ok = engine_results.iter().filter(|r| r.success && r.has_expected_content).count();
+        let engine_results: Vec<&TestResult> = all_results
+            .iter()
+            .filter(|r| &r.engine_name == name)
+            .collect();
+        let ok = engine_results
+            .iter()
+            .filter(|r| r.success && r.has_expected_content)
+            .count();
         let total = engine_results.len();
         let avg_ms = if engine_results.is_empty() {
             0
         } else {
             engine_results.iter().map(|r| r.elapsed_ms).sum::<u64>() / engine_results.len() as u64
         };
-        let status = if ok == total { "✅" } else if ok > 0 { "⚠️" } else { "❌" };
-        println!("  {} {}: {}/{} 通过 (平均 {}ms)", status, name, ok, total, avg_ms);
+        let status = if ok == total {
+            "✅"
+        } else if ok > 0 {
+            "⚠️"
+        } else {
+            "❌"
+        };
+        println!(
+            "  {} {}: {}/{} 通过 (平均 {}ms)",
+            status, name, ok, total, avg_ms
+        );
     }
 
     println!("\n==========================================================");

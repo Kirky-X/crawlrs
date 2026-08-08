@@ -47,10 +47,7 @@ pub struct MllmEngine {
 
 impl MllmEngine {
     /// 创建 MLLM 引擎
-    pub fn new(
-        vision_adapter: Arc<dyn VisionAdapterTrait>,
-        config: MllmEngineConfig,
-    ) -> Self {
+    pub fn new(vision_adapter: Arc<dyn VisionAdapterTrait>, config: MllmEngineConfig) -> Self {
         let mrt = Duration::from_secs(config.mrt_seconds.max(DEFAULT_MLLM_MRT_SECONDS));
         Self {
             pool: None,
@@ -98,14 +95,22 @@ impl MllmEngine {
     }
 
     /// 构造视觉分析的 prompt
-    fn build_vision_prompt(&self, goal: &str, iteration: u8, last_result: Option<&ActionResult>) -> String {
+    fn build_vision_prompt(
+        &self,
+        goal: &str,
+        iteration: u8,
+        last_result: Option<&ActionResult>,
+    ) -> String {
         let mut prompt = format!(
             "Analyze the current page screenshot and decide the next action to accomplish this goal: {}\n",
             goal
         );
 
         if iteration > 0 {
-            prompt.push_str(&format!("\nThis is iteration {}/{}.\n", iteration, self.config.max_iterations));
+            prompt.push_str(&format!(
+                "\nThis is iteration {}/{}.\n",
+                iteration, self.config.max_iterations
+            ));
         }
 
         if let Some(result) = last_result {
@@ -115,10 +120,7 @@ impl MllmEngine {
                     result.message
                 ));
             } else {
-                prompt.push_str(&format!(
-                    "\nLast action result: {}.\n",
-                    result.message
-                ));
+                prompt.push_str(&format!("\nLast action result: {}.\n", result.message));
             }
         }
 
@@ -151,11 +153,13 @@ impl ScraperEngine for MllmEngine {
 
             // Navigate to target URL
             info!("MLLM engine navigating to: {}", request.url);
-            page.goto(chromiumoxide::page::NavigateParams::builder()
-                .url(&request.url)
-                .build())
-                .await
-                .map_err(|e| EngineError::BrowserError(format!("Navigation failed: {}", e)))?;
+            page.goto(
+                chromiumoxide::page::NavigateParams::builder()
+                    .url(&request.url)
+                    .build(),
+            )
+            .await
+            .map_err(|e| EngineError::BrowserError(format!("Navigation failed: {}", e)))?;
 
             // Wait for initial page load
             tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -188,7 +192,10 @@ impl ScraperEngine for MllmEngine {
                 }
 
                 iteration += 1;
-                debug!("MLLM agentic loop iteration {}/{}", iteration, self.config.max_iterations);
+                debug!(
+                    "MLLM agentic loop iteration {}/{}",
+                    iteration, self.config.max_iterations
+                );
 
                 // Step 1: Take screenshot
                 let screenshot_b64 = self.take_screenshot_base64(&page).await?;
@@ -230,7 +237,10 @@ impl ScraperEngine for MllmEngine {
                     }
                     MllmDecision::Done { .. } => {
                         final_content = get_page_content(&page).await;
-                        info!("MLLM engine completed navigation at iteration {}", iteration);
+                        info!(
+                            "MLLM engine completed navigation at iteration {}",
+                            iteration
+                        );
                         break;
                     }
                     _ => {}
@@ -300,9 +310,7 @@ async fn get_page_content(page: &chromiumoxide::Page) -> String {
         .evaluate_expression("document.documentElement.outerHTML")
         .await
     {
-        Ok(result) => result
-            .into_value::<String>()
-            .unwrap_or_default(),
+        Ok(result) => result.into_value::<String>().unwrap_or_default(),
         Err(e) => {
             error!("Failed to get page content: {}", e);
             String::new()

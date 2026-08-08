@@ -154,7 +154,7 @@ pub struct ScoringContext {
     /// KG 结构空洞优先级提升因子（默认 1.0，不提升）
     ///
     /// 由 `KnowledgeGraphAccumulator::url_priority_boost()` 计算。
-    /// >1.0 表示 URL 可能填补结构空洞，应获得更高优先级。
+    /// \>1.0 表示 URL 可能填补结构空洞，应获得更高优先级。
     /// 最终分数 = base_score * kg_priority_boost，clamp 到 [0.0, 1.0]。
     pub kg_priority_boost: f64,
 }

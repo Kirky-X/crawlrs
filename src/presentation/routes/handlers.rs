@@ -157,7 +157,10 @@ pub async fn readiness_check(
 
     // Check PostgreSQL
     let db_check = async {
-        let session = db_pool.get_session("readiness").await.map_err(|e| e.to_string())?;
+        let session = db_pool
+            .get_session("readiness")
+            .await
+            .map_err(|e| e.to_string())?;
         let conn = session.connection().map_err(|e| e.to_string())?;
         conn.execute_unprepared("SELECT 1")
             .await
@@ -296,10 +299,7 @@ mod tests {
     }
 
     /// Build a test router with readiness_check handler.
-    fn build_ready_router(
-        db_pool: Arc<DbPool>,
-        cache_service: Arc<dyn CacheService>,
-    ) -> Router {
+    fn build_ready_router(db_pool: Arc<DbPool>, cache_service: Arc<dyn CacheService>) -> Router {
         Router::new()
             .route("/ready", get(readiness_check))
             .layer(Extension(db_pool))

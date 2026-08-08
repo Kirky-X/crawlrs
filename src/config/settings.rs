@@ -21,7 +21,9 @@ pub use super::engines::{
 };
 pub use super::llm::LLMSettings;
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
-pub use super::search::{BingSearchSettings, SearchSettings};
+pub use super::search::{
+    BingSearchSettings, FallbackEngineConfig, SearchFallbackConfig, SearchSettings,
+};
 
 // =============================================================================
 // 主配置结构

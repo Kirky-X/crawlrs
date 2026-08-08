@@ -56,12 +56,12 @@ pub mod markdown_service;
 /// 所有方法返回 `Ok(())`。
 #[cfg(not(feature = "webhook"))]
 pub mod noop_webhook_service;
-pub mod rate_limiting_service;
-pub mod relevance_scorer;
 /// RAG 增强提取策略（T072-T076）
 ///
 /// DOM 语义分块 + 向量嵌入 + 检索增强 LLM 提取。
 pub mod rag_strategy;
+pub mod rate_limiting_service;
+pub mod relevance_scorer;
 pub mod retry_handler;
 pub mod search_service;
 pub mod team_semaphore;

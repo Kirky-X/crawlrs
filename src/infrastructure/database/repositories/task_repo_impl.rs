@@ -658,7 +658,6 @@ impl TaskRepository for TaskRepositoryImpl {
     }
 }
 
-
 #[cfg(test)]
 #[path = "tests/task_repo_test.rs"]
 mod tests;

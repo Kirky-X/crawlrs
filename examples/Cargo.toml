@@ -31,6 +31,7 @@ tokio = { workspace = true, features = ["full"] }
 
 # 日志记录（使用 log facade，inklog 在 crawlrs 主项目中初始化）
 log.workspace = true
+env_logger = "0.11"
 
 # 其他常用依赖
 anyhow.workspace = true
@@ -293,6 +294,10 @@ path = "search/test_sogou.rs"
 [[bin]]
 name = "test_unified_search"
 path = "search/test_unified_search.rs"
+
+[[bin]]
+name = "test_fallback_engines"
+path = "search/test_fallback_engines.rs"
 
 # Teams examples
 [[bin]]

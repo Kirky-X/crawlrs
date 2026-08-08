@@ -1036,7 +1036,10 @@ mod tests {
             return Some(TlsEmulation::Firefox133);
         }
         // 纯 Safari：含 "Version/" 且非 CriOS/FxiOS/EdgiOS 变体（iOS Chrome/Firefox/Edge 也带 Safari 标记）
-        if ua.contains("Version/") && !ua.contains("CriOS") && !ua.contains("FxiOS") && !ua.contains("EdgiOS")
+        if ua.contains("Version/")
+            && !ua.contains("CriOS")
+            && !ua.contains("FxiOS")
+            && !ua.contains("EdgiOS")
         {
             return Some(TlsEmulation::Safari17);
         }
@@ -1084,7 +1087,11 @@ mod tests {
             TlsEmulation::Safari17,
             TlsEmulation::Edge131,
         ] {
-            assert!(used.contains(&variant), "variant {:?} not covered by any profile", variant);
+            assert!(
+                used.contains(&variant),
+                "variant {:?} not covered by any profile",
+                variant
+            );
         }
     }
 }

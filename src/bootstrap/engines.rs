@@ -7,17 +7,17 @@
 
 use crate::config::engines::EngineSettings;
 use crate::config::settings::{EngineTimeoutSettings, ProxyStrategy};
+#[cfg(feature = "engine-mllm")]
+use crate::domain::services::llm::vision_adapter::GenaiVisionAdapter;
 #[cfg(feature = "engine-flaresolverr")]
 use crate::engines::client::flare_solverr::FlareSolverrEngine;
+#[cfg(feature = "engine-mllm")]
+use crate::engines::client::mllm::MllmEngine;
 #[cfg(feature = "engine-playwright")]
 use crate::engines::client::playwright::PlaywrightEngine;
 use crate::engines::client::reqwest::ReqwestEngine;
 #[cfg(feature = "engine-tls-fingerprint")]
 use crate::engines::client::wreq_engine::WreqEngine;
-#[cfg(feature = "engine-mllm")]
-use crate::engines::client::mllm::MllmEngine;
-#[cfg(feature = "engine-mllm")]
-use crate::domain::services::llm::vision_adapter::GenaiVisionAdapter;
 use crate::engines::engine_client::EngineClient;
 use crate::engines::engine_client::ScraperEngine;
 use crate::engines::provider::ProxyProvider;
@@ -201,7 +201,10 @@ pub fn init_engines(
             mrt_seconds: engine_config.mllm.mrt_seconds,
         };
         let vision_adapter = std::sync::Arc::new(GenaiVisionAdapter::new());
-        engines.push(std::sync::Arc::new(MllmEngine::new(vision_adapter, mllm_config)));
+        engines.push(std::sync::Arc::new(MllmEngine::new(
+            vision_adapter,
+            mllm_config,
+        )));
     }
 
     engines

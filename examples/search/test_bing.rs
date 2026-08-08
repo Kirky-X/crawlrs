@@ -5,18 +5,20 @@
 
 //! Bing 搜索引擎真实搜索测试
 
-use crawlrs::engines::engine_client::EngineClient;
+use crawlrs::engines::client::reqwest::ReqwestEngine;
+use crawlrs::engines::engine_client::{EngineClient, ScraperEngine};
 use crawlrs::search::client::BingSearchEngine;
 use crawlrs::search::SearchEngine;
 use crawlrs::search::SearchRequest;
 use log::info;
 use std::sync::Arc;
+use tokio::time::Duration;
 
 const TIMEOUT_SECS: u64 = 60;
 
 #[tokio::main]
 async fn main() {
-    log::set_max_level(log::LevelFilter::Info);
+    env_logger::init();
 
     info!("==========================================");
     info!("测试 Bing 搜索引擎真实搜索功能");
@@ -25,7 +27,17 @@ async fn main() {
     info!("==========================================");
     info!("");
 
-    let engine_client = Arc::new(EngineClient::new());
+    let reqwest_engine: Arc<dyn ScraperEngine> = Arc::new(ReqwestEngine::new_with_timeout_and_mrt(
+        Arc::new(
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .unwrap(),
+        ),
+        60,
+        Duration::from_secs(30),
+    ));
+    let engine_client = Arc::new(EngineClient::with_engines(vec![reqwest_engine]));
     let engine = BingSearchEngine::new(engine_client);
     let request = SearchRequest::new("gemini-3-pro").with_limit(10);
 

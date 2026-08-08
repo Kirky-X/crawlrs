@@ -59,10 +59,7 @@ impl SearchEngine for FallbackSearchEngine {
         self.primary.health()
     }
 
-    async fn search(
-        &self,
-        request: &SearchRequest,
-    ) -> Result<Response<ResponseItem>, SearchError> {
+    async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         // 1. 尝试主引擎
         match self.primary.search(request).await {
             Ok(response) if !response.items.is_empty() => {
@@ -196,9 +193,7 @@ mod tests {
                     total_results: Some(0),
                     engine: SearchEngineType::Auto,
                 }),
-                MockBehavior::Error(msg) => {
-                    Err(SearchError::EngineFailed(msg.clone()))
-                }
+                MockBehavior::Error(msg) => Err(SearchError::EngineFailed(msg.clone())),
             }
         }
     }
@@ -253,8 +248,7 @@ mod tests {
         let primary = Arc::new(MockEngine::error("Primary", "down"));
         let fallback1 = Arc::new(MockEngine::success("Fallback1", 2));
         let fallback2 = Arc::new(MockEngine::success("Fallback2", 3));
-        let engine =
-            FallbackSearchEngine::new(primary, vec![fallback1, fallback2]);
+        let engine = FallbackSearchEngine::new(primary, vec![fallback1, fallback2]);
 
         let response = engine.search(&make_request()).await.unwrap();
         assert_eq!(response.items.len(), 2);
@@ -268,8 +262,7 @@ mod tests {
         let primary = Arc::new(MockEngine::error("Primary", "down"));
         let fallback1 = Arc::new(MockEngine::error("Fallback1", "also down"));
         let fallback2 = Arc::new(MockEngine::success("Fallback2", 1));
-        let engine =
-            FallbackSearchEngine::new(primary, vec![fallback1, fallback2]);
+        let engine = FallbackSearchEngine::new(primary, vec![fallback1, fallback2]);
 
         let response = engine.search(&make_request()).await.unwrap();
         assert_eq!(response.items.len(), 1);
@@ -283,8 +276,7 @@ mod tests {
         let primary = Arc::new(MockEngine::error("Primary", "down"));
         let fallback1 = Arc::new(MockEngine::error("Fallback1", "also down"));
         let fallback2 = Arc::new(MockEngine::error("Fallback2", "still down"));
-        let engine =
-            FallbackSearchEngine::new(primary, vec![fallback1, fallback2]);
+        let engine = FallbackSearchEngine::new(primary, vec![fallback1, fallback2]);
 
         let result = engine.search(&make_request()).await;
         assert!(result.is_err());
@@ -320,8 +312,7 @@ mod tests {
         let primary = Arc::new(MockEngine::empty("Primary"));
         let fallback1 = Arc::new(MockEngine::empty("Fallback1"));
         let fallback2 = Arc::new(MockEngine::success("Fallback2", 1));
-        let engine =
-            FallbackSearchEngine::new(primary, vec![fallback1, fallback2]);
+        let engine = FallbackSearchEngine::new(primary, vec![fallback1, fallback2]);
 
         let response = engine.search(&make_request()).await.unwrap();
         assert_eq!(response.items.len(), 1);

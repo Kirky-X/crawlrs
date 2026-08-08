@@ -198,7 +198,9 @@ fn validate_webhook_secret_fail_fast(is_production: bool, secret: &str) -> Resul
         env_lower == "test" || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
 
     if is_production && !is_test_env && secret.is_empty() {
-        error!("CRITICAL: webhook.secret must not be empty in production (webhook feature enabled)");
+        error!(
+            "CRITICAL: webhook.secret must not be empty in production (webhook feature enabled)"
+        );
         return Err(anyhow::anyhow!(
             "webhook.secret must not be empty in production (webhook feature enabled)"
         ));

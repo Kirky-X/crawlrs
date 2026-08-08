@@ -7,16 +7,16 @@
 //!
 //! Manages webhook endpoint registration and lifecycle.
 
-use crate::domain::services::webhook_service::{WebhookService, WebhookManagementService};
-use crate::domain::services::webhook_event_builder::WebhookEventBuilder;
 use crate::domain::models::{Webhook, WebhookEventType};
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
+use crate::domain::services::webhook_event_builder::WebhookEventBuilder;
+use crate::domain::services::webhook_service::{WebhookManagementService, WebhookService};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use log::{error, info};
 use std::sync::Arc;
 use uuid::Uuid;
-use anyhow::{anyhow, Result};
 
 /// 通过组合 `WebhookService` 复用已有的签名生成与发送逻辑，
 /// 避免代码重复。DI 注册在 Phase 11 统一处理。

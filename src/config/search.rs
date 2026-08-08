@@ -68,6 +68,48 @@ pub struct SearchSettings {
     /// 重试延迟（毫秒）
     #[config(default = 1000)]
     pub retry_delay_ms: u64,
+
+    /// Fallback 搜索引擎配置
+    pub fallback: SearchFallbackConfig,
+}
+
+/// Fallback 搜索引擎配置
+///
+/// 控制主搜索引擎全部失败时的 fallback 行为。
+/// 三个 API 引擎（Exa/Parallel/Tavily）按 `engines` 数组声明顺序依次尝试。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__SEARCH__FALLBACK__")]
+pub struct SearchFallbackConfig {
+    /// 是否启用 fallback 搜索引擎
+    #[config(default = false)]
+    pub enabled: bool,
+
+    /// Fallback 引擎名称列表（按声明顺序尝试）
+    /// 有效值: "exa", "parallel", "tavily"
+    #[config(default = vec!["exa".to_string(), "parallel".to_string(), "tavily".to_string()])]
+    pub engines: Vec<String>,
+
+    /// Exa 引擎配置
+    pub exa: FallbackEngineConfig,
+
+    /// Parallel 引擎配置
+    pub parallel: FallbackEngineConfig,
+
+    /// Tavily 引擎配置
+    pub tavily: FallbackEngineConfig,
+}
+
+/// 单个 fallback 引擎的配置
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__SEARCH__FALLBACK__")]
+pub struct FallbackEngineConfig {
+    /// API Key（可选，部分引擎支持匿名访问）
+    #[config(default = String::new())]
+    pub api_key: String,
+
+    /// API 端点 URL
+    #[config(default = String::new())]
+    pub endpoint: String,
 }
 
 #[cfg(test)]
@@ -251,6 +293,7 @@ mod tests {
             test_data_enabled: true,
             max_retries: 10,
             retry_delay_ms: 2000,
+            fallback: SearchFallbackConfig::default(),
         };
         let json = serde_json::to_string(&settings).expect("serialize");
         let back: SearchSettings = serde_json::from_str(&json).expect("deserialize");
@@ -282,6 +325,7 @@ mod tests {
             test_data_enabled: true,
             max_retries: 5,
             retry_delay_ms: 500,
+            fallback: SearchFallbackConfig::default(),
         };
         let cloned = settings.clone();
         assert_eq!(cloned.ab_test_enabled, settings.ab_test_enabled);
@@ -291,5 +335,77 @@ mod tests {
         assert_eq!(cloned.test_data_enabled, settings.test_data_enabled);
         assert_eq!(cloned.max_retries, settings.max_retries);
         assert_eq!(cloned.retry_delay_ms, settings.retry_delay_ms);
+    }
+
+    // ========== SearchFallbackConfig tests ==========
+
+    #[test]
+    fn test_fallback_default_disabled() {
+        let settings = SearchFallbackConfig::default();
+        assert!(!settings.enabled, "fallback should be disabled by default");
+    }
+
+    #[test]
+    fn test_fallback_default_engines_order() {
+        let settings = SearchFallbackConfig::default();
+        assert_eq!(settings.engines, vec!["exa", "parallel", "tavily"]);
+    }
+
+    #[test]
+    fn test_fallback_engine_config_default_empty() {
+        let config = FallbackEngineConfig::default();
+        assert_eq!(config.api_key, "");
+        assert_eq!(config.endpoint, "");
+    }
+
+    #[test]
+    fn test_fallback_serde_roundtrip() {
+        let settings = SearchFallbackConfig {
+            enabled: true,
+            engines: vec!["tavily".to_string(), "exa".to_string()],
+            exa: FallbackEngineConfig {
+                api_key: "exa-key".to_string(),
+                endpoint: "https://mcp.exa.ai/mcp".to_string(),
+            },
+            parallel: FallbackEngineConfig {
+                api_key: String::new(),
+                endpoint: "https://search.parallel.ai/mcp".to_string(),
+            },
+            tavily: FallbackEngineConfig {
+                api_key: "tavily-key".to_string(),
+                endpoint: "https://api.tavily.com".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&settings).expect("serialize");
+        let back: SearchFallbackConfig = serde_json::from_str(&json).expect("deserialize");
+        assert!(back.enabled);
+        assert_eq!(back.engines, vec!["tavily", "exa"]);
+        assert_eq!(back.exa.api_key, "exa-key");
+        assert_eq!(back.tavily.endpoint, "https://api.tavily.com");
+    }
+
+    #[test]
+    fn test_fallback_clone_preserves_fields() {
+        let settings = SearchFallbackConfig {
+            enabled: true,
+            engines: vec!["exa".to_string()],
+            exa: FallbackEngineConfig {
+                api_key: "key".to_string(),
+                endpoint: "https://example.com".to_string(),
+            },
+            parallel: FallbackEngineConfig::default(),
+            tavily: FallbackEngineConfig::default(),
+        };
+        let cloned = settings.clone();
+        assert_eq!(cloned.enabled, settings.enabled);
+        assert_eq!(cloned.engines, settings.engines);
+        assert_eq!(cloned.exa.api_key, settings.exa.api_key);
+    }
+
+    #[test]
+    fn test_search_settings_has_fallback_field() {
+        let settings = SearchSettings::default();
+        assert!(!settings.fallback.enabled);
+        assert_eq!(settings.fallback.engines.len(), 3);
     }
 }

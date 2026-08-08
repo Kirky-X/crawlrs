@@ -7,9 +7,9 @@
 //!
 //! 包含传统顺序模式的路由实现（带重试、身份升级、MRT 瀑布式 fallback）。
 
-use super::{check_js_upgrade_probe, EngineRouter, LoadBalancingStrategy};
 #[cfg(feature = "antibot")]
 use super::check_antibot_response;
+use super::{check_js_upgrade_probe, EngineRouter, LoadBalancingStrategy};
 use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse};
 use crate::utils::retry::{RetryDirective, RetryReason, RetryTracker};
 use log::{debug, info, warn};

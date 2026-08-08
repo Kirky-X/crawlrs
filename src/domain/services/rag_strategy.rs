@@ -50,12 +50,20 @@ pub struct ChunkerConfig {
 impl Default for ChunkerConfig {
     fn default() -> Self {
         Self {
-            target_chunk_size: 350,  // ~350 tokens ≈ 1400 字符
-            min_chunk_size: 200,     // ~200 tokens ≈ 800 字符
-            max_chunk_size: 500,     // ~500 tokens ≈ 2000 字符
+            target_chunk_size: 350, // ~350 tokens ≈ 1400 字符
+            min_chunk_size: 200,    // ~200 tokens ≈ 800 字符
+            max_chunk_size: 500,    // ~500 tokens ≈ 2000 字符
             boundary_tags: vec![
-                "article", "section", "div", "main", "aside",
-                "table", "ul", "ol", "p", "blockquote",
+                "article",
+                "section",
+                "div",
+                "main",
+                "aside",
+                "table",
+                "ul",
+                "ol",
+                "p",
+                "blockquote",
             ],
         }
     }
@@ -233,7 +241,7 @@ impl SemanticChunker {
             }
             path_parts.push(tag.to_string());
             // 获取父元素
-            current = el.parent().and_then(|p| scraper::ElementRef::wrap(p));
+            current = el.parent().and_then(scraper::ElementRef::wrap);
             // 防止无限循环
             if path_parts.len() > 10 {
                 break;
@@ -253,10 +261,7 @@ impl SemanticChunker {
         let texts: Vec<&str> = element.text().collect();
         let joined = texts.join(" ");
         // 去除多余空白
-        joined
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
+        joined.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
     /// 判断是否为结构化元素（表格/列表），不应截断
@@ -336,8 +341,9 @@ impl SemanticChunker {
                 (remaining, "")
             } else {
                 // 在句号/换行处切分
+                #[allow(clippy::manual_pattern_char_comparison)]
                 let split_at = remaining[..max_chars]
-                    .rfind(|c| c == '.' || c == '。' || c == '\n')
+                    .rfind(|c: char| matches!(c, '.' | '。' | '\n'))
                     .map(|i| i + 1)
                     .unwrap_or(max_chars);
                 (&remaining[..split_at], &remaining[split_at..])
@@ -442,9 +448,7 @@ impl VectorStore {
         scored
             .into_iter()
             .take(top_k)
-            .filter_map(|(id, score)| {
-                self.chunks.get(&id).map(|chunk| (chunk.clone(), score))
-            })
+            .filter_map(|(id, score)| self.chunks.get(&id).map(|chunk| (chunk.clone(), score)))
             .collect()
     }
 
@@ -509,7 +513,9 @@ impl RagExtractionStrategy {
 
     /// 索引文档：分块 + 嵌入 + 存储
     pub async fn index_document(&mut self, html: &str, doc_id: &str) -> Result<usize> {
-        let chunks = self.chunker.chunk_html(html)
+        let chunks = self
+            .chunker
+            .chunk_html(html)
             .context("Failed to chunk HTML")?;
 
         if chunks.is_empty() {
@@ -519,7 +525,10 @@ impl RagExtractionStrategy {
 
         // 批量嵌入
         let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-        let embeddings = self.embedding_provider.embed(&texts).await
+        let embeddings = self
+            .embedding_provider
+            .embed(&texts)
+            .await
             .context("Failed to generate embeddings")?;
 
         if embeddings.len() != chunks.len() {
@@ -549,7 +558,10 @@ impl RagExtractionStrategy {
 
     /// 检索增强：根据查询找到最相关的分块
     pub async fn retrieve(&self, query: &str) -> Result<Vec<(Chunk, f32)>> {
-        let query_embedding = self.embedding_provider.embed(&[query.to_string()]).await
+        let query_embedding = self
+            .embedding_provider
+            .embed(&[query.to_string()])
+            .await
             .context("Failed to embed query")?;
 
         if query_embedding.is_empty() {
@@ -649,7 +661,11 @@ mod tests {
 
         assert!(!chunks.is_empty(), "should produce at least one chunk");
         // 验证文本被提取
-        let all_text: String = chunks.iter().map(|c| c.text.as_str()).collect::<Vec<_>>().join(" ");
+        let all_text: String = chunks
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(all_text.contains("Article 1"));
         assert!(all_text.contains("Article 2"));
     }
@@ -720,7 +736,11 @@ mod tests {
         let chunker = SemanticChunker::new(ChunkerConfig::default());
         let chunks = chunker.chunk_html(html).unwrap();
 
-        let all_text: String = chunks.iter().map(|c| c.text.as_str()).collect::<Vec<_>>().join(" ");
+        let all_text: String = chunks
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(all_text.contains("Visible content"));
         // script/style 内容不应出现（traverse 会包含它们，但这是已知限制）
     }
@@ -732,7 +752,10 @@ mod tests {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![1.0, 0.0, 0.0];
         let sim = cosine_similarity(&a, &b);
-        assert!((sim - 1.0).abs() < 1e-6, "identical vectors should have similarity 1.0");
+        assert!(
+            (sim - 1.0).abs() < 1e-6,
+            "identical vectors should have similarity 1.0"
+        );
     }
 
     #[test]
@@ -740,7 +763,10 @@ mod tests {
         let a = vec![1.0, 0.0];
         let b = vec![0.0, 1.0];
         let sim = cosine_similarity(&a, &b);
-        assert!(sim.abs() < 1e-6, "orthogonal vectors should have similarity 0.0");
+        assert!(
+            sim.abs() < 1e-6,
+            "orthogonal vectors should have similarity 0.0"
+        );
     }
 
     #[test]
@@ -748,7 +774,10 @@ mod tests {
         let a = vec![1.0, 0.0];
         let b = vec![-1.0, 0.0];
         let sim = cosine_similarity(&a, &b);
-        assert!((sim + 1.0).abs() < 1e-6, "opposite vectors should have similarity -1.0");
+        assert!(
+            (sim + 1.0).abs() < 1e-6,
+            "opposite vectors should have similarity -1.0"
+        );
     }
 
     #[test]
@@ -787,7 +816,10 @@ mod tests {
         assert_eq!(results.len(), 2);
         // 最相似的应是 id=0（完全匹配）
         assert_eq!(results[0].0.id, 0);
-        assert!(results[0].1 > results[1].1, "should be sorted by similarity desc");
+        assert!(
+            results[0].1 > results[1].1,
+            "should be sorted by similarity desc"
+        );
     }
 
     // === RagExtractionStrategy 集成测试 ===
@@ -795,11 +827,7 @@ mod tests {
     #[tokio::test]
     async fn test_rag_index_and_retrieve() {
         let provider = Arc::new(MockEmbeddingProvider { dims: 8 });
-        let mut strategy = RagExtractionStrategy::new(
-            ChunkerConfig::default(),
-            provider,
-            2,
-        );
+        let mut strategy = RagExtractionStrategy::new(ChunkerConfig::default(), provider, 2);
 
         let html = r#"
             <html><body>
@@ -818,18 +846,17 @@ mod tests {
         assert!(chunk_count > 0, "should index at least one chunk");
 
         // 检索
-        let results = strategy.retrieve("Rust programming language").await.unwrap();
+        let results = strategy
+            .retrieve("Rust programming language")
+            .await
+            .unwrap();
         assert!(!results.is_empty(), "should find relevant chunks");
     }
 
     #[tokio::test]
     async fn test_rag_build_context() {
         let provider = Arc::new(MockEmbeddingProvider { dims: 4 });
-        let mut strategy = RagExtractionStrategy::new(
-            ChunkerConfig::default(),
-            provider,
-            3,
-        );
+        let mut strategy = RagExtractionStrategy::new(ChunkerConfig::default(), provider, 3);
 
         let html = r#"
             <html><body>
@@ -842,6 +869,9 @@ mod tests {
         let context = strategy.build_context("web scraping").await.unwrap();
 
         assert!(!context.is_empty(), "context should not be empty");
-        assert!(context.contains("[Chunk"), "context should contain chunk markers");
+        assert!(
+            context.contains("[Chunk"),
+            "context should contain chunk markers"
+        );
     }
 }

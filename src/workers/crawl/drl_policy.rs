@@ -48,10 +48,16 @@ impl CrawlState {
             return Err(format!("success_rate out of range: {}", self.success_rate));
         }
         if self.memory_pressure < 0.0 || self.memory_pressure > 1.0 {
-            return Err(format!("memory_pressure out of range: {}", self.memory_pressure));
+            return Err(format!(
+                "memory_pressure out of range: {}",
+                self.memory_pressure
+            ));
         }
         if self.budget_remaining < 0.0 || self.budget_remaining > 1.0 {
-            return Err(format!("budget_remaining out of range: {}", self.budget_remaining));
+            return Err(format!(
+                "budget_remaining out of range: {}",
+                self.budget_remaining
+            ));
         }
         Ok(())
     }
@@ -172,7 +178,12 @@ impl OnnxInference for HeuristicPolicy {
             0 // 成功率高 → 不重试
         };
 
-        Ok(vec![priority_adj, concurrency as f32, engine as f32, retry as f32])
+        Ok(vec![
+            priority_adj,
+            concurrency as f32,
+            engine as f32,
+            retry as f32,
+        ])
     }
 }
 
@@ -208,7 +219,10 @@ impl DrlPolicy {
 
         // 验证状态
         if let Err(e) = state.validate() {
-            log::warn!("Invalid crawl state for DRL prediction: {}, using default", e);
+            log::warn!(
+                "Invalid crawl state for DRL prediction: {}, using default",
+                e
+            );
             return CrawlAction::noop();
         }
 
@@ -388,8 +402,14 @@ mod tests {
         };
 
         let action = policy.predict(&state);
-        assert!(action.url_priority_adjustment > 1.0, "low success rate should increase priority");
-        assert_eq!(action.retry_decision, 2, "very low success rate should use delayed retry");
+        assert!(
+            action.url_priority_adjustment > 1.0,
+            "low success rate should increase priority"
+        );
+        assert_eq!(
+            action.retry_decision, 2,
+            "very low success rate should use delayed retry"
+        );
     }
 
     #[test]
@@ -404,7 +424,10 @@ mod tests {
         };
 
         let action = policy.predict(&state);
-        assert!(action.concurrency_delta < 0, "high memory should reduce concurrency");
+        assert!(
+            action.concurrency_delta < 0,
+            "high memory should reduce concurrency"
+        );
     }
 
     #[test]
@@ -425,6 +448,9 @@ mod tests {
         let state = CrawlState::default();
 
         let action = policy.predict(&state);
-        assert_eq!(action.url_priority_adjustment, 1.0, "short output should default to noop");
+        assert_eq!(
+            action.url_priority_adjustment, 1.0,
+            "short output should default to noop"
+        );
     }
 }

@@ -411,7 +411,6 @@ pub fn verify_webhook_signature_from_parts(
     Ok(())
 }
 
-
 #[cfg(all(test, feature = "webhook"))]
 #[path = "tests/webhook_service_test.rs"]
 mod tests;

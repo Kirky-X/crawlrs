@@ -90,10 +90,9 @@ impl VisionAdapterTrait for GenaiVisionAdapter {
             let chat_req = ChatRequest::new(vec![system_message, user_message]);
 
             let client = genai::Client::default();
-            let chat_res = client
-                .exec_chat(model, chat_req, None)
-                .await
-                .map_err(|e| anyhow::anyhow!("Vision LLM call failed for model {}: {:?}", model, e))?;
+            let chat_res = client.exec_chat(model, chat_req, None).await.map_err(|e| {
+                anyhow::anyhow!("Vision LLM call failed for model {}: {:?}", model, e)
+            })?;
 
             let content = chat_res
                 .first_text()

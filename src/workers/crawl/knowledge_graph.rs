@@ -157,26 +157,26 @@ impl KnowledgeGraphAccumulator {
     }
 
     /// 添加实体
-    pub fn add_entity(
-        &mut self,
-        id: &str,
-        entity_type: EntityType,
-        name: &str,
-        source_url: &str,
-    ) {
+    pub fn add_entity(&mut self, id: &str, entity_type: EntityType, name: &str, source_url: &str) {
         self.crawled_urls.insert(source_url.to_string());
 
-        let entry = self.entities.entry(id.to_string()).or_insert_with(|| Entity {
-            id: id.to_string(),
-            entity_type: entity_type.clone(),
-            name: name.to_string(),
-            source_urls: HashSet::new(),
-        });
+        let entry = self
+            .entities
+            .entry(id.to_string())
+            .or_insert_with(|| Entity {
+                id: id.to_string(),
+                entity_type: entity_type.clone(),
+                name: name.to_string(),
+                source_urls: HashSet::new(),
+            });
         entry.source_urls.insert(source_url.to_string());
 
         // 更新类型计数（只在新实体时 +1）
         if entry.source_urls.len() == 1 {
-            let count = self.type_counts.entry(entity_type.label().to_string()).or_insert(0);
+            let count = self
+                .type_counts
+                .entry(entity_type.label().to_string())
+                .or_insert(0);
             *count += 1;
         }
     }
@@ -254,7 +254,10 @@ impl KnowledgeGraphAccumulator {
 
         // 3. 缺失的关系类型（已知类型中未出现的）
         for rel_type in &self.known_relation_types {
-            let has_any = self.relations.iter().any(|r| r.relation_type.label() == rel_type);
+            let has_any = self
+                .relations
+                .iter()
+                .any(|r| r.relation_type.label() == rel_type);
             if !has_any {
                 // 找可能的实体对
                 let entity_ids: Vec<String> = self.entities.keys().cloned().collect();
@@ -438,7 +441,12 @@ mod tests {
     fn test_add_entity_and_count() {
         let mut kg = KnowledgeGraphAccumulator::new();
         kg.add_entity("e1", EntityType::Person, "Alice", "http://example.com/1");
-        kg.add_entity("e2", EntityType::Organization, "Acme", "http://example.com/2");
+        kg.add_entity(
+            "e2",
+            EntityType::Organization,
+            "Acme",
+            "http://example.com/2",
+        );
         kg.add_entity("e3", EntityType::Person, "Bob", "http://example.com/3");
 
         assert_eq!(kg.entity_count(), 3);
@@ -460,7 +468,12 @@ mod tests {
     fn test_add_relation() {
         let mut kg = KnowledgeGraphAccumulator::new();
         kg.add_entity("e1", EntityType::Person, "Alice", "http://example.com/1");
-        kg.add_entity("e2", EntityType::Organization, "Acme", "http://example.com/1");
+        kg.add_entity(
+            "e2",
+            EntityType::Organization,
+            "Acme",
+            "http://example.com/1",
+        );
         kg.add_relation("e1", "e2", RelationType::WorksAt, "http://example.com/1");
 
         assert_eq!(kg.relation_count(), 1);
@@ -470,7 +483,12 @@ mod tests {
     fn test_add_duplicate_relation_merges_sources() {
         let mut kg = KnowledgeGraphAccumulator::new();
         kg.add_entity("e1", EntityType::Person, "Alice", "http://example.com/1");
-        kg.add_entity("e2", EntityType::Organization, "Acme", "http://example.com/1");
+        kg.add_entity(
+            "e2",
+            EntityType::Organization,
+            "Acme",
+            "http://example.com/1",
+        );
         kg.add_relation("e1", "e2", RelationType::WorksAt, "http://example.com/1");
         kg.add_relation("e1", "e2", RelationType::WorksAt, "http://example.com/2");
 
@@ -489,7 +507,9 @@ mod tests {
 
         let holes = kg.find_structural_holes();
         assert!(
-            holes.iter().any(|h| matches!(&h.kind, HoleKind::MissingEntityType(t) if t == "location")),
+            holes
+                .iter()
+                .any(|h| matches!(&h.kind, HoleKind::MissingEntityType(t) if t == "location")),
             "should detect missing 'location' type"
         );
     }
@@ -512,7 +532,12 @@ mod tests {
         let mut kg = KnowledgeGraphAccumulator::new();
         kg.register_relation_type("works_at");
         kg.add_entity("e1", EntityType::Person, "Alice", "http://example.com/1");
-        kg.add_entity("e2", EntityType::Organization, "Acme", "http://example.com/2");
+        kg.add_entity(
+            "e2",
+            EntityType::Organization,
+            "Acme",
+            "http://example.com/2",
+        );
         // 没有 works_at 关系
 
         let holes = kg.find_structural_holes();
@@ -526,7 +551,12 @@ mod tests {
     fn test_get_neighbors() {
         let mut kg = KnowledgeGraphAccumulator::new();
         kg.add_entity("e1", EntityType::Person, "Alice", "http://example.com/1");
-        kg.add_entity("e2", EntityType::Organization, "Acme", "http://example.com/1");
+        kg.add_entity(
+            "e2",
+            EntityType::Organization,
+            "Acme",
+            "http://example.com/1",
+        );
         kg.add_relation("e1", "e2", RelationType::WorksAt, "http://example.com/1");
 
         let neighbors = kg.get_neighbors("e1");
@@ -564,7 +594,11 @@ mod tests {
 
         let coverage = kg.estimate_coverage();
         // 所有类型都有充足代表，覆盖率应为 1.0
-        assert!(coverage > 0.9, "coverage should be high when all types well represented, got {}", coverage);
+        assert!(
+            coverage > 0.9,
+            "coverage should be high when all types well represented, got {}",
+            coverage
+        );
     }
 
     #[test]
@@ -579,13 +613,26 @@ mod tests {
                 &format!("http://example.com/p{}", i),
             );
         }
-        kg.add_entity("o1", EntityType::Organization, "Org1", "http://example.com/o1");
+        kg.add_entity(
+            "o1",
+            EntityType::Organization,
+            "Org1",
+            "http://example.com/o1",
+        );
         kg.add_entity("l1", EntityType::Location, "Loc1", "http://example.com/l1");
 
         let coverage = kg.estimate_coverage();
         // 3 种类型已发现，但有 singleton → Chao1 估计 > 3 → 覆盖率 < 1.0
-        assert!(coverage < 1.0, "coverage should be < 1.0 with singletons, got {}", coverage);
-        assert!(coverage > 0.5, "coverage should still be reasonable, got {}", coverage);
+        assert!(
+            coverage < 1.0,
+            "coverage should be < 1.0 with singletons, got {}",
+            coverage
+        );
+        assert!(
+            coverage > 0.5,
+            "coverage should still be reasonable, got {}",
+            coverage
+        );
     }
 
     #[test]
@@ -603,7 +650,11 @@ mod tests {
         let coverage = kg.estimate_coverage();
         // 1 种类型，1 个实体（singleton），Chao1 估计 S_est = 1 + 0 = 1
         // coverage = 1/1 = 1.0
-        assert!(coverage >= 0.5, "single type coverage should be reasonable, got {}", coverage);
+        assert!(
+            coverage >= 0.5,
+            "single type coverage should be reasonable, got {}",
+            coverage
+        );
     }
 
     // === URL 优先级提升测试 ===

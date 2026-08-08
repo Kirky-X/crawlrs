@@ -899,11 +899,7 @@ mod tests {
         let mock = Arc::new(MockAggEngine::healthy(
             "google",
             SearchEngineType::Bing,
-            vec![make_item(
-                "Result",
-                "https://r.com",
-                SearchEngineType::Bing,
-            )],
+            vec![make_item("Result", "https://r.com", SearchEngineType::Bing)],
         ));
         let engines = make_engines(vec![mock.clone()]);
         let agg = SearchAggregator::new(engines, 5000);

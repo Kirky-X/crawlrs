@@ -10,14 +10,14 @@
 
 use super::ScrapeWorker;
 use super::{
-    build_crawl_request_fn, check_robots_txt_fn, extract_and_queue_links_fn,
-    parse_crawl_payload, update_crawl_completion_status_fn,
+    build_crawl_request_fn, check_robots_txt_fn, extract_and_queue_links_fn, parse_crawl_payload,
+    update_crawl_completion_status_fn,
 };
 use crate::application::dto::crawl_request::CrawlConfigDto;
+use crate::domain::models::Task;
 use crate::engines::engine_client::{ScrapeRequest, ScrapeResponse};
 use crate::presentation::helpers::ssrf::is_internal_url;
 use crate::workers::crawl::adaptive::{CrawlStats, StopCondition};
-use crate::domain::models::Task;
 use anyhow::Result;
 use log::{error, info, warn};
 use uuid::Uuid;

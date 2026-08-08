@@ -106,7 +106,10 @@ fn extract_json(response: &str) -> String {
     if let Some(start) = trimmed.find("```") {
         let after_marker = &trimmed[start + 3..];
         // 跳过可能的语言标识符行
-        let json_start = after_marker.find('\n').map(|i| &after_marker[i + 1..]).unwrap_or(after_marker);
+        let json_start = after_marker
+            .find('\n')
+            .map(|i| &after_marker[i + 1..])
+            .unwrap_or(after_marker);
         if let Some(end) = json_start.rfind("```") {
             return json_start[..end].trim().to_string();
         }
@@ -128,10 +131,15 @@ mod tests {
 
     #[test]
     fn test_parse_click() {
-        let json = r#"{"action": "click", "selector": "#submit-btn", "reasoning": "Click submit"}"#;
+        let json =
+            r##"{"action": "click", "selector": "#submit-btn", "reasoning": "Click submit"}"##;
         let decision = parse_decision(json).unwrap();
         assert!(matches!(decision, MllmDecision::Click { .. }));
-        if let MllmDecision::Click { selector, reasoning } = decision {
+        if let MllmDecision::Click {
+            selector,
+            reasoning,
+        } = decision
+        {
             assert_eq!(selector, "#submit-btn");
             assert_eq!(reasoning, "Click submit");
         }

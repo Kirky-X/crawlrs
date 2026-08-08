@@ -7,6 +7,7 @@
 //!
 //! 该模块包含对 crawlrs 系统核心组件的性能基准测试
 
+use async_trait::async_trait;
 use crawlrs::domain::models::task_domain::TaskType;
 use crawlrs::domain::models::task_model::Task;
 use crawlrs::engines::engine_client::{
@@ -15,7 +16,6 @@ use crawlrs::engines::engine_client::{
 use crawlrs::engines::router::{EngineRouter, EngineRouterTrait, LoadBalancingStrategy};
 use crawlrs::infrastructure::oxcache::RegexCacheType;
 use crawlrs::utils::regex_cache::RegexCache;
-use async_trait::async_trait;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use oxcache::Cache;
 use std::hint::black_box;
@@ -216,7 +216,13 @@ fn benchmark_uuid_generation(c: &mut Criterion) {
 /// 生成测试 URL 集合
 fn generate_test_urls(count: usize) -> Vec<String> {
     (0..count)
-        .map(|i| format!("https://example{}.com/path/to/resource?q=search&id={}", i % 100, i))
+        .map(|i| {
+            format!(
+                "https://example{}.com/path/to/resource?q=search&id={}",
+                i % 100,
+                i
+            )
+        })
         .collect()
 }
 
@@ -270,19 +276,14 @@ fn benchmark_ssrf_detection(c: &mut Criterion) {
             })
             .collect();
 
-        group.bench_with_input(
-            BenchmarkId::new("is_internal_url", size),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    for url in &urls {
-                        let is_internal =
-                            crawlrs::engines::validators::is_internal_url(url);
-                        let _ = black_box(is_internal);
-                    }
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("is_internal_url", size), &size, |b, _| {
+            b.iter(|| {
+                for url in &urls {
+                    let is_internal = crawlrs::engines::validators::is_internal_url(url);
+                    let _ = black_box(is_internal);
+                }
+            });
+        });
     }
 
     group.finish();
@@ -298,16 +299,14 @@ fn benchmark_regex_cache(c: &mut Criterion) {
     let mut group = c.benchmark_group("regex_cache");
 
     // 创建 RegexCache
-    let cache: Arc<RegexCacheType> = Arc::new(
-        rt.block_on(async {
-            Cache::builder()
-                .capacity(1000)
-                .ttl(Duration::from_secs(300))
-                .build()
-                .await
-                .unwrap()
-        }),
-    );
+    let cache: Arc<RegexCacheType> = Arc::new(rt.block_on(async {
+        Cache::builder()
+            .capacity(1000)
+            .ttl(Duration::from_secs(300))
+            .build()
+            .await
+            .unwrap()
+    }));
     let regex_cache = RegexCache::new(cache);
 
     // 预热缓存

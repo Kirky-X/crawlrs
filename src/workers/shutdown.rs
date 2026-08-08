@@ -151,7 +151,10 @@ pub async fn rollback_pending_tasks(
     .await
     {
         Ok(Ok(affected)) => {
-            info!("Rolled back {} in-flight tasks to queued during shutdown", affected);
+            info!(
+                "Rolled back {} in-flight tasks to queued during shutdown",
+                affected
+            );
         }
         Ok(Err(e)) => {
             error!("Failed to roll back in-flight tasks during shutdown: {}", e);
@@ -241,10 +244,10 @@ mod tests {
 
     // ========== T011: rollback_pending_tasks integration tests ==========
 
+    use crate::domain::models::{Task, TaskType};
     use crate::domain::repositories::task_repository::{
         RepositoryError, TaskQueryParams, TaskRepository,
     };
-    use crate::domain::models::{Task, TaskType};
     use chrono::{DateTime, Utc};
     use std::collections::HashSet;
     use uuid::Uuid;
@@ -308,7 +311,8 @@ mod tests {
             &self,
             timeout: chrono::Duration,
         ) -> Result<u64, RepositoryError> {
-            self.reset_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.reset_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             *self.last_timeout.lock() = Some(timeout);
             Ok(0)
         }

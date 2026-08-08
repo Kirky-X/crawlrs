@@ -1552,8 +1552,7 @@ mod tests {
 
     #[test]
     fn test_text_encoding_processor_component_trait_object() {
-        let component: Arc<dyn TextEncodingProcessorTrait> =
-            Arc::new(DefaultTextEncodingProcessor);
+        let component: Arc<dyn TextEncodingProcessorTrait> = Arc::new(DefaultTextEncodingProcessor);
         let result = component.process_text(b"trait object test").unwrap();
         assert_eq!(result, "trait object test");
         let trimmed = component.trim_newlines("line1\nline2");

@@ -64,9 +64,8 @@ impl TavilySearchEngine {
 
     /// 解析 Tavily 搜索响应
     fn parse_response(body: &str) -> Result<Vec<TavilySearchResult>, SearchError> {
-        let response: TavilyResponse = serde_json::from_str(body).map_err(|e| {
-            SearchError::Parse(format!("Failed to parse Tavily response: {}", e))
-        })?;
+        let response: TavilyResponse = serde_json::from_str(body)
+            .map_err(|e| SearchError::Parse(format!("Failed to parse Tavily response: {}", e)))?;
 
         Ok(response
             .results
@@ -94,10 +93,7 @@ impl SearchEngine for TavilySearchEngine {
         EngineHealth::Healthy
     }
 
-    async fn search(
-        &self,
-        request: &SearchRequest,
-    ) -> Result<Response<ResponseItem>, SearchError> {
+    async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         let body = self.build_request(&request.query, request.limit);
         let url = format!("{}/search", self.config.endpoint);
 
@@ -110,8 +106,8 @@ impl SearchEngine for TavilySearchEngine {
 
         // 根据是否有 API Key 选择认证方式
         if !self.config.api_key.is_empty() {
-            req_builder = req_builder
-                .header("Authorization", format!("Bearer {}", self.config.api_key));
+            req_builder =
+                req_builder.header("Authorization", format!("Bearer {}", self.config.api_key));
         } else {
             req_builder = req_builder.header("X-Tavily-Access-Mode", "keyless");
         }
@@ -278,7 +274,10 @@ mod tests {
 
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/search"))
-            .and(wiremock::matchers::header("X-Tavily-Access-Mode", "keyless"))
+            .and(wiremock::matchers::header(
+                "X-Tavily-Access-Mode",
+                "keyless",
+            ))
             .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(response_body))
             .mount(&mock_server)
             .await;
@@ -308,7 +307,10 @@ mod tests {
 
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/search"))
-            .and(wiremock::matchers::header("Authorization", "Bearer tavily-key"))
+            .and(wiremock::matchers::header(
+                "Authorization",
+                "Bearer tavily-key",
+            ))
             .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(response_body))
             .mount(&mock_server)
             .await;

@@ -29,7 +29,9 @@
 //! 映射渠道已就位，待上游指纹模板或实测数据到位后，在这里按变体细化即可，无需改动引擎骨架。
 
 use crate::config::settings::ProxyStrategy;
-use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine};
+use crate::engines::engine_client::{
+    EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
+};
 use crate::engines::provider::{ProxyCategory, ProxyProvider};
 use crate::engines::validators;
 use crate::utils::proxy::redact_proxy_url;
@@ -503,12 +505,8 @@ mod tests {
     // === Helper functions ===
 
     fn create_engine() -> WreqEngine {
-        WreqEngine::new(
-            Arc::new(UaPool::new()),
-            Duration::from_secs(15),
-            30,
-        )
-        .expect("wreq client build should succeed")
+        WreqEngine::new(Arc::new(UaPool::new()), Duration::from_secs(15), 30)
+            .expect("wreq client build should succeed")
     }
 
     fn create_request(url: &str) -> InternalScrapeRequest {
@@ -615,7 +613,10 @@ mod tests {
     fn test_support_score_basic_returns_10() {
         let engine = create_engine();
         // 普通请求非专长 → 10，让位快速 HTTP 引擎
-        assert_eq!(engine.support_score(&create_request("https://example.com")), 10);
+        assert_eq!(
+            engine.support_score(&create_request("https://example.com")),
+            10
+        );
     }
 
     #[test]
@@ -759,7 +760,9 @@ mod tests {
     #[tokio::test]
     async fn test_scrape_rejects_ftp_scheme() {
         let engine = create_engine();
-        let result = engine.scrape(&create_request("ftp://example.com/file")).await;
+        let result = engine
+            .scrape(&create_request("ftp://example.com/file"))
+            .await;
         assert!(result.is_err());
     }
 
@@ -823,8 +826,7 @@ mod tests {
 
         // tls.peet.ws 返回 JSON 含 ja4 / ja4_raw 等指纹字段
         let body = &response.content;
-        let has_fingerprint =
-            body.contains("ja4") || body.contains("ja3") || body.contains("tls");
+        let has_fingerprint = body.contains("ja4") || body.contains("ja3") || body.contains("tls");
         assert!(
             has_fingerprint,
             "response should contain TLS fingerprint data, got: {}",

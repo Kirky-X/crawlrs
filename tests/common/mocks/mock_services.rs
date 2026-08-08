@@ -11,9 +11,9 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Mutex;
 
+use crawlrs::domain::models::webhook::WebhookEvent;
 use crawlrs::domain::models::Task;
 use crawlrs::domain::services::webhook_service::WebhookService;
-use crawlrs::domain::models::webhook::WebhookEvent;
 use crawlrs::infrastructure::oxcache::CacheService;
 
 // ============================================================================

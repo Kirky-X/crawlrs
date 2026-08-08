@@ -722,16 +722,8 @@ mod tests {
         /// existing `make_service` callers that don't assert result shape).
         fn new() -> Self {
             Self::new_with_items(vec![
-                make_response_item(
-                    "Result 1",
-                    "https://example.com/1",
-                    SearchEngineType::Bing,
-                ),
-                make_response_item(
-                    "Result 2",
-                    "https://example.com/2",
-                    SearchEngineType::Bing,
-                ),
+                make_response_item("Result 1", "https://example.com/1", SearchEngineType::Bing),
+                make_response_item("Result 2", "https://example.com/2", SearchEngineType::Bing),
             ])
         }
     }

@@ -268,7 +268,10 @@ impl StopReason {
                 format!("saturation threshold reached ({saturation:.3} < {threshold:.3})")
             }
             Self::NoPendingLinks => "no pending links".to_string(),
-            Self::CoverageReached { coverage, threshold } => {
+            Self::CoverageReached {
+                coverage,
+                threshold,
+            } => {
                 format!("coverage threshold reached ({coverage:.3} >= {threshold:.3})")
             }
         }
@@ -474,21 +477,12 @@ impl StopCondition {
 /// DRL 策略配置
 ///
 /// 控制是否启用 DRL 策略替代启发式规则调整并发度和 URL 优先级。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DrlConfig {
     /// 是否启用 DRL 策略（默认 false）
     pub drl_policy_enabled: bool,
     /// ONNX 模型路径（可选，为空时使用启发式策略）
     pub model_path: Option<String>,
-}
-
-impl Default for DrlConfig {
-    fn default() -> Self {
-        Self {
-            drl_policy_enabled: false,
-            model_path: None,
-        }
-    }
 }
 
 impl DrlConfig {

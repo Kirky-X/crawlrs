@@ -11,5 +11,5 @@
 pub mod broadcast;
 pub mod event_bus;
 
-pub use event_bus::{DomainEvent, EventBus, EventBusError};
 pub use broadcast::BroadcastEventBus;
+pub use event_bus::{DomainEvent, EventBus, EventBusError};

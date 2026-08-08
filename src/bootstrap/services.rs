@@ -362,7 +362,10 @@ fn build_fallback_engines(
                         fallback_config.parallel.endpoint.clone()
                     },
                 };
-                engines.push(Arc::new(ParallelSearchEngine::new(http_client.clone(), config)));
+                engines.push(Arc::new(ParallelSearchEngine::new(
+                    http_client.clone(),
+                    config,
+                )));
             }
             "tavily" => {
                 let config = TavilyConfig {
@@ -373,7 +376,10 @@ fn build_fallback_engines(
                         fallback_config.tavily.endpoint.clone()
                     },
                 };
-                engines.push(Arc::new(TavilySearchEngine::new(http_client.clone(), config)));
+                engines.push(Arc::new(TavilySearchEngine::new(
+                    http_client.clone(),
+                    config,
+                )));
             }
             unknown => {
                 log::warn!("Unknown fallback engine '{}', skipping", unknown);

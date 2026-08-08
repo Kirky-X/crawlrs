@@ -14,10 +14,10 @@ use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepos
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 // R-wh-001 / T028：webhook feature 关闭时不导入 WebhookRepoImpl
 use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
-#[cfg(feature = "webhook")]
-use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::infrastructure::database::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::infrastructure::database::repositories::task_repo_impl::TaskRepositoryImpl;
+#[cfg(feature = "webhook")]
+use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::metrics_handler;
 #[cfg(not(feature = "auth"))]
 use crate::presentation::middleware::auth_types::AuthState;

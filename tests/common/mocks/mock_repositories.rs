@@ -19,7 +19,9 @@ use crawlrs::domain::repositories::credits_repository::{
     CreditsRepository, CreditsRepositoryError, CreditsTransaction, CreditsTransactionType,
 };
 use crawlrs::domain::repositories::scrape_result_repository::ScrapeResultRepository;
-use crawlrs::domain::repositories::task_repository::{RepositoryError, TaskQueryParams, TaskRepository};
+use crawlrs::domain::repositories::task_repository::{
+    RepositoryError, TaskQueryParams, TaskRepository,
+};
 
 // ============================================================================
 // MockTaskRepository
@@ -60,25 +62,16 @@ impl TaskRepository for MockTaskRepository {
     ) -> Result<HashSet<String>, RepositoryError> {
         Ok(HashSet::new())
     }
-    async fn reset_stuck_tasks(
-        &self,
-        _timeout: chrono::Duration,
-    ) -> Result<u64, RepositoryError> {
+    async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> {
         Ok(0)
     }
-    async fn cancel_tasks_by_crawl_id(
-        &self,
-        _crawl_id: Uuid,
-    ) -> Result<u64, RepositoryError> {
+    async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
         Ok(0)
     }
     async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
         Ok(0)
     }
-    async fn find_by_crawl_id(
-        &self,
-        _crawl_id: Uuid,
-    ) -> Result<Vec<Task>, RepositoryError> {
+    async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
         Ok(vec![])
     }
     async fn query_tasks(
@@ -109,22 +102,13 @@ impl ScrapeResultRepository for MockScrapeResultRepository {
     async fn save(&self, _result: ScrapeResult) -> anyhow::Result<()> {
         Ok(())
     }
-    async fn find_by_task_id(
-        &self,
-        _task_id: Uuid,
-    ) -> anyhow::Result<Option<ScrapeResult>> {
+    async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
         Ok(None)
     }
-    async fn find_by_task_ids(
-        &self,
-        _task_ids: &[Uuid],
-    ) -> anyhow::Result<Vec<ScrapeResult>> {
+    async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
         Ok(vec![])
     }
-    async fn get_team_avg_response_time(
-        &self,
-        _team_id: Uuid,
-    ) -> anyhow::Result<f64> {
+    async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
         Ok(0.0)
     }
 }
@@ -153,11 +137,7 @@ impl CrawlRepository for MockCrawlRepository {
     async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn update_status(
-        &self,
-        _id: Uuid,
-        _status: CrawlStatus,
-    ) -> Result<(), RepositoryError> {
+    async fn update_status(&self, _id: Uuid, _status: CrawlStatus) -> Result<(), RepositoryError> {
         Ok(())
     }
     async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
@@ -171,10 +151,7 @@ impl CrawlRepository for MockCrawlRepository {
     ) -> Result<Vec<Crawl>, RepositoryError> {
         Ok(vec![])
     }
-    async fn count_by_team_id(
-        &self,
-        _team_id: Uuid,
-    ) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 }
@@ -188,10 +165,7 @@ pub struct MockCreditsRepository;
 
 #[async_trait]
 impl CreditsRepository for MockCreditsRepository {
-    async fn get_balance(
-        &self,
-        _team_id: Uuid,
-    ) -> Result<i64, CreditsRepositoryError> {
+    async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
         Ok(100)
     }
     async fn deduct_credits(

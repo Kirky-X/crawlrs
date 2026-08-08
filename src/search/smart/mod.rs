@@ -15,9 +15,7 @@ use crate::engines::engine_client::{
     EngineClient, EngineError, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest,
     ScrollDirection,
 };
-use crate::search::client::{
-    BaiduSearchEngine, BingSearchEngine, SogouSearchEngine,
-};
+use crate::search::client::{BaiduSearchEngine, BingSearchEngine, SogouSearchEngine};
 use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
@@ -950,8 +948,7 @@ mod tests {
         let mut baidu_config = create_test_config();
         baidu_config.engine_type = SearchEngineType::Baidu;
         let baidu_smart_engine = SmartSearchEngine::new(client, baidu_config);
-        let baidu_url =
-            baidu_smart_engine.build_search_url("machine learning", Some("zh"), None);
+        let baidu_url = baidu_smart_engine.build_search_url("machine learning", Some("zh"), None);
         assert!(baidu_url.contains("baidu.com"));
         assert!(baidu_url.contains("machine"));
     }

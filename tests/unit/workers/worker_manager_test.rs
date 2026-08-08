@@ -418,8 +418,14 @@ impl ExtractionServiceTrait for MockExtractionService {
         _query: &str,
         _schema: &serde_json::Value,
         _rag_strategy: &crawlrs::domain::services::rag_strategy::RagExtractionStrategy,
-    ) -> anyhow::Result<(serde_json::Value, crawlrs::domain::services::llm::TokenUsage)> {
-        Ok((serde_json::json!({}), crawlrs::domain::services::llm::TokenUsage::default()))
+    ) -> anyhow::Result<(
+        serde_json::Value,
+        crawlrs::domain::services::llm::TokenUsage,
+    )> {
+        Ok((
+            serde_json::json!({}),
+            crawlrs::domain::services::llm::TokenUsage::default(),
+        ))
     }
 }
 

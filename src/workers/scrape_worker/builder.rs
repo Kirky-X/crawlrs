@@ -19,15 +19,15 @@ use crate::domain::services::extraction_service::ExtractionServiceTrait;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
+use crate::infrastructure::oxcache::CacheService;
 use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::dedup::Deduplicator;
 use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsCheckerTrait;
-use crate::infrastructure::oxcache::CacheService;
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
-use crate::workers::shutdown::ShutdownCoordinator;
 #[cfg(feature = "metrics")]
 use crate::workers::scheduler::memory_scheduler::MemoryScheduler;
+use crate::workers::shutdown::ShutdownCoordinator;
 use std::sync::Arc;
 
 /// ScrapeWorker 构建器
@@ -295,4 +295,3 @@ impl ScrapeWorkerBuilder {
         .with_deduplicator_opt(self.deduplicator))
     }
 }
-

@@ -58,7 +58,10 @@ mod tests {
             team_id: Uuid::new_v4(),
         };
         let result = bus.publish(event);
-        assert!(result.is_ok(), "publish with no subscribers should return Ok");
+        assert!(
+            result.is_ok(),
+            "publish with no subscribers should return Ok"
+        );
     }
 
     #[tokio::test]
@@ -93,10 +96,7 @@ mod tests {
 
         let scrape_id = Uuid::new_v4();
         let team_id = Uuid::new_v4();
-        let event = DomainEvent::ScrapeCompleted {
-            scrape_id,
-            team_id,
-        };
+        let event = DomainEvent::ScrapeCompleted { scrape_id, team_id };
 
         bus.publish(event).unwrap();
 

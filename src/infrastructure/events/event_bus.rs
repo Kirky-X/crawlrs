@@ -28,10 +28,7 @@ pub enum EventBusError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DomainEvent {
     /// 任务完成
-    TaskCompleted {
-        task_id: Uuid,
-        team_id: Uuid,
-    },
+    TaskCompleted { task_id: Uuid, team_id: Uuid },
     /// 任务失败
     TaskFailed {
         task_id: Uuid,
@@ -39,10 +36,7 @@ pub enum DomainEvent {
         error: String,
     },
     /// 爬取完成
-    CrawlCompleted {
-        crawl_id: Uuid,
-        team_id: Uuid,
-    },
+    CrawlCompleted { crawl_id: Uuid, team_id: Uuid },
     /// 爬取失败
     CrawlFailed {
         crawl_id: Uuid,
@@ -50,10 +44,7 @@ pub enum DomainEvent {
         error: String,
     },
     /// 抓取完成
-    ScrapeCompleted {
-        scrape_id: Uuid,
-        team_id: Uuid,
-    },
+    ScrapeCompleted { scrape_id: Uuid, team_id: Uuid },
     /// 抓取失败
     ScrapeFailed {
         scrape_id: Uuid,

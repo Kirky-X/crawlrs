@@ -116,9 +116,7 @@ impl ParallelSearchEngine {
                     }
 
                     // Fallback: 尝试解析为通用 JSON 数组
-                    if let Ok(Value::Array(items)) =
-                        serde_json::from_str::<Value>(&content.text)
-                    {
+                    if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(&content.text) {
                         for item in &items {
                             if let Some(result) = parse_generic_item(item) {
                                 results.push(result);
@@ -147,10 +145,7 @@ impl SearchEngine for ParallelSearchEngine {
         EngineHealth::Healthy
     }
 
-    async fn search(
-        &self,
-        request: &SearchRequest,
-    ) -> Result<Response<ResponseItem>, SearchError> {
+    async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
         let body = self.build_request(&request.query, request.limit);
 
         let mut req_builder = self
@@ -335,7 +330,10 @@ mod tests {
         assert_eq!(req["method"], "tools/call");
         assert_eq!(req["params"]["name"], "web_search");
         assert_eq!(req["params"]["arguments"]["objective"], "rust search");
-        assert_eq!(req["params"]["arguments"]["search_queries"][0], "rust search");
+        assert_eq!(
+            req["params"]["arguments"]["search_queries"][0],
+            "rust search"
+        );
         assert_eq!(req["params"]["arguments"]["max_results"], 10);
     }
 
@@ -377,7 +375,8 @@ mod tests {
 
     #[test]
     fn test_parse_json_rpc_error() {
-        let body = r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":1}"#;
+        let body =
+            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":1}"#;
         let rpc = ParallelSearchEngine::parse_json_response(body).unwrap();
         assert!(rpc.error.is_some());
     }

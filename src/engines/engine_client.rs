@@ -434,7 +434,6 @@ fn convert_error(e: EngineError) -> EngineError {
     }
 }
 
-
 #[cfg(test)]
 #[path = "tests/engine_client_test.rs"]
 mod tests;

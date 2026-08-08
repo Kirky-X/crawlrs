@@ -31,9 +31,7 @@ use crawlrs::domain::services::team_service::{TeamGeoRestrictions, TeamService};
 use crawlrs::presentation::state::{CrawlHandlerState, HandlerState};
 
 // T044: 使用 tests/common/mocks 统一 mock
-use crate::common::mocks::{
-    MockCrawlRepository, MockScrapeResultRepository, MockTaskRepository,
-};
+use crate::common::mocks::{MockCrawlRepository, MockScrapeResultRepository, MockTaskRepository};
 
 // =============================================================================
 // No-op mock implementations (feature-gated only — basic repos use shared mocks)

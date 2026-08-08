@@ -528,7 +528,6 @@ pub(super) fn check_js_upgrade_probe(
     probe.evaluate(&header_map, body_prefix)
 }
 
-
 #[cfg(test)]
 #[path = "../tests/router_test.rs"]
 mod tests;

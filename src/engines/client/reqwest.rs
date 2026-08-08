@@ -500,27 +500,29 @@ impl ScraperEngine for ReqwestEngine {
                     b = b.proxy(px);
                 }
             }
-            b.build()
-                .map_err(|e| EngineError::Other(format!("Failed to build SSRF resolve client: {}", e)))?
+            b.build().map_err(|e| {
+                EngineError::Other(format!("Failed to build SSRF resolve client: {}", e))
+            })?
         } else {
             // Host is an IP literal (no DNS to override) or empty — use base client
-            let temp_client: Option<reqwest::Client> = if need_tls_bypass {
-                let mut b = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(self.timeout_seconds))
-                    .cookie_store(true)
-                    .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
-                    .danger_accept_invalid_certs(true);
-                if let Some(p) = &handle.used_proxy_url {
-                    if let Ok(px) = reqwest::Proxy::http(p) {
-                        b = b.proxy(px);
+            let temp_client: Option<reqwest::Client> =
+                if need_tls_bypass {
+                    let mut b = reqwest::Client::builder()
+                        .timeout(Duration::from_secs(self.timeout_seconds))
+                        .cookie_store(true)
+                        .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
+                        .danger_accept_invalid_certs(true);
+                    if let Some(p) = &handle.used_proxy_url {
+                        if let Ok(px) = reqwest::Proxy::http(p) {
+                            b = b.proxy(px);
+                        }
                     }
-                }
-                Some(b.build().map_err(|e| {
-                    EngineError::Other(format!("Failed build temp client: {}", e))
-                })?)
-            } else {
-                None
-            };
+                    Some(b.build().map_err(|e| {
+                        EngineError::Other(format!("Failed build temp client: {}", e))
+                    })?)
+                } else {
+                    None
+                };
             temp_client.unwrap_or_else(|| handle.client.clone())
         };
         let effective_client = &ssrf_client;
@@ -549,12 +551,8 @@ impl ScraperEngine for ReqwestEngine {
         // instead of returning actual search results.
         let request_url = validated_url.parsed_url.as_str();
         let mut request_builder = match request.method {
-            crate::engines::engine_client::HttpMethod::Get => {
-                effective_client.get(request_url)
-            }
-            crate::engines::engine_client::HttpMethod::Post => {
-                effective_client.post(request_url)
-            }
+            crate::engines::engine_client::HttpMethod::Get => effective_client.get(request_url),
+            crate::engines::engine_client::HttpMethod::Post => effective_client.post(request_url),
         };
 
         // 应用 UA 绑定 headers（User-Agent + Accept-Language + sec-ch-ua）
