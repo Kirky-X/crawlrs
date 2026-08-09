@@ -74,14 +74,9 @@ webhook = []
 test-mocks = []
 
 # --- sdforge 宏生成的 cfg 条件（空特性仅用于通过 check-cfg） ---
-observability = []
 markdown = []
-http = []
-genai-llm = []
 antibot = []
 browser-download = []
-extractor-trafilatura = []
-extractor-dom-smoothie = []
 
 [dependencies]
 # Async runtime and web framework
@@ -375,7 +370,7 @@ libc = "0.2"
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors"))'
+    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability"))'
 ]
 
 
