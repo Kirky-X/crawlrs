@@ -147,7 +147,11 @@ impl SearchEngine for SmartSearchEngine {
         match bing_result {
             Ok(response) => {
                 info!("Bing returned {} results", response.items.len());
-                bing_results = response.items.iter().map(Self::item_to_search_result).collect();
+                bing_results = response
+                    .items
+                    .iter()
+                    .map(Self::item_to_search_result)
+                    .collect();
             }
             Err(e) => {
                 warn!("Bing search failed: {}", e);
@@ -157,7 +161,11 @@ impl SearchEngine for SmartSearchEngine {
         match baidu_result {
             Ok(response) => {
                 info!("Baidu returned {} results", response.items.len());
-                baidu_results = response.items.iter().map(Self::item_to_search_result).collect();
+                baidu_results = response
+                    .items
+                    .iter()
+                    .map(Self::item_to_search_result)
+                    .collect();
             }
             Err(e) => {
                 warn!("Baidu search failed: {}", e);
@@ -167,7 +175,11 @@ impl SearchEngine for SmartSearchEngine {
         match sogou_result {
             Ok(response) => {
                 info!("Sogou returned {} results", response.items.len());
-                sogou_results = response.items.iter().map(Self::item_to_search_result).collect();
+                sogou_results = response
+                    .items
+                    .iter()
+                    .map(Self::item_to_search_result)
+                    .collect();
             }
             Err(e) => {
                 warn!("Sogou search failed: {}", e);

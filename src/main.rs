@@ -94,7 +94,7 @@ mod app {
         }
 
         // 启动通用 worker（webhook / backlog / expiration）
-        spawn_common_workers(app_state, &settings).await;
+        let _common_worker_handles = spawn_common_workers(app_state, &settings).await;
 
         // Build API app with dependencies
         let app = build_api_app_with_state(app_state, settings.clone());
@@ -140,7 +140,7 @@ mod app {
         });
 
         // 启动通用 worker（webhook / backlog / expiration）
-        spawn_common_workers(app_state, &settings).await;
+        let _common_worker_handles = spawn_common_workers(app_state, &settings).await;
 
         // Create worker manager with dependencies (使用 DI 注入的服务)
         let deps = crawlrs::workers::manager::WorkerManagerDeps {
@@ -209,7 +209,9 @@ mod app {
         use crawlrs::infrastructure::database::entities::team;
         use sea_orm::{EntityTrait, Set};
         let team_id = DEFAULT_TEAM_ID;
-        let existing = team::Entity::find_by_id(team_id).one(conn).await
+        let existing = team::Entity::find_by_id(team_id)
+            .one(conn)
+            .await
             .map_err(|e| anyhow::anyhow!("find team: {}", e))?;
         if existing.is_none() {
             let now = chrono::Utc::now();
@@ -224,7 +226,9 @@ mod app {
                 created_at: Set(now.into()),
                 updated_at: Set(now.into()),
             };
-            team::Entity::insert(model).exec(conn).await
+            team::Entity::insert(model)
+                .exec(conn)
+                .await
                 .map_err(|e| anyhow::anyhow!("insert team: {}", e))?;
             println!("Created team: {}", team_id);
         } else {
@@ -249,12 +253,7 @@ mod app {
             ];
             let expires_in_secs: i64 = 365 * 24 * 3600;
             let plaintext_key = handler
-                .generate_with_namespace(
-                    login_id,
-                    "crawlrs",
-                    scopes,
-                    expires_in_secs,
-                )
+                .generate_with_namespace(login_id, "crawlrs", scopes, expires_in_secs)
                 .await
                 .map_err(|e| anyhow::anyhow!("garrison generate key: {}", e))?;
 
@@ -274,7 +273,9 @@ mod app {
                 created_at: Set(now_ts.into()),
                 updated_at: Set(None),
             };
-            api_key::Entity::insert(key_model).exec(conn).await
+            api_key::Entity::insert(key_model)
+                .exec(conn)
+                .await
                 .map_err(|e| anyhow::anyhow!("insert api_key: {}", e))?;
 
             println!("Created admin API key:");
@@ -284,7 +285,10 @@ mod app {
             println!("  scopes:     read, write, admin");
             println!();
             println!("Use this key as Bearer token:");
-            println!("  curl -H 'Authorization: Bearer {}' http://localhost:8899/v1/teams/me", plaintext_key);
+            println!(
+                "  curl -H 'Authorization: Bearer {}' http://localhost:8899/v1/teams/me",
+                plaintext_key
+            );
         }
 
         #[cfg(not(feature = "auth"))]

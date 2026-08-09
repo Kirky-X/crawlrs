@@ -67,8 +67,8 @@ use crate::domain::services::team_semaphore::{AdaptiveParams, TeamSemaphore};
 use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
-use crate::search::engine_trait::SearchEngine;
 use crate::search::client::SearchClientTrait;
+use crate::search::engine_trait::SearchEngine;
 use crate::search::smart as smart_search;
 // T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
@@ -625,15 +625,13 @@ pub fn init_llm_service(
 /// # Returns
 ///
 /// Returns an initialized regex cache wrapped in Arc.
-pub fn init_regex_cache() -> Arc<RegexCache> {
-    let cache = futures::executor::block_on(async {
-        oxcache::Cache::builder()
-            .capacity(1000)
-            .ttl(std::time::Duration::from_secs(3600))
-            .build()
-            .await
-            .expect("Failed to create regex cache")
-    });
+pub async fn init_regex_cache() -> Arc<RegexCache> {
+    let cache = oxcache::Cache::builder()
+        .capacity(1000)
+        .ttl(std::time::Duration::from_secs(3600))
+        .build()
+        .await
+        .expect("Failed to create regex cache");
     Arc::new(RegexCache::new(Arc::new(cache)))
 }
 
@@ -810,7 +808,7 @@ pub async fn init_services(
     let content_extractor = Arc::new(ContentExtractionFacade::new(Some(llm_service.clone())));
 
     // Initialize regex cache
-    let regex_cache = init_regex_cache();
+    let regex_cache = init_regex_cache().await;
 
     // R-wh-003 / T027：Initialize WebhookWorker（仅 webhook-on 时构造）
     // webhook-off：不构造 WebhookWorker，ServicesComponents.webhook_worker 字段不编译
@@ -1069,9 +1067,9 @@ mod tests {
 
     // ========== init_regex_cache tests ==========
 
-    #[test]
-    fn test_init_regex_cache_creates_instance() {
-        let cache = init_regex_cache();
+    #[tokio::test]
+    async fn test_init_regex_cache_creates_instance() {
+        let cache = init_regex_cache().await;
         // Verify the cache is usable by getting/inserting a simple pattern
         let result = cache.get_or_insert(r"\d+");
         assert!(
@@ -1080,9 +1078,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_init_regex_cache_returns_arc() {
-        let cache = init_regex_cache();
+    #[tokio::test]
+    async fn test_init_regex_cache_returns_arc() {
+        let cache = init_regex_cache().await;
         assert!(
             Arc::strong_count(&cache) >= 1,
             "init_regex_cache should return a valid Arc<RegexCache>"
@@ -1118,8 +1116,7 @@ mod tests {
 
     #[test]
     fn test_init_search_engine_with_ab_test_disabled() {
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let engine_client = make_engine_client();
         let _search_engine = init_search_engine(engine_client, &settings);
         // Should create without panic; SmartSearchEngine is always used
@@ -1127,8 +1124,7 @@ mod tests {
 
     #[test]
     fn test_init_search_engine_with_ab_test_enabled() {
-        let settings =
-            crate::bootstrap::config::load_settings().expect("Failed to load settings");
+        let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let engine_client = make_engine_client();
         let _search_engine = init_search_engine(engine_client, &settings);
         // SmartSearchEngine is always used regardless of ab_test settings

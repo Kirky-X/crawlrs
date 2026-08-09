@@ -147,27 +147,83 @@ impl Crawl {
     }
 
     /// Start the crawl
+    ///
+    /// 状态守卫：仅 `Queued` → `Processing`，终态不可重启。
     pub fn start(&mut self) {
+        if self.is_finished() {
+            log::warn!(
+                "Cannot start crawl {}: already in terminal state {:?}",
+                self.id,
+                self.status
+            );
+            return;
+        }
+        if self.status != CrawlStatus::Queued {
+            log::warn!(
+                "Cannot start crawl {}: current state is {:?}, expected Queued",
+                self.id,
+                self.status
+            );
+            return;
+        }
         self.status = CrawlStatus::Processing;
         self.updated_at = Utc::now();
     }
 
     /// Complete the crawl
+    ///
+    /// 状态守卫：仅 `Processing` → `Completed`，防止覆盖其他终态。
     pub fn complete(&mut self) {
+        if self.status != CrawlStatus::Processing {
+            log::warn!(
+                "Cannot complete crawl {}: current state is {:?}, expected Processing",
+                self.id,
+                self.status
+            );
+            return;
+        }
         self.status = CrawlStatus::Completed;
         self.completed_at = Some(Utc::now());
         self.updated_at = Utc::now();
     }
 
     /// Fail the crawl
+    ///
+    /// 状态守卫：仅 `Processing` → `Failed`，防止覆盖已完成/已取消状态。
     pub fn fail(&mut self) {
+        if self.is_finished() {
+            log::warn!(
+                "Cannot fail crawl {}: already in terminal state {:?}",
+                self.id,
+                self.status
+            );
+            return;
+        }
+        if self.status != CrawlStatus::Processing {
+            log::warn!(
+                "Cannot fail crawl {}: current state is {:?}, expected Processing",
+                self.id,
+                self.status
+            );
+            return;
+        }
         self.status = CrawlStatus::Failed;
         self.completed_at = Some(Utc::now());
         self.updated_at = Utc::now();
     }
 
     /// Cancel the crawl
+    ///
+    /// 状态守卫：终态不可取消（已完成/已失败/已取消）。
     pub fn cancel(&mut self) {
+        if self.is_finished() {
+            log::warn!(
+                "Cannot cancel crawl {}: already in terminal state {:?}",
+                self.id,
+                self.status
+            );
+            return;
+        }
         self.status = CrawlStatus::Cancelled;
         self.completed_at = Some(Utc::now());
         self.updated_at = Utc::now();
@@ -432,6 +488,7 @@ mod tests {
     #[test]
     fn test_fail_sets_failed_and_completed_at() {
         let mut crawl = make_crawl();
+        crawl.status = CrawlStatus::Processing; // 状态守卫要求 Processing
         let before = Utc::now();
         crawl.fail();
 

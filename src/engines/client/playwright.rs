@@ -94,6 +94,8 @@ pub struct PlaywrightBrowserManagerComponent {
     browser: Arc<Mutex<Option<Arc<Browser>>>>,
     /// 浏览器下载管理器
     download_manager: Arc<BrowserDownloadManager>,
+    /// T026 修复：CDP handler 任务的 JoinHandle，cleanup 时 abort + await 防止任务泄漏
+    handler_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl PlaywrightBrowserManagerComponent {
@@ -111,6 +113,7 @@ impl PlaywrightBrowserManagerComponent {
             config,
             browser: Arc::new(Mutex::new(None)),
             download_manager: Arc::new(BrowserDownloadManager::new(download_config)),
+            handler_handle: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -122,6 +125,25 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
     }
 
     async fn cleanup(&self) {
+        // T026 修复：先 abort CDP handler 任务，再关闭浏览器
+        // 取出 handle 后立即释放锁，避免 MutexGuard 跨越 await
+        let handler_to_abort = {
+            let mut handler_guard = self
+                .handler_handle
+                .lock()
+                .expect("handler_handle mutex poisoned");
+            handler_guard.take()
+        };
+        if let Some(handle) = handler_to_abort {
+            handle.abort();
+            // 给 handler 任务一点时间完成清理
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                let _ = handle.await;
+            })
+            .await;
+            log::debug!("CDP handler task aborted and awaited");
+        }
+
         let mut guard = match self.browser.lock() {
             Ok(g) => g,
             Err(e) => {
@@ -257,13 +279,25 @@ impl PlaywrightBrowserManagerComponent {
         };
 
         // 启动处理器任务
-        tokio::spawn(async move {
+        // T026 修复：存储 JoinHandle 到 manager，cleanup 时 abort + await
+        let handler_task = tokio::spawn(async move {
             while let Some(h) = handler.next().await {
                 if let Err(e) = h {
                     log::debug!("Browser handler event error (continuing): {:?}", e);
                 }
             }
         });
+        {
+            let mut guard = self
+                .handler_handle
+                .lock()
+                .expect("handler_handle mutex poisoned");
+            // 如果已有旧 handler，先 abort
+            if let Some(old) = guard.take() {
+                old.abort();
+            }
+            *guard = Some(handler_task);
+        }
 
         let browser = Arc::new(browser);
 

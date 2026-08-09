@@ -447,7 +447,9 @@ impl ScrapeWorker {
             if is_internal_url(proxy_url) {
                 warn!(
                     "SSRF via proxy blocked in worker proxy={} task_id={} team_id={}",
-                    proxy_url, task.id, task.team_id
+                    crate::workers::cache_utils::redact_url_for_log(proxy_url),
+                    task.id,
+                    task.team_id
                 );
                 self.repository.mark_failed(task.id).await?;
                 return Ok(());
@@ -1108,6 +1110,8 @@ impl ScrapeWorker {
         Ok(ScrapeRequest {
             url: dto.url.clone(),
             options: ScrapeOptions {
+                // NOTE: ScrapeOptionsDto 当前未暴露 method/body 字段，默认 Get + None。
+                // 若未来 DTO 增加这些字段，需同步更新此处。
                 method: HttpMethod::Get,
                 body: None,
                 headers,
@@ -1161,6 +1165,8 @@ impl ScrapeWorker {
                     })
                     .collect(),
                 sync_wait_ms: dto.sync_wait_ms.unwrap_or(0),
+                // NOTE: ScrapeOptionsDto 当前未暴露 block_ads/block_media/session_id/wait_for/needs_mllm 字段，
+                // 默认硬编码为 false/None。若未来 DTO 增加这些字段，需同步更新此处。
                 block_ads: false,
                 block_media: false,
                 session_id: None,

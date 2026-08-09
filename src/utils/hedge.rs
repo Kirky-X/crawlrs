@@ -148,7 +148,8 @@ impl HedgeController {
             let var_old = state.variance_ms2;
             let ema_new = alpha * x_ms + (1.0 - alpha) * ema_old;
             // 指数加权移动方差递推式
-            let var_new = (1.0 - alpha) * var_old + alpha * (x_ms - ema_new) * (x_ms - ema_old);
+            let var_new =
+                ((1.0 - alpha) * var_old + alpha * (x_ms - ema_new) * (x_ms - ema_old)).max(0.0);
             state.ema_latency_ms = ema_new;
             state.variance_ms2 = var_new;
             state.sample_count += 1;

@@ -41,7 +41,7 @@ impl BacklogWorker {
             task_repository,
             rate_limiting_service,
             settings,
-            cleanup_cycle_counter: AtomicU64::new(0),
+            cleanup_cycle_counter: AtomicU64::new(1),
         }
     }
 
@@ -1079,18 +1079,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_runs_on_10th_cycle() {
-        // The counter starts at 0, fetch_add returns 0 first, then 1, etc.
-        // counter.is_multiple_of(10) is true when counter == 0, 10, 20, ...
-        // So the FIRST cycle (counter=0) triggers cleanup!
+        // The counter starts at 1, fetch_add returns 1 first, then 2, etc.
+        // counter.is_multiple_of(10) is true when counter == 10, 20, ...
+        // So cleanup first triggers on the 10th call.
         let worker = make_worker(
             Arc::new(MockBacklogRepo::new_empty()),
             Arc::new(MockTaskRepo::new()),
             Arc::new(MockRateLimitingService::new_allowed()),
             default_settings(),
         );
-        // First call: counter=0, 0.is_multiple_of(10) = true -> cleanup runs
-        let result1 = worker.process().await;
-        assert_eq!(result1, ProcessResult::Completed);
+        // Calls 1-9: counter=1..9, none is multiple of 10 -> no cleanup
+        for _ in 0..9 {
+            let r = worker.process().await;
+            assert_eq!(r, ProcessResult::Completed);
+        }
+        // 10th call: counter=10, 10.is_multiple_of(10) = true -> cleanup runs
+        let result10 = worker.process().await;
+        assert_eq!(result10, ProcessResult::Completed);
     }
 
     #[tokio::test]
@@ -1101,11 +1106,11 @@ mod tests {
             Arc::new(MockRateLimitingService::new_allowed()),
             default_settings(),
         );
-        // First call triggers cleanup (counter=0), subsequent calls (1-9) don't
-        let _ = worker.process().await; // counter 0 -> cleanup
+        // Counter starts at 1; calls 1-9 don't trigger cleanup
         let _ = worker.process().await; // counter 1 -> no cleanup
         let _ = worker.process().await; // counter 2 -> no cleanup
-        let result = worker.process().await; // counter 3 -> no cleanup
+        let _ = worker.process().await; // counter 3 -> no cleanup
+        let result = worker.process().await; // counter 4 -> no cleanup
         assert_eq!(result, ProcessResult::Completed);
     }
 
@@ -1124,8 +1129,8 @@ mod tests {
             Arc::new(MockRateLimitingService::new_allowed()),
             default_settings(),
         );
-        let result = worker.process().await;
-        assert_eq!(result, ProcessResult::Completed);
+        // 直接调用 cleanup_expired_tasks 测试清理逻辑
+        worker.cleanup_expired_tasks().await.unwrap();
         // The expired backlog should be marked as Expired via update
         let updated = updated_repo.updated();
         assert_eq!(updated.len(), 1);
@@ -1153,8 +1158,8 @@ mod tests {
             Arc::new(MockRateLimitingService::new_allowed()),
             default_settings(),
         );
-        let result = worker.process().await;
-        assert_eq!(result, ProcessResult::Completed);
+        // 直接调用 cleanup_expired_tasks 测试清理逻辑
+        worker.cleanup_expired_tasks().await.unwrap();
         // The expired backlog should be marked as Expired
         let updated = updated_repo.updated();
         assert_eq!(updated.len(), 1);
@@ -1185,8 +1190,8 @@ mod tests {
             Arc::new(MockRateLimitingService::new_allowed()),
             default_settings(),
         );
-        let result = worker.process().await;
-        assert_eq!(result, ProcessResult::Completed);
+        // 直接调用 cleanup_expired_tasks 测试清理逻辑
+        worker.cleanup_expired_tasks().await.unwrap();
         // Only the backlog is updated (marked as Expired), no task update
         let updated = updated_repo.updated();
         assert_eq!(updated.len(), 1);
@@ -1212,8 +1217,8 @@ mod tests {
             Arc::new(MockRateLimitingService::new_allowed()),
             default_settings(),
         );
-        let result = worker.process().await;
-        assert_eq!(result, ProcessResult::Completed);
+        // 直接调用 cleanup_expired_tasks 测试清理逻辑
+        worker.cleanup_expired_tasks().await.unwrap();
         let updated = updated_repo.updated();
         assert_eq!(updated.len(), 2);
         for entry in &updated {
@@ -1407,7 +1412,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_expired_tasks_continues_after_process_error() {
         // When process_expired_backlog returns Err (backlog update fails), cleanup_expired_tasks
-        // should log the error and continue, ultimately returning Ok so process() stays Completed.
+        // should log the error and continue, ultimately returning Ok.
         let team_id = Uuid::new_v4();
         let task_id1 = Uuid::new_v4();
         let task_id2 = Uuid::new_v4();
@@ -1423,17 +1428,15 @@ mod tests {
             Arc::new(MockRateLimitingService::new_allowed()),
             default_settings(),
         );
-        // cleanup_cycle_counter starts at 0; 0.is_multiple_of(10) is true, so the first
-        // process() call triggers cleanup_expired_tasks immediately.
-        let result = worker.process().await;
-        // cleanup_expired_tasks catches individual errors and returns Ok, so process() is Completed
-        assert_eq!(result, ProcessResult::Completed);
+        // 直接调用 cleanup_expired_tasks 测试错误继续逻辑
+        let result = worker.cleanup_expired_tasks().await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_cleanup_expired_tasks_single_failure_returns_completed() {
         // Single expired backlog whose processing fails: cleanup_expired_tasks should still
-        // return Ok (the error is logged, not propagated), so process() stays Completed.
+        // return Ok (the error is logged, not propagated).
         let team_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let expired = make_expired_backlog(team_id, task_id);
@@ -1444,8 +1447,9 @@ mod tests {
             Arc::new(MockRateLimitingService::new_allowed()),
             default_settings(),
         );
-        let result = worker.process().await;
-        assert_eq!(result, ProcessResult::Completed);
+        // 直接调用 cleanup_expired_tasks 测试错误处理
+        let result = worker.cleanup_expired_tasks().await;
+        assert!(result.is_ok());
     }
 
     // ========== cleanup_expired_tasks: empty expired list returns Ok early ==========
@@ -1454,7 +1458,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_expired_tasks_empty_returns_completed() {
         // No expired backlogs: cleanup_expired_tasks returns Ok immediately after logging
-        // "没有过期的积压任务". process() should stay Completed.
+        // "没有过期的积压任务".
         let repo = Arc::new(FailingUpdateBacklogRepo::new_with_expired(vec![]));
         let worker = make_worker(
             repo,
@@ -1462,7 +1466,8 @@ mod tests {
             Arc::new(MockRateLimitingService::new_allowed()),
             default_settings(),
         );
-        let result = worker.process().await;
-        assert_eq!(result, ProcessResult::Completed);
+        // 直接调用 cleanup_expired_tasks 测试空列表早返回
+        let result = worker.cleanup_expired_tasks().await;
+        assert!(result.is_ok());
     }
 }

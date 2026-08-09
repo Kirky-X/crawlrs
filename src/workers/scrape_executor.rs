@@ -168,12 +168,13 @@ pub async fn try_read_scrape_cache(
         Ok(Some(json)) => match serde_json::from_str::<ScrapeResponse>(&json) {
             Ok(resp) => Ok(Some(resp)),
             Err(e) => {
-                warn!(
-                    "Cache deserialize failed, treating as miss url={} error={}",
+                // 返回 Err 而非 Ok(None)，让调用方可以区分缓存故障与缓存未命中，
+                // 并有机会驱逐损坏条目。
+                Err(anyhow::anyhow!(
+                    "Cache deserialize failed url={} error={}",
                     redact_url_for_log(&ctx.url),
                     e
-                );
-                Ok(None)
+                ))
             }
         },
         Ok(None) => Ok(None),

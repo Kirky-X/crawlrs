@@ -87,7 +87,10 @@ pub fn create_http_client_no_redirects() -> Client {
         .pool_idle_timeout(Duration::from_secs(DEFAULT_POOL_IDLE_TIMEOUT))
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .unwrap_or_else(|_| Client::new())
+        .unwrap_or_else(|e| {
+            log::error!("Failed to build HTTP client (no-redirect): {}", e);
+            panic!("HTTP client build failed: {}", e);
+        })
 }
 
 /// Create an HTTP client with SSRF-safe redirect policy.
@@ -103,7 +106,10 @@ fn create_client(timeout_secs: u64, max_redirects: u8) -> Client {
         .pool_idle_timeout(Duration::from_secs(DEFAULT_POOL_IDLE_TIMEOUT))
         .redirect(redirect_policy)
         .build()
-        .unwrap_or_else(|_| Client::new())
+        .unwrap_or_else(|e| {
+            log::error!("Failed to build SSRF-safe HTTP client: {}", e);
+            panic!("SSRF-safe HTTP client build failed: {}", e);
+        })
 }
 
 /// Create a reqwest redirect policy with SSRF protection.

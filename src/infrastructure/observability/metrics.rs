@@ -330,7 +330,7 @@ pub fn shared_system_monitor() -> Arc<MutableSystemMonitor> {
 pub fn init_metrics() {
     let builder = PrometheusBuilder::new();
     if let Err(e) = builder.with_http_listener(([0, 0, 0, 0], 9100)).install() {
-        log::warn!(
+        log::error!(
             "Failed to install Prometheus recorder: {}. Metrics will be disabled.",
             e
         );

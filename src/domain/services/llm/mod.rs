@@ -54,7 +54,7 @@ pub struct LLMService {
     engine_client: Arc<EngineClient>,
     /// LLM 客户端
     #[cfg(feature = "llm")]
-    client: Client,
+    _client: Client,
     /// 使用的模型
     model: String,
     /// 提供商
@@ -88,7 +88,7 @@ impl LLMService {
         Self {
             engine_client,
             #[cfg(feature = "llm")]
-            client: Client::default(),
+            _client: Client::default(),
             model,
             provider,
             api_base_url,
@@ -120,7 +120,7 @@ impl LLMService {
         Self {
             engine_client,
             #[cfg(feature = "llm")]
-            client: Client::default(),
+            _client: Client::default(),
             model,
             provider: "openai".to_string(),
             api_base_url: Some(api_base_url),
@@ -144,7 +144,7 @@ impl LLMService {
         Self {
             engine_client,
             #[cfg(feature = "llm")]
-            client: Client::default(),
+            _client: Client::default(),
             model,
             provider: "openai".to_string(),
             api_base_url: Some(api_base_url),

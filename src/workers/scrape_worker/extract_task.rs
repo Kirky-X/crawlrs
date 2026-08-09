@@ -178,11 +178,11 @@ impl ScrapeWorker {
             url: url.to_string(),
             status_code: response.status_code as i32,
             content: response.content.clone(),
-            content_type: "text/html".to_string(),
-            headers: json!({}),
+            content_type: response.content_type.clone(),
+            headers: serde_json::to_value(&response.headers).unwrap_or(json!({})),
             meta_data,
             screenshot: None,
-            response_time_ms: 0,
+            response_time_ms: response.response_time_ms as i64,
             created_at: Utc::now(),
         };
 

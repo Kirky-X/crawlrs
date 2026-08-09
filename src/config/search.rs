@@ -241,10 +241,7 @@ mod tests {
     #[test]
     fn test_search_default_max_results() {
         let settings = SearchSettings::default();
-        assert_eq!(
-            settings.max_results, 50,
-            "default max_results should be 50"
-        );
+        assert_eq!(settings.max_results, 50, "default max_results should be 50");
     }
 
     #[test]

@@ -113,7 +113,12 @@ impl DomainFilter {
     /// - host 为空字符串
     fn extract_domain(url_str: &str) -> Option<String> {
         let parsed = Url::parse(url_str).ok()?;
-        let host = parsed.host_str()?;
+        // 使用 host() 而非 host_str()，因为 host_str() 包含端口号。
+        // Host::Domain 变体仅返回域名部分（不含端口）。
+        let host = match parsed.host()? {
+            url::Host::Domain(domain) => domain,
+            _ => return None, // IP 地址不作为域名匹配
+        };
         if host.is_empty() {
             return None;
         }

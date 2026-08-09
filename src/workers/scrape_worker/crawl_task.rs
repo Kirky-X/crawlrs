@@ -48,7 +48,9 @@ impl ScrapeWorker {
             if is_internal_url(proxy_url) {
                 warn!(
                     "SSRF via proxy blocked in worker proxy={} task_id={} team_id={}",
-                    proxy_url, task.id, task.team_id
+                    crate::workers::cache_utils::redact_url_for_log(proxy_url),
+                    task.id,
+                    task.team_id
                 );
                 self.repository.mark_failed(task.id).await?;
                 return Ok(());

@@ -249,7 +249,7 @@ toml = "1.1"
 
 # Dependency Injection
 trait-kit = { version = "0.4", features = ["async", "confers"] }
-oxcache = { version = "0.4", default-features = false, features = ["memory", "serialization", "macros", "batch-write", "metrics", "bloom-filter"] }
+oxcache = { version = "0.4", default-features = false, features = ["memory", "serialization", "macros", "batch", "metrics", "bloom"] }
 ahash = "0.8"
 
 # Internationalization (i18n) — Mozilla Fluent system

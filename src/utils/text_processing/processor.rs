@@ -230,6 +230,7 @@ impl WebContentProcessorComponent {
         if text.is_empty() {
             return None;
         }
+        let char_count = text.chars().count() as f32;
         let chinese_ratio = text
             .chars()
             .filter(|c| {
@@ -239,10 +240,10 @@ impl WebContentProcessorComponent {
                     || (0xF900..=0xFAFF).contains(&code)
             })
             .count() as f32
-            / text.len() as f32;
+            / char_count;
         if chinese_ratio > 0.3 {
             Some("zh".to_string())
-        } else if text.chars().filter(|c| c.is_ascii()).count() as f32 / text.len() as f32 > 0.8 {
+        } else if text.chars().filter(|c| c.is_ascii()).count() as f32 / char_count > 0.8 {
             Some("en".to_string())
         } else {
             Some("unknown".to_string())
@@ -381,6 +382,7 @@ impl WebContentProcessor {
         if text.is_empty() {
             return None;
         }
+        let char_count = text.chars().count() as f32;
         let chinese_ratio = text
             .chars()
             .filter(|c| {
@@ -390,10 +392,10 @@ impl WebContentProcessor {
                     || (0xF900..=0xFAFF).contains(&code)
             })
             .count() as f32
-            / text.len() as f32;
+            / char_count;
         if chinese_ratio > 0.3 {
             Some("zh".to_string())
-        } else if text.chars().filter(|c| c.is_ascii()).count() as f32 / text.len() as f32 > 0.8 {
+        } else if text.chars().filter(|c| c.is_ascii()).count() as f32 / char_count > 0.8 {
             Some("en".to_string())
         } else {
             Some("unknown".to_string())

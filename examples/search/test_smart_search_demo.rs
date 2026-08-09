@@ -40,13 +40,20 @@ async fn main() {
 
     match tokio::time::timeout(Duration::from_secs(90), smart_engine.search(&request)).await {
         Ok(Ok(response)) => {
-            println!("Results: {} items (engine: {:?})\n", response.items.len(), response.engine);
+            println!(
+                "Results: {} items (engine: {:?})\n",
+                response.items.len(),
+                response.engine
+            );
             for (i, item) in response.items.iter().enumerate() {
                 println!("  {:2}. [{}] {}", i + 1, item.engine.name(), item.title);
                 println!("      {}", item.url);
                 if !item.description.is_empty() {
                     let desc = if item.description.chars().count() > 120 {
-                        format!("{}...", item.description.chars().take(120).collect::<String>())
+                        format!(
+                            "{}...",
+                            item.description.chars().take(120).collect::<String>()
+                        )
                     } else {
                         item.description.clone()
                     };

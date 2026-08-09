@@ -182,10 +182,13 @@ impl CircuitBreaker {
     pub fn is_open(&self, engine_name: &str) -> bool {
         let config = self.get_config(engine_name);
 
-        let state_guard = self
-            .states
-            .entry(engine_name.to_string())
-            .or_insert_with(|| RwLock::new(Self::create_default_state()));
+        // 使用 get() 而非 entry().or_insert_with()，
+        // 避免为每个查询的 engine_name 创建条目导致内存泄漏。
+        // 未找到状态时视为新引擎，返回 false（默认关闭）。
+        let state_guard = match self.states.get(engine_name) {
+            Some(entry) => entry,
+            None => return false,
+        };
         let mut state = state_guard.write();
 
         match state.status {

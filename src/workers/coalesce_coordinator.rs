@@ -170,13 +170,55 @@ impl CoalesceCoordinator {
                     }
                     Ok(None) => {
                         // 首个 worker 可能仍在写入或 coalesce key 不一致——延后重排
+                        // T014 修复：追踪 reschedule 次数，超过上限后 mark_failed 防止无限循环
+                        const MAX_COALESCE_RESCHEDULE: u32 = 3;
+                        let reschedule_count = task
+                            .payload
+                            .get("coalesce_reschedule_count")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32;
+
+                        if reschedule_count >= MAX_COALESCE_RESCHEDULE {
+                            error!(
+                                "Coalesced task {} exceeded max reschedule count ({}), marking failed",
+                                task.id, MAX_COALESCE_RESCHEDULE
+                            );
+                            let mut updated = task.clone();
+                            updated.status = TaskStatus::Failed;
+                            updated.completed_at = Some(Utc::now());
+                            if !updated.payload.is_object() {
+                                updated.payload = json!({});
+                            }
+                            if let Some(obj) = updated.payload.as_object_mut() {
+                                obj.insert(
+                                    "error".to_string(),
+                                    json!(format!(
+                                        "Coalesce result not available after {} reschedule attempts",
+                                        MAX_COALESCE_RESCHEDULE
+                                    )),
+                                );
+                            }
+                            self.repository.update(&updated).await?;
+                            self.repository.mark_failed(task.id).await?;
+                            return Ok(None);
+                        }
+
                         warn!(
-                            "Coalesced task {} result not yet available, rescheduling",
-                            task.id
+                            "Coalesced task {} result not yet available, rescheduling (attempt {}/{})",
+                            task.id, reschedule_count + 1, MAX_COALESCE_RESCHEDULE
                         );
                         let mut updated = task.clone();
                         updated.scheduled_at = Some(Utc::now() + chrono::Duration::seconds(5));
                         updated.status = TaskStatus::Queued;
+                        if !updated.payload.is_object() {
+                            updated.payload = json!({});
+                        }
+                        if let Some(obj) = updated.payload.as_object_mut() {
+                            obj.insert(
+                                "coalesce_reschedule_count".to_string(),
+                                json!(reschedule_count + 1),
+                            );
+                        }
                         self.repository.update(&updated).await?;
                         Ok(None)
                     }

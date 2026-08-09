@@ -71,9 +71,21 @@ impl CoalesceGuard {
 
 impl Drop for CoalesceGuard {
     fn drop(&mut self) {
-        // 移除条目并广播完成通知（广播在 remove 拿到所有权后执行，避免持有 DashMap 锁）
-        if let Some((_, entry)) = self.in_flight.remove(&self.url) {
-            let _ = entry.sender.send(());
+        // T015 修复：先 clone sender，再 remove，再 send。
+        // 确保 send 不依赖 DashMap entry 的生命周期，避免持有锁期间执行 I/O。
+        let sender = self
+            .in_flight
+            .get(&self.url)
+            .map(|entry| entry.sender.clone());
+        self.in_flight.remove(&self.url);
+        if let Some(tx) = sender {
+            if let Err(e) = tx.send(()) {
+                log::debug!(
+                    "Coalesce broadcast failed for URL {}: {} (no active waiters)",
+                    self.url,
+                    e
+                );
+            }
         }
     }
 }

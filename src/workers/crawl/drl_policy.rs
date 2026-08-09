@@ -245,9 +245,9 @@ impl DrlPolicy {
 
         CrawlAction {
             url_priority_adjustment: output[0].clamp(0.5, 2.0),
-            concurrency_delta: (output[1].round() as i32).clamp(-3, 3),
-            engine_selection: (output[2].round() as u8).clamp(0, 3),
-            retry_decision: (output[3].round() as u8).clamp(0, 2),
+            concurrency_delta: output[1].round().clamp(-3.0, 3.0) as i32,
+            engine_selection: output[2].round().clamp(0.0, 3.0) as u8,
+            retry_decision: output[3].round().clamp(0.0, 2.0) as u8,
         }
     }
 

@@ -199,11 +199,17 @@ impl WorkerManager {
         // 永久驻留 DashMap 阻塞同 URL 后续请求。每 60s 调用 purge_stale 清理
         // 僵死条目（STALE_TIMEOUT=120s），并通过 broadcast 通知等待方重试。
         let coalescer_for_purge = self.request_coalescer.clone();
+        let shutdown_for_purge = self.shutdown_coordinator.clone();
         self.handles.push(tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             interval.tick().await; // 跳过首次立即触发
             loop {
                 interval.tick().await;
+                // T023 修复：检查关闭信号，避免关闭后继续无意义循环
+                if shutdown_for_purge.is_shutting_down() {
+                    info!("purge_stale loop exiting due to shutdown");
+                    break;
+                }
                 let purged = coalescer_for_purge.purge_stale();
                 if purged > 0 {
                     info!("purge_stale cleaned up {} zombie coalesce entries", purged);
@@ -266,8 +272,17 @@ impl WorkerManager {
         let _ = self.shutdown_coordinator.wait_for_completion().await;
 
         info!("Shutting down workers...");
-        for handle in std::mem::take(&mut self.handles) {
+        let handles = std::mem::take(&mut self.handles);
+        for handle in &handles {
             handle.abort();
+        }
+        // T023 修复：abort 后 await 所有 handles，确保任务真正退出
+        // 带 5s 超时防止某个 handle 卡死阻塞关闭流程
+        for handle in handles {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let _ = handle.await;
+            })
+            .await;
         }
 
         info!("Workers shut down successfully");

@@ -220,11 +220,7 @@ mod tests {
             "Title",
             "bing",
         )];
-        let list2 = vec![make_result(
-            "https://example.com/page",
-            "Title",
-            "baidu",
-        )];
+        let list2 = vec![make_result("https://example.com/page", "Title", "baidu")];
 
         let fused = fuser.fuse(vec![list1, list2]);
         // Both normalize to "https://example.com/page" → 1 result

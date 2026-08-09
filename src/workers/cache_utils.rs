@@ -99,10 +99,11 @@ fn options_fingerprint(options: &ScrapeOptions) -> String {
     let mut sorted_headers: Vec<(&String, &String)> = options.headers.iter().collect();
     sorted_headers.sort_by(|a, b| a.0.cmp(b.0));
     for (k, v) in sorted_headers {
+        // T022 修复：使用长度前缀编码替代 NUL 分隔符，防止含 \0 的 key/value 碰撞
+        hasher.write_usize(k.len());
         hasher.write(k.as_bytes());
-        hasher.write_u8(0); // 分隔符，防止 "ab"+"cd" == "a"+"bcd"
+        hasher.write_usize(v.len());
         hasher.write(v.as_bytes());
-        hasher.write_u8(0);
     }
     hasher.write_u8(0xFF); // headers 与 needs_js 的分界
 
@@ -144,6 +145,13 @@ pub fn redact_url_for_log(url: &str) -> String {
         Ok(mut parsed) => {
             parsed.set_query(None);
             parsed.set_fragment(None);
+            // T021 修复：剥离 userinfo（用户名/密码），防止凭据泄露到日志
+            if parsed.username() != "" {
+                let _ = parsed.set_username("");
+            }
+            if parsed.password().is_some() {
+                parsed.set_password(None).ok();
+            }
             let redacted = parsed.to_string();
             // 限制长度防止日志膨胀（URL 应为 ASCII，但用 chars 截断更安全）
             if redacted.len() > MAX_URL_LOG_LEN {

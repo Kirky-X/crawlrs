@@ -1846,8 +1846,8 @@ async fn test_mock_build_extract_request_basic() {
     assert!(!request.options.needs_screenshot);
     assert!(!request.options.mobile);
     assert!(request.options.proxy.is_none());
-    // build_extract_request sets skip_tls_verification = true
-    assert!(request.options.skip_tls_verification);
+    // T019 修复：build_extract_request 不再跳过 TLS 验证
+    assert!(!request.options.skip_tls_verification);
     assert!(!request.options.needs_tls_fingerprint);
     assert!(!request.options.use_fire_engine);
     assert!(request.options.actions.is_empty());
@@ -6871,7 +6871,7 @@ async fn test_try_read_scrape_cache_hit_returns_response() {
 }
 
 #[tokio::test]
-async fn test_try_read_scrape_cache_corrupt_data_returns_none() {
+async fn test_try_read_scrape_cache_corrupt_data_returns_err() {
     let url = "https://example.com";
     let ctx = CacheContext {
         url: url.to_string(),
@@ -6885,12 +6885,8 @@ async fn test_try_read_scrape_cache_corrupt_data_returns_none() {
 
     let result = worker.try_read_scrape_cache(&ctx, &key).await;
     assert!(
-        result.is_ok(),
-        "corrupt cache should not error, degrade to miss"
-    );
-    assert!(
-        result.unwrap().is_none(),
-        "corrupt data should be treated as miss"
+        result.is_err(),
+        "corrupt cache should return Err so caller can evict the entry"
     );
     assert_eq!(cache.get_count(), 1, "get should still be called once");
 }

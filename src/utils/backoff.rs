@@ -37,7 +37,7 @@ pub fn backoff_delay(attempt: u32, base_ms: u64, max_ms: u64) -> Duration {
         .with_min_delay(Duration::from_millis(base_ms))
         .with_max_delay(Duration::from_millis(max_ms))
         .with_jitter()
-        .with_max_times((attempt + 1) as usize);
+        .with_max_times(attempt.saturating_add(1) as usize);
 
     let max = Duration::from_millis(max_ms);
     backoff

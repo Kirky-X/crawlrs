@@ -122,7 +122,7 @@ pub fn build_extract_request(url: &str, timeout_seconds: u64) -> ScrapeRequest {
         screenshot_config: None,
         mobile: false,
         proxy: None,
-        skip_tls_verification: true,
+        skip_tls_verification: false,
         needs_tls_fingerprint: false,
         use_fire_engine: false,
         actions: vec![],
@@ -281,7 +281,7 @@ mod tests {
         let req = build_extract_request("https://example.com/page", 60);
         assert_eq!(req.url, "https://example.com/page");
         assert_eq!(req.options.timeout, Duration::from_secs(60));
-        assert!(req.options.skip_tls_verification);
+        assert!(!req.options.skip_tls_verification);
         assert!(req.options.proxy.is_none());
     }
 }

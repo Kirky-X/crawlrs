@@ -120,7 +120,15 @@ impl TaskStateMachine {
     /// 成功返回 Ok(()), 失败返回 TaskStateError
     pub fn handle_event(&mut self, event: TaskStateEvent) -> Result<(), TaskStateError> {
         let current_status = self.task.status;
-        let new_status = self.calculate_next_status(current_status, event)?;
+        let new_status = Self::next_status(current_status, event)?;
+
+        // T016 修复：increment_retry 移到此处，使 next_status 成为纯函数。
+        // 避免 can_transition / get_transition_description 等只读查询产生副作用。
+        if current_status == TaskStatus::Active
+            && (event == TaskStateEvent::Fail || event == TaskStateEvent::Retry)
+        {
+            self.increment_retry();
+        }
 
         // 更新状态和元数据
         self.task.status = new_status;
@@ -142,12 +150,13 @@ impl TaskStateMachine {
         Ok(())
     }
 
-    /// 计算下一个状态
+    /// 计算下一个状态（纯函数，无副作用）
     ///
     /// 基于当前状态和事件计算目标状态。
     /// 如果转换无效，返回错误。
-    fn calculate_next_status(
-        &mut self,
+    ///
+    /// T016 修复：不再包含 `increment_retry` 副作用，变为纯函数。
+    fn next_status(
         current: TaskStatus,
         event: TaskStateEvent,
     ) -> Result<TaskStatus, TaskStateErrorKind> {
@@ -167,15 +176,10 @@ impl TaskStateMachine {
 
             // 有效转换: Active -> Completed/Failed/Cancelled
             (TaskStatus::Active, TaskStateEvent::Complete) => Ok(TaskStatus::Completed),
-            (TaskStatus::Active, TaskStateEvent::Fail) => {
-                self.increment_retry();
-                Ok(TaskStatus::Failed)
-            }
+            // T016 修复：increment_retry 已移至 handle_event，next_status 为纯函数
+            (TaskStatus::Active, TaskStateEvent::Fail) => Ok(TaskStatus::Failed),
             (TaskStatus::Active, TaskStateEvent::Cancel) => Ok(TaskStatus::Cancelled),
-            (TaskStatus::Active, TaskStateEvent::Retry) => {
-                self.increment_retry();
-                Ok(TaskStatus::Active)
-            }
+            (TaskStatus::Active, TaskStateEvent::Retry) => Ok(TaskStatus::Active),
             // 无效转换: Active 不能再次开始
             (TaskStatus::Active, TaskStateEvent::Start) => Err(TaskStateErrorKind::EventNotValid {
                 event,
@@ -212,13 +216,17 @@ impl TaskStateMachine {
     }
 
     /// 检查是否可以从当前状态转换到目标状态
-    pub fn can_transition(&mut self, event: TaskStateEvent) -> bool {
-        self.calculate_next_status(self.task.status, event).is_ok()
+    ///
+    /// T016 修复：next_status 现为纯函数，can_transition 不再有副作用。
+    pub fn can_transition(&self, event: TaskStateEvent) -> bool {
+        Self::next_status(self.task.status, event).is_ok()
     }
 
     /// 获取状态转换描述
-    pub fn get_transition_description(&mut self, event: TaskStateEvent) -> String {
-        match self.calculate_next_status(self.task.status, event) {
+    ///
+    /// T016 修复：next_status 现为纯函数，get_transition_description 不再有副作用。
+    pub fn get_transition_description(&self, event: TaskStateEvent) -> String {
+        match Self::next_status(self.task.status, event) {
             Ok(next) => format!("{:?} -> {:?}", self.task.status, next),
             Err(e) => format!("Invalid: {}", e),
         }
@@ -413,11 +421,38 @@ mod tests {
         let task = create_test_task(TaskStatus::Active);
         let mut sm = TaskStateMachine::new(task);
         assert_eq!(sm.task().retry_count, 0);
-        // 注意：不调用 can_transition 以避免 calculate_next_status 的副作用
+        // T016 修复后 can_transition 不再有副作用，可安全调用
         sm.handle_event(TaskStateEvent::Retry).unwrap();
         assert_eq!(sm.current_status(), TaskStatus::Active);
         assert_eq!(sm.task().retry_count, 1);
         assert_eq!(sm.task().attempt_count, 1);
+    }
+
+    // ========== T016: can_transition 无副作用测试 ==========
+
+    #[test]
+    fn test_can_transition_has_no_side_effects_on_retry_count() {
+        let task = create_test_task(TaskStatus::Active);
+        let mut sm = TaskStateMachine::new(task);
+        assert_eq!(sm.task().retry_count, 0);
+        // can_transition 调用不应修改 retry_count
+        let _ = sm.can_transition(TaskStateEvent::Fail);
+        let _ = sm.can_transition(TaskStateEvent::Retry);
+        assert_eq!(
+            sm.task().retry_count,
+            0,
+            "can_transition must not mutate retry_count"
+        );
+        // get_transition_description 调用也不应修改 retry_count
+        let _ = sm.get_transition_description(TaskStateEvent::Fail);
+        assert_eq!(
+            sm.task().retry_count,
+            0,
+            "get_transition_description must not mutate retry_count"
+        );
+        // handle_event 才应递增 retry_count
+        sm.handle_event(TaskStateEvent::Fail).unwrap();
+        assert_eq!(sm.task().retry_count, 1);
     }
 
     // ========== Active + Start (无效) 测试 ==========

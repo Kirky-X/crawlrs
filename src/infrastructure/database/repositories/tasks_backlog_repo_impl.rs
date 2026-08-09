@@ -49,7 +49,17 @@ impl From<tasks_backlog::Model> for TasksBacklog {
             payload: model.payload,
             max_retries: model.max_retries,
             retry_count: model.retry_count,
-            status: model.status.parse().unwrap_or(TasksBacklogStatus::Pending),
+            status: match model.status.parse::<TasksBacklogStatus>() {
+                Ok(s) => s,
+                Err(_) => {
+                    log::warn!(
+                        "Unknown tasks_backlog status '{}' for task_id={}, falling back to Pending",
+                        model.status,
+                        model.task_id
+                    );
+                    TasksBacklogStatus::Pending
+                }
+            },
             created_at: model.created_at.into(),
             updated_at: model.updated_at.into(),
             scheduled_at: model.scheduled_at.map(|dt| dt.into()),

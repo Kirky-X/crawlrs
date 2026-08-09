@@ -199,11 +199,15 @@ impl MemoryScheduler {
     /// 周期（1 秒）采样内存并更新状态；一旦 Critical 持续时长超过
     /// `critical_timeout`，通过 `shutdown_signal` 发送 `true` 并退出循环。
     ///
-    /// 返回 [`watch::Receiver<bool>`] 供调用方监听关闭信号。
-    pub fn spawn_monitor(self: Arc<Self>) -> watch::Receiver<bool> {
+    /// T025 修复：返回 `JoinHandle` 供调用方在关闭时 await，防止任务泄漏。
+    ///
+    /// 返回 (`watch::Receiver<bool>`, `JoinHandle<()>`)：
+    /// - receiver 供调用方监听关闭信号
+    /// - JoinHandle 供关闭时 await 确保监控任务退出
+    pub fn spawn_monitor(self: Arc<Self>) -> (watch::Receiver<bool>, tokio::task::JoinHandle<()>) {
         let rx = self.shutdown_signal();
         let me = Arc::clone(&self);
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             loop {
                 interval.tick().await;
@@ -214,7 +218,7 @@ impl MemoryScheduler {
                 }
             }
         });
-        rx
+        (rx, handle)
     }
 }
 
@@ -457,7 +461,7 @@ mod tests {
             0.9,
             Duration::from_millis(50),
         ));
-        let mut rx = scheduler.clone().spawn_monitor();
+        let (mut rx, _handle) = scheduler.clone().spawn_monitor();
 
         // 等待后台任务采样并最终触发关闭信号
         let changed = tokio::time::timeout(Duration::from_secs(5), rx.changed()).await;
@@ -474,8 +478,7 @@ mod tests {
             0.9,
             Duration::from_millis(50),
         ));
-        let mut rx = scheduler.clone().spawn_monitor();
-
+        let (mut rx, _handle) = scheduler.clone().spawn_monitor();
         let changed = tokio::time::timeout(Duration::from_millis(500), rx.changed()).await;
         assert!(changed.is_err(), "内存正常时不应发送 shutdown 信号");
     }

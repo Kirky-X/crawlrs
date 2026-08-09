@@ -22,6 +22,9 @@ const DEFAULT_AGING_FACTOR: f64 = 10.0;
 ///
 /// `effective_priority` 由 `base_priority` 加上等待时长贡献组成：
 /// `effective = base_priority + waited_secs / aging_factor`
+///
+/// `cached_priority` 在构造/重入队时计算一次，保证 `Ord` 契约的稳定性。
+/// 若需反映最新等待时长，调用 `refresh_priority()` 后重新入队。
 #[derive(Debug, Clone)]
 pub struct ScheduledTask {
     /// 业务侧赋予的静态优先级（数值大者优先）
@@ -30,63 +33,83 @@ pub struct ScheduledTask {
     pub enqueued_at: Instant,
     /// 老化因子：值越小，等待时长对优先级的提升越显著
     aging_factor: f64,
+    /// 缓存的有效优先级（构造时计算一次，保证 Ord 稳定性）
+    cached_priority: f64,
 }
 
 impl ScheduledTask {
     /// 创建任务，使用默认老化因子
     pub fn new(base_priority: u32) -> Self {
+        let enqueued_at = Instant::now();
         Self {
             base_priority,
-            enqueued_at: Instant::now(),
+            enqueued_at,
             aging_factor: DEFAULT_AGING_FACTOR,
+            cached_priority: base_priority as f64,
         }
     }
 
     /// 创建任务并指定入队时刻（测试与重排场景使用）
     pub fn with_enqueued_at(base_priority: u32, enqueued_at: Instant) -> Self {
+        let waited_secs = enqueued_at.elapsed().as_secs_f64();
+        let cached_priority = base_priority as f64 + waited_secs / DEFAULT_AGING_FACTOR;
         Self {
             base_priority,
             enqueued_at,
             aging_factor: DEFAULT_AGING_FACTOR,
+            cached_priority,
         }
     }
 
     /// 创建任务并显式指定老化因子
     pub fn with_aging_factor(base_priority: u32, aging_factor: f64) -> Self {
         assert!(aging_factor > 0.0, "aging_factor must be positive");
+        let enqueued_at = Instant::now();
         Self {
             base_priority,
-            enqueued_at: Instant::now(),
+            enqueued_at,
             aging_factor,
+            cached_priority: base_priority as f64,
         }
     }
 
     /// 创建任务并显式指定全部字段（测试与精细重排场景使用）
     pub fn with_all(base_priority: u32, enqueued_at: Instant, aging_factor: f64) -> Self {
         assert!(aging_factor > 0.0, "aging_factor must be positive");
+        let waited_secs = enqueued_at.elapsed().as_secs_f64();
+        let cached_priority = base_priority as f64 + waited_secs / aging_factor;
         Self {
             base_priority,
             enqueued_at,
             aging_factor,
+            cached_priority,
         }
     }
 
-    /// 计算有效优先级
+    /// 计算有效优先级（动态，含实时等待时长；仅供外部展示/调试用）
     ///
     /// `effective = base_priority + waited_secs / aging_factor`
     pub fn effective_priority(&self) -> f64 {
         let waited_secs = self.enqueued_at.elapsed().as_secs_f64();
         self.base_priority as f64 + waited_secs / self.aging_factor
     }
+
+    /// 刷新缓存优先级（重入队前调用，反映最新等待时长）
+    pub fn refresh_priority(&mut self) {
+        self.cached_priority = self.effective_priority();
+    }
 }
 
-/// `BinaryHeap` 要求 `Ord`；按 `effective_priority` 降序排列（max-heap）
+/// `BinaryHeap` 要求 `Ord`；按 `cached_priority` 降序排列（max-heap）
+///
+/// 使用构造/刷新时缓存的 `cached_priority` 而非实时计算，
+/// 保证 `Ord::cmp` 的稳定性契约（同一对元素的比较结果不随时间变化）。
 impl Ord for ScheduledTask {
     fn cmp(&self, other: &Self) -> Ordering {
         // f64 不实现 Ord，使用 partial_cmp 并对 NaN 做兜底
-        // （正常场景下 effective_priority 不会产生 NaN：base 是有限数 + 等待时长有限）
-        self.effective_priority()
-            .partial_cmp(&other.effective_priority())
+        // （cached_priority 由有限数构造，正常场景不会产生 NaN）
+        self.cached_priority
+            .partial_cmp(&other.cached_priority)
             .unwrap_or(Ordering::Equal)
     }
 }
@@ -99,7 +122,7 @@ impl PartialOrd for ScheduledTask {
 
 impl PartialEq for ScheduledTask {
     fn eq(&self, other: &Self) -> bool {
-        self.effective_priority() == other.effective_priority()
+        self.cached_priority == other.cached_priority
     }
 }
 
