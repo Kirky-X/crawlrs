@@ -11,13 +11,14 @@
 //! # 模块依赖图
 //!
 //! ```text
-//! SettingsModule (config: Arc<Settings>)
-//!   ├── DatabaseModule → Arc<DatabasePool>
-//!   ├── HttpModule → Arc<reqwest::Client>
-//!   └── CacheModule → CacheComponents
-//!          ├── RepositoryModule → Repositories (depends: DatabaseModule)
-//!          └── EngineModule → EngineComponents (depends: HttpModule, SettingsModule)
-//!                 └── ServiceModule → ServicesComponents (depends: all above)
+//! SettingsModule (config: Arc<Settings>)           ← 根节点，无依赖
+//!   ├── DatabaseModule → Arc<DatabasePool>          (dep: Settings)
+//!   ├── HttpModule → Arc<reqwest::Client>           (dep: Settings)
+//!   └── CacheModule → CacheComponents               (dep: Settings)
+//!          ├── RepositoryModule → Repositories       (dep: Database, Settings)
+//!          ├── EngineModule → EngineComponents       (dep: Http, Settings)
+//!          └── InfrastructureModule → InfraComponents(dep: Database, Http, Cache, Repository, Settings)
+//!                 └── ServiceModule → ServicesComponents (dep: Infrastructure, Engine, Settings)
 //! ```
 
 // ---------------------------------------------------------------------------
