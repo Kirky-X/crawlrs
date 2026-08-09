@@ -31,7 +31,7 @@ pub mod manager;
 /// Markdown 后处理器（H-4 职责拆分，gated `markdown` 特性）
 ///
 /// 从 ScrapeWorker 抽取的 HTML→Markdown 转换逻辑。
-#[cfg(feature = "markdown")]
+#[cfg(feature = "content")]
 pub mod markdown_post_processor;
 pub mod scheduler;
 pub mod scrape_executor;

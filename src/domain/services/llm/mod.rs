@@ -23,7 +23,7 @@ use crate::config::settings::Settings;
 use crate::engines::engine_client::EngineClient;
 use anyhow::Result;
 use async_trait::async_trait;
-#[cfg(feature = "genai-llm")]
+#[cfg(feature = "llm")]
 use genai::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -53,7 +53,7 @@ pub trait LLMServiceTrait: Send + Sync {
 pub struct LLMService {
     engine_client: Arc<EngineClient>,
     /// LLM 客户端
-    #[cfg(feature = "genai-llm")]
+    #[cfg(feature = "llm")]
     client: Client,
     /// 使用的模型
     model: String,
@@ -87,7 +87,7 @@ impl LLMService {
 
         Self {
             engine_client,
-            #[cfg(feature = "genai-llm")]
+            #[cfg(feature = "llm")]
             client: Client::default(),
             model,
             provider,
@@ -119,7 +119,7 @@ impl LLMService {
 
         Self {
             engine_client,
-            #[cfg(feature = "genai-llm")]
+            #[cfg(feature = "llm")]
             client: Client::default(),
             model,
             provider: "openai".to_string(),
@@ -143,7 +143,7 @@ impl LLMService {
 
         Self {
             engine_client,
-            #[cfg(feature = "genai-llm")]
+            #[cfg(feature = "llm")]
             client: Client::default(),
             model,
             provider: "openai".to_string(),

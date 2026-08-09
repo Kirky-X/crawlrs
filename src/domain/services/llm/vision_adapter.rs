@@ -70,7 +70,7 @@ impl VisionAdapterTrait for GenaiVisionAdapter {
         system_prompt: &str,
         model: &str,
     ) -> Result<String> {
-        #[cfg(feature = "genai-llm")]
+        #[cfg(feature = "llm")]
         {
             use genai::chat::{ChatMessage, ChatRequest};
             use genai::chat::{ContentPart, MessageContent};
@@ -101,12 +101,12 @@ impl VisionAdapterTrait for GenaiVisionAdapter {
 
             Ok(content)
         }
-        #[cfg(not(feature = "genai-llm"))]
+        #[cfg(not(feature = "llm"))]
         {
             let _ = (screenshot_b64, prompt, system_prompt, model);
             Err(anyhow::anyhow!(
-                "Vision adapter requires 'genai-llm' feature. \
-                 Please rebuild with --features genai-llm"
+                "Vision adapter requires 'llm' feature. \
+                 Please rebuild with --features llm"
             ))
         }
     }

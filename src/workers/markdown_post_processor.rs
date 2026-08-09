@@ -23,7 +23,7 @@
 //! 本模块整体 gated `markdown`（与 [`crate::domain::services::markdown_service`] 一致）。
 //! 关闭 `markdown` 特性时本模块不编译，ScrapeWorker 也不持有本类型的字段。
 
-#![cfg(feature = "markdown")]
+#![cfg(feature = "content")]
 
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::domain::services::content_extractor::ContentExtractionFacade;

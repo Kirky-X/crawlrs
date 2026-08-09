@@ -19,7 +19,7 @@ pub mod upgrade_probe; // T014：流式 HTTP→Chrome 升级探测
 pub mod validators;
 
 // 反爬虫检测模块（T009-T011）— 由 `antibot` feature 门控
-#[cfg(feature = "antibot")]
+#[cfg(feature = "content")]
 pub mod antibot;
 
 // JS 注入模块（T029-T031，R-jsrender-002）— 由 `engine-playwright` feature 门控

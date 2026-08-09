@@ -123,10 +123,10 @@ pub async fn send_direct_request(
 ///
 /// # Errors
 ///
-/// 当 `genai-llm` feature 未启用时返回错误
+/// 当 `llm` feature 未启用时返回错误
 #[allow(dead_code)]
 pub async fn send_genai_request(provider: &str, model: &str, prompt: &str) -> Result<LlmResponse> {
-    #[cfg(feature = "genai-llm")]
+    #[cfg(feature = "llm")]
     {
         use genai::chat::{ChatMessage, ChatRequest};
 
@@ -153,12 +153,12 @@ pub async fn send_genai_request(provider: &str, model: &str, prompt: &str) -> Re
 
         Ok(LlmResponse { content, usage })
     }
-    #[cfg(not(feature = "genai-llm"))]
+    #[cfg(not(feature = "llm"))]
     {
         let _ = (provider, model, prompt);
         Err(anyhow::anyhow!(
-            "LLM provider requires 'genai-llm' feature to be enabled. \
-             Please rebuild with --features genai-llm"
+            "LLM provider requires 'llm' feature to be enabled. \
+             Please rebuild with --features llm"
         ))
     }
 }

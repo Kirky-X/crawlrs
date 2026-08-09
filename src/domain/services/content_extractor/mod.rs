@@ -24,14 +24,14 @@ pub use traits::{ContentExtractor, ExtractError, ExtractedContent, PageType, Res
 pub mod css_rule_extractor;
 pub use css_rule_extractor::CssRuleExtractor;
 
-#[cfg(feature = "extractor-trafilatura")]
+#[cfg(feature = "trafilatura")]
 pub mod trafilatura_extractor;
-#[cfg(feature = "extractor-trafilatura")]
+#[cfg(feature = "trafilatura")]
 pub use trafilatura_extractor::TrafilaturaExtractor;
 
-#[cfg(feature = "extractor-dom-smoothie")]
+#[cfg(feature = "dom-smoothie")]
 pub mod dom_smoothie_extractor;
-#[cfg(feature = "extractor-dom-smoothie")]
+#[cfg(feature = "dom-smoothie")]
 pub use dom_smoothie_extractor::DomSmoothieExtractor;
 
 pub mod facade;

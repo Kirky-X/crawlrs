@@ -191,7 +191,7 @@ impl BrowserDownloadManager {
     async fn try_fetcher_download(&self) -> Result<PathBuf, BrowserDownloadError> {
         // 动态检测是否可以使用 fetcher
         // 如果 browser-download 特性启用，尝试下载
-        #[cfg(feature = "browser-download")]
+        #[cfg(feature = "engine-playwright")]
         {
             match self.do_fetcher_download().await {
                 Ok(path) => return Ok(path),
@@ -207,7 +207,7 @@ impl BrowserDownloadManager {
     }
 
     /// 实际的 fetcher 下载实现（仅在 browser-download 特性启用时编译）
-    #[cfg(feature = "browser-download")]
+    #[cfg(feature = "engine-playwright")]
     async fn do_fetcher_download(&self) -> Result<PathBuf, BrowserDownloadError> {
         // chromiumoxide_fetcher API 需要正确的使用方式
         // 完整实现需要参考 crates.io 上的最新文档

@@ -216,7 +216,7 @@ async fn test_aggregate_partial_failure() {
 // 接管并返回正常结果。
 //
 // 仅在 `antibot` feature 启用时编译——`check_antibot_response` 与 cfg 块都依赖该 feature。
-#[cfg(feature = "antibot")]
+#[cfg(feature = "content")]
 #[tokio::test]
 async fn test_t013_antibot_cloudflare_forces_needs_js_for_next_attempt() {
     use std::sync::Mutex;
@@ -359,7 +359,7 @@ async fn test_t013_antibot_cloudflare_forces_needs_js_for_next_attempt() {
 }
 
 /// T013 边界：HTTP 引擎返回正常页面（非反爬挑战），不应触发 force_needs_js
-#[cfg(feature = "antibot")]
+#[cfg(feature = "content")]
 #[tokio::test]
 async fn test_t013_normal_response_does_not_trigger_force_needs_js() {
     use std::sync::Mutex;

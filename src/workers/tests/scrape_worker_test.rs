@@ -2400,7 +2400,7 @@ async fn test_mock_handle_scrape_success_with_extraction_rules() {
 // --- T042/R-content-001: Markdown 集成测试（gated `markdown` 特性） ---
 
 /// formats 含 "markdown" 时应生成 Markdown 并持久化到 meta_data
-#[cfg(feature = "markdown")]
+#[cfg(feature = "content")]
 #[tokio::test]
 async fn test_handle_scrape_success_with_markdown_format_generates_markdown() {
     let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
@@ -2448,7 +2448,7 @@ async fn test_handle_scrape_success_with_markdown_format_generates_markdown() {
 }
 
 /// formats 不含 "markdown" 时不应生成 Markdown
-#[cfg(feature = "markdown")]
+#[cfg(feature = "content")]
 #[tokio::test]
 async fn test_handle_scrape_success_without_markdown_format_no_markdown() {
     let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
@@ -2485,7 +2485,7 @@ async fn test_handle_scrape_success_without_markdown_format_no_markdown() {
 }
 
 /// formats 为 None 时不应生成 Markdown
-#[cfg(feature = "markdown")]
+#[cfg(feature = "content")]
 #[tokio::test]
 async fn test_handle_scrape_success_no_formats_field_no_markdown() {
     let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
@@ -2520,7 +2520,7 @@ async fn test_handle_scrape_success_no_formats_field_no_markdown() {
 }
 
 /// save_result 应将 markdown 合并到已存在的 meta_data Object 中
-#[cfg(feature = "markdown")]
+#[cfg(feature = "content")]
 #[tokio::test]
 async fn test_save_result_merges_markdown_into_existing_meta_data() {
     let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
@@ -2558,7 +2558,7 @@ async fn test_save_result_merges_markdown_into_existing_meta_data() {
 }
 
 /// save_result 在 meta_data 为 Null 时应创建 {"markdown": "..."} 对象
-#[cfg(feature = "markdown")]
+#[cfg(feature = "content")]
 #[tokio::test]
 async fn test_save_result_with_markdown_only_creates_markdown_object() {
     let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;

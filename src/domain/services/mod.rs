@@ -47,7 +47,7 @@ pub mod llm_provider_strategy;
 /// Markdown 转换服务（content-processing R1，T040/R-content-001）
 ///
 /// gated `markdown` 特性（依赖 `htmd`）。`markdown` 已加入 `standard`/`full`。
-#[cfg(feature = "markdown")]
+#[cfg(feature = "content")]
 pub mod markdown_service;
 /// Noop Webhook 服务实现（webhook feature 关闭时使用）
 ///

@@ -60,9 +60,9 @@ impl ContentExtractionFacade {
     /// LLM 回退按 `llm_service` 注入与否决定是否启用。
     pub fn new(llm_service: Option<Arc<dyn LLMServiceTrait>>) -> Self {
         let extractors: Vec<Box<dyn ContentExtractor>> = vec![
-            #[cfg(feature = "extractor-trafilatura")]
+            #[cfg(feature = "trafilatura")]
             Box::new(super::trafilatura_extractor::TrafilaturaExtractor::new()),
-            #[cfg(feature = "extractor-dom-smoothie")]
+            #[cfg(feature = "dom-smoothie")]
             Box::new(super::dom_smoothie_extractor::DomSmoothieExtractor::new()),
             // CssRule 始终入队（兜底，无 feature 依赖）
             Box::new(super::css_rule_extractor::CssRuleExtractor::new()),
@@ -434,7 +434,7 @@ mod tests {
         let facade = ContentExtractionFacade::new(None);
         let names: Vec<&'static str> = facade.extractors.iter().map(|e| e.name()).collect();
 
-        #[cfg(feature = "extractor-trafilatura")]
+        #[cfg(feature = "trafilatura")]
         {
             let trafilatura_idx = names.iter().position(|&n| n == "trafilatura").unwrap();
             let css_rule_idx = names.iter().position(|&n| n == "css-rule").unwrap();
@@ -444,7 +444,7 @@ mod tests {
             );
         }
 
-        #[cfg(feature = "extractor-dom-smoothie")]
+        #[cfg(feature = "dom-smoothie")]
         {
             let dom_idx = names.iter().position(|&n| n == "dom-smoothie").unwrap();
             let css_rule_idx = names.iter().position(|&n| n == "css-rule").unwrap();
@@ -453,7 +453,7 @@ mod tests {
                 "dom-smoothie should come before css-rule"
             );
 
-            #[cfg(feature = "extractor-trafilatura")]
+            #[cfg(feature = "trafilatura")]
             {
                 let trafilatura_idx = names.iter().position(|&n| n == "trafilatura").unwrap();
                 assert!(

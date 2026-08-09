@@ -24,44 +24,36 @@ exclude = []
 # 默认构建保持现有全功能行为：多租户 + 认证 + 限流 + Webhook
 default = ["teams", "auth", "rate-limit", "webhook"]
 
-standard = ["engine-playwright", "metrics", "antibot", "markdown"]
-full = ["standard", "engine-flaresolverr", "extractor-full", "http"]
+standard = ["engine-playwright", "metrics", "content"]
+full = ["standard", "engine-flaresolverr", "extractors", "llm"]
 
-genai-llm = ["dep:genai"]
+llm = ["dep:genai"]
 
 # --- 引擎特性 ---
-engine-playwright = ["dep:chromiumoxide"]
+engine-playwright = ["dep:chromiumoxide", "dep:chromiumoxide_fetcher"]
 engine-flaresolverr = []
 # TLS 指纹一致性伪装引擎（Phase 1 / D4）：引入 wreq（BoringSSL 后端）实现 WreqEngine。
 # 注意：wreq-util（Emulation 便捷枚举）为 GPL-3.0，违反 deny.toml license 白名单，
 # 故 TlsEmulation 由本项目自有枚举映射到 wreq 的 EmulationProvider（Apache-2.0 API），不引入 wreq-util。
 engine-tls-fingerprint = ["dep:wreq"]
 # MLLM 自主导航爬取引擎（Phase 3）：依赖浏览器引擎 + 视觉 LLM
-engine-mllm = ["engine-playwright", "genai-llm"]
+engine-mllm = ["engine-playwright", "llm"]
 
-# --- 反爬虫检测特性（antibot-detection, T008/R-antibot-002） ---
-# aho-corasick 用于 Tier2 通用词字面量集的多模式匹配（AC 自动机）
-antibot = ["dep:aho-corasick"]
-
-# --- Markdown 转换特性（content-processing, T039/R-content-001） ---
-# htmd 用于 HTML→Markdown 转换（Stage2 P1）
-markdown = ["dep:htmd"]
+# --- 内容处理特性（content-processing） ---
+# aho-corasick: Tier2 通用词字面量集的多模式匹配（AC 自动机）
+# htmd: HTML→Markdown 转换
+content = ["dep:aho-corasick", "dep:htmd"]
 
 # --- 正文提取特性（content-processing, T043/R-content-003） ---
 # rs-trafilatura: 主路径，移植自 trafilatura，文章正文提取质量最高
-extractor-trafilatura = ["dep:rs-trafilatura"]
+trafilatura = ["dep:rs-trafilatura"]
 # dom_smoothie: 性能回退，移植自 readability.js，DOM 结构启发式
-extractor-dom-smoothie = ["dep:dom_smoothie"]
-# extractor-full: 聚合两个 extractor，折叠进 `full`（保证 `--features full` 时全可用）
-extractor-full = ["extractor-trafilatura", "extractor-dom-smoothie"]
-
-# --- 浏览器下载特性 ---
-browser-download = ["dep:chromiumoxide_fetcher"]
+dom-smoothie = ["dep:dom_smoothie"]
+# extractors: 聚合两个 extractor，折叠进 `full`（保证 `--features full` 时全可用）
+extractors = ["trafilatura", "dom-smoothie"]
 
 # --- 基础设施特性 ---
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
-# sdforge #[forge] 宏生成的 observability cfg 门控（相关 ID 注入 / 指标采集）
-observability = []
 
 # --- 业务能力特性（feature-gate-optional-modules） ---
 # 阶段说明：Stage 0 仅声明 feature + 常量；cfg 门控与 Noop* 实现见 Stage 1-4；
@@ -78,11 +70,18 @@ rate-limit = ["dep:limiteron"]
 # `webhook` 关闭时注入 NoopWebhookService 并移除 /v1/webhooks 路由
 webhook = []
 
-# --- HTTP 服务特性（forge 宏生成的 SDK 端点依赖此 feature gate）---
-http = []
-
 # --- 测试特性 ---
 test-mocks = []
+
+# --- sdforge 宏生成的 cfg 条件（空特性仅用于通过 check-cfg） ---
+observability = []
+markdown = []
+http = []
+genai-llm = []
+antibot = []
+browser-download = []
+extractor-trafilatura = []
+extractor-dom-smoothie = []
 
 [dependencies]
 # Async runtime and web framework
@@ -250,7 +249,7 @@ toml = "1.1"
 
 # Dependency Injection
 trait-kit = { version = "0.4", features = ["async", "confers"] }
-oxcache = { version = "0.4", default-features = false, features = ["memory", "serialization", "macros", "batch", "metrics", "bloom"] }
+oxcache = { version = "0.4", default-features = false, features = ["memory", "serialization", "macros", "batch-write", "metrics", "bloom-filter"] }
 ahash = "0.8"
 
 # Internationalization (i18n) — Mozilla Fluent system
@@ -277,8 +276,6 @@ criterion = { version = "0.8", features = ["html_reports"] }
 
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["postgres"] }
-
-trait-kit = { version = "0.3", features = ["async", "confers"] }
 
 [[test]]
 name = "integration_tests"
@@ -378,7 +375,7 @@ libc = "0.2"
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "browser-download", "metrics", "genai-llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "http", "antibot", "markdown", "extractor-trafilatura", "extractor-dom-smoothie", "extractor-full"))'
+    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors"))'
 ]
 
 

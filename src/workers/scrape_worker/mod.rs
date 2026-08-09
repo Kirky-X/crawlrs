@@ -50,10 +50,10 @@ use crate::workers::shutdown::ShutdownCoordinator;
 // HIGH-2 SRP 拆分：cache key 生成、URL 脱敏
 use crate::workers::cache_utils::{self, redact_url_for_log};
 // H-4 职责拆分：Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
-#[cfg(feature = "markdown")]
+#[cfg(feature = "content")]
 use crate::workers::markdown_post_processor::MarkdownPostProcessor;
 // T074/R-content-001：正文提取门面（与 markdown 特性配合，only_main_content 前置提取）
-#[cfg(feature = "markdown")]
+#[cfg(feature = "content")]
 use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::utils::retry_policy::RetryPolicy;
 // T028/R-identity-002：重试指令与分类器（消费 RetryTracker + RetryDirective）
@@ -116,7 +116,7 @@ pub struct ScrapeWorker {
     ///
     /// 无状态服务，根据任务 `formats` 字段判断是否生成 Markdown。
     /// gated `markdown` 特性：关闭时本字段不存在，相关分支也不编译。
-    #[cfg(feature = "markdown")]
+    #[cfg(feature = "content")]
     markdown_post_processor: MarkdownPostProcessor,
     token_usage: Arc<DashMap<Uuid, AtomicI64>>,
     robots_checker: Arc<dyn RobotsCheckerTrait>,
@@ -189,7 +189,7 @@ impl ScrapeWorker {
             _create_scrape_use_case: deps.create_scrape_use_case,
             team_semaphore: deps.team_semaphore,
             coalesce_coordinator: deps.coalesce_coordinator,
-            #[cfg(feature = "markdown")]
+            #[cfg(feature = "content")]
             markdown_post_processor: MarkdownPostProcessor::new(
                 Arc::new(crate::domain::services::markdown_service::HtmdMarkdownService::new()),
                 Some(Arc::new(ContentExtractionFacade::new(None))),
@@ -813,7 +813,7 @@ impl ScrapeWorker {
         // 调用方策略（design.md §10）：markdown 为增强字段，失败不阻断基础抓取结果，
         // 错误时记录告警并继续（generated_markdown = None）。
         // T074/R-content-001：generate() 改为 async，支持 only_main_content 前置正文提取
-        #[cfg(feature = "markdown")]
+        #[cfg(feature = "content")]
         let generated_markdown: Option<String> = if let Some(req) = parsed_req.as_ref() {
             self.markdown_post_processor
                 .generate(task.id, req, &processed_content)
@@ -828,7 +828,7 @@ impl ScrapeWorker {
         } else {
             None
         };
-        #[cfg(not(feature = "markdown"))]
+        #[cfg(not(feature = "content"))]
         let generated_markdown: Option<String> = None;
 
         // 性能审查 H-1 修复：handle_scrape_success 改为 owned ScrapeResponse，

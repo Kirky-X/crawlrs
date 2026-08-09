@@ -7,7 +7,7 @@
 //!
 //! 包含传统顺序模式的路由实现（带重试、身份升级、MRT 瀑布式 fallback）。
 
-#[cfg(feature = "antibot")]
+#[cfg(feature = "content")]
 use super::check_antibot_response;
 use super::{check_js_upgrade_probe, EngineRouter, LoadBalancingStrategy};
 use crate::common::metrics_shim::{counter, histogram};
@@ -65,7 +65,7 @@ impl EngineRouter {
         // T013（R-antibot-003）：anti-bot 检测命中后，后续 attempt 强制 needs_js=true，
         // 使浏览器/FlareSolverr 引擎走 JS 渲染路径突破反爬挑战。
         // 仅 `antibot` 特性启用时 `force_needs_js` 会被改写；关闭时需抑制 unused_mut。
-        #[cfg_attr(not(feature = "antibot"), allow(unused_mut))]
+        #[cfg_attr(not(feature = "content"), allow(unused_mut))]
         let mut force_needs_js = false;
 
         // T028（R-identity-002）：智能重试基础设施
@@ -198,7 +198,7 @@ impl EngineRouter {
                     // T013（R-antibot-003）：引擎返回"成功"响应后，检查是否为反爬挑战页。
                     // 命中 needs_browser 时将当前结果视为失败，强制后续 attempt needs_js=true，
                     // 使浏览器/FlareSolverr 引擎走 JS 渲染路径突破反爬。
-                    #[cfg(feature = "antibot")]
+                    #[cfg(feature = "content")]
                     {
                         if let Some(detection) = check_antibot_response(&response, &request.url) {
                             if detection.needs_browser {

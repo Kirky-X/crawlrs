@@ -476,7 +476,7 @@ impl EngineRouterTrait for EngineRouter {
 /// 将 `InternalScrapeResponse` 的 `HashMap<String,String>` headers 转为
 /// `reqwest::header::HeaderMap` 后调用 `antibot::classify`。仅在 `antibot`
 /// feature 启用时编译；关闭时 route_internal 的检测块被 cfg 移除，此函数也不存在。
-#[cfg(feature = "antibot")]
+#[cfg(feature = "content")]
 pub(super) fn check_antibot_response(
     response: &InternalScrapeResponse,
     url: &str,
