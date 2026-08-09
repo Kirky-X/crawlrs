@@ -18,16 +18,16 @@ use crate::{
     application::dto::scrape_request::ScrapeRequestDto,
     application::dto::scrape_response::{CancelScrapeResponseDto, ScrapeResponseDto},
     common::constants::crawl_task::MAX_SYNC_WAIT_MS,
-    domain::models::{Task, TaskStatus, TaskType},
+    domain::models::{Task, TaskType},
     domain::repositories::task_repository::TaskRepository,
     i18n::{I18nBundle, Locale},
     presentation::extractors::AppDeps,
+    presentation::handlers::{check_ssrf_url, sync_wait_status_code},
     presentation::handlers::response_builder::{
         errors, errors_locale, success_response, ApiResponse,
     },
     presentation::handlers::task_handler::handle_sync_wait_and_get_status,
     presentation::helpers::rate_limit_helper::check_rate_limit,
-    presentation::helpers::ssrf::validate_url,
     presentation::middleware::auth_middleware::AuthState,
 };
 
@@ -78,39 +78,15 @@ pub async fn create_scrape(
     }
 
     // 2. SSRF 验证 - 使用完整的异步 DNS 验证
-    match validate_url(&payload.url).await {
-        Ok(validated) => {
-            log::trace!(
-                "URL passed SSRF validation url={} team_id={} resolved_ips={:?}",
-                payload.url,
-                team_id,
-                validated.resolved_ips
-            );
-        }
-        Err(e) => {
-            log::warn!(
-                "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",
-                payload.url,
-                team_id,
-                auth_state.api_key_id,
-                e
-            );
-            return errors::bad_request(format!("SSRF protection: {}", e));
-        }
+    if let Some(response) = check_ssrf_url(&payload.url, team_id, auth_state.api_key_id).await {
+        return response;
     }
 
     // 2.5 SSRF 防护 (CWE-918)：验证 options.proxy 不指向内部网络
     if let Some(ref options) = payload.options {
         if let Some(ref proxy_url) = options.proxy {
-            if let Err(e) = validate_url(proxy_url).await {
-                log::warn!(
-                    "SSRF via proxy blocked proxy={} team_id={} api_key_id={} error={}",
-                    proxy_url,
-                    team_id,
-                    auth_state.api_key_id,
-                    e
-                );
-                return errors::bad_request(format!("SSRF protection: proxy URL rejected: {}", e));
+            if let Some(response) = check_ssrf_url(proxy_url, team_id, auth_state.api_key_id).await {
+                return response;
             }
         }
     }
@@ -130,29 +106,14 @@ pub async fn create_scrape(
         return errors::payment_required(e.to_string());
     }
 
-    let now = chrono::Utc::now();
-    let task = Task {
-        id: Uuid::new_v4(),
-        task_type: TaskType::Scrape,
-        status: TaskStatus::Queued,
-        priority: 0,
+    let task = Task::new(
+        Uuid::new_v4(),
+        TaskType::Scrape,
         team_id,
-        api_key_id: auth_state.api_key_id,
-        url: payload.url.clone(),
-        payload: serde_json::to_value(&payload).unwrap_or_default(),
-        retry_count: 0,
-        attempt_count: 0,
-        max_retries: 3,
-        scheduled_at: None,
-        expires_at: None,
-        created_at: now,
-        started_at: None,
-        completed_at: None,
-        crawl_id: None,
-        updated_at: now,
-        lock_token: None,
-        lock_expires_at: None,
-    };
+        auth_state.api_key_id,
+        payload.url.clone(),
+        serde_json::to_value(&payload).unwrap_or_default(),
+    );
 
     let sync_wait_ms = payload.sync_wait_ms.unwrap_or(0);
 
@@ -179,16 +140,7 @@ pub async fn create_scrape(
                 credits_used: 1,
             };
 
-            // 根据同步等待结果设置响应状态
-            let status_code = if sync_wait_ms > 0 {
-                if wait_result.is_timeout {
-                    StatusCode::ACCEPTED // 同步等待超时
-                } else {
-                    StatusCode::CREATED // 同步等待完成
-                }
-            } else {
-                StatusCode::CREATED // 异步模式
-            };
+            let status_code = sync_wait_status_code(sync_wait_ms, wait_result.is_timeout);
 
             success_response(status_code, response)
         }

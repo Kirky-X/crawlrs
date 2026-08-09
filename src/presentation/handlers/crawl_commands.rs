@@ -20,7 +20,7 @@ use crate::application::use_cases::crawl_use_case::CrawlUseCaseError;
 use crate::common::constants::crawl_task::CRAWL_TASK_CREDITS_COST;
 use crate::common::constants::crawl_task::DEFAULT_TIMEOUT_MS;
 use crate::i18n::{I18nBundle, Locale};
-use crate::presentation::handlers::extract_task_ids;
+use crate::presentation::handlers::{check_ssrf_url, extract_task_ids, sync_wait_status_code};
 use crate::presentation::handlers::response_builder::errors;
 use crate::presentation::handlers::response_builder::{
     error_response, errors_locale, success_response,
@@ -28,7 +28,6 @@ use crate::presentation::handlers::response_builder::{
 use crate::presentation::handlers::task_handler::handle_sync_wait_and_get_status;
 use crate::presentation::handlers::task_handler::SyncWaitResult;
 use crate::presentation::helpers::rate_limit_helper::check_rate_limit;
-use crate::presentation::helpers::ssrf::validate_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::presentation::state::CrawlHandlerState;
 use log::error;
@@ -75,38 +74,14 @@ pub async fn create_crawl(
     }
 
     // 2. SSRF 验证 - 使用完整的异步 DNS 验证
-    match validate_url(&payload.url).await {
-        Ok(validated) => {
-            log::trace!(
-                "URL passed SSRF validation url={} team_id={} resolved_ips={:?}",
-                payload.url,
-                team_id,
-                validated.resolved_ips
-            );
-        }
-        Err(e) => {
-            log::warn!(
-                "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",
-                payload.url,
-                team_id,
-                auth_state.api_key_id,
-                e
-            );
-            return errors::bad_request(format!("SSRF protection: {}", e));
-        }
+    if let Some(response) = check_ssrf_url(&payload.url, team_id, auth_state.api_key_id).await {
+        return response;
     }
 
     // 2.5 SSRF 防护 (CWE-918)：验证 config.proxy 不指向内部网络
     if let Some(ref proxy_url) = payload.config.proxy {
-        if let Err(e) = validate_url(proxy_url).await {
-            log::warn!(
-                "SSRF via proxy blocked proxy={} team_id={} api_key_id={} error={}",
-                proxy_url,
-                team_id,
-                auth_state.api_key_id,
-                e
-            );
-            return errors::bad_request(format!("SSRF protection: proxy URL rejected: {}", e));
+        if let Some(response) = check_ssrf_url(proxy_url, team_id, auth_state.api_key_id).await {
+            return response;
         }
     }
 
@@ -172,11 +147,7 @@ pub async fn create_crawl(
                 }
             };
 
-            let status_code = if sync_wait_ms > 0 && wait_result.is_timeout {
-                StatusCode::ACCEPTED
-            } else {
-                StatusCode::CREATED
-            };
+            let status_code = sync_wait_status_code(sync_wait_ms, wait_result.is_timeout);
 
             success_response(status_code, crawl)
         }

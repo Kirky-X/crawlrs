@@ -35,8 +35,13 @@ pub mod team_handler;
 pub mod webhook_handler;
 
 use crate::domain::models::Task;
+use axum::http::StatusCode;
+use axum::response::Response;
 use std::collections::HashMap;
 use uuid::Uuid;
+
+use crate::presentation::handlers::response_builder::errors;
+use crate::presentation::helpers::ssrf::validate_url;
 
 /// 从任务列表中提取ID列表 - 消除重复代码
 #[inline]
@@ -48,6 +53,59 @@ pub fn extract_task_ids(tasks: &[Task]) -> Vec<Uuid> {
 #[inline]
 pub fn tasks_to_id_map(tasks: Vec<Task>) -> HashMap<Uuid, Task> {
     tasks.into_iter().map(|task| (task.id, task)).collect()
+}
+
+/// SSRF 验证单个 URL，失败返回错误响应（用于 handler 提前返回）
+pub async fn check_ssrf_url(url: &str, team_id: Uuid, api_key_id: Uuid) -> Option<Response> {
+    match validate_url(url).await {
+        Ok(validated) => {
+            log::trace!(
+                "URL passed SSRF validation url={} team_id={} resolved_ips={:?}",
+                url,
+                team_id,
+                validated.resolved_ips
+            );
+            None
+        }
+        Err(e) => {
+            log::warn!(
+                "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",
+                url,
+                team_id,
+                api_key_id,
+                e
+            );
+            Some(errors::bad_request(format!("SSRF protection: {}", e)))
+        }
+    }
+}
+
+/// SSRF 批量验证多个 URL，失败返回错误响应
+pub async fn check_ssrf_urls_batch(urls: &[String], team_id: Uuid, api_key_id: Uuid) -> Option<Response> {
+    let results = futures::future::join_all(urls.iter().map(|url| validate_url(url))).await;
+    for (url, result) in urls.iter().zip(results) {
+        if let Err(e) = result {
+            log::warn!(
+                "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",
+                url,
+                team_id,
+                api_key_id,
+                e
+            );
+            return Some(errors::bad_request(format!("SSRF protection: {}", e)));
+        }
+    }
+    None
+}
+
+/// 根据同步等待结果返回状态码：超时返回 ACCEPTED，否则返回 CREATED
+#[inline]
+pub fn sync_wait_status_code(sync_wait_ms: u32, is_timeout: bool) -> StatusCode {
+    if sync_wait_ms > 0 && is_timeout {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::CREATED
+    }
 }
 
 #[cfg(test)]

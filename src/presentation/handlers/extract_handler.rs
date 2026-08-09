@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::common::constants::crawl_task;
 use crate::config::settings::Settings;
-use crate::domain::models::{Task, TaskStatus, TaskType};
+use crate::domain::models::{Task, TaskType};
 // R-teams-003 / T013：teams-off 时 extract 不需要 GR / TeamService
 #[cfg(feature = "teams")]
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
@@ -23,8 +23,8 @@ use crate::domain::repositories::task_repository::TaskRepository;
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
 use crate::presentation::handlers::response_builder::{error_response, ApiResponse};
+use crate::presentation::handlers::{check_ssrf_urls_batch, sync_wait_status_code};
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
-use crate::presentation::helpers::ssrf::validate_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 use std::sync::Arc;
@@ -77,23 +77,9 @@ where
         );
     }
 
-    // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证，
-    // 与 scrape_handler / crawl_handler 保持一致，在入队前拦截恶意 URL。
-    // 并行化避免 N 个 URL 串行 DNS 解析的 N 倍延迟。
-    let validation_results =
-        futures::future::join_all(payload.urls.iter().map(|url| validate_url(url))).await;
-
-    for (url, result) in payload.urls.iter().zip(validation_results) {
-        if let Err(e) = result {
-            log::warn!(
-                "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",
-                url,
-                team_id,
-                auth_state.api_key_id,
-                e
-            );
-            return error_response(StatusCode::BAD_REQUEST, format!("SSRF protection: {}", e));
-        }
+    // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证
+    if let Some(response) = check_ssrf_urls_batch(&payload.urls, team_id, auth_state.api_key_id).await {
+        return response;
     }
 
     // 检查地理限制
@@ -170,34 +156,18 @@ where
         }
     }
 
-    // Create a task for async extraction
-    let primary_url = payload
-        .urls
-        .first()
-        .expect("URLs already validated as non-empty");
-    let now = chrono::Utc::now();
-    let task = Task {
-        id: Uuid::new_v4(),
-        task_type: TaskType::Extract,
-        status: TaskStatus::Queued,
-        priority: 0,
+    let task = Task::new(
+        Uuid::new_v4(),
+        TaskType::Extract,
         team_id,
-        api_key_id: auth_state.api_key_id,
-        url: primary_url.clone(),
-        payload: serde_json::to_value(&payload).unwrap_or_default(),
-        retry_count: 0,
-        attempt_count: 0,
-        max_retries: 3,
-        scheduled_at: None,
-        expires_at: None,
-        created_at: now,
-        started_at: None,
-        completed_at: None,
-        crawl_id: None,
-        updated_at: now,
-        lock_token: None,
-        lock_expires_at: None,
-    };
+        auth_state.api_key_id,
+        payload
+            .urls
+            .first()
+            .expect("URLs already validated as non-empty")
+            .clone(),
+        serde_json::to_value(&payload).unwrap_or_default(),
+    );
 
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
@@ -235,12 +205,7 @@ where
                 status: "pending".to_string(),
             };
 
-            // 根据同步等待结果设置响应状态
-            let status_code = if sync_wait_ms > 0 && waited_time_ms >= sync_wait_ms as u64 {
-                StatusCode::ACCEPTED // 同步等待超时，任务已接受但可能未完成
-            } else {
-                StatusCode::CREATED // 任务已创建（可能已完成）
-            };
+            let status_code = sync_wait_status_code(sync_wait_ms, waited_time_ms >= sync_wait_ms as u64);
 
             (status_code, Json(ApiResponse::success(response))).into_response()
         }
@@ -279,23 +244,9 @@ pub async fn extract(
         );
     }
 
-    // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证，
-    // 与 scrape_handler / crawl_handler 保持一致，在入队前拦截恶意 URL。
-    // 并行化避免 N 个 URL 串行 DNS 解析的 N 倍延迟。
-    let validation_results =
-        futures::future::join_all(payload.urls.iter().map(|url| validate_url(url))).await;
-
-    for (url, result) in payload.urls.iter().zip(validation_results) {
-        if let Err(e) = result {
-            log::warn!(
-                "SSRF attack attempt blocked url={} team_id={} api_key_id={} error={}",
-                url,
-                team_id,
-                auth_state.api_key_id,
-                e
-            );
-            return error_response(StatusCode::BAD_REQUEST, format!("SSRF protection: {}", e));
-        }
+    // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证
+    if let Some(response) = check_ssrf_urls_batch(&payload.urls, team_id, auth_state.api_key_id).await {
+        return response;
     }
 
     // Validate sync_wait_ms if present
@@ -308,34 +259,18 @@ pub async fn extract(
         }
     }
 
-    // Create a task for async extraction
-    let primary_url = payload
-        .urls
-        .first()
-        .expect("URLs already validated as non-empty");
-    let now = chrono::Utc::now();
-    let task = Task {
-        id: Uuid::new_v4(),
-        task_type: TaskType::Extract,
-        status: TaskStatus::Queued,
-        priority: 0,
+    let task = Task::new(
+        Uuid::new_v4(),
+        TaskType::Extract,
         team_id,
-        api_key_id: auth_state.api_key_id,
-        url: primary_url.clone(),
-        payload: serde_json::to_value(&payload).unwrap_or_default(),
-        retry_count: 0,
-        attempt_count: 0,
-        max_retries: 3,
-        scheduled_at: None,
-        expires_at: None,
-        created_at: now,
-        started_at: None,
-        completed_at: None,
-        crawl_id: None,
-        updated_at: now,
-        lock_token: None,
-        lock_expires_at: None,
-    };
+        auth_state.api_key_id,
+        payload
+            .urls
+            .first()
+            .expect("URLs already validated as non-empty")
+            .clone(),
+        serde_json::to_value(&payload).unwrap_or_default(),
+    );
 
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
@@ -373,12 +308,7 @@ pub async fn extract(
                 status: "pending".to_string(),
             };
 
-            // 根据同步等待结果设置响应状态
-            let status_code = if sync_wait_ms > 0 && waited_time_ms >= sync_wait_ms as u64 {
-                StatusCode::ACCEPTED // 同步等待超时，任务已接受但可能未完成
-            } else {
-                StatusCode::CREATED // 任务已创建（可能已完成）
-            };
+            let status_code = sync_wait_status_code(sync_wait_ms, waited_time_ms >= sync_wait_ms as u64);
 
             (status_code, Json(ApiResponse::success(response))).into_response()
         }
@@ -389,6 +319,7 @@ pub async fn extract(
 #[cfg(all(test, feature = "teams"))]
 mod tests {
     use super::*;
+    use crate::domain::models::TaskStatus;
     use uuid::Uuid;
 
     // ========== ExtractResponseDto tests ==========
