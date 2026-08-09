@@ -318,4 +318,43 @@ mod tests {
         // Scores should be non-zero after relevance scoring
         assert!(results[0].score > 0.0);
     }
+
+    #[test]
+    fn test_apply_relevance_scoring_extracts_date_from_description() {
+        let mut results = vec![SearchResult {
+            title: "Recent Article".to_string(),
+            url: "https://example.com/recent".to_string(),
+            description: Some("Published on 2025-08-01, a comprehensive guide".to_string()),
+            engine: "bing".to_string(),
+            score: 0.01,
+            published_time: None,
+        }];
+
+        SmartSearchEngine::apply_relevance_scoring(&mut results, "guide");
+
+        // Date extraction should have populated published_time
+        assert!(
+            results[0].published_time.is_some(),
+            "date should be extracted from description"
+        );
+        assert!(results[0].score > 0.0);
+    }
+
+    #[test]
+    fn test_apply_relevance_scoring_no_description_uses_default_freshness() {
+        let mut results = vec![SearchResult {
+            title: "No Description".to_string(),
+            url: "https://example.com/no-desc".to_string(),
+            description: None,
+            engine: "bing".to_string(),
+            score: 0.01,
+            published_time: None,
+        }];
+
+        SmartSearchEngine::apply_relevance_scoring(&mut results, "test");
+
+        // No description → no date extraction → freshness defaults to 0.5
+        assert!(results[0].published_time.is_none());
+        assert!(results[0].score > 0.0);
+    }
 }

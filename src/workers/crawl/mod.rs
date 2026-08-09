@@ -277,3 +277,34 @@ impl FilterChain {
 pub use filters::{ContentTypeFilter, DomainFilter, UrlPatternFilter};
 pub use frontier::{Frontier, FrontierError, ScoredUrl};
 pub use scorers::{CompositeScorer, KeywordRelevanceScorer, PathDepthScorer};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scoring_context_with_source_url() {
+        let ctx = ScoringContext::new().with_source_url("https://example.com/page");
+        assert_eq!(ctx.source_url.as_deref(), Some("https://example.com/page"));
+    }
+
+    #[test]
+    fn test_scoring_context_with_kg_priority_boost() {
+        let ctx = ScoringContext::new().with_kg_priority_boost(2.5);
+        assert!((ctx.kg_priority_boost - 2.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_scoring_context_with_kg_priority_boost_clamps_below_one() {
+        let ctx = ScoringContext::new().with_kg_priority_boost(0.5);
+        assert!((ctx.kg_priority_boost - 1.0).abs() < f64::EPSILON, "boost must be clamped to >= 1.0");
+    }
+
+    #[test]
+    fn test_scoring_context_default_values() {
+        let ctx = ScoringContext::new();
+        assert!(ctx.keywords.is_empty());
+        assert!(ctx.source_url.is_none());
+        assert!((ctx.kg_priority_boost - 1.0).abs() < f64::EPSILON);
+    }
+}

@@ -356,4 +356,65 @@ mod tests {
         assert!(p1 > p0, "等待后 effective_priority 必须上升");
         assert!(p1 - p0 < 1.0, "50ms 内提升幅度应远小于 1.0");
     }
+
+    // ========== with_aging_factor ==========
+
+    #[test]
+    fn test_with_aging_factor_valid_value() {
+        let task = ScheduledTask::with_aging_factor(5, 2.0);
+        assert_eq!(task.base_priority, 5);
+        assert!((task.aging_factor - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_with_aging_factor_cached_priority_equals_base() {
+        // 刚创建时等待为 0，cached_priority 应等于 base_priority
+        let task = ScheduledTask::with_aging_factor(10, 5.0);
+        assert!((task.cached_priority - 10.0).abs() < 0.01);
+    }
+
+    // ========== refresh_priority ==========
+
+    #[test]
+    fn test_refresh_priority_updates_cached_value() {
+        let mut task = ScheduledTask::new(5);
+        let old_cached = task.cached_priority;
+        std::thread::sleep(Duration::from_millis(50));
+        task.refresh_priority();
+        assert!(
+            task.cached_priority >= old_cached,
+            "refresh_priority 应更新缓存值"
+        );
+    }
+
+    // ========== PartialEq / Eq ==========
+
+    #[test]
+    fn test_partial_eq_same_priority() {
+        let a = ScheduledTask::new(5);
+        let b = ScheduledTask::new(5);
+        assert_eq!(a, b, "相同 base_priority 的任务应相等");
+    }
+
+    #[test]
+    fn test_partial_eq_different_priority() {
+        let a = ScheduledTask::new(5);
+        let b = ScheduledTask::new(10);
+        assert_ne!(a, b, "不同 base_priority 的任务不应相等");
+    }
+
+    // ========== with_capacity / Default ==========
+
+    #[test]
+    fn test_priority_queue_with_capacity() {
+        let q = PriorityQueue::with_capacity(100);
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn test_priority_queue_default() {
+        let q = PriorityQueue::default();
+        assert!(q.is_empty());
+        assert_eq!(q.len(), 0);
+    }
 }

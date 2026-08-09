@@ -374,6 +374,62 @@ mod tests {
         update_status_count: AtomicU32,
     }
 
+    /// Configurable crawl repo that can return a specific crawl from find_by_id
+    struct ConfigurableCrawlRepo {
+        crawl: Option<Crawl>,
+        update_status_count: AtomicU32,
+    }
+
+    impl ConfigurableCrawlRepo {
+        fn with_crawl(c: Crawl) -> Self {
+            Self {
+                crawl: Some(c),
+                update_status_count: AtomicU32::new(0),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CrawlRepository for ConfigurableCrawlRepo {
+        async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+            Ok(crawl.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+            Ok(self.crawl.clone())
+        }
+        async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+            Ok(crawl.clone())
+        }
+        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn update_status(
+            &self,
+            _id: Uuid,
+            _status: CrawlStatus,
+        ) -> Result<(), RepositoryError> {
+            self.update_status_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn find_by_team_id_paginated(
+            &self,
+            _team_id: Uuid,
+            _limit: u32,
+            _offset: u32,
+        ) -> Result<Vec<Crawl>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+    }
+
     #[async_trait::async_trait]
     impl CrawlRepository for MockCrawlRepo {
         async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
@@ -439,5 +495,312 @@ mod tests {
         let repo = MockCrawlRepo::default();
         update_crawl_completion_status(Uuid::new_v4(), &repo).await;
         // No assertion needed — just verify it doesn't panic
+    }
+
+    // ---- extract_and_queue_links ----
+
+    use crate::application::dto::crawl_request::CrawlConfigDto;
+    use crate::domain::repositories::crawl_repository::CrawlRepository;
+    use crate::domain::repositories::task_repository::TaskQueryParams;
+    use crate::engines::engine_client::ScrapeResponse;
+    use crate::utils::dedup::Deduplicator;
+    use std::collections::HashSet;
+
+    struct CountingTaskRepo {
+        create_count: AtomicU32,
+    }
+    impl CountingTaskRepo {
+        fn new() -> Self { Self { create_count: AtomicU32::new(0) } }
+    }
+
+    #[async_trait::async_trait]
+    impl TaskRepository for CountingTaskRepo {
+        async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
+            self.create_count.fetch_add(1, Ordering::SeqCst);
+            Ok(Task::new(Uuid::new_v4(), TaskType::Crawl, Uuid::new_v4(), Uuid::new_v4(), String::new(), json!({})))
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> { Ok(None) }
+        async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> { Ok(Task::new(Uuid::new_v4(), TaskType::Crawl, Uuid::new_v4(), Uuid::new_v4(), String::new(), json!({}))) }
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> { Ok(None) }
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> { Ok(false) }
+        async fn find_existing_urls(&self, _urls: &[String]) -> Result<HashSet<String>, RepositoryError> { Ok(HashSet::new()) }
+        async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> { Ok(0) }
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> { Ok(0) }
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> { Ok(0) }
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> { Ok(vec![]) }
+        async fn query_tasks(&self, _params: TaskQueryParams) -> Result<(Vec<Task>, u64), RepositoryError> { Ok((vec![], 0)) }
+        async fn batch_cancel(&self, _task_ids: Vec<Uuid>, _team_id: Uuid, _force: bool) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> { Ok((vec![], vec![])) }
+    }
+
+    fn make_response(content_type: &str, content: &str) -> ScrapeResponse {
+        ScrapeResponse {
+            content: content.to_string(),
+            status_code: 200,
+            content_type: content_type.to_string(),
+            headers: Default::default(),
+            screenshot: None,
+            response_time_ms: 100,
+            final_url: None,
+            markdown: None,
+        }
+    }
+
+    fn default_config() -> CrawlConfigDto {
+        CrawlConfigDto {
+            max_depth: 2,
+            include_patterns: None,
+            exclude_patterns: None,
+            strategy: None,
+            crawl_delay_ms: None,
+            max_concurrency: None,
+            proxy: None,
+            headers: None,
+            extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extract_links_non_html_returns_early() {
+        let task = make_task("https://example.com");
+        let response = make_response("application/json", r#"{"key": "value"}"#);
+        let repo = CountingTaskRepo::new();
+        let crawl_repo = MockCrawlRepo::default();
+        let dedup = Arc::new(parking_lot::RwLock::new(Deduplicator::new()));
+        let config = default_config();
+
+        extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config, &repo, &crawl_repo, &dedup).await.unwrap();
+        assert_eq!(repo.create_count.load(Ordering::SeqCst), 0, "non-HTML should not extract links");
+    }
+
+    #[tokio::test]
+    async fn test_extract_links_html_with_links() {
+        let task = make_task("https://example.com/page");
+        let html = r#"<html><body>
+            <a href="https://example.com/other">Other</a>
+            <a href="https://example.com/another">Another</a>
+        </body></html>"#;
+        let response = make_response("text/html", html);
+        let repo = CountingTaskRepo::new();
+        let crawl_repo = MockCrawlRepo::default();
+        let dedup = Arc::new(parking_lot::RwLock::new(Deduplicator::new()));
+        let config = default_config();
+
+        extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config, &repo, &crawl_repo, &dedup).await.unwrap();
+        assert!(repo.create_count.load(Ordering::SeqCst) > 0, "should enqueue found links");
+    }
+
+    #[tokio::test]
+    async fn test_extract_links_skips_self_link() {
+        let task = make_task("https://example.com/page");
+        let html = r#"<html><body>
+            <a href="https://example.com/page">Self</a>
+            <a href="https://example.com/other">Other</a>
+        </body></html>"#;
+        let response = make_response("text/html", html);
+        let repo = CountingTaskRepo::new();
+        let crawl_repo = MockCrawlRepo::default();
+        let dedup = Arc::new(parking_lot::RwLock::new(Deduplicator::new()));
+        let config = default_config();
+
+        extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config, &repo, &crawl_repo, &dedup).await.unwrap();
+        // Self-link should be skipped, only "other" should be enqueued
+        assert_eq!(repo.create_count.load(Ordering::SeqCst), 1, "self-link should be skipped");
+    }
+
+    #[tokio::test]
+    async fn test_extract_links_empty_include_patterns_short_circuit() {
+        let task = make_task("https://example.com/page");
+        let html = r#"<html><body><a href="https://example.com/other">Other</a></body></html>"#;
+        let response = make_response("text/html", html);
+        let repo = CountingTaskRepo::new();
+        let crawl_repo = MockCrawlRepo::default();
+        let dedup = Arc::new(parking_lot::RwLock::new(Deduplicator::new()));
+        let mut config = default_config();
+        config.include_patterns = Some(vec![]); // empty → short circuit
+
+        extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config, &repo, &crawl_repo, &dedup).await.unwrap();
+        assert_eq!(repo.create_count.load(Ordering::SeqCst), 0, "empty include_patterns should block all links");
+    }
+
+    #[tokio::test]
+    async fn test_extract_links_with_dfs_strategy() {
+        let task = make_task("https://example.com/page");
+        let html = r#"<html><body>
+            <a href="https://example.com/other">Other</a>
+        </body></html>"#;
+        let response = make_response("text/html", html);
+        let repo = CountingTaskRepo::new();
+        let crawl_repo = MockCrawlRepo::default();
+        let dedup = Arc::new(parking_lot::RwLock::new(Deduplicator::new()));
+        let mut config = default_config();
+        config.strategy = Some("dfs".to_string());
+
+        extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config, &repo, &crawl_repo, &dedup).await.unwrap();
+        // DFS strategy should still enqueue links (with priority + 1)
+        assert!(repo.create_count.load(Ordering::SeqCst) > 0, "DFS strategy should enqueue links");
+    }
+
+    #[tokio::test]
+    async fn test_extract_links_with_exclude_patterns() {
+        let task = make_task("https://example.com/page");
+        let html = r#"<html><body>
+            <a href="https://example.com/good">Good</a>
+            <a href="https://example.com/bad">Bad</a>
+        </body></html>"#;
+        let response = make_response("text/html", html);
+        let repo = CountingTaskRepo::new();
+        let crawl_repo = MockCrawlRepo::default();
+        let dedup = Arc::new(parking_lot::RwLock::new(Deduplicator::new()));
+        let mut config = default_config();
+        config.exclude_patterns = Some(vec![".*bad.*".to_string()]);
+
+        extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config, &repo, &crawl_repo, &dedup).await.unwrap();
+        // Only "good" link should be enqueued (bad excluded)
+        assert_eq!(repo.create_count.load(Ordering::SeqCst), 1, "excluded pattern links should be filtered");
+    }
+
+    // ---- update_crawl_completion_status (all paths) ----
+
+    #[tokio::test]
+    async fn test_update_crawl_completion_status_all_done_marks_completed() {
+        // completed(3) + failed(2) == total(5) → should call update_status
+        let crawl = Crawl::with_all_fields(
+            Uuid::new_v4(), Uuid::new_v4(), "test".into(), "https://example.com".into(),
+            "https://example.com".into(), CrawlStatus::Processing, json!({}),
+            5, 3, 2, Utc::now(), Utc::now(), None,
+        );
+        let repo = ConfigurableCrawlRepo::with_crawl(crawl);
+        update_crawl_completion_status(Uuid::new_v4(), &repo).await;
+        assert_eq!(repo.update_status_count.load(Ordering::SeqCst), 1, "should mark completed when all tasks done");
+    }
+
+    #[tokio::test]
+    async fn test_update_crawl_completion_status_not_yet_done() {
+        // completed(1) + failed(0) != total(5) → should NOT call update_status
+        let crawl = Crawl::with_all_fields(
+            Uuid::new_v4(), Uuid::new_v4(), "test".into(), "https://example.com".into(),
+            "https://example.com".into(), CrawlStatus::Processing, json!({}),
+            5, 1, 0, Utc::now(), Utc::now(), None,
+        );
+        let repo = ConfigurableCrawlRepo::with_crawl(crawl);
+        update_crawl_completion_status(Uuid::new_v4(), &repo).await;
+        assert_eq!(repo.update_status_count.load(Ordering::SeqCst), 0, "should not mark completed when tasks pending");
+    }
+
+    #[tokio::test]
+    async fn test_update_crawl_completion_status_find_error() {
+        // find_by_id returns Err → logs error, no panic
+        struct ErrorCrawlRepo;
+        #[async_trait::async_trait]
+        impl CrawlRepository for ErrorCrawlRepo {
+            async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> { Ok(crawl.clone()) }
+            async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+                Err(RepositoryError::Database(anyhow::anyhow!("db error")))
+            }
+            async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> { Ok(crawl.clone()) }
+            async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
+            async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
+            async fn update_status(&self, _id: Uuid, _status: CrawlStatus) -> Result<(), RepositoryError> { Ok(()) }
+            async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
+            async fn find_by_team_id_paginated(&self, _team_id: Uuid, _limit: u32, _offset: u32) -> Result<Vec<Crawl>, RepositoryError> { Ok(vec![]) }
+            async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> { Ok(0) }
+        }
+        let repo = ErrorCrawlRepo;
+        update_crawl_completion_status(Uuid::new_v4(), &repo).await;
+        // No panic = success
+    }
+
+    // ---- DB check path (MaybeExisting → find_existing_urls → second dedup) ----
+
+    /// Mock task repo that returns existing URLs from find_existing_urls
+    struct ExistingUrlTaskRepo {
+        create_count: AtomicU32,
+        existing_urls: HashSet<String>,
+    }
+    impl ExistingUrlTaskRepo {
+        fn new_with_existing(urls: Vec<String>) -> Self {
+            Self {
+                create_count: AtomicU32::new(0),
+                existing_urls: urls.into_iter().collect(),
+            }
+        }
+    }
+    #[async_trait::async_trait]
+    impl TaskRepository for ExistingUrlTaskRepo {
+        async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
+            self.create_count.fetch_add(1, Ordering::SeqCst);
+            Ok(Task::new(Uuid::new_v4(), TaskType::Crawl, Uuid::new_v4(), Uuid::new_v4(), String::new(), json!({})))
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> { Ok(None) }
+        async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> { Ok(Task::new(Uuid::new_v4(), TaskType::Crawl, Uuid::new_v4(), Uuid::new_v4(), String::new(), json!({}))) }
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> { Ok(None) }
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> { Ok(false) }
+        async fn find_existing_urls(&self, urls: &[String]) -> Result<HashSet<String>, RepositoryError> {
+            // Return only URLs that are in our "existing" set
+            Ok(urls.iter().filter(|u| self.existing_urls.contains(u.as_str())).cloned().collect())
+        }
+        async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> { Ok(0) }
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> { Ok(0) }
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> { Ok(0) }
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> { Ok(vec![]) }
+        async fn query_tasks(&self, _params: TaskQueryParams) -> Result<(Vec<Task>, u64), RepositoryError> { Ok((vec![], 0)) }
+        async fn batch_cancel(&self, _task_ids: Vec<Uuid>, _team_id: Uuid, _force: bool) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> { Ok((vec![], vec![])) }
+    }
+
+    #[tokio::test]
+    async fn test_extract_links_db_check_path_with_preinserted_urls() {
+        let task = make_task("https://example.com/page");
+        let html = r#"<html><body>
+            <a href="https://example.com/new-link">New</a>
+        </body></html>"#;
+        let response = make_response("text/html", html);
+
+        // Pre-insert the URL into deduplicator to trigger MaybeExisting path
+        let dedup = Arc::new(parking_lot::RwLock::new(Deduplicator::new()));
+        {
+            let mut d = dedup.write();
+            d.insert("https://example.com/new-link");
+        }
+
+        // Repo says URL already exists → should skip (DB check finds it existing)
+        let repo = ExistingUrlTaskRepo::new_with_existing(vec!["https://example.com/new-link".to_string()]);
+        let crawl_repo = MockCrawlRepo::default();
+        let config = default_config();
+
+        extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config, &repo, &crawl_repo, &dedup).await.unwrap();
+        // URL found在 existing_urls 中 → to_db_insert 为空 → 不 create
+        assert_eq!(repo.create_count.load(Ordering::SeqCst), 0, "existing URLs should not be enqueued via DB check path");
+    }
+
+    #[tokio::test]
+    async fn test_extract_links_db_check_path_existing_url_skipped() {
+        let task = make_task("https://example.com/page");
+        let html = r#"<html><body>
+            <a href="https://example.com/existing-link">Existing</a>
+        </body></html>"#;
+        let response = make_response("text/html", html);
+
+        // Pre-insert to trigger MaybeExisting
+        let dedup = Arc::new(parking_lot::RwLock::new(Deduplicator::new()));
+        {
+            let mut d = dedup.write();
+            d.insert("https://example.com/existing-link");
+        }
+
+        // Repo says this URL already exists → should NOT enqueue
+        let repo = ExistingUrlTaskRepo::new_with_existing(vec!["https://example.com/existing-link".to_string()]);
+        let crawl_repo = MockCrawlRepo::default();
+        let config = default_config();
+
+        extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config, &repo, &crawl_repo, &dedup).await.unwrap();
+        assert_eq!(repo.create_count.load(Ordering::SeqCst), 0, "existing URLs should not be enqueued");
     }
 }

@@ -382,6 +382,35 @@ mod tests {
         assert_eq!(repo.save_count.load(Ordering::SeqCst), 1);
     }
 
+    #[tokio::test]
+    async fn test_save_result_with_markdown_and_object_extra_data() {
+        let task = make_task("https://example.com");
+        let mut response = make_response("content");
+        response.markdown = Some("# MD".to_string());
+        let repo = MockResultRepo::default();
+        let extra = json!({"key": "value"});
+
+        save_result(&task, &response, Some(extra), &repo)
+            .await
+            .unwrap();
+        assert_eq!(repo.save_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_save_result_with_markdown_and_non_object_extra_data() {
+        let task = make_task("https://example.com");
+        let mut response = make_response("content");
+        response.markdown = Some("# MD".to_string());
+        let repo = MockResultRepo::default();
+        // Non-object extra data (array) should hit the `_` branch
+        let extra = json!(["item1", "item2"]);
+
+        save_result(&task, &response, Some(extra), &repo)
+            .await
+            .unwrap();
+        assert_eq!(repo.save_count.load(Ordering::SeqCst), 1);
+    }
+
     // ---- try_read_scrape_cache ----
 
     #[tokio::test]
@@ -448,5 +477,96 @@ mod tests {
         };
         let key = crate::workers::cache_utils::generate_scrape_cache_key(&ctx, &options);
         assert!(key.contains("example.com"));
+    }
+
+    // ---- Configurable error mocks ----
+
+    struct ErrorCacheService {
+        get_err: bool,
+        set_err: bool,
+    }
+
+    impl ErrorCacheService {
+        fn get_error() -> Self { Self { get_err: true, set_err: false } }
+        fn set_error() -> Self { Self { get_err: false, set_err: true } }
+    }
+
+    #[async_trait::async_trait]
+    impl CacheService for ErrorCacheService {
+        fn get(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>> {
+            if self.get_err {
+                Box::pin(async { Err(anyhow::anyhow!("cache get error")) })
+            } else {
+                Box::pin(async { Ok(None) })
+            }
+        }
+        fn set(&self, _key: &str, _value: &str, _ttl: u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+            if self.set_err {
+                Box::pin(async { Err(anyhow::anyhow!("cache set error")) })
+            } else {
+                Box::pin(async { Ok(()) })
+            }
+        }
+        fn delete(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn exists(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>> {
+            Box::pin(async { Ok(false) })
+        }
+    }
+
+    struct CorruptCacheService;
+
+    #[async_trait::async_trait]
+    impl CacheService for CorruptCacheService {
+        fn get(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>> {
+            Box::pin(async { Ok(Some("not-valid-json".to_string())) })
+        }
+        fn set(&self, _key: &str, _value: &str, _ttl: u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn delete(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn exists(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>> {
+            Box::pin(async { Ok(false) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_try_read_scrape_cache_get_error() {
+        let ctx = CacheContext {
+            url: "https://example.com".to_string(),
+            method: crate::common::HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let cache = ErrorCacheService::get_error();
+        let result = try_read_scrape_cache(&ctx, "key", &cache).await;
+        assert!(result.is_err(), "cache get error should propagate");
+    }
+
+    #[tokio::test]
+    async fn test_try_read_scrape_cache_corrupt_data() {
+        let ctx = CacheContext {
+            url: "https://example.com".to_string(),
+            method: crate::common::HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let cache = CorruptCacheService;
+        let result = try_read_scrape_cache(&ctx, "key", &cache).await;
+        assert!(result.is_err(), "corrupt cache data should return deserialization error");
+    }
+
+    #[tokio::test]
+    async fn test_try_write_scrape_cache_set_error() {
+        let ctx = CacheContext {
+            url: "https://example.com".to_string(),
+            method: crate::common::HttpMethod::Get,
+            mode: CacheMode::Enabled,
+        };
+        let response = make_response("content");
+        let cache = ErrorCacheService::set_error();
+        let result = try_write_scrape_cache(&ctx, "key", &response, &cache, 300).await;
+        assert!(result.is_err(), "cache set error should propagate");
     }
 }

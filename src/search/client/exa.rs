@@ -717,4 +717,94 @@ mod tests {
             other => panic!("expected BadHttpStatus, got {:?}", other),
         }
     }
+
+    // ========== parse_generic_result_item ==========
+
+    #[test]
+    fn test_parse_generic_result_item_with_all_fields() {
+        let item = json!({
+            "title": "Test Title",
+            "url": "https://example.com",
+            "description": "Test description"
+        });
+        let result = parse_generic_result_item(&item);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert_eq!(r.title, "Test Title");
+        assert_eq!(r.url, "https://example.com");
+        assert_eq!(r.description, "Test description");
+    }
+
+    #[test]
+    fn test_parse_generic_result_item_empty_url_returns_none() {
+        let item = json!({"title": "No URL", "url": ""});
+        assert!(parse_generic_result_item(&item).is_none());
+    }
+
+    #[test]
+    fn test_parse_generic_result_item_fallback_to_text_and_snippet() {
+        let item_text = json!({"url": "https://a.com", "text": "from text field"});
+        let r = parse_generic_result_item(&item_text).unwrap();
+        assert_eq!(r.description, "from text field");
+
+        let item_snippet = json!({"url": "https://b.com", "snippet": "from snippet"});
+        let r = parse_generic_result_item(&item_snippet).unwrap();
+        assert_eq!(r.description, "from snippet");
+    }
+
+    // ========== extract_results JSON array fallback ==========
+
+    #[test]
+    fn test_extract_results_json_array_format() {
+        let response = json!({
+            "result": {
+                "content": [{
+                    "type": "text",
+                    "text": "[{\"title\": \"Arr Item\", \"url\": \"https://arr.com\", \"description\": \"arr desc\"}]"
+                }]
+            }
+        });
+        let results = ExaSearchEngine::extract_results_from_response(&response);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Arr Item");
+        assert_eq!(results[0].url, "https://arr.com");
+    }
+
+    #[test]
+    fn test_extract_results_empty_text_skipped() {
+        let response = json!({
+            "result": {
+                "content": [{"type": "text", "text": ""}]
+            }
+        });
+        let results = ExaSearchEngine::extract_results_from_response(&response);
+        assert!(results.is_empty());
+    }
+
+    // ========== 描述截断 ==========
+
+    #[test]
+    fn test_parse_text_results_description_truncated_at_500() {
+        let long_desc = "x".repeat(600);
+        let text = format!("Title: Truncated\nURL: https://trunc.com\nHighlights:\n{}", long_desc);
+        let results = ExaSearchEngine::parse_text_results(&text);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].description.len() <= 503, "description should be truncated to ~500 chars + '...'");
+        assert!(results[0].description.ends_with("..."));
+    }
+
+    // ========== SSE 解析：多 data 行取最后一条 ==========
+
+    #[test]
+    fn test_parse_sse_multiple_data_lines_takes_last() {
+        let body = "data: {\"a\":1}\ndata: {\"b\":2}\n\n";
+        let value = ExaSearchEngine::parse_sse_to_json(body).unwrap();
+        assert!(value.get("b").is_some(), "should use last data line");
+    }
+
+    #[test]
+    fn test_parse_sse_invalid_json_returns_error() {
+        let body = "data: not-json\n\n";
+        assert!(ExaSearchEngine::parse_sse_to_json(body).is_err());
+    }
 }

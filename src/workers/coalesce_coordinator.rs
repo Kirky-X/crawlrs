@@ -540,4 +540,91 @@ mod tests {
         // 取消避免 60s 阻塞
         handle.abort();
     }
+
+    /// 最大重排次数路径：coalesce_reschedule_count >= 3 时 mark_failed
+    #[tokio::test]
+    async fn try_coalesce_max_reschedule_exceeded_marks_failed() {
+        let task_repo = Arc::new(CountingTaskRepo::new());
+        let result_repo = Arc::new(ConfigurableResultRepo::new(false));
+        let coalescer = Arc::new(RequestCoalescer::new());
+        let coord =
+            CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
+
+        // 构造已达最大重排次数的任务
+        let mut task = make_task();
+        task.payload = json!({"coalesce_reschedule_count": 3});
+        let url = task.url.clone();
+
+        // 占住 slot
+        let first_guard = coalescer.try_start(&url);
+        let task_clone = task.clone();
+        let coord_clone = coord.clone();
+        let url_clone = url.clone();
+        let handle =
+            tokio::spawn(async move { coord_clone.try_coalesce(&url_clone, &task_clone).await });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drop(first_guard);
+
+        let result = handle.await.expect("task panicked");
+        assert!(result.is_ok());
+        let guard = result.unwrap();
+        assert!(guard.is_none(), "max reschedule exceeded should return None");
+
+        // update 应被调用（设置 Failed 状态 + error message）
+        let captured = task_repo.captured_updates.lock().unwrap();
+        let updated = captured.last().expect("captured update");
+        assert_eq!(updated.status, TaskStatus::Failed);
+    }
+
+    /// find_by_task_id 返回 Err 时应传播错误
+    #[tokio::test]
+    async fn try_coalesce_wait_find_by_task_id_error_propagates() {
+        let task_repo = Arc::new(CountingTaskRepo::new());
+        let coalescer = Arc::new(RequestCoalescer::new());
+
+        // ErrorResultRepo: find_by_task_id returns Err
+        struct ErrorResultRepo;
+        #[async_trait]
+        impl ScrapeResultRepository for ErrorResultRepo {
+            async fn save(&self, _result: crate::domain::models::ScrapeResult) -> Result<()> { Ok(()) }
+            async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<crate::domain::models::ScrapeResult>> {
+                Err(anyhow::anyhow!("db connection lost"))
+            }
+            async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> Result<Vec<crate::domain::models::ScrapeResult>> { Ok(vec![]) }
+            async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> { Ok(0.0) }
+        }
+
+        let result_repo = Arc::new(ErrorResultRepo);
+        let coord =
+            CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
+
+        let task = make_task();
+        let url = task.url.clone();
+
+        let first_guard = coalescer.try_start(&url);
+        let task_clone = task.clone();
+        let coord_clone = coord.clone();
+        let url_clone = url.clone();
+        let handle =
+            tokio::spawn(async move { coord_clone.try_coalesce(&url_clone, &task_clone).await });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drop(first_guard);
+
+        let result = handle.await.expect("task panicked");
+        assert!(result.is_err(), "find_by_task_id error should propagate");
+    }
+
+    /// new() 构造器验证字段正确初始化
+    #[test]
+    fn test_coalesce_coordinator_new() {
+        let task_repo = Arc::new(CountingTaskRepo::new());
+        let result_repo = Arc::new(ConfigurableResultRepo::new(false));
+        let coalescer = Arc::new(RequestCoalescer::new());
+        let coord =
+            CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
+        // Clone should work (Arc-based)
+        let _cloned = coord.clone();
+    }
 }
