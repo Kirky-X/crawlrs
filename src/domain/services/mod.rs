@@ -34,9 +34,9 @@ pub mod audit_service;
 /// 正文提取模块（content-processing R2/R3，T044-T049/R-content-002、R-content-003）
 ///
 /// 特性门控（R-content-003）：
-/// - `extractor-trafilatura`：启用 trafilatura 实现（主路径）
-/// - `extractor-dom-smoothie`：启用 dom_smoothie 实现（性能回退）
-/// - `extractor-full`：聚合两者
+/// - `trafilatura`：启用 trafilatura 实现（主路径）
+/// - `dom-smoothie`：启用 dom_smoothie 实现（性能回退）
+/// - `extractors`：聚合两者
 /// - 三特性均关闭时 Facade 退化为 CssRule 兜底（编译通过，功能可用）
 pub mod content_extractor;
 pub mod extraction_service;

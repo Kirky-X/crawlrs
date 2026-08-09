@@ -11,8 +11,8 @@
 //! [`crate::domain::services::content_extractor::facade::ContentExtractionFacade`] 路由。
 //!
 //! 实现说明（R-content-003）：
-//! - `TrafilaturaExtractor`（gated `extractor-trafilatura`）：主路径，质量最高
-//! - `DomSmoothieExtractor`（gated `extractor-dom-smoothie`）：性能回退，DOM 启发式
+//! - `TrafilaturaExtractor`（gated `trafilatura`）：主路径，质量最高
+//! - `DomSmoothieExtractor`（gated `dom-smoothie`）：性能回退，DOM 启发式
 //! - `CssRuleExtractor`：兜底（无 feature 依赖），复用 `ExtractionService::get_clean_text`
 //!
 //! 三特性均关闭时 Facade 退化为 CssRule 兜底（编译通过，功能可用）。

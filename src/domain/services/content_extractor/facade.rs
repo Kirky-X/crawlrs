@@ -12,8 +12,8 @@
 //! LLM 回退：将首选 extractor 的低置信度结果送 LLM 结构化提取，输出 confidence=0.8。
 //!
 //! 特性兼容（R-content-003）：
-//! - `extractor-trafilatura` on → Trafilatura 优先
-//! - `extractor-dom-smoothie` on → DomSmoothie 次选
+//! - `trafilatura` on → Trafilatura 优先
+//! - `dom-smoothie` on → DomSmoothie 次选
 //! - 三特性均关闭 → 退化为 CssRule 兜底（编译通过，功能可用）
 
 use std::borrow::Cow;
@@ -38,8 +38,8 @@ const LLM_INPUT_END_TAG: &str = "<scraped_content_end>";
 /// ContentExtractionFacade：按优先级路由多 extractor + LLM 回退
 ///
 /// 持有 `Vec<Box<dyn ContentExtractor>>`，构造时按优先级入队：
-/// 1. Trafilatura（gated `extractor-trafilatura`）— 主路径，质量最高
-/// 2. DomSmoothie（gated `extractor-dom-smoothie`）— 性能回退
+/// 1. Trafilatura（gated `trafilatura`）— 主路径，质量最高
+/// 2. DomSmoothie（gated `dom-smoothie`）— 性能回退
 /// 3. CssRule（无条件）— 兜底
 ///
 /// 调用策略：依次尝试，首个 `confidence >= 0.7` 立即返回；
@@ -350,7 +350,7 @@ mod tests {
             </article></body></html>"#;
         let _ = facade.extract(html, "https://example.com/a").await;
 
-        // 当 extractor-trafilatura 启用时：confidence 应 >= 0.7 → call_count = 0
+        // 当 trafilatura 启用时：confidence 应 >= 0.7 → call_count = 0
         // 当三个特性均关闭时：CssRule confidence=0.5 → 触发 LLM → call_count = 1
         // 不严格断言 call_count，仅检查流程不 panic
         let _ = call_count.load(Ordering::SeqCst);

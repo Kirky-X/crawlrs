@@ -8,7 +8,7 @@
 //! [`DomSmoothieExtractor`] 是基于 [`dom_smoothie`] crate（readability.js 移植）的性能回退实现，
 //! DOM 启发式提取，比 Trafilatura 略低质量但速度更快。
 //!
-//! 特性门控：本模块整体 gated `extractor-dom-smoothie`（T043 声明的 `dep:dom_smoothie`）。
+//! 特性门控：本模块整体 gated `dom-smoothie`（T043 声明的 `dep:dom_smoothie`）。
 //! 特性未启用时由 [`super::facade::ContentExtractionFacade`] 跳过本实现。
 //!
 //! 提取策略：

@@ -8,14 +8,14 @@
 //! 模块结构：
 //! - [`traits`]：`ContentExtractor` trait + `ExtractedContent` + `PageType`
 //! - [`css_rule_extractor`]：`CssRuleExtractor` 兜底实现（无 feature 依赖）
-//! - [`trafilatura_extractor`]：`TrafilaturaExtractor` 主路径（gated `extractor-trafilatura`）
-//! - [`dom_smoothie_extractor`]：`DomSmoothieExtractor` 性能回退（gated `extractor-dom-smoothie`）
+//! - [`trafilatura_extractor`]：`TrafilaturaExtractor` 主路径（gated `trafilatura`）
+//! - [`dom_smoothie_extractor`]：`DomSmoothieExtractor` 性能回退（gated `dom-smoothie`）
 //! - [`facade`]：`ContentExtractionFacade` 优先级路由 + LLM 回退
 //!
 //! 特性门控策略（R-content-003）：
-//! - `extractor-trafilatura`：启用 trafilatura 实现
-//! - `extractor-dom-smoothie`：启用 dom_smoothie 实现
-//! - `extractor-full`：聚合两者
+//! - `trafilatura`：启用 trafilatura 实现
+//! - `dom-smoothie`：启用 dom_smoothie 实现
+//! - `extractors`：聚合两者
 //! - 三特性均关闭时 Facade 退化为 CssRule 兜底（编译通过，功能可用）
 
 pub mod traits;

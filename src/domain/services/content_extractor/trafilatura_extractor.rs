@@ -8,7 +8,7 @@
 //! [`TrafilaturaExtractor`] 是基于 [`rs_trafilatura`] crate 的主路径实现，
 //! 文章正文提取质量最高。
 //!
-//! 特性门控：本模块整体 gated `extractor-trafilatura`（T043 声明的 `dep:rs-trafilatura`）。
+//! 特性门控：本模块整体 gated `trafilatura`（T043 声明的 `dep:rs-trafilatura`）。
 //! 特性未启用时由 [`super::facade::ContentExtractionFacade`] 跳过本实现回退到下一优先级。
 //!
 //! 提取策略：
