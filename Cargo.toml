@@ -73,11 +73,6 @@ webhook = []
 # --- 测试特性 ---
 test-mocks = []
 
-# --- sdforge 宏生成的 cfg 条件（空特性仅用于通过 check-cfg） ---
-markdown = []
-antibot = []
-browser-download = []
-
 [dependencies]
 # Async runtime and web framework
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
@@ -147,15 +142,15 @@ robotstxt = { version = "0.3" }
 chromiumoxide = { version = "0.9", optional = true }
 chromiumoxide_fetcher = { version = "0.9", optional = true }
 
-# Anti-bot detection — gated by `antibot` feature (T008/R-antibot-002)
+# Anti-bot detection — gated by `content` feature (T008/R-antibot-002)
 # aho-corasick: Tier2 通用词字面量集的多模式匹配（AC 自动机）
 aho-corasick = { version = "1.1", optional = true }
 
-# Markdown conversion — gated by `markdown` feature (T039/R-content-001)
+# Markdown conversion — gated by `content` feature (T039/R-content-001)
 # htmd: HTML→Markdown 转换主路径（Stage2 P1）
 htmd = { version = "0.5", optional = true }
 
-# Content extraction — gated by `extractor-*` features (T043/R-content-003)
+# Content extraction — gated by `trafilatura` / `dom-smoothie` / `extractors` features (T043/R-content-003)
 # rs-trafilatura: 主路径，移植自 trafilatura（提取文章正文 + 元数据）
 rs-trafilatura = { version = "0.2", default-features = false, optional = true }
 # dom_smoothie: 性能回退，移植自 readability.js（DOM 启发式提取）
