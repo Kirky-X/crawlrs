@@ -282,8 +282,8 @@ mod tests {
     impl CacheWriter for FailingBackend {
         async fn set(
             &self,
-            _key: &str,
-            _value: Vec<u8>,
+            _key: Arc<str>,
+            _value: Arc<Vec<u8>>,
             _ttl: Option<Duration>,
         ) -> OxCacheResult<()> {
             Err(oxcache::OxCacheError::Operation(
