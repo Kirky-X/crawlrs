@@ -227,7 +227,7 @@ timeout_seconds = 15
 
 # MLLM Autonomous Navigation Engine (Phase 3)
 # Uses vision LLM to analyze page screenshots and autonomously navigate.
-# Requires 'engine-mllm' feature flag. Depends on engine-playwright + genai-llm.
+# Requires 'engine-mllm' feature flag. Depends on engine-playwright + llm.
 #
 # Feature gate: `engine-mllm`
 # 工作原理：

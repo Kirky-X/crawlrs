@@ -11,7 +11,7 @@
 //!
 //! # 前置条件
 //!
-//! - 编译时需启用 `engine-mllm` feature（隐含 `engine-playwright` + `genai-llm`）
+//! - 编译时需启用 `engine-mllm` feature（隐含 `engine-playwright` + `llm`）
 //! - 需配置视觉模型 API key（如 `GEMINI_API_KEY` 环境变量）
 //! - 需安装 Playwright 浏览器（`cargo run --bin crawlrs -- migrate`）
 //!

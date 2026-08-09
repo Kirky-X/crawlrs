@@ -193,15 +193,13 @@ cargo build --release --features "engine-playwright,metrics"
 | `engine-playwright` | 基于 chromiumoxide 的浏览器自动化 | ❌ 否 |
 | `engine-flaresolverr` | FlareSolverr 反爬虫保护（FlareSolverrMode 枚举区分 Full/Cdp/Tls 三模式） | ❌ 否 |
 | `engine-tls-fingerprint` | TLS 指纹伪装引擎（WreqEngine + BoringSSL JA3/JA4） | ❌ 否 |
-| `engine-mllm` | MLLM 自主导航引擎（视觉 LLM agentic loop，隐含 `engine-playwright` + `genai-llm`） | ❌ 否 |
-| `antibot` | 反爬虫检测（Aho-Corasick + 20+ WAF 指纹 + 三层分类器 + 路由驱动） | ❌ 否 |
-| `markdown` | HTML→Markdown 转换（htmd），ScrapeResponse 增 `markdown` 字段 | ❌ 否 |
-| `extractor-trafilatura` | 正文提取主路径（rs-trafilatura） | ❌ 否 |
-| `extractor-dom-smoothie` | 正文提取回退路径（dom_smoothie） | ❌ 否 |
-| `extractor-full` | 正文提取全启用（trafilatura + dom_smoothie） | ❌ 否 |
+| `engine-mllm` | MLLM 自主导航引擎（视觉 LLM agentic loop，隐含 `engine-playwright` + `llm`） | ❌ 否 |
+| `content` | 内容处理管道（反爬虫检测 + HTML→Markdown 转换） | ❌ 否 |
+| `trafilatura` | 正文提取主路径（rs-trafilatura） | ❌ 否 |
+| `dom-smoothie` | 正文提取回退路径（dom_smoothie） | ❌ 否 |
+| `extractors` | 正文提取全启用（trafilatura + dom_smoothie） | ❌ 否 |
 | `metrics` | Prometheus 指标导出 | ❌ 否 |
-| `genai-llm` | 基于 genai 的 LLM 抽取 | ❌ 否 |
-| `browser-download` | 自动下载 Playwright 浏览器 | ❌ 否 |
+| `llm` | 基于 genai 的 LLM 抽取 | ❌ 否 |
 | `test-mocks` | 测试专用 mock 模块（integration test 需显式启用） | ❌ 否 |
 
 > **说明：** `openapi` 不是 Cargo feature——它是 `sdforge_macros` 的 `#[forge]` 宏生成的 cfg 标记，用于 OpenAPI 规范输出。用户无需显式启用；sdforge 总是编译，openapi 自动生效。
@@ -213,8 +211,8 @@ cargo build --release --features "engine-playwright,metrics"
 | 预设 | 特性组合 | 二进制大小 | 适用场景 |
 |-----|---------|-----------|---------|
 | default | `teams, auth, rate-limit, webhook` | ~30MB | 单租户/多租户全功能（业务能力默认开） |
-| standard | `default + engine-playwright, metrics, antibot, markdown` | ~40MB | 生产推荐（JS 渲染 + 反爬 + Markdown） |
-| full | `standard + engine-flaresolverr + extractor-full` | ~55MB | 所有功能 |
+| standard | `default + engine-playwright, metrics, content` | ~40MB | 生产推荐（JS 渲染 + 内容处理 + 指标） |
+| full | `standard + engine-flaresolverr + extractors + llm` | ~55MB | 所有功能 |
 | no-default | `--no-default-features` | ~22MB | 单租户/无认证部署（业务能力全关，Noop 实现） |
 
 > **注意：** `default` 包含业务能力特性，因此预设表已包含业务能力。如需关闭业务能力，使用 `--no-default-features` 显式列出所需特性（如 `--no-default-features --features rate-limit`）。
@@ -223,7 +221,7 @@ cargo build --release --features "engine-playwright,metrics"
 
 ```bash
 # 自定义组合：核心栈始终编译，仅需指定可选特性
-cargo build --release --features "engine-playwright,metrics,genai-llm"
+cargo build --release --features "engine-playwright,metrics,llm"
 
 # 仅核心栈（关闭所有业务能力 + 引擎，单租户/无认证部署）
 cargo build --release --no-default-features
@@ -247,9 +245,12 @@ cargo build --release --no-default-features --features teams
 | `engine-flaresolverr` | FlareSolverr 引擎（通过 FlareSolverrMode 枚举区分 Full/Cdp/Tls 三种模式） | - |
 | `engine-tls-fingerprint` | TLS 指纹伪装引擎（WreqEngine + BoringSSL） | +8MB |
 | `engine-mllm` | MLLM 自主导航引擎（视觉 LLM agentic loop） | - |
+| `content` | 内容处理管道（反爬检测 + Markdown 转换） | - |
+| `trafilatura` | 正文提取主路径 | - |
+| `dom-smoothie` | 正文提取回退路径 | - |
+| `extractors` | 正文提取全启用 | - |
 | `metrics` | 指标监控 | - |
-| `genai-llm` | genai LLM 抽取 | - |
-| `browser-download` | 自动下载 Playwright 浏览器 | - |
+| `llm` | genai LLM 抽取 | - |
 | `test-mocks` | 测试 mock 模块（`#[cfg(any(test, feature = "test-mocks"))]`） | - |
 
 ### Feature 矩阵（业务能力）
