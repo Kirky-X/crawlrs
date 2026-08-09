@@ -43,7 +43,7 @@ pub mod wreq_engine;
 /// MLLM 自主导航爬取引擎（Phase 3）
 ///
 /// 使用视觉大模型分析页面截图，自主决策导航操作，实现 agentic loop 式智能爬取。
-/// 依赖 engine-playwright（浏览器）+ genai-llm（视觉模型）。
+/// 依赖 engine-playwright（浏览器）+ llm（视觉模型）。
 #[cfg(feature = "engine-mllm")]
 pub mod mllm;
 

@@ -103,7 +103,7 @@ pub struct TlsFingerprintEngineSettings {
 /// MLLM 自主导航爬取引擎配置（Phase 3）
 ///
 /// 配置视觉大模型驱动的浏览器自主导航引擎。
-/// 依赖 `engine-playwright`（浏览器）+ `genai-llm`（视觉模型）。
+/// 依赖 `engine-playwright`（浏览器）+ `llm`（视觉模型）。
 ///
 /// # 字段说明
 ///
