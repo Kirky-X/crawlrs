@@ -117,10 +117,11 @@ fn cache_module_depends_on_settings() {
 }
 
 #[test]
-fn repository_module_depends_on_database() {
+fn repository_module_depends_on_database_and_settings() {
     let deps = RepositoryModule::dependencies();
-    assert_eq!(deps.len(), 1);
+    assert_eq!(deps.len(), 2);
     assert_dep_contains(deps, DatabaseModule::NAME, TypeId::of::<DatabaseModule>());
+    assert_dep_contains(deps, SettingsModule::NAME, TypeId::of::<SettingsModule>());
 }
 
 #[test]
@@ -132,9 +133,9 @@ fn engine_module_depends_on_http_and_settings() {
 }
 
 #[test]
-fn infrastructure_module_depends_on_four_modules() {
+fn infrastructure_module_depends_on_five_modules() {
     let deps = InfrastructureModule::dependencies();
-    assert_eq!(deps.len(), 4);
+    assert_eq!(deps.len(), 5);
     assert_dep_contains(deps, DatabaseModule::NAME, TypeId::of::<DatabaseModule>());
     assert_dep_contains(deps, HttpModule::NAME, TypeId::of::<HttpModule>());
     assert_dep_contains(deps, CacheModule::NAME, TypeId::of::<CacheModule>());
@@ -143,6 +144,7 @@ fn infrastructure_module_depends_on_four_modules() {
         RepositoryModule::NAME,
         TypeId::of::<RepositoryModule>(),
     );
+    assert_dep_contains(deps, SettingsModule::NAME, TypeId::of::<SettingsModule>());
 }
 
 #[test]
