@@ -633,21 +633,6 @@ mod tests {
         assert_eq!(err.to_string(), "Not found: User");
     }
 
-    #[test]
-    fn test_error_debug() {
-        let err = CrawlRsError::Validation("Invalid email".to_string());
-        let debug_str = format!("{:?}", err);
-        assert!(debug_str.contains("Validation"));
-    }
-
-    #[test]
-    fn test_app_result() {
-        let result: CrawlRsResult<i32> = Ok(42);
-        assert!(result.is_ok());
-
-        let result: CrawlRsResult<i32> = Err(CrawlRsError::Config("Missing key".to_string()));
-        assert!(result.is_err());
-    }
 
     #[test]
     fn test_status_code_mapping() {

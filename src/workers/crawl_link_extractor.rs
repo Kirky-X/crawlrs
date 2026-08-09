@@ -376,14 +376,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl CrawlRepository for MockCrawlRepo {
-        async fn create(&self, _crawl: &Crawl) -> Result<Crawl, RepositoryError> {
-            unimplemented!()
+        async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+            Ok(crawl.clone())
         }
         async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
             Ok(None)
         }
-        async fn update(&self, _crawl: &Crawl) -> Result<Crawl, RepositoryError> {
-            unimplemented!()
+        async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
+            Ok(crawl.clone())
         }
         async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
             Ok(())

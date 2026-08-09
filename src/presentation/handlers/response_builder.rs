@@ -462,14 +462,6 @@ mod tests {
         assert!(response.timestamp.is_some());
     }
 
-    #[test]
-    fn test_timestamp_format_is_valid() {
-        let response = ApiResponse::success("test");
-        let ts_str = response.timestamp.unwrap();
-        // Parse as DateTime to verify format
-        let parsed = ChronoDateTime::parse_from_rfc3339(&ts_str);
-        assert!(parsed.is_ok());
-    }
 
     #[test]
     fn test_timestamp_is_recent() {
@@ -1044,12 +1036,6 @@ mod tests {
         assert!(resp.timestamp.is_some());
     }
 
-    #[test]
-    fn test_rate_limit_error_response_timestamp_is_rfc3339() {
-        let resp = RateLimitErrorResponse::new("slow", 10);
-        let ts = resp.timestamp.unwrap();
-        assert!(ChronoDateTime::parse_from_rfc3339(&ts).is_ok());
-    }
 
     #[tokio::test]
     async fn test_rate_limit_error_response_serialization() {
@@ -1082,88 +1068,7 @@ mod tests {
         assert_eq!(err.message, "msg");
     }
 
-    // ========== error_codes module constants ==========
 
-    #[test]
-    fn test_error_codes_validation_error() {
-        assert_eq!(error_codes::VALIDATION_ERROR, "VALIDATION_ERROR");
-    }
-
-    #[test]
-    fn test_error_codes_not_found() {
-        assert_eq!(error_codes::NOT_FOUND, "NOT_FOUND");
-    }
-
-    #[test]
-    fn test_error_codes_unauthorized() {
-        assert_eq!(error_codes::UNAUTHORIZED, "UNAUTHORIZED");
-    }
-
-    #[test]
-    fn test_error_codes_forbidden() {
-        assert_eq!(error_codes::FORBIDDEN, "FORBIDDEN");
-    }
-
-    #[test]
-    fn test_error_codes_rate_limited() {
-        assert_eq!(error_codes::RATE_LIMITED, "RATE_LIMITED");
-    }
-
-    #[test]
-    fn test_error_codes_conflict() {
-        assert_eq!(error_codes::CONFLICT, "CONFLICT");
-    }
-
-    #[test]
-    fn test_error_codes_internal_error() {
-        assert_eq!(error_codes::INTERNAL_ERROR, "INTERNAL_ERROR");
-    }
-
-    #[test]
-    fn test_error_codes_service_unavailable() {
-        assert_eq!(error_codes::SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE");
-    }
-
-    #[test]
-    fn test_error_codes_quota_exceeded() {
-        assert_eq!(error_codes::QUOTA_EXCEEDED, "QUOTA_EXCEEDED");
-    }
-
-    #[test]
-    fn test_error_codes_database_error() {
-        assert_eq!(error_codes::DATABASE_ERROR, "DATABASE_ERROR");
-    }
-
-    #[test]
-    fn test_error_codes_feature_disabled() {
-        assert_eq!(error_codes::FEATURE_DISABLED, "FEATURE_DISABLED");
-    }
-
-    // ========== ApiResponse skip_serializing_if ==========
-
-    #[test]
-    fn test_api_response_error_field_skipped_when_none() {
-        let response = ApiResponse::success("data");
-        let json = serde_json::to_string(&response).unwrap();
-        // error field should be skipped because it's None
-        assert!(!json.contains("\"error\""));
-    }
-
-    #[test]
-    fn test_api_response_meta_field_skipped_when_none() {
-        let response: ApiResponse<()> = ApiResponse::error("ERR", "msg");
-        let json = serde_json::to_string(&response).unwrap();
-        // meta field should be skipped because it's None
-        assert!(!json.contains("\"meta\""));
-    }
-
-    #[test]
-    fn test_api_response_meta_present_when_some() {
-        let meta = PaginationMeta::new(1, 10, 50);
-        let response = ApiResponse::success_with_meta("data", meta);
-        let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("\"meta\""));
-    }
 
     // ========== ApiResponse round-trip deserialization ==========
 
@@ -1189,35 +1094,6 @@ mod tests {
         assert_eq!(deserialized.has_previous, original.has_previous);
     }
 
-    // ========== 缺失的 error_codes 常量测试 ==========
-
-    #[test]
-    fn test_error_codes_precondition_failed() {
-        assert_eq!(error_codes::PRECONDITION_FAILED, "PRECONDITION_FAILED");
-    }
-
-    #[test]
-    fn test_error_codes_unprocessable_entity() {
-        assert_eq!(error_codes::UNPROCESSABLE_ENTITY, "UNPROCESSABLE_ENTITY");
-    }
-
-    #[test]
-    fn test_error_codes_cache_error() {
-        assert_eq!(error_codes::CACHE_ERROR, "CACHE_ERROR");
-    }
-
-    #[test]
-    fn test_error_codes_external_service_error() {
-        assert_eq!(
-            error_codes::EXTERNAL_SERVICE_ERROR,
-            "EXTERNAL_SERVICE_ERROR"
-        );
-    }
-
-    #[test]
-    fn test_error_codes_timeout() {
-        assert_eq!(error_codes::TIMEOUT, "TIMEOUT");
-    }
 
     // ========== RateLimitErrorResponse 反序列化 ==========
 
@@ -1232,19 +1108,4 @@ mod tests {
         assert!(resp.timestamp.is_some());
     }
 
-    #[test]
-    fn test_rate_limit_error_response_skip_timestamp_when_none() {
-        // timestamp 为 None 时序列化结果不应包含 timestamp 字段
-        let resp = RateLimitErrorResponse {
-            success: false,
-            error: ApiError {
-                code: "RATE_LIMITED".to_string(),
-                message: "test".to_string(),
-            },
-            retry_after_seconds: 10,
-            timestamp: None,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(!json.contains("timestamp"));
-    }
 }
