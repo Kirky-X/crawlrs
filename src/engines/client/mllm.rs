@@ -166,7 +166,7 @@ impl ScraperEngine for MllmEngine {
             // Agentic loop
             let mut last_result: Option<ActionResult> = None;
             let mut iteration: u8 = 0;
-            let mut final_content = String::new();
+            let final_content;
 
             loop {
                 if iteration >= self.config.max_iterations {
