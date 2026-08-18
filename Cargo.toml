@@ -126,7 +126,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # Database
 # SAST 修复：jsonwebtoken 已单独声明（仅 hmac+sha2+rand 最小 feature，不开 rsa/p256/p384/ed25519-dalek）
 dbnexus = { workspace = true, optional = true }
-dbnexus-macros = { version = "0.4", default-features = false, features = [], optional = true }
+dbnexus-macros = { version = "0.5", path = "../base/dbnexus/macros", default-features = false, features = [], optional = true }
 
 sea-orm = { workspace = true }
 
