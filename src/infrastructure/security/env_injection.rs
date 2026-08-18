@@ -574,7 +574,6 @@ impl EnvVarSecurityMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::test_support::ENV_MUTEX;
 
     #[test]
     fn test_env_var_check_allowed() {

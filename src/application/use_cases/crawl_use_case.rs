@@ -396,7 +396,7 @@ impl CrawlUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::{ScrapeResult, Task, TaskStatus, TaskType};
+    use crate::domain::models::{ScrapeResult, Task, TaskType};
     use serde_json::json;
     // R-teams-004 / T014：teams feature 关闭时不导入 teams 相关类型
     // （teams-only 测试已门控，mock 类型也门控）

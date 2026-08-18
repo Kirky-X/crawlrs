@@ -338,12 +338,12 @@ mod tests {
     #[test]
     fn test_terminal_states_no_transitions() {
         let completed = create_test_task(TaskStatus::Completed);
-        let mut completed_sm = TaskStateMachine::new(completed);
+        let completed_sm = TaskStateMachine::new(completed);
         assert!(!completed_sm.can_transition(TaskStateEvent::Start));
         assert!(!completed_sm.can_transition(TaskStateEvent::Fail));
 
         let cancelled = create_test_task(TaskStatus::Cancelled);
-        let mut cancelled_sm = TaskStateMachine::new(cancelled);
+        let cancelled_sm = TaskStateMachine::new(cancelled);
         assert!(!cancelled_sm.can_transition(TaskStateEvent::Start));
     }
 
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn test_cancelled_all_events_invalid() {
         let task = create_test_task(TaskStatus::Cancelled);
-        let mut sm = TaskStateMachine::new(task);
+        let sm = TaskStateMachine::new(task);
         for event in [
             TaskStateEvent::Start,
             TaskStateEvent::Complete,
@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn test_completed_all_events_invalid() {
         let task = create_test_task(TaskStatus::Completed);
-        let mut sm = TaskStateMachine::new(task);
+        let sm = TaskStateMachine::new(task);
         for event in [
             TaskStateEvent::Start,
             TaskStateEvent::Complete,
@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn test_get_transition_description_valid() {
         let task = create_test_task(TaskStatus::Queued);
-        let mut sm = TaskStateMachine::new(task);
+        let sm = TaskStateMachine::new(task);
         let desc = sm.get_transition_description(TaskStateEvent::Start);
         assert!(desc.contains("Queued"));
         assert!(desc.contains("Active"));
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn test_get_transition_description_invalid() {
         let task = create_test_task(TaskStatus::Completed);
-        let mut sm = TaskStateMachine::new(task);
+        let sm = TaskStateMachine::new(task);
         let desc = sm.get_transition_description(TaskStateEvent::Start);
         assert!(desc.contains("Invalid"));
     }

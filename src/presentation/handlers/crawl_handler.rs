@@ -16,20 +16,18 @@ mod tests {
     use crate::application::use_cases::crawl_use_case::CrawlUseCaseError;
     use crate::common::constants::crawl_task::{CRAWL_TASK_CREDITS_COST, DEFAULT_TIMEOUT_MS};
     use crate::common::test_helpers::create_test_db_pool;
-    use crate::config::settings::Settings;
     use crate::domain::repositories::task_repository::RepositoryError;
     use crate::i18n::{I18nBundle, Locale};
     use crate::presentation::handlers::task_handler::SyncWaitResult;
     use crate::presentation::middleware::auth_middleware::AuthState;
     use crate::presentation::state::CrawlHandlerState;
-    use crate::queue::task_queue::TaskQueue;
     use axum::{
         extract::{ConnectInfo, Extension, Path},
         http::StatusCode,
         response::IntoResponse,
         Json,
     };
-    use chrono::{Datelike, Utc};
+    use chrono::Datelike;
     use std::net::SocketAddr;
     use std::sync::Arc;
     use uuid::Uuid;

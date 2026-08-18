@@ -730,7 +730,6 @@ pub use super::validation::validate_values;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::test_support::ENV_MUTEX;
 
     #[test]
     fn test_settings_structure() {

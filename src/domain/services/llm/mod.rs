@@ -208,7 +208,6 @@ impl LLMService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use std::sync::Arc;
 
     // ===== TokenUsage tests =====
@@ -376,7 +375,7 @@ json = 'json only'
 
     #[test]
     fn test_llm_service_new_with_config_creates_instance() {
-        let settings = make_test_settings(llm_settings_default());
+        let _settings = make_test_settings(llm_settings_default());
         let http_client = Arc::new(reqwest::Client::new());
         let service = LLMService::new_with_config(
             "test-key".to_string(),

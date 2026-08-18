@@ -16,7 +16,7 @@ mod tests {
     use crate::application::dto::scrape_response::{
         CancelScrapeResponseDto, ScrapeResponseDto, ScrapeResultDto, ScrapeStatusResponseDto,
     };
-    use crate::common::constants::crawl_task::{DEFAULT_TIMEOUT_MS, MAX_SYNC_WAIT_MS};
+    use crate::common::constants::crawl_task::MAX_SYNC_WAIT_MS;
     use crate::config::settings::Settings;
     use crate::domain::models::{Task, TaskStatus, TaskType};
     use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
@@ -24,7 +24,6 @@ mod tests {
     use crate::domain::services::rate_limiting_service::RateLimitingService;
     use crate::i18n::{I18nBundle, Locale};
     use crate::presentation::extractors::AppDeps;
-    use crate::presentation::handlers::task_handler::SyncWaitResult;
     use crate::presentation::middleware::auth_middleware::AuthState;
     use axum::{
         extract::{Extension, Path},
@@ -32,7 +31,7 @@ mod tests {
         response::IntoResponse,
         Json,
     };
-    use chrono::{NaiveDateTime, Utc};
+    use chrono::NaiveDateTime;
     use std::sync::Arc;
     use uuid::Uuid;
     use validator::Validate;

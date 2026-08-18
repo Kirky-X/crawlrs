@@ -25,8 +25,7 @@ mod tests {
         poll_count_exceeded, query_tasks_for_poll, validate_request,
     };
     use crate::application::dto::task_query_request::{
-        CancelledTaskInfoDto, FailedTaskInfoDto, ScrapeResultInfoDto, TaskCancelDataDto,
-        TaskCancelRequestDto, TaskInfoDto, TaskQueryDataDto, TaskQueryRequestDto,
+        TaskCancelRequestDto, TaskQueryRequestDto,
     };
     use crate::common::constants::crawl_task;
     use crate::common::constants::server_config;
@@ -36,15 +35,12 @@ mod tests {
     use crate::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
     use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
     use crate::presentation::errors::CrawlRsError;
-    use crate::presentation::handlers::response_builder::ApiResponse;
     use crate::presentation::middleware::auth_middleware::AuthState;
     use async_trait::async_trait;
     use axum::{extract::Extension, Json};
-    use chrono::Utc;
     use dbnexus::DbPool;
     use std::sync::{Arc, Mutex};
     use uuid::Uuid;
-    use validator::Validate;
 
     // ========== Helper to create test Task ==========
 

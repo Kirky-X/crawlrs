@@ -44,7 +44,7 @@ pub use crate::infrastructure::security::ssrf::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::shared::{is_blocked_hostname, is_private_ip};
+    use crate::engines::shared::is_blocked_hostname;
 
     #[tokio::test]
     async fn test_validate_url_ssrf() {

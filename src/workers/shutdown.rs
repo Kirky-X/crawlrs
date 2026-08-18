@@ -248,7 +248,6 @@ mod tests {
     use crate::domain::repositories::task_repository::{
         RepositoryError, TaskQueryParams, TaskRepository,
     };
-    use chrono::{DateTime, Utc};
     use std::collections::HashSet;
     use uuid::Uuid;
 

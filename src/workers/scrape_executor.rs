@@ -230,7 +230,6 @@ mod tests {
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
 
     fn make_task(url: &str) -> Task {
         Task {
