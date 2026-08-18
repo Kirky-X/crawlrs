@@ -10,7 +10,7 @@
 //! based implementation.
 
 use crate::config::DatabaseSettings;
-use dbnexus::{CacheConfig, DbConfig, DbPool, Session};
+use dbnexus::{CacheConfig, DbConfig, DbPool, PoolConfig, Session};
 use log::{debug, info, warn};
 use sea_orm::{ConnAcquireErr, DbErr};
 use std::ops::Deref;
@@ -258,10 +258,13 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
     // Create DbConfig from settings
     let config = DbConfig {
         url: settings.url.clone(),
-        max_connections,
-        min_connections,
-        idle_timeout,
-        acquire_timeout,
+        pool_config: PoolConfig {
+            max_connections,
+            min_connections,
+            idle_timeout,
+            acquire_timeout,
+            ..PoolConfig::default()
+        },
         permissions_path,
         migrations_dir: None,
         auto_migrate: false,
@@ -270,6 +273,9 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
         warmup_timeout: 30,
         warmup_retries: 3,
         cache_config: CacheConfig::default(),
+        retry_policy: None,
+        failover_config: None,
+        replica_config: None,
     };
 
     // Create pool using dbnexus with_config (handles async initialization)

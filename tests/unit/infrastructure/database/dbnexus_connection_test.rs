@@ -27,7 +27,7 @@ use crawlrs::config::DatabaseSettings;
 use crawlrs::infrastructure::database::dbnexus_connection::{
     create_pool, create_pool_with_retry, DatabasePool, PoolStats,
 };
-use dbnexus::{CacheConfig, DbConfig, DbPool};
+use dbnexus::{CacheConfig, DbConfig, DbPool, PoolConfig};
 use testcontainers::core::IntoContainerPort;
 use testcontainers::runners::AsyncRunner;
 use testcontainers::ImageExt;
@@ -95,10 +95,13 @@ async fn setup_real_pg() -> Option<String> {
 async fn setup_real_db_pool(url: &str) -> Option<DbPool> {
     let config = DbConfig {
         url: url.to_string(),
-        max_connections: 5,
-        min_connections: 1,
-        idle_timeout: 300,
-        acquire_timeout: 30000,
+        pool_config: PoolConfig {
+            max_connections: 5,
+            min_connections: 1,
+            idle_timeout: 300,
+            acquire_timeout: 30000,
+            ..PoolConfig::default()
+        },
         permissions_path: None,
         migrations_dir: None,
         auto_migrate: false,
@@ -107,6 +110,9 @@ async fn setup_real_db_pool(url: &str) -> Option<DbPool> {
         warmup_timeout: 30,
         warmup_retries: 3,
         cache_config: CacheConfig::default(),
+        retry_policy: None,
+        failover_config: None,
+        replica_config: None,
     };
     match DbPool::with_config(config).await {
         Ok(p) => Some(p),

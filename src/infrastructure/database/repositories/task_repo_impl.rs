@@ -49,6 +49,9 @@ impl From<dbnexus::DbError> for RepositoryError {
             DbError::Migration(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
                 format!("Migration: {}", msg)
             ))),
+            DbError::Cache(msg) | DbError::Query(msg) => {
+                RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(msg)))
+            }
         }
     }
 }

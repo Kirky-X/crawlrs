@@ -6,7 +6,7 @@
 // Minimal test helpers for queue_client_test and task_repository_test
 // This file provides just enough functionality to run the basic tests
 
-use dbnexus::{CacheConfig, DbConfig, DbPool};
+use dbnexus::{CacheConfig, DbConfig, DbPool, PoolConfig};
 use sea_orm::ConnectionTrait;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -32,10 +32,13 @@ async fn create_db_pool() -> Arc<DbPool> {
 
     let config = DbConfig {
         url: db_url,
-        max_connections: 10,
-        min_connections: 1,
-        idle_timeout: 300,
-        acquire_timeout: 30000,
+        pool_config: PoolConfig {
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout: 300,
+            acquire_timeout: 30000,
+            ..PoolConfig::default()
+        },
         permissions_path: Some("tests/integration/helpers/permissions.json".to_string()),
         migrations_dir: None,
         auto_migrate: false,
@@ -44,6 +47,9 @@ async fn create_db_pool() -> Arc<DbPool> {
         warmup_timeout: 30,
         warmup_retries: 3,
         cache_config: CacheConfig::default(),
+        retry_policy: None,
+        failover_config: None,
+        replica_config: None,
     };
 
     let pool = DbPool::with_config(config)

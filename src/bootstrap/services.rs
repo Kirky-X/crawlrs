@@ -407,9 +407,14 @@ pub async fn init_garrison_auth(
     let interface: Arc<dyn GarrisonInterface> =
         Arc::new(CrawlrsGarrisonInterface::new((*pool).clone()));
 
-    // 4. 写入 garrison 全局单例（同步函数，覆盖式更新允许重复 init）
+    // 4. 写入 garrison 全局单例（builder 模式，异步 build）
     // Stage 3 重构：使用类型化 `BootstrapError::GarrisonManager`。
-    GarrisonManager::init(dao, config, interface)
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
         .map_err(|e| BootstrapError::GarrisonManager(format!("{e}")))?;
 
     // 5. 决策 2：断言 garrison firewall 已启用（仅依赖 garrison 做 CWE-307 IP 限速）

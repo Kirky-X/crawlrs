@@ -10,7 +10,7 @@
 //! Uses unique IPs per test to avoid interference with the global
 //! IP_RATE_LIMITER singleton.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use async_trait::async_trait;
 use axum::{
@@ -496,7 +496,11 @@ async fn tc_middleware_retry_after_returns_429_with_retry_after_header() {
 
 #[tokio::test]
 async fn tc_middleware_service_error_fail_open_allows_request() {
-    // RATE_LIMIT_FAIL_OPEN is const true → service errors must allow the request.
+    // RATE_LIMIT_FAIL_OPEN 从 env 读取（默认 false=fail-closed）。
+    // 本测试验证 fail-open 行为：显式设置 true。
+    static ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+    let _guard = ENV_MUTEX.lock().expect("ENV_MUTEX poisoned");
+    std::env::set_var("RATE_LIMIT_FAIL_OPEN", "true");
     let app = build_app(mock_arc(MockBehavior::Error));
     let response = app
         .oneshot(

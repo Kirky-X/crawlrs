@@ -144,7 +144,7 @@ dirs = "6.0"
 
 # Logging and observability
 log.workspace = true
-inklog = { version = "0.1", default-features = false, features = ["cli"] }
+inklog = { version = "0.2", path = "../base/inklog", default-features = false, features = ["cli"] }
 sdforge = { workspace = true, optional = true }
 metrics = { version = "0.24", optional = true }
 metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"], optional = true }
@@ -201,7 +201,7 @@ ipnetwork = "0.21"
 hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
 
 # Rate limiting and circuit breaking — gated by `rate-limit` feature
-limiteron = { version = "0.2", default-features = false, optional = true, features = [
+limiteron = { version = "0.2", path = "../base/limiteron", default-features = false, optional = true, features = [
     "postgres",
     "ban-manager",
     "quota-control",
@@ -213,7 +213,7 @@ limiteron = { version = "0.2", default-features = false, optional = true, featur
 # Authentication & authorization framework — gated by `auth` feature
 # garrison-auth-migration (R-auth-engine-001)：auth-on 改由 garrison 提供认证引擎
 # 版本与 dbnexus/oxcache/trait-kit/confers/inklog/sdforge/limiteron 同作者对齐（共享 rc.43 链）
-garrison = { version = "0.8", default-features = false, optional = true, features = [
+garrison = { version = "0.8", path = "/home/kirky/projects/garrison", default-features = false, optional = true, features = [
     "backend-embedded",
     "web-axum",
     "db-postgres",
@@ -254,8 +254,8 @@ genai = { version = "0.6", optional = true }
 toml = "1.1"
 
 # Dependency Injection
-trait-kit = { version = "0.4", features = ["async", "confers"] }
-oxcache = { version = "0.4", default-features = false, features = ["memory", "serialization", "macros", "batch", "metrics", "bloom"] }
+trait-kit = { version = "0.4", path = "../base/trait-kit", features = ["async", "confers"] }
+oxcache = { version = "0.4", path = "../base/oxcache", default-features = false, features = ["memory", "serialization", "macros", "batch", "metrics", "bloom"] }
 ahash = "0.8"
 
 # Internationalization (i18n) — Mozilla Fluent system
@@ -357,7 +357,7 @@ tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "fs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # Configuration
-confers = { version = "0.4", default-features = false, features = ["validation", "toml", "env"] }
+confers = { version = "0.5", path = "../base/confers", default-features = false, features = ["validation", "toml", "env"] }
 figment = { version = "0.10", default-features = false, features = ["toml", "json", "yaml", "env"] }
 # Error handling
 anyhow = "1.0"
@@ -373,10 +373,10 @@ regex = "1.13"
 # Encoding
 base64 = "0.23"
 # Database
-dbnexus = { version = "0.4", default-features = false, features = ["postgres", "runtime-tokio-rustls", "cache", "macros", "migration", "config-env", "config-toml", "chrono", "uuid", "with-json"] }
+dbnexus = { version = "0.5", path = "../base/dbnexus", default-features = false, features = ["postgres", "runtime-tokio-rustls", "cache", "macros", "migration", "config-env", "config-toml", "chrono", "with-uuid", "with-json", "replica-routing", "yaml", "permission"] }
 sea-orm = { version = "2.0.1", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK
-sdforge = { version = "0.4", default-features = false, features = ["http"] }
+sdforge = { version = "0.4", path = "../base/sdforge", default-features = false, features = ["http"] }
 # Web framework
 axum = "0.8"
 

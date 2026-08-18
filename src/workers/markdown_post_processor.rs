@@ -85,7 +85,7 @@ pub enum MarkdownPostProcessorError {
 /// // generate is async — use .await in async context
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
 /// let md = processor.generate(Uuid::new_v4(), &req, "<html><body><h1>Hi</h1></body></html>").await;
-/// assert!(md.is_some());
+/// assert!(md.unwrap().is_some());
 /// # });
 /// ```
 #[derive(Clone)]

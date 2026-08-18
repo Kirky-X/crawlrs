@@ -41,6 +41,9 @@ impl From<dbnexus::DbError> for AuditRepositoryError {
             DbError::Migration(msg) => AuditRepositoryError::DatabaseError(anyhow::anyhow!(
                 DbErr::Custom(format!("Migration: {}", msg))
             )),
+            DbError::Cache(msg) | DbError::Query(msg) => {
+                AuditRepositoryError::DatabaseError(anyhow::anyhow!(DbErr::Custom(msg)))
+            }
         }
     }
 }
