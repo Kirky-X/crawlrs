@@ -23,8 +23,8 @@ use crate::domain::repositories::task_repository::TaskRepository;
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
 use crate::presentation::handlers::response_builder::{error_response, ApiResponse};
-use crate::presentation::handlers::{check_ssrf_urls_batch, sync_wait_status_code};
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
+use crate::presentation::handlers::{check_ssrf_urls_batch, sync_wait_status_code};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 use std::sync::Arc;
@@ -78,7 +78,9 @@ where
     }
 
     // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证
-    if let Some(response) = check_ssrf_urls_batch(&payload.urls, team_id, auth_state.api_key_id).await {
+    if let Some(response) =
+        check_ssrf_urls_batch(&payload.urls, team_id, auth_state.api_key_id).await
+    {
         return response;
     }
 
@@ -205,7 +207,8 @@ where
                 status: "pending".to_string(),
             };
 
-            let status_code = sync_wait_status_code(sync_wait_ms, waited_time_ms >= sync_wait_ms as u64);
+            let status_code =
+                sync_wait_status_code(sync_wait_ms, waited_time_ms >= sync_wait_ms as u64);
 
             (status_code, Json(ApiResponse::success(response))).into_response()
         }
@@ -245,7 +248,9 @@ pub async fn extract(
     }
 
     // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证
-    if let Some(response) = check_ssrf_urls_batch(&payload.urls, team_id, auth_state.api_key_id).await {
+    if let Some(response) =
+        check_ssrf_urls_batch(&payload.urls, team_id, auth_state.api_key_id).await
+    {
         return response;
     }
 
@@ -308,7 +313,8 @@ pub async fn extract(
                 status: "pending".to_string(),
             };
 
-            let status_code = sync_wait_status_code(sync_wait_ms, waited_time_ms >= sync_wait_ms as u64);
+            let status_code =
+                sync_wait_status_code(sync_wait_ms, waited_time_ms >= sync_wait_ms as u64);
 
             (status_code, Json(ApiResponse::success(response))).into_response()
         }

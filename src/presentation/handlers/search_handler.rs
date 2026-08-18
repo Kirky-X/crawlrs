@@ -19,7 +19,7 @@ use crate::{
         services::rate_limiting_service::RateLimitingService,
         services::search_service::{SearchQuery, SearchServiceError, SearchServiceTrait},
     },
-    presentation::handlers::{check_ssrf_url},
+    presentation::handlers::check_ssrf_url,
     presentation::handlers::response_builder::{error_response, success_response},
     presentation::handlers::task_handler::wait_for_tasks_completion,
     presentation::helpers::rate_limit_helper::check_rate_limit,

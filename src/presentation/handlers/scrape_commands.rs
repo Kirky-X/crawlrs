@@ -22,11 +22,11 @@ use crate::{
     domain::repositories::task_repository::TaskRepository,
     i18n::{I18nBundle, Locale},
     presentation::extractors::AppDeps,
-    presentation::handlers::{check_ssrf_url, sync_wait_status_code},
     presentation::handlers::response_builder::{
         errors, errors_locale, success_response, ApiResponse,
     },
     presentation::handlers::task_handler::handle_sync_wait_and_get_status,
+    presentation::handlers::{check_ssrf_url, sync_wait_status_code},
     presentation::helpers::rate_limit_helper::check_rate_limit,
     presentation::middleware::auth_middleware::AuthState,
 };
@@ -85,7 +85,8 @@ pub async fn create_scrape(
     // 2.5 SSRF 防护 (CWE-918)：验证 options.proxy 不指向内部网络
     if let Some(ref options) = payload.options {
         if let Some(ref proxy_url) = options.proxy {
-            if let Some(response) = check_ssrf_url(proxy_url, team_id, auth_state.api_key_id).await {
+            if let Some(response) = check_ssrf_url(proxy_url, team_id, auth_state.api_key_id).await
+            {
                 return response;
             }
         }

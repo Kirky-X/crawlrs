@@ -297,7 +297,10 @@ mod tests {
     #[test]
     fn test_scoring_context_with_kg_priority_boost_clamps_below_one() {
         let ctx = ScoringContext::new().with_kg_priority_boost(0.5);
-        assert!((ctx.kg_priority_boost - 1.0).abs() < f64::EPSILON, "boost must be clamped to >= 1.0");
+        assert!(
+            (ctx.kg_priority_boost - 1.0).abs() < f64::EPSILON,
+            "boost must be clamped to >= 1.0"
+        );
     }
 
     #[test]

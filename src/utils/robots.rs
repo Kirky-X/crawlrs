@@ -36,8 +36,8 @@ pub enum RobotsCheckerError {
 
 impl_basic_error_conversions!(RobotsCheckerError, ValidationError);
 
-impl From<crate::presentation::helpers::ssrf::SsrfError> for RobotsCheckerError {
-    fn from(err: crate::presentation::helpers::ssrf::SsrfError) -> Self {
+impl From<crate::infrastructure::security::ssrf::SsrfError> for RobotsCheckerError {
+    fn from(err: crate::infrastructure::security::ssrf::SsrfError) -> Self {
         RobotsCheckerError::ValidationError(err.to_string())
     }
 }
@@ -344,7 +344,7 @@ impl RobotsChecker {
 mod tests {
     // Copyright (c) 2025 Kirky.X
     use super::*;
-    use crate::presentation::helpers::ssrf::SsrfError;
+    use crate::infrastructure::security::ssrf::SsrfError;
 
     // ========== CacheStats tests ==========
 

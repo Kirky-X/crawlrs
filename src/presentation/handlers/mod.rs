@@ -40,8 +40,8 @@ use axum::response::Response;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use crate::infrastructure::security::ssrf::validate_url;
 use crate::presentation::handlers::response_builder::errors;
-use crate::presentation::helpers::ssrf::validate_url;
 
 /// 从任务列表中提取ID列表 - 消除重复代码
 #[inline]
@@ -81,7 +81,11 @@ pub async fn check_ssrf_url(url: &str, team_id: Uuid, api_key_id: Uuid) -> Optio
 }
 
 /// SSRF 批量验证多个 URL，失败返回错误响应
-pub async fn check_ssrf_urls_batch(urls: &[String], team_id: Uuid, api_key_id: Uuid) -> Option<Response> {
+pub async fn check_ssrf_urls_batch(
+    urls: &[String],
+    team_id: Uuid,
+    api_key_id: Uuid,
+) -> Option<Response> {
     let results = futures::future::join_all(urls.iter().map(|url| validate_url(url))).await;
     for (url, result) in urls.iter().zip(results) {
         if let Err(e) = result {

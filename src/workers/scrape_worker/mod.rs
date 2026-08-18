@@ -41,7 +41,7 @@ use crate::engines::engine_client::{
     ScrollDirection,
 };
 use crate::infrastructure::oxcache::CacheService;
-use crate::presentation::helpers::ssrf::is_internal_url;
+use crate::infrastructure::security::ssrf::is_internal_url;
 use crate::queue::task_queue::TaskQueue;
 // H-4 职责拆分：请求合并协调器（替代原 request_coalescer 字段 + try_coalesce 方法）
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;

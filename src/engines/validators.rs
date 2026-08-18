@@ -11,7 +11,7 @@
 //! ## Architecture
 //!
 //! This module now delegates to the unified SSRF protection module at
-//! `crate::presentation::helpers::ssrf` which provides:
+//! `crate::infrastructure::security::ssrf` which provides:
 //! - Static URL validation (fast pre-check)
 //! - DNS resolution validation (DNS rebinding protection)
 //! - Redirect validation
@@ -36,7 +36,7 @@
 //! ```
 
 // Re-export from unified SSRF module
-pub use crate::presentation::helpers::ssrf::{
+pub use crate::infrastructure::security::ssrf::{
     is_internal_url, validate_domain_blacklist, validate_url, RedirectPolicy, RedirectValidator,
     SsrfConfig, SsrfError, SsrfValidationResult, SsrfValidator, ValidatedUrl,
 };

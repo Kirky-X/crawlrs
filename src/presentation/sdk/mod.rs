@@ -101,7 +101,7 @@ pub struct SdkCrawlResponse {
 
 #[forge(
     name = "sdk_search",
-    version = "1",
+    version = "v1",
     path = "/sdk/search",
     method = "POST",
     description = "SDK search endpoint"
@@ -158,7 +158,7 @@ async fn sdk_search(
 
 #[forge(
     name = "sdk_create_task",
-    version = "1",
+    version = "v1",
     path = "/sdk/tasks",
     method = "POST",
     description = "SDK create task endpoint"
@@ -228,7 +228,7 @@ async fn sdk_create_task(
 
 #[forge(
     name = "sdk_scrape",
-    version = "1",
+    version = "v1",
     path = "/sdk/scrape",
     method = "POST",
     description = "SDK scrape endpoint"
@@ -285,7 +285,7 @@ async fn sdk_scrape(
 
 #[forge(
     name = "sdk_create_crawl",
-    version = "1",
+    version = "v1",
     path = "/sdk/crawl",
     method = "POST",
     description = "SDK create crawl endpoint"
@@ -345,5 +345,8 @@ pub fn build_sdk_router() -> axum::Router {
 #[cfg(any(test, feature = "test-mocks"))]
 pub mod mocks;
 
-#[cfg(feature = "test-mocks")]
+// tests.rs 依赖 test_helpers（`cfg(all(test, feature = "platform"))`）与
+// dev-dependency axum-test，仅 test 构建可编译；`cargo check` 等非 test 构建
+// 即使启用 test-mocks 也不能编译（E0432 unresolved import）。
+#[cfg(all(test, feature = "test-mocks"))]
 mod tests;

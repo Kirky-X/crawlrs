@@ -21,8 +21,20 @@ categories = ["web-programming", "web-programming::http-client"]
 exclude = []
 
 [features]
-# 默认构建保持现有全功能行为：多租户 + 认证 + 限流 + Webhook
-default = ["teams", "auth", "rate-limit", "webhook"]
+# 默认构建保持现有全功能行为：平台全套（多租户 + 认证 + 限流 + Webhook + metrics + content）
+default = ["platform"]
+
+# platform：完整平台服务能力面。agent-lib / 嵌入式接入方用 `--no-default-features` 剥离。
+# 挂载 platform 的服务端依赖：dbnexus（DB）、axum（HTTP）、sdforge（SDK 宏）。
+# garrison/inventory（auth 隐含）、sysinfo（metrics 隐含）已分别挂既有 feature。
+platform = [
+    "teams", "auth", "rate-limit", "webhook", "metrics", "content",
+    "dep:dbnexus", "dep:dbnexus-macros", "dep:axum", "dep:sdforge",
+    "inklog/http", "inklog/postgres", "http",
+]
+# sdforge 0.4 `#[forge]` 宏生成 `cfg(feature = "http")` 门控的 HTTP 路由注册代码
+# （inventory submit）。下游 crate 必须显式声明本 feature 才会生成路由。
+http = ["sdforge/http"]
 
 standard = ["engine-playwright", "metrics", "content"]
 full = ["standard", "engine-flaresolverr", "extractors", "llm"]
@@ -52,6 +64,10 @@ dom-smoothie = ["dep:dom_smoothie"]
 # extractors: 聚合两个 extractor，折叠进 `full`（保证 `--features full` 时全可用）
 extractors = ["trafilatura", "dom-smoothie"]
 
+# --- 库面特性（agent-lib：嵌入式/agent 最小库面，不编译 DB/服务端） ---
+# 复用 engines/search/content 既有依赖；不引入新第三方依赖（spec constraint）。
+agent-lib = ["content", "trafilatura", "dom-smoothie"]
+
 # --- 基础设施特性 ---
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
 
@@ -76,7 +92,7 @@ test-mocks = []
 [dependencies]
 # Async runtime and web framework
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
-axum.workspace = true
+axum = { workspace = true, optional = true }
 futures = "0.3"
 async-trait = "0.1"
 tower = { version = "0.5", features = ["util"] }
@@ -99,7 +115,7 @@ backon = { version = "1.6", default-features = false, features = ["tokio-sleep"]
 subtle = "2.6"
 
 # HTTP client and networking
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs", "cookies", "http2", "charset", "system-proxy", "gzip", "brotli"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "cookies", "http2", "charset", "system-proxy", "gzip", "brotli", "stream"] }
 # TLS 指纹引擎（Phase 1 / D4）：BoringSSL 后端 HTTP 客户端，Apache-2.0。
 # wreq 5.x 稳定版（6.0.0-rc 为预发布，不选）。EmulationProvider/EmulationProviderFactory/TlsConfig
 # 均为 wreq 自有 API，无需引入 GPL 的 wreq-util。构建需 cmake + C 编译器（BoringSSL）。
@@ -109,8 +125,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 
 # Database
 # SAST 修复：jsonwebtoken 已单独声明（仅 hmac+sha2+rand 最小 feature，不开 rsa/p256/p384/ed25519-dalek）
-dbnexus.workspace = true
-dbnexus-macros = { version = "0.4", default-features = false, features = [] }
+dbnexus = { workspace = true, optional = true }
+dbnexus-macros = { version = "0.4", default-features = false, features = [], optional = true }
 
 sea-orm = { workspace = true }
 
@@ -128,8 +144,8 @@ dirs = "6.0"
 
 # Logging and observability
 log.workspace = true
-inklog = { version = "0.1", default-features = false, features = ["cli", "http", "postgres"] }
-sdforge.workspace = true
+inklog = { version = "0.1", default-features = false, features = ["cli"] }
+sdforge = { workspace = true, optional = true }
 metrics = { version = "0.24", optional = true }
 metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"], optional = true }
 # inventory：编译期监听器注册（garrison GarrisonListenerEntry 需要，crawlrs 直接使用以注册 CrawlrsAuditListener）
@@ -282,6 +298,17 @@ name = "sdk_api_test"
 path = "tests/sdk_api_test.rs"
 required-features = ["test-mocks"]
 
+# 临时诊断测试：依赖 presentation（platform 门控），非平台构建时跳过
+[[test]]
+name = "route_diag_test"
+path = "tests/route_diag_test.rs"
+required-features = ["platform"]
+
+[[example]]
+name = "tls_fingerprint_check"
+path = "examples/tls_fingerprint_check.rs"
+required-features = ["engine-tls-fingerprint"]
+
 [[bench]]
 name = "benchmark"
 harness = false
@@ -290,6 +317,7 @@ path = "benches/benchmark.rs"
 [[bin]]
 name = "crawlrs"
 path = "src/main.rs"
+required-features = ["platform"]
 
 # =============================================================================
 # Build Optimization Profiles
@@ -365,7 +393,7 @@ libc = "0.2"
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability"))'
+    'cfg(feature, values("platform", "agent-lib", "engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability"))'
 ]
 
 

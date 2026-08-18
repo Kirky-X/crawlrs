@@ -153,13 +153,9 @@ impl ScraperEngine for MllmEngine {
 
             // Navigate to target URL
             info!("MLLM engine navigating to: {}", request.url);
-            page.goto(
-                chromiumoxide::page::NavigateParams::builder()
-                    .url(&request.url)
-                    .build(),
-            )
-            .await
-            .map_err(|e| EngineError::BrowserError(format!("Navigation failed: {}", e)))?;
+            page.goto(&request.url)
+                .await
+                .map_err(|e| EngineError::BrowserError(format!("Navigation failed: {}", e)))?;
 
             // Wait for initial page load
             tokio::time::sleep(Duration::from_millis(1500)).await;

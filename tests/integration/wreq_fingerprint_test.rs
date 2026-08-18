@@ -96,6 +96,7 @@ async fn wreq_engine_emits_tls_ja4_fingerprint() {
         block_media: false,
         session_id: None,
         wait_for: None,
+        needs_mllm: false,
     };
 
     let response = engine
@@ -149,6 +150,7 @@ fn wreq_engine_scores_tls_requests_highest() {
         block_media: false,
         session_id: None,
         wait_for: None,
+        needs_mllm: false,
     };
     let baseline = engine.support_score(&req);
     req.needs_tls_fingerprint = true;

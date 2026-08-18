@@ -17,6 +17,7 @@
 ///
 /// 基础设施层遵循依赖倒置原则，依赖于领域层的抽象接口，
 /// 确保领域层保持纯粹的业务逻辑，不受技术实现的影响。
+#[cfg(feature = "platform")]
 pub mod database;
 pub mod dns;
 pub mod errors;
@@ -25,8 +26,10 @@ pub mod geolocation;
 pub mod metrics;
 pub mod observability;
 pub mod oxcache;
+#[cfg(feature = "platform")]
 pub mod persistence;
 pub mod security;
+#[cfg(feature = "platform")]
 pub use database::repositories;
 // R-auth-engine-002 / T004：garrison 认证基础设施仅在 auth feature 启用时编译
 // （DAO 复用内建 GarrisonDaoOxcache、Config 构造、Interface 实现 RBAC 桥接）

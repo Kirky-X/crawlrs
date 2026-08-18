@@ -16,7 +16,7 @@ use super::{
 use crate::application::dto::crawl_request::CrawlConfigDto;
 use crate::domain::models::Task;
 use crate::engines::engine_client::{ScrapeRequest, ScrapeResponse};
-use crate::presentation::helpers::ssrf::is_internal_url;
+use crate::infrastructure::security::ssrf::is_internal_url;
 use crate::workers::crawl::adaptive::{CrawlStats, StopCondition};
 use anyhow::Result;
 use log::{error, info, warn};

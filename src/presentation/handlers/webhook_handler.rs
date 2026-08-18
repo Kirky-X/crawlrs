@@ -17,13 +17,13 @@ use crate::domain::services::webhook_service::{
     verify_webhook_signature_from_parts, WEBHOOK_AUTH_FAILED,
 };
 use crate::domain::use_cases::create_webhook::CreateWebhookUseCase;
-// 架构 MEDIUM-2：与 crawl/scrape handler 统一使用 `presentation::helpers::ssrf::validate_url`。
+// 架构 MEDIUM-2：与 crawl/scrape handler 统一使用 `infrastructure::security::ssrf::validate_url`。
 // `engines::validators::validate_url` 仅是 re-export（见 engines/validators.rs line 39-42），
 // 直接使用源模块避免读者跳两次 import 才找到实现。
+use crate::infrastructure::security::ssrf::validate_url;
 use crate::presentation::errors::CrawlRsError;
 use crate::presentation::handlers::response_builder::ApiResponse;
 use crate::presentation::helpers::rate_limit_helper::check_rate_limit_as_app_error;
-use crate::presentation::helpers::ssrf::validate_url;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::body::Bytes;
 use axum::http::{HeaderMap, StatusCode};

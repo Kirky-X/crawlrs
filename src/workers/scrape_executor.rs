@@ -487,30 +487,59 @@ mod tests {
     }
 
     impl ErrorCacheService {
-        fn get_error() -> Self { Self { get_err: true, set_err: false } }
-        fn set_error() -> Self { Self { get_err: false, set_err: true } }
+        fn get_error() -> Self {
+            Self {
+                get_err: true,
+                set_err: false,
+            }
+        }
+        fn set_error() -> Self {
+            Self {
+                get_err: false,
+                set_err: true,
+            }
+        }
     }
 
     #[async_trait::async_trait]
     impl CacheService for ErrorCacheService {
-        fn get(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>> {
+        fn get(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>,
+        > {
             if self.get_err {
                 Box::pin(async { Err(anyhow::anyhow!("cache get error")) })
             } else {
                 Box::pin(async { Ok(None) })
             }
         }
-        fn set(&self, _key: &str, _value: &str, _ttl: u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+        fn set(
+            &self,
+            _key: &str,
+            _value: &str,
+            _ttl: u64,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
             if self.set_err {
                 Box::pin(async { Err(anyhow::anyhow!("cache set error")) })
             } else {
                 Box::pin(async { Ok(()) })
             }
         }
-        fn delete(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+        fn delete(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
             Box::pin(async { Ok(()) })
         }
-        fn exists(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>> {
+        fn exists(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+        {
             Box::pin(async { Ok(false) })
         }
     }
@@ -519,16 +548,35 @@ mod tests {
 
     #[async_trait::async_trait]
     impl CacheService for CorruptCacheService {
-        fn get(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>> {
+        fn get(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>,
+        > {
             Box::pin(async { Ok(Some("not-valid-json".to_string())) })
         }
-        fn set(&self, _key: &str, _value: &str, _ttl: u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+        fn set(
+            &self,
+            _key: &str,
+            _value: &str,
+            _ttl: u64,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
             Box::pin(async { Ok(()) })
         }
-        fn delete(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+        fn delete(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
             Box::pin(async { Ok(()) })
         }
-        fn exists(&self, _key: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>> {
+        fn exists(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>
+        {
             Box::pin(async { Ok(false) })
         }
     }
@@ -554,7 +602,10 @@ mod tests {
         };
         let cache = CorruptCacheService;
         let result = try_read_scrape_cache(&ctx, "key", &cache).await;
-        assert!(result.is_err(), "corrupt cache data should return deserialization error");
+        assert!(
+            result.is_err(),
+            "corrupt cache data should return deserialization error"
+        );
     }
 
     #[tokio::test]

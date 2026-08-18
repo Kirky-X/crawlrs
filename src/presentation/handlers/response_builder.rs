@@ -462,7 +462,6 @@ mod tests {
         assert!(response.timestamp.is_some());
     }
 
-
     #[test]
     fn test_timestamp_is_recent() {
         use chrono::Utc;
@@ -1036,7 +1035,6 @@ mod tests {
         assert!(resp.timestamp.is_some());
     }
 
-
     #[tokio::test]
     async fn test_rate_limit_error_response_serialization() {
         let resp = RateLimitErrorResponse::new("limited", 120);
@@ -1068,8 +1066,6 @@ mod tests {
         assert_eq!(err.message, "msg");
     }
 
-
-
     // ========== ApiResponse round-trip deserialization ==========
 
     #[test]
@@ -1094,7 +1090,6 @@ mod tests {
         assert_eq!(deserialized.has_previous, original.has_previous);
     }
 
-
     // ========== RateLimitErrorResponse 反序列化 ==========
 
     #[test]
@@ -1107,5 +1102,4 @@ mod tests {
         assert_eq!(resp.retry_after_seconds, 45);
         assert!(resp.timestamp.is_some());
     }
-
 }

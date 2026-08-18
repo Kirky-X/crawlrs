@@ -569,7 +569,10 @@ mod tests {
         let result = handle.await.expect("task panicked");
         assert!(result.is_ok());
         let guard = result.unwrap();
-        assert!(guard.is_none(), "max reschedule exceeded should return None");
+        assert!(
+            guard.is_none(),
+            "max reschedule exceeded should return None"
+        );
 
         // update 应被调用（设置 Failed 状态 + error message）
         let captured = task_repo.captured_updates.lock().unwrap();
@@ -587,12 +590,24 @@ mod tests {
         struct ErrorResultRepo;
         #[async_trait]
         impl ScrapeResultRepository for ErrorResultRepo {
-            async fn save(&self, _result: crate::domain::models::ScrapeResult) -> Result<()> { Ok(()) }
-            async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<crate::domain::models::ScrapeResult>> {
+            async fn save(&self, _result: crate::domain::models::ScrapeResult) -> Result<()> {
+                Ok(())
+            }
+            async fn find_by_task_id(
+                &self,
+                _task_id: Uuid,
+            ) -> Result<Option<crate::domain::models::ScrapeResult>> {
                 Err(anyhow::anyhow!("db connection lost"))
             }
-            async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> Result<Vec<crate::domain::models::ScrapeResult>> { Ok(vec![]) }
-            async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> { Ok(0.0) }
+            async fn find_by_task_ids(
+                &self,
+                _task_ids: &[Uuid],
+            ) -> Result<Vec<crate::domain::models::ScrapeResult>> {
+                Ok(vec![])
+            }
+            async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
+                Ok(0.0)
+            }
         }
 
         let result_repo = Arc::new(ErrorResultRepo);

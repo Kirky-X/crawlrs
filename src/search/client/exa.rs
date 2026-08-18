@@ -786,10 +786,16 @@ mod tests {
     #[test]
     fn test_parse_text_results_description_truncated_at_500() {
         let long_desc = "x".repeat(600);
-        let text = format!("Title: Truncated\nURL: https://trunc.com\nHighlights:\n{}", long_desc);
+        let text = format!(
+            "Title: Truncated\nURL: https://trunc.com\nHighlights:\n{}",
+            long_desc
+        );
         let results = ExaSearchEngine::parse_text_results(&text);
         assert_eq!(results.len(), 1);
-        assert!(results[0].description.len() <= 503, "description should be truncated to ~500 chars + '...'");
+        assert!(
+            results[0].description.len() <= 503,
+            "description should be truncated to ~500 chars + '...'"
+        );
         assert!(results[0].description.ends_with("..."));
     }
 

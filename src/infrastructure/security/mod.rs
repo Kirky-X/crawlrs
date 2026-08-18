@@ -20,6 +20,7 @@
 //! | [`secure_ip`] | 受信代理下的客户端 IP 提取 |
 //! | [`constant_time_compare`] | 常量时间字符串比较（防时序侧信道） |
 //! | [`api_key_hash`] | API Key 的 bcrypt 哈希与验证 |
+//! | [`ssrf`] | 统一 SSRF 防护（静态校验 / DNS 防重绑定 / 重定向校验 / TOCTOU） |
 
 // 子模块声明
 pub mod api_key_hash;
@@ -27,9 +28,12 @@ pub mod constant_time_compare;
 pub mod env_injection;
 pub mod env_validation;
 pub mod env_var_security;
+#[cfg(feature = "platform")]
 pub mod secure_ip;
+pub mod ssrf;
 
 // 重新导出常用类型与函数（保持现有调用路径 `security::hash_api_key` 等不变）
 pub use api_key_hash::{hash_api_key, hash_api_key_sha256, is_legacy_sha256_hash, verify_api_key};
 pub use constant_time_compare::constant_time_eq_str;
+#[cfg(feature = "platform")]
 pub use secure_ip::{get_secure_client_ip, SecureIpExtractor, TrustedProxyConfig};

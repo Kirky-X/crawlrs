@@ -10,10 +10,12 @@
 
 mod bundle;
 mod locale;
+#[cfg(feature = "platform")]
 mod middleware;
 mod translate;
 
 pub use bundle::{I18nBundle, Locale};
 pub use locale::{negotiate_locale, parse_accept_language};
+#[cfg(feature = "platform")]
 pub use middleware::i18n_middleware;
 pub use translate::{t, t_with_args};

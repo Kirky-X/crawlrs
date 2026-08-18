@@ -78,6 +78,7 @@ fn make_request(url: &str, needs_js: bool, skip_tls: bool) -> InternalScrapeRequ
         session_id: None,
         wait_for: None,
         needs_mllm: false,
+        needs_mllm: false,
     }
 }
 

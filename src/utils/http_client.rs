@@ -125,7 +125,7 @@ fn create_client(timeout_secs: u64, max_redirects: u8) -> Client {
 ///
 /// A `reqwest::redirect::Policy` that validates redirect URLs
 pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect::Policy {
-    use crate::presentation::helpers::ssrf::is_internal_url;
+    use crate::infrastructure::security::ssrf::is_internal_url;
 
     reqwest::redirect::Policy::custom(move |attempt| {
         // Check redirect count

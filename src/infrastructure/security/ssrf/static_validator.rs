@@ -45,7 +45,7 @@ use url::Url;
 /// # Examples
 ///
 /// ```ignore
-/// use crate::presentation::helpers::ssrf::is_internal_url;
+/// use crate::infrastructure::security::ssrf::is_internal_url;
 ///
 /// // Internal URLs - returns true
 /// assert!(is_internal_url("http://localhost:8080"));

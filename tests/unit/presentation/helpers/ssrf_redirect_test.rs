@@ -18,7 +18,7 @@
 
 #![cfg(test)]
 
-use crawlrs::presentation::helpers::ssrf::{RedirectPolicy, RedirectValidator, SsrfError};
+use crawlrs::infrastructure::security::ssrf::{RedirectPolicy, RedirectValidator, SsrfError};
 
 // ============================================================
 // RedirectValidator::would_validate max_redirects 超限路径

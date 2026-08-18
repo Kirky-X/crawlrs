@@ -28,6 +28,7 @@ fn mkreq(url: &str) -> InternalScrapeRequest {
         block_media: false,
         session_id: None,
         wait_for: None,
+        needs_mllm: false,
     }
 }
 

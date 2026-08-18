@@ -407,23 +407,53 @@ mod tests {
         async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Err(RepositoryError::NotFound)
         }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
-        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> { Ok(false) }
-        async fn find_existing_urls(&self, _urls: &[String]) -> Result<HashSet<String>, RepositoryError> {
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
             Ok(HashSet::new())
         }
-        async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> {
-            Err(RepositoryError::Database(anyhow::anyhow!("db connection lost")))
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Err(RepositoryError::Database(anyhow::anyhow!(
+                "db connection lost"
+            )))
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> { Ok(0) }
-        async fn expire_tasks(&self) -> Result<u64, RepositoryError> { Ok(0) }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> { Ok(vec![]) }
-        async fn query_tasks(&self, _params: TaskQueryParams) -> Result<(Vec<Task>, u64), RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
             Ok((vec![], 0))
         }
-        async fn batch_cancel(&self, _task_ids: Vec<Uuid>, _team_id: Uuid, _force: bool) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
         }
     }
@@ -432,25 +462,81 @@ mod tests {
 
     #[async_trait]
     impl TaskRepository for SlowTaskRepository {
-        async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> { Ok(Task::new(Uuid::new_v4(), TaskType::Scrape, Uuid::new_v4(), Uuid::new_v4(), String::new(), serde_json::json!({}))) }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> { Ok(None) }
-        async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> { Ok(Task::new(Uuid::new_v4(), TaskType::Scrape, Uuid::new_v4(), Uuid::new_v4(), String::new(), serde_json::json!({}))) }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> { Ok(None) }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> { Ok(()) }
-        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> { Ok(false) }
-        async fn find_existing_urls(&self, _urls: &[String]) -> Result<HashSet<String>, RepositoryError> { Ok(HashSet::new()) }
-        async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> {
+        async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
+            Ok(Task::new(
+                Uuid::new_v4(),
+                TaskType::Scrape,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                String::new(),
+                serde_json::json!({}),
+            ))
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> {
+            Ok(Task::new(
+                Uuid::new_v4(),
+                TaskType::Scrape,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                String::new(),
+                serde_json::json!({}),
+            ))
+        }
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
+            Ok(HashSet::new())
+        }
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
             // 模拟超时的数据库操作
             tokio::time::sleep(Duration::from_secs(10)).await;
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> { Ok(0) }
-        async fn expire_tasks(&self) -> Result<u64, RepositoryError> { Ok(0) }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> { Ok(vec![]) }
-        async fn query_tasks(&self, _params: TaskQueryParams) -> Result<(Vec<Task>, u64), RepositoryError> { Ok((vec![], 0)) }
-        async fn batch_cancel(&self, _task_ids: Vec<Uuid>, _team_id: Uuid, _force: bool) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> { Ok((vec![], vec![])) }
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            Ok((vec![], 0))
+        }
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
     }
 
     #[tokio::test]

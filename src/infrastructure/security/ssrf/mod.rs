@@ -136,7 +136,7 @@ impl SsrfValidator {
     /// # Example
     ///
     /// ```ignore
-    /// use crate::presentation::helpers::ssrf::SsrfValidator;
+    /// use crate::infrastructure::security::ssrf::SsrfValidator;
     ///
     /// let validator = SsrfValidator::new();
     /// let result = validator.validate("https://example.com").await;

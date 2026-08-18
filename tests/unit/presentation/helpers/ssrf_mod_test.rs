@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crawlrs::infrastructure::dns::DnsCacheService;
-use crawlrs::presentation::helpers::ssrf::{SsrfConfig, SsrfError, SsrfValidator};
+use crawlrs::infrastructure::security::ssrf::{SsrfConfig, SsrfError, SsrfValidator};
 
 // ============================================================
 // 辅助函数
