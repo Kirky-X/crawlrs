@@ -24,9 +24,7 @@ mod tests {
         calculate_next_interval, execute_task_query, fetch_scrape_results, handle_sync_wait,
         poll_count_exceeded, query_tasks_for_poll, validate_request,
     };
-    use crate::application::dto::task_query_request::{
-        TaskCancelRequestDto, TaskQueryRequestDto,
-    };
+    use crate::application::dto::task_query_request::{TaskCancelRequestDto, TaskQueryRequestDto};
     use crate::common::constants::crawl_task;
     use crate::common::constants::server_config;
     use crate::domain::auth::ApiKeyScope;
