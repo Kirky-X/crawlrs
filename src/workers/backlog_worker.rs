@@ -400,6 +400,7 @@ mod tests {
             trusted_proxies: TrustedProxySettings::default(),
             auth: AuthSettings::default(),
             i18n: I18nSettings::default(),
+            retention: RetentionSettings::default(),
         };
         Arc::new(settings)
     }

@@ -106,6 +106,17 @@ mod tests {
         assert_eq!(settings.server.host, "0.0.0.0");
     }
 
+    /// R-retention-001：`CRAWLRS__RETENTION__SCRAPE_RESULTS_DAYS` 环境变量可覆盖默认值。
+    ///
+    /// 测试末尾恢复环境变量，避免影响并行测试（其他用例不读 retention 字段）。
+    #[test]
+    fn test_retention_env_override() {
+        std::env::set_var("CRAWLRS__RETENTION__SCRAPE_RESULTS_DAYS", "7");
+        let settings = load_settings().expect("Failed to load settings");
+        assert_eq!(settings.retention.scrape_results_days, 7);
+        std::env::remove_var("CRAWLRS__RETENTION__SCRAPE_RESULTS_DAYS");
+    }
+
     #[test]
     fn test_load_settings_has_database_config() {
         let settings = load_settings().expect("Failed to load settings");
@@ -131,7 +142,7 @@ mod tests {
     fn test_load_settings_has_tls_fingerprint_engine_config() {
         // T020：`[engines.tls_fingerprint]` 配置段应从 default.toml 正确解析
         let settings = load_settings().expect("Failed to load settings");
-        assert_eq!(settings.engines.tls_fingerprint.enabled, false);
+        assert!(!settings.engines.tls_fingerprint.enabled);
         assert_eq!(settings.engines.tls_fingerprint.timeout_seconds, 15);
     }
 

@@ -361,3 +361,18 @@ supported_locales = ["en-US", "zh-CN"]
 # 翻译文件根目录路径（相对于工作目录）
 locales_dir = "locales"
 
+
+# Data Retention Governance
+# 数据保留期治理：RetentionWorker 按 interval_seconds 周期清理四类数据
+# （判龄字段说明见 src/config/settings.rs RetentionSettings）
+[retention]
+# 清理执行间隔（秒）
+interval_seconds = 3600
+# scrape_results 保留天数
+scrape_results_days = 30
+# webhook_events 终态事件保留天数
+webhook_events_days = 30
+# geo_restriction_logs 保留天数
+geo_logs_days = 90
+# audit_logs 保留天数
+audit_logs_days = 90

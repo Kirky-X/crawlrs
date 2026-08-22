@@ -101,6 +101,9 @@ pub struct Settings {
 
     /// 国际化配置（i18n）
     pub i18n: I18nSettings,
+
+    /// 数据保留期治理配置（R-retention-001）
+    pub retention: RetentionSettings,
 }
 
 // =============================================================================
@@ -557,6 +560,40 @@ pub struct CacheTypeSpecificSettings {
 }
 
 // =============================================================================
+// 数据保留期治理配置
+// =============================================================================
+
+/// 数据保留期治理配置（R-retention-001）
+///
+/// RetentionWorker 按 `interval_seconds` 周期清理四类数据：
+/// 每类删除对应判龄字段早于 `NOW() - days` 的行（判龄字段见设计：
+/// scrape/geo 用 created_at，webhook delivered 用 delivered_at、dead 用
+/// updated_at，audit 用 created_at）。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__RETENTION__")]
+pub struct RetentionSettings {
+    /// 清理执行间隔（秒）
+    #[config(default = 3600)]
+    pub interval_seconds: u64,
+
+    /// scrape_results 保留天数
+    #[config(default = 30)]
+    pub scrape_results_days: i64,
+
+    /// webhook_events 终态事件保留天数
+    #[config(default = 30)]
+    pub webhook_events_days: i64,
+
+    /// geo_restriction_logs 保留天数
+    #[config(default = 90)]
+    pub geo_logs_days: i64,
+
+    /// audit_logs 保留天数
+    #[config(default = 90)]
+    pub audit_logs_days: i64,
+}
+
+// =============================================================================
 // 可信代理配置
 // =============================================================================
 
@@ -731,6 +768,17 @@ pub use super::validation::validate_values;
 mod tests {
     use super::*;
 
+    /// R-retention-001：`[retention]` 空段时各字段取默认值（3600s 间隔 + 四类数据保留天数）。
+    #[test]
+    fn retention_defaults_load_from_toml() {
+        let settings = RetentionSettings::default();
+        assert_eq!(settings.interval_seconds, 3600);
+        assert_eq!(settings.scrape_results_days, 30);
+        assert_eq!(settings.webhook_events_days, 30);
+        assert_eq!(settings.geo_logs_days, 90);
+        assert_eq!(settings.audit_logs_days, 90);
+    }
+
     #[test]
     fn test_settings_structure() {
         let settings = Settings {
@@ -752,6 +800,7 @@ mod tests {
             trusted_proxies: TrustedProxySettings::default(),
             auth: AuthSettings::default(),
             i18n: I18nSettings::default(),
+            retention: RetentionSettings::default(),
         };
 
         assert_eq!(settings.server.port, 8899);
