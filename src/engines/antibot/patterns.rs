@@ -197,7 +197,7 @@ mod tests {
             .iter()
             .find(|(re, _)| re.is_match(body))
             .map(|(_, t)| *t)
-            .map_or(false, |t| t == expected)
+            == Some(expected)
     }
 
     // -------- Tier1：每个 WAF 至少 1 个标记测试（共 8 个 WAF） --------

@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn default_equals_new() {
         let a = TrafilaturaExtractor::new();
-        let b = TrafilaturaExtractor::default();
+        let b = TrafilaturaExtractor;
         let html = r#"<html><body><article><p>some content</p></article></body></html>"#;
         let ra = a
             .extract(html, "https://example.com/")
@@ -269,7 +269,7 @@ mod tests {
 
         // 低比例 → 接近 0.7
         let c = TrafilaturaExtractor::calculate_confidence(1, 1000);
-        assert!(c >= 0.7 && c < 0.75, "ratio=0.001 → near 0.7, got: {c}");
+        assert!((0.7..0.75).contains(&c), "ratio=0.001 → near 0.7, got: {c}");
     }
 
     /// 超长 HTML 应能正常提取（不 panic）

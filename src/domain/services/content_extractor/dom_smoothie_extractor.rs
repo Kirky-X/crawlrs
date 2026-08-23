@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn default_equals_new() {
         let a = DomSmoothieExtractor::new();
-        let b = DomSmoothieExtractor::default();
+        let b = DomSmoothieExtractor;
         let html = r#"<html><body><article><p>some content</p></article></body></html>"#;
         let ra = a
             .extract(html, "https://example.com/")

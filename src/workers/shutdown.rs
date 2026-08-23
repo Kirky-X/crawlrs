@@ -204,7 +204,7 @@ mod tests {
         let coordinator = Arc::new(ShutdownCoordinator::new(Duration::from_secs(60)));
         coordinator.trigger();
         let result = coordinator.wait_for_completion().await;
-        assert_eq!(result, true);
+        assert!(result);
     }
 
     #[tokio::test]
@@ -214,7 +214,7 @@ mod tests {
         let start = std::time::Instant::now();
         let result = coordinator.wait_for_completion().await;
         let elapsed = start.elapsed();
-        assert_eq!(result, false, "timeout should return false");
+        assert!(!result, "timeout should return false");
         assert!(
             elapsed >= Duration::from_millis(40),
             "timeout should wait at least ~graceful_period, got {:?}",
@@ -234,7 +234,7 @@ mod tests {
         let start = std::time::Instant::now();
         let result = coordinator.wait_for_completion().await;
         let elapsed = start.elapsed();
-        assert_eq!(result, true);
+        assert!(result);
         assert!(
             elapsed < Duration::from_secs(5),
             "should unblock promptly on trigger, got {:?}",

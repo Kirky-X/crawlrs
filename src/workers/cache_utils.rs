@@ -368,11 +368,15 @@ mod tests {
         // 场景：浏览器渲染后 DOM 与原始 HTML 不能共享缓存
         let ctx = make_ctx("https://example.com", HttpMethod::Get);
 
-        let mut opts_js = ScrapeOptions::default();
-        opts_js.needs_js = true;
+        let opts_js = ScrapeOptions {
+            needs_js: true,
+            ..Default::default()
+        };
 
-        let mut opts_no_js = ScrapeOptions::default();
-        opts_no_js.needs_js = false;
+        let opts_no_js = ScrapeOptions {
+            needs_js: false,
+            ..Default::default()
+        };
 
         let key_js = generate_scrape_cache_key(&ctx, &opts_js);
         let key_no_js = generate_scrape_cache_key(&ctx, &opts_no_js);
@@ -388,11 +392,15 @@ mod tests {
         // 场景：不同粘性会话走不同代理，IP 风控结果不同，不能共享缓存
         let ctx = make_ctx("https://example.com", HttpMethod::Get);
 
-        let mut opts_s1 = ScrapeOptions::default();
-        opts_s1.session_id = Some("session-abc".to_string());
+        let opts_s1 = ScrapeOptions {
+            session_id: Some("session-abc".to_string()),
+            ..Default::default()
+        };
 
-        let mut opts_s2 = ScrapeOptions::default();
-        opts_s2.session_id = Some("session-xyz".to_string());
+        let opts_s2 = ScrapeOptions {
+            session_id: Some("session-xyz".to_string()),
+            ..Default::default()
+        };
 
         let key_s1 = generate_scrape_cache_key(&ctx, &opts_s1);
         let key_s2 = generate_scrape_cache_key(&ctx, &opts_s2);

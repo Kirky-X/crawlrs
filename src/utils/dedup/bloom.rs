@@ -316,13 +316,8 @@ impl Drop for MmapBloom {
                     );
                 }
             }
-            #[cfg(not(unix))]
-            AllocKind::Mmap { .. } => {
-                // Unreachable on non-unix, but handle gracefully.
-                unsafe {
-                    let _ = Vec::from_raw_parts(self.ptr, self.len_bytes, self.len_bytes);
-                }
-            }
+            // 注：Mmap variant 仅 unix 定义（cfg(unix)），Windows 面枚举只有 Heap，
+            // match 在 Heap 臂穷尽，故此处无 not(unix) 的 Mmap 分支。
             AllocKind::Heap => {
                 // SAFETY: `ptr` was obtained from a `Vec<u8>` of exactly
                 // `len_bytes` length and capacity, then `mem::forget`'d.

@@ -5,7 +5,11 @@ use crate::engines::engine_client::{
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// 指纹记录类型：各引擎按调用记录 UA / Accept-Language / sec-ch-ua 三元组
+type RecordedHeaders = Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>;
 
 // A simple test engine that is a controllable implementation
 struct TestScraperEngineImpl {
@@ -922,7 +926,7 @@ async fn test_c1_fingerprint_headers_rotated_together() {
     /// 记录每次调用全部指纹相关 header（UA / AL / sec-ch-ua）
     struct FingerprintRecordingEngine {
         name: &'static str,
-        recorded: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
+        recorded: RecordedHeaders,
         error_msg: Option<String>,
         response: Option<InternalScrapeResponse>,
     }
@@ -958,10 +962,7 @@ async fn test_c1_fingerprint_headers_rotated_together() {
         }
     }
 
-    fn make_failing(
-        name: &'static str,
-        rec: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
-    ) -> Arc<dyn ScraperEngine> {
+    fn make_failing(name: &'static str, rec: RecordedHeaders) -> Arc<dyn ScraperEngine> {
         Arc::new(FingerprintRecordingEngine {
             name,
             recorded: rec,
@@ -970,10 +971,7 @@ async fn test_c1_fingerprint_headers_rotated_together() {
         })
     }
 
-    fn make_success(
-        name: &'static str,
-        rec: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
-    ) -> Arc<dyn ScraperEngine> {
+    fn make_success(name: &'static str, rec: RecordedHeaders) -> Arc<dyn ScraperEngine> {
         Arc::new(FingerprintRecordingEngine {
             name,
             recorded: rec,
@@ -1195,16 +1193,16 @@ async fn test_t028_retry_tracker_caps_feature_toggle() {
     );
 
     // 验证只有前 3 个引擎被调用（cap=3 → 3 次 record 后停止）
-    for i in 0..3 {
-        let c = counts[i].lock().unwrap();
+    for (i, item) in counts.iter().enumerate().take(3) {
+        let c = item.lock().unwrap();
         assert_eq!(
             *c, 1,
             "engine {} should be called exactly once (within cap)",
             i
         );
     }
-    for i in 3..5 {
-        let c = counts[i].lock().unwrap();
+    for (i, item) in counts.iter().enumerate().skip(3) {
+        let c = item.lock().unwrap();
         assert_eq!(
             *c, 0,
             "engine {} should NOT be called (RetryTracker stopped after cap=3)",

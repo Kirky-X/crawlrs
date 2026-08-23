@@ -263,7 +263,6 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
             min_connections,
             idle_timeout,
             acquire_timeout,
-            ..PoolConfig::default()
         },
         permissions_path,
         migrations_dir: None,

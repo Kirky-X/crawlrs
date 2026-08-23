@@ -420,6 +420,10 @@ mod tests {
             !facade.extractors.is_empty(),
             "extractors chain should not be empty"
         );
+        #[cfg_attr(
+            not(any(feature = "trafilatura", feature = "dom-smoothie")),
+            allow(unused_variables)
+        )]
         let names: Vec<&'static str> = facade.extractors.iter().map(|e| e.name()).collect();
         assert!(
             names.contains(&"css-rule"),
@@ -432,6 +436,10 @@ mod tests {
     #[test]
     fn extractors_priority_order_trafilatura_before_dom_smoothie_before_css_rule() {
         let facade = ContentExtractionFacade::new(None);
+        #[cfg_attr(
+            not(any(feature = "trafilatura", feature = "dom-smoothie")),
+            allow(unused_variables)
+        )]
         let names: Vec<&'static str> = facade.extractors.iter().map(|e| e.name()).collect();
 
         #[cfg(feature = "trafilatura")]

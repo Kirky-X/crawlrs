@@ -450,7 +450,7 @@ mod tests {
     async fn test_shutdown_signal_initially_false() {
         let scheduler = make_static_scheduler(0.5, 0.8, 0.9, Duration::from_secs(30));
         let rx = scheduler.shutdown_signal();
-        assert_eq!(*rx.borrow(), false);
+        assert!(!(*rx.borrow()));
     }
 
     #[tokio::test]
@@ -466,7 +466,7 @@ mod tests {
         // 等待后台任务采样并最终触发关闭信号
         let changed = tokio::time::timeout(Duration::from_secs(5), rx.changed()).await;
         assert!(changed.is_ok(), "spawn_monitor 必须在超时后发送关闭信号");
-        assert_eq!(*rx.borrow(), true);
+        assert!(*rx.borrow());
     }
 
     #[tokio::test]

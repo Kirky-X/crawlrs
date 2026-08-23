@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn test_get_browser_executable_path_with_empty_dir() {
         let cache_dir = PathBuf::new();
-        let exe_path = get_browser_executable_path(&cache_dir);
+        let _exe_path = get_browser_executable_path(&cache_dir);
         // Should still produce a valid relative path
         #[cfg(target_os = "linux")]
         assert!(exe_path.ends_with("chrome"));

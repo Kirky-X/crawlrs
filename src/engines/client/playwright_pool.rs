@@ -1119,7 +1119,7 @@ mod tests {
         // 要么在 shutdown 后返回错误。关键是无 panic。
         let mut error_count = 0;
         for handle in handles {
-            if let Err(_) = handle.await.unwrap() {
+            if handle.await.unwrap().is_err() {
                 error_count += 1;
             }
         }

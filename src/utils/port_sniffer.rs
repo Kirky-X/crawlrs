@@ -139,13 +139,12 @@ mod tests {
 
     #[test]
     fn test_is_port_in_use() {
-        // 绑定一个随机端口
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        // 绑定一个随机端口（与 is_port_in_use 的探测地址一致用 0.0.0.0：
+        // Windows 允许 127.0.0.1 与 0.0.0.0 同端口共存绑定，绑定地址不同会漏判）
+        let listener = TcpListener::bind(("0.0.0.0", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
 
         // 该端口应该显示被占用
-        // 注意：is_port_in_use 尝试绑定 0.0.0.0，如果测试环境支持双栈或特定绑定可能会有差异
-        // 这里简单测试逻辑
         assert!(PortSniffer::is_port_in_use(port));
     }
 

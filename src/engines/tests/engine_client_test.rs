@@ -1449,7 +1449,7 @@ fn test_validate_session_id_rejects_control_chars() {
     assert!(!validate_session_id("session\n123"));
     assert!(!validate_session_id("session\t123"));
     assert!(!validate_session_id("session\r123"));
-    assert!(!validate_session_id("session\0123"));
+    assert!(!validate_session_id("session\x00123"));
     assert!(!validate_session_id("session\u{007F}123"));
 }
 
@@ -1502,8 +1502,14 @@ fn test_session_id_builder_rejects_control_chars() {
 #[test]
 fn test_to_internal_validates_session_id() {
     // to_internal 应二次校验 session_id，拒绝非法值
-    let mut options = ScrapeOptions::default();
-    options.session_id = Some("bad\nsession".to_string());
+    let options = ScrapeOptions {
+        session_id: Some(
+            "bad
+session"
+                .to_string(),
+        ),
+        ..Default::default()
+    };
     let request = ScrapeRequest::new("https://example.com").with_options(options);
     let internal = request.to_internal();
     assert!(
@@ -1514,8 +1520,10 @@ fn test_to_internal_validates_session_id() {
 
 #[test]
 fn test_to_internal_preserves_valid_session_id() {
-    let mut options = ScrapeOptions::default();
-    options.session_id = Some("valid-session".to_string());
+    let options = ScrapeOptions {
+        session_id: Some("valid-session".to_string()),
+        ..Default::default()
+    };
     let request = ScrapeRequest::new("https://example.com").with_options(options);
     let internal = request.to_internal();
     assert_eq!(

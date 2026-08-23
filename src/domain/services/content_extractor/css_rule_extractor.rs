@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn default_equals_new() {
         let a = CssRuleExtractor::new();
-        let b = CssRuleExtractor::default();
+        let b = CssRuleExtractor;
         let html = "<p>same content</p>";
         let ra = a
             .extract(html, "https://example.com/")

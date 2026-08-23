@@ -10,7 +10,7 @@ use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepos
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
-use crate::domain::services::audit_service::{AuditServiceError, AuditServiceTrait};
+use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
@@ -998,7 +998,7 @@ mod tests {
 
     #[async_trait]
     impl AuditServiceTrait for MockAuditService {
-        async fn log(&self, _entry: crate::domain::auth::AuditLogEntry) -> Result<(), AuditServiceError> {
+        async fn log(&self, _entry: crate::domain::auth::AuditLogEntry) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
             Ok(())
         }
         async fn log_allow(
@@ -1007,7 +1007,7 @@ mod tests {
             _api_key_id: Uuid,
             _team_id: Uuid,
             _scope: crate::domain::auth::ApiKeyScope,
-        ) -> Result<(), AuditServiceError> {
+        ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
             Ok(())
         }
         async fn log_deny(
@@ -1017,7 +1017,7 @@ mod tests {
             _team_id: Option<Uuid>,
             _reason: String,
             _scope: Option<crate::domain::auth::ApiKeyScope>,
-        ) -> Result<(), AuditServiceError> {
+        ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
             Ok(())
         }
         async fn get_logs_for_key(
@@ -1025,7 +1025,7 @@ mod tests {
             _api_key_id: Uuid,
             _limit: u64,
             _offset: u64,
-        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, AuditServiceError> {
+        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, crate::domain::services::audit_service::AuditServiceError> {
             Ok(vec![])
         }
         async fn get_logs_for_team(
@@ -1033,17 +1033,17 @@ mod tests {
             _team_id: Uuid,
             _limit: u64,
             _offset: u64,
-        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, AuditServiceError> {
+        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, crate::domain::services::audit_service::AuditServiceError> {
             Ok(vec![])
         }
         async fn get_denied_requests(
             &self,
             _api_key_id: Uuid,
             _limit: u64,
-        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, AuditServiceError> {
+        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, crate::domain::services::audit_service::AuditServiceError> {
             Ok(vec![])
         }
-        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditServiceError> {
+        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, crate::domain::services::audit_service::AuditServiceError> {
             Ok(0)
         }
     }

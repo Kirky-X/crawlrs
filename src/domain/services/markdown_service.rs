@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn default_equals_new() {
         let a = HtmdMarkdownService::new();
-        let b = HtmdMarkdownService::default();
+        let b = HtmdMarkdownService;
         // 无状态服务，等价性通过可调用相同输入验证
         let html = "<p>test</p>";
         let ra = a.to_markdown(html, false).expect("a convert ok");
