@@ -277,6 +277,10 @@ mod tests {
             self.updated_events.lock().unwrap().push(event.clone());
             Ok(event.clone())
         }
+
+        async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
     }
 
     /// Mock WebhookService that can be configured to succeed or fail

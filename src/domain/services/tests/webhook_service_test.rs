@@ -47,6 +47,10 @@ impl WebhookEventRepository for MockWebhookEventRepository {
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
         Ok(event.clone())
     }
+
+    async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+        Ok(0)
+    }
 }
 
 /// Repository mock that always fails on create
@@ -81,6 +85,10 @@ impl WebhookEventRepository for FailingWebhookEventRepository {
 
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
         Ok(event.clone())
+    }
+
+    async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+        Ok(0)
     }
 }
 
@@ -1165,6 +1173,10 @@ impl WebhookEventRepository for ConfigurableWebhookEventRepository {
         }
         Ok(event.clone())
     }
+
+    async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+        Ok(0)
+    }
 }
 
 /// find_pending 始终失败的 WebhookEvent 仓库 mock
@@ -1201,6 +1213,10 @@ impl WebhookEventRepository for FindPendingFailingEventRepository {
 
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
         Ok(event.clone())
+    }
+
+    async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+        Ok(0)
     }
 }
 

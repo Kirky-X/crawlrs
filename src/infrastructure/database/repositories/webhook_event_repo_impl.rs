@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use dbnexus::DbPool;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect,
 };
 use std::sync::Arc;
@@ -180,6 +180,44 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
         Ok(count)
+    }
+
+    async fn cleanup_terminal(&self, retention_days: i64) -> Result<u64, RepositoryError> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let cutoff = Utc::now() - chrono::Duration::days(retention_days);
+
+        let terminal_condition = Condition::any()
+            .add(
+                Condition::all()
+                    .add(webhook_event::Column::Status.eq(
+                        webhook_event::SeaWebhookStatus::Delivered,
+                    ))
+                    .add(webhook_event::Column::DeliveredAt.lt(cutoff)),
+            )
+            .add(
+                Condition::all()
+                    .add(webhook_event::Column::Status.eq(
+                        webhook_event::SeaWebhookStatus::Dead,
+                    ))
+                    .add(webhook_event::Column::UpdatedAt.lt(cutoff)),
+            );
+
+        let result = webhook_event::Entity::delete_many()
+            .filter(terminal_condition)
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        Ok(result.rows_affected)
     }
 }
 
@@ -413,3 +451,7 @@ mod tests {
         assert!(msg.contains("Database error"));
     }
 }
+
+#[cfg(test)]
+#[path = "tests/webhook_event_cleanup_test.rs"]
+mod integration_tests;

@@ -30,4 +30,10 @@ pub trait WebhookEventRepository: Send + Sync {
     async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError>;
     /// 更新Webhook事件
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError>;
+
+    /// 按保留期删除终态事件（R-retention-004）
+    ///
+    /// 删除 `status='delivered'` 且 `delivered_at` 早于 `NOW() - retention_days`，
+    /// 或 `status='dead'` 且 `updated_at` 早于该 cutoff 的行，返回删除行数。
+    async fn cleanup_terminal(&self, retention_days: i64) -> Result<u64, RepositoryError>;
 }
