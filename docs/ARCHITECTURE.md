@@ -589,6 +589,8 @@ dbnexus provides connection pooling, permission control, migration framework, me
 | `geo_restriction_logs` | Geographic restriction check logs |
 | `auth_scopes` | ⚠️ DEPRECATED (0.2.0): garrison RBAC 接管权限映射，本表不再写入（`deprecated_at` 标记，仅作历史审计只读） |
 
+> R-retention-007：`scrape_results` 在保留期治理（`[retention]` 配置，默认 30 天）生效后按窗口滚动清理；依赖该表的统计（如 `ScrapeResultRepository::get_team_avg_response_time`）语义变为"保留窗口内的近期平均响应时间"，窗口滚动后统计自然准确。
+
 **Cache Layer:**
 
 **Technology:** oxcache 0.3 (in-memory, no Redis backend)

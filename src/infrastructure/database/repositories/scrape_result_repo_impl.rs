@@ -153,6 +153,9 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
         // JOIN scrape_results with tasks on task_id, filter by team_id and
         // last 30 days. AVG(bigint) returns numeric; cast to DOUBLE PRECISION
         // so it maps cleanly to f64. COALESCE returns 0.0 when no rows match.
+        //
+        // R-retention-007：retention 生效后本统计基于保留窗口（默认 30 天）内的
+        // 数据计算——窗口滚动后统计自然准确，无需迁移历史聚合。
         let stmt = Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"SELECT COALESCE(AVG(sr.response_time_ms), 0)::DOUBLE PRECISION AS avg_ms
