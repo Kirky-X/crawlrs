@@ -1279,6 +1279,8 @@ flowchart LR
 
 ## Queue System
 
+> **R-queue-001**：项目内三套 Postgres 队列机制（`tasks` 任务队列、`webhook_events` 通知 outbox、`message_queues` 通用消息队列）的职责边界与收敛条件见 `docs/queue-architecture.md`——新队列使用场景须先对照该文档，避免机制混用。
+
 ### Architecture
 
 The queue system uses a **trait-based** approach with a PostgreSQL-backed implementation:
