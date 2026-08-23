@@ -733,6 +733,9 @@ pub trait AuditServiceTrait: Send + Sync {
         api_key_id: Uuid,
         limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError>;
+
+    /// Clean up old audit logs（R-retention-005：供 RetentionWorker 调度）
+    async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, AuditServiceError>;
 }
 
 /// Service for managing audit logs
@@ -937,5 +940,9 @@ impl<R: AuditLogRepository + 'static> AuditServiceTrait for AuditService<R> {
             .find_denied_for_key(api_key_id, limit)
             .await
             .map_err(Into::into)
+    }
+
+    async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, AuditServiceError> {
+        self.cleanup_old_logs(retention_days).await
     }
 }

@@ -1651,6 +1651,10 @@ mod tests {
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             Ok(self.entries())
         }
+
+        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditServiceError> {
+            Ok(0)
+        }
     }
 
     // ============================================================

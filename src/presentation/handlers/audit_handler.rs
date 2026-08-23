@@ -461,6 +461,17 @@ mod tests {
                 .cloned()
                 .collect())
         }
+
+        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditServiceError> {
+            if self.should_fail {
+                return Err(AuditServiceError::RepositoryError(
+                    AuditRepositoryError::DatabaseError(
+                        sea_orm::DbErr::Custom("mock error".to_string()).into(),
+                    ),
+                ));
+            }
+            Ok(0)
+        }
     }
 
     // ========== Branch selection logic ==========

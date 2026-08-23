@@ -15,10 +15,10 @@
 //! `ProcessResult::Error` 并聚合失败类别（规则 12：失败必须显性化）。
 //! 每类删除行数 > 0 时输出含类别名与行数的 info 日志。
 
-use crate::domain::repositories::audit_log_repository::AuditLogRepository;
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::workers::worker::{ProcessResult, WorkerProcess};
 use async_trait::async_trait;
 use log::{error, info};
@@ -29,7 +29,7 @@ pub struct RetentionWorker {
     scrape_repo: Arc<dyn ScrapeResultRepository>,
     geo_repo: Arc<dyn GeoRestrictionRepository>,
     webhook_repo: Arc<dyn WebhookEventRepository>,
-    audit_repo: Arc<dyn AuditLogRepository>,
+    audit_service: Arc<dyn AuditServiceTrait>,
     scrape_results_days: i64,
     geo_logs_days: i64,
     webhook_events_days: i64,
@@ -43,7 +43,7 @@ impl RetentionWorker {
         scrape_repo: Arc<dyn ScrapeResultRepository>,
         geo_repo: Arc<dyn GeoRestrictionRepository>,
         webhook_repo: Arc<dyn WebhookEventRepository>,
-        audit_repo: Arc<dyn AuditLogRepository>,
+        audit_service: Arc<dyn AuditServiceTrait>,
         scrape_results_days: i64,
         geo_logs_days: i64,
         webhook_events_days: i64,
@@ -53,7 +53,7 @@ impl RetentionWorker {
             scrape_repo,
             geo_repo,
             webhook_repo,
-            audit_repo,
+            audit_service,
             scrape_results_days,
             geo_logs_days,
             webhook_events_days,
@@ -109,7 +109,7 @@ impl RetentionWorker {
             }
         }
 
-        match self.audit_repo.cleanup_old_logs(self.audit_logs_days).await {
+        match self.audit_service.cleanup_old_logs(self.audit_logs_days).await {
             Ok(count) => {
                 if count > 0 {
                     info!("Retention: cleaned up {} old audit_logs", count);
@@ -149,6 +149,7 @@ mod tests {
     use super::*;
     use crate::domain::auth::AuditLogEntry;
     use crate::domain::models::{ScrapeResult, WebhookEvent};
+    use crate::domain::services::audit_service::{AuditServiceError, AuditServiceTrait};
     use crate::domain::services::team_service::TeamGeoRestrictions;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -291,39 +292,58 @@ mod tests {
         }
     }
 
-    struct MockAuditRepo {
+    struct MockAuditService {
         cleanup_calls: AtomicU64,
     }
 
     #[async_trait]
-    impl AuditLogRepository for MockAuditRepo {
-        async fn create(&self, entry: &AuditLogEntry) -> Result<AuditLogEntry, crate::domain::repositories::audit_log_repository::AuditRepositoryError> {
-            Ok(entry.clone())
+    impl AuditServiceTrait for MockAuditService {
+        async fn log(&self, _entry: AuditLogEntry) -> Result<(), AuditServiceError> {
+            Ok(())
         }
-        async fn find_by_api_key_id(
+        async fn log_allow(
+            &self,
+            _action: String,
+            _api_key_id: Uuid,
+            _team_id: Uuid,
+            _scope: crate::domain::auth::ApiKeyScope,
+        ) -> Result<(), AuditServiceError> {
+            Ok(())
+        }
+        async fn log_deny(
+            &self,
+            _action: String,
+            _api_key_id: Option<Uuid>,
+            _team_id: Option<Uuid>,
+            _reason: String,
+            _scope: Option<crate::domain::auth::ApiKeyScope>,
+        ) -> Result<(), AuditServiceError> {
+            Ok(())
+        }
+        async fn get_logs_for_key(
             &self,
             _api_key_id: Uuid,
             _limit: u64,
             _offset: u64,
-        ) -> Result<Vec<AuditLogEntry>, crate::domain::repositories::audit_log_repository::AuditRepositoryError> {
+        ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             Ok(vec![])
         }
-        async fn find_by_team_id(
+        async fn get_logs_for_team(
             &self,
             _team_id: Uuid,
             _limit: u64,
             _offset: u64,
-        ) -> Result<Vec<AuditLogEntry>, crate::domain::repositories::audit_log_repository::AuditRepositoryError> {
+        ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             Ok(vec![])
         }
-        async fn find_denied_for_key(
+        async fn get_denied_requests(
             &self,
             _api_key_id: Uuid,
             _limit: u64,
-        ) -> Result<Vec<AuditLogEntry>, crate::domain::repositories::audit_log_repository::AuditRepositoryError> {
+        ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             Ok(vec![])
         }
-        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, crate::domain::repositories::audit_log_repository::AuditRepositoryError> {
+        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditServiceError> {
             self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
             Ok(0)
         }
@@ -335,7 +355,7 @@ mod tests {
         scrape: Arc<dyn ScrapeResultRepository>,
         geo: Arc<dyn GeoRestrictionRepository>,
         webhook: Arc<dyn WebhookEventRepository>,
-        audit: Arc<dyn AuditLogRepository>,
+        audit: Arc<dyn AuditServiceTrait>,
     ) -> RetentionWorker {
         RetentionWorker::new(scrape, geo, webhook, audit, 30, 90, 30, 90)
     }
@@ -348,7 +368,7 @@ mod tests {
         let webhook = Arc::new(MockWebhookRepo {
             cleanup_calls: AtomicU64::new(0),
         });
-        let audit = Arc::new(MockAuditRepo {
+        let audit = Arc::new(MockAuditService {
             cleanup_calls: AtomicU64::new(0),
         });
         let worker = make_worker(scrape.clone(), geo.clone(), webhook.clone(), audit.clone());
@@ -373,7 +393,7 @@ mod tests {
         let webhook = Arc::new(MockWebhookRepo {
             cleanup_calls: AtomicU64::new(0),
         });
-        let audit = Arc::new(MockAuditRepo {
+        let audit = Arc::new(MockAuditService {
             cleanup_calls: AtomicU64::new(0),
         });
         let worker = make_worker(scrape.clone(), geo.clone(), webhook.clone(), audit.clone());
@@ -398,7 +418,7 @@ mod tests {
         let webhook = Arc::new(MockWebhookRepo {
             cleanup_calls: AtomicU64::new(0),
         });
-        let audit = Arc::new(MockAuditRepo {
+        let audit = Arc::new(MockAuditService {
             cleanup_calls: AtomicU64::new(0),
         });
         let worker = make_worker(scrape.clone(), geo.clone(), webhook.clone(), audit.clone());
@@ -422,7 +442,7 @@ mod tests {
             Arc::new(MockWebhookRepo {
                 cleanup_calls: AtomicU64::new(0),
             }),
-            Arc::new(MockAuditRepo {
+            Arc::new(MockAuditService {
                 cleanup_calls: AtomicU64::new(0),
             }),
         );

@@ -153,6 +153,10 @@ mod app {
             engine_client: app_state.engine_client(),
             create_scrape_use_case: app_state.create_scrape_use_case(),
             team_semaphore: app_state.team_semaphore.clone(),
+            // R-retention-005：RetentionWorker 三个数据源（geo 走 StateProvider 统一访问器，feature 无关）
+            webhook_event_repository: app_state.webhook_event_repo(),
+            geo_restriction_repository: app_state.geo_restriction_repo(),
+            audit_service: app_state.audit_service(),
             request_coalescer: app_state.request_coalescer.clone(),
             robots_checker: app_state.robots_checker.clone(),
             http_client,

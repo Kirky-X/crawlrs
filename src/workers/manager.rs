@@ -6,8 +6,11 @@
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
+use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
+use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+use crate::domain::services::audit_service::{AuditServiceError, AuditServiceTrait};
 use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
@@ -19,6 +22,7 @@ use crate::utils::regex_cache::RegexCache;
 // H-4 职责拆分：CoalesceCoordinator（封装 try_coalesce 逻辑，注入 ScrapeWorker）
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 use crate::workers::expiration_worker::ExpirationWorker;
+use crate::workers::retention_worker::RetentionWorker;
 use crate::workers::scrape_worker::{ScrapeWorker, ScrapeWorkerDeps};
 // R-security-004/005：优雅退出协调器（design.md D3，T007）
 use crate::workers::shutdown::ShutdownCoordinator;
@@ -44,6 +48,10 @@ pub struct WorkerManager {
     engine_client: Arc<EngineClient>,
     create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     team_semaphore: Arc<TeamSemaphore>,
+    /// R-retention-005：数据保留期清理器使用的三个仓库
+    webhook_event_repository: Arc<dyn WebhookEventRepository>,
+    geo_restriction_repository: Arc<dyn GeoRestrictionRepository>,
+    audit_service: Arc<dyn AuditServiceTrait>,
     /// 请求合并器（T035/R-runtime-002）
     ///
     /// 由 `WorkerManagerDeps` 从 `ServicesComponents.request_coalescer` 注入，
@@ -97,6 +105,10 @@ pub struct WorkerManagerDeps {
     pub engine_client: Arc<EngineClient>,
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     pub team_semaphore: Arc<TeamSemaphore>,
+    /// R-retention-005：数据保留期清理器使用的三个仓库
+    pub webhook_event_repository: Arc<dyn WebhookEventRepository>,
+    pub geo_restriction_repository: Arc<dyn GeoRestrictionRepository>,
+    pub audit_service: Arc<dyn AuditServiceTrait>,
     /// 请求合并器（T035/R-runtime-002）
     pub request_coalescer: Arc<RequestCoalescer>,
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
@@ -155,6 +167,9 @@ impl WorkerManager {
             engine_client: deps.engine_client,
             create_scrape_use_case: deps.create_scrape_use_case,
             team_semaphore: deps.team_semaphore,
+            webhook_event_repository: deps.webhook_event_repository,
+            geo_restriction_repository: deps.geo_restriction_repository,
+            audit_service: deps.audit_service,
             coalesce_coordinator,
             request_coalescer: deps.request_coalescer,
             robots_checker: deps.robots_checker,
@@ -191,6 +206,25 @@ impl WorkerManager {
             AbstractWorker::new(expiration_processor, std::time::Duration::from_secs(3600));
         self.handles.push(tokio::spawn(async move {
             expiration_worker.run().await;
+        }));
+
+        // R-retention-005：数据保留期清理工作器（间隔与天数来自 [retention] 配置）
+        let retention_processor = Arc::new(RetentionWorker::new(
+            self.result_repository.clone(),
+            self.geo_restriction_repository.clone(),
+            self.webhook_event_repository.clone(),
+            self.audit_service.clone(),
+            self.settings.retention.scrape_results_days,
+            self.settings.retention.geo_logs_days,
+            self.settings.retention.webhook_events_days,
+            self.settings.retention.audit_logs_days,
+        ));
+        let retention_worker = AbstractWorker::new(
+            retention_processor,
+            std::time::Duration::from_secs(self.settings.retention.interval_seconds),
+        );
+        self.handles.push(tokio::spawn(async move {
+            retention_worker.run().await;
         }));
 
         // 性能审查 H-1 修复：定期调度 RequestCoalescer::purge_stale
@@ -885,6 +919,135 @@ mod tests {
         }
     }
 
+    // R-retention-005：RetentionWorker 所需的三个仓库 mock（无状态，全 Ok 默认值）
+
+    struct MockWebhookEventRepository;
+
+    #[async_trait]
+    impl WebhookEventRepository for MockWebhookEventRepository {
+        async fn create(
+            &self,
+            event: &WebhookEvent,
+        ) -> Result<WebhookEvent, RepositoryError> {
+            Ok(event.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
+            Ok(None)
+        }
+        async fn find_pending(&self, _limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn find_by_team_id_paginated(
+            &self,
+            _team_id: Uuid,
+            _limit: u32,
+            _offset: u32,
+        ) -> Result<Vec<WebhookEvent>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn update(
+            &self,
+            event: &WebhookEvent,
+        ) -> Result<WebhookEvent, RepositoryError> {
+            Ok(event.clone())
+        }
+        async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+    }
+
+    struct MockGeoRestrictionRepository;
+
+    #[async_trait]
+    impl GeoRestrictionRepository for MockGeoRestrictionRepository {
+        async fn get_team_restrictions(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<crate::domain::services::team_service::TeamGeoRestrictions, crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError> {
+            Ok(crate::domain::services::team_service::TeamGeoRestrictions::default())
+        }
+        async fn update_team_restrictions(
+            &self,
+            _team_id: Uuid,
+            _restrictions: &crate::domain::services::team_service::TeamGeoRestrictions,
+        ) -> Result<(), crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError> {
+            Ok(())
+        }
+        async fn log_geo_restriction_action(
+            &self,
+            _team_id: Uuid,
+            _ip_address: &str,
+            _country_code: &str,
+            _action: &str,
+            _reason: &str,
+        ) -> Result<(), crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError> {
+            Ok(())
+        }
+        async fn cleanup_expired(
+            &self,
+            _retention_days: i64,
+        ) -> Result<u64, crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError> {
+            Ok(0)
+        }
+    }
+
+    struct MockAuditService;
+
+    #[async_trait]
+    impl AuditServiceTrait for MockAuditService {
+        async fn log(&self, _entry: crate::domain::auth::AuditLogEntry) -> Result<(), AuditServiceError> {
+            Ok(())
+        }
+        async fn log_allow(
+            &self,
+            _action: String,
+            _api_key_id: Uuid,
+            _team_id: Uuid,
+            _scope: crate::domain::auth::ApiKeyScope,
+        ) -> Result<(), AuditServiceError> {
+            Ok(())
+        }
+        async fn log_deny(
+            &self,
+            _action: String,
+            _api_key_id: Option<Uuid>,
+            _team_id: Option<Uuid>,
+            _reason: String,
+            _scope: Option<crate::domain::auth::ApiKeyScope>,
+        ) -> Result<(), AuditServiceError> {
+            Ok(())
+        }
+        async fn get_logs_for_key(
+            &self,
+            _api_key_id: Uuid,
+            _limit: u64,
+            _offset: u64,
+        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, AuditServiceError> {
+            Ok(vec![])
+        }
+        async fn get_logs_for_team(
+            &self,
+            _team_id: Uuid,
+            _limit: u64,
+            _offset: u64,
+        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, AuditServiceError> {
+            Ok(vec![])
+        }
+        async fn get_denied_requests(
+            &self,
+            _api_key_id: Uuid,
+            _limit: u64,
+        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, AuditServiceError> {
+            Ok(vec![])
+        }
+        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditServiceError> {
+            Ok(0)
+        }
+    }
+
     struct MockWebhookService;
 
     #[async_trait]
@@ -1022,6 +1185,9 @@ mod tests {
             engine_client: Arc::new(EngineClient::new()),
             create_scrape_use_case: Arc::new(MockCreateScrapeUseCase),
             team_semaphore: Arc::new(TeamSemaphore::new(10)),
+            webhook_event_repository: Arc::new(MockWebhookEventRepository),
+            geo_restriction_repository: Arc::new(MockGeoRestrictionRepository),
+            audit_service: Arc::new(MockAuditService) as Arc<dyn AuditServiceTrait>,
             request_coalescer: Arc::new(crate::utils::coalesce::RequestCoalescer::new()),
             robots_checker: Arc::new(MockRobotsChecker),
             http_client: Arc::new(reqwest::Client::new()),
@@ -1103,11 +1269,11 @@ mod tests {
     async fn test_start_workers_zero_count_starts_only_expiration_worker() {
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(0).await;
-        // start_workers(0) 启动：1 个 expiration worker + 1 个 purge_stale 调度任务
+        // start_workers(0) 启动：1 expiration + 1 retention + 1 purge_stale 调度任务（R-retention-005）
         assert_eq!(
             manager.handles.len(),
-            2,
-            "start_workers(0) should start expiration + purge_stale scheduler"
+            3,
+            "start_workers(0) should start expiration + retention + purge_stale scheduler"
         );
     }
 
@@ -1115,11 +1281,11 @@ mod tests {
     async fn test_start_workers_multiple_count() {
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(3).await;
-        // start_workers(3) 启动：1 expiration + 1 purge_stale + 3 scrape = 5
+        // start_workers(3) 启动：1 expiration + 1 retention + 1 purge_stale + 3 scrape = 6
         assert_eq!(
             manager.handles.len(),
-            5,
-            "start_workers(3) should start expiration + purge_stale + 3 scrape workers"
+            6,
+            "start_workers(3) should start expiration + retention + purge_stale + 3 scrape workers"
         );
     }
 
@@ -1127,8 +1293,8 @@ mod tests {
     async fn test_start_workers_handles_are_aborted_on_drop() {
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(1).await;
-        // start_workers(1) 启动：1 expiration + 1 purge_stale + 1 scrape = 3
-        assert_eq!(manager.handles.len(), 3);
+        // start_workers(1) 启动：1 expiration + 1 retention + 1 purge_stale + 1 scrape = 4
+        assert_eq!(manager.handles.len(), 4);
 
         // Give workers a moment to start.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1183,8 +1349,8 @@ mod tests {
 
         let mut manager = WorkerManager::new(make_deps(), make_config());
         manager.start_workers(1).await;
-        // start_workers(1) 启动：1 expiration + 1 purge_stale + 1 scrape = 3
-        assert_eq!(manager.handles.len(), 3);
+        // start_workers(1) 启动：1 expiration + 1 retention + 1 purge_stale + 1 scrape = 4
+        assert_eq!(manager.handles.len(), 4);
 
         // 触发优雅退出（等价于收到 SIGTERM/SIGINT）
         manager.begin_shutdown();
