@@ -1323,6 +1323,30 @@ class CircuitBreaker {
 
 ---
 
+## Data Retention & Cleanup
+
+抓取结果与事件数据按保留期自动清理（由 `RetentionWorker` 定期执行），防止数据库无限增长。保留天数可通过 `[retention]` 配置调整：
+
+```toml
+[retention]
+# 清理执行间隔（秒），默认 3600
+interval_seconds = 3600
+# scrape_results 保留天数，默认 30
+scrape_results_days = 30
+# webhook_events 终态事件（delivered/dead）保留天数，默认 30
+webhook_events_days = 30
+# geo_restriction_logs 保留天数，默认 90
+geo_logs_days = 90
+# audit_logs 保留天数，默认 90
+audit_logs_days = 90
+```
+
+也可通过环境变量覆盖（前缀 `CRAWLRS__RETENTION__`，如 `CRAWLRS__RETENTION__SCRAPE_RESULTS_DAYS=7`）。
+
+> **注意**：超过保留期的数据会被删除且不可恢复。调大 `scrape_results_days` 可延长历史抓取结果的回查窗口，但会相应增加数据库存储占用。团队平均响应时间统计基于保留窗口内的数据计算。
+
+---
+
 ## Best Practices
 
 ### 1. Use Async Mode for Long-Running Tasks

@@ -591,6 +591,19 @@ dbnexus provides connection pooling, permission control, migration framework, me
 
 > R-retention-007：`scrape_results` 在保留期治理（`[retention]` 配置，默认 30 天）生效后按窗口滚动清理；依赖该表的统计（如 `ScrapeResultRepository::get_team_avg_response_time`）语义变为"保留窗口内的近期平均响应时间"，窗口滚动后统计自然准确。
 
+**Data Retention Governance（R-retention-001 ~ 006，change `db-retention-governance`）**
+
+`RetentionWorker`（`src/workers/retention_worker.rs`）按 `[retention]` 配置周期清理四类数据，顺序执行、单类失败不中断其余、错误聚合上报（每类删除行数 > 0 时输出 info 日志）：
+
+| 数据 | 清理条件（判龄字段） | 默认保留 |
+|------|----------------------|----------|
+| `scrape_results` | `created_at < NOW() - days` | 30 天 |
+| `webhook_events`（终态） | `status='delivered' AND delivered_at < cutoff` OR `status='dead' AND updated_at < cutoff` | 30 天 |
+| `geo_restriction_logs` | `created_at < NOW() - days` | 90 天 |
+| `audit_logs` | `created_at < NOW() - days`（复用 `AuditService::cleanup_old_logs`） | 90 天 |
+
+清理扫描由 migration 007 的索引支撑：`webhook_events` 终态 partial index（`delivered_at`/`updated_at`）、`geo_restriction_logs(created_at)`、`audit_logs(created_at)`；`scrape_results` 复用 `idx_scrape_results_created_at`。`pending`/`failed` webhook 事件为活事件，永不参与清理。
+
 **Cache Layer:**
 
 **Technology:** oxcache 0.3 (in-memory, no Redis backend)
