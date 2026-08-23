@@ -186,16 +186,25 @@ pub fn skip_if_no_test_db() -> bool {
 /// Panics if no database source is available (no env var AND no Docker),
 /// or if pool construction fails.
 pub fn create_test_db_pool() -> Arc<DbPool> {
+    // 池内连接的 IO 绑定构造时所在 runtime 的 driver。此前每次构造都在 scoped
+    // 临时 current_thread runtime 中进行，block_on 返回后 driver 随 runtime 销毁，
+    // 池中已建立的连接在测试自身的 runtime 上 acquire 必然超时（表现为
+    // "Connection pool timed out"）。改为进程级保活的 multi-thread runtime：
+    // driver 与进程同生命周期；block_on 在独立线程上执行（禁止在异步上下文内
+    // 阻塞当前线程驱动另一 runtime）。
+    static POOL_RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    let rt = POOL_RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("failed to build persistent runtime for DbPool construction")
+    });
+    let url = resolve_test_database_url()
+        .expect("No test database available: set TEST_DATABASE_URL or ensure Docker is running");
     std::thread::scope(|s| {
-        let handle = s.spawn(|| {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("failed to build tokio runtime for DbPool construction");
+        let handle = s.spawn(move || {
             let _guard = rt.enter();
-            let url = resolve_test_database_url().expect(
-                "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
-            );
             rt.block_on(async {
                 let cfg = DbConfig {
                     url,
