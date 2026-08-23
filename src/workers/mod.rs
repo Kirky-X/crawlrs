@@ -28,6 +28,8 @@ pub mod crawl_link_extractor;
 pub mod errors;
 pub mod expiration_worker;
 pub mod manager;
+/// R-retention-005：数据保留期清理工作器
+pub mod retention_worker;
 /// Markdown 后处理器（H-4 职责拆分，gated `markdown` 特性）
 ///
 /// 从 ScrapeWorker 抽取的 HTML→Markdown 转换逻辑。
