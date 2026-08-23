@@ -420,6 +420,10 @@ mod tests {
                     ttl_seconds: 60,
                     max_size: 100,
                 },
+                scrape: crate::config::settings::CacheTypeSettings {
+                    ttl_seconds: 60,
+                    max_size: 100,
+                },
                 dns: crate::config::settings::CacheTypeSettings {
                     ttl_seconds: 300,
                     max_size: 100,

@@ -552,6 +552,9 @@ pub struct CacheTypeSpecificSettings {
     /// 搜索结果缓存配置
     pub search: CacheTypeSettings,
 
+    /// 抓取结果缓存配置（R-cache-001：与 search 语义解耦）
+    pub scrape: CacheTypeSettings,
+
     /// DNS 缓存配置
     pub dns: CacheTypeSettings,
 
@@ -777,6 +780,14 @@ mod tests {
         assert_eq!(settings.webhook_events_days, 30);
         assert_eq!(settings.geo_logs_days, 90);
         assert_eq!(settings.audit_logs_days, 90);
+    }
+
+    /// R-cache-001：`[cache.types.scrape]` 空段时默认 300s TTL 与 10000 容量（与 search 一致，零行为回归）。
+    #[test]
+    fn cache_scrape_type_defaults() {
+        let settings = CacheSettings::default();
+        assert_eq!(settings.types.scrape.ttl_seconds, 300);
+        assert_eq!(settings.types.scrape.max_size, 10000);
     }
 
     #[test]
@@ -1384,6 +1395,10 @@ mod tests {
                 search: CacheTypeSettings {
                     ttl_seconds: 10,
                     max_size: 20,
+                },
+                scrape: CacheTypeSettings {
+                    ttl_seconds: 15,
+                    max_size: 25,
                 },
                 dns: CacheTypeSettings {
                     ttl_seconds: 30,
