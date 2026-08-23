@@ -174,6 +174,28 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
 
         Ok(avg)
     }
+
+    async fn cleanup_expired(&self, retention_days: i64) -> anyhow::Result<u64> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| anyhow::anyhow!("Failed to get connection: {}", e))?;
+
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
+
+        let result = db_entity::Entity::delete_many()
+            .filter(db_entity::Column::CreatedAt.lt(cutoff))
+            .exec(conn)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to cleanup expired scrape results: {}", e))?;
+
+        Ok(result.rows_affected)
+    }
 }
 
 #[cfg(test)]
@@ -194,8 +216,10 @@ mod tests {
             meta_data: serde_json::json!({"lang": "en"}),
             screenshot: Some("base64screenshot".to_string()),
             response_time_ms: 150,
-            created_at: chrono::DateTime::from_timestamp(1_700_000_000, 0)
-                .expect("valid timestamp"),
+            // 使用当前时间而非固定历史时间戳：retention 清理测试（共享
+            // testcontainers 容器）会把固定旧时间戳数据当作过期行删除，
+            // 导致 CRUD 测试与清理测试并发时互相干扰。
+            created_at: chrono::Utc::now(),
         }
     }
 
@@ -597,3 +621,7 @@ mod tests {
         assert!(model.meta_data.is_some());
     }
 }
+
+#[cfg(test)]
+#[path = "tests/scrape_result_cleanup_test.rs"]
+mod integration_tests;

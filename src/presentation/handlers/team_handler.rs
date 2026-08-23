@@ -843,27 +843,9 @@ mod tests {
 
     /// Construct a lazy `DbPool` that does not connect to any database.
     fn make_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                let url = crate::common::test_helpers::resolve_test_database_url().expect(
-                    "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
-                );
-                rt.block_on(async {
-                    let cfg = dbnexus::DbConfig {
-                        url,
-                        ..Default::default()
-                    };
-                    DbPool::with_config(cfg).await
-                })
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
+        // 委托公共 helper：其使用进程级保活 runtime 构造池，避免临时 runtime
+        // 销毁导致池连接 IO 失效（跨 runtime acquire 超时）
+        crate::common::test_helpers::create_test_db_pool()
     }
 
     /// Build an `AuthState` suitable for handler unit tests.
@@ -1091,6 +1073,10 @@ mod tests {
                 return Err(anyhow::anyhow!("get_team_avg_response_time failed"));
             }
             Ok(self.avg_response_time)
+        }
+
+        async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+            Ok(0)
         }
     }
 

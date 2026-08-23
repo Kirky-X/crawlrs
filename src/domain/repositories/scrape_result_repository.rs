@@ -24,4 +24,8 @@ pub trait ScrapeResultRepository: Send + Sync {
     ///
     /// 计算指定团队在过去30天内的平均响应时间
     async fn get_team_avg_response_time(&self, team_id: Uuid) -> Result<f64>;
+    /// 按保留期删除过期结果（R-retention-002）
+    ///
+    /// 删除 `created_at` 早于 `NOW() - retention_days` 的行，返回删除行数。
+    async fn cleanup_expired(&self, retention_days: i64) -> Result<u64>;
 }

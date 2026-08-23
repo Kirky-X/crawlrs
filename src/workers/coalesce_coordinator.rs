@@ -377,6 +377,9 @@ mod tests {
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
             Ok(0.0)
         }
+        async fn cleanup_expired(&self, _retention_days: i64) -> Result<u64> {
+            Ok(0)
+        }
     }
 
     fn make_task() -> Task {
@@ -607,6 +610,9 @@ mod tests {
             }
             async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
                 Ok(0.0)
+            }
+            async fn cleanup_expired(&self, _retention_days: i64) -> Result<u64> {
+                Ok(0)
             }
         }
 
