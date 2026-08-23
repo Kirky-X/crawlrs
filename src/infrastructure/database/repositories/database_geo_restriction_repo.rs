@@ -9,7 +9,7 @@ use crate::domain::repositories::geo_restriction_repository::{
 use crate::domain::services::team_service::TeamGeoRestrictions;
 use crate::infrastructure::database::entities::{geo_restriction_log, team};
 use dbnexus::DbPool;
-use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use uuid::Uuid;
 
 use std::sync::Arc;
@@ -173,6 +173,32 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// 按保留期删除过期日志
+    async fn cleanup_expired(
+        &self,
+        retention_days: i64,
+    ) -> Result<u64, GeoRestrictionRepositoryError> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
+
+        let result = geo_restriction_log::Entity::delete_many()
+            .filter(geo_restriction_log::Column::CreatedAt.lt(cutoff))
+            .exec(conn)
+            .await
+            .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+
+        Ok(result.rows_affected)
     }
 }
 
@@ -834,3 +860,7 @@ mod error_path_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "tests/geo_restriction_cleanup_test.rs"]
+mod integration_tests;

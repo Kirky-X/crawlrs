@@ -73,6 +73,13 @@ impl GeoRestrictionRepository for MockGeoRestrictionRepository {
     ) -> Result<(), GeoRestrictionRepositoryError> {
         Ok(())
     }
+
+    async fn cleanup_expired(
+        &self,
+        _retention_days: i64,
+    ) -> Result<u64, GeoRestrictionRepositoryError> {
+        Ok(0)
+    }
 }
 
 #[tokio::test]
@@ -325,6 +332,15 @@ impl GeoRestrictionRepository for FailingGeoRestrictionRepository {
             "db down".to_string(),
         ))
     }
+
+    async fn cleanup_expired(
+        &self,
+        _retention_days: i64,
+    ) -> Result<u64, GeoRestrictionRepositoryError> {
+        Err(GeoRestrictionRepositoryError::Database(
+            "db down".to_string(),
+        ))
+    }
 }
 
 /// Geo restriction repo mock that returns a specific restrictions config
@@ -365,6 +381,13 @@ impl GeoRestrictionRepository for ConfigurableGeoRestrictionRepository {
         _reason: &str,
     ) -> Result<(), GeoRestrictionRepositoryError> {
         Ok(())
+    }
+
+    async fn cleanup_expired(
+        &self,
+        _retention_days: i64,
+    ) -> Result<u64, GeoRestrictionRepositoryError> {
+        Ok(0)
     }
 }
 

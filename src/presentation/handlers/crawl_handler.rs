@@ -1212,6 +1212,13 @@ mod tests {
         ) -> Result<(), GeoRestrictionRepositoryError> {
             Ok(())
         }
+
+        async fn cleanup_expired(
+            &self,
+            _retention_days: i64,
+        ) -> Result<u64, GeoRestrictionRepositoryError> {
+            Ok(0)
+        }
     }
 
     // --- MockGeoLocationService ---

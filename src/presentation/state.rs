@@ -495,6 +495,15 @@ mod tests {
         > {
             Ok(())
         }
+        async fn cleanup_expired(
+            &self,
+            _retention_days: i64,
+        ) -> Result<
+            u64,
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
+            Ok(0)
+        }
     }
 
     // R-teams-004 / T014：teams feature 关闭时不编译此 mock
