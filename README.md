@@ -187,7 +187,7 @@ cargo build --release --features "engine-playwright,metrics"
 | 特性 | 描述 | 默认 |
 |---------|-------------|----------|
 | `teams` | 多租户隔离（团队、地理限制、配额隔离）；隐含 `auth` | ✅ 是 |
-| `auth` | API Key 认证中间件；关闭时走 `default_identity_middleware` 注入固定身份 | ✅ 是 |
+| `auth` | API Key 认证中间件；关闭时走 `default_identity_middleware`——**protected routes 默认 401**，需显式 `allow_unauthenticated_protected()` opt-in 后注入匿名受限身份（denied scope、无 token_hash） | ✅ 是 |
 | `rate-limit` | 基于 limiteron 的速率限制与熔断；关闭时注入 `NoopRateLimitingService` 放行 | ✅ 是 |
 | `webhook` | Webhook 投递与管理；关闭时注入 `NoopWebhookService` 并移除 `/v1/webhooks` 路由 | ✅ 是 |
 | `engine-playwright` | 基于 chromiumoxide 的浏览器自动化 | ❌ 否 |
