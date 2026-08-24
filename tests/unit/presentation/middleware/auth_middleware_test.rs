@@ -67,6 +67,10 @@ impl AuditServiceTrait for MockAuditService {
         Ok(())
     }
 
+    async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditServiceError> {
+        Ok(0)
+    }
+
     async fn log_allow(
         &self,
         _action: String,

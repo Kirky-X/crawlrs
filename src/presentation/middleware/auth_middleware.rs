@@ -19,8 +19,6 @@
 //! - `auth` 启用：`auth_middleware_inner` 走 garrison RBAC 路径
 //! - `auth` 关闭：`default_identity_middleware` 注入默认身份模板（单租户降级）
 
-#[cfg(not(feature = "auth"))]
-use crate::common::constants::default_identity::DEFAULT_IDENTITY_TOKEN_HASH;
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
 use crate::domain::services::audit_service::AuditServiceTrait;
 #[cfg(feature = "auth")]
@@ -206,12 +204,15 @@ fn hash_token(token: &str) -> String {
 /// 注入的 `token_hash` 是 SHA-256 hash（`sha256:...`），非裸 token。
 /// 下游 `limiteron_rate_limit_middleware` 的 `Extension<String>` 提取器拿到的是 hash，
 /// 不会在限速日志中泄露明文 token。
-fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash: &str) {
+fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash: Option<&str>) {
     // 注意：`team_id` 和 `api_key_id` 均为 `Uuid` 类型，若同时 `insert` 会发生类型冲突
     // （后者覆盖前者）。生产代码通过 `Extension<AuthState>` 读取，无需裸 `Uuid` 扩展。
-    // 此处仅注入 `AuthState`（包含 team_id/api_key_id/scope）+ `token_hash`（限速器消费）。
+    // 此处仅注入 `AuthState`（包含 team_id/api_key_id/scope）；`token_hash` 仅当身份
+    // 持有真实 token 时注入（`Option` 类型区分：匿名身份为 None，限速器回退 api_key_id）。
     req.extensions_mut().insert(auth_state);
-    req.extensions_mut().insert(token_hash.to_string());
+    if let Some(hash) = token_hash {
+        req.extensions_mut().insert(hash.to_string());
+    }
 }
 
 /// Unified authentication middleware (garrison RBAC path, R-auth-engine-003 / T017).
@@ -400,7 +401,7 @@ pub async fn auth_middleware_inner(
 
     // 7. 注入 extensions（token_hash 用 SHA-256 hash，CWE-532 防护）
     let token_hash = hash_token(&raw);
-    inject_auth_state(&mut req, auth_state, &token_hash);
+    inject_auth_state(&mut req, auth_state, Some(&token_hash));
 
     debug!("API Key authentication successful (garrison path)");
 
@@ -410,20 +411,67 @@ pub async fn auth_middleware_inner(
 /// 单租户降级模式下的默认身份中间件（`auth` feature 关闭时启用）。
 ///
 /// 当 `auth` feature 关闭时，此中间件替代真实 `auth_middleware`：
-/// 不校验 API Key、不查 DB、不做暴力破解防护，而是直接将预构建的
+/// 不校验 API Key、不查 DB、不做暴力破解防护，而是将预构建的
 /// `AuthState` 模板克隆并注入到请求 extensions。
 ///
-/// # Security
+/// # Security（production-mock-purge T037/T038 收紧）
 ///
-/// 此中间件仅适用于受信任的内部部署（单租户、无外部用户）。
-/// 在多租户或公开 API 场景下必须启用 `auth` feature。
-#[cfg(not(feature = "auth"))]
+/// **默认拒绝**：未显式 opt-in 时，所有 protected 请求返回 `401`（即使是
+/// auth-off 降级模式，也不应在未确认安全边界的情况下放行请求）。一次性
+/// `error!` 日志提示运维存在未鉴权路径。
+///
+/// 显式 opt-in：调用 [`allow_unauthenticated_protected`] 后，本中间件注入
+/// **匿名受限身份**（`ApiKeyScope::denied()` 最小 scope + 无 token_hash），
+/// 下游接口按 scope 校验自行拒绝越权操作。此模式仍仅适用于受信任的内部
+/// 部署（单租户、无外部用户）；多租户或公开 API 场景必须启用 `auth` feature。
+#[cfg(all(not(feature = "auth"), feature = "web-axum"))]
+static ALLOW_UNAUTHENTICATED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(all(not(feature = "auth"), feature = "web-axum"))]
+static DENY_LOG_ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+#[cfg(all(not(feature = "auth"), feature = "web-axum"))]
+static ALLOW_LOG_ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// 显式放行未鉴权请求（auth-off 面 opt-in）。
+///
+/// 调用后 protected routes 以**匿名受限身份**（`denied()` scope、无
+/// token_hash）放行；未调用时默认 `401`。一次性 `error!` 日志声明安全语义
+/// 降级（"all requests allowed" 模式仅限受信任内网部署）。
+#[cfg(all(not(feature = "auth"), feature = "web-axum"))]
+pub fn allow_unauthenticated_protected() {
+    ALLOW_LOG_ONCE.get_or_init(|| {
+        log::error!(
+            "allow_unauthenticated_protected() 显式启用：protected routes 将放行未鉴权请求 \
+             （匿名受限身份，denied scope）。仅限受信任内网部署；公开网络必须启用 auth feature。"
+        );
+    });
+    ALLOW_UNAUTHENTICATED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 测试用：重置 opt-in 开关（避免跨用例污染）。
+#[cfg(all(test, not(feature = "auth"), feature = "web-axum"))]
+pub(crate) fn _reset_unauthenticated_for_test() {
+    ALLOW_UNAUTHENTICATED.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(all(not(feature = "auth"), feature = "web-axum"))]
 pub(crate) async fn default_identity_middleware(
     State(template): State<AuthState>,
     mut req: Request<Body>,
     next: Next,
 ) -> Response {
-    inject_auth_state(&mut req, template, DEFAULT_IDENTITY_TOKEN_HASH);
+    if !ALLOW_UNAUTHENTICATED.load(std::sync::atomic::Ordering::SeqCst) {
+        DENY_LOG_ONCE.get_or_init(|| {
+            log::error!(
+                "auth feature disabled：protected route 收到未鉴权请求，默认拒绝（401）。\
+                 若确需匿名放行，请显式调用 allow_unauthenticated_protected()。"
+            );
+        });
+        use axum::response::IntoResponse as _;
+        return (StatusCode::UNAUTHORIZED, "authentication required").into_response();
+    }
+    // opt-in：注入匿名受限身份（无 token_hash —— 限速器回退 api_key_id 维度）
+    inject_auth_state(&mut req, template, None);
     next.run(req).await
 }
 
@@ -679,8 +727,9 @@ mod tests {
     //
     // 这些测试仅在 `--no-default-features`（关闭 `auth` feature）下编译运行，
     // 验证 `default_identity_middleware` 的契约（R-auth-002）。
-    #[cfg(not(feature = "auth"))]
+    #[cfg(all(not(feature = "auth"), feature = "web-axum"))]
     mod default_identity_tests {
+        #![allow(clippy::await_holding_lock)]
         use super::*;
         use crate::common::constants::default_identity::{DEFAULT_API_KEY_ID, DEFAULT_TEAM_ID};
         use crate::common::test_helpers::create_test_db_pool;
@@ -688,6 +737,10 @@ mod tests {
             middleware::from_fn_with_state, response::IntoResponse, routing::get, Extension, Router,
         };
         use tower::ServiceExt;
+
+        // opt-in 全局开关在测试间共享：全部用例串行执行（互斥锁）
+        // 避免并发交错导致默认拒绝语义被并发 opt-in 污染。
+        static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
         async fn reflect_extensions(
             Extension(auth_state): Extension<AuthState>,
@@ -712,13 +765,16 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn default_identity_middleware_injects_default_api_key_id_and_full_access_scope() {
+        async fn default_identity_middleware_injects_default_api_key_id_and_denied_scope() {
+            // T038：opt-in 后注入匿名受限身份（denied scope），不再注入 full_access
+            let _lock_guard = TEST_LOCK.lock().unwrap();
+            allow_unauthenticated_protected();
             let pool = create_test_db_pool();
             let template = AuthState::new(
                 pool,
                 DEFAULT_TEAM_ID,
                 DEFAULT_API_KEY_ID,
-                ApiKeyScope::full_access(),
+                ApiKeyScope::denied(),
             );
 
             let response = make_default_identity_router(template)
@@ -741,19 +797,21 @@ mod tests {
             .unwrap();
             assert!(body.contains(&format!("auth_team={}", DEFAULT_TEAM_ID)));
             assert!(body.contains(&format!("auth_key={}", DEFAULT_API_KEY_ID)));
-            assert!(body.contains("read=true"));
-            assert!(body.contains("write=true"));
-            assert!(body.contains("admin=true"));
+            assert!(body.contains("read=false"));
+            assert!(body.contains("write=false"));
+            assert!(body.contains("admin=false"));
         }
 
         #[tokio::test]
         async fn default_identity_middleware_passes_without_authorization_header() {
+            let _lock_guard = TEST_LOCK.lock().unwrap();
+            allow_unauthenticated_protected();
             let pool = create_test_db_pool();
             let template = AuthState::new(
                 pool,
                 DEFAULT_TEAM_ID,
                 DEFAULT_API_KEY_ID,
-                ApiKeyScope::full_access(),
+                ApiKeyScope::denied(),
             );
 
             let response = make_default_identity_router(template)
@@ -771,12 +829,14 @@ mod tests {
 
         #[tokio::test]
         async fn default_identity_middleware_ignores_invalid_authorization_header() {
+            let _lock_guard = TEST_LOCK.lock().unwrap();
+            allow_unauthenticated_protected();
             let pool = create_test_db_pool();
             let template = AuthState::new(
                 pool,
                 DEFAULT_TEAM_ID,
                 DEFAULT_API_KEY_ID,
-                ApiKeyScope::full_access(),
+                ApiKeyScope::denied(),
             );
 
             let response = make_default_identity_router(template)
@@ -792,5 +852,40 @@ mod tests {
 
             assert_eq!(response.status(), StatusCode::OK);
         }
+
+        /// T037 Red→Green：protected 路由默认拒绝未鉴权请求（auth-off 面）。
+        ///
+        /// 历史语义：auth-off 注入 `full_access` 身份，所有请求全权放行（200）；
+        /// 安全收紧：默认返回 401，须显式 `allow_unauthenticated_protected()` opt-in。
+        #[tokio::test]
+        async fn default_identity_middleware_denies_unauthenticated_by_default() {
+            // 独立于其它 opt-in 用例：显式复位全局开关
+            let _lock_guard = TEST_LOCK.lock().unwrap();
+            _reset_unauthenticated_for_test();
+            let pool = create_test_db_pool();
+            let template = AuthState::new(
+                pool,
+                DEFAULT_TEAM_ID,
+                DEFAULT_API_KEY_ID,
+                crate::domain::auth::ApiKeyScope::denied(),
+            );
+
+            let response = make_default_identity_router(template)
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/echo")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "auth-off 未显式 opt-in 时 protected route 必须默认 401"
+            );
+        }
     }
 }
+

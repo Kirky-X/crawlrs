@@ -275,7 +275,7 @@ pub struct GarrisonGlobalStateGuard {
 ///
 /// 当 `auth` feature 关闭时，`garrison_dao`/`garrison_listener` 模块不编译，
 /// 不存在需要保护的全局态。此空 struct 让调用方代码在两种 feature 下都能编译。
-#[cfg(not(feature = "auth"))]
+#[cfg(all(not(feature = "auth"), feature = "web-axum"))]
 pub struct NoopGarrisonGuard;
 
 /// 获取 garrison 全局态锁并 reset DAO + AUDIT_SERVICE。
@@ -300,7 +300,7 @@ pub async fn acquire_garrison_global_state() -> GarrisonGlobalStateGuard {
 }
 
 /// auth-off 时的 no-op 实现（架构审查 M1 修复）。
-#[cfg(not(feature = "auth"))]
+#[cfg(all(not(feature = "auth"), feature = "web-axum"))]
 pub async fn acquire_garrison_global_state() -> NoopGarrisonGuard {
     NoopGarrisonGuard
 }

@@ -17,6 +17,13 @@
 //! - `get_quota_balance` → `Ok(i64::MAX)`（无限配额）
 //! - `process_backlog_tasks` → `Ok(0)`（幂等空转，不处理积压）
 //! - 其余方法返回合理默认值（配置/计数器等）
+//!
+//! # 降级语义（T039 显性化）
+//!
+//! 装配本服务即**安全语义降级**：全部请求放行（不限流/不扣配额/无限并发），
+//! 恶意流量与突发负载不再被任何阈值拦截。装配侧有 error 级一次性日志（见
+//! services.rs）；启用方式：`rate-limit` feature（`--features rate-limit`）。
+//! 仅限受信任内部部署（单租户、无外部流量面）。
 
 use async_trait::async_trait;
 use uuid::Uuid;

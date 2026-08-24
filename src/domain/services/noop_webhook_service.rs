@@ -15,6 +15,13 @@
 //! - `trigger_completion` → `Ok(())`（不触发完成通知）
 //! - `trigger_failure` → `Ok(())`（不触发失败通知）
 //! - 无副作用（不写日志、不写 DB、不发送 HTTP）
+//!
+//! # 降级语义（T039 显性化）
+//!
+//! 装配本服务即**安全语义降级**：任务完成/失败事件不会投递到任何外部端点，
+//! 依赖 webhook 完成通知的集成方将静默失去通知（非观测丢失——装配侧有 error 级一次性日志）。
+//! 启用方式：`webhook` feature（Cargo.toml [features] 或 `--features webhook`）；
+//! 仅在确定无投递需求时关闭。
 
 use anyhow::Result;
 use async_trait::async_trait;

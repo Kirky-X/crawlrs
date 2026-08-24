@@ -33,22 +33,16 @@ pub mod default_identity {
     use uuid::Uuid;
 
     /// 单租户模式下的默认团队 ID（非 nil，固定值 1）
+    ///
+    /// 用途限定：main.rs 引导的种子数据（auth-off 单租户标识）。
+    /// 自 production-mock-purge T038 起，本组常量不再参与任何身份注入
+    /// （匿名身份无 token_hash；占位 `DEFAULT_IDENTITY_TOKEN_HASH` 已删除）。
     pub const DEFAULT_TEAM_ID: Uuid = Uuid::from_u128(1);
 
     /// 单租户模式下的默认 API Key ID（非 nil，固定值 2，与 DEFAULT_TEAM_ID 区分）
+    ///
+    /// 用途限定：main.rs 引导的种子数据（auth-off 单租户标识）。
     pub const DEFAULT_API_KEY_ID: Uuid = Uuid::from_u128(2);
-
-    /// 单租户降级模式下注入的 `token_hash` 占位字符串。
-    ///
-    /// 真实 `auth_middleware` 注入 `"sha256:<hex>"` 格式的 `token_hash`；
-    /// 单租户模式下没有 token，使用固定字符串 `"sha256:default_identity"` 作为占位。
-    ///
-    /// 格式与真实 `token_hash` 对齐（`sha256:` 前缀），确保下游消费者
-    /// 不会因格式差异产生异常行为（如 rate-limit bucket key 分裂）。
-    ///
-    /// 迁移路径：若未来需要区分单租户与多租户的 token hash，
-    /// 可改用 `sha256:single_tenant_<team_id>` 格式。
-    pub const DEFAULT_IDENTITY_TOKEN_HASH: &str = "sha256:default_identity";
 }
 
 /// 服务器配置常量

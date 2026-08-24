@@ -23,11 +23,11 @@ pub use time_utils::{
 };
 
 /// Testcontainers integration test fixtures.
-#[cfg(all(test, feature = "platform"))]
+#[cfg(all(test, any(feature = "platform", feature = "web-axum")))]
 pub mod test_fixtures;
 
 /// Centralized test helpers shared across `src/` `#[cfg(test)] mod tests` blocks.
-#[cfg(all(test, feature = "platform"))]
+#[cfg(all(test, any(feature = "platform", feature = "web-axum")))]
 pub mod test_helpers;
 
 /// Test support utilities shared across modules
@@ -42,6 +42,6 @@ pub(crate) mod test_support {
     pub static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
     /// Backward-compatible re-export of the testcontainers fixtures module.
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     pub use super::test_fixtures as testcontainers_fixtures;
 }

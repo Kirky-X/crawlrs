@@ -150,16 +150,19 @@ fn build_default_identity_template(state: &CrawlRsState) -> AuthState {
     WARN_ONCE.get_or_init(|| {
         log::warn!(
             "auth feature disabled — running in single-tenant degraded mode; \
-             NO authentication, NO brute-force protection. \
+             protected routes default-denied (401) unless \
+             allow_unauthenticated_protected() is called. \
              DO NOT expose to public networks."
         );
     });
 
+    // 匿名受限身份：denied scope（read/write/admin 全 false、限额 0）+ 无 token_hash
+    // （default_identity_middleware 注入时显式传 None）。T038 起不再注入 full_access。
     AuthState::new(
         state.db_pool.clone(),
         DEFAULT_TEAM_ID,
         DEFAULT_API_KEY_ID,
-        ApiKeyScope::full_access(),
+        ApiKeyScope::denied(),
     )
 }
 

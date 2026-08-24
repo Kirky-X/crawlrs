@@ -24,6 +24,16 @@ exclude = []
 # 默认构建保持现有全功能行为：平台全套（多租户 + 认证 + 限流 + Webhook + metrics + content）
 default = ["platform"]
 
+# auth-off 的 Web 中间件面（production-mock-purge T037/T038）：
+# platform 隐含 auth，auth-off 的 default_identity_middleware 在现有 feature 矩阵中
+# 无法编译；本 feature 为 platform 剔除 teams/auth 的等价面（auth-off 语义生效面），
+# 供 `--no-default-features --features web-axum --lib` 构建/测试该路径。
+web-axum = [
+    "rate-limit", "webhook", "metrics", "content",
+    "dep:dbnexus", "dep:dbnexus-macros", "dep:axum", "dep:sdforge",
+    "inklog/http", "inklog/postgres", "http",
+]
+
 # platform：完整平台服务能力面。agent-lib / 嵌入式接入方用 `--no-default-features` 剥离。
 # 挂载 platform 的服务端依赖：dbnexus（DB）、axum（HTTP）、sdforge（SDK 宏）。
 # garrison/inventory（auth 隐含）、sysinfo（metrics 隐含）已分别挂既有 feature。
@@ -293,10 +303,6 @@ name = "main"
 path = "tests/main.rs"
 required-features = ["test-mocks"]
 
-[[test]]
-name = "sdk_api_test"
-path = "tests/sdk_api_test.rs"
-required-features = ["test-mocks"]
 
 # 临时诊断测试：依赖 presentation（platform 门控），非平台构建时跳过
 [[test]]

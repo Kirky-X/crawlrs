@@ -28,7 +28,7 @@ pub mod constant_time_compare;
 pub mod env_injection;
 pub mod env_validation;
 pub mod env_var_security;
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 pub mod secure_ip;
 pub mod ssrf;
 

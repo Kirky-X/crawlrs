@@ -262,10 +262,17 @@ pub async fn init_rate_limiting_service(
         // 避免 unused 参数 warning
         let _ = repositories;
         let _ = settings;
-        log::warn!(
-            "rate-limit feature disabled, using NoopRateLimitingService — \
-             all requests are allowed without rate limiting"
-        );
+        // T039：安全语义降级必须 error 级且仅提示一次（OnceLock），
+        // 避免刷屏淹没运维日志；"all requests allowed" 是显式的降级声明。
+        static NOOP_RATE_LIMIT_WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        NOOP_RATE_LIMIT_WARNED.get_or_init(|| {
+            log::error!(
+                "rate-limit feature disabled，装配 NoopRateLimitingService —— 安全语义降级：\
+                 ALL requests are allowed without rate limiting（不限流/不扣配额/无限并发）。\
+                 仅限受信任内部部署；公开网络必须启用 rate-limit feature（启用方式：\
+                 Cargo.toml [features] 打开 rate-limit，或 --features rate-limit）。"
+            );
+        });
         Arc::new(NoopRateLimitingService::new())
     }
 }
