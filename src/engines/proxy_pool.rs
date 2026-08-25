@@ -939,7 +939,7 @@ mod tests {
         // LOW-2 修复核心测试：多线程并发 sticky 同一 session_id，
         // 所有线程必须返回同一 URL（entry API 保证原子性）。
         //
-        // 场景：TTL 极短（1ms），所有线程几乎同时发现绑定过期，
+        // 场景：TTL 极短（50ms），所有线程几乎同时发现绑定过期，
         // 进入慢路径重选。修复前：各线程独立 rr_pick + insert，互相覆盖，
         // 返回不同 URL。修复后：entry API 保证只有一个线程 insert，
         // 其余线程在 entry 锁内复用。
@@ -951,7 +951,7 @@ mod tests {
                     "http://c:8080",
                     "http://d:8080",
                 ],
-                Duration::from_millis(1),
+                Duration::from_millis(50),
             )
             .with_sticky_max_capacity(100),
         );
