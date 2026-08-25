@@ -349,7 +349,7 @@ debug = true
 members = ["examples"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.0-rc.1"
 edition = "2021"
 rust-version = "1.95"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]

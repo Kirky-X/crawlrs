@@ -1423,7 +1423,7 @@ dependencies = [
 
 [[package]]
 name = "confers-macros"
-version = "0.5.1"
+version = "0.6.0-rc.1"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -1665,7 +1665,7 @@ dependencies = [
 
 [[package]]
 name = "crawlrs-examples"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "async-trait",
