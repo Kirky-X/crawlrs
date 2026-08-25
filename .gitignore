@@ -291,3 +291,4 @@ strix_runs/
 # End of .gitignore
 .gitnexus
 .codenexus
+Cargo.lock
