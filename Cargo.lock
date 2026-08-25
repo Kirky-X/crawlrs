@@ -6818,7 +6818,7 @@ dependencies = [
 
 [[package]]
 name = "sdforge-macros"
-version = "0.4.6"
+version = "0.5.0-rc.1"
 dependencies = [
  "proc-macro2",
  "quote",

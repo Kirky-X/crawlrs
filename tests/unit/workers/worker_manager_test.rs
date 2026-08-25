@@ -31,6 +31,153 @@ use crawlrs::domain::repositories::scrape_result_repository::ScrapeResultReposit
 use crawlrs::domain::repositories::task_repository::{
     RepositoryError, TaskQueryParams, TaskRepository,
 };
+
+// ===== 最小测试替身（WorkerManagerDeps 三个新字段；unit 层允许 mock） =====
+#[derive(Default)]
+struct MockWebhookEventRepo;
+
+#[async_trait]
+impl crawlrs::domain::repositories::webhook_event_repository::WebhookEventRepository
+    for MockWebhookEventRepo
+{
+    async fn create(
+        &self,
+        _event: &crawlrs::domain::models::WebhookEvent,
+    ) -> Result<crawlrs::domain::models::WebhookEvent, crawlrs::domain::repositories::task_repository::RepositoryError>
+    {
+        Err(crawlrs::domain::repositories::task_repository::RepositoryError::Database(
+            anyhow::anyhow!("mock"),
+        ))
+    }
+    async fn find_by_id(&self, _id: Uuid) -> Result<Option<crawlrs::domain::models::WebhookEvent>, crawlrs::domain::repositories::task_repository::RepositoryError> {
+        Ok(None)
+    }
+    async fn find_pending(&self, _limit: u64) -> Result<Vec<crawlrs::domain::models::WebhookEvent>, crawlrs::domain::repositories::task_repository::RepositoryError> {
+        Ok(vec![])
+    }
+    async fn find_by_team_id_paginated(
+        &self,
+        _team_id: Uuid,
+        _limit: u32,
+        _offset: u32,
+    ) -> Result<Vec<crawlrs::domain::models::WebhookEvent>, crawlrs::domain::repositories::task_repository::RepositoryError> {
+        Ok(vec![])
+    }
+    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, crawlrs::domain::repositories::task_repository::RepositoryError> {
+        Ok(0)
+    }
+    async fn update(&self, _event: &crawlrs::domain::models::WebhookEvent) -> Result<crawlrs::domain::models::WebhookEvent, crawlrs::domain::repositories::task_repository::RepositoryError> {
+        Err(crawlrs::domain::repositories::task_repository::RepositoryError::Database(
+            anyhow::anyhow!("mock"),
+        ))
+    }
+    async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, crawlrs::domain::repositories::task_repository::RepositoryError> {
+        Ok(0)
+    }
+}
+
+#[derive(Default)]
+struct MockGeoRestrictionRepo;
+
+#[async_trait]
+impl crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepository
+    for MockGeoRestrictionRepo
+{
+    async fn get_team_restrictions(
+        &self,
+        _team_id: Uuid,
+    ) -> Result<
+        crawlrs::domain::services::team_service::TeamGeoRestrictions,
+        crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+    > {
+        Ok(crawlrs::domain::services::team_service::TeamGeoRestrictions::default())
+    }
+    async fn update_team_restrictions(
+        &self,
+        _team_id: Uuid,
+        _restrictions: &crawlrs::domain::services::team_service::TeamGeoRestrictions,
+    ) -> Result<
+        (),
+        crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+    > {
+        Ok(())
+    }
+    async fn log_geo_restriction_action(
+        &self,
+        _team_id: Uuid,
+        _ip_address: &str,
+        _country_code: &str,
+        _action: &str,
+        _reason: &str,
+    ) -> Result<(), crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError> {
+        Ok(())
+    }
+    async fn cleanup_expired(
+        &self,
+        _retention_days: i64,
+    ) -> Result<u64, crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError>
+    {
+        Ok(0)
+    }
+}
+
+#[derive(Default)]
+struct MockAuditService;
+
+#[async_trait]
+impl crawlrs::domain::services::audit_service::AuditServiceTrait for MockAuditService {
+    async fn log(
+        &self,
+        _entry: crawlrs::domain::auth::AuditLogEntry,
+    ) -> Result<(), crawlrs::domain::services::audit_service::AuditServiceError> {
+        Ok(())
+    }
+    async fn log_allow(
+        &self,
+        _action: String,
+        _api_key_id: Uuid,
+        _team_id: Uuid,
+        _scope: crawlrs::domain::auth::ApiKeyScope,
+    ) -> Result<(), crawlrs::domain::services::audit_service::AuditServiceError> {
+        Ok(())
+    }
+    async fn log_deny(
+        &self,
+        _action: String,
+        _api_key_id: Option<Uuid>,
+        _team_id: Option<Uuid>,
+        _reason: String,
+        _scope: Option<crawlrs::domain::auth::ApiKeyScope>,
+    ) -> Result<(), crawlrs::domain::services::audit_service::AuditServiceError> {
+        Ok(())
+    }
+    async fn get_logs_for_key(
+        &self,
+        _api_key_id: Uuid,
+        _limit: u64,
+        _offset: u64,
+    ) -> Result<Vec<crawlrs::domain::auth::AuditLogEntry>, crawlrs::domain::services::audit_service::AuditServiceError> {
+        Ok(vec![])
+    }
+    async fn get_logs_for_team(
+        &self,
+        _team_id: Uuid,
+        _limit: u64,
+        _offset: u64,
+    ) -> Result<Vec<crawlrs::domain::auth::AuditLogEntry>, crawlrs::domain::services::audit_service::AuditServiceError> {
+        Ok(vec![])
+    }
+    async fn get_denied_requests(
+        &self,
+        _team_id: Uuid,
+        _limit: u64,
+    ) -> Result<Vec<crawlrs::domain::auth::AuditLogEntry>, crawlrs::domain::services::audit_service::AuditServiceError> {
+        Ok(vec![])
+    }
+    async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, crawlrs::domain::services::audit_service::AuditServiceError> {
+        Ok(0)
+    }
+}
 use crawlrs::domain::services::extraction_service::{ExtractionRule, ExtractionServiceTrait};
 use crawlrs::domain::services::llm::TokenUsage;
 use crawlrs::domain::services::team_semaphore::TeamSemaphore;
@@ -216,6 +363,9 @@ struct MockScrapeResultRepository;
 
 #[async_trait]
 impl ScrapeResultRepository for MockScrapeResultRepository {
+    async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+        Ok(0)
+    }
     async fn save(&self, _result: ScrapeResult) -> anyhow::Result<()> {
         Ok(())
     }
@@ -495,6 +645,9 @@ fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> 
         extraction_service: Arc::new(MockExtractionService),
         regex_cache: make_regex_cache(),
         cache_service: Arc::new(MockCacheService) as Arc<dyn CacheService>,
+        webhook_event_repository: Arc::new(MockWebhookEventRepo),
+        geo_restriction_repository: Arc::new(MockGeoRestrictionRepo),
+        audit_service: Arc::new(MockAuditService),
         shutdown_coordinator: Arc::new(crawlrs::workers::shutdown::ShutdownCoordinator::default()),
     }
 }

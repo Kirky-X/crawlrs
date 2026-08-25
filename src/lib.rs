@@ -5,6 +5,9 @@
 
 // 数据库后端特性说明：
 // - 当前仅支持 PostgreSQL（通过 dbnexus-postgres 特性启用）
+#![allow(rustdoc::broken_intra_doc_links)]
+#![allow(rustdoc::private_intra_doc_links)]
+#![allow(rustdoc::invalid_html_tags)]
 // - 原 dbnexus-sqlite 特性已删除（不再支持 SQLite）
 // - 若未来需要重新支持 SQLite，需重新引入 dbnexus-sqlite 特性并恢复相关测试
 // 注意：未启用任何 db 特性时，依赖 Settings/仓储的代码将不可用，
