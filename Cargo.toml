@@ -186,7 +186,7 @@ dom_smoothie = { version = "0.18", default-features = false, optional = true }
 chardetng = { version = "1.0" }
 encoding_rs = { version = "0.8" }
 deunicode = "1.6"
-lru = "0.18"
+lru = "0.18.2"
 strsim = "0.11"
 html-escape = "0.2"
 serde_urlencoded = "0.7"
