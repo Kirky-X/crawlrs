@@ -1401,7 +1401,7 @@ checksum = "cc14f565cf027a105f7a44ccf9e5b424348421a1d8952a8fc9d499d313107789"
 
 [[package]]
 name = "confers"
-version = "0.5.1"
+version = "0.6.0-rc.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "crawlrs"
-version = "0.2.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "ahash 0.8.12",
  "aho-corasick",
@@ -2079,7 +2079,7 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "dbnexus"
-version = "0.5.1"
+version = "0.6.0-rc.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2112,7 +2112,7 @@ dependencies = [
 
 [[package]]
 name = "dbnexus-macros"
-version = "0.5.1"
+version = "0.6.0-rc.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3047,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "garrison"
-version = "0.8.1"
+version = "0.9.0-rc.1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4306,7 +4306,7 @@ checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
 
 [[package]]
 name = "inklog"
-version = "0.2.0"
+version = "0.3.0-rc.1"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -4752,7 +4752,7 @@ dependencies = [
 
 [[package]]
 name = "limiteron"
-version = "0.2.10"
+version = "0.3.0-rc.1"
 dependencies = [
  "ahash 0.8.12",
  "async-trait",
@@ -5403,7 +5403,7 @@ dependencies = [
 
 [[package]]
 name = "oxcache"
-version = "0.4.3"
+version = "0.5.0-rc.1"
 dependencies = [
  "async-trait",
  "bloomfilter",
@@ -5425,7 +5425,7 @@ dependencies = [
 
 [[package]]
 name = "oxcache_macros"
-version = "0.4.3"
+version = "0.5.0-rc.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6794,7 +6794,7 @@ dependencies = [
 
 [[package]]
 name = "sdforge"
-version = "0.4.7"
+version = "0.5.0-rc.1"
 dependencies = [
  "axum",
  "axum-extra",
@@ -8556,7 +8556,7 @@ dependencies = [
 
 [[package]]
 name = "trait-kit"
-version = "0.4.2"
+version = "0.5.0-rc.1"
 dependencies = [
  "confers",
  "serde",
