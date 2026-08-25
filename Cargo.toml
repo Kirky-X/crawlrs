@@ -127,7 +127,7 @@ subtle = "2.6"
 # HTTP client and networking
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "cookies", "http2", "charset", "system-proxy", "gzip", "brotli", "stream"] }
 # TLS 指纹引擎（Phase 1 / D4）：BoringSSL 后端 HTTP 客户端，Apache-2.0。
-# wreq 5.x 稳定版（6.0.0-rc 为预发布，不选）。EmulationProvider/EmulationProviderFactory/TlsConfig
+# wreq 5.x 已被上游全部 yank（2026-08 检查 5.1.0/5.2.0/5.3.0 均 yanked），改用 6.0.0-rc.31。EmulationProvider/EmulationProviderFactory/TlsConfig
 # 均为 wreq 自有 API，无需引入 GPL 的 wreq-util。构建需 cmake + C 编译器（BoringSSL）。
 wreq = { version = "5.3", default-features = false, optional = true }
 url = "2.5"

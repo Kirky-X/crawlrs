@@ -925,10 +925,7 @@ mod tests {
 
     #[async_trait]
     impl WebhookEventRepository for MockWebhookEventRepository {
-        async fn create(
-            &self,
-            event: &WebhookEvent,
-        ) -> Result<WebhookEvent, RepositoryError> {
+        async fn create(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
             Ok(event.clone())
         }
         async fn find_by_id(&self, _id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
@@ -948,10 +945,7 @@ mod tests {
         async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn update(
-            &self,
-            event: &WebhookEvent,
-        ) -> Result<WebhookEvent, RepositoryError> {
+        async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
             Ok(event.clone())
         }
         async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
@@ -966,14 +960,20 @@ mod tests {
         async fn get_team_restrictions(
             &self,
             _team_id: Uuid,
-        ) -> Result<crate::domain::services::team_service::TeamGeoRestrictions, crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError> {
+        ) -> Result<
+            crate::domain::services::team_service::TeamGeoRestrictions,
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             Ok(crate::domain::services::team_service::TeamGeoRestrictions::default())
         }
         async fn update_team_restrictions(
             &self,
             _team_id: Uuid,
             _restrictions: &crate::domain::services::team_service::TeamGeoRestrictions,
-        ) -> Result<(), crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError> {
+        ) -> Result<
+            (),
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             Ok(())
         }
         async fn log_geo_restriction_action(
@@ -983,13 +983,19 @@ mod tests {
             _country_code: &str,
             _action: &str,
             _reason: &str,
-        ) -> Result<(), crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError> {
+        ) -> Result<
+            (),
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             Ok(())
         }
         async fn cleanup_expired(
             &self,
             _retention_days: i64,
-        ) -> Result<u64, crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError> {
+        ) -> Result<
+            u64,
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             Ok(0)
         }
     }
@@ -998,7 +1004,10 @@ mod tests {
 
     #[async_trait]
     impl AuditServiceTrait for MockAuditService {
-        async fn log(&self, _entry: crate::domain::auth::AuditLogEntry) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
+        async fn log(
+            &self,
+            _entry: crate::domain::auth::AuditLogEntry,
+        ) -> Result<(), crate::domain::services::audit_service::AuditServiceError> {
             Ok(())
         }
         async fn log_allow(
@@ -1025,7 +1034,10 @@ mod tests {
             _api_key_id: Uuid,
             _limit: u64,
             _offset: u64,
-        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, crate::domain::services::audit_service::AuditServiceError> {
+        ) -> Result<
+            Vec<crate::domain::auth::AuditLogEntry>,
+            crate::domain::services::audit_service::AuditServiceError,
+        > {
             Ok(vec![])
         }
         async fn get_logs_for_team(
@@ -1033,17 +1045,26 @@ mod tests {
             _team_id: Uuid,
             _limit: u64,
             _offset: u64,
-        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, crate::domain::services::audit_service::AuditServiceError> {
+        ) -> Result<
+            Vec<crate::domain::auth::AuditLogEntry>,
+            crate::domain::services::audit_service::AuditServiceError,
+        > {
             Ok(vec![])
         }
         async fn get_denied_requests(
             &self,
             _api_key_id: Uuid,
             _limit: u64,
-        ) -> Result<Vec<crate::domain::auth::AuditLogEntry>, crate::domain::services::audit_service::AuditServiceError> {
+        ) -> Result<
+            Vec<crate::domain::auth::AuditLogEntry>,
+            crate::domain::services::audit_service::AuditServiceError,
+        > {
             Ok(vec![])
         }
-        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, crate::domain::services::audit_service::AuditServiceError> {
+        async fn cleanup_old_logs(
+            &self,
+            _retention_days: i64,
+        ) -> Result<u64, crate::domain::services::audit_service::AuditServiceError> {
             Ok(0)
         }
     }

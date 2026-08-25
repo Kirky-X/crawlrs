@@ -6,8 +6,7 @@ use uuid::Uuid;
 
 /// 序列化清理测试：共享 testcontainers 容器下，多个清理用例并行时会
 /// 互相删除对方刚插入的数据（retention 覆盖全部行）。
-static WEBHOOK_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
-    std::sync::OnceLock::new();
+static WEBHOOK_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
 
 fn webhook_lock() -> &'static tokio::sync::Mutex<()> {
     WEBHOOK_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
@@ -101,9 +100,7 @@ async fn cleanup_terminal_keeps_recent_delivered() {
     let repo = WebhookEventRepoImpl::new(create_test_db_pool());
 
     let recent_delivered = make_event(WebhookStatus::Delivered, 1, Some(1));
-    repo.create(&recent_delivered)
-        .await
-        .expect("create failed");
+    repo.create(&recent_delivered).await.expect("create failed");
 
     repo.cleanup_terminal(30).await.expect("cleanup failed");
 

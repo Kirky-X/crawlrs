@@ -84,7 +84,10 @@ impl RetentionWorker {
         match self.geo_repo.cleanup_expired(self.geo_logs_days).await {
             Ok(count) => {
                 if count > 0 {
-                    info!("Retention: cleaned up {} expired geo_restriction_logs", count);
+                    info!(
+                        "Retention: cleaned up {} expired geo_restriction_logs",
+                        count
+                    );
                 }
             }
             Err(e) => {
@@ -109,7 +112,11 @@ impl RetentionWorker {
             }
         }
 
-        match self.audit_service.cleanup_old_logs(self.audit_logs_days).await {
+        match self
+            .audit_service
+            .cleanup_old_logs(self.audit_logs_days)
+            .await
+        {
             Ok(count) => {
                 if count > 0 {
                     info!("Retention: cleaned up {} old audit_logs", count);
@@ -136,10 +143,7 @@ impl WorkerProcess for RetentionWorker {
         if errors.is_empty() {
             ProcessResult::Completed
         } else {
-            ProcessResult::Error(format!(
-                "Retention cleanup failed: {}",
-                errors.join("; ")
-            ))
+            ProcessResult::Error(format!("Retention cleanup failed: {}", errors.join("; ")))
         }
     }
 }
@@ -220,16 +224,20 @@ mod tests {
         async fn get_team_restrictions(
             &self,
             _team_id: Uuid,
-        ) -> Result<TeamGeoRestrictions, crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError>
-        {
+        ) -> Result<
+            TeamGeoRestrictions,
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             Ok(TeamGeoRestrictions::default())
         }
         async fn update_team_restrictions(
             &self,
             _team_id: Uuid,
             _restrictions: &TeamGeoRestrictions,
-        ) -> Result<(), crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError>
-        {
+        ) -> Result<
+            (),
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             Ok(())
         }
         async fn log_geo_restriction_action(
@@ -239,15 +247,19 @@ mod tests {
             _country_code: &str,
             _action: &str,
             _reason: &str,
-        ) -> Result<(), crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError>
-        {
+        ) -> Result<
+            (),
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             Ok(())
         }
         async fn cleanup_expired(
             &self,
             _retention_days: i64,
-        ) -> Result<u64, crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError>
-        {
+        ) -> Result<
+            u64,
+            crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+        > {
             self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
             if self.fail {
                 Err(crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError::Database("db down".to_string()))
@@ -263,13 +275,27 @@ mod tests {
 
     #[async_trait]
     impl WebhookEventRepository for MockWebhookRepo {
-        async fn create(&self, event: &WebhookEvent) -> Result<WebhookEvent, crate::domain::repositories::task_repository::RepositoryError> {
+        async fn create(
+            &self,
+            event: &WebhookEvent,
+        ) -> Result<WebhookEvent, crate::domain::repositories::task_repository::RepositoryError>
+        {
             Ok(event.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<WebhookEvent>, crate::domain::repositories::task_repository::RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: Uuid,
+        ) -> Result<
+            Option<WebhookEvent>,
+            crate::domain::repositories::task_repository::RepositoryError,
+        > {
             Ok(None)
         }
-        async fn find_pending(&self, _limit: u64) -> Result<Vec<WebhookEvent>, crate::domain::repositories::task_repository::RepositoryError> {
+        async fn find_pending(
+            &self,
+            _limit: u64,
+        ) -> Result<Vec<WebhookEvent>, crate::domain::repositories::task_repository::RepositoryError>
+        {
             Ok(vec![])
         }
         async fn find_by_team_id_paginated(
@@ -277,16 +303,27 @@ mod tests {
             _team_id: Uuid,
             _limit: u32,
             _offset: u32,
-        ) -> Result<Vec<WebhookEvent>, crate::domain::repositories::task_repository::RepositoryError> {
+        ) -> Result<Vec<WebhookEvent>, crate::domain::repositories::task_repository::RepositoryError>
+        {
             Ok(vec![])
         }
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
+        async fn count_by_team_id(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
             Ok(0)
         }
-        async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, crate::domain::repositories::task_repository::RepositoryError> {
+        async fn update(
+            &self,
+            event: &WebhookEvent,
+        ) -> Result<WebhookEvent, crate::domain::repositories::task_repository::RepositoryError>
+        {
             Ok(event.clone())
         }
-        async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
+        async fn cleanup_terminal(
+            &self,
+            _retention_days: i64,
+        ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
             self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
             Ok(3)
         }
@@ -401,13 +438,28 @@ mod tests {
         let result = worker.process().await;
         match result {
             ProcessResult::Error(msg) => {
-                assert!(msg.contains("scrape_results"), "error should name category: {msg}");
+                assert!(
+                    msg.contains("scrape_results"),
+                    "error should name category: {msg}"
+                );
             }
             other => panic!("expected Error, got {:?}", other),
         }
-        assert_eq!(geo.cleanup_calls.load(Ordering::SeqCst), 1, "geo must still run");
-        assert_eq!(webhook.cleanup_calls.load(Ordering::SeqCst), 1, "webhook must still run");
-        assert_eq!(audit.cleanup_calls.load(Ordering::SeqCst), 1, "audit must still run");
+        assert_eq!(
+            geo.cleanup_calls.load(Ordering::SeqCst),
+            1,
+            "geo must still run"
+        );
+        assert_eq!(
+            webhook.cleanup_calls.load(Ordering::SeqCst),
+            1,
+            "webhook must still run"
+        );
+        assert_eq!(
+            audit.cleanup_calls.load(Ordering::SeqCst),
+            1,
+            "audit must still run"
+        );
     }
 
     /// 失败语义：多处失败时错误串聚合全部失败类别。

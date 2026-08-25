@@ -7,8 +7,7 @@ use uuid::Uuid;
 
 /// 序列化清理测试：共享 testcontainers 容器下，两个清理用例并行时
 /// 会互相删除对方刚插入的数据（retention 覆盖全部行）。
-static RESTRICTION_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
-    std::sync::OnceLock::new();
+static RESTRICTION_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
 
 fn restriction_lock() -> &'static tokio::sync::Mutex<()> {
     RESTRICTION_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))

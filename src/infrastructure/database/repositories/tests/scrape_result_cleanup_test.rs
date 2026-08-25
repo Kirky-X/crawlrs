@@ -49,11 +49,17 @@ async fn cleanup_expired_deletes_old_keeps_recent() {
         .cleanup_expired(30)
         .await
         .expect("cleanup_expired failed");
-    assert!(deleted >= 1, "deleted count should include our old row: {deleted}");
+    assert!(
+        deleted >= 1,
+        "deleted count should include our old row: {deleted}"
+    );
 
     // Exact behavior: our 40-day-old row is gone, our 1-day-old row survives.
     assert!(
-        repo.find_by_task_id(old.task_id).await.expect("query failed").is_none(),
+        repo.find_by_task_id(old.task_id)
+            .await
+            .expect("query failed")
+            .is_none(),
         "40-day-old row should be deleted"
     );
     let found = repo
@@ -75,9 +81,15 @@ async fn cleanup_expired_with_zero_retention_removes_fresh_rows() {
         .cleanup_expired(0)
         .await
         .expect("cleanup_expired failed");
-    assert!(deleted >= 1, "fresh row should be removable with 0 retention: {deleted}");
     assert!(
-        repo.find_by_task_id(fresh.task_id).await.expect("query failed").is_none(),
+        deleted >= 1,
+        "fresh row should be removable with 0 retention: {deleted}"
+    );
+    assert!(
+        repo.find_by_task_id(fresh.task_id)
+            .await
+            .expect("query failed")
+            .is_none(),
         "row should be deleted with 0-day retention"
     );
 }

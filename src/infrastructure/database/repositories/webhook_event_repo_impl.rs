@@ -198,16 +198,15 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
         let terminal_condition = Condition::any()
             .add(
                 Condition::all()
-                    .add(webhook_event::Column::Status.eq(
-                        webhook_event::SeaWebhookStatus::Delivered,
-                    ))
+                    .add(
+                        webhook_event::Column::Status
+                            .eq(webhook_event::SeaWebhookStatus::Delivered),
+                    )
                     .add(webhook_event::Column::DeliveredAt.lt(cutoff)),
             )
             .add(
                 Condition::all()
-                    .add(webhook_event::Column::Status.eq(
-                        webhook_event::SeaWebhookStatus::Dead,
-                    ))
+                    .add(webhook_event::Column::Status.eq(webhook_event::SeaWebhookStatus::Dead))
                     .add(webhook_event::Column::UpdatedAt.lt(cutoff)),
             );
 

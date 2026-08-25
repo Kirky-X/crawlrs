@@ -43,16 +43,32 @@ impl crawlrs::domain::repositories::webhook_event_repository::WebhookEventReposi
     async fn create(
         &self,
         _event: &crawlrs::domain::models::WebhookEvent,
-    ) -> Result<crawlrs::domain::models::WebhookEvent, crawlrs::domain::repositories::task_repository::RepositoryError>
-    {
-        Err(crawlrs::domain::repositories::task_repository::RepositoryError::Database(
-            anyhow::anyhow!("mock"),
-        ))
+    ) -> Result<
+        crawlrs::domain::models::WebhookEvent,
+        crawlrs::domain::repositories::task_repository::RepositoryError,
+    > {
+        Err(
+            crawlrs::domain::repositories::task_repository::RepositoryError::Database(
+                anyhow::anyhow!("mock"),
+            ),
+        )
     }
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<crawlrs::domain::models::WebhookEvent>, crawlrs::domain::repositories::task_repository::RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: Uuid,
+    ) -> Result<
+        Option<crawlrs::domain::models::WebhookEvent>,
+        crawlrs::domain::repositories::task_repository::RepositoryError,
+    > {
         Ok(None)
     }
-    async fn find_pending(&self, _limit: u64) -> Result<Vec<crawlrs::domain::models::WebhookEvent>, crawlrs::domain::repositories::task_repository::RepositoryError> {
+    async fn find_pending(
+        &self,
+        _limit: u64,
+    ) -> Result<
+        Vec<crawlrs::domain::models::WebhookEvent>,
+        crawlrs::domain::repositories::task_repository::RepositoryError,
+    > {
         Ok(vec![])
     }
     async fn find_by_team_id_paginated(
@@ -60,18 +76,35 @@ impl crawlrs::domain::repositories::webhook_event_repository::WebhookEventReposi
         _team_id: Uuid,
         _limit: u32,
         _offset: u32,
-    ) -> Result<Vec<crawlrs::domain::models::WebhookEvent>, crawlrs::domain::repositories::task_repository::RepositoryError> {
+    ) -> Result<
+        Vec<crawlrs::domain::models::WebhookEvent>,
+        crawlrs::domain::repositories::task_repository::RepositoryError,
+    > {
         Ok(vec![])
     }
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, crawlrs::domain::repositories::task_repository::RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        _team_id: Uuid,
+    ) -> Result<u64, crawlrs::domain::repositories::task_repository::RepositoryError> {
         Ok(0)
     }
-    async fn update(&self, _event: &crawlrs::domain::models::WebhookEvent) -> Result<crawlrs::domain::models::WebhookEvent, crawlrs::domain::repositories::task_repository::RepositoryError> {
-        Err(crawlrs::domain::repositories::task_repository::RepositoryError::Database(
-            anyhow::anyhow!("mock"),
-        ))
+    async fn update(
+        &self,
+        _event: &crawlrs::domain::models::WebhookEvent,
+    ) -> Result<
+        crawlrs::domain::models::WebhookEvent,
+        crawlrs::domain::repositories::task_repository::RepositoryError,
+    > {
+        Err(
+            crawlrs::domain::repositories::task_repository::RepositoryError::Database(
+                anyhow::anyhow!("mock"),
+            ),
+        )
     }
-    async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, crawlrs::domain::repositories::task_repository::RepositoryError> {
+    async fn cleanup_terminal(
+        &self,
+        _retention_days: i64,
+    ) -> Result<u64, crawlrs::domain::repositories::task_repository::RepositoryError> {
         Ok(0)
     }
 }
@@ -109,14 +142,19 @@ impl crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRe
         _country_code: &str,
         _action: &str,
         _reason: &str,
-    ) -> Result<(), crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError> {
+    ) -> Result<
+        (),
+        crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+    > {
         Ok(())
     }
     async fn cleanup_expired(
         &self,
         _retention_days: i64,
-    ) -> Result<u64, crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError>
-    {
+    ) -> Result<
+        u64,
+        crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
+    > {
         Ok(0)
     }
 }
@@ -156,7 +194,10 @@ impl crawlrs::domain::services::audit_service::AuditServiceTrait for MockAuditSe
         _api_key_id: Uuid,
         _limit: u64,
         _offset: u64,
-    ) -> Result<Vec<crawlrs::domain::auth::AuditLogEntry>, crawlrs::domain::services::audit_service::AuditServiceError> {
+    ) -> Result<
+        Vec<crawlrs::domain::auth::AuditLogEntry>,
+        crawlrs::domain::services::audit_service::AuditServiceError,
+    > {
         Ok(vec![])
     }
     async fn get_logs_for_team(
@@ -164,17 +205,26 @@ impl crawlrs::domain::services::audit_service::AuditServiceTrait for MockAuditSe
         _team_id: Uuid,
         _limit: u64,
         _offset: u64,
-    ) -> Result<Vec<crawlrs::domain::auth::AuditLogEntry>, crawlrs::domain::services::audit_service::AuditServiceError> {
+    ) -> Result<
+        Vec<crawlrs::domain::auth::AuditLogEntry>,
+        crawlrs::domain::services::audit_service::AuditServiceError,
+    > {
         Ok(vec![])
     }
     async fn get_denied_requests(
         &self,
         _team_id: Uuid,
         _limit: u64,
-    ) -> Result<Vec<crawlrs::domain::auth::AuditLogEntry>, crawlrs::domain::services::audit_service::AuditServiceError> {
+    ) -> Result<
+        Vec<crawlrs::domain::auth::AuditLogEntry>,
+        crawlrs::domain::services::audit_service::AuditServiceError,
+    > {
         Ok(vec![])
     }
-    async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, crawlrs::domain::services::audit_service::AuditServiceError> {
+    async fn cleanup_old_logs(
+        &self,
+        _retention_days: i64,
+    ) -> Result<u64, crawlrs::domain::services::audit_service::AuditServiceError> {
         Ok(0)
     }
 }
