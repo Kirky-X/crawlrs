@@ -48,6 +48,7 @@ use std::fmt::Display;
 ///
 /// * `Ok(())` - Rate limit check passed
 /// * `Err(Response)` - Rate limit exceeded, with appropriate error response
+#[allow(clippy::result_large_err)]
 pub async fn check_rate_limit<T, K>(service: &T, api_key: K, endpoint: &str) -> Result<(), Response>
 where
     T: RateLimitingService + ?Sized,
