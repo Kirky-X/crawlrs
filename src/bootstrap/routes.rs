@@ -24,7 +24,6 @@ use crate::presentation::middleware::auth_types::AuthState;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
 use crate::presentation::routes;
-use crate::presentation::routes::task::task_routes;
 use crate::presentation::state::CrawlHandlerState;
 use axum::{routing::get, Extension, Router};
 use std::sync::Arc;
@@ -331,7 +330,10 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>
     let result_repo_impl: Arc<ScrapeResultRepositoryImpl> =
         Arc::new(ScrapeResultRepositoryImpl::new(state.db_pool.clone()));
 
-    let app = task_routes()
+    // task 路由已迁移至 `presentation::forge_api::task`（sdforge 直注注册，T010）；
+    // 信号量语义由 build_api_app_with_state 的路径条件中间件在 /v1/tasks/* 上保序执行。
+    // 本函数保留空装配点，由 T013 随 protected 组一并移除。
+    let app = Router::new()
         .layer(Extension(task_repo_impl.clone()))
         .layer(Extension(result_repo_impl.clone()));
 
@@ -372,6 +374,33 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>
     };
 
     app
+}
+
+/// 路径条件信号量中间件（migrate-routes-to-sdforge T010 保序迁移）。
+///
+/// 仅 `/v1/tasks/` 前缀执行 team 并发信号量——迁移自原 v2 任务组独立装配的语义；
+/// 其余路径直通。执行顺序与迁移前一致：auth 外层注入 AuthState → 本中间件 → handler。
+///
+/// 注意：信号量 Extension 必须在函数体内按需读取而非作中间件参数——`from_fn`
+/// 的参数提取发生在函数体之前，参数化写法会让非任务路径也因缺扩展被 500 拒绝。
+async fn task_semaphore_for_tasks_paths(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if !request.uri().path().starts_with("/v1/tasks/") {
+        return next.run(request).await;
+    }
+    let Some(semaphore) = request
+        .extensions()
+        .get::<Arc<crate::domain::services::team_semaphore::TeamSemaphore>>()
+        .cloned()
+    else {
+        use axum::response::IntoResponse as _;
+        // 迁移前 v2 组恒 layer 该 Extension；缺失属装配错误，与 axum 提取拒绝同为 500
+        log::error!("TeamSemaphore extension missing — route assembly error");
+        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    team_semaphore_middleware(Extension(semaphore), request, next).await
 }
 
 /// Build the complete API application router using CrawlRsState.
@@ -446,23 +475,24 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool。
     // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
     //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
+    // 信号量内层（先 layer）：仅 /v1/tasks/* 生效，auth 之后、handler 之前执行
     #[cfg(feature = "auth")]
     let forge_router =
-        crate::presentation::forge_api::build_forge_router().layer(
-            axum::middleware::from_fn_with_state(
+        crate::presentation::forge_api::build_forge_router()
+            .layer(axum::middleware::from_fn(task_semaphore_for_tasks_paths))
+            .layer(axum::middleware::from_fn_with_state(
                 state.db_pool.clone(),
                 crate::presentation::middleware::auth_middleware::auth_middleware_inner,
-            ),
-        );
+            ));
     #[cfg(not(feature = "auth"))]
     let forge_router = {
         let template = build_default_identity_template(state);
-        crate::presentation::forge_api::build_forge_router().layer(
-            axum::middleware::from_fn_with_state(
+        crate::presentation::forge_api::build_forge_router()
+            .layer(axum::middleware::from_fn(task_semaphore_for_tasks_paths))
+            .layer(axum::middleware::from_fn_with_state(
                 template,
                 crate::presentation::middleware::auth_middleware::default_identity_middleware,
-            ),
-        )
+            ))
     };
 
     let app = app
@@ -1661,6 +1691,42 @@ mod tests {
         #[cfg(feature = "auth")]
         v.push(SmokeEndpoint { method: "POST", path: "/v1/admin/api-keys" });
         v
+    }
+
+    // ========== 条件信号量中间件直通性（T010）==========
+
+    /// 非 /v1/tasks/ 路径必须直通：即使无任何 Extension（无信号量、无 AuthState）
+    /// 也到达 handler，证明信号量逻辑未被触发。
+    #[tokio::test]
+    async fn test_task_semaphore_middleware_passes_through_non_task_paths() {
+        use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
+        use tower::ServiceExt;
+
+        async fn ok_handler() -> StatusCode {
+            StatusCode::OK
+        }
+
+        let app: Router = Router::new()
+            .route("/other", get(ok_handler))
+            .layer(axum::middleware::from_fn(task_semaphore_for_tasks_paths));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/other")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "non-/v1/tasks/ paths must bypass the semaphore entirely \
+             (no Extension<TeamSemaphore> present, so any semaphore invocation would fail)"
+        );
     }
 
     /// 全业务端点可达性 + 认证语义冒烟（19 端点）。

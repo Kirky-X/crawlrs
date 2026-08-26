@@ -27,6 +27,7 @@ pub mod crawl;
 pub mod management;
 pub mod scrape;
 pub mod search;
+pub mod task;
 
 use axum::Router;
 
