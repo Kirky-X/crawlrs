@@ -1600,4 +1600,118 @@ mod tests {
             "POST /v1/admin/api-keys must NOT be registered when auth feature is off"
         );
     }
+
+    // ========== 业务端点冒烟测试（migrate-routes-to-sdforge T003 回归防护网）==========
+    //
+    // 对全部 19 个业务端点逐一发起未认证请求：
+    // - auth-on：必须被最外层 auth 中间件以 401/403 拦截——证明「路由可达 + 方法匹配」，
+    //   而非 404（路由未注册）；
+    // - auth-off：请求穿透默认身份中间件进入业务层——断言非 404/405/500/501，
+    //   其中 500 会暴露合并 app 层 Extension 供给缺口。
+    //
+    // 迁移过渡期同时压住手写与 sdforge 两条注册路径；迁移完成后作为单一注册面的
+    // 可达性回归网。feature 门控行与生产路由注册的 cfg 完全对应。
+
+    struct SmokeEndpoint {
+        method: &'static str,
+        path: &'static str,
+    }
+
+    fn smoke_endpoints() -> Vec<SmokeEndpoint> {
+        let mut v = vec![
+            SmokeEndpoint { method: "POST", path: "/v1/scrape" },
+            SmokeEndpoint {
+                method: "GET",
+                path: "/v1/scrape/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234",
+            },
+            SmokeEndpoint { method: "POST", path: "/v1/search" },
+            SmokeEndpoint { method: "POST", path: "/v1/crawl" },
+            SmokeEndpoint {
+                method: "GET",
+                path: "/v1/crawl/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234",
+            },
+            SmokeEndpoint {
+                method: "GET",
+                path: "/v1/crawl/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234/results",
+            },
+            SmokeEndpoint {
+                method: "DELETE",
+                path: "/v1/crawl/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234",
+            },
+            SmokeEndpoint { method: "GET", path: "/v1/audit/logs" },
+            SmokeEndpoint { method: "GET", path: "/v1/audit/denied" },
+            SmokeEndpoint { method: "POST", path: "/v1/tasks/_query" },
+            SmokeEndpoint { method: "POST", path: "/v1/tasks/_cancel" },
+        ];
+        // R-wh-001：webhook 门控组
+        #[cfg(feature = "webhook")]
+        v.extend([
+            SmokeEndpoint { method: "POST", path: "/v1/webhooks" },
+            SmokeEndpoint { method: "GET", path: "/v1/webhooks" },
+        ]);
+        // R-teams-002：extract / teams 门控组
+        #[cfg(feature = "teams")]
+        v.extend([
+            SmokeEndpoint { method: "POST", path: "/v1/extract" },
+            SmokeEndpoint { method: "GET", path: "/v1/teams/me" },
+            SmokeEndpoint { method: "GET", path: "/v1/teams/me/usage" },
+            SmokeEndpoint { method: "GET", path: "/v1/teams/geo-restrictions" },
+            SmokeEndpoint { method: "PUT", path: "/v1/teams/geo-restrictions" },
+        ]);
+        // R-key-lifecycle-001：admin 门控组
+        #[cfg(feature = "auth")]
+        v.push(SmokeEndpoint { method: "POST", path: "/v1/admin/api-keys" });
+        v
+    }
+
+    /// 全业务端点可达性 + 认证语义冒烟（19 端点）。
+    #[tokio::test]
+    async fn smoke_all_business_endpoints_reachable() {
+        if skip_if_no_test_db() {
+            return;
+        }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
+        let state = match build_test_state().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
+                return;
+            }
+        };
+        let app = build_api_app_with_state(&state, Arc::new(load_test_settings()));
+
+        for ep in smoke_endpoints() {
+            let req = Request::builder()
+                .method(Method::from_bytes(ep.method.as_bytes()).unwrap())
+                .uri(ep.path)
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .expect("request build");
+            let resp = app.clone().oneshot(req).await.expect("oneshot");
+            let status = resp.status().as_u16();
+
+            #[cfg(feature = "auth")]
+            {
+                assert!(
+                    status == 401 || status == 403,
+                    "{} {} expected 401/403 from auth middleware, got {} \
+                     (404 = route missing; 500 = missing Extension)",
+                    ep.method,
+                    ep.path,
+                    status
+                );
+            }
+            #[cfg(not(feature = "auth"))]
+            {
+                assert!(
+                    !matches!(status, 404 | 405 | 500 | 501),
+                    "{} {} unexpectedly returned {} \
+                     (404 = route missing; 405 = wrong method; 500 = missing Extension)",
+                    ep.method,
+                    ep.path,
+                    status
+                );
+            }
+        }
+    }
 }
