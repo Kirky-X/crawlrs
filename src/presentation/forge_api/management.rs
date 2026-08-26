@@ -89,17 +89,17 @@ mod admin {
 /// R-teams-002：teams 路由（teams feature 门控）。
 #[cfg(feature = "teams")]
 mod teams {
-    use axum::{Extension, response::Response};
+    use axum::{response::Response, Extension};
     use sdforge::prelude::*;
     use std::sync::Arc;
 
+    use super::{route_metadata, ApiMetadata, HttpRoute, RouteRegistration};
     use crate::domain::repositories::credits_repository::CreditsRepository;
     use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
     use crate::domain::repositories::task_repository::TaskRepository;
     use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
     use crate::presentation::handlers::team_handler;
     use crate::presentation::middleware::auth_middleware::AuthState;
-    use super::{route_metadata, ApiMetadata, HttpRoute, RouteRegistration};
     use inventory::submit;
 
     #[forge(
@@ -116,15 +116,13 @@ mod teams {
         #[state] task_repo: Arc<dyn TaskRepository>,
         #[state] auth_state: AuthState,
     ) -> Result<Response, Response> {
-        Ok(
-            team_handler::get_team_info(
-                Extension(credits_repo),
-                Extension(task_repo),
-                Extension(auth_state),
-            )
-            .await
-            .into_response(),
+        Ok(team_handler::get_team_info(
+            Extension(credits_repo),
+            Extension(task_repo),
+            Extension(auth_state),
         )
+        .await
+        .into_response())
     }
 
     #[forge(
@@ -141,22 +139,21 @@ mod teams {
         #[state] scrape_result_repo: Arc<dyn ScrapeResultRepository>,
         #[state] auth_state: AuthState,
     ) -> Result<Response, Response> {
-        Ok(
-            team_handler::get_team_usage(
-                Extension(credits_repo),
-                Extension(scrape_result_repo),
-                Extension(auth_state),
-            )
-            .await
-            .into_response(),
+        Ok(team_handler::get_team_usage(
+            Extension(credits_repo),
+            Extension(scrape_result_repo),
+            Extension(auth_state),
         )
+        .await
+        .into_response())
     }
 
     // GET+PUT 同路径多方法：单条 RouteRegistration 直注，规避 build() 按路径去重的覆盖丢失
     fn team_geo_restrictions_route() -> HttpRoute {
-        let method_router =
-            axum::routing::get(team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>)
-                .put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>);
+        let method_router = axum::routing::get(
+            team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>,
+        )
+        .put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>);
         HttpRoute::new(
             "/v1/teams/geo-restrictions".to_string(),
             method_router,
@@ -187,9 +184,8 @@ mod webhook {
 
     // POST+GET 同路径多方法：单条直注，规避 build() 按路径去重的覆盖丢失
     fn webhooks_route() -> HttpRoute {
-        let method_router =
-            axum::routing::post(webhook_handler::create_webhook::<WebhookRepoImpl>)
-                .get(webhook_handler::list_webhooks::<WebhookRepoImpl>);
+        let method_router = axum::routing::post(webhook_handler::create_webhook::<WebhookRepoImpl>)
+            .get(webhook_handler::list_webhooks::<WebhookRepoImpl>);
         HttpRoute::new(
             "/v1/webhooks".to_string(),
             method_router,

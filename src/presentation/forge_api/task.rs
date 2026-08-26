@@ -13,8 +13,8 @@ use inventory::submit;
 use sdforge::prelude::{ApiMetadata, HttpRoute, RouteRegistration};
 
 use crate::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use crate::presentation::handlers::task_handler;
 use crate::presentation::forge_api::route_metadata;
+use crate::presentation::handlers::task_handler;
 
 fn query_tasks_route() -> HttpRoute {
     HttpRoute::new(
@@ -67,8 +67,14 @@ mod tests {
     #[tokio::test]
     async fn task_routes_registered_via_inventory_factories() {
         let app = axum::Router::new()
-            .route(query_tasks_route().path(), query_tasks_route().handler().clone())
-            .route(cancel_tasks_route().path(), cancel_tasks_route().handler().clone());
+            .route(
+                query_tasks_route().path(),
+                query_tasks_route().handler().clone(),
+            )
+            .route(
+                cancel_tasks_route().path(),
+                cancel_tasks_route().handler().clone(),
+            );
 
         // POST /v1/tasks/_query：方法已注册（缺 Extension 的 500 亦证明进入 handler 链）
         let resp = app

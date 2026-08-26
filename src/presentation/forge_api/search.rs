@@ -12,8 +12,8 @@ use axum::routing::post;
 use inventory::submit;
 use sdforge::prelude::{ApiMetadata, HttpRoute};
 
-use crate::presentation::handlers::search_handler;
 use crate::presentation::forge_api::route_metadata;
+use crate::presentation::handlers::search_handler;
 
 fn search_route() -> HttpRoute {
     HttpRoute::new(

@@ -9,7 +9,7 @@
 //! - `GET /v1/scrape/{id}`：`#[forge]` stream 透传 wrapper（无 body，Path+State
 //!   参数模型与宏匹配；Ok/Err 两臂各做一次 into_response，响应零改写）
 
-use axum::{Extension, response::Response};
+use axum::{response::Response, Extension};
 use sdforge::prelude::*;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -17,11 +17,11 @@ use uuid::Uuid;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::i18n::{I18nBundle, Locale};
+use crate::presentation::forge_api::route_metadata;
 use crate::presentation::handlers::scrape_handler;
 use crate::presentation::middleware::auth_middleware::AuthState;
-use crate::presentation::forge_api::route_metadata;
-use inventory::submit;
 use axum::routing::post;
+use inventory::submit;
 
 fn create_scrape_route() -> HttpRoute {
     HttpRoute::new(
@@ -60,16 +60,14 @@ async fn scrape_status_route(
     #[state] locale: Locale,
     #[state] bundle: Arc<I18nBundle>,
 ) -> Result<Response, Response> {
-    Ok(
-        scrape_handler::get_scrape_status(
-            axum::extract::Path(id),
-            Extension(task_repo),
-            Extension(result_repo),
-            Extension(auth_state),
-            Extension(locale),
-            Extension(bundle),
-        )
-        .await
-        .into_response(),
+    Ok(scrape_handler::get_scrape_status(
+        axum::extract::Path(id),
+        Extension(task_repo),
+        Extension(result_repo),
+        Extension(auth_state),
+        Extension(locale),
+        Extension(bundle),
     )
+    .await
+    .into_response())
 }

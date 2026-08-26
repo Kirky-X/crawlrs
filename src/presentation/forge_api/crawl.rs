@@ -10,16 +10,16 @@
 //! - `GET /v1/crawl/{id}`：直注（多方法路径——与 DELETE 同路径，必须单条目注册）
 //! - `GET /v1/crawl/{id}/results`：`#[forge]` stream 透传 wrapper（无 body）
 
-use axum::{Extension, response::Response};
+use axum::{response::Response, Extension};
 use sdforge::prelude::*;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::i18n::{I18nBundle, Locale};
+use crate::presentation::forge_api::route_metadata;
 use crate::presentation::handlers::crawl_handler;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::presentation::state::CrawlHandlerState;
-use crate::presentation::forge_api::route_metadata;
 use inventory::submit;
 
 fn create_crawl_route() -> HttpRoute {
@@ -45,8 +45,8 @@ submit!(RouteRegistration::new(
 // GET+DELETE 同路径多方法：单条 RouteRegistration 直注，
 // 规避 build() 按路径去重的覆盖丢失问题（design D2）。
 fn crawl_by_id_route() -> HttpRoute {
-    let method_router = axum::routing::get(crawl_handler::get_crawl)
-        .delete(crawl_handler::cancel_crawl);
+    let method_router =
+        axum::routing::get(crawl_handler::get_crawl).delete(crawl_handler::cancel_crawl);
     HttpRoute::new(
         "/v1/crawl/{id}".to_string(),
         method_router,
@@ -82,15 +82,13 @@ async fn crawl_results_route(
     #[state] locale: Locale,
     #[state] bundle: Arc<I18nBundle>,
 ) -> Result<Response, Response> {
-    Ok(
-        crawl_handler::get_crawl_results(
-            Extension(state),
-            Extension(auth_state),
-            Extension(locale),
-            Extension(bundle),
-            axum::extract::Path(crawl_id),
-        )
-        .await
-        .into_response(),
+    Ok(crawl_handler::get_crawl_results(
+        Extension(state),
+        Extension(auth_state),
+        Extension(locale),
+        Extension(bundle),
+        axum::extract::Path(crawl_id),
     )
+    .await
+    .into_response())
 }

@@ -256,13 +256,12 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
     // 信号量内层（先 layer）：仅 /v1/tasks/* 生效，auth 之后、handler 之前执行
     #[cfg(feature = "auth")]
-    let forge_router =
-        crate::presentation::forge_api::build_forge_router()
-            .layer(axum::middleware::from_fn(task_semaphore_for_tasks_paths))
-            .layer(axum::middleware::from_fn_with_state(
-                state.db_pool.clone(),
-                crate::presentation::middleware::auth_middleware::auth_middleware_inner,
-            ));
+    let forge_router = crate::presentation::forge_api::build_forge_router()
+        .layer(axum::middleware::from_fn(task_semaphore_for_tasks_paths))
+        .layer(axum::middleware::from_fn_with_state(
+            state.db_pool.clone(),
+            crate::presentation::middleware::auth_middleware::auth_middleware_inner,
+        ));
     #[cfg(not(feature = "auth"))]
     let forge_router = {
         let template = build_default_identity_template(state);
@@ -1466,13 +1465,22 @@ mod tests {
 
     fn smoke_endpoints() -> Vec<SmokeEndpoint> {
         let mut v = vec![
-            SmokeEndpoint { method: "POST", path: "/v1/scrape" },
+            SmokeEndpoint {
+                method: "POST",
+                path: "/v1/scrape",
+            },
             SmokeEndpoint {
                 method: "GET",
                 path: "/v1/scrape/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234",
             },
-            SmokeEndpoint { method: "POST", path: "/v1/search" },
-            SmokeEndpoint { method: "POST", path: "/v1/crawl" },
+            SmokeEndpoint {
+                method: "POST",
+                path: "/v1/search",
+            },
+            SmokeEndpoint {
+                method: "POST",
+                path: "/v1/crawl",
+            },
             SmokeEndpoint {
                 method: "GET",
                 path: "/v1/crawl/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234",
@@ -1485,29 +1493,65 @@ mod tests {
                 method: "DELETE",
                 path: "/v1/crawl/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234",
             },
-            SmokeEndpoint { method: "GET", path: "/v1/audit/logs" },
-            SmokeEndpoint { method: "GET", path: "/v1/audit/denied" },
-            SmokeEndpoint { method: "POST", path: "/v1/tasks/_query" },
-            SmokeEndpoint { method: "POST", path: "/v1/tasks/_cancel" },
+            SmokeEndpoint {
+                method: "GET",
+                path: "/v1/audit/logs",
+            },
+            SmokeEndpoint {
+                method: "GET",
+                path: "/v1/audit/denied",
+            },
+            SmokeEndpoint {
+                method: "POST",
+                path: "/v1/tasks/_query",
+            },
+            SmokeEndpoint {
+                method: "POST",
+                path: "/v1/tasks/_cancel",
+            },
         ];
         // R-wh-001：webhook 门控组
         #[cfg(feature = "webhook")]
         v.extend([
-            SmokeEndpoint { method: "POST", path: "/v1/webhooks" },
-            SmokeEndpoint { method: "GET", path: "/v1/webhooks" },
+            SmokeEndpoint {
+                method: "POST",
+                path: "/v1/webhooks",
+            },
+            SmokeEndpoint {
+                method: "GET",
+                path: "/v1/webhooks",
+            },
         ]);
         // R-teams-002：extract / teams 门控组
         #[cfg(feature = "teams")]
         v.extend([
-            SmokeEndpoint { method: "POST", path: "/v1/extract" },
-            SmokeEndpoint { method: "GET", path: "/v1/teams/me" },
-            SmokeEndpoint { method: "GET", path: "/v1/teams/me/usage" },
-            SmokeEndpoint { method: "GET", path: "/v1/teams/geo-restrictions" },
-            SmokeEndpoint { method: "PUT", path: "/v1/teams/geo-restrictions" },
+            SmokeEndpoint {
+                method: "POST",
+                path: "/v1/extract",
+            },
+            SmokeEndpoint {
+                method: "GET",
+                path: "/v1/teams/me",
+            },
+            SmokeEndpoint {
+                method: "GET",
+                path: "/v1/teams/me/usage",
+            },
+            SmokeEndpoint {
+                method: "GET",
+                path: "/v1/teams/geo-restrictions",
+            },
+            SmokeEndpoint {
+                method: "PUT",
+                path: "/v1/teams/geo-restrictions",
+            },
         ]);
         // R-key-lifecycle-001：admin 门控组
         #[cfg(feature = "auth")]
-        v.push(SmokeEndpoint { method: "POST", path: "/v1/admin/api-keys" });
+        v.push(SmokeEndpoint {
+            method: "POST",
+            path: "/v1/admin/api-keys",
+        });
         v
     }
 
@@ -1517,7 +1561,6 @@ mod tests {
     /// 也到达 handler，证明信号量逻辑未被触发。
     #[tokio::test]
     async fn test_task_semaphore_middleware_passes_through_non_task_paths() {
-        use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
         use tower::ServiceExt;
 
         async fn ok_handler() -> StatusCode {
