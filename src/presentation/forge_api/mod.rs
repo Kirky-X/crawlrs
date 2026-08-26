@@ -23,6 +23,7 @@
 //! 一个生产调用点（本模块）。SDK 路由（`presentation::sdk`）与本层路由共用同
 //! 一次 build —— 两者路径空间不相交（/api/v1/sdk/* vs /v1/*）。
 
+pub mod management;
 pub mod scrape;
 pub mod search;
 

@@ -7,7 +7,7 @@
 //!
 //! 包含所有 feature-gated 路由（webhook、teams、auth）和通用管理路由（audit）。
 
-use crate::presentation::handlers::{audit_handler, extract_handler};
+use crate::presentation::handlers::extract_handler;
 use axum::{routing::get, Router};
 
 // R-wh-001 / T028：webhook-off 时不导入
@@ -83,11 +83,11 @@ pub fn register_teams_routes() -> Router {
     Router::new()
 }
 
-/// 注册 audit 路由。
+/// 注册 audit 路由 — 已迁移至 `presentation::forge_api::management`（sdforge 直注）。
+///
+/// 保留空实现以维持装配点，由 migrate-routes-to-sdforge T013 一并移除。
 pub fn register_audit_routes() -> Router {
     Router::new()
-        .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
-        .route("/v1/audit/denied", get(audit_handler::get_denied_requests))
 }
 
 /// 注册 admin 路由（auth feature-gated）。
