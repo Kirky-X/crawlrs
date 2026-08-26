@@ -90,7 +90,7 @@ teams = ["auth"]
 # `auth` 关闭时走 default_identity_middleware 注入固定 AuthState
 # （DEFAULT_TEAM_ID/DEFAULT_API_KEY_ID 见 src/common/constants.rs::default_identity）
 # garrison-auth-migration：auth-on 改由 garrison 提供认证引擎，故 `auth` 隐含 `dep:garrison`
-auth = ["dep:garrison", "dep:inventory"]
+auth = ["dep:garrison", "dep:inventory", "dep:dbnexus"]
 # `rate-limit` 门控 limiteron 依赖；关闭时注入 NoopRateLimitingService
 rate-limit = ["dep:limiteron"]
 # `webhook` 关闭时注入 NoopWebhookService 并移除 /v1/webhooks 路由
