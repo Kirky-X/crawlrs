@@ -9,8 +9,6 @@ use crate::config::settings::Settings;
 use crate::di::{CrawlRsState, CrawlRsStateExt};
 // R-teams-004 / T014：teams-off 时不导入 teams 相关类型
 #[cfg(feature = "teams")]
-use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
-#[cfg(feature = "teams")]
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 // R-wh-001 / T028：webhook feature 关闭时不导入 WebhookRepoImpl
 use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
@@ -34,11 +32,6 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::common::constants::default_identity::{DEFAULT_API_KEY_ID, DEFAULT_TEAM_ID};
 #[cfg(not(feature = "auth"))]
 use crate::domain::auth::ApiKeyScope;
-
-// 路由分组
-use crate::bootstrap::route_groups::{
-    crawl_routes, management_routes, scrape_routes, search_routes,
-};
 
 /// 创建 CORS 中间件层
 ///
@@ -132,9 +125,8 @@ pub fn create_public_routes(state: &CrawlRsState) -> Router {
 /// 其余字段（`api_key_cache` / `auth_rate_limiter` / `trusted_proxies`）已在 Stage 3 DTO 化中删除，
 /// 单租户降级模式下不查 DB 加载 scope、不做缓存、不做暴力破解防护、不解析 trusted proxies。
 ///
-/// 此函数仅在三处路由装配点（`create_protected_routes_with_state` /
-/// `create_v2_routes_with_state` / `build_api_app_with_state` 的 SDK 路由）
-/// 调用，构造的模板通过 `from_fn_with_state(template, default_identity_middleware)`
+/// 此函数仅在 `build_api_app_with_state` 的 forge 路由装配点调用，
+/// 构造的模板通过 `from_fn_with_state(template, default_identity_middleware)`
 /// 注入到 `FromFnLayer`，由 layer 在每请求 `Service::call` 内 `clone()` 一次传给
 /// `default_identity_middleware`（见 diting 架构审查 MEDIUM-1 / 性能审查 LOW-2）。
 ///
@@ -166,216 +158,6 @@ fn build_default_identity_template(state: &CrawlRsState) -> AuthState {
 }
 
 /// Create the protected API routes using CrawlRsState.
-///
-/// # Arguments
-///
-/// * `state` - Application state with resolved dependencies
-/// * `settings` - Application settings
-pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
-    let team_semaphore = state.team_semaphore.clone();
-    let queue = state.task_queue.clone();
-    let task_repo = state.task_repo.clone();
-    let result_repo = state.result_repo.clone();
-    let rate_limiting_service = state.rate_limiting_service.clone();
-    let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
-    let crawl_repo = state.crawl_repo.clone();
-    // R-wh-001 / T028：webhook 相关字段在 webhook-off 时不编译
-    #[cfg(feature = "webhook")]
-    let webhook_repo = state.webhook_repo.clone();
-    #[cfg(feature = "webhook")]
-    let webhook_event_repo = state.webhook_event_repo();
-    let search_engine_service = state.search_client();
-    // R-teams-004 / T014：teams 相关字段在 teams-off 时不编译
-    #[cfg(feature = "teams")]
-    let team_service = state.team_service.clone();
-    #[cfg(feature = "teams")]
-    let geo_location_service = state.geo_location_service();
-    let credits_repo = state.credits_repo();
-
-    // 构造一次具体实现，同时用于 trait object Extension 和泛型 handler Extension
-    // （架构 HIGH-2：消除重复构造——之前 trait object 和 concrete 各 new 一次）
-    //
-    // R-teams-004 / T014：teams-off 时不构造 geo_restriction_repo_impl / geo_restriction_repo
-    //   （DatabaseGeoRestrictionRepository 仅供 teams-on 的 extract_handler 使用）
-    #[cfg(feature = "teams")]
-    let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
-        Arc::new(DatabaseGeoRestrictionRepository::new(state.db_pool.clone()));
-    #[cfg(feature = "teams")]
-    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = geo_restriction_repo_impl.clone();
-
-    // WebhookRepoImpl 同理：构造一次，复用给 Extension layer
-    // R-wh-001 / T028：webhook-off 时不构造 WebhookRepoImpl
-    //   （WebhookRepoImpl 仅供 webhook-on 的 webhook_handler 使用）
-    #[cfg(feature = "webhook")]
-    let webhook_repo_impl: Arc<WebhookRepoImpl> =
-        Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
-
-    // Create Arc<CrawlRsState> for handlers that need unified state, and derive
-    // CrawlHandlerState from it for crawl handlers (decoupled for testability).
-    let app_state_arc = Arc::new(state.clone());
-    let crawl_handler_state = Arc::new(CrawlHandlerState::from_app_state(&app_state_arc));
-
-    // Auth state for middleware
-    //
-    // auth-on：通过 `from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool，
-    //   `auth_middleware_inner` 在每请求中通过 garrison RBAC + `bridge_to_auth_state` 动态填充 AuthState。
-    // auth-off：通过 `from_fn_with_state(template, default_identity_middleware)` 直接注入模板，
-    //   `default_identity_middleware` 通过 `State<AuthState>` 提取器读取；
-    //   模板在下方 `.layer()` 调用处构造（携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope）。
-
-    let app: Router = scrape_routes::register_scrape_routes()
-        .merge(crawl_routes::register_crawl_routes())
-        .merge(search_routes::register_search_routes())
-        .merge(management_routes::register_webhook_routes())
-        .merge(management_routes::register_extract_routes())
-        .merge(management_routes::register_teams_routes())
-        .merge(management_routes::register_audit_routes());
-
-    // 认证中间件层（条件编译，T009）
-    //
-    // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 通过 State<Arc<DbPool>> 提取器
-    //   注入 DbPool，中间件在每请求中调用 garrison RBAC + `bridge_to_auth_state` 动态填充
-    //   AuthState（Stage 3 DTO 化后仅含 pool/team_id/api_key_id/scope 四字段）。
-    // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
-    //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool，
-    //   `default_identity_middleware` 克隆模板并注入 extensions（不查 DB、不校验 token）。
-    //
-    // 注意：两分支返回的 `FromFnLayer` 类型参数不同（`S=Arc<DbPool>` vs `S=AuthState`），
-    // 无法用 `let layer = if ... { from_fn(...) } else { from_fn_with_state(...) }` 统一类型，
-    // 必须用 shadowing + cfg 分别调用 `.layer()`。
-    #[cfg(feature = "auth")]
-    let app = app.layer(axum::middleware::from_fn_with_state(
-        state.db_pool.clone(),
-        crate::presentation::middleware::auth_middleware::auth_middleware_inner,
-    ));
-    #[cfg(not(feature = "auth"))]
-    let app = {
-        let template = build_default_identity_template(state);
-        app.layer(axum::middleware::from_fn_with_state(
-            template,
-            crate::presentation::middleware::auth_middleware::default_identity_middleware,
-        ))
-    };
-
-    // R-teams-004 / T014：teams 相关 Extension 层在 teams-off 时不装配
-    //
-    // teams-on：附加 geo_restriction_repo / team_service / geo_location_service / geo_restriction_repo_impl
-    //   四个 Extension 层（供 teams-on 版本的 extract_handler / team_handler / crawl_handler 等使用）
-    // teams-off：跳过这四个 Extension 层（对应 handler 不接收这些参数，trait object 缺失不会触发 panic）
-    #[cfg(feature = "teams")]
-    let app = app
-        .layer(Extension(geo_restriction_repo))
-        .layer(Extension(geo_location_service.clone()))
-        .layer(Extension(team_service))
-        .layer(Extension(geo_restriction_repo_impl));
-
-    // R-wh-001 / T028：webhook 相关 Extension 层在 webhook-off 时不装配
-    //
-    // webhook-on：附加 webhook_repo / webhook_event_repo / webhook_repo_impl
-    //   三个 Extension 层（供 webhook_handler 使用）
-    // webhook-off：跳过这三个 Extension 层（对应 handler 不存在，trait object 缺失不会触发 panic）
-    #[cfg(feature = "webhook")]
-    let app = app
-        .layer(Extension(webhook_repo))
-        .layer(Extension(webhook_event_repo))
-        .layer(Extension(webhook_repo_impl));
-
-    app.layer(Extension(team_semaphore))
-        .layer(Extension(queue))
-        .layer(Extension(task_repo))
-        .layer(Extension(result_repo))
-        .layer(Extension(rate_limit_middleware))
-        .layer(Extension(settings))
-        .layer(Extension(rate_limiting_service))
-        .layer(Extension(crawl_repo))
-        .layer(Extension(search_engine_service))
-        .layer(Extension(state.search_service.clone()))
-        .layer(Extension(crawl_handler_state)) // CrawlHandlerState for crawl handlers
-        .layer(Extension(credits_repo))
-}
-
-/// Create v2 task routes using CrawlRsState.
-///
-/// # Arguments
-///
-/// * `state` - Application state with resolved dependencies
-pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
-    let crawl_repo = state.crawl_repo.clone();
-    // R-wh-001 / T028：webhook 相关字段在 webhook-off 时不编译
-    #[cfg(feature = "webhook")]
-    let webhook_repo = state.webhook_repo.clone();
-    #[cfg(feature = "webhook")]
-    let webhook_event_repo = state.webhook_event_repo();
-    let team_semaphore = state.team_semaphore.clone();
-
-    // Auth state for middleware
-    //
-    // auth-on：通过 `from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool（与 protected_routes 一致）。
-    // auth-off：不调用全局状态，模板通过下方 `from_fn_with_state` 直接注入。
-
-    // 构造具体实现类型（非 trait object），供泛型 handler 的 Extension 提取。
-    // handler 签名 `Extension<Arc<T>>` 其中 T: TaskRepository 要求具体类型，
-    // 而 CrawlRsState.task_repo 是 Arc<dyn TaskRepository>（trait object），
-    // Axum Extension 按精确类型匹配，trait object 与具体类型不兼容。
-    let task_repo_impl: Arc<TaskRepositoryImpl> = Arc::new(TaskRepositoryImpl::new(
-        state.db_pool.clone(),
-        chrono::Duration::seconds(
-            settings
-                .concurrency
-                .task_lock_duration_seconds
-                .try_into()
-                .expect("task_lock_duration_seconds exceeds i64 range"),
-        ),
-    ));
-    let result_repo_impl: Arc<ScrapeResultRepositoryImpl> =
-        Arc::new(ScrapeResultRepositoryImpl::new(state.db_pool.clone()));
-
-    // task 路由已迁移至 `presentation::forge_api::task`（sdforge 直注注册，T010）；
-    // 信号量语义由 build_api_app_with_state 的路径条件中间件在 /v1/tasks/* 上保序执行。
-    // 本函数保留空装配点，由 T013 随 protected 组一并移除。
-    let app = Router::new()
-        .layer(Extension(task_repo_impl.clone()))
-        .layer(Extension(result_repo_impl.clone()));
-
-    // team_semaphore_middleware（inner — auth 注入 AuthState 后执行）
-    //
-    // 注意中间件顺序：Axum 中后 .layer() = 外层 = 先执行。
-    // auth_middleware 必须在 team_semaphore_middleware 之外（之后 .layer()），
-    // 确保 AuthState 已注入 extensions，team_semaphore_middleware 才能读取 team_id。
-    let app = app
-        .layer(axum::middleware::from_fn(team_semaphore_middleware))
-        .layer(Extension(team_semaphore))
-        .layer(Extension(task_repo_impl.clone()))
-        .layer(Extension(result_repo_impl.clone()))
-        .layer(Extension(crawl_repo.clone()));
-    // R-wh-001 / T028：webhook Extension 层在 webhook-off 时不装配
-    #[cfg(feature = "webhook")]
-    let app = app
-        .layer(Extension(webhook_repo.clone()))
-        .layer(Extension(webhook_event_repo.clone()));
-
-    // 认证中间件层（outermost — 最先执行，注入 AuthState）
-    //
-    // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool。
-    // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
-    //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
-    #[cfg(feature = "auth")]
-    let app = app.layer(axum::middleware::from_fn_with_state(
-        state.db_pool.clone(),
-        crate::presentation::middleware::auth_middleware::auth_middleware_inner,
-    ));
-    #[cfg(not(feature = "auth"))]
-    let app = {
-        let template = build_default_identity_template(state);
-        app.layer(axum::middleware::from_fn_with_state(
-            template,
-            crate::presentation::middleware::auth_middleware::default_identity_middleware,
-        ))
-    };
-
-    app
-}
-
 /// 路径条件信号量中间件（migrate-routes-to-sdforge T010 保序迁移）。
 ///
 /// 仅 `/v1/tasks/` 前缀执行 team 并发信号量——迁移自原 v2 任务组独立装配的语义；
@@ -415,8 +197,6 @@ async fn task_semaphore_for_tasks_paths(
 /// Returns the configured API router.
 pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
     let public_routes = create_public_routes(state);
-    let protected_routes = create_protected_routes_with_state(state, settings.clone());
-    let v2_routes = create_v2_routes_with_state(state, settings.clone());
 
     let rate_limiting_service = state.rate_limiting_service.clone();
     let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
@@ -461,10 +241,9 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
         Arc::new(DatabaseGeoRestrictionRepository::new(state.db_pool.clone()));
 
-    let app = Router::new()
-        .merge(public_routes)
-        .merge(protected_routes)
-        .merge(v2_routes);
+    // 业务端点全部由 forge router（sdforge inventory）承载（migrate-routes-to-sdforge），
+    // 此处仅保留 public 健康面手写装配。
+    let app = Router::new().merge(public_routes);
 
     // Forge routes（SDK + 平台业务路由共用同一次 inventory 收集，见
     // presentation::forge_api 模块文档的单一调用点约束）。
@@ -552,8 +331,7 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     app
 }
 
-// Note: create_public_routes, create_protected_routes_with_state,
-// create_v2_routes_with_state, and build_api_app_with_state are not unit-tested
+// Note: create_public_routes and build_api_app_with_state are not unit-tested
 // here because they require a fully constructed CrawlRsState (trait-kit AsyncKit with
 // real DatabasePool and ~30 Arc<dyn Trait> dependencies). These
 // functions are integration-tested via the test harness with Docker-provided
@@ -1321,7 +1099,6 @@ mod tests {
     // ========== Route builder tests using TEST_DATABASE_URL ==========
     //
     // These tests exercise the route builder functions (`create_public_routes`,
-    // `create_protected_routes_with_state`, `create_v2_routes_with_state`,
     // `build_api_app_with_state`). They require a fully constructed
     // `CrawlRsState`, built via `AsyncKit` against the externally-managed
     // `TEST_DATABASE_URL` PostgreSQL instance (no Docker required).
@@ -1409,11 +1186,11 @@ mod tests {
         );
     }
 
-    /// `create_protected_routes_with_state` should construct a Router that
-    /// includes all v1 protected endpoints. Verify construction succeeds
-    /// without panic and the router can be dropped cleanly.
+    /// T013（migrate-routes-to-sdforge）：原 `create_protected_routes_with_state`
+    /// 构造测试的等价改造——protected 业务端点现由完整 app 的 forge router 承载。
+    /// 断言语义保持：受保护端点已注册且被 auth 中间件拦截（非 404）。
     #[tokio::test]
-    async fn test_create_protected_routes_constructs_without_panic() {
+    async fn test_protected_endpoint_served_by_forge_router() {
         if skip_if_no_test_db() {
             return;
         }
@@ -1426,17 +1203,32 @@ mod tests {
             }
         };
         let settings = Arc::new(load_test_settings());
-        // Constructing the router exercises all Extension layers and
-        // set_global_auth_state calls in the function body.
-        let router = create_protected_routes_with_state(&state, settings);
-        // Dropping should not panic.
-        drop(router);
+        let router = build_api_app_with_state(&state, settings);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/search")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_ne!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "POST /v1/search must be registered via forge router (got {})",
+            response.status()
+        );
     }
 
-    /// `create_v2_routes_with_state` should construct a Router that wires
-    /// the v2 task routes. Verify construction succeeds without panic.
+    /// T013：原 `create_v2_routes_with_state` 构造测试的等价改造——task 路由现由
+    /// forge router 直注承载。断言语义保持：/v1/tasks/_query 已注册且方法为 POST。
     #[tokio::test]
-    async fn test_create_v2_routes_constructs_without_panic() {
+    async fn test_v2_task_paths_served_by_forge_router() {
         if skip_if_no_test_db() {
             return;
         }
@@ -1449,8 +1241,32 @@ mod tests {
             }
         };
         let settings = Arc::new(load_test_settings());
-        let router = create_v2_routes_with_state(&state, settings);
-        drop(router);
+        let router = build_api_app_with_state(&state, settings);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/tasks/_query")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .expect("Failed to build request"),
+            )
+            .await
+            .expect("Failed to get response");
+
+        assert_ne!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "POST /v1/tasks/_query must be registered via forge router (got {})",
+            response.status()
+        );
+        assert_ne!(
+            response.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "POST must be allowed on /v1/tasks/_query (got {})",
+            response.status()
+        );
     }
 
     /// `build_api_app_with_state` should construct a complete application
@@ -1567,7 +1383,8 @@ mod tests {
             }
         };
         let settings = Arc::new(load_test_settings());
-        let router = create_protected_routes_with_state(&state, settings);
+        // T013：protected 组装配已并入完整 app（业务端点由 forge router 承载）
+        let router = build_api_app_with_state(&state, settings);
 
         // 发送未认证 POST 请求（无 Authorization header）
         let response = router
@@ -1609,7 +1426,8 @@ mod tests {
             }
         };
         let settings = Arc::new(load_test_settings());
-        let router = create_protected_routes_with_state(&state, settings);
+        // T013：protected 组装配已并入完整 app
+        let router = build_api_app_with_state(&state, settings);
 
         let response = router
             .oneshot(
