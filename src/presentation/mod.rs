@@ -9,6 +9,7 @@
 /// 包含错误处理、请求提取、处理器、中间件和路由配置
 pub mod errors;
 pub mod extractors;
+pub mod forge_api;
 pub mod handlers;
 pub mod helpers;
 pub mod middleware;

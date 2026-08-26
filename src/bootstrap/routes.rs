@@ -414,30 +414,36 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
         .merge(protected_routes)
         .merge(v2_routes);
 
-    // SDK routes (always enabled; sdforge is non-optional since Task9)
-    // CRITICAL: auth middleware is mandatory — SDK handlers extract team_id/api_key_id
-    // from AuthState set by the middleware, never from the request body.
+    // Forge routes（SDK + 平台业务路由共用同一次 inventory 收集，见
+    // presentation::forge_api 模块文档的单一调用点约束）。
+    // CRITICAL: auth middleware is mandatory — forge handlers extract
+    // team_id/api_key_id from AuthState set by the middleware, never from the
+    // request body.
     //
     // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool。
     // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
     //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
     #[cfg(feature = "auth")]
-    let sdk_router =
-        crate::presentation::sdk::build_sdk_router().layer(axum::middleware::from_fn_with_state(
-            state.db_pool.clone(),
-            crate::presentation::middleware::auth_middleware::auth_middleware_inner,
-        ));
+    let forge_router =
+        crate::presentation::forge_api::build_forge_router().layer(
+            axum::middleware::from_fn_with_state(
+                state.db_pool.clone(),
+                crate::presentation::middleware::auth_middleware::auth_middleware_inner,
+            ),
+        );
     #[cfg(not(feature = "auth"))]
-    let sdk_router = {
+    let forge_router = {
         let template = build_default_identity_template(state);
-        crate::presentation::sdk::build_sdk_router().layer(axum::middleware::from_fn_with_state(
-            template,
-            crate::presentation::middleware::auth_middleware::default_identity_middleware,
-        ))
+        crate::presentation::forge_api::build_forge_router().layer(
+            axum::middleware::from_fn_with_state(
+                template,
+                crate::presentation::middleware::auth_middleware::default_identity_middleware,
+            ),
+        )
     };
 
     let app = app
-        .merge(sdk_router)
+        .merge(forge_router)
         .layer(Extension(state.search_service.clone()))
         .layer(Extension(state.task_queue.clone()))
         .layer(Extension(state.crawl_repo.clone()));

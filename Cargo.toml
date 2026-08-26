@@ -44,7 +44,8 @@ platform = [
 ]
 # sdforge 0.4 `#[forge]` 宏生成 `cfg(feature = "http")` 门控的 HTTP 路由注册代码
 # （inventory submit）。下游 crate 必须显式声明本 feature 才会生成路由。
-http = ["sdforge/http"]
+# inventory：HttpRoute 直注（多方法路径单条目注册）需从本 crate 提交 inventory 条目。
+http = ["sdforge/http", "dep:inventory"]
 
 standard = ["engine-playwright", "metrics", "content"]
 full = ["standard", "engine-flaresolverr", "extractors", "llm"]
