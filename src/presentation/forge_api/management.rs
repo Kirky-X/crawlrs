@@ -85,3 +85,94 @@ mod admin {
         admin_api_keys_metadata,
     ));
 }
+
+/// R-teams-002：teams 路由（teams feature 门控）。
+#[cfg(feature = "teams")]
+mod teams {
+    use axum::{Extension, response::Response};
+    use sdforge::prelude::*;
+    use std::sync::Arc;
+
+    use crate::domain::repositories::credits_repository::CreditsRepository;
+    use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
+    use crate::domain::repositories::task_repository::TaskRepository;
+    use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
+    use crate::presentation::handlers::team_handler;
+    use crate::presentation::middleware::auth_middleware::AuthState;
+    use super::{route_metadata, ApiMetadata, HttpRoute, RouteRegistration};
+    use inventory::submit;
+
+    #[forge(
+        name = "team_info",
+        version = "v1",
+        path = "/v1/teams/me",
+        method = "GET",
+        no_prefix = true,
+        stream = true,
+        description = "Get current team info"
+    )]
+    async fn team_info_route(
+        #[state] credits_repo: Arc<dyn CreditsRepository>,
+        #[state] task_repo: Arc<dyn TaskRepository>,
+        #[state] auth_state: AuthState,
+    ) -> Result<Response, Response> {
+        Ok(
+            team_handler::get_team_info(
+                Extension(credits_repo),
+                Extension(task_repo),
+                Extension(auth_state),
+            )
+            .await
+            .into_response(),
+        )
+    }
+
+    #[forge(
+        name = "team_usage",
+        version = "v1",
+        path = "/v1/teams/me/usage",
+        method = "GET",
+        no_prefix = true,
+        stream = true,
+        description = "Get current team usage"
+    )]
+    async fn team_usage_route(
+        #[state] credits_repo: Arc<dyn CreditsRepository>,
+        #[state] scrape_result_repo: Arc<dyn ScrapeResultRepository>,
+        #[state] auth_state: AuthState,
+    ) -> Result<Response, Response> {
+        Ok(
+            team_handler::get_team_usage(
+                Extension(credits_repo),
+                Extension(scrape_result_repo),
+                Extension(auth_state),
+            )
+            .await
+            .into_response(),
+        )
+    }
+
+    // GET+PUT 同路径多方法：单条 RouteRegistration 直注，规避 build() 按路径去重的覆盖丢失
+    fn team_geo_restrictions_route() -> HttpRoute {
+        let method_router =
+            axum::routing::get(team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>)
+                .put(team_handler::update_team_geo_restrictions::<DatabaseGeoRestrictionRepository>);
+        HttpRoute::new(
+            "/v1/teams/geo-restrictions".to_string(),
+            method_router,
+            route_metadata("team_geo_restrictions", "v1", "Team geo restrictions"),
+            None,
+        )
+    }
+
+    fn team_geo_restrictions_metadata() -> ApiMetadata {
+        route_metadata("team_geo_restrictions", "v1", "Team geo restrictions")
+    }
+
+    submit!(RouteRegistration::new(
+        "team_geo_restrictions",
+        "v1",
+        team_geo_restrictions_route,
+        team_geo_restrictions_metadata,
+    ));
+}
