@@ -1385,6 +1385,17 @@ mod tests {
         // T013：protected 组装配已并入完整 app（业务端点由 forge router 承载）
         let router = build_api_app_with_state(&state, settings);
 
+        // T016：inventory 注册表直接断言（与下方 HTTP 断言互补）
+        {
+            use sdforge::prelude::RouteRegistration;
+            let has_admin_registration = inventory::iter::<RouteRegistration>()
+                .any(|r| r.name == "admin_api_keys");
+            assert!(
+                has_admin_registration,
+                "auth-on build must contain an admin_api_keys route registration"
+            );
+        }
+
         // 发送未认证 POST 请求（无 Authorization header）
         let response = router
             .oneshot(
@@ -1407,43 +1418,24 @@ mod tests {
         );
     }
 
-    /// T027-4（auth-off 分支）：验证 `POST /v1/admin/api-keys` 路由在 auth-off 时不注册。
+    /// T027-4（auth-off 分支）：验证 admin api-keys 路由在 auth-off 时不注册。
     ///
-    /// `api_key_handler` 模块被 `#[cfg(feature = "auth")]` 门控，auth-off 时不编译，
-    /// 路由也不注册——请求返回 404。
+    /// T016 修法：auth-off 下 `default_identity_middleware` 位于 layer 包裹的
+    /// fallback 之上，未匹配路径同样被 401 拒绝——HTTP 状态码无法区分「路由未
+    /// 注册」与「默认拒绝」（axum 将 `Router::layer` 应用于 fallback 的既有语义，
+    /// 与迁移前 protected 路由器同构，属预存在行为，非本迁移引入）。故改为直接
+    /// 断言 inventory 注册表（compile-time 收集的确定性事实，不依赖全局标志）。
     #[cfg(not(feature = "auth"))]
     #[tokio::test]
     async fn test_admin_api_keys_endpoint_not_registered_when_auth_off() {
-        if skip_if_no_test_db() {
-            return;
-        }
-        let state = match build_test_state().await {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("[skip] failed to build CrawlRsState: {e}");
-                return;
-            }
-        };
-        let settings = Arc::new(load_test_settings());
-        // T013：protected 组装配已并入完整 app
-        let router = build_api_app_with_state(&state, settings);
+        use sdforge::prelude::RouteRegistration;
 
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method(Method::POST)
-                    .uri("/v1/admin/api-keys")
-                    .header("content-type", "application/json")
-                    .body(Body::from("{}"))
-                    .expect("Failed to build request"),
-            )
-            .await
-            .expect("Failed to get response");
-
-        assert_eq!(
-            response.status(),
-            StatusCode::NOT_FOUND,
-            "POST /v1/admin/api-keys must NOT be registered when auth feature is off"
+        let has_admin_registration = inventory::iter::<RouteRegistration>()
+            .any(|r| r.name == "admin_api_keys");
+        assert!(
+            !has_admin_registration,
+            "auth-off build must NOT contain an admin_api_keys route registration \
+             (inventory is compile-time collected, so this is deterministic)"
         );
     }
 

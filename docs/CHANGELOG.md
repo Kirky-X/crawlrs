@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **HTTP 路由单一注册面（sdforge inventory）**: 全部 19 个业务端点（scrape/search/crawl/webhook/extract/teams/audit/admin/tasks）从 `bootstrap/route_groups` 手写装配迁移至 `presentation::forge_api` 经 sdforge inventory 编译期注册——15 个端点走 `RouteRegistration` 直注（既有 handler 原样组装，覆盖 JSON body 与同路径多方法资源如 `GET+DELETE /v1/crawl/{id}`），4 个无 body GET 端点走 `#[forge]` 宏；`build_forge_router()` 为进程内唯一 `sdforge::http::build()` 调用点。URL/方法/状态码/响应体 100% 向后兼容；team 信号量改为路径条件中间件在 `/v1/tasks/*` 上保序执行
+
 ### Added
 
 - **TLS 指纹伪装引擎** (`engine-tls-fingerprint`): WreqEngine 基于 BoringSSL 实现真实 JA3/JA4 指纹伪装，支持 Chrome/Firefox/Safari/Edge 指纹模拟
