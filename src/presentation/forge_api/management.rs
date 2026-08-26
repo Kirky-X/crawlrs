@@ -176,3 +176,36 @@ mod teams {
         team_geo_restrictions_metadata,
     ));
 }
+
+/// R-wh-001：webhook 路由（webhook feature 门控）。
+#[cfg(feature = "webhook")]
+mod webhook {
+    use super::{route_metadata, ApiMetadata, HttpRoute, RouteRegistration};
+    use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
+    use crate::presentation::handlers::webhook_handler;
+    use inventory::submit;
+
+    // POST+GET 同路径多方法：单条直注，规避 build() 按路径去重的覆盖丢失
+    fn webhooks_route() -> HttpRoute {
+        let method_router =
+            axum::routing::post(webhook_handler::create_webhook::<WebhookRepoImpl>)
+                .get(webhook_handler::list_webhooks::<WebhookRepoImpl>);
+        HttpRoute::new(
+            "/v1/webhooks".to_string(),
+            method_router,
+            route_metadata("webhooks", "v1", "Create and list webhooks"),
+            None,
+        )
+    }
+
+    fn webhooks_metadata() -> ApiMetadata {
+        route_metadata("webhooks", "v1", "Create and list webhooks")
+    }
+
+    submit!(RouteRegistration::new(
+        "webhooks",
+        "v1",
+        webhooks_route,
+        webhooks_metadata,
+    ));
+}
