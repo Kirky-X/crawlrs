@@ -232,13 +232,16 @@ presentation/
 │   ├── api_key_handler.rs
 │   ├── response_builder.rs
 │   └── mod.rs
-├── routes/                # Route definitions
-│   ├── mod.rs             # health, version, base routes
-│   ├── handlers.rs        # Handler route registration
-│   ├── scrape.rs
-│   ├── crawl.rs
-│   ├── extract.rs
-│   └── task.rs
+├── forge_api/             # sdforge 路由注册层（全部业务端点单一注册面）
+│   ├── mod.rs             # build_forge_router()：进程内唯一 sdforge::http::build() 调用点
+│   ├── scrape.rs          # POST /v1/scrape 直注 + GET /v1/scrape/{id} 宏注册
+│   ├── search.rs          # /v1/search 直注
+│   ├── crawl.rs           # /v1/crawl 直注（含 GET+DELETE 多方法单条目）
+│   ├── management.rs      # audit/admin/teams/webhook/extract 直注与宏注册
+│   └── task.rs            # /v1/tasks/_query、_cancel 直注
+├── routes/                # public 健康面路由（/health /ready /metrics /v1/version）
+│   ├── mod.rs
+│   └── handlers.rs
 ├── middleware/             # HTTP middleware
 │   ├── auth_middleware.rs
 │   ├── auth_bridge.rs
@@ -250,7 +253,7 @@ presentation/
 │   ├── team_semaphore_middleware.rs
 │   ├── scope_validation.rs
 │   └── mod.rs
-├── sdk/                   # sdforge SDK interface
+├── sdk/                   # sdforge SDK interface (/api/v1/sdk/*)
 │   ├── mod.rs
 │   ├── mocks.rs
 │   └── tests.rs
@@ -271,9 +274,18 @@ presentation/
 └── mod.rs
 ```
 
-**SDK Interface Layer (sdforge 0.4):**
+**Route Registration (sdforge 单一注册面):**
 
-The presentation layer includes an SDK interface built on **sdforge 0.4**, which wraps domain services as HTTP endpoints via sdforge's `#[service_api]` macro. All SDK handlers extract authentication context from `AuthState` (populated by `auth_middleware`), never from the request body.
+All 19 business endpoints are registered through sdforge's compile-time inventory system and collected once by `presentation::forge_api::build_forge_router()` (the single `sdforge::http::build()` call site; SDK routes `/api/v1/sdk/*` share the same collection). Two registration mechanisms:
+
+1. **`RouteRegistration` direct injection** — `inventory::submit!` of a const factory that assembles the existing handler into an `HttpRoute` at runtime. Used for JSON-body endpoints and same-path multi-method resources (e.g. `GET+DELETE /v1/crawl/{id}` in one MethodRouter entry, avoiding upstream build()'s per-path dedup overwrite). URL/method/extractors are byte-identical to the pre-migration hand-written `.route()` calls.
+2. **`#[forge]` macro** — for body-less GET endpoints (path/state params only); `stream = true` acts as a passthrough so handlers returning `impl IntoResponse` are wrapped verbatim.
+
+Public health routes (`/health` `/ready` `/metrics` `/v1/version`) remain hand-written in `bootstrap/routes.rs`. The team semaphore runs as a path-conditioned middleware on the merged router: only `/v1/tasks/*` triggers it, ordered after auth (AuthState injection) and before body extraction/handler.
+
+**SDK Interface Layer (sdforge):**
+
+The SDK interface (`src/presentation/sdk/`) wraps domain services as HTTP endpoints under `/api/v1/sdk/*` via sdforge macros. All SDK handlers extract authentication context from `AuthState` (populated by `auth_middleware`), never from the request body — the same contract as platform forge routes.
 
 **Handler Flow:**
 

@@ -22,7 +22,7 @@ pub mod config;
 pub mod engines;
 pub mod error;
 pub mod infrastructure;
-pub mod route_groups;
+// route_groups 已随 migrate-routes-to-sdforge 迁移至 presentation::forge_api 后删除
 pub mod routes;
 pub mod services;
 pub mod telemetry;

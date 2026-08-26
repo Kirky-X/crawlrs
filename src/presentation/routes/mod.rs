@@ -4,7 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 pub mod handlers;
-pub mod task;
+// task 模块已迁移至 `presentation::forge_api::task`（sdforge 直注注册）
 
 pub use handlers::{health_check, readiness_check, routes, version};
 
