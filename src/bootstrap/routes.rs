@@ -1582,6 +1582,78 @@ mod tests {
         );
     }
 
+    // ========== 多方法路径方法级可达性（T018 审查补强）==========
+    //
+    // smoke 在 auth-on 下以 401/403 断言可达性，但 auth 层先于方法匹配执行，
+    // 无法区分「方法未注册（405）」。此测试直接在无 auth 层的 forge router 上
+    // 验证三条多方法路径的每个已注册方法非 404/405、未注册方法为 405。
+
+    #[tokio::test]
+    async fn test_multi_method_paths_method_level_reachability() {
+        let router = crate::presentation::forge_api::build_forge_router();
+
+        async fn probe(router: &axum::Router, method: &str, path: &str) -> u16 {
+            router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::from_bytes(method.as_bytes()).unwrap())
+                        .uri(path)
+                        .header("content-type", "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+                .as_u16()
+        }
+
+        // GET+DELETE /v1/crawl/{id}
+        for m in ["GET", "DELETE"] {
+            let s = probe(&router, m, "/v1/crawl/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234").await;
+            assert!(
+                !matches!(s, 404 | 405),
+                "GET/DELETE /v1/crawl/{{id}} must be registered ({} returned {s})",
+                m
+            );
+        }
+        let s = probe(&router, "POST", "/v1/crawl/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234").await;
+        assert_eq!(s, 405, "POST must not be allowed on /v1/crawl/{{id}}");
+
+        // POST+GET /v1/webhooks（webhook feature）
+        #[cfg(feature = "webhook")]
+        for m in ["POST", "GET"] {
+            let s = probe(&router, m, "/v1/webhooks").await;
+            assert!(
+                !matches!(s, 404 | 405),
+                "POST/GET /v1/webhooks must be registered ({} returned {s})",
+                m
+            );
+        }
+        #[cfg(feature = "webhook")]
+        {
+            let s = probe(&router, "DELETE", "/v1/webhooks").await;
+            assert_eq!(s, 405, "DELETE must not be allowed on /v1/webhooks");
+        }
+
+        // GET+PUT /v1/teams/geo-restrictions（teams feature）
+        #[cfg(feature = "teams")]
+        for m in ["GET", "PUT"] {
+            let s = probe(&router, m, "/v1/teams/geo-restrictions").await;
+            assert!(
+                !matches!(s, 404 | 405),
+                "GET/PUT /v1/teams/geo-restrictions must be registered ({} returned {s})",
+                m
+            );
+        }
+        #[cfg(feature = "teams")]
+        {
+            let s = probe(&router, "DELETE", "/v1/teams/geo-restrictions").await;
+            assert_eq!(s, 405, "DELETE must not be allowed on /v1/teams/geo-restrictions");
+        }
+    }
+
     /// 全业务端点可达性 + 认证语义冒烟（19 端点）。
     #[tokio::test]
     async fn smoke_all_business_endpoints_reachable() {
