@@ -24,10 +24,6 @@ use crate::presentation::handlers::team_handler;
 #[cfg(feature = "teams")]
 use axum::routing::put;
 
-// R-key-lifecycle-001：auth-off 时不导入
-#[cfg(feature = "auth")]
-use crate::presentation::handlers::api_key_handler;
-
 /// 注册 webhook 相关路由（feature-gated）。
 #[cfg(feature = "webhook")]
 pub fn register_webhook_routes() -> Router {
@@ -87,19 +83,5 @@ pub fn register_teams_routes() -> Router {
 ///
 /// 保留空实现以维持装配点，由 migrate-routes-to-sdforge T013 一并移除。
 pub fn register_audit_routes() -> Router {
-    Router::new()
-}
-
-/// 注册 admin 路由（auth feature-gated）。
-#[cfg(feature = "auth")]
-pub fn register_admin_routes() -> Router {
-    Router::new().route(
-        "/v1/admin/api-keys",
-        axum::routing::post(api_key_handler::create_api_key),
-    )
-}
-
-#[cfg(not(feature = "auth"))]
-pub fn register_admin_routes() -> Router {
     Router::new()
 }

@@ -55,3 +55,33 @@ submit!(RouteRegistration::new(
     audit_denied_route,
     audit_denied_metadata,
 ));
+
+/// R-key-lifecycle-001：admin api-keys（auth feature 门控，整段随 feature 编译）。
+#[cfg(feature = "auth")]
+mod admin {
+    use super::{route_metadata, HttpRoute, RouteRegistration};
+    use axum::routing::post;
+    use inventory::submit;
+
+    use crate::presentation::handlers::api_key_handler;
+
+    fn admin_api_keys_route() -> HttpRoute {
+        HttpRoute::new(
+            "/v1/admin/api-keys".to_string(),
+            post(api_key_handler::create_api_key),
+            route_metadata("admin_api_keys", "v1", "Create an admin API key"),
+            None,
+        )
+    }
+
+    fn admin_api_keys_metadata() -> super::ApiMetadata {
+        route_metadata("admin_api_keys", "v1", "Create an admin API key")
+    }
+
+    submit!(RouteRegistration::new(
+        "admin_api_keys",
+        "v1",
+        admin_api_keys_route,
+        admin_api_keys_metadata,
+    ));
+}

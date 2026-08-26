@@ -230,8 +230,7 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .merge(management_routes::register_webhook_routes())
         .merge(management_routes::register_extract_routes())
         .merge(management_routes::register_teams_routes())
-        .merge(management_routes::register_audit_routes())
-        .merge(management_routes::register_admin_routes());
+        .merge(management_routes::register_audit_routes());
 
     // 认证中间件层（条件编译，T009）
     //
