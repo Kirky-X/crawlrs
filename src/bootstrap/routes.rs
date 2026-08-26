@@ -409,6 +409,30 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     // 创建 CORS 层
     let cors_layer = create_cors_layer(&settings);
 
+    // T002（migrate-routes-to-sdforge）：forge 路由 wrapper 所需 Extension 的统一供给。
+    // 以下具体类型此前仅在 protected/v2 组内 layer；业务端点迁入 forge router 后，
+    // 统一在合并 app 层供给。须在 settings 被 Extension 层 move 前构造（读取并发锁时长）。
+    let crawl_handler_state = {
+        let app_state_arc = Arc::new(state.clone());
+        Arc::new(CrawlHandlerState::from_app_state(&app_state_arc))
+    };
+    let task_repo_impl = Arc::new(TaskRepositoryImpl::new(
+        state.db_pool.clone(),
+        chrono::Duration::seconds(
+            settings
+                .concurrency
+                .task_lock_duration_seconds
+                .try_into()
+                .expect("task_lock_duration_seconds exceeds i64 range"),
+        ),
+    ));
+    let result_repo_impl = Arc::new(ScrapeResultRepositoryImpl::new(state.db_pool.clone()));
+    #[cfg(feature = "webhook")]
+    let webhook_repo_impl = Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
+    #[cfg(feature = "teams")]
+    let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
+        Arc::new(DatabaseGeoRestrictionRepository::new(state.db_pool.clone()));
+
     let app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
@@ -473,19 +497,28 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
         .layer(Extension(settings))
         .layer(Extension(search_engine_service))
         .layer(Extension(rate_limiting_service.clone()))
-        .layer(Extension(state.audit_service()));
+        .layer(Extension(state.audit_service()))
+        // forge 路由统一供给（T002）：具体类型实现，供 wrapper 的 #[state] 提取
+        .layer(Extension(crawl_handler_state))
+        .layer(Extension(task_repo_impl))
+        .layer(Extension(result_repo_impl));
 
     // R-wh-001 / T028：webhook Extension 层在 webhook-off 时不装配
     #[cfg(feature = "webhook")]
     let app = app
         .layer(Extension(webhook_event_repo))
-        .layer(Extension(webhook_repo.clone()));
+        .layer(Extension(webhook_repo.clone()))
+        .layer(Extension(webhook_repo_impl));
 
-    // R-teams-004 / T014：teams-on 时附加 geo_restriction_repo Extension
-    //   （供 SDK 路由中的 teams 相关 handler 使用）
-    // teams-off：跳过，geo_restriction_repo 变量未声明
+    // R-teams-004 / T014：teams-on 时附加 teams 相关 Extension
+    //   （供 SDK/forge 路由中的 teams 相关 handler 使用）
+    // teams-off：跳过，对应变量未声明
     #[cfg(feature = "teams")]
-    let app = app.layer(Extension(geo_restriction_repo));
+    let app = app
+        .layer(Extension(geo_restriction_repo))
+        .layer(Extension(state.geo_location_service()))
+        .layer(Extension(state.team_service.clone()))
+        .layer(Extension(geo_restriction_repo_impl));
 
     app
 }
