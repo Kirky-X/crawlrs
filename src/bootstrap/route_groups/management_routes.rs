@@ -3,13 +3,9 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Management 路由组 — 剩余 extract 路由注册。
-//!
-//! audit / admin / teams / webhook 已迁移至 `presentation::forge_api::management`
-//! （sdforge 注册）；本文件仅存 extract，由 migrate-routes-to-sdforge T012
-//! 迁出后于 T013 整体移除。
+//! Management 路由组 — 全部路由已迁移至 `presentation::forge_api::management`
+//! （sdforge 注册）。本文件仅存空装配点，由 migrate-routes-to-sdforge T013 移除。
 
-use crate::presentation::handlers::extract_handler;
 use axum::Router;
 
 // R-teams-002：teams 路由已迁移至 `presentation::forge_api::management`（sdforge 注册）
@@ -32,20 +28,11 @@ pub fn register_webhook_routes() -> Router {
     Router::new()
 }
 
-/// 注册 extract 路由（teams feature 分裂）。
-#[cfg(feature = "teams")]
+/// 注册 extract 路由 — 已迁移至 `presentation::forge_api::management`（sdforge 直注）。
+///
+/// 保留空实现以维持装配点，由 migrate-routes-to-sdforge T013 一并移除。
 pub fn register_extract_routes() -> Router {
-    use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
-
-    Router::new().route(
-        "/v1/extract",
-        axum::routing::post(extract_handler::extract::<DatabaseGeoRestrictionRepository>),
-    )
-}
-
-#[cfg(not(feature = "teams"))]
-pub fn register_extract_routes() -> Router {
-    Router::new().route("/v1/extract", axum::routing::post(extract_handler::extract))
+    Router::new()
 }
 
 /// 注册 audit 路由 — 已迁移至 `presentation::forge_api::management`（sdforge 直注）。

@@ -209,3 +209,59 @@ mod webhook {
         webhooks_metadata,
     ));
 }
+
+/// R-teams-003：extract 路由（teams feature 分裂，两变体 cfg 互斥保证唯一注册）。
+#[cfg(feature = "teams")]
+mod extract_teams_on {
+    use super::{route_metadata, ApiMetadata, HttpRoute, RouteRegistration};
+    use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
+    use crate::presentation::handlers::extract_handler;
+    use inventory::submit;
+
+    fn extract_route() -> HttpRoute {
+        HttpRoute::new(
+            "/v1/extract".to_string(),
+            axum::routing::post(extract_handler::extract::<DatabaseGeoRestrictionRepository>),
+            route_metadata("extract", "v1", "Extract structured data from URLs"),
+            None,
+        )
+    }
+
+    fn extract_metadata() -> ApiMetadata {
+        route_metadata("extract", "v1", "Extract structured data from URLs")
+    }
+
+    submit!(RouteRegistration::new(
+        "extract",
+        "v1",
+        extract_route,
+        extract_metadata,
+    ));
+}
+
+#[cfg(not(feature = "teams"))]
+mod extract_teams_off {
+    use super::{route_metadata, ApiMetadata, HttpRoute, RouteRegistration};
+    use crate::presentation::handlers::extract_handler;
+    use inventory::submit;
+
+    fn extract_route() -> HttpRoute {
+        HttpRoute::new(
+            "/v1/extract".to_string(),
+            axum::routing::post(extract_handler::extract),
+            route_metadata("extract", "v1", "Extract structured data from URLs"),
+            None,
+        )
+    }
+
+    fn extract_metadata() -> ApiMetadata {
+        route_metadata("extract", "v1", "Extract structured data from URLs")
+    }
+
+    submit!(RouteRegistration::new(
+        "extract",
+        "v1",
+        extract_route,
+        extract_metadata,
+    ));
+}
