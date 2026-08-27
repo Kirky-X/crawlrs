@@ -1388,8 +1388,8 @@ mod tests {
         // T016：inventory 注册表直接断言（与下方 HTTP 断言互补）
         {
             use sdforge::prelude::RouteRegistration;
-            let has_admin_registration = inventory::iter::<RouteRegistration>()
-                .any(|r| r.name == "admin_api_keys");
+            let has_admin_registration =
+                inventory::iter::<RouteRegistration>().any(|r| r.name == "admin_api_keys");
             assert!(
                 has_admin_registration,
                 "auth-on build must contain an admin_api_keys route registration"
@@ -1430,8 +1430,8 @@ mod tests {
     async fn test_admin_api_keys_endpoint_not_registered_when_auth_off() {
         use sdforge::prelude::RouteRegistration;
 
-        let has_admin_registration = inventory::iter::<RouteRegistration>()
-            .any(|r| r.name == "admin_api_keys");
+        let has_admin_registration =
+            inventory::iter::<RouteRegistration>().any(|r| r.name == "admin_api_keys");
         assert!(
             !has_admin_registration,
             "auth-off build must NOT contain an admin_api_keys route registration \
@@ -1618,7 +1618,12 @@ mod tests {
                 m
             );
         }
-        let s = probe(&router, "POST", "/v1/crawl/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234").await;
+        let s = probe(
+            &router,
+            "POST",
+            "/v1/crawl/3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234",
+        )
+        .await;
         assert_eq!(s, 405, "POST must not be allowed on /v1/crawl/{{id}}");
 
         // POST+GET /v1/webhooks（webhook feature）
@@ -1650,7 +1655,10 @@ mod tests {
         #[cfg(feature = "teams")]
         {
             let s = probe(&router, "DELETE", "/v1/teams/geo-restrictions").await;
-            assert_eq!(s, 405, "DELETE must not be allowed on /v1/teams/geo-restrictions");
+            assert_eq!(
+                s, 405,
+                "DELETE must not be allowed on /v1/teams/geo-restrictions"
+            );
         }
     }
 
