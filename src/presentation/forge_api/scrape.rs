@@ -52,6 +52,7 @@ submit!(RouteRegistration::new(
     stream = true,
     description = "Get scrape task status"
 )]
+#[allow(clippy::result_large_err)] // axum handler 惯用签名：Err 变体为 Response
 async fn scrape_status_route(
     id: Uuid,
     #[state] task_repo: Arc<dyn TaskRepository>,

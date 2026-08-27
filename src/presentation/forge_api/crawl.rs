@@ -75,6 +75,7 @@ submit!(RouteRegistration::new(
     stream = true,
     description = "Get crawl task results"
 )]
+#[allow(clippy::result_large_err)] // axum handler 惯用签名：Err 变体为 Response
 async fn crawl_results_route(
     crawl_id: Uuid,
     #[state] state: Arc<CrawlHandlerState>,
