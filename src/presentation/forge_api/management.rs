@@ -111,6 +111,7 @@ mod teams {
         stream = true,
         description = "Get current team info"
     )]
+    #[allow(clippy::result_large_err)] // axum handler 惯用签名：Err 变体为 Response
     async fn team_info_route(
         #[state] credits_repo: Arc<dyn CreditsRepository>,
         #[state] task_repo: Arc<dyn TaskRepository>,
@@ -134,6 +135,7 @@ mod teams {
         stream = true,
         description = "Get current team usage"
     )]
+    #[allow(clippy::result_large_err)] // axum handler 惯用签名：Err 变体为 Response
     async fn team_usage_route(
         #[state] credits_repo: Arc<dyn CreditsRepository>,
         #[state] scrape_result_repo: Arc<dyn ScrapeResultRepository>,
