@@ -7,8 +7,6 @@
 //!
 //! These tests exercise the four public route-assembly functions:
 //! - [`create_public_routes`]
-//! - [`create_protected_routes_with_state`]
-//! - [`create_v2_routes_with_state`]
 //! - [`build_api_app_with_state`]
 //!
 //! Building a real `CrawlRsState` requires ~30 `Arc<dyn Trait>` dependencies wired
@@ -36,10 +34,7 @@ use tokio::sync::OnceCell;
 use tower::ServiceExt;
 
 use crawlrs::bootstrap::config::load_settings;
-use crawlrs::bootstrap::routes::{
-    build_api_app_with_state, create_protected_routes_with_state, create_public_routes,
-    create_v2_routes_with_state,
-};
+use crawlrs::bootstrap::routes::{build_api_app_with_state, create_public_routes};
 use crawlrs::di::modules::{
     CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule, RepositoryModule,
     ServiceModule, SettingsModule,
@@ -372,7 +367,7 @@ async fn test_protected_routes_builds_without_panic() {
     };
 
     // Building the protected router must not panic.
-    let _app = create_protected_routes_with_state(&state, settings);
+    let _app = build_api_app_with_state(&state, settings);
 }
 
 #[cfg(feature = "auth")]
@@ -387,7 +382,7 @@ async fn test_protected_routes_scrape_post_is_registered() {
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     // POST /v1/scrape is registered → auth middleware rejects with 401 (not 404)
     let (status, _, _) = send(app, request(Method::POST, "/v1/scrape")).await;
     assert_ne!(status, StatusCode::NOT_FOUND);
@@ -407,7 +402,7 @@ async fn test_protected_routes_scrape_get_by_id_is_registered() {
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     let (status, _, _) = send(app, request(Method::GET, "/v1/scrape/abc-123")).await;
     assert_ne!(status, StatusCode::NOT_FOUND);
 }
@@ -424,7 +419,7 @@ async fn test_protected_routes_extract_post_is_registered() {
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     let (status, _, _) = send(app, request(Method::POST, "/v1/extract")).await;
     assert_ne!(status, StatusCode::NOT_FOUND);
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -444,7 +439,7 @@ async fn test_protected_routes_webhooks_post_and_list_get_registered() {
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     // POST /v1/webhooks (create) and GET /v1/webhooks (list) both registered
     let (post_status, _, _) = send(app.clone(), request(Method::POST, "/v1/webhooks")).await;
     let (get_status, _, _) = send(app, request(Method::GET, "/v1/webhooks")).await;
@@ -467,7 +462,7 @@ async fn test_protected_routes_crawl_post_get_delete_registered() {
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     // POST /v1/crawl
     let (s1, _, _) = send(app.clone(), request(Method::POST, "/v1/crawl")).await;
     // GET /v1/crawl/{id}
@@ -499,7 +494,7 @@ async fn test_protected_routes_search_post_is_registered() {
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     let (status, _, _) = send(app, request(Method::POST, "/v1/search")).await;
     assert_ne!(status, StatusCode::NOT_FOUND);
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -517,7 +512,7 @@ async fn test_protected_routes_team_endpoints_registered() {
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     // GET /v1/teams/me
     let (s1, _, _) = send(app.clone(), request(Method::GET, "/v1/teams/me")).await;
     // GET /v1/teams/me/usage
@@ -548,7 +543,7 @@ async fn test_protected_routes_audit_endpoints_registered() {
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     let (s1, _, _) = send(app.clone(), request(Method::GET, "/v1/audit/logs")).await;
     let (s2, _, _) = send(app, request(Method::GET, "/v1/audit/denied")).await;
     assert_ne!(s1, StatusCode::NOT_FOUND);
@@ -569,7 +564,7 @@ async fn test_protected_routes_scrape_get_rejected_by_auth_before_method_check()
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     // /v1/scrape only allows POST, but the auth middleware layer wraps the
     // entire router (including fallback) and runs before method matching.
     // Without an Authorization header the request is rejected with 401
@@ -592,7 +587,7 @@ async fn test_protected_routes_search_get_rejected_by_auth_before_method_check()
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     let (status, _, _) = send(app, request(Method::GET, "/v1/search")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
@@ -611,7 +606,7 @@ async fn test_protected_routes_unknown_path_rejected_by_auth() {
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     // The auth middleware layer wraps the whole protected router, so even
     // unknown paths are rejected with 401 (auth runs before fallback 404).
     let (status, _, _) = send(app, request(Method::GET, "/v1/does-not-exist")).await;
@@ -630,7 +625,7 @@ async fn test_protected_routes_requires_auth_header() {
         None => return,
     };
 
-    let app = create_protected_routes_with_state(&state, settings);
+    let app = build_api_app_with_state(&state, settings);
     // No Authorization header → auth middleware must reject with 401.
     let (status, _, _) = send(app, request(Method::POST, "/v1/scrape")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -651,10 +646,7 @@ async fn test_v2_routes_builds_without_panic() {
         None => return,
     };
 
-    let _app = create_v2_routes_with_state(
-        &state,
-        Arc::new(load_settings().expect("load_settings failed")),
-    );
+    let _app = build_api_app_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
 }
 
 #[tokio::test]
@@ -668,10 +660,7 @@ async fn test_v2_routes_tasks_query_post_is_registered() {
         None => return,
     };
 
-    let app = create_v2_routes_with_state(
-        &state,
-        Arc::new(load_settings().expect("load_settings failed")),
-    );
+    let app = build_api_app_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
     let (status, _, _) = send(app, request(Method::POST, "/v1/tasks/_query")).await;
     assert_ne!(status, StatusCode::NOT_FOUND);
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -688,10 +677,7 @@ async fn test_v2_routes_tasks_cancel_post_is_registered() {
         None => return,
     };
 
-    let app = create_v2_routes_with_state(
-        &state,
-        Arc::new(load_settings().expect("load_settings failed")),
-    );
+    let app = build_api_app_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
     let (status, _, _) = send(app, request(Method::POST, "/v1/tasks/_cancel")).await;
     assert_ne!(status, StatusCode::NOT_FOUND);
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -710,10 +696,7 @@ async fn test_v2_routes_tasks_query_get_rejected_before_method_check() {
         None => return,
     };
 
-    let app = create_v2_routes_with_state(
-        &state,
-        Arc::new(load_settings().expect("load_settings failed")),
-    );
+    let app = build_api_app_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
     // team_semaphore_middleware wraps the router and runs before method
     // matching; without a team_id (injected by auth_middleware, which runs
     // later) it rejects with 401 rather than 405.
@@ -732,10 +715,7 @@ async fn test_v2_routes_unknown_path_rejected_by_middleware() {
         None => return,
     };
 
-    let app = create_v2_routes_with_state(
-        &state,
-        Arc::new(load_settings().expect("load_settings failed")),
-    );
+    let app = build_api_app_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
     // The middleware layer wraps the whole v2 router, so unknown paths are
     // rejected by team_semaphore_middleware (401) before the fallback 404.
     let (status, _, _) = send(app, request(Method::GET, "/v1/tasks/nonexistent")).await;
@@ -753,10 +733,7 @@ async fn test_v2_routes_requires_auth_header() {
         None => return,
     };
 
-    let app = create_v2_routes_with_state(
-        &state,
-        Arc::new(load_settings().expect("load_settings failed")),
-    );
+    let app = build_api_app_with_state(&state, Arc::new(load_settings().expect("load_settings failed")));
     let (status, _, _) = send(app, request(Method::POST, "/v1/tasks/_query")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
