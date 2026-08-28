@@ -68,7 +68,15 @@ fn start_testcontainers_pg() -> String {
                 .expect("failed to build tokio runtime for testcontainers");
             rt.block_on(async {
                 // Start PostgreSQL 16-alpine container
-                let image = Postgres::default().with_tag("16-alpine");
+                // max_connections 提升（flaky 根因修复）：并行测试各自持有独立
+                // DbPool（每池默认 min=5/max=20），多池并发建连会打爆镜像默认的
+                // 100 连接上限，表现为偶发 "Connection pool timed out" / save 失败。
+                // 通过 init 脚本以 ALTER SYSTEM 调高上限（docker entrypoint 在
+                // 临时 server 执行 init 脚本后启动主 server，auto.conf 被主 server
+                // 读取生效），保留各测试独立池语义。
+                let image = Postgres::default()
+                    .with_init_sql(b"ALTER SYSTEM SET max_connections = 2000;".to_vec())
+                    .with_tag("16-alpine");
                 let container = image
                     .start()
                     .await
@@ -192,6 +200,11 @@ pub fn create_test_db_pool() -> Arc<DbPool> {
     // "Connection pool timed out"）。改为进程级保活的 multi-thread runtime：
     // driver 与进程同生命周期；block_on 在独立线程上执行（禁止在异步上下文内
     // 阻塞当前线程驱动另一 runtime）。
+    //
+    // 保持每调用新建独立池语义（`test_new_with_distinct_pools_do_not_share_identity`
+    // 显式断言不同 Arc）。池风暴（并行多池建连打爆容器默认 100 连接上限）由
+    // testcontainers PostgreSQL 的 max_connections 提升（见 start_testcontainers_pg）
+    // 治本，而非收拢为单例（单例曾将并发需求集中到单池造成 acquire 超时）。
     static POOL_RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     let rt = POOL_RT.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
