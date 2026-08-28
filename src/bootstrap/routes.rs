@@ -1662,6 +1662,164 @@ mod tests {
         }
     }
 
+    // ========== forge 路由认证业务回归（sdforge 封装专项回归）==========
+    //
+    // 未认证冒烟（smoke_all_business_endpoints_reachable）只证明「路由可达 + 被
+    // 认证拦截」；本测试注入真实 AuthState（sdk/tests.rs 已验证的项目内先例——
+    // garrison 签发路径的 oxcache 同步 block_on 与测试 runtime 嵌套，属 garrison
+    // 测试环境老问题，auth_garrison_test 因此 #[ignore]，故不走签发），验证业务
+    // 逻辑在 forge 路由下真实执行（进入 handler、依赖注入完整、返回业务状态码）。
+    // 覆盖三种注册机制：RouteRegistration 直注（search/tasks/admin/crawl/webhooks）、
+    // #[forge] 宏（teams/me、scrape-status）、多方法单条目（crawl/{id} GET+DELETE）。
+
+    #[cfg(feature = "auth")]
+    #[tokio::test]
+    async fn forge_business_routes_authenticated_no_regression() {
+        use tower::ServiceExt;
+
+        if skip_if_no_test_db() {
+            return;
+        }
+        let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
+        let state = match build_test_state().await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[skip] failed to build CrawlRsState: {e}");
+                return;
+            }
+        };
+
+        // 注入 AuthState（full_access scope）+ 信号量，等价「认证已通过」的请求面。
+        // Extension 供给与 build_api_app_with_state 的 T002 超集逐条对齐（等价于
+        // 「生产 app 去掉 auth 拦截层」）——裸 build_forge_router() 缺这些供给，
+        // handler 提取失败会 500（该风险正是本测试要网住的面）。
+        let auth_state = crate::presentation::middleware::auth_types::AuthState::new(
+            state.db_pool.clone(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            crate::domain::auth::ApiKeyScope::full_access(),
+        );
+        let settings = Arc::new(load_test_settings());
+        let app = crate::presentation::forge_api::build_forge_router()
+            .layer(axum::middleware::from_fn(task_semaphore_for_tasks_paths))
+            // i18n 中间件：每请求协商并注入 Extension<Locale>（生产同款，缺则 Locale 提取失败 500）
+            .layer(axum::middleware::from_fn(crate::i18n::i18n_middleware))
+            .layer(Extension(auth_state))
+            .layer(Extension(state.search_service.clone()))
+            .layer(Extension(state.task_queue.clone()))
+            .layer(Extension(state.team_semaphore.clone()))
+            .layer(Extension(state.task_repo.clone()))
+            .layer(Extension(state.result_repo.clone()))
+            .layer(Extension(state.crawl_repo.clone()))
+            .layer(Extension(state.rate_limiting_service.clone()))
+            .layer(Extension(RateLimitMiddleware::new(
+                state.rate_limiting_service.clone(),
+            )))
+            .layer(Extension(state.search_client()))
+            .layer(Extension(state.audit_service()))
+            .layer(Extension(state.i18n_bundle.clone()))
+            .layer(Extension(state.credits_repo()))
+            // T002 具体类型超集
+            .layer(Extension(Arc::new(TaskRepositoryImpl::new(
+                state.db_pool.clone(),
+                chrono::Duration::seconds(
+                    settings
+                        .concurrency
+                        .task_lock_duration_seconds
+                        .try_into()
+                        .expect("task_lock_duration_seconds exceeds i64 range"),
+                ),
+            ))))
+            .layer(Extension(Arc::new(ScrapeResultRepositoryImpl::new(
+                state.db_pool.clone(),
+            ))))
+            .layer(Extension(Arc::new(CrawlHandlerState::from_app_state(
+                &Arc::new(state.clone()),
+            ))))
+            .layer(Extension(settings));
+        #[cfg(feature = "webhook")]
+        let app = app.layer(Extension(Arc::new(WebhookRepoImpl::new(
+            state.db_pool.clone(),
+        ))));
+        #[cfg(feature = "teams")]
+        let app = app
+            .layer(Extension(Arc::new(DatabaseGeoRestrictionRepository::new(
+                state.db_pool.clone(),
+            ))))
+            .layer(Extension(state.geo_location_service()))
+            .layer(Extension(state.team_service.clone()));
+
+        let uuid = "3f0e3e57-2f6d-4cbb-9e8e-6a1a5b1f1234";
+
+        async fn authed(router: &axum::Router, method: &str, path: &str) -> u16 {
+            router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::from_bytes(method.as_bytes()).unwrap())
+                        .uri(path)
+                        .header("content-type", "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+                .as_u16()
+        }
+
+        // 黑名单断言：401/403=认证回归、405=方法回归、500/501=装配回归。
+        // 404 不列入黑名单：对「不存在的 task/crawl id」handler 返回业务性 404
+        // （路由/方法存在性由 smoke 的未认证 401 与多方法测试单独覆盖）。
+        let cases: Vec<(String, String)> = vec![
+            ("POST".into(), "/v1/search".into()),         // 直注 + JSON body
+            ("POST".into(), "/v1/tasks/_query".into()),   // 泛型直注 + 信号量
+            ("POST".into(), "/v1/admin/api-keys".into()), // auth 门控直注
+            ("GET".into(), format!("/v1/scrape/{uuid}")), // 宏注册 GET
+            ("GET".into(), format!("/v1/crawl/{uuid}")),  // 多方法直注
+            ("DELETE".into(), format!("/v1/crawl/{uuid}")),
+        ];
+        // webhook 创建需 HMAC 签名头：无签名 → 业务性 401（签名校验拒绝），
+        // 恰好证明业务逻辑执行到了签名环节；单独放宽 401。
+        #[cfg(feature = "webhook")]
+        {
+            let s = authed(&app, "POST", "/v1/webhooks").await;
+            assert!(
+                (200..=499).contains(&s) && !matches!(s, 403 | 405 | 500 | 501),
+                "POST /v1/webhooks with AuthState returned {} — expected business status \
+                 (401=missing HMAC signature is the expected business rejection; \
+                 403/405/500/501 are regressions)",
+                s
+            );
+        }
+
+        for (method, path) in &cases {
+            let s = authed(&app, method, path).await;
+            assert!(
+                (200..=499).contains(&s) && !matches!(s, 401 | 403 | 405 | 500 | 501),
+                "{} {} with AuthState returned {} — expected a business status \
+                 (401/403=auth regression, 405=method regression, 500/501=assembly regression)",
+                method,
+                path,
+                s
+            );
+        }
+
+        // 精确抽样：这两个端点对 [empty] 请求必然走成功路径
+        let exact_ok: Vec<(&str, &str, u16)> = vec![
+            ("GET", "/v1/teams/me", 200),   // 宏注册 + state 注入
+            ("GET", "/v1/audit/logs", 200), // 直注 + Query DTO
+        ];
+        for (method, path, expected) in &exact_ok {
+            let s = authed(&app, method, path).await;
+            assert_eq!(
+                s, *expected,
+                "{} {} with AuthState must return {} (got {})",
+                method, path, expected, s
+            );
+        }
+    }
+
     /// 全业务端点可达性 + 认证语义冒烟（19 端点）。
     #[tokio::test]
     async fn smoke_all_business_endpoints_reachable() {
