@@ -93,8 +93,8 @@ mod app {
             run_bootstrap(app_state, &settings).await?;
         }
 
-        // 启动通用 worker（webhook / backlog / expiration）
-        let _common_worker_handles = spawn_common_workers(app_state, &settings).await;
+        // 启动通用 worker（webhook / backlog / expiration / retention）
+        let _common_worker_handles = spawn_common_workers(app_state, &settings, true).await;
 
         // Build API app with dependencies
         let app = build_api_app_with_state(app_state, settings.clone());
@@ -139,8 +139,8 @@ mod app {
             }
         });
 
-        // 启动通用 worker（webhook / backlog / expiration）
-        let _common_worker_handles = spawn_common_workers(app_state, &settings).await;
+        // 启动通用 worker（webhook / backlog / expiration）；retention 由 WorkerManager 注册
+        let _common_worker_handles = spawn_common_workers(app_state, &settings, false).await;
 
         // Create worker manager with dependencies (使用 DI 注入的服务)
         let deps = crawlrs::workers::manager::WorkerManagerDeps {

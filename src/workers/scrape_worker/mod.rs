@@ -1256,7 +1256,8 @@ impl ScrapeWorker {
             key,
             response,
             self.cache_service.as_ref(),
-            // R-cache-001：scrape 缓存独立 TTL 配置
+            // R-cache-001：scrape 缓存独立 TTL 配置（oxcache 物理为
+            // cache 级 TTL，见 cache_service.rs 的 _ttl_seconds 说明）
             self.settings.cache.types.scrape.ttl_seconds,
         )
         .await

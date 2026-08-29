@@ -19,6 +19,11 @@ fn make_event(
     updated_days_ago: i64,
     delivered_days_ago: Option<i64>,
 ) -> WebhookEvent {
+    // find_pending 的重试集要求 next_retry_at < now，failed 事件须带已过期的重试时间
+    let next_retry_at = match status {
+        WebhookStatus::Failed => Some(Utc::now() - Duration::hours(1)),
+        _ => None,
+    };
     WebhookEvent::with_all_fields(
         Uuid::new_v4(),
         Uuid::new_v4(),
@@ -32,7 +37,7 @@ fn make_event(
         None,
         None,
         None,
-        None,
+        next_retry_at,
         Utc::now() - Duration::days(updated_days_ago),
         Utc::now() - Duration::days(updated_days_ago),
         delivered_days_ago.map(|d| Utc::now() - Duration::days(d)),
@@ -90,6 +95,23 @@ async fn cleanup_terminal_removes_old_terminal_keeps_active() {
             .expect("query failed")
             .is_some(),
         "failed event should be kept"
+    );
+
+    // 活事件不仅要"没被删"，还要仍可被 worker 经 find_pending 捞取投递
+    let fetchable_ids: Vec<Uuid> = repo
+        .find_pending(10_000)
+        .await
+        .expect("find_pending failed")
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    assert!(
+        fetchable_ids.contains(&pending.id),
+        "pending event must remain fetchable via find_pending after cleanup"
+    );
+    assert!(
+        fetchable_ids.contains(&failed.id),
+        "failed event with due next_retry_at must remain fetchable via find_pending after cleanup"
     );
 }
 

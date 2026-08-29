@@ -103,6 +103,10 @@ pub struct Settings {
     pub i18n: I18nSettings,
 
     /// 数据保留期治理配置（R-retention-001）
+    ///
+    /// `#[validate(nested)]` 使 `Settings::validate()` 递归校验
+    /// `RetentionSettings` 的字段级 range 约束（不可逆 DELETE 的边界保护）。
+    #[validate(nested)]
     pub retention: RetentionSettings,
 }
 
@@ -572,27 +576,40 @@ pub struct CacheTypeSpecificSettings {
 /// 每类删除对应判龄字段早于 `NOW() - days` 的行（判龄字段见设计：
 /// scrape/geo 用 created_at，webhook delivered 用 delivered_at、dead 用
 /// updated_at，audit 用 created_at）。
-#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+///
+/// 所有字段均加 `#[validate(range)]` 约束——这些值驱动**不可逆的 DELETE**，
+/// 而配置可经环境变量覆盖（绕过 toml 默认值）：
+/// - `min = 1`（天数）：`days = 0` 或负值使 cutoff 落到现在或未来，单个周期
+///   即清空全表（含 audit_logs 的 deny 取证记录），故必须拒绝
+/// - `max = 3650`：十年上界，排除把年/毫秒误填为天数导致的无界保留
+/// - `min = 60`（间隔）：防止 `Duration::from_secs(0)` 忙循环打满 DB
+/// - `max = 604800`：一周上界，超出即视为误配（retention 失去治理意义）
+#[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
 #[config(env_prefix = "CRAWLRS__RETENTION__")]
 pub struct RetentionSettings {
     /// 清理执行间隔（秒）
     #[config(default = 3600)]
+    #[validate(range(min = 60, max = 604_800))]
     pub interval_seconds: u64,
 
     /// scrape_results 保留天数
     #[config(default = 30)]
+    #[validate(range(min = 1, max = 3650))]
     pub scrape_results_days: i64,
 
     /// webhook_events 终态事件保留天数
     #[config(default = 30)]
+    #[validate(range(min = 1, max = 3650))]
     pub webhook_events_days: i64,
 
     /// geo_restriction_logs 保留天数
     #[config(default = 90)]
+    #[validate(range(min = 1, max = 3650))]
     pub geo_logs_days: i64,
 
     /// audit_logs 保留天数
     #[config(default = 90)]
+    #[validate(range(min = 1, max = 3650))]
     pub audit_logs_days: i64,
 }
 
@@ -790,9 +807,81 @@ mod tests {
         assert_eq!(settings.types.scrape.max_size, 10000);
     }
 
+    /// T015（converge 补强）：retention 五个字段驱动**不可逆 DELETE**，误配必须被拒绝。
     #[test]
-    fn test_settings_structure() {
-        let settings = Settings {
+    fn retention_config_rejects_unsafe_values() {
+        assert!(
+            RetentionSettings::default().validate().is_ok(),
+            "defaults must pass validation"
+        );
+
+        // days <= 0 使 cutoff 落到现在/未来，单个周期即清空全表
+        for days in [0, -1, -90] {
+            for bad in [
+                RetentionSettings {
+                    scrape_results_days: days,
+                    ..RetentionSettings::default()
+                },
+                RetentionSettings {
+                    webhook_events_days: days,
+                    ..RetentionSettings::default()
+                },
+                RetentionSettings {
+                    geo_logs_days: days,
+                    ..RetentionSettings::default()
+                },
+                RetentionSettings {
+                    audit_logs_days: days,
+                    ..RetentionSettings::default()
+                },
+            ] {
+                assert!(
+                    bad.validate().is_err(),
+                    "retention days={days} must be rejected (would wipe the table)"
+                );
+            }
+        }
+
+        // interval_seconds = 0 → tokio interval 忙循环
+        assert!(RetentionSettings {
+            interval_seconds: 0,
+            ..RetentionSettings::default()
+        }
+        .validate()
+        .is_err());
+
+        // 上界：把年/毫秒误填为天数
+        assert!(RetentionSettings {
+            audit_logs_days: 4000,
+            ..RetentionSettings::default()
+        }
+        .validate()
+        .is_err());
+    }
+
+    /// T015（converge 补强）：`Settings::validate()` 必须递归到 retention 子段，
+    /// 否则字段级约束在 config_loader 的 fail-fast 校验中形同虚设。
+    #[test]
+    fn settings_validate_recurses_into_retention() {
+        let bad = full_settings_with_retention(RetentionSettings {
+            audit_logs_days: 0,
+            ..RetentionSettings::default()
+        });
+        assert!(
+            bad.validate().is_err(),
+            "Settings::validate() must reach retention fields via #[validate(nested)]"
+        );
+
+        let ok = full_settings_with_retention(RetentionSettings::default());
+        assert!(
+            ok.validate().is_ok(),
+            "default retention must not break whole-Settings validation"
+        );
+    }
+
+    /// 构造一份完整 `Settings`，仅替换 retention 字段（供 retention 校验测试复用）。
+    fn full_settings_with_retention(retention: RetentionSettings) -> Settings {
+        Settings {
             server: ServerSettings::default(),
             database: DatabaseSettings::default(),
             cors: CorsSettings::default(),
@@ -811,8 +900,13 @@ mod tests {
             trusted_proxies: TrustedProxySettings::default(),
             auth: AuthSettings::default(),
             i18n: I18nSettings::default(),
-            retention: RetentionSettings::default(),
-        };
+            retention,
+        }
+    }
+
+    #[test]
+    fn test_settings_structure() {
+        let settings = full_settings_with_retention(RetentionSettings::default());
 
         assert_eq!(settings.server.port, 8899);
         assert!(settings.rate_limiting.enabled);
