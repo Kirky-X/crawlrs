@@ -466,7 +466,8 @@ pub async fn init_garrison_auth(
     //
     // ## 安全（CWE-532 / CWE-798）
     //
-    // - 明文 key 仅通过环境变量注入一次，从不写入日志或配置文件；
+    // - 明文 key 写 0600 文件交付（unix；Windows 依赖当前用户默认 ACL），
+    //   stdout 仅提示路径，从不写入日志或数据库；
     // - garrison 侧仅存 `sha256(key_secret)`（CWE-916 与 generate_internal 一致）；
     // - 环境变量不存在或为空时完全跳过此分支（不影响部署未启用 bootstrap 的场景）。
     //
@@ -475,7 +476,7 @@ pub async fn init_garrison_auth(
     // `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` = `<team_id_uuid>`（可选）；
     //   不传 team_id 时自动创建 `"bootstrap-admin-team"` team。
     // 内部签发双段格式：`key_id.key_secret`（`ApiKeyHandler::generate_with_namespace`），
-    // key_id / key_secret 各 32 hex，TTL 30 天，scope `crawlrs:admin`。
+    // key_id / key_secret 各 32 hex，TTL 72 小时，scope `crawlrs:admin`。
     let bootstrap_cfg = match std::env::var("CRAWLRS__BOOTSTRAP_ADMIN_API_KEY") {
         Ok(v) if !v.is_empty() => Some(v),
         _ => None,
@@ -495,7 +496,8 @@ pub async fn init_garrison_auth(
         const GARRISON_NS: &str = "crawlrs";
         const PERM_ADMIN: &str = "crawlrs:admin";
         const DEFAULT_TEAM_NAME: &str = "bootstrap-admin-team";
-        const TTL_SECS: i64 = 30 * 24 * 60 * 60;
+        // 72h：覆盖周末等运维窗口，同时限制 key 泄漏后的攻击窗口
+        const TTL_SECS: i64 = 72 * 60 * 60;
 
         let wrap_db = |ctx: &'static str| {
             move |e: sea_orm::DbErr| BootstrapError::GarrisonManager(format!("{}: db: {}", ctx, e))
@@ -591,17 +593,58 @@ pub async fn init_garrison_auth(
              `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY={}` to reuse team ID)",
             team_id, api_key_id, team_id
         );
-        // 明文 key 只打印到 stdout——生产运维保存；不写入 log/DB。
+        // 交付：明文 key 写 0600 文件（对齐 Jenkins/GitLab initial-credential 模式），
+        // stdout 仅提示路径——避免 key 经 docker/kubectl logs 进入日志采集链
+        // 持久化（CWE-532）。写入失败即启动失败：显性暴露，不静默回退 stdout。
+        // 路径默认当前工作目录，`CRAWLRS__BOOTSTRAP_ADMIN_KEY_FILE` 可覆盖。
+        const KEY_FILE_ENV: &str = "CRAWLRS__BOOTSTRAP_ADMIN_KEY_FILE";
+        const KEY_FILE_NAME: &str = "bootstrap_admin_key";
+        let key_file_path = std::env::var(KEY_FILE_ENV)
+            .ok()
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| KEY_FILE_NAME.to_string());
+
+        let mut key_file_opts = std::fs::OpenOptions::new();
+        key_file_opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // 0600 在 open(2) 时生效：新建即受限，无 0644 竞态窗口
+            key_file_opts.mode(0o600);
+        }
+        let mut key_file = key_file_opts.open(&key_file_path).map_err(|e| {
+            BootstrapError::GarrisonManager(format!(
+                "bootstrap_admin_key: open key file '{}': {} \
+                 (set CRAWLRS__BOOTSTRAP_ADMIN_KEY_FILE to a writable path)",
+                key_file_path, e
+            ))
+        })?;
+        use std::io::Write as _;
+        writeln!(key_file, "{}", plaintext_key).map_err(|e| {
+            BootstrapError::GarrisonManager(format!(
+                "bootstrap_admin_key: write key file '{}': {}",
+                key_file_path, e
+            ))
+        })?;
+        drop(key_file);
+        // 已存在文件重建时（create 不改变既有 mode），强制回到 0600
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ =
+                std::fs::set_permissions(&key_file_path, std::fs::Permissions::from_mode(0o600));
+        }
+
         println!(
             "\n\
             ====================================================\n\
-            BOOTSTRAP ADMIN API KEY (save this now!):\n\
-            {}\n\
-            TEAM_ID:      {}\n\
-            API_KEY_ID:   {}\n\
-            Valid for:    30 days\n\
+            BOOTSTRAP ADMIN API KEY created!\n\
+            File:   {} (0600 on unix)\n\
+            Team:   {}\n\
+            Key ID: {}\n\
+            Valid:  72h — read it now, save to your vault, then delete the file\n\
             ====================================================\n",
-            plaintext_key, team_id, api_key_id
+            key_file_path, team_id, api_key_id
         );
     }
 

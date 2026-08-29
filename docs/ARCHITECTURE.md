@@ -1578,6 +1578,13 @@ Scopes: `scrape`, `crawl`, `search`, `extract`, `admin`
 迁移已完成。新 team 通过 `POST /v1/admin/api-keys` 签发 API Key，无需运维工具介入。
 开发/测试环境可通过 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量自动签发 admin key。
 
+**Bootstrap key 交付（当前行为）：**
+
+- 明文 key 写入 0600 文件（unix；Windows 依赖当前用户 ACL），默认 `./bootstrap_admin_key`，可用 `CRAWLRS__BOOTSTRAP_ADMIN_KEY_FILE` 指定路径
+- stdout 仅打印文件路径与有效期，key 本体不进入 stdout/日志/数据库
+- 有效期 72 小时；运维读取保存后应删除该文件
+- `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量复用通道不变
+
 **`migrations/005_deprecate_legacy_api_keys.sql` 行为：**
 - 仅给 `api_keys` 表追加 `deprecated_at` 列并回填 `NOW()`
 - 仅给 `scopes` 表追加 `deprecated_at` 列并回填 `NOW()`

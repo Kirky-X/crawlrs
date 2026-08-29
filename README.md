@@ -479,6 +479,13 @@ curl -X POST http://localhost:8899/v1/admin/api-keys \
 - 新 team 通过 `POST /v1/admin/api-keys` 签发 API Key，无需运维工具介入
 - 开发/测试环境可通过 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量自动签发 admin key
 
+**Bootstrap key 交付（当前行为）：**
+
+- 明文 key 写入 0600 文件（unix；Windows 依赖当前用户 ACL），默认 `./bootstrap_admin_key`，可用 `CRAWLRS__BOOTSTRAP_ADMIN_KEY_FILE` 指定路径
+- stdout 仅打印文件路径与有效期，key 本体不进入 stdout/日志/数据库
+- 有效期 72 小时；运维读取保存后应删除该文件
+- `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量复用通道不变
+
 **客户端迁移：**
 
 - 调用方式不变，仍是 `Authorization: Bearer <key>`
