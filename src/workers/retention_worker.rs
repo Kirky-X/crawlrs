@@ -37,6 +37,8 @@ pub struct RetentionWorker {
     audit_logs_days: i64,
     /// 有界删除参数（retention-worker-hardening R-retention-002）
     policy: RetentionBatchPolicy,
+    /// 逐类清理超时（秒，R-retention-009：单类慢清理不阻塞其余三类）
+    category_timeout_seconds: u64,
 }
 
 impl RetentionWorker {
@@ -52,6 +54,7 @@ impl RetentionWorker {
         webhook_events_days: i64,
         audit_logs_days: i64,
         policy: RetentionBatchPolicy,
+        category_timeout_seconds: u64,
     ) -> Self {
         Self {
             scrape_repo,
@@ -63,35 +66,55 @@ impl RetentionWorker {
             webhook_events_days,
             audit_logs_days,
             policy,
+            category_timeout_seconds,
         }
     }
 
     /// 顺序执行四类清理；返回收集到的错误描述（类别名 + 错误信息）。
+    /// 每类以 `category_timeout_seconds` 超时包裹：超时该类记为错误、其余类继续
+    /// （R-retention-009）。
     async fn run_cleanup(&self) -> Vec<String> {
         let mut errors = Vec::new();
+        let category_timeout = std::time::Duration::from_secs(self.category_timeout_seconds);
 
-        match self
-            .scrape_repo
-            .cleanup_expired(self.scrape_results_days, &self.policy)
-            .await
+        // scrape_results
+        match tokio::time::timeout(
+            category_timeout,
+            self.scrape_repo
+                .cleanup_expired(self.scrape_results_days, &self.policy),
+        )
+        .await
         {
-            Ok(count) => {
+            Ok(Ok(count)) => {
                 if count > 0 {
                     info!("Retention: cleaned up {} expired scrape_results", count);
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!("Retention: scrape_results cleanup failed: {}", e);
                 errors.push(format!("scrape_results: {}", e));
             }
+            Err(_) => {
+                error!(
+                    "Retention: scrape_results cleanup timed out after {}s",
+                    self.category_timeout_seconds
+                );
+                errors.push(format!(
+                    "scrape_results: timed out after {}s",
+                    self.category_timeout_seconds
+                ));
+            }
         }
 
-        match self
-            .geo_repo
-            .cleanup_expired(self.geo_logs_days, &self.policy)
-            .await
+        // geo_restriction_logs
+        match tokio::time::timeout(
+            category_timeout,
+            self.geo_repo
+                .cleanup_expired(self.geo_logs_days, &self.policy),
+        )
+        .await
         {
-            Ok(count) => {
+            Ok(Ok(count)) => {
                 if count > 0 {
                     info!(
                         "Retention: cleaned up {} expired geo_restriction_logs",
@@ -99,41 +122,77 @@ impl RetentionWorker {
                     );
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!("Retention: geo_restriction_logs cleanup failed: {}", e);
                 errors.push(format!("geo_restriction_logs: {}", e));
             }
+            Err(_) => {
+                error!(
+                    "Retention: geo_restriction_logs cleanup timed out after {}s",
+                    self.category_timeout_seconds
+                );
+                errors.push(format!(
+                    "geo_restriction_logs: timed out after {}s",
+                    self.category_timeout_seconds
+                ));
+            }
         }
 
-        match self
-            .webhook_repo
-            .cleanup_terminal(self.webhook_events_days, &self.policy)
-            .await
+        // webhook_events
+        match tokio::time::timeout(
+            category_timeout,
+            self.webhook_repo
+                .cleanup_terminal(self.webhook_events_days, &self.policy),
+        )
+        .await
         {
-            Ok(count) => {
+            Ok(Ok(count)) => {
                 if count > 0 {
                     info!("Retention: cleaned up {} terminal webhook_events", count);
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!("Retention: webhook_events cleanup failed: {}", e);
                 errors.push(format!("webhook_events: {}", e));
             }
+            Err(_) => {
+                error!(
+                    "Retention: webhook_events cleanup timed out after {}s",
+                    self.category_timeout_seconds
+                );
+                errors.push(format!(
+                    "webhook_events: timed out after {}s",
+                    self.category_timeout_seconds
+                ));
+            }
         }
 
-        match self
-            .audit_service
-            .cleanup_old_logs(self.audit_logs_days, &self.policy)
-            .await
+        // audit_logs
+        match tokio::time::timeout(
+            category_timeout,
+            self.audit_service
+                .cleanup_old_logs(self.audit_logs_days, &self.policy),
+        )
+        .await
         {
-            Ok(count) => {
+            Ok(Ok(count)) => {
                 if count > 0 {
                     info!("Retention: cleaned up {} old audit_logs", count);
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!("Retention: audit_logs cleanup failed: {}", e);
                 errors.push(format!("audit_logs: {}", e));
+            }
+            Err(_) => {
+                error!(
+                    "Retention: audit_logs cleanup timed out after {}s",
+                    self.category_timeout_seconds
+                );
+                errors.push(format!(
+                    "audit_logs: timed out after {}s",
+                    self.category_timeout_seconds
+                ));
             }
         }
 
@@ -174,6 +233,8 @@ mod tests {
     struct MockScrapeRepo {
         cleanup_calls: AtomicU64,
         result: Mutex<Option<anyhow::Result<u64>>>,
+        /// cleanup 时的延迟（R-retention-009 逐类超时用例）
+        delay: Option<tokio::time::Duration>,
     }
 
     impl MockScrapeRepo {
@@ -181,12 +242,21 @@ mod tests {
             Self {
                 cleanup_calls: AtomicU64::new(0),
                 result: Mutex::new(None),
+                delay: None,
             }
         }
         fn failing() -> Self {
             Self {
                 cleanup_calls: AtomicU64::new(0),
                 result: Mutex::new(Some(Err(anyhow::anyhow!("db down")))),
+                delay: None,
+            }
+        }
+        fn slow(delay: tokio::time::Duration) -> Self {
+            Self {
+                cleanup_calls: AtomicU64::new(0),
+                result: Mutex::new(None),
+                delay: Some(delay),
             }
         }
     }
@@ -210,6 +280,9 @@ mod tests {
             _retention_days: i64,
             _policy: &RetentionBatchPolicy,
         ) -> anyhow::Result<u64> {
+            if let Some(delay) = self.delay {
+                tokio::time::sleep(delay).await;
+            }
             self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
             match self.result.lock().unwrap().take() {
                 Some(r) => r,
@@ -423,6 +496,7 @@ mod tests {
             30,
             90,
             RetentionBatchPolicy::default(),
+            300,
         )
     }
 
@@ -512,6 +586,58 @@ mod tests {
             }
             other => panic!("expected Error, got {:?}", other),
         }
+    }
+
+    /// R-retention-009：scrape 清理耗时 2s 而逐类超时 1s → scrape 记超时错误，
+    /// 其余三类仍被调用，process 返回 Error 且错误串含超时类别名。
+    #[tokio::test]
+    async fn test_process_slow_scrape_times_out() {
+        let scrape = Arc::new(MockScrapeRepo::slow(tokio::time::Duration::from_secs(2)));
+        let geo = Arc::new(MockGeoRepo::new(false));
+        let webhook = Arc::new(MockWebhookRepo {
+            cleanup_calls: AtomicU64::new(0),
+        });
+        let audit = Arc::new(MockAuditService {
+            cleanup_calls: AtomicU64::new(0),
+        });
+        let worker = RetentionWorker::new(
+            scrape.clone(),
+            geo.clone(),
+            webhook.clone(),
+            audit.clone(),
+            30,
+            90,
+            30,
+            90,
+            RetentionBatchPolicy::default(),
+            1, // 1s 超时 < 2s 清理耗时
+        );
+
+        let result = worker.process().await;
+        match result {
+            ProcessResult::Error(msg) => {
+                assert!(
+                    msg.contains("scrape_results") && msg.contains("timed out"),
+                    "error should name timed-out category: {msg}"
+                );
+            }
+            other => panic!("expected Error, got {:?}", other),
+        }
+        assert_eq!(
+            geo.cleanup_calls.load(Ordering::SeqCst),
+            1,
+            "geo must still run after scrape timeout"
+        );
+        assert_eq!(
+            webhook.cleanup_calls.load(Ordering::SeqCst),
+            1,
+            "webhook must still run after scrape timeout"
+        );
+        assert_eq!(
+            audit.cleanup_calls.load(Ordering::SeqCst),
+            1,
+            "audit must still run after scrape timeout"
+        );
     }
 
     /// name() 返回固定标识。

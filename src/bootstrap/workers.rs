@@ -77,6 +77,7 @@ pub async fn spawn_common_workers(
             crate::domain::retention_policy::RetentionBatchPolicy::from_settings(
                 &settings.retention,
             ),
+            settings.retention.category_timeout_seconds,
         ));
         let retention_worker = AbstractWorker::new(
             retention_processor,

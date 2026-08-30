@@ -221,6 +221,7 @@ impl WorkerManager {
             crate::domain::retention_policy::RetentionBatchPolicy::from_settings(
                 &self.settings.retention,
             ),
+            self.settings.retention.category_timeout_seconds,
         ));
         let retention_worker = AbstractWorker::new(
             retention_processor,
