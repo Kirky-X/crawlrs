@@ -311,6 +311,14 @@ name = "route_diag_test"
 path = "tests/route_diag_test.rs"
 required-features = ["platform"]
 
+# BDD 验收套件（bdd-acceptance-hardening）：cucumber 自带 main，需 harness = false；
+# 全部公开 API 面在 platform 全量特性下验收（testcontainers PG + wiremock 本地 mock）。
+[[test]]
+name = "acceptance"
+path = "tests/acceptance/main.rs"
+harness = false
+required-features = ["platform"]
+
 [[example]]
 name = "tls_fingerprint_check"
 path = "examples/tls_fingerprint_check.rs"
