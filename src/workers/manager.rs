@@ -92,6 +92,8 @@ pub struct WorkerManager {
     /// `start_workers` 注入到每个 `ScrapeWorker`，关闭信号到达后 worker 循环
     /// 停止接受新任务并在完成当前任务后退出。
     shutdown_coordinator: Arc<ShutdownCoordinator>,
+    /// retention 多实例互斥锁（R-retention-008）
+    retention_lock: Arc<dyn crate::workers::retention_worker::RetentionLock>,
 }
 
 /// Worker Manager Dependencies
@@ -120,6 +122,8 @@ pub struct WorkerManagerDeps {
     pub cache_service: Arc<dyn CacheService>,
     /// 优雅退出协调器（R-security-004/005，design.md D3）
     pub shutdown_coordinator: Arc<ShutdownCoordinator>,
+    /// retention 多实例互斥锁（R-retention-008，PG advisory lock 实现）
+    pub retention_lock: Arc<dyn crate::workers::retention_worker::RetentionLock>,
 }
 
 /// Worker Manager Configuration
@@ -189,6 +193,8 @@ impl WorkerManager {
             // T059/R-cache-002：所有 worker 共享 CacheService 实例
             cache_service: deps.cache_service,
             shutdown_coordinator: deps.shutdown_coordinator,
+            // R-retention-008：retention 多实例互斥锁
+            retention_lock: deps.retention_lock,
         }
     }
 
@@ -222,6 +228,7 @@ impl WorkerManager {
                 &self.settings.retention,
             ),
             self.settings.retention.category_timeout_seconds,
+            self.retention_lock.clone(),
         ));
         let retention_worker = AbstractWorker::new(
             retention_processor,
@@ -1232,6 +1239,20 @@ mod tests {
             )),
             cache_service: Arc::new(NoopCacheService) as Arc<dyn CacheService>,
             shutdown_coordinator: Arc::new(ShutdownCoordinator::default()),
+            retention_lock: Arc::new(AlwaysAcquireLock),
+        }
+    }
+
+    /// 测试用互斥锁：恒可获取（R-retention-008）
+    struct AlwaysAcquireLock;
+
+    #[async_trait::async_trait]
+    impl crate::workers::retention_worker::RetentionLock for AlwaysAcquireLock {
+        async fn try_acquire(&self) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+        async fn release(&self) -> anyhow::Result<()> {
+            Ok(())
         }
     }
 

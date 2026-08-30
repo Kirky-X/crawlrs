@@ -164,6 +164,10 @@ mod app {
             regex_cache: (*app_state.regex_cache()).clone(),
             cache_service: app_state.cache_service(),
             shutdown_coordinator: coordinator.clone(),
+            // R-retention-008：retention 多实例互斥（PG advisory lock，复用连接池）
+            retention_lock: std::sync::Arc::new(
+                crawlrs::workers::retention_worker::PgRetentionLock::new(app_state.db_pool()),
+            ),
         };
 
         let config = WorkerManagerConfig {

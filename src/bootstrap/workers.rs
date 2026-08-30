@@ -78,6 +78,9 @@ pub async fn spawn_common_workers(
                 &settings.retention,
             ),
             settings.retention.category_timeout_seconds,
+            std::sync::Arc::new(crate::workers::retention_worker::PgRetentionLock::new(
+                app_state.db_pool(),
+            )),
         ));
         let retention_worker = AbstractWorker::new(
             retention_processor,
