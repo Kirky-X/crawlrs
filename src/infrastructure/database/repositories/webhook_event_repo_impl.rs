@@ -182,7 +182,11 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
         Ok(count)
     }
 
-    async fn cleanup_terminal(&self, retention_days: i64) -> Result<u64, RepositoryError> {
+    async fn cleanup_terminal(
+        &self,
+        retention_days: i64,
+        policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -193,30 +197,40 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        let cutoff = Utc::now() - chrono::Duration::days(retention_days);
+        // cutoff 由 DB `NOW()` 计算（消除跨主机时钟漂移）；循环分批 + 封顶。
+        // 谓词与索引（migration 007 partial index）对齐：delivered 按 delivered_at、
+        // dead 按 updated_at 判龄，ORDER BY updated_at 支撑 LIMIT 子查询。
+        const DELETE_BATCH_SQL: &str = "DELETE FROM webhook_events WHERE id IN (
+            SELECT id FROM webhook_events
+            WHERE (status = 'delivered' AND delivered_at < NOW() - make_interval(days => $1))
+               OR (status = 'dead' AND updated_at < NOW() - make_interval(days => $1))
+            ORDER BY updated_at
+            LIMIT $2
+        )";
 
-        let terminal_condition = Condition::any()
-            .add(
-                Condition::all()
-                    .add(
-                        webhook_event::Column::Status
-                            .eq(webhook_event::SeaWebhookStatus::Delivered),
-                    )
-                    .add(webhook_event::Column::DeliveredAt.lt(cutoff)),
+        let mut total_deleted: u64 = 0;
+        loop {
+            let remaining = policy.max_rows_per_cycle - total_deleted;
+            let this_batch = policy.batch_size.min(remaining);
+            if this_batch == 0 {
+                break;
+            }
+            let deleted = super::retention_batch::delete_one_batch(
+                conn,
+                DELETE_BATCH_SQL,
+                retention_days,
+                this_batch,
+                policy.statement_timeout_ms,
             )
-            .add(
-                Condition::all()
-                    .add(webhook_event::Column::Status.eq(webhook_event::SeaWebhookStatus::Dead))
-                    .add(webhook_event::Column::UpdatedAt.lt(cutoff)),
-            );
-
-        let result = webhook_event::Entity::delete_many()
-            .filter(terminal_condition)
-            .exec(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
+            total_deleted += deleted;
+            if deleted < this_batch {
+                break;
+            }
+        }
 
-        Ok(result.rows_affected)
+        Ok(total_deleted)
     }
 }
 

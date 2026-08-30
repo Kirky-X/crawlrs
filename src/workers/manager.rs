@@ -955,7 +955,11 @@ mod tests {
         async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
             Ok(event.clone())
         }
-        async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+        async fn cleanup_terminal(
+            &self,
+            _retention_days: i64,
+            _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
     }

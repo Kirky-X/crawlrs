@@ -48,7 +48,11 @@ impl WebhookEventRepository for MockWebhookEventRepository {
         Ok(event.clone())
     }
 
-    async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+    async fn cleanup_terminal(
+        &self,
+        _retention_days: i64,
+        _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 }
@@ -87,7 +91,11 @@ impl WebhookEventRepository for FailingWebhookEventRepository {
         Ok(event.clone())
     }
 
-    async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+    async fn cleanup_terminal(
+        &self,
+        _retention_days: i64,
+        _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 }
@@ -1174,7 +1182,11 @@ impl WebhookEventRepository for ConfigurableWebhookEventRepository {
         Ok(event.clone())
     }
 
-    async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+    async fn cleanup_terminal(
+        &self,
+        _retention_days: i64,
+        _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 }
@@ -1215,7 +1227,11 @@ impl WebhookEventRepository for FindPendingFailingEventRepository {
         Ok(event.clone())
     }
 
-    async fn cleanup_terminal(&self, _retention_days: i64) -> Result<u64, RepositoryError> {
+    async fn cleanup_terminal(
+        &self,
+        _retention_days: i64,
+        _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 }

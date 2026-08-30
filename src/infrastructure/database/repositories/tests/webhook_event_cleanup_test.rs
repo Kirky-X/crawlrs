@@ -1,6 +1,7 @@
 use super::*;
 use crate::common::test_helpers::create_test_db_pool;
 use crate::domain::models::webhook_model::{WebhookEventType, WebhookStatus};
+use crate::domain::retention_policy::RetentionBatchPolicy;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
@@ -60,7 +61,7 @@ async fn cleanup_terminal_removes_old_terminal_keeps_active() {
     }
 
     let deleted = repo
-        .cleanup_terminal(30)
+        .cleanup_terminal(30, &RetentionBatchPolicy::default())
         .await
         .expect("cleanup_terminal failed");
     assert!(
@@ -124,7 +125,9 @@ async fn cleanup_terminal_keeps_recent_delivered() {
     let recent_delivered = make_event(WebhookStatus::Delivered, 1, Some(1));
     repo.create(&recent_delivered).await.expect("create failed");
 
-    repo.cleanup_terminal(30).await.expect("cleanup failed");
+    repo.cleanup_terminal(30, &RetentionBatchPolicy::default())
+        .await
+        .expect("cleanup failed");
 
     assert!(
         repo.find_by_id(recent_delivered.id)
@@ -132,5 +135,84 @@ async fn cleanup_terminal_keeps_recent_delivered() {
             .expect("query failed")
             .is_some(),
         "1-day-old delivered event should be kept"
+    );
+}
+
+/// R-retention-004：delivered/dead 过期行数 > batch_size 时循环分批删净，活事件不受影响。
+#[tokio::test]
+async fn cleanup_terminal_batches_until_drained() {
+    let _guard = webhook_lock().lock().await;
+    let repo = WebhookEventRepoImpl::new(create_test_db_pool());
+
+    let mut old_terminal_ids = Vec::new();
+    for _ in 0..3 {
+        let d = make_event(WebhookStatus::Delivered, 35, Some(35));
+        old_terminal_ids.push(d.id);
+        repo.create(&d).await.expect("create failed");
+    }
+    for _ in 0..3 {
+        let dead = make_event(WebhookStatus::Dead, 35, None);
+        old_terminal_ids.push(dead.id);
+        repo.create(&dead).await.expect("create failed");
+    }
+    let pending = make_event(WebhookStatus::Pending, 1, None);
+    repo.create(&pending).await.expect("create failed");
+
+    let policy = RetentionBatchPolicy {
+        batch_size: 2,
+        max_rows_per_cycle: 100_000,
+        statement_timeout_ms: 60_000,
+    };
+    let deleted = repo
+        .cleanup_terminal(30, &policy)
+        .await
+        .expect("cleanup_terminal failed");
+    assert!(
+        deleted >= 6,
+        "our 6 old terminal rows must be among the deleted: {deleted}"
+    );
+    for id in old_terminal_ids {
+        assert!(
+            repo.find_by_id(id).await.expect("query failed").is_none(),
+            "old terminal event should be deleted"
+        );
+    }
+    assert!(
+        repo.find_by_id(pending.id)
+            .await
+            .expect("query failed")
+            .is_some(),
+        "pending event must survive batched cleanup"
+    );
+}
+
+/// R-retention-004：删除总数达到 `max_rows_per_cycle` 即封顶停止。
+#[tokio::test]
+async fn cleanup_terminal_caps_at_max_rows_per_cycle() {
+    let _guard = webhook_lock().lock().await;
+    let repo = WebhookEventRepoImpl::new(create_test_db_pool());
+
+    // 清掉共享容器中的历史过期终态行，保证封顶断言精确
+    repo.cleanup_terminal(30, &RetentionBatchPolicy::default())
+        .await
+        .expect("pre-clean failed");
+
+    for _ in 0..5 {
+        let d = make_event(WebhookStatus::Delivered, 35, Some(35));
+        repo.create(&d).await.expect("create failed");
+    }
+
+    let policy = RetentionBatchPolicy {
+        batch_size: 2,
+        max_rows_per_cycle: 3,
+        statement_timeout_ms: 60_000,
+    };
+    let deleted = repo
+        .cleanup_terminal(30, &policy)
+        .await
+        .expect("cleanup_terminal failed");
+    assert_eq!(
+        deleted, 3,
+        "deletion must stop once max_rows_per_cycle is reached"
     );
 }

@@ -107,7 +107,7 @@ impl RetentionWorker {
 
         match self
             .webhook_repo
-            .cleanup_terminal(self.webhook_events_days)
+            .cleanup_terminal(self.webhook_events_days, &self.policy)
             .await
         {
             Ok(count) => {
@@ -337,6 +337,7 @@ mod tests {
         async fn cleanup_terminal(
             &self,
             _retention_days: i64,
+            _policy: &RetentionBatchPolicy,
         ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError> {
             self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
             Ok(3)

@@ -31,9 +31,14 @@ pub trait WebhookEventRepository: Send + Sync {
     /// 更新Webhook事件
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError>;
 
-    /// 按保留期删除终态事件（R-retention-004）
+    /// 按保留期分批删除终态事件（R-retention-004）
     ///
-    /// 删除 `status='delivered'` 且 `delivered_at` 早于 `NOW() - retention_days`，
-    /// 或 `status='dead'` 且 `updated_at` 早于该 cutoff 的行，返回删除行数。
-    async fn cleanup_terminal(&self, retention_days: i64) -> Result<u64, RepositoryError>;
+    /// 循环分批删除 `status='delivered'` 且 `delivered_at` 早于 DB `NOW() - retention_days`，
+    /// 或 `status='dead'` 且 `updated_at` 早于该 cutoff 的行，直到删净或累计达
+    /// `policy.max_rows_per_cycle`；每批独立短事务并带 `statement_timeout`。
+    async fn cleanup_terminal(
+        &self,
+        retention_days: i64,
+        policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, RepositoryError>;
 }
