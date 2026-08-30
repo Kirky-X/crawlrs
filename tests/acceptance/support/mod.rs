@@ -199,6 +199,10 @@ pub struct AcceptanceWorld {
     pub auth_key: Option<String>,
     /// 场景内共享上下文（task id 等）
     pub ctx: std::collections::HashMap<String, String>,
+    /// response 被消费后的状态码遗留（sign 步骤等，供 then_status 断言）
+    pub last_status: Option<u16>,
+    /// response 被消费后的响应体遗留
+    pub last_body: Option<String>,
 }
 
 /// 手写 Debug：TestResponse / Harness 无 Debug，仅输出结构性字段。
@@ -237,6 +241,43 @@ async fn given_no_key(w: &mut AcceptanceWorld) {
     w.auth_key = None;
 }
 
+/// 经 admin 端点签发普通 key（R-acceptance-003：签发→使用完整链路）。
+#[given("a regular API key signed via admin endpoint")]
+async fn given_regular_key(w: &mut AcceptanceWorld) {
+    let harness = w.get_harness().await;
+    let payload = serde_json::json!({
+        "team_id": uuid::Uuid::from_u128(1), // DEFAULT_TEAM_ID（bootstrap 已建）
+        "scopes": ["read", "write"],
+    });
+    let response = harness
+        .server
+        .post("/v1/admin/api-keys")
+        .json(&payload)
+        .add_header(
+            axum_test::http::header::AUTHORIZATION,
+            &format!("Bearer {}", harness.admin_key),
+        )
+        .await;
+    assert_eq!(
+        response.status_code().as_u16(),
+        201,
+        "regular key signing failed: {}",
+        response.text()
+    );
+    let json: Json = response.json();
+    let key = json
+        .pointer("/data/api_key")
+        .and_then(|v| v.as_str())
+        .expect("data.api_key missing")
+        .to_string();
+    w.auth_key = Some(key);
+}
+
+#[given("an invalid API key")]
+async fn given_invalid_key(w: &mut AcceptanceWorld) {
+    w.auth_key = Some("00000000000000000000000000000000.invalidsecretinvalidsecretinvalidsecret".to_string());
+}
+
 #[when(expr = "I GET {string}")]
 async fn when_get(w: &mut AcceptanceWorld, path: String) {
     let harness = w.get_harness().await;
@@ -250,12 +291,21 @@ async fn when_get(w: &mut AcceptanceWorld, path: String) {
     w.last_response = Some(request.await);
 }
 
-#[when(expr = "I POST {string} with JSON")]
-async fn when_post_json(w: &mut AcceptanceWorld, path: String, body: String) {
+/// 原样发送 Authorization 头（畸形格式异常矩阵用）。
+#[when(expr = "I GET {string} with raw Authorization {string}")]
+async fn when_get_raw_auth(w: &mut AcceptanceWorld, path: String, raw: String) {
     let harness = w.get_harness().await;
-    let payload: Json =
-        serde_json::from_str(&body).unwrap_or_else(|e| panic!("invalid JSON in step: {e}"));
-    let mut request = harness.server.post(&path).json(&payload);
+    let request = harness
+        .server
+        .get(&path)
+        .add_header(axum_test::http::header::AUTHORIZATION, &raw);
+    w.last_response = Some(request.await);
+}
+
+/// 通用 POST 辅助：当前认证态 + JSON body。
+async fn post_json(w: &mut AcceptanceWorld, path: &str, payload: Json) {
+    let harness = w.get_harness().await;
+    let mut request = harness.server.post(path).json(&payload);
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
@@ -263,6 +313,113 @@ async fn when_post_json(w: &mut AcceptanceWorld, path: String, body: String) {
         );
     }
     w.last_response = Some(request.await);
+}
+
+/// 用当前认证态签发 API key（given 步骤辅助，断言 201 并返回明文 key）。
+async fn sign_api_key(w: &mut AcceptanceWorld, scopes: &[&str]) -> String {
+    let harness = w.get_harness().await;
+    let payload = serde_json::json!({
+        "team_id": uuid::Uuid::from_u128(1), // DEFAULT_TEAM_ID（bootstrap 已建）
+        "scopes": scopes,
+    });
+    let response = harness
+        .server
+        .post("/v1/admin/api-keys")
+        .json(&payload)
+        .add_header(
+            axum_test::http::header::AUTHORIZATION,
+            &format!("Bearer {}", harness.admin_key),
+        )
+        .await;
+    assert_eq!(
+        response.status_code().as_u16(),
+        201,
+        "regular key signing failed: {}",
+        response.text()
+    );
+    let json: Json = response.json();
+    json.pointer("/data/api_key")
+        .and_then(|v| v.as_str())
+        .expect("data.api_key missing")
+        .to_string()
+}
+
+#[when(expr = "I sign a regular API key with scopes {string}")]
+async fn when_sign_regular_key(w: &mut AcceptanceWorld, scopes: String) {
+    let scope_list: Vec<&str> = scopes.split(',').map(str::trim).collect();
+    let harness = w.get_harness().await;
+    let payload = serde_json::json!({
+        "team_id": uuid::Uuid::from_u128(1), // DEFAULT_TEAM_ID（bootstrap 已建）
+        "scopes": scope_list,
+    });
+    let mut request = harness.server.post("/v1/admin/api-keys").json(&payload);
+    if let Some(key) = &w.auth_key {
+        request = request.add_header(
+            axum_test::http::header::AUTHORIZATION,
+            &format!("Bearer {key}"),
+        );
+    }
+    let response = request.await;
+    let status = response.status_code().as_u16();
+    let text = response.text();
+    w.last_status = Some(status);
+    if status == 201 {
+        let json: Json =
+            serde_json::from_str(&text).expect("sign response JSON malformed");
+        let key = json
+            .pointer("/data/api_key")
+            .and_then(|v| v.as_str())
+            .expect("data.api_key missing")
+            .to_string();
+        w.auth_key = Some(key);
+        w.last_body = Some(text);
+    }
+}
+
+#[when(expr = "I POST {string} scraping {string}")]
+async fn when_post_scrape(w: &mut AcceptanceWorld, path: String, url: String) {
+    post_json(w, &path, serde_json::json!({"url": url})).await;
+}
+
+#[when(expr = "I POST {string} extracting {string}")]
+async fn when_post_extract(w: &mut AcceptanceWorld, path: String, url: String) {
+    post_json(w, &path, serde_json::json!({"url": url})).await;
+}
+
+#[when(expr = "I POST {string} crawling {string} with max depth {int}")]
+async fn when_post_crawl(
+    w: &mut AcceptanceWorld,
+    path: String,
+    url: String,
+    max_depth: i32,
+) {
+    post_json(
+        w,
+        &path,
+        serde_json::json!({"url": url, "config": {"max_depth": max_depth}}),
+    )
+    .await;
+}
+
+#[when(expr = "I POST {string} searching {string}")]
+async fn when_post_search(w: &mut AcceptanceWorld, path: String, query: String) {
+    post_json(w, &path, serde_json::json!({"query": query})).await;
+}
+
+#[when(expr = "I POST {string} mapping {string}")]
+async fn when_post_map(w: &mut AcceptanceWorld, path: String, url: String) {
+    post_json(w, &path, serde_json::json!({"url": url})).await;
+}
+
+#[when(expr = "I POST {string} creating webhook {string} for events {string}")]
+async fn when_post_webhook(w: &mut AcceptanceWorld, path: String, url: String, events: String) {
+    let event_list: Vec<&str> = events.split(',').map(str::trim).collect();
+    post_json(
+        w,
+        &path,
+        serde_json::json!({"url": url, "events": event_list}),
+    )
+    .await;
 }
 
 #[when(expr = "I DELETE {string}")]
@@ -280,25 +437,34 @@ async fn when_delete(w: &mut AcceptanceWorld, path: String) {
 
 #[then(expr = "the response status is {int}")]
 async fn then_status(w: &mut AcceptanceWorld, expected: u16) {
-    let response = w
-        .last_response
-        .as_ref()
-        .expect("no response captured — send a request first");
-    let actual = response.status_code().as_u16();
-    assert_eq!(
-        actual, expected,
-        "unexpected status; body: {}",
-        response.text()
-    );
+    if let Some(response) = &w.last_response {
+        let actual = response.status_code().as_u16();
+        assert_eq!(
+            actual, expected,
+            "unexpected status; body: {}",
+            response.text()
+        );
+    } else if let Some(status) = w.last_status {
+        assert_eq!(status, expected, "unexpected status; body: {:?}", w.last_body);
+    } else {
+        panic!("no response captured — send a request first");
+    }
+}
+
+/// 取最近响应的 JSON：优先 TestResponse，response 被消费时用 last_body 遗留。
+async fn last_json(w: &AcceptanceWorld) -> Json {
+    if let Some(response) = &w.last_response {
+        response.json()
+    } else if let Some(body) = &w.last_body {
+        serde_json::from_str(body).unwrap_or_else(|e| panic!("last body malformed: {e}: {body}"))
+    } else {
+        panic!("no response captured — send a request first");
+    }
 }
 
 #[then(expr = "the response JSON field {string} is {string}")]
 async fn then_json_field_is_string(w: &mut AcceptanceWorld, field: String, expected: String) {
-    let response = w
-        .last_response
-        .as_ref()
-        .expect("no response captured — send a request first");
-    let json: Json = response.json();
+    let json = last_json(w).await;
     // 字段名自动转 JSON Pointer：顶层 "status" → "/status"，嵌套 "a.b" → "/a/b"
     let pointer = format!("/{}", field.replace('.', "/"));
     let actual = json
@@ -311,13 +477,30 @@ async fn then_json_field_is_string(w: &mut AcceptanceWorld, field: String, expec
     );
 }
 
+#[then(expr = "the response JSON field {string} is true")]
+async fn then_json_field_is_true(w: &mut AcceptanceWorld, field: String) {
+    let json = last_json(w).await;
+    let pointer = format!("/{}", field.replace('.', "/"));
+    let actual = json
+        .pointer(&pointer)
+        .unwrap_or_else(|| panic!("field {field} missing in response: {json}"));
+    assert!(actual.as_bool() == Some(true), "field {field} must be true: {json}");
+}
+
+#[then(expr = "the response JSON field {string} is a non-empty string")]
+async fn then_json_field_nonempty_string(w: &mut AcceptanceWorld, field: String) {
+    let json = last_json(w).await;
+    let pointer = format!("/{}", field.replace('.', "/"));
+    let actual = json
+        .pointer(&pointer)
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("field {field} missing or not a string: {json}"));
+    assert!(!actual.is_empty(), "field {field} must be non-empty");
+}
+
 #[then(expr = "the response JSON pointer {string} is a non-empty array")]
 async fn then_json_pointer_nonempty_array(w: &mut AcceptanceWorld, pointer: String) {
-    let response = w
-        .last_response
-        .as_ref()
-        .expect("no response captured — send a request first");
-    let json: Json = response.json();
+    let json = last_json(w).await;
     let value = json
         .pointer(&pointer)
         .unwrap_or_else(|| panic!("pointer {pointer} missing in response: {json}"));
