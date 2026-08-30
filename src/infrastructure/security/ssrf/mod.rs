@@ -143,6 +143,23 @@ impl SsrfValidator {
     /// assert!(result.is_ok());
     /// ```
     pub async fn validate(&self, url_str: &str) -> Result<ValidatedUrl, SsrfError> {
+        // Step 0: dev/test 显式关闭开关（CRAWLRS_DISABLE_SSRF_PROTECTION，仅保留
+        // URL 合法性解析）。引擎层 SsrfValidator::new() 与 handler 层 validate_url()
+        // 均走此判断，保证验收套件 wiremock（127.0.0.1）可测。
+        if ssrf_disabled() {
+            let parsed_url = Url::parse(url_str).map_err(|e| SsrfError::InvalidUrl {
+                url: url_str.to_string(),
+                reason: e.to_string(),
+            })?;
+            let port = parsed_url.port_or_known_default().unwrap_or(80);
+            return Ok(ValidatedUrl {
+                url: url_str.to_string(),
+                parsed_url,
+                resolved_ips: Vec::new(),
+                port,
+            });
+        }
+
         // Step 1: URL length check
         if url_str.len() > self.config.max_url_length {
             return Err(SsrfError::UrlTooLong {
@@ -291,19 +308,25 @@ impl SsrfValidator {
     }
 }
 
+/// `CRAWLRS_DISABLE_SSRF_PROTECTION` 是否生效（非空且非 false/0）。
+/// 仅限开发/测试环境；config_validator 会在非 dev 环境输出显著告警。
+/// `CRAWLRS_DISABLE_SSRF_PROTECTION` 是否生效（引擎层与 handler 层共用判定）。
+pub fn ssrf_protection_disabled() -> bool {
+    ssrf_disabled()
+}
+
+fn ssrf_disabled() -> bool {
+    std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION)
+        .map(|v| !v.is_empty() && v != "false" && v != "0")
+        .unwrap_or(false)
+}
+
 /// Convenience function for quick URL validation without DNS caching.
 ///
 /// This function performs full SSRF validation including DNS resolution.
 /// For repeated validations, use `SsrfValidator::with_dns_cache()` instead.
-///
-/// `CRAWLRS_DISABLE_SSRF_PROTECTION`（仅限开发/测试环境；config_validator 会在
-/// 非 dev 环境输出显著告警）设置且非 "false"/"0" 时跳过 DNS/IP 校验，仅保留
-/// URL 合法性解析——使本地 mock 目标站（127.0.0.1 wiremock）与无外网测试环境可测。
 pub async fn validate_url(url_str: &str) -> Result<ValidatedUrl, SsrfError> {
-    let ssrf_disabled = std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION)
-        .map(|v| !v.is_empty() && v != "false" && v != "0")
-        .unwrap_or(false);
-    if ssrf_disabled {
+    if ssrf_disabled() {
         let parsed_url = Url::parse(url_str).map_err(|e| SsrfError::InvalidUrl {
             url: url_str.to_string(),
             reason: e.to_string(),

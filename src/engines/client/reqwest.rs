@@ -467,12 +467,15 @@ impl ScraperEngine for ReqwestEngine {
         let port = validated_url.port;
         // SSRF: pin hostname → validated IPs via reqwest resolve override.
         // Keep the original URL intact so TLS SNI and virtual host routing work correctly.
+        // SSRF 关闭（开发/测试开关）时 resolved_ips 为空 → 跳过 pin，正常 DNS 解析。
         let resolve_addrs: Vec<std::net::SocketAddr> = validated_url
             .resolved_ips
             .iter()
             .map(|ip| std::net::SocketAddr::new(*ip, port))
             .collect();
-        if resolve_addrs.is_empty() {
+        if resolve_addrs.is_empty()
+            && !crate::infrastructure::security::ssrf::ssrf_protection_disabled()
+        {
             return Err(EngineError::Other("SSRF: no resolved IPs".to_string()));
         }
         let need_tls_bypass = request.skip_tls_verification;
