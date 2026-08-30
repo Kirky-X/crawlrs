@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use dbnexus::DbPool;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect,
 };
 use std::sync::Arc;

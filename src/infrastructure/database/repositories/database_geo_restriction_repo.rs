@@ -9,7 +9,7 @@ use crate::domain::repositories::geo_restriction_repository::{
 use crate::domain::services::team_service::TeamGeoRestrictions;
 use crate::infrastructure::database::entities::{geo_restriction_log, team};
 use dbnexus::DbPool;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use uuid::Uuid;
 
 use std::sync::Arc;
