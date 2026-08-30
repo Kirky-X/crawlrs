@@ -36,6 +36,7 @@ use crate::domain::repositories::webhook_event_repository::WebhookEventRepositor
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
 // T049/R-content-002：ContentExtractionFacade 用于正文提取（多 extractor 优先级路由 + LLM 回退）
+use crate::application::use_cases::map_use_case::{EngineSitemapFetcher, MapUseCase};
 use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
 #[cfg(feature = "teams")]
@@ -130,6 +131,8 @@ pub struct CrawlRsState {
     pub search_client: Arc<SearchClient>,
     /// Search service (trait object for DI)
     pub search_service: Arc<dyn SearchServiceTrait>,
+    /// `/v1/map` sitemap URL 发现用例（bdd-acceptance-hardening R-map-004）
+    pub map_use_case: Arc<MapUseCase>,
     /// LLM service for LLM operations
     pub llm_service: Arc<dyn LLMServiceTrait>,
     /// Extraction service for data extraction
@@ -201,6 +204,9 @@ impl CrawlRsState {
         let settings = kit.require::<SettingsModule>()?;
 
         let search_client = Arc::new(SearchClient::new(engines.engine_client.clone()));
+        let map_use_case = Arc::new(MapUseCase::new(Arc::new(EngineSitemapFetcher::new(
+            engines.engine_client.clone(),
+        ))));
 
         // 加载 i18n 翻译 bundle
         let supported: Vec<&str> = settings
@@ -249,6 +255,7 @@ impl CrawlRsState {
             create_scrape_use_case: services.create_scrape_use_case.clone(),
             search_client,
             search_service: services.search_service.clone(),
+            map_use_case,
             llm_service: services.llm_service.clone(),
             extraction_service: services.extraction_service.clone(),
             content_extractor: services.content_extractor.clone(),

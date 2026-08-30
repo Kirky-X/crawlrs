@@ -276,6 +276,7 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     let app = app
         .merge(forge_router)
         .layer(Extension(state.search_service.clone()))
+        .layer(Extension(state.map_use_case.clone()))
         .layer(Extension(state.task_queue.clone()))
         .layer(Extension(state.crawl_repo.clone()));
 

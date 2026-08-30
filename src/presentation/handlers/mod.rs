@@ -16,6 +16,7 @@ pub mod crawl_commands;
 pub mod crawl_handler;
 pub mod crawl_queries;
 pub mod extract_handler;
+pub mod map_handler;
 pub mod metrics_handler;
 pub mod response_builder;
 pub mod scrape_commands;

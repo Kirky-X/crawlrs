@@ -295,7 +295,27 @@ impl SsrfValidator {
 ///
 /// This function performs full SSRF validation including DNS resolution.
 /// For repeated validations, use `SsrfValidator::with_dns_cache()` instead.
+///
+/// `CRAWLRS_DISABLE_SSRF_PROTECTION`（仅限开发/测试环境；config_validator 会在
+/// 非 dev 环境输出显著告警）设置且非 "false"/"0" 时跳过 DNS/IP 校验，仅保留
+/// URL 合法性解析——使本地 mock 目标站（127.0.0.1 wiremock）与无外网测试环境可测。
 pub async fn validate_url(url_str: &str) -> Result<ValidatedUrl, SsrfError> {
+    let ssrf_disabled = std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION)
+        .map(|v| !v.is_empty() && v != "false" && v != "0")
+        .unwrap_or(false);
+    if ssrf_disabled {
+        let parsed_url = Url::parse(url_str).map_err(|e| SsrfError::InvalidUrl {
+            url: url_str.to_string(),
+            reason: e.to_string(),
+        })?;
+        let port = parsed_url.port_or_known_default().unwrap_or(80);
+        return Ok(ValidatedUrl {
+            url: url_str.to_string(),
+            parsed_url,
+            resolved_ips: Vec::new(),
+            port,
+        });
+    }
     let validator = SsrfValidator::new();
     validator.validate(url_str).await
 }
