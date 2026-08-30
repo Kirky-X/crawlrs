@@ -515,6 +515,7 @@ curl -X POST http://localhost:8899/v1/admin/api-keys \
 | `/v1/crawl/{id}/_cancel` | POST | 取消爬取任务 |
 | `/v1/crawl/{id}/results` | GET | 获取爬取结果 |
 | `/v1/search` | POST | 使用指定引擎搜索 |
+| `/v1/map` | POST | 从站点 sitemap 发现 URL（0.2.0 新增） |
 | `/v1/extract` | POST | 从 HTML 提取数据 |
 | `/v1/webhooks` | POST | 创建 webhook |
 | `/v1/webhooks` | GET | 列出 webhook |

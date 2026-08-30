@@ -493,6 +493,7 @@ See [ARCHITECTURE.md → Garrison Authentication Engine](docs/ARCHITECTURE.md#ga
 | `/v1/crawl/{id}/_cancel` | POST | Cancel crawl task |
 | `/v1/crawl/{id}/results` | GET | Get crawl results |
 | `/v1/search` | POST | Search with specified engine |
+| `/v1/map` | POST | Discover URLs from a site sitemap (new in 0.2.0) |
 | `/v1/extract` | POST | Extract data from HTML |
 | `/v1/webhooks` | POST | Create webhook |
 | `/v1/webhooks` | GET | List webhooks |
