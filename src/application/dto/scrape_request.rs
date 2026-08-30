@@ -24,7 +24,7 @@ pub const MAX_METADATA_DEPTH: usize = 5;
 /// URL scheme validation: only http and https are allowed (SSRF mitigation).
 static HTTP_URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^https?://").unwrap());
 
-fn is_http_url(value: &str) -> Result<(), validator::ValidationError> {
+pub(crate) fn is_http_url(value: &str) -> Result<(), validator::ValidationError> {
     if HTTP_URL_RE.is_match(value) {
         Ok(())
     } else {
