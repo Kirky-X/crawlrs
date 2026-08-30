@@ -616,6 +616,15 @@ dbnexus provides connection pooling, permission control, migration framework, me
 
 清理扫描由 migration 007 的索引支撑：`webhook_events` 终态 partial index（`delivered_at`/`updated_at`）、`geo_restriction_logs(created_at)`、`audit_logs(created_at)`；`scrape_results` 复用 `idx_scrape_results_created_at`。`pending`/`failed` webhook 事件为活事件，永不参与清理。
 
+**运行时行为硬化（R-retention-001 ~ 009，change `retention-worker-hardening`）**
+
+- **分批有界删除**：四类清理不再单事务一把删，改为循环分批 `DELETE ... WHERE id IN (SELECT id ... ORDER BY <判龄字段> LIMIT $batch)`。每批独立短事务，事务内 `SET LOCAL statement_timeout`（`batch_size` 默认 5000，`statement_timeout_ms` 默认 60000），直到某批删 0 行或累计达 `max_rows_per_cycle`（默认 100000，硬上限——每批按剩余配额裁剪，不越界）。首次上线/停机回填时避免长事务持锁、WAL 峰值与 TOAST 死元组堆积。
+- **多实例互斥**：周期开始以 `pg_try_advisory_lock(RETENTION_ADVISORY_LOCK_ID)` 抢会话级锁（锁走独立连接，由 `PgRetentionLock` 持有 session 直至释放），未抢到的实例跳过本轮（debug 日志）；锁在周期结束（含错误路径）释放。多副本部署不再重复清理。
+- **逐类超时**：每类清理由 `category_timeout_seconds`（默认 300s）的 `tokio::time::timeout` 包裹，单类慢/挂只记超时错误，其余三类照常执行。
+- **DB 时钟判龄**：四类 cutoff 一律由 SQL 内 `NOW() - make_interval(days => $1)` 计算，消除跨主机时钟漂移导致的清理边界不一致。
+
+> **autovacuum 调优建议（delete 密集表）**：`scrape_results` 等高频删除表建议调低 `autovacuum_vacuum_scale_factor`（如 0.02）使清理更频繁、每次更小，并调高 `autovacuum_vacuum_cost_limit`（如 2000）加速死元组回收。以上为指导性建议，按实际负载调整，本系统不做自动 VACUUM 调度。
+
 **Cache Layer:**
 
 **Technology:** oxcache 0.3 (in-memory, no Redis backend)

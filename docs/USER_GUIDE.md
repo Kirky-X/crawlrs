@@ -1346,11 +1346,21 @@ webhook_events_days = 30
 geo_logs_days = 90
 # audit_logs 保留天数，默认 90
 audit_logs_days = 90
+# 单批删除最大行数（分批有界 DELETE，防长事务），默认 5000，范围 1-100000
+batch_size = 5000
+# 单类单周期删除行数上限（封顶单轮负载），默认 100000
+max_rows_per_cycle = 100000
+# 单批事务语句超时（毫秒，防慢 DELETE 挂住连接），默认 60000，最小 1000
+statement_timeout_ms = 60000
+# 逐类清理超时（秒，单类慢清理不阻塞其余三类），默认 300，最小 60
+category_timeout_seconds = 300
 ```
 
 也可通过环境变量覆盖（前缀 `CRAWLRS__RETENTION__`，如 `CRAWLRS__RETENTION__SCRAPE_RESULTS_DAYS=7`）。
 
 > **注意**：超过保留期的数据会被删除且不可恢复。调大 `scrape_results_days` 可延长历史抓取结果的回查窗口，但会相应增加数据库存储占用。团队平均响应时间统计基于保留窗口内的数据计算。
+>
+> **多副本部署**：清理由 PG advisory lock 互斥，每周期仅一个实例执行，无需额外配置。数据量大的首次上线可调小 `max_rows_per_cycle` 分多轮消化存量，避免单轮清理压力过大。
 
 ---
 
