@@ -156,19 +156,46 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
         Ok(logs.into_iter().map(|l| l.into()).collect())
     }
 
-    async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, AuditRepositoryError> {
-        let cutoff = Utc::now() - chrono::Duration::days(retention_days);
-
+    async fn cleanup_old_logs(
+        &self,
+        retention_days: i64,
+        policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, AuditRepositoryError> {
         let session = self.pool.get_session("admin").await?;
 
         let conn = session.connection()?;
 
-        let result = AuditEntity::delete_many()
-            .filter(AuditColumn::CreatedAt.lt(cutoff))
-            .exec(conn)
-            .await?;
+        // cutoff 由 DB `NOW()` 计算（消除跨主机时钟漂移）；循环分批 + 封顶
+        const DELETE_BATCH_SQL: &str = "DELETE FROM audit_logs WHERE id IN (
+            SELECT id FROM audit_logs
+            WHERE created_at < NOW() - make_interval(days => $1)
+            ORDER BY created_at
+            LIMIT $2
+        )";
 
-        Ok(result.rows_affected as u64)
+        let mut total_deleted: u64 = 0;
+        loop {
+            let remaining = policy.max_rows_per_cycle - total_deleted;
+            let this_batch = policy.batch_size.min(remaining);
+            if this_batch == 0 {
+                break;
+            }
+            let deleted = super::retention_batch::delete_one_batch(
+                conn,
+                DELETE_BATCH_SQL,
+                retention_days,
+                this_batch,
+                policy.statement_timeout_ms,
+            )
+            .await
+            .map_err(|e| AuditRepositoryError::DatabaseError(e))?;
+            total_deleted += deleted;
+            if deleted < this_batch {
+                break;
+            }
+        }
+
+        Ok(total_deleted)
     }
 }
 
@@ -283,7 +310,12 @@ mod tests {
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         // retention_days=30 means cutoff is 30 days ago; newly created records
         // (in create test above) should not be deleted.
-        let result = repo.cleanup_old_logs(30).await;
+        let result = repo
+            .cleanup_old_logs(
+                30,
+                &crate::domain::retention_policy::RetentionBatchPolicy::default(),
+            )
+            .await;
         assert!(
             result.is_ok(),
             "cleanup_old_logs failed: {:?}",

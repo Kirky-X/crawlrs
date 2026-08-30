@@ -1652,7 +1652,11 @@ mod tests {
             Ok(self.entries())
         }
 
-        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditServiceError> {
+        async fn cleanup_old_logs(
+            &self,
+            _retention_days: i64,
+            _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+        ) -> Result<u64, AuditServiceError> {
             Ok(0)
         }
     }

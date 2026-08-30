@@ -57,6 +57,13 @@ pub trait AuditLogRepository: Send + Sync {
         limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError>;
 
-    /// 清理旧的审计日志
-    async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, AuditRepositoryError>;
+    /// 分批清理旧的审计日志（R-retention-005：供 RetentionWorker 调度）
+    ///
+    /// 循环分批删除 `created_at` 早于 DB `NOW() - retention_days` 的行，直到删净
+    /// 或累计达 `policy.max_rows_per_cycle`；每批独立短事务并带 `statement_timeout`。
+    async fn cleanup_old_logs(
+        &self,
+        retention_days: i64,
+        policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, AuditRepositoryError>;
 }

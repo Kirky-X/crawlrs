@@ -123,7 +123,7 @@ impl RetentionWorker {
 
         match self
             .audit_service
-            .cleanup_old_logs(self.audit_logs_days)
+            .cleanup_old_logs(self.audit_logs_days, &self.policy)
             .await
         {
             Ok(count) => {
@@ -395,7 +395,11 @@ mod tests {
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             Ok(vec![])
         }
-        async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditServiceError> {
+        async fn cleanup_old_logs(
+            &self,
+            _retention_days: i64,
+            _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+        ) -> Result<u64, AuditServiceError> {
             self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
             Ok(0)
         }

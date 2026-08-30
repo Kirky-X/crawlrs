@@ -172,6 +172,7 @@ mod tests {
         async fn cleanup_old_logs(
             &self,
             _retention_days: i64,
+            _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
         ) -> Result<u64, AuditRepositoryError> {
             if self.fail_all {
                 return Err(AuditRepositoryError::DatabaseError(
@@ -442,7 +443,10 @@ mod tests {
         let repo = Arc::new(MockAuditLogRepository::with_cleanup_count(42));
         let service = AuditService::new(repo);
         let count = service
-            .cleanup_old_logs(90)
+            .cleanup_old_logs(
+                90,
+                &crate::domain::retention_policy::RetentionBatchPolicy::default(),
+            )
             .await
             .expect("cleanup_old_logs should succeed");
         assert_eq!(count, 42);
@@ -452,7 +456,13 @@ mod tests {
     async fn test_audit_service_cleanup_old_logs_zero() {
         let repo = Arc::new(MockAuditLogRepository::new());
         let service = AuditService::new(repo);
-        let count = service.cleanup_old_logs(30).await.expect("should succeed");
+        let count = service
+            .cleanup_old_logs(
+                30,
+                &crate::domain::retention_policy::RetentionBatchPolicy::default(),
+            )
+            .await
+            .expect("should succeed");
         assert_eq!(count, 0);
     }
 
@@ -460,7 +470,12 @@ mod tests {
     async fn test_audit_service_cleanup_old_logs_repository_error() {
         let repo = Arc::new(MockAuditLogRepository::failing());
         let service = AuditService::new(repo);
-        let result = service.cleanup_old_logs(30).await;
+        let result = service
+            .cleanup_old_logs(
+                30,
+                &crate::domain::retention_policy::RetentionBatchPolicy::default(),
+            )
+            .await;
         assert!(result.is_err());
     }
 
@@ -735,7 +750,11 @@ pub trait AuditServiceTrait: Send + Sync {
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError>;
 
     /// Clean up old audit logs（R-retention-005：供 RetentionWorker 调度）
-    async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, AuditServiceError>;
+    async fn cleanup_old_logs(
+        &self,
+        retention_days: i64,
+        policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, AuditServiceError>;
 }
 
 /// Service for managing audit logs
@@ -870,9 +889,13 @@ impl<R: AuditLogRepository> AuditService<R> {
     }
 
     /// Clean up old audit logs
-    pub async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, AuditServiceError> {
+    pub async fn cleanup_old_logs(
+        &self,
+        retention_days: i64,
+        policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, AuditServiceError> {
         self.audit_repo
-            .cleanup_old_logs(retention_days)
+            .cleanup_old_logs(retention_days, policy)
             .await
             .map_err(Into::into)
     }
@@ -942,7 +965,11 @@ impl<R: AuditLogRepository + 'static> AuditServiceTrait for AuditService<R> {
             .map_err(Into::into)
     }
 
-    async fn cleanup_old_logs(&self, retention_days: i64) -> Result<u64, AuditServiceError> {
-        self.cleanup_old_logs(retention_days).await
+    async fn cleanup_old_logs(
+        &self,
+        retention_days: i64,
+        policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, AuditServiceError> {
+        AuditService::cleanup_old_logs(self, retention_days, policy).await
     }
 }
