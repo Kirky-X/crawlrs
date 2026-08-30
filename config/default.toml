@@ -380,3 +380,11 @@ webhook_events_days = 30
 geo_logs_days = 90
 # audit_logs 保留天数
 audit_logs_days = 90
+# 单批删除最大行数（分批有界 DELETE）
+batch_size = 5000
+# 单类单周期删除行数上限
+max_rows_per_cycle = 100000
+# 单批事务 statement_timeout（毫秒）
+statement_timeout_ms = 60000
+# 逐类清理超时（秒）
+category_timeout_seconds = 300

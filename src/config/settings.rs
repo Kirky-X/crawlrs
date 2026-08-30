@@ -611,6 +611,26 @@ pub struct RetentionSettings {
     #[config(default = 90)]
     #[validate(range(min = 1, max = 3650))]
     pub audit_logs_days: i64,
+
+    /// 单批删除最大行数（分批有界 DELETE，避免长事务锁表）
+    #[config(default = 5000)]
+    #[validate(range(min = 1, max = 100_000))]
+    pub batch_size: u64,
+
+    /// 单类单周期删除行数上限（封顶单轮清理负载）
+    #[config(default = 100_000)]
+    #[validate(range(min = 1))]
+    pub max_rows_per_cycle: u64,
+
+    /// 单批事务 statement_timeout（毫秒，防慢 DELETE 挂住连接）
+    #[config(default = 60_000)]
+    #[validate(range(min = 1000))]
+    pub statement_timeout_ms: u64,
+
+    /// 逐类清理超时（秒，单类慢清理不阻塞其余三类）
+    #[config(default = 300)]
+    #[validate(range(min = 60))]
+    pub category_timeout_seconds: u64,
 }
 
 // =============================================================================
@@ -805,6 +825,54 @@ mod tests {
         let settings = CacheSettings::default();
         assert_eq!(settings.types.scrape.ttl_seconds, 300);
         assert_eq!(settings.types.scrape.max_size, 10000);
+    }
+
+    /// retention-worker-hardening T001/R-retention-001：`[retention]` 空段时四个硬化字段取默认值
+    /// （分批 5000、单周期上限 100000、语句超时 60s、逐类超时 300s）。
+    #[test]
+    fn retention_hardening_defaults_load_from_toml() {
+        let settings = RetentionSettings::default();
+        assert_eq!(settings.batch_size, 5000);
+        assert_eq!(settings.max_rows_per_cycle, 100_000);
+        assert_eq!(settings.statement_timeout_ms, 60_000);
+        assert_eq!(settings.category_timeout_seconds, 300);
+    }
+
+    /// retention-worker-hardening T001/R-retention-001：硬化字段越界必须被 `validate()` 拒绝。
+    #[test]
+    fn retention_hardening_config_rejects_unsafe_values() {
+        let bad_batch = RetentionSettings {
+            batch_size: 0,
+            ..RetentionSettings::default()
+        };
+        let bad_batch_max = RetentionSettings {
+            batch_size: 100_001,
+            ..RetentionSettings::default()
+        };
+        let bad_max_rows = RetentionSettings {
+            max_rows_per_cycle: 0,
+            ..RetentionSettings::default()
+        };
+        let bad_statement_timeout = RetentionSettings {
+            statement_timeout_ms: 999,
+            ..RetentionSettings::default()
+        };
+        let bad_category_timeout = RetentionSettings {
+            category_timeout_seconds: 10,
+            ..RetentionSettings::default()
+        };
+        for bad in [
+            bad_batch,
+            bad_batch_max,
+            bad_max_rows,
+            bad_statement_timeout,
+            bad_category_timeout,
+        ] {
+            assert!(
+                bad.validate().is_err(),
+                "out-of-range hardening field must fail validation"
+            );
+        }
     }
 
     /// T015（converge 补强）：retention 五个字段驱动**不可逆 DELETE**，误配必须被拒绝。
