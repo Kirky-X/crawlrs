@@ -218,6 +218,9 @@ impl WorkerManager {
             self.settings.retention.geo_logs_days,
             self.settings.retention.webhook_events_days,
             self.settings.retention.audit_logs_days,
+            crate::domain::retention_policy::RetentionBatchPolicy::from_settings(
+                &self.settings.retention,
+            ),
         ));
         let retention_worker = AbstractWorker::new(
             retention_processor,
@@ -872,7 +875,11 @@ mod tests {
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
             Ok(0.0)
         }
-        async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+        async fn cleanup_expired(
+            &self,
+            _retention_days: i64,
+            _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+        ) -> anyhow::Result<u64> {
             Ok(0)
         }
     }

@@ -74,6 +74,9 @@ pub async fn spawn_common_workers(
             settings.retention.geo_logs_days,
             settings.retention.webhook_events_days,
             settings.retention.audit_logs_days,
+            crate::domain::retention_policy::RetentionBatchPolicy::from_settings(
+                &settings.retention,
+            ),
         ));
         let retention_worker = AbstractWorker::new(
             retention_processor,

@@ -1075,7 +1075,11 @@ mod tests {
             Ok(self.avg_response_time)
         }
 
-        async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+        async fn cleanup_expired(
+            &self,
+            _retention_days: i64,
+            _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+        ) -> anyhow::Result<u64> {
             Ok(0)
         }
     }

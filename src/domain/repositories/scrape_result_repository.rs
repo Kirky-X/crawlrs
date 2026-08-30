@@ -4,6 +4,7 @@
 // See LICENSE file in the project root for full license information.
 
 use crate::domain::models::ScrapeResult;
+use crate::domain::retention_policy::RetentionBatchPolicy;
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -24,8 +25,14 @@ pub trait ScrapeResultRepository: Send + Sync {
     ///
     /// 计算指定团队在过去30天内的平均响应时间
     async fn get_team_avg_response_time(&self, team_id: Uuid) -> Result<f64>;
-    /// 按保留期删除过期结果（R-retention-002）
+    /// 按保留期分批删除过期结果（R-retention-002）
     ///
-    /// 删除 `created_at` 早于 `NOW() - retention_days` 的行，返回删除行数。
-    async fn cleanup_expired(&self, retention_days: i64) -> Result<u64>;
+    /// 循环分批删除 `created_at` 早于 DB `NOW() - retention_days` 的行，直到删净
+    /// 或累计达 `policy.max_rows_per_cycle`；每批独立短事务并带 `statement_timeout`。
+    /// 返回本轮实际删除总行数。
+    async fn cleanup_expired(
+        &self,
+        retention_days: i64,
+        policy: &RetentionBatchPolicy,
+    ) -> Result<u64>;
 }

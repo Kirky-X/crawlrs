@@ -1,5 +1,6 @@
 use super::*;
 use crate::common::test_helpers::create_test_db_pool;
+use crate::domain::retention_policy::RetentionBatchPolicy;
 use chrono::Duration;
 
 /// 序列化清理测试：共享 testcontainers 容器下，两个清理用例并行时
@@ -46,7 +47,7 @@ async fn cleanup_expired_deletes_old_keeps_recent() {
     repo.save(recent.clone()).await.expect("save recent failed");
 
     let deleted = repo
-        .cleanup_expired(30)
+        .cleanup_expired(30, &RetentionBatchPolicy::default())
         .await
         .expect("cleanup_expired failed");
     assert!(
@@ -78,7 +79,7 @@ async fn cleanup_expired_with_zero_retention_removes_fresh_rows() {
     repo.save(fresh.clone()).await.expect("save failed");
 
     let deleted = repo
-        .cleanup_expired(0)
+        .cleanup_expired(0, &RetentionBatchPolicy::default())
         .await
         .expect("cleanup_expired failed");
     assert!(
@@ -91,5 +92,76 @@ async fn cleanup_expired_with_zero_retention_removes_fresh_rows() {
             .expect("query failed")
             .is_none(),
         "row should be deleted with 0-day retention"
+    );
+}
+
+/// R-retention-002：过期行数 > batch_size 时循环分批删净，返回总数 = 过期行数，新行保留。
+#[tokio::test]
+async fn cleanup_expired_batches_until_drained() {
+    let _guard = retention_lock().lock().await;
+    let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
+
+    let mut old_tasks = Vec::new();
+    for _ in 0..5 {
+        let r = sample_result_with_age(40);
+        old_tasks.push(r.task_id);
+        repo.save(r).await.expect("save old failed");
+    }
+    let recent = sample_result_with_age(1);
+    repo.save(recent.clone()).await.expect("save recent failed");
+
+    let policy = RetentionBatchPolicy {
+        batch_size: 2,
+        max_rows_per_cycle: 100_000,
+        statement_timeout_ms: 60_000,
+    };
+    let deleted = repo
+        .cleanup_expired(30, &policy)
+        .await
+        .expect("cleanup_expired failed");
+    assert_eq!(deleted, 5, "all 5 old rows must be deleted across batches");
+
+    for task_id in old_tasks {
+        assert!(
+            repo.find_by_task_id(task_id)
+                .await
+                .expect("query failed")
+                .is_none(),
+            "old row should be deleted"
+        );
+    }
+    assert!(
+        repo.find_by_task_id(recent.task_id)
+            .await
+            .expect("query failed")
+            .is_some(),
+        "recent row must survive"
+    );
+}
+
+/// R-retention-002：删除总数达到 `max_rows_per_cycle` 即封顶停止，超出部分留给下一周期。
+#[tokio::test]
+async fn cleanup_expired_caps_at_max_rows_per_cycle() {
+    let _guard = retention_lock().lock().await;
+    let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
+
+    for _ in 0..5 {
+        repo.save(sample_result_with_age(40))
+            .await
+            .expect("save old failed");
+    }
+
+    let policy = RetentionBatchPolicy {
+        batch_size: 2,
+        max_rows_per_cycle: 3,
+        statement_timeout_ms: 60_000,
+    };
+    let deleted = repo
+        .cleanup_expired(30, &policy)
+        .await
+        .expect("cleanup_expired failed");
+    assert_eq!(
+        deleted, 3,
+        "deletion must stop once max_rows_per_cycle is reached"
     );
 }

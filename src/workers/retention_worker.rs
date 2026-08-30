@@ -18,6 +18,7 @@
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
+use crate::domain::retention_policy::RetentionBatchPolicy;
 use crate::domain::services::audit_service::AuditServiceTrait;
 use crate::workers::worker::{ProcessResult, WorkerProcess};
 use async_trait::async_trait;
@@ -34,6 +35,8 @@ pub struct RetentionWorker {
     geo_logs_days: i64,
     webhook_events_days: i64,
     audit_logs_days: i64,
+    /// 有界删除参数（retention-worker-hardening R-retention-002）
+    policy: RetentionBatchPolicy,
 }
 
 impl RetentionWorker {
@@ -48,6 +51,7 @@ impl RetentionWorker {
         geo_logs_days: i64,
         webhook_events_days: i64,
         audit_logs_days: i64,
+        policy: RetentionBatchPolicy,
     ) -> Self {
         Self {
             scrape_repo,
@@ -58,6 +62,7 @@ impl RetentionWorker {
             geo_logs_days,
             webhook_events_days,
             audit_logs_days,
+            policy,
         }
     }
 
@@ -67,7 +72,7 @@ impl RetentionWorker {
 
         match self
             .scrape_repo
-            .cleanup_expired(self.scrape_results_days)
+            .cleanup_expired(self.scrape_results_days, &self.policy)
             .await
         {
             Ok(count) => {
@@ -196,7 +201,11 @@ mod tests {
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
             Ok(0.0)
         }
-        async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+        async fn cleanup_expired(
+            &self,
+            _retention_days: i64,
+            _policy: &RetentionBatchPolicy,
+        ) -> anyhow::Result<u64> {
             self.cleanup_calls.fetch_add(1, Ordering::SeqCst);
             match self.result.lock().unwrap().take() {
                 Some(r) => r,
@@ -394,7 +403,17 @@ mod tests {
         webhook: Arc<dyn WebhookEventRepository>,
         audit: Arc<dyn AuditServiceTrait>,
     ) -> RetentionWorker {
-        RetentionWorker::new(scrape, geo, webhook, audit, 30, 90, 30, 90)
+        RetentionWorker::new(
+            scrape,
+            geo,
+            webhook,
+            audit,
+            30,
+            90,
+            30,
+            90,
+            RetentionBatchPolicy::default(),
+        )
     }
 
     /// 成功路径：四类清理各执行一次，process 返回 Completed。

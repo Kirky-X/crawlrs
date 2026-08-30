@@ -178,7 +178,11 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
         Ok(avg)
     }
 
-    async fn cleanup_expired(&self, retention_days: i64) -> anyhow::Result<u64> {
+    async fn cleanup_expired(
+        &self,
+        retention_days: i64,
+        policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> anyhow::Result<u64> {
         let session = self
             .pool
             .get_session("admin")
@@ -189,15 +193,39 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
             .connection()
             .map_err(|e| anyhow::anyhow!("Failed to get connection: {}", e))?;
 
-        let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
+        // R-retention-002：循环分批有界删除。cutoff 由 DB `NOW()` 计算（消除跨主机
+        // 时钟漂移）；每批独立短事务 + statement_timeout；封顶 max_rows_per_cycle。
+        const DELETE_BATCH_SQL: &str = "DELETE FROM scrape_results WHERE id IN (
+            SELECT id FROM scrape_results
+            WHERE created_at < NOW() - make_interval(days => $1)
+            ORDER BY created_at
+            LIMIT $2
+        )";
 
-        let result = db_entity::Entity::delete_many()
-            .filter(db_entity::Column::CreatedAt.lt(cutoff))
-            .exec(conn)
+        let mut total_deleted: u64 = 0;
+        loop {
+            // 每批按剩余配额裁剪，保证 total 不越过 max_rows_per_cycle 硬上限
+            let remaining = policy.max_rows_per_cycle - total_deleted;
+            let this_batch = policy.batch_size.min(remaining);
+            if this_batch == 0 {
+                break;
+            }
+            let deleted = super::retention_batch::delete_one_batch(
+                conn,
+                DELETE_BATCH_SQL,
+                retention_days,
+                this_batch,
+                policy.statement_timeout_ms,
+            )
             .await
             .map_err(|e| anyhow::anyhow!("Failed to cleanup expired scrape results: {}", e))?;
+            total_deleted += deleted;
+            if deleted < this_batch {
+                break; // 删净：本批不足额说明已无更多过期行
+            }
+        }
 
-        Ok(result.rows_affected)
+        Ok(total_deleted)
     }
 }
 

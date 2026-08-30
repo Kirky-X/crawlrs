@@ -1212,7 +1212,11 @@ impl ScrapeResultRepository for MockScrapeResultRepository {
     async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
         Ok(0.0)
     }
-    async fn cleanup_expired(&self, _retention_days: i64) -> Result<u64> {
+    async fn cleanup_expired(
+        &self,
+        _retention_days: i64,
+        _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64> {
         Ok(0)
     }
 }
@@ -1251,7 +1255,11 @@ impl ScrapeResultRepository for CapturingScrapeResultRepository {
     async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
         Ok(0.0)
     }
-    async fn cleanup_expired(&self, _retention_days: i64) -> Result<u64> {
+    async fn cleanup_expired(
+        &self,
+        _retention_days: i64,
+        _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64> {
         Ok(0)
     }
 }
@@ -4333,7 +4341,11 @@ impl ScrapeResultRepository for FailingScrapeResultRepo {
     async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
         Ok(0.0)
     }
-    async fn cleanup_expired(&self, _retention_days: i64) -> Result<u64> {
+    async fn cleanup_expired(
+        &self,
+        _retention_days: i64,
+        _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64> {
         Ok(0)
     }
 }
