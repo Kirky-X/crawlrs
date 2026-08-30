@@ -17,7 +17,7 @@
 pub mod auth;
 pub mod errors;
 pub mod models;
-pub mod retention_policy;
 pub mod repositories;
+pub mod retention_policy;
 pub mod services;
 pub mod use_cases;

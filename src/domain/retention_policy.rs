@@ -40,7 +40,6 @@ impl RetentionBatchPolicy {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

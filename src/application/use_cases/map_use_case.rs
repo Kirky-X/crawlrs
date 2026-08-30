@@ -57,8 +57,8 @@ impl EngineSitemapFetcher {
 #[async_trait]
 impl SitemapFetcher for EngineSitemapFetcher {
     async fn fetch(&self, url: &str) -> Result<SitemapFetch, MapError> {
-        let request = ScrapeRequest::new(url.to_string())
-            .timeout(std::time::Duration::from_secs(30));
+        let request =
+            ScrapeRequest::new(url.to_string()).timeout(std::time::Duration::from_secs(30));
         let response = self
             .client
             .scrape(&request)
@@ -93,10 +93,7 @@ impl MapUseCase {
         let origin = extract_origin(&dto.url)
             .ok_or_else(|| MapError::Internal(format!("cannot parse origin from {}", dto.url)))?;
 
-        let first = self
-            .fetcher
-            .fetch(&format!("{origin}/sitemap.xml"))
-            .await?;
+        let first = self.fetcher.fetch(&format!("{origin}/sitemap.xml")).await?;
         if first.status == 404 {
             // 站点无 sitemap 是合法状态：空结果而非错误
             return Ok(MapResult { links: Vec::new() });
@@ -285,7 +282,10 @@ mod tests {
         assert!(matches_glob("*/blog/*", "https://a.com/blog/post-1"));
         assert!(!matches_glob("*/blog/*", "https://a.com/page/1"));
         assert!(matches_glob("https://a.com/page/?", "https://a.com/page/1"));
-        assert!(!matches_glob("https://a.com/page/?", "https://a.com/page/12"));
+        assert!(!matches_glob(
+            "https://a.com/page/?",
+            "https://a.com/page/12"
+        ));
         assert!(matches_glob("*", "https://anything.example"));
         assert!(matches_glob("https://a.com/*", "https://a.com/"));
     }
@@ -300,11 +300,7 @@ mod tests {
                 format!("{ORIGIN}/sitemap.xml"),
                 (
                     200u16,
-                    urlset(&[
-                        "https://a.com/1",
-                        "https://a.com/2",
-                        "https://a.com/3",
-                    ]),
+                    urlset(&["https://a.com/1", "https://a.com/2", "https://a.com/3"]),
                 ),
             )]),
         };
@@ -346,21 +342,14 @@ mod tests {
                     format!("{ORIGIN}/sitemap.xml"),
                     (
                         200u16,
-                        sitemap_index(&[
-                            "https://a.com/s1.xml",
-                            "https://a.com/s2.xml",
-                        ]),
+                        sitemap_index(&["https://a.com/s1.xml", "https://a.com/s2.xml"]),
                     ),
                 ),
                 (
                     "https://a.com/s1.xml".to_string(),
                     (
                         200u16,
-                        urlset(&[
-                            "https://a.com/1",
-                            "https://a.com/2",
-                            "https://a.com/3",
-                        ]),
+                        urlset(&["https://a.com/1", "https://a.com/2", "https://a.com/3"]),
                     ),
                 ),
                 (
@@ -381,9 +370,7 @@ mod tests {
     /// R-map-002：子 sitemap 数超过 5 时只取前 5 个。
     #[tokio::test]
     async fn execute_caps_sub_sitemaps_at_five() {
-        let children: Vec<String> = (0..7)
-            .map(|i| format!("https://a.com/s{i}.xml"))
-            .collect();
+        let children: Vec<String> = (0..7).map(|i| format!("https://a.com/s{i}.xml")).collect();
         let child_refs: Vec<&str> = children.iter().map(|s| s.as_str()).collect();
         let mut responses = HashMap::from([(
             format!("{ORIGIN}/sitemap.xml"),
@@ -443,11 +430,7 @@ mod tests {
                 format!("{ORIGIN}/sitemap.xml"),
                 (
                     200u16,
-                    urlset(&[
-                        "https://a.com/1",
-                        "https://a.com/2",
-                        "https://a.com/3",
-                    ]),
+                    urlset(&["https://a.com/1", "https://a.com/2", "https://a.com/3"]),
                 ),
             )]),
         };

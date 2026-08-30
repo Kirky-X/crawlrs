@@ -66,10 +66,7 @@ mod tests {
                 "url": "https://a.com", "limit": bad
             }))
             .expect("parse");
-            assert!(
-                dto.validate().is_err(),
-                "limit={bad} must fail validation"
-            );
+            assert!(dto.validate().is_err(), "limit={bad} must fail validation");
         }
         let ok: MapRequestDto = serde_json::from_value(serde_json::json!({
             "url": "https://a.com", "limit": 10_000
@@ -88,8 +85,14 @@ mod tests {
             "limit": 50
         }))
         .expect("parse");
-        assert_eq!(dto.include_patterns.as_deref(), Some(&["*/blog/*".to_string()][..]));
-        assert_eq!(dto.exclude_patterns.as_deref(), Some(&["*/tag/*".to_string()][..]));
+        assert_eq!(
+            dto.include_patterns.as_deref(),
+            Some(&["*/blog/*".to_string()][..])
+        );
+        assert_eq!(
+            dto.exclude_patterns.as_deref(),
+            Some(&["*/tag/*".to_string()][..])
+        );
         assert_eq!(dto.limit, Some(50));
     }
 }
