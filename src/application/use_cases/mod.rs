@@ -11,3 +11,4 @@ pub mod crawl_link_processor;
 pub mod crawl_state_machine;
 pub mod crawl_use_case;
 pub mod create_scrape;
+pub mod map_use_case;
