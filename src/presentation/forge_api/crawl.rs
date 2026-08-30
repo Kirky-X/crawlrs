@@ -77,7 +77,9 @@ submit!(RouteRegistration::new(
 )]
 #[allow(clippy::result_large_err)] // axum handler 惯用签名：Err 变体为 Response
 async fn crawl_results_route(
-    crawl_id: Uuid,
+    // 显式 kind=path：GET 端点参数默认会被推断为 Query（sdforge lib.rs:556），
+    // 缺注解会让 {id} 路径段被当 query 反序列化 → 恒 400 "missing field crawl_id"
+    #[param(kind = "path")] crawl_id: Uuid,
     #[state] state: Arc<CrawlHandlerState>,
     #[state] auth_state: AuthState,
     #[state] locale: Locale,
