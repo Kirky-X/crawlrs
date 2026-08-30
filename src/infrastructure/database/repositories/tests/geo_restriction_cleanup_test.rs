@@ -1,5 +1,6 @@
 use super::*;
 use crate::common::test_helpers::create_test_db_pool;
+use crate::domain::retention_policy::RetentionBatchPolicy;
 use crate::infrastructure::database::entities::geo_restriction_log;
 use chrono::Duration;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
@@ -56,7 +57,7 @@ async fn cleanup_expired_deletes_old_keeps_recent() {
     let recent_id = insert_log_with_age(1).await;
 
     let deleted = repo
-        .cleanup_expired(90)
+        .cleanup_expired(90, &RetentionBatchPolicy::default())
         .await
         .expect("cleanup_expired failed");
     assert!(
@@ -80,7 +81,7 @@ async fn cleanup_expired_with_zero_retention_removes_fresh_rows() {
     let fresh_id = insert_log_with_age(0).await;
 
     let deleted = repo
-        .cleanup_expired(0)
+        .cleanup_expired(0, &RetentionBatchPolicy::default())
         .await
         .expect("cleanup_expired failed");
     assert!(
@@ -91,5 +92,69 @@ async fn cleanup_expired_with_zero_retention_removes_fresh_rows() {
     assert!(
         !row_exists(fresh_id).await,
         "row should be deleted with 0-day retention"
+    );
+}
+
+/// R-retention-003：过期行数 > batch_size 时循环分批删净，返回总数 = 过期行数，新行保留。
+#[tokio::test]
+async fn cleanup_expired_batches_until_drained() {
+    let _guard = restriction_lock().lock().await;
+    let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
+
+    let mut old_ids = Vec::new();
+    for _ in 0..5 {
+        old_ids.push(insert_log_with_age(100).await);
+    }
+    let recent_id = insert_log_with_age(1).await;
+
+    let policy = RetentionBatchPolicy {
+        batch_size: 2,
+        max_rows_per_cycle: 100_000,
+        statement_timeout_ms: 60_000,
+    };
+    let deleted = repo
+        .cleanup_expired(90, &policy)
+        .await
+        .expect("cleanup_expired failed");
+    assert!(
+        deleted >= 5,
+        "our 5 old rows must be among the deleted: {deleted}"
+    );
+
+    for id in old_ids {
+        assert!(!row_exists(id).await, "100-day-old row should be deleted");
+    }
+    assert!(row_exists(recent_id).await, "1-day-old row must survive");
+}
+
+/// R-retention-003：删除总数达到 `max_rows_per_cycle` 即封顶停止。
+#[tokio::test]
+async fn cleanup_expired_caps_at_max_rows_per_cycle() {
+    let _guard = restriction_lock().lock().await;
+    let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
+
+    for _ in 0..5 {
+        insert_log_with_age(100).await;
+    }
+
+    let policy = RetentionBatchPolicy {
+        batch_size: 2,
+        max_rows_per_cycle: 3,
+        statement_timeout_ms: 60_000,
+    };
+    // 清掉共享容器中的历史过期行，保证封顶断言精确
+    repo.cleanup_expired(90, &RetentionBatchPolicy::default())
+        .await
+        .expect("pre-clean failed");
+    for _ in 0..5 {
+        insert_log_with_age(100).await;
+    }
+    let deleted = repo
+        .cleanup_expired(90, &policy)
+        .await
+        .expect("cleanup_expired failed");
+    assert_eq!(
+        deleted, 3,
+        "deletion must stop once max_rows_per_cycle is reached"
     );
 }

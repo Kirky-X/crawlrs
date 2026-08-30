@@ -175,10 +175,11 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
         Ok(())
     }
 
-    /// 按保留期删除过期日志
+    /// 按保留期分批删除过期日志（R-retention-003）
     async fn cleanup_expired(
         &self,
         retention_days: i64,
+        policy: &crate::domain::retention_policy::RetentionBatchPolicy,
     ) -> Result<u64, GeoRestrictionRepositoryError> {
         let session = self
             .pool
@@ -190,15 +191,37 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
             .connection()
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
 
-        let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
+        // cutoff 由 DB `NOW()` 计算（消除跨主机时钟漂移）；循环分批 + 封顶
+        const DELETE_BATCH_SQL: &str = "DELETE FROM geo_restriction_logs WHERE id IN (
+            SELECT id FROM geo_restriction_logs
+            WHERE created_at < NOW() - make_interval(days => $1)
+            ORDER BY created_at
+            LIMIT $2
+        )";
 
-        let result = geo_restriction_log::Entity::delete_many()
-            .filter(geo_restriction_log::Column::CreatedAt.lt(cutoff))
-            .exec(conn)
+        let mut total_deleted: u64 = 0;
+        loop {
+            let remaining = policy.max_rows_per_cycle - total_deleted;
+            let this_batch = policy.batch_size.min(remaining);
+            if this_batch == 0 {
+                break;
+            }
+            let deleted = super::retention_batch::delete_one_batch(
+                conn,
+                DELETE_BATCH_SQL,
+                retention_days,
+                this_batch,
+                policy.statement_timeout_ms,
+            )
             .await
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
+            total_deleted += deleted;
+            if deleted < this_batch {
+                break;
+            }
+        }
 
-        Ok(result.rows_affected)
+        Ok(total_deleted)
     }
 }
 

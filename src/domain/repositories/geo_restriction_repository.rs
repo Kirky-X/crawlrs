@@ -83,11 +83,13 @@ pub trait GeoRestrictionRepository: Send + Sync {
         reason: &str,
     ) -> Result<(), GeoRestrictionRepositoryError>;
 
-    /// 按保留期删除过期日志（R-retention-003）
+    /// 按保留期分批删除过期日志（R-retention-003）
     ///
-    /// 删除 `created_at` 早于 `NOW() - retention_days` 的行，返回删除行数。
+    /// 循环分批删除 `created_at` 早于 DB `NOW() - retention_days` 的行，直到删净
+    /// 或累计达 `policy.max_rows_per_cycle`；每批独立短事务并带 `statement_timeout`。
     async fn cleanup_expired(
         &self,
         retention_days: i64,
+        policy: &crate::domain::retention_policy::RetentionBatchPolicy,
     ) -> Result<u64, GeoRestrictionRepositoryError>;
 }

@@ -86,7 +86,11 @@ impl RetentionWorker {
             }
         }
 
-        match self.geo_repo.cleanup_expired(self.geo_logs_days).await {
+        match self
+            .geo_repo
+            .cleanup_expired(self.geo_logs_days, &self.policy)
+            .await
+        {
             Ok(count) => {
                 if count > 0 {
                     info!(
@@ -265,6 +269,7 @@ mod tests {
         async fn cleanup_expired(
             &self,
             _retention_days: i64,
+            _policy: &RetentionBatchPolicy,
         ) -> Result<
             u64,
             crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,

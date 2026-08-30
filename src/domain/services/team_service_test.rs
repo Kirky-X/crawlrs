@@ -77,6 +77,7 @@ impl GeoRestrictionRepository for MockGeoRestrictionRepository {
     async fn cleanup_expired(
         &self,
         _retention_days: i64,
+        _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
     ) -> Result<u64, GeoRestrictionRepositoryError> {
         Ok(0)
     }
@@ -336,6 +337,7 @@ impl GeoRestrictionRepository for FailingGeoRestrictionRepository {
     async fn cleanup_expired(
         &self,
         _retention_days: i64,
+        _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
     ) -> Result<u64, GeoRestrictionRepositoryError> {
         Err(GeoRestrictionRepositoryError::Database(
             "db down".to_string(),
@@ -386,6 +388,7 @@ impl GeoRestrictionRepository for ConfigurableGeoRestrictionRepository {
     async fn cleanup_expired(
         &self,
         _retention_days: i64,
+        _policy: &crate::domain::retention_policy::RetentionBatchPolicy,
     ) -> Result<u64, GeoRestrictionRepositoryError> {
         Ok(0)
     }
