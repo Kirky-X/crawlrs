@@ -70,6 +70,9 @@ Desktop.ini
 # Claude AI
 .claude/
 
+# WorkBuddy AI
+.workbuddy-ai/
+
 # Shared folder
 .shared/
 
