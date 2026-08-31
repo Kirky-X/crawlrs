@@ -1347,6 +1347,8 @@ cargo test --test acceptance --features platform --tags "not @external"
 
 **Feature 文件位置：** `tests/acceptance/features/*.feature`
 
+**覆盖范围：** 全部公开 `/v1/*` 与 `/api/v1/sdk/*` 端点，含 webhook 投递端到端（Standard Webhooks HMAC-SHA256 验签）与任务生命周期闭环。
+
 **新增场景：** 在对应能力域的 `.feature` 文件中按 Given/When/Then 语法追加场景；通用步骤（认证、请求发送、JSON 断言、任务终态轮询）已在 `tests/acceptance/support/mod.rs` 定义，业务步骤（如 `I create a scrape at ... for ...`）按既有命名惯例扩展。
 
 ---
