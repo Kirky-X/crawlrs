@@ -31,9 +31,10 @@ pub struct SharedHarness {
     pub admin_key: String,
     /// 场景模板变量（feature 步骤中 {name} 引用，含 `mock_base`）
     pub template_vars: std::collections::HashMap<String, String>,
-    /// mock 目标站句柄保活
+    /// 主 mock 目标站（场景可断言其收到的请求，如 webhook 投递验签）
+    pub mock_main: wiremock::MockServer,
+    /// 其余 mock 站句柄保活
     _mock_guards: (
-        wiremock::MockServer,
         wiremock::MockServer,
         wiremock::MockServer,
         wiremock::MockServer,
@@ -310,7 +311,8 @@ impl SharedHarness {
             server,
             admin_key,
             template_vars,
-            _mock_guards: (mock_main, mock_sitemap, mock_index, mock_404, mock_500),
+            mock_main,
+            _mock_guards: (mock_sitemap, mock_index, mock_404, mock_500),
         })
     }
 }
@@ -421,6 +423,8 @@ pub struct AcceptanceWorld {
     pub last_status: Option<u16>,
     /// response 被消费后的响应体遗留
     pub last_body: Option<String>,
+    /// 最近一次捕获的 webhook 投递（R-whv-001/002）
+    pub last_delivery: Option<CapturedDelivery>,
 }
 
 /// 手写 Debug：TestResponse / Harness 无 Debug，仅输出结构性字段。
@@ -634,10 +638,116 @@ async fn when_create_scrape(w: &mut AcceptanceWorld, path: String, url: String) 
     if let Some(id) = json
         .pointer("/data/id")
         .or_else(|| json.pointer("/data/task_id"))
+        .or_else(|| json.pointer("/id"))
         .and_then(|v| v.as_str().map(str::to_string))
     {
         w.ctx.insert("task_id".into(), id);
     }
+}
+
+/// sdk.feature：创建 SDK 任务（task_type 必填）并记录 task id。
+#[when(expr = "I create a sdk task at {string} for {string} with type {string}")]
+async fn when_create_sdk_task(
+    w: &mut AcceptanceWorld,
+    path: String,
+    url: String,
+    task_type: String,
+) {
+    let url = expand_templates(w, url);
+    post_json(
+        w,
+        &path,
+        serde_json::json!({"url": url, "task_type": task_type}),
+    )
+    .await;
+    let json = last_json(w).await;
+    if let Some(id) = json
+        .pointer("/data/id")
+        .or_else(|| json.pointer("/id"))
+        .and_then(|v| v.as_str().map(str::to_string))
+    {
+        w.ctx.insert("task_id".into(), id);
+    }
+}
+
+/// sdk.feature：创建 SDK crawl（SdkCreateCrawlRequest：name/url/seed_url）。
+#[when(expr = "I create a sdk crawl at {string} named {string} with url {string} seed {string}")]
+async fn when_create_sdk_crawl(
+    w: &mut AcceptanceWorld,
+    path: String,
+    name: String,
+    url: String,
+    seed: String,
+) {
+    let url = expand_templates(w, url);
+    let seed = expand_templates(w, seed);
+    post_json(
+        w,
+        &path,
+        serde_json::json!({"name": name, "url": url, "seed_url": seed}),
+    )
+    .await;
+}
+
+/// webhook.feature：创建带 webhook 回调的 scrape 任务并记录 task id。
+#[when(expr = "I create a scrape at {string} for {string} with webhook {string}")]
+async fn when_create_scrape_with_webhook(
+    w: &mut AcceptanceWorld,
+    path: String,
+    url: String,
+    webhook: String,
+) {
+    let url = expand_templates(w, url);
+    let webhook = expand_templates(w, webhook);
+    post_json(
+        w,
+        &path,
+        serde_json::json!({"url": url, "webhook": webhook}),
+    )
+    .await;
+    let json = last_json(w).await;
+    if let Some(id) = json
+        .pointer("/data/id")
+        .or_else(|| json.pointer("/data/task_id"))
+        .and_then(|v| v.as_str().map(str::to_string))
+    {
+        w.ctx.insert("task_id".into(), id);
+    }
+}
+
+/// 轮询主 mock 站收到的请求，等待第一个 POST 命中路径前缀（webhook 投递）。
+/// 返回 (headers, body)：headers 为小写名 → 值映射。
+pub async fn wait_for_webhook_delivery(
+    harness: &Arc<SharedHarness>,
+    path_prefix: &str,
+    max_secs: u64,
+) -> Option<(std::collections::HashMap<String, String>, String)> {
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(max_secs);
+    while tokio::time::Instant::now() < deadline {
+        if let Some(requests) = harness.mock_main.received_requests().await {
+            for request in &requests {
+                let path = request.url.path().to_string();
+                if request.method == wiremock::http::Method::POST
+                    && path.starts_with(path_prefix)
+                {
+                    let headers: std::collections::HashMap<String, String> = request
+                        .headers
+                        .iter()
+                        .map(|(name, value)| {
+                            (
+                                name.as_str().to_ascii_lowercase(),
+                                value.to_str().unwrap_or_default().to_string(),
+                            )
+                        })
+                        .collect();
+                    let body = String::from_utf8_lossy(&request.body).to_string();
+                    return Some((headers, body));
+                }
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+    None
 }
 
 /// scrape.feature：空 body POST（缺 url 字段异常矩阵）。
@@ -1266,4 +1376,86 @@ fn start_testcontainers_pg() -> String {
             })
         })
         .clone()
+}
+
+
+// ---- webhook 投递验收 steps（R-whv-001/002）----
+
+/// 最近一次捕获的 webhook 投递。
+pub struct CapturedDelivery {
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: String,
+}
+
+#[when(expr = "I wait at most {int} seconds for a webhook delivery to {string}")]
+async fn when_wait_webhook_delivery(w: &mut AcceptanceWorld, max_secs: u64, path_prefix: String) {
+    let harness = w.get_harness().await;
+    let delivery = wait_for_webhook_delivery(&harness, &path_prefix, max_secs)
+        .await
+        .unwrap_or_else(|| panic!("no webhook delivery to {path_prefix} within {max_secs}s"));
+    w.last_delivery = Some(CapturedDelivery {
+        headers: delivery.0,
+        body: delivery.1,
+    });
+}
+
+#[then(expr = "the delivery has non-empty headers {string}")]
+async fn then_delivery_headers_nonempty(w: &mut AcceptanceWorld, names: String) {
+    let delivery = w.last_delivery.as_ref().expect("no webhook delivery captured");
+    for name in names.split(',') {
+        let name = name.trim();
+        let value = delivery
+            .headers
+            .get(name)
+            .unwrap_or_else(|| panic!("header {name} missing in delivery"));
+        assert!(!value.is_empty(), "header {name} must be non-empty");
+    }
+}
+
+#[then(expr = "the delivery signature verifies with the test secret")]
+async fn then_delivery_signature_verifies(w: &mut AcceptanceWorld) {
+    use base64::Engine as _;
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::Sha256;
+
+    let delivery = w.last_delivery.as_ref().expect("no webhook delivery captured");
+    let msg_id = delivery
+        .headers
+        .get("webhook-id")
+        .expect("webhook-id header missing");
+    let timestamp = delivery
+        .headers
+        .get("webhook-timestamp")
+        .expect("webhook-timestamp header missing");
+    let signature = delivery
+        .headers
+        .get("webhook-signature")
+        .expect("webhook-signature header missing");
+
+    let to_sign = format!("{msg_id}.{timestamp}.{}", delivery.body);
+    let mut mac: Hmac<Sha256> =
+        Hmac::new_from_slice(TEST_WEBHOOK_SECRET.as_bytes()).expect("hmac key");
+    mac.update(to_sign.as_bytes());
+    let expected = format!(
+        "v1,{}",
+        base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
+    );
+    assert_eq!(
+        signature.as_str(), expected.as_str(),
+        "webhook signature mismatch (standardwebhooks HMAC-SHA256)"
+    );
+}
+
+#[then(expr = "the delivery body JSON contains the task id from context {string}")]
+async fn then_delivery_body_contains_task_id(w: &mut AcceptanceWorld, ctx_name: String) {
+    let delivery = w.last_delivery.as_ref().expect("no webhook delivery captured");
+    let task_id = w
+        .ctx
+        .get(&ctx_name)
+        .unwrap_or_else(|| panic!("ctx key {ctx_name} missing"));
+    assert!(
+        delivery.body.contains(task_id.as_str()),
+        "delivery body must contain task id {task_id}: {}",
+        delivery.body
+    );
 }

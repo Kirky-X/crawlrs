@@ -94,23 +94,6 @@ impl WebhookServiceImpl {
         }
     }
 
-    /// 为负载生成签名（standardwebhooks 标准格式）
-    ///
-    /// 签名格式：`v1,<base64>`，签名消息：`{event_id}.{timestamp}.{payload}`
-    fn generate_signature(&self, payload: &str, timestamp: i64) -> String {
-        // 使用 event_id 作为 msg_id（若无则用固定值）
-        let msg_id = "none";
-        let wh = match StandardWebhook::from_bytes(self.secret.as_bytes().to_vec()) {
-            Ok(w) => w,
-            Err(e) => {
-                log::error!("Failed to create standardwebhook: {:?}", e);
-                return String::new();
-            }
-        };
-        wh.sign(msg_id, timestamp, payload.as_bytes())
-            .unwrap_or_default()
-    }
-
     /// 提取 webhook URL 从任务
     fn extract_webhook_url(&self, task: &Task) -> Option<String> {
         // Try to parse as ScrapeRequestDto first
@@ -150,9 +133,16 @@ impl WebhookServiceImpl {
 impl WebhookService for WebhookServiceImpl {
     async fn send_webhook(&self, event: &WebhookEvent) -> Result<()> {
         let timestamp = chrono::Utc::now().timestamp();
-        // Serialize only for HMAC signature computation; pass event.payload directly to sender
-        let payload_str = serde_json::to_string(&event.payload)?;
-        let signature = self.generate_signature(&payload_str, timestamp);
+        // R-acceptance-deep-coverage 修复：msg_id 必须与 `webhook-id` 头一致
+        // （Standard Webhooks 规范：to_sign = `{msg_id}.{timestamp}.{payload}`，
+        // 接收方按头验签）。原实现固定 "none" 而头发 event.id，接收方验签必败。
+        let msg_id = event.id.to_string();
+        let signature = generate_signature(
+            &self.secret,
+            &msg_id,
+            event.payload.to_string().as_bytes(),
+            timestamp,
+        );
 
         let mut headers = std::collections::HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -166,7 +156,7 @@ impl WebhookService for WebhookServiceImpl {
         );
         headers.insert(
             standardwebhooks::HEADER_WEBHOOK_ID.to_string(),
-            event.id.to_string(),
+            msg_id,
         );
 
         // T022: pass payload directly instead of serialize-then-deserialize round-trip
