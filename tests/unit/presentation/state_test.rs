@@ -90,6 +90,7 @@ impl GeoRestrictionRepository for MockGeoRestrictionRepository {
     async fn cleanup_expired(
         &self,
         _retention_days: i64,
+        _policy: &crawlrs::domain::retention_policy::RetentionBatchPolicy,
     ) -> Result<
         u64,
         crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,

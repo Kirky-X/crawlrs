@@ -109,7 +109,11 @@ impl ScrapeResultRepository for MockScrapeResultRepository {
     async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
         Ok(vec![])
     }
-    async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+    async fn cleanup_expired(
+        &self,
+        _retention_days: i64,
+        _policy: &crawlrs::domain::retention_policy::RetentionBatchPolicy,
+    ) -> anyhow::Result<u64> {
         Ok(0)
     }
     async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {

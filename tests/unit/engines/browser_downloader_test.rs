@@ -1,10 +1,13 @@
-#![cfg(test)]
+#![cfg(all(test, unix))]
 // Copyright (c) 2025 Kirky.X
 //
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
 //! External unit tests for browser_downloader module
+//!
+//! unix-only：用例依赖 `std::os::unix::fs::PermissionsExt` 设置可执行位，
+//! 非 unix 平台（Windows）编译时整体排除（规则 31 跨平台）。
 //!
 //! Supplements the embedded tests by covering the "browser already downloaded"
 //! path in `download_browser` and testing `get_or_download_browser` with

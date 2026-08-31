@@ -142,7 +142,11 @@ impl AuditLogRepository for MockAuditLogRepository {
         Ok(self.find_results.lock().expect("find lock").clone())
     }
 
-    async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditRepositoryError> {
+    async fn cleanup_old_logs(
+        &self,
+        _retention_days: i64,
+        _policy: &crawlrs::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, AuditRepositoryError> {
         if self.fail_all {
             return Err(AuditRepositoryError::DatabaseError(anyhow::anyhow!(
                 "mock cleanup failure"
@@ -317,7 +321,7 @@ async fn test_audit_service_cleanup_old_logs_returns_count() {
     let service = AuditService::new(repo);
 
     let count = service
-        .cleanup_old_logs(90)
+        .cleanup_old_logs(90, &crawlrs::domain::retention_policy::RetentionBatchPolicy::default())
         .await
         .expect("cleanup_old_logs should succeed");
     assert_eq!(count, 42);
@@ -381,7 +385,7 @@ async fn test_audit_service_get_denied_requests_repository_error() {
 #[tokio::test]
 async fn test_audit_service_cleanup_old_logs_repository_error() {
     let service = make_failing_service();
-    let result = service.cleanup_old_logs(30).await;
+    let result = service.cleanup_old_logs(30, &crawlrs::domain::retention_policy::RetentionBatchPolicy::default()).await;
     assert!(result.is_err());
 }
 
@@ -760,7 +764,7 @@ async fn test_cleanup_old_logs_zero_returns_zero() {
     let repo = Arc::new(MockAuditLogRepository::new());
     let service = AuditService::new(repo);
 
-    let count = service.cleanup_old_logs(30).await.expect("should succeed");
+    let count = service.cleanup_old_logs(30, &crawlrs::domain::retention_policy::RetentionBatchPolicy::default()).await.expect("should succeed");
     assert_eq!(count, 0);
 }
 

@@ -104,6 +104,7 @@ impl crawlrs::domain::repositories::webhook_event_repository::WebhookEventReposi
     async fn cleanup_terminal(
         &self,
         _retention_days: i64,
+        _policy: &crawlrs::domain::retention_policy::RetentionBatchPolicy,
     ) -> Result<u64, crawlrs::domain::repositories::task_repository::RepositoryError> {
         Ok(0)
     }
@@ -151,6 +152,7 @@ impl crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRe
     async fn cleanup_expired(
         &self,
         _retention_days: i64,
+        _policy: &crawlrs::domain::retention_policy::RetentionBatchPolicy,
     ) -> Result<
         u64,
         crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
@@ -224,6 +226,7 @@ impl crawlrs::domain::services::audit_service::AuditServiceTrait for MockAuditSe
     async fn cleanup_old_logs(
         &self,
         _retention_days: i64,
+        _policy: &crawlrs::domain::retention_policy::RetentionBatchPolicy,
     ) -> Result<u64, crawlrs::domain::services::audit_service::AuditServiceError> {
         Ok(0)
     }
@@ -413,7 +416,11 @@ struct MockScrapeResultRepository;
 
 #[async_trait]
 impl ScrapeResultRepository for MockScrapeResultRepository {
-    async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+    async fn cleanup_expired(
+        &self,
+        _retention_days: i64,
+        _policy: &crawlrs::domain::retention_policy::RetentionBatchPolicy,
+    ) -> anyhow::Result<u64> {
         Ok(0)
     }
     async fn save(&self, _result: ScrapeResult) -> anyhow::Result<()> {
@@ -678,10 +685,24 @@ fn make_regex_cache() -> RegexCache {
     ))
 }
 
+/// 测试用互斥锁：恒可获取（R-retention-008）
+struct AlwaysAcquireLock;
+
+#[async_trait::async_trait]
+impl crawlrs::workers::retention_worker::RetentionLock for AlwaysAcquireLock {
+    async fn try_acquire(&self) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+    async fn release(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
 fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> WorkerManagerDeps {
     WorkerManagerDeps {
         queue,
         repository,
+        retention_lock: std::sync::Arc::new(AlwaysAcquireLock),
         result_repository: Arc::new(MockScrapeResultRepository),
         crawl_repository: Arc::new(MockCrawlRepository),
         webhook_service: Arc::new(MockWebhookService),

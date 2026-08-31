@@ -67,7 +67,11 @@ impl AuditServiceTrait for MockAuditService {
         Ok(())
     }
 
-    async fn cleanup_old_logs(&self, _retention_days: i64) -> Result<u64, AuditServiceError> {
+    async fn cleanup_old_logs(
+        &self,
+        _retention_days: i64,
+        _policy: &crawlrs::domain::retention_policy::RetentionBatchPolicy,
+    ) -> Result<u64, AuditServiceError> {
         Ok(0)
     }
 
