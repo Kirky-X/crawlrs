@@ -553,6 +553,7 @@ flowchart TB
 ```
 
 > **Detailed Architecture:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
+> **Benchmark:** [BEST-PRACTICES-BENCHMARK.md](docs/best-practices-benchmark.md) (6-dimension matrix vs Firecrawl / Crawl4AI / Crawlee)
 
 ### Engine Architecture
 

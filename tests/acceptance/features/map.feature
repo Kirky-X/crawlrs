@@ -55,3 +55,8 @@ Feature: Map endpoint
     Given an admin API key
     When I map "not-a-url"
     Then the response status is 422
+
+  Scenario: Unauthenticated map request is rejected
+    Given no API key
+    When I map "{sitemap_base}/page"
+    Then the response status is 401
