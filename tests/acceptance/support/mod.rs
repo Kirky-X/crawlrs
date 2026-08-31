@@ -8,7 +8,7 @@
 //! 启动链（进程内一次，garrison 单例约束）：
 //! testcontainers PG（migrations 全量）→ env 注入 → Settings → DI kit →
 //! CrawlRsState → garrison init → bootstrap admin key → build_api_app_with_state
-//! → axum-test TestServer → spawn_common_workers。
+//! → axum-test TestServer → spawn_common_workers + WorkerManager（任务消费）。
 //!
 //! 数据隔离：场景间用 UUID 唯一资源，不依赖全局清理（与既有集成测试约定一致）。
 
@@ -17,9 +17,9 @@ use std::sync::{Arc, OnceLock};
 use testcontainers_modules::postgres::Postgres;
 
 use axum_test::TestServer;
+use crawlrs::di::CrawlRsStateExt as _;
 use cucumber::{given, then, when};
 use serde_json::Value as Json;
-use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
 // 共享 Harness（进程级单次启动）
@@ -29,9 +29,7 @@ pub struct SharedHarness {
     pub server: TestServer,
     /// bootstrap 签发的 admin key（`crawlrs:admin` 全权限，`<key_id>.<secret>` 形态）
     pub admin_key: String,
-    /// wiremock mock 目标站 base URL（`{mock_base}` 模板引用）
-    pub mock_base: String,
-    /// 场景模板变量（feature 步骤中 {name} 引用）
+    /// 场景模板变量（feature 步骤中 {name} 引用，含 `mock_base`）
     pub template_vars: std::collections::HashMap<String, String>,
     /// mock 目标站句柄保活
     _mock_guards: (
@@ -66,13 +64,11 @@ async fn start_mock_target() -> wiremock::MockServer {
 
     let server = MockServer::start().await;
 
-    // 正常页面（含可提取正文）
+    // 正常页面（含可提取正文；内容足够长以通过反爬 near-empty 启发式）
+    let rich_page = "<html><head><title>Acceptance Page</title></head><body><h1>Acceptance</h1><p>acceptance-marker-content</p><p>Rust is a multi-paradigm, general-purpose programming language that emphasizes performance, type safety, and concurrency. It enforces memory safety, meaning that all references point to valid memory.</p><p>Web scraping is data extraction used for copying data from the web. This page contains enough textual content to satisfy content-quality heuristics during crawl acceptance verification runs.</p><ul><li>item one with descriptive text content</li><li>item two with additional descriptive text</li></ul></body></html>";
     Mock::given(method("GET"))
         .and(path("/page"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            "<html><head><title>Acceptance Page</title></head><body>\
-             <h1>Acceptance</h1><p>acceptance-marker-content</p></body></html>",
-        ))
+        .respond_with(ResponseTemplate::new(200).set_body_string(rich_page))
         .mount(&server)
         .await;
     // 失败端点（500）
@@ -88,9 +84,9 @@ async fn start_mock_target() -> wiremock::MockServer {
         ("/page_c", ""),
     ] {
         let body = if link.is_empty() {
-            format!("<html><body><h1>{page}</h1><p>leaf page</p></body></html>")
+            format!("<html><body><h1>{page}</h1><p>This leaf page carries substantial descriptive content so that the anti-bot near-empty-body heuristic does not misjudge it during acceptance runs.</p><p>Additional paragraph with plenty of real textual content describing the purpose of this fixture page in detail.</p></body></html>")
         } else {
-            format!("<html><body><a href=\"{link}\">next</a><p>{page} content</p></body></html>")
+            format!("<html><body><a href=\"{link}\">next</a><p>{page} carries substantial descriptive content so the anti-bot near-empty-body heuristic does not misjudge this fixture page during acceptance verification runs.</p><p>Another paragraph with enough real text to pass content quality checks reliably.</p></body></html>")
         };
         Mock::given(method("GET"))
             .and(path(page))
@@ -202,6 +198,11 @@ impl SharedHarness {
         // 2. Settings
         let settings = Arc::new(crawlrs::bootstrap::config::load_settings()?);
 
+        // 2.5 telemetry：worker 的 log 宏经 inklog 输出（RUST_LOG=debug 可见）
+        let _logger_manager = crawlrs::bootstrap::telemetry::init_all(&settings.logging)
+            .await
+            .map_err(|e| anyhow::anyhow!("init inklog: {e}"))?;
+
         // 3. DI kit 组装（对齐 main.rs 的 8 模块注册）
         let mut kit = AsyncKit::new();
         kit.set_config(settings.clone());
@@ -226,6 +227,10 @@ impl SharedHarness {
             .await
             .map_err(|e| anyhow::anyhow!("build AsyncKit: {e}"))?;
         let app_state = crawlrs::di::CrawlRsState::from_kit(&kit)?;
+        // HttpModule 持有共享 reqwest::Client，WorkerManager 需要它（对齐 main.rs:357）
+        let http_client: std::sync::Arc<reqwest::Client> = kit
+            .require::<crawlrs::di::modules::HttpModule>()
+            .map_err(|e| anyhow::anyhow!("require HttpModule: {e}"))?;
 
         // 4. garrison 单例初始化已由 ServiceModule 内部完成（重复调用会触发
         // "global DAO already injected"），此处只做 bootstrap 数据准备。
@@ -244,16 +249,58 @@ impl SharedHarness {
         let _worker_handles =
             crawlrs::bootstrap::workers::spawn_common_workers(&app_state, &settings, true).await;
 
+        // 7b. 任务执行 worker：spawn_common_workers 只覆盖 webhook/backlog/expiration/
+        // retention，队列里的 scrape/crawl 任务需 WorkerManager 消费（对齐 main.rs
+        // start_worker_service）。缺失时任务永远停在 queued，生命周期场景即为假绿。
+        let coordinator =
+            std::sync::Arc::new(crawlrs::workers::shutdown::ShutdownCoordinator::new(
+                std::time::Duration::from_secs(settings.workers.graceful_shutdown_seconds),
+            ));
+        let worker_deps = crawlrs::workers::manager::WorkerManagerDeps {
+            queue: app_state.task_queue(),
+            repository: app_state.task_repo(),
+            result_repository: app_state.result_repo(),
+            crawl_repository: app_state.crawl_repo(),
+            webhook_service: app_state.webhook_service(),
+            credits_repository: app_state.credits_repo(),
+            engine_client: app_state.engine_client(),
+            create_scrape_use_case: app_state.create_scrape_use_case(),
+            team_semaphore: app_state.team_semaphore.clone(),
+            webhook_event_repository: app_state.webhook_event_repo(),
+            geo_restriction_repository: app_state.geo_restriction_repo(),
+            audit_service: app_state.audit_service(),
+            request_coalescer: app_state.request_coalescer.clone(),
+            robots_checker: app_state.robots_checker.clone(),
+            http_client,
+            extraction_service: app_state.extraction_service(),
+            regex_cache: (*app_state.regex_cache()).clone(),
+            cache_service: app_state.cache_service(),
+            shutdown_coordinator: coordinator,
+            retention_lock: std::sync::Arc::new(
+                crawlrs::workers::retention_worker::PgRetentionLock::new(app_state.db_pool()),
+            ),
+        };
+        let worker_config = crawlrs::workers::manager::WorkerManagerConfig {
+            settings: settings.clone(),
+            default_concurrency_limit: settings.concurrency.default_team_limit as usize,
+        };
+        let mut worker_manager =
+            crawlrs::workers::manager::WorkerManager::new(worker_deps, worker_config);
+        let worker_count = settings.workers.count.resolve();
+        worker_manager.start_workers(worker_count).await;
+        // WorkerManager::drop 会 abort 全部 worker，而 harness 需存活至进程结束
+        // （静态 OnceCell 语义）。显式 forget 保持 worker 运行，进程退出即回收。
+        std::mem::forget(worker_manager);
+
         // 8. mock 目标站群（零外部网络依赖）
         let mock_main = start_mock_target().await;
         let mock_sitemap = start_mock_sitemap_site().await;
         let mock_index = start_mock_sitemap_index_site().await;
         let mock_404 = start_mock_404_site().await;
         let mock_500 = start_mock_500_site().await;
-        let mock_base = mock_main.uri();
         // 场景模板变量（feature 中以 {mock_base} 等引用）
         let mut template_vars = std::collections::HashMap::new();
-        template_vars.insert("mock_base".to_string(), mock_base.clone());
+        template_vars.insert("mock_base".to_string(), mock_main.uri());
         template_vars.insert("sitemap_base".to_string(), mock_sitemap.uri());
         template_vars.insert("index_base".to_string(), mock_index.uri());
         template_vars.insert("site404".to_string(), mock_404.uri());
@@ -262,7 +309,6 @@ impl SharedHarness {
         Ok(Self {
             server,
             admin_key,
-            mock_base,
             template_vars,
             _mock_guards: (mock_main, mock_sitemap, mock_index, mock_404, mock_500),
         })
@@ -504,35 +550,6 @@ async fn post_json(w: &mut AcceptanceWorld, path: &str, payload: Json) {
     w.last_response = Some(request.await);
 }
 
-/// 用当前认证态签发 API key（given 步骤辅助，断言 201 并返回明文 key）。
-async fn sign_api_key(w: &mut AcceptanceWorld, scopes: &[&str]) -> String {
-    let harness = w.get_harness().await;
-    let payload = serde_json::json!({
-        "team_id": uuid::Uuid::from_u128(1), // DEFAULT_TEAM_ID（bootstrap 已建）
-        "scopes": scopes,
-    });
-    let response = harness
-        .server
-        .post("/v1/admin/api-keys")
-        .json(&payload)
-        .add_header(
-            axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {}", harness.admin_key),
-        )
-        .await;
-    assert_eq!(
-        response.status_code().as_u16(),
-        201,
-        "regular key signing failed: {}",
-        response.text()
-    );
-    let json: Json = response.json();
-    json.pointer("/data/api_key")
-        .and_then(|v| v.as_str())
-        .expect("data.api_key missing")
-        .to_string()
-}
-
 #[when(expr = "I sign a regular API key with scopes {string}")]
 async fn when_sign_regular_key(w: &mut AcceptanceWorld, scopes: String) {
     let scope_list: Vec<&str> = scopes.split(',').map(str::trim).collect();
@@ -638,18 +655,40 @@ async fn when_post_empty_body(w: &mut AcceptanceWorld, path: String) {
     w.last_response = Some(request.await);
 }
 
-/// extract.feature：`I extract urls [..] at {path}`（ExtractRequestDto 契约为 urls 数组）。
-#[when(expr = "I extract urls {string} at {string}")]
-async fn when_extract_urls(w: &mut AcceptanceWorld, urls: String, path: String) {
-    let urls = expand_templates(w, urls);
-    let url_list: Vec<String> = serde_json::from_str(&urls).unwrap_or_else(|_| vec![urls.clone()]);
-    post_json(w, &path, serde_json::json!({"urls": url_list})).await;
+/// extract.feature：`I extract url {url} at {path}`（ExtractRequestDto 契约为
+/// `urls` 数组；Gherkin `{string}` 不支持内嵌引号，故单 URL 入参在步骤内包数组）。
+#[when(expr = "I extract url {string} at {string}")]
+async fn when_extract_urls(w: &mut AcceptanceWorld, url: String, path: String) {
+    let url = expand_templates(w, url);
+    // DTO 契约：prompt/schema/rules 三选一必填，默认给一条 CSS 规则
+    post_json(
+        w,
+        &path,
+        serde_json::json!({"urls": [url], "extraction_rules": {"content": {"selector": "body", "is_array": false}}}),
+    )
+    .await;
 }
 
 /// search.feature：`I search for {query} at {path}`。
 #[when(expr = "I search for {string} at {string}")]
 async fn when_search_for(w: &mut AcceptanceWorld, query: String, path: String) {
     post_json(w, &path, serde_json::json!({"query": query})).await;
+}
+
+/// search.feature：显式指定引擎（`{"query": q, "engine": e}`）。
+#[when(expr = "I search for {string} at {string} with engine {string}")]
+async fn when_search_with_engine(
+    w: &mut AcceptanceWorld,
+    query: String,
+    path: String,
+    engine: String,
+) {
+    post_json(
+        w,
+        &path,
+        serde_json::json!({"query": query, "engine": engine}),
+    )
+    .await;
 }
 
 /// map.feature：`I map {url}`。
@@ -760,16 +799,22 @@ async fn then_status(w: &mut AcceptanceWorld, expected: u16) {
 
 #[then(expr = "the response status is {int} or {int}")]
 async fn then_status_either(w: &mut AcceptanceWorld, a: u16, b: u16) {
-    let actual = if let Some(response) = &w.last_response {
-        response.status_code().as_u16()
+    let (actual, body) = if let Some(response) = &w.last_response {
+        let code = response.status_code().as_u16();
+        let body = if code == a || code == b {
+            String::new()
+        } else {
+            response.text()
+        };
+        (code, body)
     } else if let Some(status) = w.last_status {
-        status
+        (status, w.last_body.clone().unwrap_or_default())
     } else {
         panic!("no response captured — send a request first");
     };
     assert!(
         actual == a || actual == b,
-        "unexpected status {actual}; expected {a} or {b}"
+        "unexpected status {actual}; expected {a} or {b}; body: {body}"
     );
 }
 
@@ -1021,13 +1066,12 @@ async fn given_crawl_completed(w: &mut AcceptanceWorld, url: String) {
     assert_eq!(status, "completed", "crawl must complete");
 }
 
-/// When：GET 任务详情（用 ctx 里的 task_id）。
+/// When：GET 任务详情（用 ctx 里的 task_id，前缀决定 scrape/crawl 面）。
 #[when(expr = "I GET the task detail at {string}")]
 async fn when_get_task_detail(w: &mut AcceptanceWorld, path_prefix: String) {
     let task_id = w.ctx.get("task_id").cloned().expect("task_id in ctx");
-    let _ = path_prefix;
     let harness = w.get_harness().await;
-    let mut request = harness.server.get(&format!("/v1/scrape/{task_id}"));
+    let mut request = harness.server.get(&format!("{path_prefix}/{task_id}"));
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
@@ -1035,6 +1079,42 @@ async fn when_get_task_detail(w: &mut AcceptanceWorld, path_prefix: String) {
         );
     }
     w.last_response = Some(request.await);
+}
+
+/// 状态码属于给定集合（契约尚不稳定的错误映射用，避免把未定型的口径写成硬断言）。
+#[then(expr = "the response status is one of {string}")]
+async fn then_status_in_set(w: &mut AcceptanceWorld, allowed: String) {
+    let expected: Vec<u16> = allowed
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<u16>().expect("status list must be u16 csv"))
+        .collect();
+    let status = if let Some(response) = &w.last_response {
+        response.status_code().as_u16()
+    } else if let Some(status) = w.last_status {
+        status
+    } else {
+        panic!("no response captured — send a request first");
+    };
+    assert!(
+        expected.contains(&status),
+        "unexpected status {status}; expected one of {expected:?}"
+    );
+}
+
+/// 响应体文本包含子串（结果内容特征串断言，规避结果嵌套结构差异）。
+#[then(expr = "the response body contains {string}")]
+async fn then_body_contains(w: &mut AcceptanceWorld, needle: String) {
+    let body = w
+        .last_body
+        .clone()
+        .or_else(|| w.last_response.as_ref().map(|r| r.text()))
+        .expect("no response captured");
+    assert!(
+        body.contains(&needle),
+        "response body does not contain {needle:?}: {body}"
+    );
 }
 
 /// 记录任意 JSON 字段值到 ctx（后续 URL 模板引用）。
@@ -1086,11 +1166,6 @@ async fn when_delete_template(w: &mut AcceptanceWorld, template: String) {
         );
     }
     w.last_response = Some(request.await);
-}
-
-/// 生成场景内唯一 URL 路径段（数据隔离）
-pub fn unique_suffix() -> String {
-    Uuid::new_v4().simple().to_string()[..8].to_string()
 }
 
 // ---------------------------------------------------------------------------

@@ -223,7 +223,7 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
                 policy.statement_timeout_ms,
             )
             .await
-            .map_err(|e| RepositoryError::Database(e.into()))?;
+            .map_err(RepositoryError::Database)?;
             total_deleted += deleted;
             if deleted < this_batch {
                 break;

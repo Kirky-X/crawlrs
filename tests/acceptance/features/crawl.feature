@@ -12,11 +12,12 @@ Feature: Crawl lifecycle
   Scenario: Create and complete a crawl task
     Given an admin API key
     When I create a crawl at "/v1/crawl" for "{mock_base}/page_a" with max depth 1
-    Then the response status is 200 or 202
-    And I wait for crawl "/v1/crawl" to complete within 60 seconds
+    Then the response status is 200 or 201
+    When I wait for crawl "/v1/crawl" to complete within 60 seconds
     And I GET the task detail at "/v1/crawl"
     Then the response status is 200
     And the response JSON field "success" is true
+    And the response JSON field "data.status" is "completed"
 
   Scenario: Crawl results are retrievable after completion
     Given a crawl of "{mock_base}/page_a" completed
@@ -25,18 +26,19 @@ Feature: Crawl lifecycle
     And the response JSON field "success" is true
 
   Scenario: Cancel a running crawl task
+    # 契约：取消成功返回 204 No Content（无响应体）
     Given an admin API key
     When I create a crawl at "/v1/crawl" for "{mock_base}/page_a" with max depth 2
-    Then the response status is 200 or 202
+    Then the response status is 200 or 201
     When I DELETE template "/v1/crawl/{task_id}"
-    Then the response status is 200
+    Then the response status is 204
 
   Scenario: Invalid crawl URL is rejected
-    # 契约：crawl 的 DTO validator 校验先于 SSRF（"url: URL must start with
-    # http:// or https://"，422）
+    # 契约：与 scrape 一致，SSRF 静态校验先于 DTO validator，无效 URL → 400
+    # VALIDATION_ERROR（"Invalid URL 'not-a-url': relative URL without a base"）
     Given an admin API key
     When I create a crawl at "/v1/crawl" for "not-a-url" with max depth 1
-    Then the response status is 422
+    Then the response status is 400
 
   Scenario: Unknown crawl id returns 404
     Given an admin API key

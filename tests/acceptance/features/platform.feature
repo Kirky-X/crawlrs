@@ -28,8 +28,9 @@ Feature: Platform capabilities
     When I create a webhook at "/v1/webhooks" pointing to "{mock_base}/hook" for events "crawl.completed"
     Then the response status is 200 or 201
     And the response JSON field "url" is a non-empty string
-    And I GET "/v1/webhooks"
+    When I GET "/v1/webhooks"
     Then the response status is 200
+    And the response JSON field "success" is true
 
   Scenario: Webhook with missing url is rejected
     # 契约：空 url 被 webhook_url SSRF 校验拒绝（400 "Invalid webhook URL"）

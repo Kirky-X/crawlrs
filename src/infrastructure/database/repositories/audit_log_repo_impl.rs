@@ -187,7 +187,7 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
                 policy.statement_timeout_ms,
             )
             .await
-            .map_err(|e| AuditRepositoryError::DatabaseError(e))?;
+            .map_err(AuditRepositoryError::DatabaseError)?;
             total_deleted += deleted;
             if deleted < this_batch {
                 break;

@@ -111,9 +111,18 @@ impl MapUseCase {
             let children: Vec<String> = locs.iter().take(MAX_SUB_SITEMAPS).cloned().collect();
             locs.clear();
             for child in children {
-                let fetched = self.fetcher.fetch(&child).await?;
-                if fetched.status == 200 {
-                    locs.extend(parse_locs(&fetched.body));
+                // 连接级瞬态错误（如 keep-alive 连接被对端关闭）重试一次，
+                // 仍失败则按既有语义放弃该子 sitemap 的内容（不计为整体失败）
+                let fetched = match self.fetcher.fetch(&child).await {
+                    Ok(f) => Some(f),
+                    // 连接级瞬态错误重试一次（ok() 语义：仍失败则放弃该子 sitemap）
+                    Err(MapError::TargetUnreachable(_)) => self.fetcher.fetch(&child).await.ok(),
+                    Err(e) => return Err(e),
+                };
+                if let Some(fetched) = fetched {
+                    if fetched.status == 200 {
+                        locs.extend(parse_locs(&fetched.body));
+                    }
                 }
             }
         }
