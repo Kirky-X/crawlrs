@@ -289,6 +289,28 @@ jobs:
       - name: Integration tests (full + test-mocks)
         run: cargo test --features "full,test-mocks" --tests --no-fail-fast
 
+  acceptance-test:
+    name: BDD Acceptance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/crawlrs_test
+      CRAWLRS_DISABLE_SSRF_PROTECTION: "true"
+      CRAWLRS__AUTH__JWT_SECRET: ci-acceptance-test-strong-secret-key-32bytes!!
+      CRAWLRS__WEBHOOK__SECRET: whsec-ci-acceptance-webhook-secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-acceptance-deps
+      # 套件经 testcontainers 自起 PG（需 Docker，ubuntu runner 自带）；
+      # TEST_DATABASE_URL 由套件内 resolve 优先读取——CI 用 service 容器减少启动时间
+      - name: BDD acceptance tests (platform, excl. @external)
+        run: cargo test --test acceptance --features platform -- --tags "not @external"
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

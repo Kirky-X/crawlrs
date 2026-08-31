@@ -575,6 +575,7 @@ flowchart TB
 ```
 
 > **详细架构:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
+> **业内对标:** [BEST-PRACTICES-BENCHMARK.md](docs/best-practices-benchmark.md)（vs Firecrawl / Crawl4AI / Crawlee 六维矩阵）
 
 ### 引擎架构
 

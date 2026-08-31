@@ -1330,6 +1330,27 @@ class CircuitBreaker {
 
 ---
 
+## 验收测试（Acceptance Tests）
+
+项目内置 BDD 验收套件（cucumber + Gherkin），覆盖全部公开 API 面的正常流与异常矩阵，零外部网络依赖（目标站/搜索引擎均以本地 wiremock 模拟）。
+
+**运行命令：**
+
+```bash
+cargo test --test acceptance --features platform --tags "not @external"
+```
+
+**前置条件：**
+
+- Docker 运行中——套件经 testcontainers 自动启动 PostgreSQL 16 并应用全部 migrations
+- `--tags "not @external"` 过滤依赖真实外网的场景（如真实搜索引擎验证）；联网环境可去掉该过滤运行完整套件
+
+**Feature 文件位置：** `tests/acceptance/features/*.feature`
+
+**新增场景：** 在对应能力域的 `.feature` 文件中按 Given/When/Then 语法追加场景；通用步骤（认证、请求发送、JSON 断言、任务终态轮询）已在 `tests/acceptance/support/mod.rs` 定义，业务步骤（如 `I create a scrape at ... for ...`）按既有命名惯例扩展。
+
+---
+
 ## Data Retention & Cleanup
 
 抓取结果与事件数据按保留期自动清理（由 `RetentionWorker` 定期执行），防止数据库无限增长。保留天数可通过 `[retention]` 配置调整：
