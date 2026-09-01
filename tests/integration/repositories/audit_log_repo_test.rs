@@ -200,7 +200,10 @@ async fn test_cleanup_old_logs() {
 
     // 清理 7 天前的日志
     let deleted = repo
-        .cleanup_old_logs(7, &crawlrs::domain::retention_policy::RetentionBatchPolicy::default())
+        .cleanup_old_logs(
+            7,
+            &crawlrs::domain::retention_policy::RetentionBatchPolicy::default(),
+        )
         .await
         .expect("Failed to cleanup old logs");
 
@@ -349,7 +352,10 @@ async fn tc_cleanup_old_logs_returns_zero_when_nothing_to_delete() {
 
     // 清理 30 天前的日志——新日志不应被删除
     let _deleted = repo
-        .cleanup_old_logs(30, &crawlrs::domain::retention_policy::RetentionBatchPolicy::default())
+        .cleanup_old_logs(
+            30,
+            &crawlrs::domain::retention_policy::RetentionBatchPolicy::default(),
+        )
         .await
         .expect("Failed to cleanup old logs");
 

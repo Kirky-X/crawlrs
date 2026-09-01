@@ -727,9 +727,7 @@ pub async fn wait_for_webhook_delivery(
         if let Some(requests) = harness.mock_main.received_requests().await {
             for request in &requests {
                 let path = request.url.path().to_string();
-                if request.method == wiremock::http::Method::POST
-                    && path.starts_with(path_prefix)
-                {
+                if request.method == wiremock::http::Method::POST && path.starts_with(path_prefix) {
                     let headers: std::collections::HashMap<String, String> = request
                         .headers
                         .iter()
@@ -1378,7 +1376,6 @@ fn start_testcontainers_pg() -> String {
         .clone()
 }
 
-
 // ---- webhook 投递验收 steps（R-whv-001/002）----
 
 /// 最近一次捕获的 webhook 投递。
@@ -1401,7 +1398,10 @@ async fn when_wait_webhook_delivery(w: &mut AcceptanceWorld, max_secs: u64, path
 
 #[then(expr = "the delivery has non-empty headers {string}")]
 async fn then_delivery_headers_nonempty(w: &mut AcceptanceWorld, names: String) {
-    let delivery = w.last_delivery.as_ref().expect("no webhook delivery captured");
+    let delivery = w
+        .last_delivery
+        .as_ref()
+        .expect("no webhook delivery captured");
     for name in names.split(',') {
         let name = name.trim();
         let value = delivery
@@ -1418,7 +1418,10 @@ async fn then_delivery_signature_verifies(w: &mut AcceptanceWorld) {
     use hmac::{Hmac, KeyInit, Mac};
     use sha2::Sha256;
 
-    let delivery = w.last_delivery.as_ref().expect("no webhook delivery captured");
+    let delivery = w
+        .last_delivery
+        .as_ref()
+        .expect("no webhook delivery captured");
     let msg_id = delivery
         .headers
         .get("webhook-id")
@@ -1441,14 +1444,18 @@ async fn then_delivery_signature_verifies(w: &mut AcceptanceWorld) {
         base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
     );
     assert_eq!(
-        signature.as_str(), expected.as_str(),
+        signature.as_str(),
+        expected.as_str(),
         "webhook signature mismatch (standardwebhooks HMAC-SHA256)"
     );
 }
 
 #[then(expr = "the delivery body JSON contains the task id from context {string}")]
 async fn then_delivery_body_contains_task_id(w: &mut AcceptanceWorld, ctx_name: String) {
-    let delivery = w.last_delivery.as_ref().expect("no webhook delivery captured");
+    let delivery = w
+        .last_delivery
+        .as_ref()
+        .expect("no webhook delivery captured");
     let task_id = w
         .ctx
         .get(&ctx_name)
