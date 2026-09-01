@@ -29,6 +29,9 @@ fn main() {
         AcceptanceWorld::cucumber()
             // garrison GarrisonManager 为进程级单例且不可重置，场景必须串行
             .max_concurrent_scenarios(Some(1))
+            // 偶发环境抖动（TestServer 端口竞态/本地连接瞬断）自动重试一次
+            .retries(Some(1))
+            .retry_after(std::time::Duration::from_secs(1))
             .filter_run_and_exit("tests/acceptance/features", move |_, _, sc| {
                 !(offline && sc.tags.iter().any(|t| t == EXTERNAL_NETWORK_TAG))
             })

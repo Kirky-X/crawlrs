@@ -4,7 +4,8 @@
 # See LICENSE file in the project root for full license information.
 
 # R-sdk-001/002：SDK 端点验收（/api/v1/sdk/*，受 auth 保护）
-# 契约注记：sdk/search 正常流依赖硬编码引擎端点 → @external（同 /v1/search）。
+# 契约注记：sdk/search 正常流依赖硬编码引擎端点 → @requires-internet + @external
+# （同 /v1/search；CI 以 CRAWLRS_ACCEPTANCE_OFFLINE=1 跳过，本地用 --tags "not @external"）。
 
 Feature: SDK endpoints
   SDK 编程接口：任务创建/搜索与认证
@@ -49,6 +50,7 @@ Feature: SDK endpoints
     When I GET "/api/v1/sdk/search"
     Then the response status is 401
 
+  @requires-internet
   @external
   Scenario: SDK search returns results (requires internet)
     Given an admin API key
