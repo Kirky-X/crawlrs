@@ -154,10 +154,7 @@ impl WebhookService for WebhookServiceImpl {
             standardwebhooks::HEADER_WEBHOOK_TIMESTAMP.to_string(),
             timestamp.to_string(),
         );
-        headers.insert(
-            standardwebhooks::HEADER_WEBHOOK_ID.to_string(),
-            msg_id,
-        );
+        headers.insert(standardwebhooks::HEADER_WEBHOOK_ID.to_string(), msg_id);
 
         // T022: pass payload directly instead of serialize-then-deserialize round-trip
         self.webhook_sender
