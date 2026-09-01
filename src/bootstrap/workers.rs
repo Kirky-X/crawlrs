@@ -65,9 +65,16 @@ pub async fn spawn_common_workers(
     // T014（converge 补强）：RetentionWorker 调度。仅在 include_retention=true
     // 时启动（api 形态）；worker 形态由 WorkerManager::start_workers 注册，避免双调度。
     if include_retention {
+        // R-teams-004：geo 仓库 accessor 仅 teams-on 编译；teams-off 传 None 跳过 geo 类清理
+        #[cfg(feature = "teams")]
+        let geo_repo: Option<Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>> =
+            Some(app_state.geo_restriction_repo());
+        #[cfg(not(feature = "teams"))]
+        let geo_repo: Option<Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>> =
+            None;
         let retention_processor = Arc::new(RetentionWorker::new(
             app_state.result_repo(),
-            app_state.geo_restriction_repo(),
+            geo_repo,
             app_state.webhook_event_repo(),
             app_state.audit_service(),
             settings.retention.scrape_results_days,

@@ -217,7 +217,7 @@ impl WorkerManager {
         // R-retention-005：数据保留期清理工作器（间隔与天数来自 [retention] 配置）
         let retention_processor = Arc::new(RetentionWorker::new(
             self.result_repository.clone(),
-            self.geo_restriction_repository.clone(),
+            Some(self.geo_restriction_repository.clone()),
             self.webhook_event_repository.clone(),
             self.audit_service.clone(),
             self.settings.retention.scrape_results_days,

@@ -346,7 +346,7 @@ fn test_get_failed_event_type_extract_returns_custom() {
 
 #[test]
 fn test_generate_signature_method_returns_standardwebhooks_format() {
-    let service = make_service(
+    let _service = make_service(
         Arc::new(MockWebhookSender::default()),
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
@@ -362,7 +362,7 @@ fn test_generate_signature_method_returns_standardwebhooks_format() {
 
 #[test]
 fn test_generate_signature_method_is_deterministic() {
-    let service = make_service(
+    let _service = make_service(
         Arc::new(MockWebhookSender::default()),
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
@@ -374,7 +374,7 @@ fn test_generate_signature_method_is_deterministic() {
 
 #[test]
 fn test_generate_signature_method_changes_with_timestamp() {
-    let service = make_service(
+    let _service = make_service(
         Arc::new(MockWebhookSender::default()),
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
@@ -386,7 +386,7 @@ fn test_generate_signature_method_changes_with_timestamp() {
 
 #[test]
 fn test_generate_signature_method_changes_with_payload() {
-    let service = make_service(
+    let _service = make_service(
         Arc::new(MockWebhookSender::default()),
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
@@ -399,7 +399,7 @@ fn test_generate_signature_method_changes_with_payload() {
 #[test]
 fn test_generate_signature_method_with_empty_secret_returns_signature() {
     // standardwebhooks accepts empty key (same as HMAC); still produces a valid signature
-    let service = make_service(
+    let _service = make_service(
         Arc::new(MockWebhookSender::default()),
         Arc::new(MockWebhookEventRepository::default()),
         "",

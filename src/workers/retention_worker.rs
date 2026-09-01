@@ -118,7 +118,9 @@ impl RetentionLock for PgRetentionLock {
 /// 数据保留期清理工作器
 pub struct RetentionWorker {
     scrape_repo: Arc<dyn ScrapeResultRepository>,
-    geo_repo: Arc<dyn GeoRestrictionRepository>,
+    // teams 门控修复（R-teams-004）：geo 仓库仅 teams-on 有 accessor；teams-off
+    // 传 None，run 跳过 geo 类清理（geo_restriction_logs 仅 teams 语义存在）。
+    geo_repo: Option<Arc<dyn GeoRestrictionRepository>>,
     webhook_repo: Arc<dyn WebhookEventRepository>,
     audit_service: Arc<dyn AuditServiceTrait>,
     scrape_results_days: i64,
@@ -138,7 +140,7 @@ impl RetentionWorker {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         scrape_repo: Arc<dyn ScrapeResultRepository>,
-        geo_repo: Arc<dyn GeoRestrictionRepository>,
+        geo_repo: Option<Arc<dyn GeoRestrictionRepository>>,
         webhook_repo: Arc<dyn WebhookEventRepository>,
         audit_service: Arc<dyn AuditServiceTrait>,
         scrape_results_days: i64,
@@ -200,35 +202,36 @@ impl RetentionWorker {
             }
         }
 
-        // geo_restriction_logs
-        match tokio::time::timeout(
-            category_timeout,
-            self.geo_repo
-                .cleanup_expired(self.geo_logs_days, &self.policy),
-        )
-        .await
-        {
-            Ok(Ok(count)) => {
-                if count > 0 {
-                    info!(
-                        "Retention: cleaned up {} expired geo_restriction_logs",
-                        count
-                    );
+        // geo_restriction_logs（仅 teams-on 提供 geo 仓库时执行；teams-off 无 geo 语义）
+        if let Some(geo_repo) = &self.geo_repo {
+            match tokio::time::timeout(
+                category_timeout,
+                geo_repo.cleanup_expired(self.geo_logs_days, &self.policy),
+            )
+            .await
+            {
+                Ok(Ok(count)) => {
+                    if count > 0 {
+                        info!(
+                            "Retention: cleaned up {} expired geo_restriction_logs",
+                            count
+                        );
+                    }
                 }
-            }
-            Ok(Err(e)) => {
-                error!("Retention: geo_restriction_logs cleanup failed: {}", e);
-                errors.push(format!("geo_restriction_logs: {}", e));
-            }
-            Err(_) => {
-                error!(
-                    "Retention: geo_restriction_logs cleanup timed out after {}s",
-                    self.category_timeout_seconds
-                );
-                errors.push(format!(
-                    "geo_restriction_logs: timed out after {}s",
-                    self.category_timeout_seconds
-                ));
+                Ok(Err(e)) => {
+                    error!("Retention: geo_restriction_logs cleanup failed: {}", e);
+                    errors.push(format!("geo_restriction_logs: {}", e));
+                }
+                Err(_) => {
+                    error!(
+                        "Retention: geo_restriction_logs cleanup timed out after {}s",
+                        self.category_timeout_seconds
+                    );
+                    errors.push(format!(
+                        "geo_restriction_logs: timed out after {}s",
+                        self.category_timeout_seconds
+                    ));
+                }
             }
         }
 
@@ -602,7 +605,7 @@ mod tests {
     ) -> RetentionWorker {
         RetentionWorker::new(
             scrape,
-            geo,
+            Some(geo),
             webhook,
             audit,
             30,
@@ -763,7 +766,7 @@ mod tests {
         });
         let worker = RetentionWorker::new(
             scrape.clone(),
-            geo.clone(),
+            Some(geo.clone()),
             webhook.clone(),
             audit.clone(),
             30,
@@ -832,7 +835,7 @@ mod tests {
         let lock = Arc::new(MockRetentionLock::never_acquires());
         let worker = RetentionWorker::new(
             scrape.clone(),
-            geo.clone(),
+            Some(geo.clone()),
             webhook.clone(),
             audit.clone(),
             30,
@@ -871,7 +874,7 @@ mod tests {
         let lock = Arc::new(MockRetentionLock::acquires());
         let worker = RetentionWorker::new(
             scrape.clone(),
-            geo.clone(),
+            Some(geo.clone()),
             webhook.clone(),
             audit.clone(),
             30,
@@ -906,7 +909,7 @@ mod tests {
         let lock = Arc::new(MockRetentionLock::acquires());
         let worker = RetentionWorker::new(
             Arc::new(MockScrapeRepo::failing()),
-            Arc::new(MockGeoRepo::new(false)),
+            Some(Arc::new(MockGeoRepo::new(false))),
             Arc::new(MockWebhookRepo {
                 cleanup_calls: AtomicU64::new(0),
             }),

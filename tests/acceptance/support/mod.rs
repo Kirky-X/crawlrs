@@ -399,7 +399,7 @@ async fn bootstrap_admin_key(pool: Arc<dbnexus::DbPool>) -> anyhow::Result<Strin
         .exec(conn)
         .await?;
 
-        return Ok(plaintext_key);
+        Ok(plaintext_key)
     }
 
     #[cfg(not(feature = "auth"))]
@@ -477,7 +477,7 @@ async fn given_regular_key(w: &mut AcceptanceWorld) {
         .json(&payload)
         .add_header(
             axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {}", harness.admin_key),
+            format!("Bearer {}", harness.admin_key),
         )
         .await;
     assert_eq!(
@@ -510,7 +510,7 @@ async fn when_get(w: &mut AcceptanceWorld, path: String) {
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {key}"),
+            format!("Bearer {key}"),
         );
     }
     w.last_response = Some(request.await);
@@ -548,7 +548,7 @@ async fn post_json(w: &mut AcceptanceWorld, path: &str, payload: Json) {
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {key}"),
+            format!("Bearer {key}"),
         );
     }
     w.last_response = Some(request.await);
@@ -566,7 +566,7 @@ async fn when_sign_regular_key(w: &mut AcceptanceWorld, scopes: String) {
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {key}"),
+            format!("Bearer {key}"),
         );
     }
     let response = request.await;
@@ -757,7 +757,7 @@ async fn when_post_empty_body(w: &mut AcceptanceWorld, path: String) {
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {key}"),
+            format!("Bearer {key}"),
         );
     }
     w.last_response = Some(request.await);
@@ -865,7 +865,7 @@ async fn when_create_webhook(w: &mut AcceptanceWorld, path: String, url: String,
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {key}"),
+            format!("Bearer {key}"),
         );
     }
     w.last_response = Some(request.await);
@@ -878,7 +878,7 @@ async fn when_delete(w: &mut AcceptanceWorld, path: String) {
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {key}"),
+            format!("Bearer {key}"),
         );
     }
     w.last_response = Some(request.await);
@@ -1061,7 +1061,7 @@ async fn poll_task_to_terminal(
             .get(&detail_path)
             .add_header(
                 axum_test::http::header::AUTHORIZATION,
-                &format!("Bearer {}", w.auth_key.clone().unwrap_or_default()),
+                format!("Bearer {}", w.auth_key.clone().unwrap_or_default()),
             )
             .await;
         let status = response.status_code().as_u16();
@@ -1183,7 +1183,7 @@ async fn when_get_task_detail(w: &mut AcceptanceWorld, path_prefix: String) {
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {key}"),
+            format!("Bearer {key}"),
         );
     }
     w.last_response = Some(request.await);
@@ -1252,7 +1252,7 @@ async fn when_get_template(w: &mut AcceptanceWorld, template: String) {
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {key}"),
+            format!("Bearer {key}"),
         );
     }
     w.last_response = Some(request.await);
@@ -1270,7 +1270,7 @@ async fn when_delete_template(w: &mut AcceptanceWorld, template: String) {
     if let Some(key) = &w.auth_key {
         request = request.add_header(
             axum_test::http::header::AUTHORIZATION,
-            &format!("Bearer {key}"),
+            format!("Bearer {key}"),
         );
     }
     w.last_response = Some(request.await);
