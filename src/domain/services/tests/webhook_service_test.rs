@@ -351,7 +351,7 @@ fn test_generate_signature_method_returns_standardwebhooks_format() {
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
     );
-    let sig = service.generate_signature(r#"{"a":1}"#, 1_700_000_000);
+    let sig = generate_signature("supersecret", "test-msg-id", br#"{"a":1}"#, 1_700_000_000);
     // standardwebhooks format: "v1,<base64>"
     assert!(sig.starts_with("v1,"), "signature should start with v1,");
     assert!(
@@ -367,8 +367,8 @@ fn test_generate_signature_method_is_deterministic() {
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
     );
-    let sig1 = service.generate_signature("payload", 1_234);
-    let sig2 = service.generate_signature("payload", 1_234);
+    let sig1 = generate_signature("supersecret", "test-msg-id", b"payload", 1_234);
+    let sig2 = generate_signature("supersecret", "test-msg-id", b"payload", 1_234);
     assert_eq!(sig1, sig2);
 }
 
@@ -379,8 +379,8 @@ fn test_generate_signature_method_changes_with_timestamp() {
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
     );
-    let sig1 = service.generate_signature("payload", 1_234);
-    let sig2 = service.generate_signature("payload", 1_235);
+    let sig1 = generate_signature("supersecret", "test-msg-id", b"payload", 1_234);
+    let sig2 = generate_signature("supersecret", "test-msg-id", b"payload", 1_235);
     assert_ne!(sig1, sig2);
 }
 
@@ -391,8 +391,8 @@ fn test_generate_signature_method_changes_with_payload() {
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
     );
-    let sig1 = service.generate_signature("payload1", 1_234);
-    let sig2 = service.generate_signature("payload2", 1_234);
+    let sig1 = generate_signature("supersecret", "test-msg-id", b"payload1", 1_234);
+    let sig2 = generate_signature("supersecret", "test-msg-id", b"payload2", 1_234);
     assert_ne!(sig1, sig2);
 }
 
@@ -404,7 +404,7 @@ fn test_generate_signature_method_with_empty_secret_returns_signature() {
         Arc::new(MockWebhookEventRepository::default()),
         "",
     );
-    let sig = service.generate_signature("payload", 1);
+    let sig = generate_signature("supersecret", "test-msg-id", b"payload", 1);
     // standardwebhooks format: "v1,<base64>" even with empty secret
     assert!(
         sig.starts_with("v1,"),
