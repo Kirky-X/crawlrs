@@ -1743,8 +1743,12 @@ mod tests {
     async fn test_on_event_persists_entry_via_audit_service() {
         // 串行化：全程持有 test_lock，防止并行测试在 setup 与 on_event 之间
         // reset AUDIT_SERVICE，导致 on_event 的 get_audit_service() 返回 None 或其他 mock。
-        // 先检查后 notified().await 模式处理 notify_one 早于 notified() 注册的竞态。
         let _guard = test_lock().await;
+
+        // drain: 在锁内排空前一个测试遗留的 spawn task（全局 AUDIT_TASKS JoinSet 可能包含
+        // 未调度的 task）。锁内 drain 保证 drain 期间无新 task 被 spawn（其他测试等锁）。
+        wait_audit_tasks(std::time::Duration::from_secs(5)).await;
+
         reset_audit_service_for_test();
         let mock = Arc::new(CapturingAuditService::new());
         match set_audit_service(mock.clone() as Arc<dyn AuditServiceTrait>) {
@@ -1808,7 +1812,8 @@ mod tests {
         assert_eq!(entry.decision, AuditDecision::Allow);
         assert_eq!(entry.api_key_id, Some(api_key_id));
 
-        // teardown: 仍持有 _guard，直接 reset
+        // teardown: 等待 spawn task 完成后再重置全局态，避免遗留 task 干扰后续测试
+        wait_audit_tasks(std::time::Duration::from_secs(5)).await;
         reset_audit_service_for_test();
     }
 
@@ -1842,6 +1847,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_on_event_returns_ok_when_log_fails() {
+        // drain: 排空上一个测试遗留的 spawn task
+        wait_audit_tasks(std::time::Duration::from_secs(5)).await;
+
         // setup: 持有串行化锁，注入失败型 mock
         {
             let _guard = test_lock().await;
@@ -1873,6 +1881,7 @@ mod tests {
         // teardown
         {
             let _guard = test_lock().await;
+            wait_audit_tasks(std::time::Duration::from_secs(5)).await;
             reset_audit_service_for_test();
         }
     }
