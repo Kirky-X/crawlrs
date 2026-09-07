@@ -324,33 +324,6 @@ pub async fn auth_middleware_inner(
         let info = match handler.verify_with_namespace(&raw, "crawlrs").await {
             Ok(i) => i,
             Err(e) => {
-                // [DEBUG BOOTSTRAP 专用]：直接 stderr 打印 garrison 内部错误。
-                // 发布 v0.2.0 验收完成后删除。
-                eprintln!(
-                    "[BOOTSTRAP-DIAG] verify failed: raw_token_len={}, err_debug={:?}, err_display={}",
-                    raw.len(),
-                    e,
-                    e
-                );
-                // 额外加 dao 健康检查：读 garrison:apikey:crawlrs:* 列表（最多 5 条）
-                // 检查 dao 是否真的有数据
-                if let Ok(Some(dump_check)) =
-                    dao.get("garrison:apikey:crawlrs:__diag_probe__").await
-                {
-                    eprintln!("[BOOTSTRAP-DIAG] dao-get probe ok: {}", &dump_check[..0]);
-                }
-                // 列 key_id 头部
-                let key_id_from_raw = raw.split_once('.').map(|(k, _)| k).unwrap_or("no-dot");
-                let probe_dao_key = format!("garrison:apikey:crawlrs:{}", key_id_from_raw);
-                match dao.get(&probe_dao_key).await {
-                    Ok(Some(v)) => eprintln!(
-                        "[BOOTSTRAP-DIAG] dao found {} -> {} bytes",
-                        probe_dao_key,
-                        v.len()
-                    ),
-                    Ok(None) => eprintln!("[BOOTSTRAP-DIAG] dao NOT FOUND: {}", probe_dao_key),
-                    Err(err2) => eprintln!("[BOOTSTRAP-DIAG] dao GET ERROR: {:?}", err2),
-                }
                 if let Some(ip) = &ip_ctx {
                     use garrison::strategy::firewall::brute_force::{
                         BruteForceConfig, BruteForceStrategy,
