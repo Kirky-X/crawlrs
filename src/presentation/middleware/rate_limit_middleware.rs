@@ -49,7 +49,7 @@ const IP_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 /// - If false: Reject the request with 503 Service Unavailable - for security (default)
 ///
 /// Controlled via RATE_LIMIT_FAIL_OPEN environment variable at startup.
-static RATE_LIMIT_FAIL_OPEN: once_cell::sync::Lazy<bool> = once_cell::sync::Lazy::new(|| {
+pub(crate) static RATE_LIMIT_FAIL_OPEN: once_cell::sync::Lazy<bool> = once_cell::sync::Lazy::new(|| {
     std::env::var("RATE_LIMIT_FAIL_OPEN")
         .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
         .unwrap_or(false)
@@ -150,13 +150,15 @@ impl RateLimiter {
 static IP_RATE_LIMITER: once_cell::sync::Lazy<RateLimiter> =
     once_cell::sync::Lazy::new(|| RateLimiter::new_for_ip_limit(DEFAULT_IP_RATE_LIMIT));
 
-/// 速率限制中间件
+/// 速率限制中间件配置容器。
 ///
-/// 使用注入的 RateLimitingService 进行 API 密钥速率限制检查
+/// 结构体被构造并 Clone 到 axum 中间件栈中，字段由
+/// `rate_limit_middleware` 异步函数通过 axum 的 `Extension`/`State` 提取使用，
+/// 非直接方法调用，故需抑制 dead_code 警告。
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct RateLimitMiddleware {
-    /// 速率限制服务
+    /// 速率限制服务（由 axum middleware 函数提取，非直接读取）
+    #[allow(dead_code)]
     rate_limiting_service: Arc<dyn RateLimitingService>,
 }
 

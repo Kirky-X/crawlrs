@@ -332,6 +332,7 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_serialization() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let task_id = Uuid::new_v4();
         let dto = ExtractResponseDto {
             id: task_id,
@@ -345,6 +346,7 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_deserialization() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let task_id = Uuid::new_v4();
         let json = format!(r#"{{"id":"{}","status":"completed"}}"#, task_id);
         let dto: ExtractResponseDto = serde_json::from_str(&json).unwrap();
@@ -354,6 +356,7 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_accepted_status() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto = ExtractResponseDto {
             id: Uuid::new_v4(),
             status: "accepted".to_string(),
@@ -367,6 +370,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_minimal_with_prompt() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"urls":["https://example.com"],"prompt":"Extract title"}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.urls.len(), 1);
@@ -377,6 +381,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_with_schema() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"urls":["https://example.com"],"schema":{"type":"object"}}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.schema.is_some());
@@ -385,6 +390,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_with_sync_wait_ms() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"urls":["https://example.com"],"prompt":"test","sync_wait_ms":10000}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.sync_wait_ms, Some(10000));
@@ -392,6 +398,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_multiple_urls() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"urls":["https://a.com","https://b.com","https://c.com"],"prompt":"test"}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.urls.len(), 3);
@@ -399,6 +406,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_empty_urls() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"urls":[],"prompt":"test"}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.urls.is_empty());
@@ -408,16 +416,19 @@ mod tests {
 
     #[test]
     fn test_max_sync_wait_ms_value() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(crawl_task::MAX_SYNC_WAIT_MS, 30000);
     }
 
     #[test]
     fn test_default_timeout_ms_value() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(crawl_task::DEFAULT_TIMEOUT_MS, 5000);
     }
 
     #[test]
     fn test_base_poll_interval_ms_value() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(crawl_task::BASE_POLL_INTERVAL_MS, 1000);
     }
 
@@ -425,6 +436,7 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_clone() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let task_id = Uuid::new_v4();
         let dto = ExtractResponseDto {
             id: task_id,
@@ -437,6 +449,7 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_debug() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let task_id = Uuid::new_v4();
         let dto = ExtractResponseDto {
             id: task_id,
@@ -450,6 +463,7 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_round_trip() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let task_id = Uuid::new_v4();
         let original = ExtractResponseDto {
             id: task_id,
@@ -465,6 +479,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_with_rules() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut rules = std::collections::HashMap::new();
         rules.insert(
             "title".to_string(),
@@ -491,6 +506,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_with_model() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"urls":["https://example.com"],"prompt":"test","model":"gpt-4"}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.model.as_deref(), Some("gpt-4"));
@@ -498,6 +514,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_full_payload() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{
             "urls": ["https://a.com", "https://b.com"],
             "prompt": "Extract data",
@@ -516,6 +533,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_minimal_with_only_schema() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"urls":["https://example.com"],"schema":{"type":"object"}}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.prompt.is_none());
@@ -525,6 +543,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_minimal_with_only_rules() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"urls":["https://example.com"],"rules":{}}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.prompt.is_none());
@@ -535,6 +554,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_no_extraction_method() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"urls":["https://example.com"]}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.prompt.is_none());
@@ -544,6 +564,7 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_sync_wait_ms_zero() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"urls":["https://example.com"],"prompt":"test","sync_wait_ms":0}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.sync_wait_ms, Some(0));
@@ -554,6 +575,7 @@ mod tests {
 
     #[test]
     fn test_validation_empty_urls_fails() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto = ExtractRequestDto {
             urls: vec![],
             prompt: Some("test".to_string()),
@@ -568,6 +590,7 @@ mod tests {
 
     #[test]
     fn test_validation_no_extraction_method_fails() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: None,
@@ -587,6 +610,7 @@ mod tests {
 
     #[test]
     fn test_validation_has_prompt_passes() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: Some("test".to_string()),
@@ -603,6 +627,7 @@ mod tests {
 
     #[test]
     fn test_validation_has_schema_passes() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: None,
@@ -618,6 +643,7 @@ mod tests {
 
     #[test]
     fn test_validation_has_rules_passes() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: None,
@@ -633,6 +659,7 @@ mod tests {
 
     #[test]
     fn test_validation_sync_wait_ms_at_max_passes() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // MAX_SYNC_WAIT_MS is 30000
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
@@ -649,6 +676,7 @@ mod tests {
 
     #[test]
     fn test_validation_sync_wait_ms_exceeds_max() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: Some("test".to_string()),
@@ -666,6 +694,7 @@ mod tests {
 
     #[test]
     fn test_task_construction_for_extract() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Verify that a Task with Extract type can be constructed (mirrors handler logic)
         let task_id = Uuid::new_v4();
         let team_id = Uuid::new_v4();
@@ -702,16 +731,19 @@ mod tests {
 
     #[test]
     fn test_extract_task_credits_cost() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(crawl_task::EXTRACT_TASK_CREDITS_COST, 8);
     }
 
     #[test]
     fn test_scrape_task_credits_cost() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(crawl_task::SCRAPE_TASK_CREDITS_COST, 5);
     }
 
     #[test]
     fn test_crawl_task_credits_cost() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(crawl_task::CRAWL_TASK_CREDITS_COST, 10);
     }
 
@@ -719,6 +751,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_response_builds_correct_status() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         use axum::body::to_bytes;
         let response = error_response(StatusCode::BAD_REQUEST, "test error");
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -730,6 +763,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_response_internal_server_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         use axum::body::to_bytes;
         let response = error_response(StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong");
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
@@ -740,6 +774,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_response_forbidden() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let response = error_response(
             StatusCode::FORBIDDEN,
             "Access denied due to geographic restrictions: blocked region",
@@ -1133,6 +1168,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_empty_urls_returns_bad_request() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1169,6 +1205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_no_extraction_method_returns_bad_request() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1205,6 +1242,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_repo_error_returns_internal_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::failing_get());
@@ -1231,6 +1269,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_sync_wait_ms_exceeds_max_returns_bad_request() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1267,6 +1306,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_denied_returns_forbidden() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         // Enable geo restrictions and block "US"
@@ -1311,6 +1351,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_validation_error_returns_internal_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         // Enable geo restrictions so that validate_geographic_restriction
@@ -1346,6 +1387,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_success_returns_created() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1378,6 +1420,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_with_sync_wait_returns_accepted() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1417,6 +1460,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_enqueue_failure_returns_internal_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::failing());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1445,6 +1489,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_allowed_country_passes_geo_check() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Enable geo restrictions but the client's country is in allowed list
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1481,6 +1526,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_ip_whitelist_bypasses_country_check() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // IP in whitelist should be allowed regardless of country rules
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1519,6 +1565,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_allowed_with_failing_log() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Allowed path where log_geo_restriction_action returns Err — covers
         // the error! branch on the Allowed arm (line 107).
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1552,6 +1599,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_denied_with_failing_log() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Denied path where log_geo_restriction_action returns Err — covers
         // the error! branch on the Denied arm (line 122).
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1589,6 +1637,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_sync_wait_with_query_failure() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // sync_wait_ms > 0 but query_tasks fails → wait_for_tasks_completion
         // returns Err — covers the error! branch on the wait arm (lines 192-193).
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1634,6 +1683,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_sync_wait_completes_returns_created() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // sync_wait_ms > 0 and wait_for_tasks_completion returns Ok quickly
         // (task is already Completed on first poll) → waited_time_ms <
         // sync_wait_ms → CREATED (not ACCEPTED). Covers the Ok arm where
@@ -1707,40 +1757,18 @@ mod tests {
     // uncovered. We install a no-op CapturingLogger at Error level so the
     // format args are evaluated (and thus counted as covered).
 
-    use log::{LevelFilter, Log, Metadata, Record};
-    use std::sync::Once;
-
-    static LOGGER_INIT: Once = Once::new();
-
-    struct CapturingLogger;
-
-    impl Log for CapturingLogger {
-        fn enabled(&self, metadata: &Metadata) -> bool {
-            metadata.level() <= log::Level::Error
-        }
-        fn log(&self, _record: &Record) {}
-        fn flush(&self) {}
-    }
-
-    /// Install a global error-level logger so `log::error!` format arguments
-    /// in the extract handler are evaluated and counted as covered.
-    fn ensure_error_logger() {
-        LOGGER_INIT.call_once(|| {
-            static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
-            let _ = log::set_logger(&CAPTURING_LOGGER);
-            log::set_max_level(LevelFilter::Error);
-        });
-    }
+    use crate::test_utils::ensure_debug_logger;
 
     // ========== Log-evaluated handler tests ==========
-    // These tests call `ensure_error_logger()` so that `log::error!` format
+    // These tests call `ensure_debug_logger()` so that `log::error!` format
     // args are evaluated, covering the error! lines (72, 107, 122, 131, 193)
     // and the surrounding error_response lines in the handler.
 
     #[tokio::test]
     async fn test_extract_no_extraction_method_log_evaluated() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Covers error_response lines 60-61 (Either prompt, schema, or rules).
-        ensure_error_logger();
+        ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1777,8 +1805,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_repo_error_log_evaluated() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Covers error! line 72 + error_response lines 74-75.
-        ensure_error_logger();
+        ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::failing_get());
@@ -1805,8 +1834,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_sync_wait_ms_exceeds_max_log_evaluated() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Covers error_response line 84 (sync_wait_ms must be <= MAX).
-        ensure_error_logger();
+        ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1843,9 +1873,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_denied_log_evaluated() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Covers error_response line 126 (Access denied due to geographic
         // restrictions).
-        ensure_error_logger();
+        ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let restrictions = TeamGeoRestrictions {
@@ -1881,8 +1912,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_validation_error_log_evaluated() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Covers error! line 131 + error_response lines 133-134.
-        ensure_error_logger();
+        ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let restrictions = TeamGeoRestrictions {
@@ -1916,10 +1948,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_sync_wait_log_evaluated() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Covers line 185 (BASE_POLL_INTERVAL_MS argument) + error! line 193
         // when wait_for_tasks_completion fails. Uses a failing query repo so
         // the wait path exercises the Err arm.
-        ensure_error_logger();
+        ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::failing_query());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1956,8 +1989,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_enqueue_failure_log_evaluated() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Covers error_response line 213 (enqueue failure path).
-        ensure_error_logger();
+        ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::failing());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(

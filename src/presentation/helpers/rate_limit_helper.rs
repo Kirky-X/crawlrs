@@ -10,12 +10,13 @@
 
 use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
 use crate::presentation::errors::CrawlRsError;
+use crate::presentation::middleware::rate_limit_middleware::RATE_LIMIT_FAIL_OPEN;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
-use log::error;
+use log::{error, warn};
 use serde_json::json;
 use std::fmt::Display;
 
@@ -30,13 +31,10 @@ use std::fmt::Display;
 /// 若要真正消除分配，需要 `RateLimitingService::check_rate_limit` 接受 `&dyn Display`
 /// 或泛型 `K: Display`，但这会污染 trait 接口。当前实现是可读性与性能的折中。
 ///
-/// 安全 LOW-3（fail-open 监控建议）：当 `service.check_rate_limit` 返回 `Err(e)` 时，
-/// 本 helper 采用 **fail-open** 策略 — 返回 `Ok(())` 让请求通过。
-/// 这是可用性优先于安全的折中（限流服务故障不应阻断正常业务流量），
-/// 但要求生产环境必须监控 `Rate limiting service error` 日志（error! 级别），
-/// 并设置告警阈值（如 1 分钟内 >= 5 次即告警），避免 fail-open 被长期利用绕过限流。
-/// 进阶建议：将 fail-open 计数暴露到 metrics（如 Prometheus `rate_limit_fail_open_total`），
-/// 配合 SLO 告警（如 fail-open 比例 > 1% 即触发）。
+/// 安全策略（与 `rate_limit_middleware` 函数一致）：当 `service.check_rate_limit` 返回
+/// `Err(e)` 时，行为由 `RATE_LIMIT_FAIL_OPEN` 环境变量控制（默认 false = fail-closed）。
+/// fail-closed 时返回 503 Service Unavailable；fail-open 时放行请求并记录 warn 日志。
+/// 生产环境必须监控 `Rate limiting service error` 日志并设置告警阈值。
 ///
 /// # Arguments
 ///
@@ -74,11 +72,31 @@ where
             })),
         )
             .into_response()),
+        Ok(RateLimitResult::Allowed) => Ok(()),
         Err(e) => {
-            error!("Rate limiting service error: {}", e);
-            Ok(())
+            if *RATE_LIMIT_FAIL_OPEN {
+                warn!(
+                    "Rate limiting service error - failing open (allowing request). \
+                     error={} endpoint={}",
+                    e, endpoint
+                );
+                Ok(())
+            } else {
+                error!(
+                    "Rate limiting service error - failing closed (rejecting request). \
+                     error={} endpoint={}",
+                    e, endpoint
+                );
+                Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({
+                        "success": false,
+                        "error": "Rate limiting service is temporarily unavailable. Please try again later."
+                    })),
+                )
+                    .into_response())
+            }
         }
-        _ => Ok(()),
     }
 }
 
@@ -88,6 +106,10 @@ where
 ///
 /// 性能 LOW-3（注释修正）：同 `check_rate_limit`，`impl Display` 未消除分配，
 /// 仅把分配从 handler 挪到 helper。详见 `check_rate_limit` 文档。
+///
+/// 安全策略（与 `rate_limit_middleware` 函数一致）：当 `service.check_rate_limit` 返回
+/// `Err(e)` 时，行为由 `RATE_LIMIT_FAIL_OPEN` 环境变量控制（默认 false = fail-closed）。
+/// fail-closed 时返回 `CrawlRsError::ServiceUnavailable`；fail-open 时放行并记录 warn 日志。
 ///
 /// # Arguments
 ///
@@ -99,6 +121,7 @@ where
 ///
 /// * `Ok(())` - Rate limit check passed
 /// * `Err(CrawlRsError::RateLimit)` - Rate limit exceeded
+/// * `Err(CrawlRsError::ServiceUnavailable)` - Rate limiting service error (fail-closed)
 pub async fn check_rate_limit_as_app_error<T, K>(
     service: &T,
     api_key: K,
@@ -120,11 +143,27 @@ where
             "Rate limit exceeded, please retry after {} seconds",
             retry_after_seconds
         ))),
+        Ok(RateLimitResult::Allowed) => Ok(()),
         Err(e) => {
-            error!("Rate limiting service error: {}", e);
-            Ok(())
+            if *RATE_LIMIT_FAIL_OPEN {
+                warn!(
+                    "Rate limiting service error - failing open (allowing request). \
+                     error={} endpoint={}",
+                    e, endpoint
+                );
+                Ok(())
+            } else {
+                error!(
+                    "Rate limiting service error - failing closed (rejecting request). \
+                     error={} endpoint={}",
+                    e, endpoint
+                );
+                Err(CrawlRsError::ServiceUnavailable(
+                    "Rate limiting service is temporarily unavailable. Please try again later."
+                        .to_string(),
+                ))
+            }
         }
-        _ => Ok(()),
     }
 }
 
@@ -342,15 +381,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_rate_limit_error_fails_open() {
-        // When the rate limiting service returns an error, the helper fails open
-        // (returns Ok) per the fail-open security policy.
+    async fn test_check_rate_limit_error_fails_closed() {
+        // Default behavior (RATE_LIMIT_FAIL_OPEN=false): service error returns 503.
         let service = MockRateLimitingService::with_error();
         let result = check_rate_limit(&service, "test-key", "/v1/test").await;
         assert!(
-            result.is_ok(),
-            "fail-open should return Ok on service error"
+            result.is_err(),
+            "fail-closed should return Err on service error"
         );
+        let response = result.unwrap_err();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
             service.call_count.load(Ordering::SeqCst),
             1,
@@ -403,14 +443,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_app_error_service_error_fails_open() {
-        // Fail-open: service error returns Ok, not CrawlRsError.
+    async fn test_app_error_service_error_fails_closed() {
+        // Default fail-closed: service error returns CrawlRsError::ServiceUnavailable.
         let service = MockRateLimitingService::with_error();
         let result = check_rate_limit_as_app_error(&service, "test-key", "/v1/test").await;
-        assert!(
-            result.is_ok(),
-            "fail-open should return Ok on service error"
-        );
+        let err = result.expect_err("fail-closed should return Err on service error");
+        assert_eq!(err.status_code(), StatusCode::SERVICE_UNAVAILABLE);
+        match err {
+            CrawlRsError::ServiceUnavailable(msg) => {
+                assert!(msg.contains("temporarily unavailable"));
+            }
+            other => panic!("expected CrawlRsError::ServiceUnavailable, got {:?}", other),
+        }
     }
 
     #[tokio::test]
@@ -543,11 +587,13 @@ mod tests {
     // ===== Supplementary tests: error variant coverage and boundary cases =====
 
     #[tokio::test]
-    async fn test_check_rate_limit_fail_open_on_credits_error() {
-        // Fail-open must hold for all RateLimitingError variants, not just DatabaseError.
+    async fn test_check_rate_limit_fails_closed_on_credits_error() {
+        // Fail-closed must hold for all RateLimitingError variants (default behavior).
         let service = MockRateLimitingService::with_error_kind(MockError::Credits);
         let result = check_rate_limit(&service, "k", "/v1/test").await;
-        assert!(result.is_ok(), "CreditsError should fail-open");
+        assert!(result.is_err(), "CreditsError should fail-closed");
+        let response = result.unwrap_err();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
             service.call_count.load(Ordering::SeqCst),
             1,
@@ -556,38 +602,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_rate_limit_fail_open_on_configuration_error() {
+    async fn test_check_rate_limit_fails_closed_on_configuration_error() {
         let service = MockRateLimitingService::with_error_kind(MockError::Configuration);
         let result = check_rate_limit(&service, "k", "/v1/test").await;
-        assert!(result.is_ok(), "ConfigurationError should fail-open");
+        assert!(result.is_err(), "ConfigurationError should fail-closed");
+        let response = result.unwrap_err();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]
-    async fn test_check_rate_limit_fail_open_on_other_error() {
+    async fn test_check_rate_limit_fails_closed_on_other_error() {
         let service = MockRateLimitingService::with_error_kind(MockError::Other);
         let result = check_rate_limit(&service, "k", "/v1/test").await;
-        assert!(result.is_ok(), "Other error should fail-open");
+        assert!(result.is_err(), "Other error should fail-closed");
+        let response = result.unwrap_err();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]
-    async fn test_app_error_fail_open_on_credits_error() {
-        // check_rate_limit_as_app_error must also fail-open on non-DatabaseError variants.
+    async fn test_app_error_fails_closed_on_credits_error() {
+        // check_rate_limit_as_app_error must also fail-closed on non-DatabaseError variants.
         let service = MockRateLimitingService::with_error_kind(MockError::Credits);
         let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
-        assert!(
-            result.is_ok(),
-            "CreditsError should fail-open in app_error path"
-        );
+        let err = result.expect_err("CreditsError should fail-closed in app_error path");
+        assert_eq!(err.status_code(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]
-    async fn test_app_error_fail_open_on_other_error() {
+    async fn test_app_error_fails_closed_on_other_error() {
         let service = MockRateLimitingService::with_error_kind(MockError::Other);
         let result = check_rate_limit_as_app_error(&service, "k", "/v1/test").await;
-        assert!(
-            result.is_ok(),
-            "Other error should fail-open in app_error path"
-        );
+        let err = result.expect_err("Other error should fail-closed in app_error path");
+        assert_eq!(err.status_code(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     // ===== Boundary values: empty reason / zero / max seconds =====

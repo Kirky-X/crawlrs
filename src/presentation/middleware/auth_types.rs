@@ -243,6 +243,7 @@ mod tests {
     /// AuthState::new 应正确填充所有字段。
     #[test]
     fn test_auth_state_new_populates_fields() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let pool = crate::common::test_helpers::create_test_db_pool();
         let team_id = Uuid::new_v4();
         let api_key_id = Uuid::new_v4();
@@ -258,6 +259,7 @@ mod tests {
     /// AuthState 应可 Clone（请求 extensions 注入需要）。
     #[test]
     fn test_auth_state_is_clone() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let pool = crate::common::test_helpers::create_test_db_pool();
         let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
         let cloned = state.clone();
@@ -269,6 +271,7 @@ mod tests {
     /// LOW-3 修复后：pool 字段显式占位为 "<DbPool>"，但不应包含连接串/数据库 URL 等内部细节。
     #[test]
     fn test_auth_state_debug_does_not_leak_pool_internals() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let pool = crate::common::test_helpers::create_test_db_pool();
         let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
         let debug = format!("{:?}", state);
@@ -283,6 +286,7 @@ mod tests {
     /// AuthError::InvalidKey 应转换为 401。
     #[test]
     fn test_auth_error_invalid_key_is_unauthorized() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         use axum::http::StatusCode;
         let response = AuthError::InvalidKey.into_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -291,6 +295,7 @@ mod tests {
     /// AuthError::Forbidden 应转换为 403。
     #[test]
     fn test_auth_error_forbidden_is_forbidden() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         use axum::http::StatusCode;
         let response = AuthError::Forbidden("NOT_PERMISSION".to_string()).into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -299,6 +304,7 @@ mod tests {
     /// AuthError::RateLimited 应转换为 429。
     #[test]
     fn test_auth_error_rate_limited_is_too_many_requests() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         use axum::http::StatusCode;
         let response = AuthError::RateLimited.into_response();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -307,6 +313,7 @@ mod tests {
     /// AuthError::InvalidLoginId 应转换为 400。
     #[test]
     fn test_auth_error_invalid_login_id_is_bad_request() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         use axum::http::StatusCode;
         let response = AuthError::InvalidLoginId("not-a-uuid".to_string()).into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -315,6 +322,7 @@ mod tests {
     /// AuthError::InternalError 应转换为 500。
     #[test]
     fn test_auth_error_internal_error_is_server_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         use axum::http::StatusCode;
         let response = AuthError::InternalError("DAO_ERROR".to_string()).into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);

@@ -161,6 +161,7 @@ mod tests {
 
     #[test]
     fn test_audit_logs_query_empty() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let query = serde_urlencoded::from_str::<AuditLogsQuery>("").unwrap();
         assert!(query.limit.is_none());
         assert!(query.offset.is_none());
@@ -170,6 +171,7 @@ mod tests {
 
     #[test]
     fn test_audit_logs_query_with_limit_and_offset() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let query_str = "limit=50&offset=100";
         let query = serde_urlencoded::from_str::<AuditLogsQuery>(query_str).unwrap();
         assert_eq!(query.limit, Some(50));
@@ -178,6 +180,7 @@ mod tests {
 
     #[test]
     fn test_audit_logs_query_with_api_key_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
         let query_str = format!("api_key_id={}", uuid_str);
         let query = serde_urlencoded::from_str::<AuditLogsQuery>(&query_str).unwrap();
@@ -187,6 +190,7 @@ mod tests {
 
     #[test]
     fn test_audit_logs_query_with_team_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
         let query_str = format!("team_id={}", uuid_str);
         let query = serde_urlencoded::from_str::<AuditLogsQuery>(&query_str).unwrap();
@@ -195,6 +199,7 @@ mod tests {
 
     #[test]
     fn test_audit_logs_query_with_all_params() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
         let query_str = format!(
             "limit=10&offset=20&api_key_id={}&team_id={}",
@@ -209,6 +214,7 @@ mod tests {
 
     #[test]
     fn test_audit_logs_query_invalid_uuid_fails() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let query_str = "api_key_id=not-a-uuid";
         let result = serde_urlencoded::from_str::<AuditLogsQuery>(query_str);
         assert!(result.is_err());
@@ -216,6 +222,7 @@ mod tests {
 
     #[test]
     fn test_audit_logs_query_invalid_limit_fails() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let query_str = "limit=abc";
         let result = serde_urlencoded::from_str::<AuditLogsQuery>(query_str);
         assert!(result.is_err());
@@ -225,6 +232,7 @@ mod tests {
 
     #[test]
     fn test_audit_logs_response_dto_empty() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto: AuditLogsResponseDto<serde_json::Value> = AuditLogsResponseDto { logs: vec![] };
         let json = serde_json::to_string(&dto).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -233,6 +241,7 @@ mod tests {
 
     #[test]
     fn test_audit_logs_response_dto_with_string_logs() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto: AuditLogsResponseDto<&str> = AuditLogsResponseDto {
             logs: vec!["log entry 1", "log entry 2"],
         };
@@ -245,6 +254,7 @@ mod tests {
 
     #[test]
     fn test_audit_logs_response_dto_with_json_logs() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![
             serde_json::json!({"action": "read", "resource": "task"}),
             serde_json::json!({"action": "write", "resource": "webhook"}),
@@ -260,6 +270,7 @@ mod tests {
 
     #[test]
     fn test_denied_requests_response_dto_empty() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto: DeniedRequestsResponseDto<serde_json::Value> = DeniedRequestsResponseDto {
             denied_requests: vec![],
         };
@@ -270,6 +281,7 @@ mod tests {
 
     #[test]
     fn test_denied_requests_response_dto_with_entries() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let dto = DeniedRequestsResponseDto {
             denied_requests: vec![
                 serde_json::json!({"reason": "rate limited", "ip": "1.2.3.4"}),
@@ -287,17 +299,20 @@ mod tests {
 
     #[test]
     fn test_default_page_limit_value() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(server_config::DEFAULT_PAGE_LIMIT, 100);
     }
 
     #[test]
     fn test_max_page_limit_value() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(server_config::MAX_PAGE_LIMIT, 1000);
     }
 
     #[test]
     #[allow(clippy::assertions_on_constants)]
     fn test_default_page_limit_less_than_max() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert!(server_config::DEFAULT_PAGE_LIMIT < server_config::MAX_PAGE_LIMIT);
     }
 
@@ -467,6 +482,7 @@ mod tests {
 
     #[test]
     fn test_branch_selects_api_key_when_api_key_id_present() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
@@ -478,6 +494,7 @@ mod tests {
 
     #[test]
     fn test_branch_selects_team_when_only_team_id_present() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
@@ -490,6 +507,7 @@ mod tests {
 
     #[test]
     fn test_branch_falls_back_to_auth_state_when_neither_present() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
@@ -502,6 +520,7 @@ mod tests {
 
     #[test]
     fn test_branch_api_key_takes_priority_over_team_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let query = AuditLogsQuery {
             limit: None,
             offset: None,
@@ -528,6 +547,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_by_api_key_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![
             sample_entry("search", AuditDecision::Allow),
             sample_entry("scrape", AuditDecision::Allow),
@@ -557,6 +577,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_by_team_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         let team_id = Uuid::new_v4();
@@ -583,6 +604,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_fallback_to_auth_state_api_key() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("extract", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         let auth_state = make_auth_state();
@@ -608,6 +630,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_api_key_takes_priority_over_team_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         let auth_state = make_admin_auth_state();
@@ -633,6 +656,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_error_returns_internal_server_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mock = Arc::new(MockAuditService::failing());
         let auth_state = make_admin_auth_state();
         let query = AuditLogsQuery {
@@ -657,6 +681,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_error_on_team_branch() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mock = Arc::new(MockAuditService::failing());
         let auth_state = make_admin_auth_state();
         let query = AuditLogsQuery {
@@ -681,6 +706,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_error_on_fallback_branch() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mock = Arc::new(MockAuditService::failing());
         let auth_state = make_auth_state();
         let query = AuditLogsQuery {
@@ -705,6 +731,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_empty_logs() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mock = Arc::new(MockAuditService::new(vec![]));
         let auth_state = make_admin_auth_state();
         let query = AuditLogsQuery {
@@ -729,6 +756,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_limit_clamped_to_max() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         let auth_state = make_admin_auth_state();
@@ -759,6 +787,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_idor_blocks_other_api_key_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         // 非 Admin 用户，查询其他 api_key_id → 403
@@ -785,6 +814,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_idor_blocks_other_team_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         // 非 Admin 用户，查询其他 team_id → 403
@@ -811,6 +841,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_non_admin_can_query_own_api_key_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         // 非 Admin 用户查询自身 api_key_id → 200（自有数据路径）
@@ -838,6 +869,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_non_admin_can_query_own_team_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         // 非 Admin 用户查询自身 team_id → 200（自有数据路径）
@@ -865,6 +897,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_admin_can_query_other_api_key_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         // Admin 用户查询其他 api_key_id → 200（管理员特权）
@@ -891,6 +924,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_admin_can_query_other_team_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         // Admin 用户查询其他 team_id → 200（管理员特权）
@@ -917,6 +951,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_audit_logs_idor_combo_own_key_other_team() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         // 非 Admin 用户：自有 api_key_id + 他人 team_id → 403（team_id 检查拦截）
@@ -946,6 +981,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_denied_requests_success() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let denied = vec![
             sample_entry("search", AuditDecision::Deny),
             sample_entry("scrape", AuditDecision::Deny),
@@ -963,6 +999,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_denied_requests_error_returns_internal_server_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mock = Arc::new(MockAuditService::failing());
         let auth_state = make_auth_state();
         let query = DeniedRequestsQuery { limit: Some(10) };
@@ -976,6 +1013,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_denied_requests_empty() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mock = Arc::new(MockAuditService::new(vec![]));
         let auth_state = make_auth_state();
         let query = DeniedRequestsQuery { limit: Some(10) };
@@ -989,6 +1027,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_denied_requests_limit_clamped() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let denied = vec![sample_entry("search", AuditDecision::Deny)];
         let mock = Arc::new(MockAuditService::new(denied));
         let auth_state = make_auth_state();
@@ -1003,6 +1042,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_denied_requests_uses_auth_state_api_key_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let api_key_id = Uuid::new_v4();
         let denied = vec![sample_entry("search", AuditDecision::Deny)];
         let mock = Arc::new(MockAuditService::new(denied));
@@ -1018,6 +1058,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_denied_requests_with_allow_entries_filters() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let entries = vec![
             sample_entry("search", AuditDecision::Deny),
             sample_entry("search", AuditDecision::Allow),

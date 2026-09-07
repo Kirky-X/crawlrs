@@ -218,6 +218,7 @@ mod tests {
 
     #[test]
     fn test_extract_client_ip_none_without_remote_addr() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // No remote_addr and no ConnectInfo extension → cannot determine IP
         let request = build_request();
         assert_eq!(extract_client_ip(&request, None), None);
@@ -225,6 +226,7 @@ mod tests {
 
     #[test]
     fn test_extract_client_ip_uses_direct_public_ip() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // A public (non-trusted) remote address should be used directly
         let request = build_request();
         let remote = socket_addr("8.8.8.8", 443);
@@ -236,6 +238,7 @@ mod tests {
 
     #[test]
     fn test_extract_client_ip_ignores_forwarded_from_untrusted() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Security: X-Forwarded-For must be ignored when the direct connection
         // is NOT from a trusted proxy.
         let request = build_request_with_forwarded(Some("203.0.113.5"), None);
@@ -248,6 +251,7 @@ mod tests {
 
     #[test]
     fn test_extract_client_ip_trusted_proxy_falls_back_to_direct() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // 127.0.0.1 is a trusted proxy; with no forwarded headers it falls
         // back to the direct IP.
         let request = build_request();
@@ -260,6 +264,7 @@ mod tests {
 
     #[test]
     fn test_extract_client_ip_trusted_proxy_uses_x_forwarded_for() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // From a trusted proxy, X-Forwarded-For should be honored.
         let request = build_request_with_forwarded(Some("203.0.113.5"), None);
         let remote = socket_addr("127.0.0.1", 8080);
@@ -271,6 +276,7 @@ mod tests {
 
     #[test]
     fn test_extract_client_ip_trusted_proxy_uses_x_real_ip() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // From a trusted proxy, X-Real-IP should be honored as a fallback.
         let request = build_request_with_forwarded(None, Some("203.0.113.9"));
         let remote = socket_addr("127.0.0.1", 8080);
@@ -282,6 +288,7 @@ mod tests {
 
     #[test]
     fn test_extract_client_ip_x_forwarded_for_takes_first_ip() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // X-Forwarded-For: client, proxy1, proxy2 → first IP (client) wins.
         let request = build_request_with_forwarded(Some("203.0.113.5, 10.0.0.1, 10.0.0.2"), None);
         let remote = socket_addr("127.0.0.1", 8080);
@@ -293,6 +300,7 @@ mod tests {
 
     #[test]
     fn test_extract_client_ip_trusted_proxy_10_x() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // 10.x.x.x is a trusted proxy range by default.
         let request = build_request_with_forwarded(Some("198.51.100.7"), None);
         let remote = socket_addr("10.0.0.1", 8080);
@@ -305,12 +313,14 @@ mod tests {
     #[test]
     #[allow(clippy::assertions_on_constants)]
     fn test_rate_limit_fail_open_constant() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // The fail-open default must be true (availability over strictness).
         assert!(RATE_LIMIT_FAIL_OPEN);
     }
 
     #[tokio::test]
     async fn test_limiteron_middleware_state_clone_preserves_governor() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Clone must share the same Governor Arc.
         use limiteron::config::{Action, ActionConfig, GlobalConfig, LimiterConfig, Matcher, Rule};
 
@@ -509,6 +519,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_public_endpoints_bypass_rate_limiting() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_test_governor().await;
         let state = LimiteronMiddlewareState { governor };
 
@@ -529,6 +540,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_public_endpoint_prefix_bypass_rate_limiting() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_test_governor().await;
         let state = LimiteronMiddlewareState { governor };
 
@@ -549,6 +561,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_protected_request_passes_through_when_allowed() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_test_governor().await;
         let state = LimiteronMiddlewareState { governor };
 
@@ -569,6 +582,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_limit_exceeded_returns_429() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_governor_with_ip_capacity(1, 1).await;
         let state = LimiteronMiddlewareState { governor };
 
@@ -600,6 +614,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_429_response_body_contains_rate_limit_message() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_governor_with_ip_capacity(1, 1).await;
         let state = LimiteronMiddlewareState { governor };
 
@@ -638,6 +653,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_api_key_extension_is_read_into_context() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_test_governor().await;
         let state = LimiteronMiddlewareState { governor };
 
@@ -662,6 +678,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_info_provides_client_ip() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_test_governor().await;
         let state = LimiteronMiddlewareState { governor };
 
@@ -686,6 +703,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bearer_token_request_is_processed() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_test_governor().await;
         let state = LimiteronMiddlewareState { governor };
 
@@ -715,6 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_governor_check_allows_first_request() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_test_governor().await;
 
         let context = RequestContext {
@@ -749,6 +768,7 @@ mod tests {
 
     #[tokio::test]
     async fn tc_banned_request_returns_403_forbidden() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_banning_governor().await;
         governor
             .ban_identifier(
@@ -791,6 +811,7 @@ mod tests {
 
     #[tokio::test]
     async fn tc_banned_response_body_contains_ban_reason() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_banning_governor().await;
         governor
             .ban_identifier(
@@ -838,6 +859,7 @@ mod tests {
 
     #[tokio::test]
     async fn tc_auth_state_extension_provides_user_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         use crate::domain::auth::ApiKeyScope;
         use crate::presentation::middleware::auth_middleware::AuthState;
         use uuid::Uuid;
@@ -869,6 +891,7 @@ mod tests {
 
     #[tokio::test]
     async fn tc_auth_state_and_api_key_both_present_still_allowed() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         use crate::domain::auth::ApiKeyScope;
         use crate::presentation::middleware::auth_middleware::AuthState;
         use uuid::Uuid;
@@ -901,6 +924,7 @@ mod tests {
 
     #[tokio::test]
     async fn tc_api_key_alone_populates_headers_without_user_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let governor = create_test_governor().await;
         let state = LimiteronMiddlewareState { governor };
 

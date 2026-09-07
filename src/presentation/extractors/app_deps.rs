@@ -338,6 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_extracts_all_fields() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut parts = make_parts_with_extensions();
         let result = AppDeps::from_request_parts(&mut parts, &()).await;
         assert!(result.is_ok(), "AppDeps should extract successfully");
@@ -345,6 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_missing_task_queue_returns_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
         parts
@@ -369,6 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_missing_settings_returns_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
         parts
@@ -393,6 +396,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_missing_task_repo_returns_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
         parts
@@ -417,6 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_missing_rate_limit_returns_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
         parts
@@ -441,6 +446,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_missing_auth_state_returns_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
         parts
@@ -462,6 +468,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_empty_extensions_returns_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
 
@@ -471,6 +478,7 @@ mod tests {
 
     #[test]
     fn test_app_deps_clone() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let deps = AppDeps {
             queue: Arc::new(MockTaskQueue),
             settings: Arc::new(Settings::default()),
@@ -490,6 +498,7 @@ mod tests {
 
     #[test]
     fn test_app_deps_struct_fields_accessible() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let deps = AppDeps {
             queue: Arc::new(MockTaskQueue),
             settings: Arc::new(Settings::default()),
