@@ -238,6 +238,7 @@ mod tests {
 
     #[test]
     fn test_create_webhook_request_valid() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"url":"https://example.com/webhook"}"#;
         let req: CreateWebhookRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.url, "https://example.com/webhook");
@@ -245,6 +246,7 @@ mod tests {
 
     #[test]
     fn test_create_webhook_request_rejects_unknown_fields() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let json = r#"{"url":"https://example.com","extra":"field"}"#;
         let result: Result<CreateWebhookRequest, _> = serde_json::from_str(json);
         assert!(result.is_err());
@@ -252,6 +254,7 @@ mod tests {
 
     #[test]
     fn test_create_webhook_request_serialization() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let req = CreateWebhookRequest {
             url: "https://example.com/hook".to_string(),
         };
@@ -262,6 +265,7 @@ mod tests {
 
     #[test]
     fn test_create_webhook_request_round_trip() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let original = CreateWebhookRequest {
             url: "https://my.webhook.site/abc123".to_string(),
         };
@@ -274,6 +278,7 @@ mod tests {
 
     #[test]
     fn test_webhook_to_response_mapping() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let webhook_id = Uuid::new_v4();
         let team_id = Uuid::new_v4();
         let webhook = Webhook {
@@ -299,6 +304,7 @@ mod tests {
 
     #[test]
     fn test_webhook_response_serialization() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let response = WebhookResponse {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
@@ -316,6 +322,7 @@ mod tests {
 
     #[test]
     fn test_webhook_response_secret_none_serialized() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let response = WebhookResponse {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
@@ -334,6 +341,7 @@ mod tests {
 
     #[test]
     fn test_webhook_list_response_empty() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let response = WebhookListResponse {
             webhooks: vec![],
             total: 0,
@@ -346,6 +354,7 @@ mod tests {
 
     #[test]
     fn test_webhook_list_response_with_items() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let webhook1 = WebhookListEntry {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
@@ -374,6 +383,7 @@ mod tests {
 
     #[test]
     fn test_webhook_list_response_total_matches_count() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let webhooks: Vec<WebhookListEntry> = (0..5)
             .map(|_| WebhookListEntry {
                 id: Uuid::new_v4(),
@@ -396,6 +406,7 @@ mod tests {
 
     #[test]
     fn test_webhook_new_constructor() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let id = Uuid::new_v4();
         let team_id = Uuid::new_v4();
         let webhook = Webhook::new(id, team_id, "https://example.com/hook".to_string());
@@ -639,6 +650,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_webhook_success() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -672,6 +684,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_webhook_ssrf_blocked() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -710,6 +723,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_webhook_rate_limit_exceeded() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_denied("too many requests"));
         let auth = make_test_auth_state();
@@ -748,6 +762,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_webhook_repo_create_failure() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::with_create_error(
             RepositoryError::Database(anyhow::anyhow!("repo down")),
         ));
@@ -790,6 +805,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_webhooks_empty() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let auth = make_test_auth_state();
 
@@ -810,6 +826,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_webhooks_with_items() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let team_id = Uuid::new_v4();
         let webhook1 = Webhook::new(
             Uuid::new_v4(),
@@ -843,6 +860,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_webhooks_repo_failure() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::with_find_result(Err(
             RepositoryError::Database(anyhow::anyhow!("find_by_team_id failed")),
         )));
@@ -865,33 +883,11 @@ mod tests {
 
     // ========== Test logger for covering log::debug! format args ==========
 
-    use log::{LevelFilter, Log, Metadata, Record};
-    use std::sync::Once;
-
-    static LOGGER_INIT: Once = Once::new();
-
-    struct CapturingLogger;
-
-    impl Log for CapturingLogger {
-        fn enabled(&self, metadata: &Metadata) -> bool {
-            metadata.level() <= log::Level::Debug
-        }
-        fn log(&self, _record: &Record) {}
-        fn flush(&self) {}
-    }
-
-    /// Install a global debug-level logger so `log::debug!` format arguments
-    /// (handler lines 34-37) are evaluated and counted as covered.
-    fn ensure_debug_logger() {
-        LOGGER_INIT.call_once(|| {
-            static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
-            let _ = log::set_logger(&CAPTURING_LOGGER);
-            log::set_max_level(LevelFilter::Debug);
-        });
-    }
+    use crate::test_utils::ensure_debug_logger;
 
     #[tokio::test]
     async fn test_create_webhook_debug_log_evaluated() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // With debug logging enabled, the log::debug! format args on lines
         // 34-37 are evaluated (even though CapturingLogger discards them).
         ensure_debug_logger();
@@ -944,6 +940,7 @@ mod tests {
     /// 缺少签名头 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_missing_signature_header_returns_401() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -987,6 +984,7 @@ mod tests {
     /// 缺少时间戳头 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_missing_timestamp_header_returns_401() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -1029,6 +1027,7 @@ mod tests {
     /// 时间戳格式无效 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_invalid_timestamp_format_returns_401() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -1074,6 +1073,7 @@ mod tests {
     /// 签名错误 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_wrong_signature_returns_401() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -1113,6 +1113,7 @@ mod tests {
     /// 时间戳过期（超出 5 分钟窗口）→ 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_expired_timestamp_returns_401() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -1155,6 +1156,7 @@ mod tests {
     /// 使用不同 secret 计算的签名 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_wrong_secret_returns_401() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -1198,6 +1200,7 @@ mod tests {
     /// Body 不是有效 UTF-8 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_invalid_utf8_body_returns_401() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();

@@ -91,3 +91,10 @@ pub mod di;
 ///
 /// 提供多语言翻译支持（基于 Mozilla Fluent 系统）
 pub mod i18n;
+
+/// 共享测试工具（仅 `cargo test` 时编译）
+///
+/// 提供 `CapturingLogger` + `ensure_debug_logger()` 等工具，
+/// 消除多个 `#[cfg(test)]` 模块中的重复 logger 定义。
+#[cfg(test)]
+pub mod test_utils;

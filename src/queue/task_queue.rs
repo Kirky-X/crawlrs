@@ -457,28 +457,7 @@ mod tests {
 
     // ========== Test logger for covering debug! macro in dequeue ==========
 
-    use log::{LevelFilter, Log, Metadata, Record};
-    use std::sync::Once;
-
-    static LOGGER_INIT: Once = Once::new();
-
-    struct CapturingLogger;
-
-    impl Log for CapturingLogger {
-        fn enabled(&self, metadata: &Metadata) -> bool {
-            metadata.level() <= log::Level::Debug
-        }
-        fn log(&self, _record: &Record) {}
-        fn flush(&self) {}
-    }
-
-    fn ensure_debug_logger() {
-        LOGGER_INIT.call_once(|| {
-            static CAPTURING_LOGGER: CapturingLogger = CapturingLogger;
-            let _ = log::set_logger(&CAPTURING_LOGGER);
-            log::set_max_level(LevelFilter::Debug);
-        });
-    }
+    use crate::test_utils::ensure_debug_logger;
 
     // ========== debug! coverage tests ==========
 

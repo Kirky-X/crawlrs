@@ -628,31 +628,11 @@ mod tests {
 
     // ---- logger initialization to cover debug! macro argument lines ----
 
-    use std::sync::Once;
-
-    static TEST_LOGGER_INIT: Once = Once::new();
-
-    struct TestLogger;
-    impl log::Log for TestLogger {
-        fn enabled(&self, _: &log::Metadata) -> bool {
-            true
-        }
-        fn log(&self, _: &log::Record) {}
-        fn flush(&self) {}
-    }
-
-    static TEST_LOGGER: TestLogger = TestLogger;
-
-    fn ensure_test_logger() {
-        TEST_LOGGER_INIT.call_once(|| {
-            let _ = log::set_logger(&TEST_LOGGER);
-            log::set_max_level(log::LevelFilter::Debug);
-        });
-    }
+    use crate::test_utils::ensure_debug_logger;
 
     #[tokio::test]
     async fn test_audit_service_log_with_logger_covers_debug_macro_args() {
-        ensure_test_logger();
+        ensure_debug_logger();
         let repo = Arc::new(MockAuditLogRepository::new());
         let service = AuditService::new(repo.clone());
         let entry = sample_entry("search", AuditDecision::Allow);
@@ -664,7 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_service_log_deny_with_logger_covers_debug_macro_args() {
-        ensure_test_logger();
+        ensure_debug_logger();
         let repo = Arc::new(MockAuditLogRepository::new());
         let service = AuditService::new(repo.clone());
         let api_key_id = Uuid::new_v4();
