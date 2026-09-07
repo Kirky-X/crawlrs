@@ -13,8 +13,8 @@
 //! wreq-util 提供了 `Emulation::Chrome131` 便捷枚举，但 **wreq-util 本身是 GPL-3.0**，
 //! 不在 `deny.toml` 的 license 白名单中（`cargo deny check` CI 会拒绝）。因此本引擎
 //! **不引入 wreq-util**，改用 wreq 自有 API（Apache-2.0）：
-//! - `wreq::EmulationProvider`（buildable struct，实现 `EmulationProviderFactory`）
-//! - `wreq::EmulationProviderFactory` trait
+//! - `wreq::Emulation`（buildable struct，通过 `EmulationBuilder` 构建）
+//! - `wreq::IntoEmulation` trait
 //! - `wreq::TlsConfig` / `Http1Config` / `Http2Config`
 //!
 //! 本项目自有枚举 [`TlsEmulation`](crate::utils::ua_pool::TlsEmulation) 经
@@ -44,7 +44,7 @@ use std::time::{Duration, Instant};
 /// 默认代理策略（无 settings 注入时使用）
 const DEFAULT_PROXY_STRATEGY: ProxyStrategy = ProxyStrategy::RoundRobin;
 
-/// 将 [`TlsEmulation`] 映射为 `wreq::EmulationProvider`（Phase 1 / D4）。
+/// 将 [`TlsEmulation`] 映射为 `wreq::Emulation`（Phase 1 / D4）。
 ///
 /// # 许可证
 ///
@@ -52,11 +52,11 @@ const DEFAULT_PROXY_STRATEGY: ProxyStrategy = ProxyStrategy::RoundRobin;
 ///
 /// # 当前保真度
 ///
-/// 全部变体当前解析为 `EmulationProvider::default()`（wreq 内置 Chrome 系浏览器指纹）。
+/// 全部变体当前解析为 `Emulation::default()`（wreq 内置 Chrome 系浏览器指纹）。
 /// 详见模块级文档「指纹保真度说明」。
 #[must_use]
-pub fn emulation_provider(_emulation: TlsEmulation) -> wreq::EmulationProvider {
-    wreq::EmulationProvider::default()
+pub fn emulation_provider(_emulation: TlsEmulation) -> wreq::Emulation {
+    wreq::Emulation::builder().build(wreq::Group::default())
 }
 
 /// TLS 指纹引擎
@@ -293,14 +293,14 @@ impl WreqEngine {
 
         // SSRF resolve 覆盖：hostname → 验证过的 IP
         if !host.is_empty() && host.parse::<std::net::IpAddr>().is_err() {
-            builder = builder.resolve_to_addrs(host, resolve_addrs);
+            builder = builder.resolve_to_addrs(host.to_string(), resolve_addrs.iter().copied());
         }
 
         if skip_tls {
             log::warn!(
                 "wreq skip_tls_verification=true: TLS certificate validation disabled for this request"
             );
-            builder = builder.cert_verification(false);
+            builder = builder.tls_cert_verification(false);
         }
 
         if let Some(url) = proxy_url {
