@@ -231,14 +231,12 @@ impl CrawlHandlerState {
     /// This factory method creates a new use case with all required
     /// dependencies injected from this state.
     ///
-    /// R-teams-004 / R-wh-003：feature-off 时跳过对应字段（CrawlUseCase::new 已门控参数）
+    /// R-teams-004：feature-off 时跳过对应字段（CrawlUseCase::new 已门控参数）
     pub fn create_use_case(&self) -> CrawlUseCase {
         CrawlUseCase::new(
             self.crawl_repo.clone(),
             self.task_repo.clone(),
             self.scrape_result_repo.clone(),
-            #[cfg(feature = "webhook")]
-            self.webhook_repo.clone(),
             #[cfg(feature = "teams")]
             self.geo_restriction_repo.clone(),
             #[cfg(feature = "teams")]

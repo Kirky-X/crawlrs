@@ -22,10 +22,6 @@ use crate::{
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
-// R-wh-003 / T027：webhook feature 关闭时不导入 WebhookRepository
-// （CrawlUseCase.webhook_repo 字段门控）
-#[cfg(feature = "webhook")]
-use crate::domain::repositories::webhook_repository::WebhookRepository;
 use chrono::Utc;
 // R-teams-004 / T014: error! 仅在 teams-on 地理限制块中使用，teams-off 时不导入
 #[cfg(feature = "teams")]
@@ -64,14 +60,7 @@ pub struct CrawlUseCase {
     crawl_repo: Arc<dyn CrawlRepository>,
     /// 任务仓库
     task_repo: Arc<dyn TaskRepository>,
-    /// Webhook 仓库
-    ///
-    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
-    /// webhook-off 模式下，CrawlUseCase 不持有 WebhookRepository。
-    /// 字段由构造器注入并保留，供未来 webhook 相关用例方法使用。
-    #[cfg(feature = "webhook")]
-    #[allow(dead_code)]
-    webhook_repo: Arc<dyn WebhookRepository>,
+
     /// 抓取结果仓库
     scrape_result_repo: Arc<dyn ScrapeResultRepository>,
     /// 地理限制仓库
@@ -95,7 +84,6 @@ impl CrawlUseCase {
     ///
     /// * `crawl_repo` - 爬取任务仓库
     /// * `task_repo` - 任务仓库
-    /// * `webhook_repo` - Webhook 仓库（仅 webhook-on 时传入）
     /// * `scrape_result_repo` - 抓取结果仓库
     /// * `geo_restriction_repo` - 地理限制仓库（仅 teams-on 时传入）
     /// * `team_service` - 团队服务（仅 teams-on 时传入）
@@ -107,7 +95,6 @@ impl CrawlUseCase {
         crawl_repo: Arc<dyn CrawlRepository>,
         task_repo: Arc<dyn TaskRepository>,
         scrape_result_repo: Arc<dyn ScrapeResultRepository>,
-        #[cfg(feature = "webhook")] webhook_repo: Arc<dyn WebhookRepository>,
         #[cfg(feature = "teams")] geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
         #[cfg(feature = "teams")] team_service: Arc<TeamService>,
     ) -> Self {
@@ -115,8 +102,6 @@ impl CrawlUseCase {
             crawl_repo,
             task_repo,
             scrape_result_repo,
-            #[cfg(feature = "webhook")]
-            webhook_repo,
             #[cfg(feature = "teams")]
             geo_restriction_repo,
             #[cfg(feature = "teams")]
@@ -989,8 +974,6 @@ mod tests {
             crawl_repo,
             task_repo,
             scrape_result_repo,
-            #[cfg(feature = "webhook")]
-            Arc::new(MockWebhookRepository),
             #[cfg(feature = "teams")]
             geo_repo,
             #[cfg(feature = "teams")]
