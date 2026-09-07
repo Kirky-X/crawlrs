@@ -22,7 +22,6 @@ use crate::engines::engine_client::EngineClient;
 use crate::infrastructure::oxcache::CacheService;
 use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::dedup::Deduplicator;
-use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 #[cfg(feature = "metrics")]
@@ -47,7 +46,6 @@ pub struct ScrapeWorkerBuilder {
     settings: Option<Arc<Settings>>,
     default_concurrency_limit: usize,
     extraction_service: Option<Arc<dyn ExtractionServiceTrait>>,
-    regex_cache: Option<RegexCache>,
     /// 内存感知调度器（T019/R-runtime-001），仅 metrics 特性启用时存在
     #[cfg(feature = "metrics")]
     memory_scheduler: Option<Arc<MemoryScheduler>>,
@@ -80,7 +78,6 @@ impl Default for ScrapeWorkerBuilder {
             settings: None,
             default_concurrency_limit: 10,
             extraction_service: None,
-            regex_cache: None,
             #[cfg(feature = "metrics")]
             memory_scheduler: None,
             deduplicator: None,
@@ -185,12 +182,6 @@ impl ScrapeWorkerBuilder {
         self
     }
 
-    /// 设置正则缓存 (必需)
-    pub fn with_regex_cache(mut self, regex_cache: RegexCache) -> Self {
-        self.regex_cache = Some(regex_cache);
-        self
-    }
-
     /// 设置高级缓存服务（T059/R-cache-002，必需）
     ///
     /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
@@ -254,7 +245,6 @@ impl ScrapeWorkerBuilder {
         let extraction_service = self
             .extraction_service
             .ok_or("extraction_service is required")?;
-        let regex_cache = self.regex_cache.ok_or("regex_cache is required")?;
         let cache_service = self.cache_service.ok_or("cache_service is required")?;
         #[cfg(feature = "metrics")]
         let memory_scheduler = self
@@ -286,7 +276,6 @@ impl ScrapeWorkerBuilder {
             settings,
             default_concurrency_limit: self.default_concurrency_limit,
             extraction_service,
-            regex_cache,
             cache_service,
             #[cfg(feature = "metrics")]
             memory_scheduler,

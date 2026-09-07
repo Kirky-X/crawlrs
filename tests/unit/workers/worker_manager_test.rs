@@ -38,7 +38,6 @@ use crawlrs::domain::services::webhook_service::WebhookService;
 use crawlrs::engines::engine_client::{EngineClient, ScrapeResponse};
 use crawlrs::infrastructure::oxcache::CacheService;
 use crawlrs::queue::task_queue::{QueueError, TaskQueue};
-use crawlrs::utils::regex_cache::RegexCache;
 use crawlrs::utils::robots::RobotsCheckerTrait;
 use crawlrs::workers::manager::{WorkerManager, WorkerManagerConfig, WorkerManagerDeps};
 
@@ -472,12 +471,6 @@ impl CacheService for MockCacheService {
 // Helper functions
 // =============================================================================
 
-fn make_regex_cache() -> RegexCache {
-    RegexCache::new(Arc::new(
-        crawlrs::infrastructure::oxcache::RegexCacheType::new(),
-    ))
-}
-
 fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> WorkerManagerDeps {
     WorkerManagerDeps {
         queue,
@@ -493,7 +486,6 @@ fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> 
         robots_checker: Arc::new(MockRobotsChecker),
         http_client: Arc::new(reqwest::Client::new()),
         extraction_service: Arc::new(MockExtractionService),
-        regex_cache: make_regex_cache(),
         cache_service: Arc::new(MockCacheService) as Arc<dyn CacheService>,
         shutdown_coordinator: Arc::new(crawlrs::workers::shutdown::ShutdownCoordinator::default()),
     }

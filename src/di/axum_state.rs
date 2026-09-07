@@ -57,7 +57,6 @@ use crate::infrastructure::events::{BroadcastEventBus, EventBus};
 use crate::infrastructure::oxcache::CacheService;
 // T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
-use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsCheckerTrait;
 use dbnexus::DbPool;
 
@@ -139,8 +138,6 @@ pub struct CrawlRsState {
     /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLMService，按 Trafilatura→DomSmoothie→CssRule
     /// 优先级路由，`confidence < 0.7` 时触发 LLM 回退。由 `scrape_worker` 提取路径使用。
     pub content_extractor: Arc<ContentExtractionFacade>,
-    /// Regex cache for performance optimization
-    pub regex_cache: Arc<RegexCache>,
     /// 高级缓存服务（T059/R-cache-002）
     ///
     /// 由 `InfrastructureModule` 从 `InfrastructureComponents.cache_service` 注入，
@@ -252,7 +249,6 @@ impl CrawlRsState {
             llm_service: services.llm_service.clone(),
             extraction_service: services.extraction_service.clone(),
             content_extractor: services.content_extractor.clone(),
-            regex_cache: services.regex_cache.clone(),
             cache_service: infra.cache_service.clone(),
             audit_service: services.audit_service.clone(),
             #[cfg(feature = "webhook")]
@@ -313,8 +309,6 @@ pub trait CrawlRsStateExt {
     fn search_service(&self) -> Arc<dyn SearchServiceTrait>;
     /// Get LLM service
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait>;
-    /// Get regex cache
-    fn regex_cache(&self) -> Arc<RegexCache>;
     /// Get cache service
     ///
     /// T059/R-cache-002：供 `WorkerManagerDeps` 注入 `scrape_worker`。
@@ -428,10 +422,6 @@ impl CrawlRsStateExt for CrawlRsState {
 
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait> {
         self.llm_service.clone()
-    }
-
-    fn regex_cache(&self) -> Arc<RegexCache> {
-        self.regex_cache.clone()
     }
 
     fn cache_service(&self) -> Arc<dyn CacheService> {
@@ -568,10 +558,6 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
 
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait> {
         self.as_ref().llm_service()
-    }
-
-    fn regex_cache(&self) -> Arc<RegexCache> {
-        self.as_ref().regex_cache()
     }
 
     fn cache_service(&self) -> Arc<dyn CacheService> {
@@ -765,9 +751,6 @@ mod tests {
 
         let llm_service: Arc<dyn LLMServiceTrait> = state.llm_service();
         assert!(Arc::strong_count(&llm_service) >= 2);
-
-        let regex_cache: Arc<RegexCache> = state.regex_cache();
-        assert!(Arc::strong_count(&regex_cache) >= 2);
 
         let db_pool: Arc<DbPool> = state.db_pool();
         assert!(Arc::strong_count(&db_pool) >= 2);
@@ -994,9 +977,6 @@ mod tests {
 
         let llm_service = state_arc.llm_service();
         assert!(Arc::strong_count(&llm_service) >= 2);
-
-        let regex_cache = state_arc.regex_cache();
-        assert!(Arc::strong_count(&regex_cache) >= 2);
 
         let db_pool = state_arc.db_pool();
         assert!(Arc::strong_count(&db_pool) >= 2);

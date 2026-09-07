@@ -19,7 +19,6 @@ use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::infrastructure::oxcache::CacheService;
-use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 #[cfg(feature = "metrics")]
@@ -44,7 +43,6 @@ pub struct ScrapeWorkerDeps {
     pub settings: Arc<Settings>,
     pub default_concurrency_limit: usize,
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
-    pub regex_cache: RegexCache,
     pub cache_service: Arc<dyn CacheService>,
     /// 内存感知调度器（仅 metrics 特性启用时存在）
     #[cfg(feature = "metrics")]

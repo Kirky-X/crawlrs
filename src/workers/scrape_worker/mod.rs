@@ -28,7 +28,6 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
 use crate::domain::services::retry_handler::RetryHandler;
 use crate::domain::services::webhook_service::WebhookService;
-use crate::utils::regex_cache::RegexCache;
 // T053/R-frontier-001：URL 分层去重器（Bloom 预筛 + DB 保权威）
 use crate::utils::dedup::Deduplicator;
 
@@ -81,19 +80,6 @@ pub(super) use super::scrape_response_builder::{
 // Test-only imports for cfg(test) wrappers and functions
 #[cfg(test)]
 use crate::application::dto::extract_request::ExtractRequestDto;
-#[cfg(test)]
-use crate::workers::errors::ScrapeWorkerError;
-
-/// 从缓存获取正则表达式
-///
-/// T066 后 `should_crawl` 委托 `UrlPatternFilter`（内部自管 regex 缓存），
-/// 此函数仅保留供测试验证 `RegexCache` 行为，标记 `#[cfg(test)]` 避免生产死代码。
-#[cfg(test)]
-fn get_cached_regex(pattern: &str, cache: &RegexCache) -> Result<regex::Regex, ScrapeWorkerError> {
-    cache
-        .get_or_insert(pattern)
-        .map_err(ScrapeWorkerError::RegexError)
-}
 
 /// 抓取工作者
 pub struct ScrapeWorker {
@@ -125,11 +111,6 @@ pub struct ScrapeWorker {
     default_concurrency_limit: usize,
     retry_handler: RetryHandler,
     extraction_service: Arc<dyn ExtractionServiceTrait>,
-    /// T066 后 `should_crawl` 委托 `UrlPatternFilter`，此字段不再被生产代码读取。
-    /// 保留以维持 builder API 兼容（`with_regex_cache` + 构造器签名），
-    /// 全面移除需更新 30+ 调用点，作为独立重构任务处理。
-    #[allow(dead_code)]
-    regex_cache: RegexCache,
     /// 内存感知调度器（T019/R-runtime-001）
     ///
     /// `metrics` 启用时由 `WorkerManager` 注入；`process_task` 在获取并发许可前
@@ -201,7 +182,6 @@ impl ScrapeWorker {
             default_concurrency_limit: deps.default_concurrency_limit,
             retry_handler,
             extraction_service: deps.extraction_service,
-            regex_cache: deps.regex_cache,
             #[cfg(feature = "metrics")]
             memory_scheduler: deps.memory_scheduler,
             // T053/R-frontier-001：默认每 worker 独立 Deduplicator

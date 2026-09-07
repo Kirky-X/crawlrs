@@ -59,7 +59,6 @@ pub enum CrawlUseCaseError {
 /// 爬取用例
 ///
 /// 处理爬取任务的核心业务逻辑，包括创建、查询、取消等操作
-#[allow(dead_code)]
 pub struct CrawlUseCase {
     /// 爬取任务仓库
     crawl_repo: Arc<dyn CrawlRepository>,
@@ -69,7 +68,9 @@ pub struct CrawlUseCase {
     ///
     /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
     /// webhook-off 模式下，CrawlUseCase 不持有 WebhookRepository。
+    /// 字段由构造器注入并保留，供未来 webhook 相关用例方法使用。
     #[cfg(feature = "webhook")]
+    #[allow(dead_code)]
     webhook_repo: Arc<dyn WebhookRepository>,
     /// 抓取结果仓库
     scrape_result_repo: Arc<dyn ScrapeResultRepository>,

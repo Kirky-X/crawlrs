@@ -72,7 +72,6 @@ use crate::search::engine_trait::SearchEngine;
 use crate::search::smart as smart_search;
 // T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
-use crate::utils::regex_cache::RegexCache;
 use crate::utils::robots::RobotsChecker;
 
 /// All application services.
@@ -129,8 +128,6 @@ pub struct ServicesComponents {
     /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLMService，按 Trafilatura→DomSmoothie→CssRule
     /// 优先级路由，`confidence < 0.7` 时触发 LLM 回退。由 `scrape_worker` 提取路径使用。
     pub content_extractor: Arc<ContentExtractionFacade>,
-    /// Regex cache for performance optimization.
-    pub regex_cache: Arc<RegexCache>,
     /// Webhook worker
     ///
     /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
@@ -622,24 +619,6 @@ pub fn init_llm_service(
     Arc::new(LLMService::new(settings, http_client))
 }
 
-/// Initialize regex cache.
-///
-/// This function creates a RegexCache for performance optimization,
-/// following dependency injection principles.
-///
-/// # Returns
-///
-/// Returns an initialized regex cache wrapped in Arc.
-pub async fn init_regex_cache() -> Arc<RegexCache> {
-    let cache = oxcache::Cache::builder()
-        .capacity(1000)
-        .ttl(std::time::Duration::from_secs(3600))
-        .build()
-        .await
-        .expect("Failed to create regex cache");
-    Arc::new(RegexCache::new(Arc::new(cache)))
-}
-
 /// Initialize all application services.
 ///
 /// # Arguments
@@ -812,9 +791,6 @@ pub async fn init_services(
     // Facade 内部按 cfg 编译期决定 extractor 链（Trafilatura→DomSmoothie→CssRule）。
     let content_extractor = Arc::new(ContentExtractionFacade::new(Some(llm_service.clone())));
 
-    // Initialize regex cache
-    let regex_cache = init_regex_cache().await;
-
     // R-wh-003 / T027：Initialize WebhookWorker（仅 webhook-on 时构造）
     // webhook-off：不构造 WebhookWorker，ServicesComponents.webhook_worker 字段不编译
     #[cfg(feature = "webhook")]
@@ -859,7 +835,6 @@ pub async fn init_services(
         llm_service,
         extraction_service,
         content_extractor,
-        regex_cache,
         #[cfg(feature = "webhook")]
         webhook_worker,
         backlog_worker,
@@ -1070,28 +1045,6 @@ mod tests {
         assert_eq!(semaphore.current_target(team_id), 15);
     }
 
-    // ========== init_regex_cache tests ==========
-
-    #[tokio::test]
-    async fn test_init_regex_cache_creates_instance() {
-        let cache = init_regex_cache().await;
-        // Verify the cache is usable by getting/inserting a simple pattern
-        let result = cache.get_or_insert(r"\d+");
-        assert!(
-            result.is_ok(),
-            "RegexCache should be usable after init_regex_cache"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_init_regex_cache_returns_arc() {
-        let cache = init_regex_cache().await;
-        assert!(
-            Arc::strong_count(&cache) >= 1,
-            "init_regex_cache should return a valid Arc<RegexCache>"
-        );
-    }
-
     // ========== init_llm_service tests ==========
 
     #[test]
@@ -1293,7 +1246,6 @@ mod tests {
         assert!(Arc::strong_count(&services.audit_service) >= 1);
         assert!(Arc::strong_count(&services.llm_service) >= 1);
         assert!(Arc::strong_count(&services.extraction_service) >= 1);
-        assert!(Arc::strong_count(&services.regex_cache) >= 1);
         // R-wh-003 / T027：webhook feature 关闭时 webhook_worker 字段不编译
         #[cfg(feature = "webhook")]
         {

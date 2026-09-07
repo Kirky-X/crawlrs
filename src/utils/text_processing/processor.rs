@@ -414,7 +414,6 @@ impl WebContentProcessor {
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct HtmlCleaner {
     script_regex: Regex,
     style_regex: Regex,

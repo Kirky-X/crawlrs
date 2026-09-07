@@ -141,7 +141,9 @@ impl TaskStateMachine {
                     self.task.started_at = Some(Utc::now());
                 }
             }
-            TaskStatus::Completed => {
+            // 终态（Completed/Failed/Cancelled）统一设置 completed_at，
+            // 与 Task::complete()、Task::fail()、Task::cancel() 行为一致。
+            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled => {
                 self.task.completed_at = Some(Utc::now());
             }
             _ => {}

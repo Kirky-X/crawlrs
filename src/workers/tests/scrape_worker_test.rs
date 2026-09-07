@@ -1,7 +1,6 @@
 use super::*;
 use crate::domain::models::{CrawlStatus, ScrapeResult, TaskType};
 use crate::engines::EngineError;
-use crate::infrastructure::oxcache::RegexCacheType;
 use crate::utils::coalesce::RequestCoalescer;
 use crate::workers::cache_utils::{filter_sensitive_headers, generate_scrape_cache_key};
 use crate::workers::crawl::{FilterContext, UrlFilter, UrlPatternFilter};
@@ -143,17 +142,6 @@ fn parse_dto_for_test(task: &Task) -> Option<ScrapeRequestDto> {
     serde_json::from_value(task.payload.clone()).ok()
 }
 
-/// Build a RegexCache backed by an in-memory oxcache instance.
-async fn make_regex_cache() -> RegexCache {
-    let cache: RegexCacheType = oxcache::Cache::builder()
-        .capacity(100)
-        .ttl(Duration::from_secs(3600))
-        .build()
-        .await
-        .expect("Failed to build oxcache for test");
-    RegexCache::new(Arc::new(cache))
-}
-
 /// T019：构造测试用 MemoryScheduler
 ///
 /// 默认返回 Normal 状态的调度器（内存使用率 0.5）。
@@ -186,17 +174,6 @@ fn make_test_memory_scheduler() -> Arc<MemoryScheduler> {
         0.9,
         Duration::from_secs(30),
     ))
-}
-
-// ========== get_cached_regex tests ==========
-
-#[tokio::test]
-async fn test_get_cached_regex_valid_pattern_returns_regex() {
-    let cache = make_regex_cache().await;
-    let result = get_cached_regex(r"\d+", &cache);
-    let regex = result.expect("valid pattern should produce a Regex");
-    assert!(regex.is_match("123"));
-    assert!(!regex.is_match("abc"));
 }
 
 // ========== T062 安全审查 MEDIUM-2: redact_url_for_log tests ==========
@@ -357,28 +334,6 @@ fn test_filter_sensitive_headers_empty_input() {
     let mut headers: HashMap<String, String> = HashMap::new();
     filter_sensitive_headers(&mut headers);
     assert!(headers.is_empty());
-}
-
-#[tokio::test]
-async fn test_get_cached_regex_invalid_pattern_returns_regex_error() {
-    let cache = make_regex_cache().await;
-    let result = get_cached_regex(r"[unclosed", &cache);
-    let err = result.expect_err("invalid pattern should error");
-    match err {
-        ScrapeWorkerError::RegexError(msg) => {
-            assert!(!msg.is_empty(), "error message should not be empty");
-        }
-        other => panic!("Expected RegexError, got {:?}", other),
-    }
-}
-
-#[tokio::test]
-async fn test_get_cached_regex_caches_repeated_calls() {
-    let cache = make_regex_cache().await;
-    let r1 = get_cached_regex(r"[a-z]+", &cache).expect("first call should succeed");
-    let r2 = get_cached_regex(r"[a-z]+", &cache).expect("second call should succeed");
-    assert!(r1.is_match("hello"));
-    assert!(r2.is_match("world"));
 }
 
 // ========== build_scrape_request: error / edge cases ==========
@@ -1433,7 +1388,6 @@ impl ExtractionServiceTrait for MockExtractionService {
 /// services. The TeamSemaphore is an in-memory primitive — no external
 /// service is required during these tests.
 async fn build_mock_worker() -> ScrapeWorker {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings =
         crate::bootstrap::config::load_settings().expect("Failed to load settings for mock worker");
@@ -1458,7 +1412,6 @@ async fn build_mock_worker() -> ScrapeWorker {
         settings: settings_arc,
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -1470,7 +1423,6 @@ async fn build_mock_worker() -> ScrapeWorker {
 /// 返回 (worker, cache_arc) —— 调用方通过 cache_arc.get_count()/set_count()
 /// 验证缓存读/写行为，或通过 cache_arc 预填充数据模拟 cache hit。
 async fn build_mock_worker_with_cache(cache: Arc<MockCacheService>) -> ScrapeWorker {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings =
         crate::bootstrap::config::load_settings().expect("Failed to load settings for mock worker");
@@ -1495,7 +1447,6 @@ async fn build_mock_worker_with_cache(cache: Arc<MockCacheService>) -> ScrapeWor
         settings: settings_arc,
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: cache as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -1508,7 +1459,6 @@ async fn build_mock_worker_with_cache(cache: Arc<MockCacheService>) -> ScrapeWor
 /// 获取 save_result 保存的 ScrapeResult 以断言 meta_data 内容。
 async fn build_mock_worker_with_capturing_repo(
 ) -> (ScrapeWorker, Arc<CapturingScrapeResultRepository>) {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings =
         crate::bootstrap::config::load_settings().expect("Failed to load settings for mock worker");
@@ -1535,7 +1485,6 @@ async fn build_mock_worker_with_capturing_repo(
         settings: settings_arc,
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -2799,7 +2748,6 @@ async fn test_builder_with_default_concurrency_limit() {
 
 #[tokio::test]
 async fn test_builder_build_success() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -2820,7 +2768,6 @@ async fn test_builder_build_success() {
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>);
     #[cfg(feature = "metrics")]
     let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
@@ -2833,7 +2780,6 @@ async fn test_builder_build_success() {
 
 #[tokio::test]
 async fn test_builder_build_missing_repository() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -2853,7 +2799,6 @@ async fn test_builder_build_missing_repository() {
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -2863,7 +2808,6 @@ async fn test_builder_build_missing_repository() {
 
 #[tokio::test]
 async fn test_builder_build_missing_result_repository() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -2881,7 +2825,6 @@ async fn test_builder_build_missing_result_repository() {
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -2891,7 +2834,6 @@ async fn test_builder_build_missing_result_repository() {
 
 #[tokio::test]
 async fn test_builder_build_missing_crawl_repository() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -2911,7 +2853,6 @@ async fn test_builder_build_missing_crawl_repository() {
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -2921,7 +2862,6 @@ async fn test_builder_build_missing_crawl_repository() {
 
 #[tokio::test]
 async fn test_builder_build_missing_webhook_service() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -2941,7 +2881,6 @@ async fn test_builder_build_missing_webhook_service() {
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -2951,7 +2890,6 @@ async fn test_builder_build_missing_webhook_service() {
 
 #[tokio::test]
 async fn test_builder_build_missing_engine_client() {
-    let regex_cache = make_regex_cache().await;
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
@@ -2970,7 +2908,6 @@ async fn test_builder_build_missing_engine_client() {
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -2980,7 +2917,6 @@ async fn test_builder_build_missing_engine_client() {
 
 #[tokio::test]
 async fn test_builder_build_missing_team_semaphore() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
 
@@ -2999,7 +2935,6 @@ async fn test_builder_build_missing_team_semaphore() {
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -3009,7 +2944,6 @@ async fn test_builder_build_missing_team_semaphore() {
 
 #[tokio::test]
 async fn test_builder_build_missing_settings() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
 
@@ -3028,7 +2962,6 @@ async fn test_builder_build_missing_settings() {
         .with_team_semaphore(team_semaphore)
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -3038,7 +2971,6 @@ async fn test_builder_build_missing_settings() {
 
 #[tokio::test]
 async fn test_builder_build_missing_extraction_service() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -3058,7 +2990,6 @@ async fn test_builder_build_missing_extraction_service() {
         .with_team_semaphore(team_semaphore)
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -3067,7 +2998,7 @@ async fn test_builder_build_missing_extraction_service() {
 }
 
 #[tokio::test]
-async fn test_builder_build_missing_regex_cache() {
+async fn test_builder_build_missing_cache_service() {
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -3091,12 +3022,11 @@ async fn test_builder_build_missing_regex_cache() {
         .build();
 
     assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), "regex_cache is required");
+    assert_eq!(result.unwrap_err(), "cache_service is required");
 }
 
 #[tokio::test]
 async fn test_builder_with_custom_concurrency_limit() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -3117,7 +3047,6 @@ async fn test_builder_with_custom_concurrency_limit() {
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .with_default_concurrency_limit(100);
     #[cfg(feature = "metrics")]
@@ -3191,7 +3120,6 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
         settings: settings_arc,
         default_concurrency_limit: settings.concurrency.default_team_limit as usize,
         extraction_service: services.extraction_service.clone(),
-        regex_cache: (*services.regex_cache).clone(),
         cache_service: infra.cache_service.clone(),
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -3364,7 +3292,6 @@ async fn tc_scrape_worker_builder_builds_full_worker() {
         .with_settings(settings_arc)
         .with_default_concurrency_limit(settings.concurrency.default_team_limit as usize)
         .with_extraction_service(services.extraction_service.clone())
-        .with_regex_cache((*services.regex_cache).clone())
         .with_cache_service(infra.cache_service.clone());
     #[cfg(feature = "metrics")]
     let builder = builder.with_memory_scheduler(make_test_memory_scheduler());
@@ -3517,7 +3444,6 @@ impl ExtractionServiceTrait for MockExtractionServiceWithTokens {
 
 /// Build a ScrapeWorker whose ExtractionService returns non-zero tokens.
 async fn build_mock_worker_with_tokens() -> ScrapeWorker {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings =
         crate::bootstrap::config::load_settings().expect("Failed to load settings for mock worker");
@@ -3543,7 +3469,6 @@ async fn build_mock_worker_with_tokens() -> ScrapeWorker {
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionServiceWithTokens)
             as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -4547,7 +4472,6 @@ async fn build_configurable_worker(
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     engine_client: Arc<EngineClient>,
 ) -> ScrapeWorker {
-    let regex_cache = make_regex_cache().await;
     let settings = crate::bootstrap::config::load_settings()
         .expect("Failed to load settings for configurable worker");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -4569,7 +4493,6 @@ async fn build_configurable_worker(
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -4582,7 +4505,6 @@ async fn build_worker_with_failing_deps(
     webhook_service: Arc<dyn WebhookService>,
     credits_repo: Arc<dyn CreditsRepository>,
 ) -> ScrapeWorker {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings()
         .expect("Failed to load settings for failing deps worker");
@@ -4605,7 +4527,6 @@ async fn build_worker_with_failing_deps(
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -4675,7 +4596,6 @@ async fn test_process_task_not_expired_proceeds_normally() {
 #[tokio::test]
 async fn test_process_task_concurrency_limit_exceeded_reschedules() {
     let task_repo = Arc::new(ConfigurableTaskRepo::new());
-    let regex_cache = make_regex_cache().await;
     let settings = crate::bootstrap::config::load_settings()
         .expect("Failed to load settings for concurrency test");
 
@@ -4699,7 +4619,6 @@ async fn test_process_task_concurrency_limit_exceeded_reschedules() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -4753,7 +4672,6 @@ async fn test_process_task_memory_critical_defers_task() {
     ));
 
     let task_repo = Arc::new(ConfigurableTaskRepo::new());
-    let regex_cache = make_regex_cache().await;
     let settings = crate::bootstrap::config::load_settings()
         .expect("Failed to load settings for memory critical test");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -4778,7 +4696,6 @@ async fn test_process_task_memory_critical_defers_task() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         memory_scheduler,
     });
@@ -4868,7 +4785,6 @@ async fn test_process_task_memory_pressure_defers_task() {
     ));
 
     let task_repo = Arc::new(ConfigurableTaskRepo::new());
-    let regex_cache = make_regex_cache().await;
     let settings = crate::bootstrap::config::load_settings()
         .expect("Failed to load settings for memory pressure test");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -4893,7 +4809,6 @@ async fn test_process_task_memory_pressure_defers_task() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         memory_scheduler,
     });
@@ -5229,7 +5144,6 @@ async fn test_check_robots_txt_error_falls_back_to_allowed() {
 
 #[tokio::test]
 async fn test_builder_build_missing_credits_repository() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -5249,7 +5163,6 @@ async fn test_builder_build_missing_credits_repository() {
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -5259,7 +5172,6 @@ async fn test_builder_build_missing_credits_repository() {
 
 #[tokio::test]
 async fn test_builder_build_missing_create_scrape_use_case() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -5277,7 +5189,6 @@ async fn test_builder_build_missing_create_scrape_use_case() {
         .with_robots_checker(Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -5287,7 +5198,6 @@ async fn test_builder_build_missing_create_scrape_use_case() {
 
 #[tokio::test]
 async fn test_builder_build_missing_robots_checker() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -5307,7 +5217,6 @@ async fn test_builder_build_missing_robots_checker() {
         .with_team_semaphore(team_semaphore)
         .with_settings(Arc::new(settings))
         .with_extraction_service(Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>)
-        .with_regex_cache(regex_cache)
         .with_cache_service(Arc::new(MockCacheService::new()) as Arc<dyn CacheService>)
         .build();
 
@@ -5442,7 +5351,6 @@ async fn test_deduct_token_credits_failure_does_not_propagate_error() {
 
 #[tokio::test]
 async fn test_handle_crawl_success_save_result_failure_propagates_error() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -5466,7 +5374,6 @@ async fn test_handle_crawl_success_save_result_failure_propagates_error() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -5498,7 +5405,6 @@ async fn test_handle_crawl_success_save_result_failure_propagates_error() {
 
 #[tokio::test]
 async fn test_handle_crawl_success_increment_completed_error_does_not_propagate() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -5526,7 +5432,6 @@ async fn test_handle_crawl_success_increment_completed_error_does_not_propagate(
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -5560,7 +5465,6 @@ async fn test_handle_crawl_success_increment_completed_error_does_not_propagate(
 
 #[tokio::test]
 async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -5584,7 +5488,6 @@ async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -5613,7 +5516,6 @@ async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
 #[tokio::test]
 async fn test_process_crawl_task_robots_denied_marks_failed() {
     let task_repo = Arc::new(ConfigurableTaskRepo::new());
-    let regex_cache = make_regex_cache().await;
     let engine_client = Arc::new(EngineClient::new());
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -5636,7 +5538,6 @@ async fn test_process_crawl_task_robots_denied_marks_failed() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -5762,7 +5663,6 @@ async fn build_worker_for_success_tests(
     credits_repo: Arc<dyn CreditsRepository>,
     extraction_service: Arc<dyn ExtractionServiceTrait>,
 ) -> ScrapeWorker {
-    let regex_cache = make_regex_cache().await;
     let settings = crate::bootstrap::config::load_settings()
         .expect("Failed to load settings for success tests");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
@@ -5784,7 +5684,6 @@ async fn build_worker_for_success_tests(
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: extraction_service,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -5872,7 +5771,6 @@ async fn test_process_scrape_task_success_handle_scrape_failure_calls_handle_fai
     let engine_client = Arc::new(EngineClient::with_router(router));
 
     let task_repo = Arc::new(ConfigurableTaskRepo::new());
-    let regex_cache = make_regex_cache().await;
     let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
     let team_semaphore = Arc::new(TeamSemaphore::new(10));
     let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(FailingScrapeResultRepo);
@@ -5893,7 +5791,6 @@ async fn test_process_scrape_task_success_handle_scrape_failure_calls_handle_fai
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
-        regex_cache: regex_cache,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -6634,8 +6531,7 @@ async fn test_handle_failure_failed_branch_returns_ok() {
 // ========== should_crawl tests ==========
 
 /// Build a worker pre-configured for should_crawl unit tests.
-/// should_crawl only reads `self.regex_cache`, so all other deps use
-/// default in-memory mocks.
+/// All deps use default in-memory mocks.
 async fn build_should_crawl_worker() -> ScrapeWorker {
     build_configurable_worker(
         Arc::new(ConfigurableTaskRepo::new()),
