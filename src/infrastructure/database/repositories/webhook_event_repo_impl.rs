@@ -214,6 +214,7 @@ mod tests {
 
     #[test]
     fn test_new_creates_repository_instance() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let pool = create_test_db_pool();
         let repo = WebhookEventRepoImpl::new(pool);
         let _clone = repo.clone();
@@ -223,6 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_inserts_record() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let event = sample_webhook_event();
         let result = repo.create(&event).await;
@@ -243,6 +245,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_id_returns_none_for_unknown() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::new_v4()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
@@ -251,6 +254,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_pending_returns_ok() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.find_pending(10).await;
         assert!(result.is_ok(), "find_pending failed: {:?}", result.err());
@@ -260,6 +264,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_modifies_record() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let mut event = sample_webhook_event();
         // First create
@@ -280,6 +285,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_team_id_paginated_returns_empty_for_unknown() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 10, 0).await;
         assert!(
@@ -295,6 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_by_team_id_returns_zero_for_unknown() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
         let result = repo.count_by_team_id(Uuid::new_v4()).await;
         assert!(
@@ -309,6 +316,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_database_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = RepositoryError::Database(anyhow::anyhow!("connection refused"));
         let msg = format!("{}", err);
         assert!(msg.contains("Database error"));
@@ -317,6 +325,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_not_found_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = RepositoryError::NotFound;
         assert_eq!(format!("{}", err), "Record not found");
     }
@@ -325,6 +334,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_record_not_found() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::RecordNotFound("event missing".to_string());
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
@@ -335,6 +345,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_query_runtime() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err =
             sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
         let repo_err: RepositoryError = db_err.into();
@@ -346,6 +357,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_connection_acquire() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
@@ -356,6 +368,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_record_not_inserted() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::RecordNotInserted;
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
@@ -368,6 +381,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_connection_path() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Mirrors the production `.map_err(|e| RepositoryError::Database(e.into()))` path
         let inner = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
         let db_err = dbnexus::DbError::Connection(inner);
@@ -379,6 +393,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_config_path() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = dbnexus::DbError::Config("invalid url".to_string());
         let any_err: anyhow::Error = db_err.into();
         let repo_err = RepositoryError::Database(any_err);
@@ -388,6 +403,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_permission_path() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = dbnexus::DbError::Permission("forbidden".to_string());
         let any_err: anyhow::Error = db_err.into();
         let repo_err = RepositoryError::Database(any_err);
@@ -397,6 +413,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_transaction_path() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = dbnexus::DbError::Transaction("deadlock".to_string());
         let any_err: anyhow::Error = db_err.into();
         let repo_err = RepositoryError::Database(any_err);
@@ -406,6 +423,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_migration_path() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = dbnexus::DbError::Migration("schema mismatch".to_string());
         let any_err: anyhow::Error = db_err.into();
         let repo_err = RepositoryError::Database(any_err);

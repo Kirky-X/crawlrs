@@ -32,6 +32,7 @@ fn make_test_task_with_unique_url() -> Task {
 
 #[test]
 fn test_new_creates_repository_instance() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let pool = create_test_db_pool();
     let repo = TaskRepositoryImpl::new(pool, Duration::minutes(5));
     // Repository should be constructible with a real pool
@@ -45,6 +46,7 @@ fn test_new_creates_repository_instance() {
 
 #[tokio::test]
 async fn test_create_with_real_db_succeeds() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     // 序列化：防止并行的 acquire_next 测试偷走本测试创建的 queued 任务，
     // 导致 find_by_id 读回 status=Active 而非 Queued（测试隔离修复）
     let _guard = acquire_next_test_mutex().lock().await;
@@ -70,6 +72,7 @@ async fn test_create_with_real_db_succeeds() {
 
 #[tokio::test]
 async fn test_find_by_id_with_real_db_returns_none_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.find_by_id(Uuid::new_v4()).await;
     assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
@@ -78,6 +81,7 @@ async fn test_find_by_id_with_real_db_returns_none_for_unknown() {
 
 #[tokio::test]
 async fn test_update_with_real_db_succeeds() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let mut task = make_test_task();
     // create first
@@ -102,6 +106,7 @@ async fn test_update_with_real_db_succeeds() {
 
 #[tokio::test]
 async fn test_acquire_next_with_real_db_returns_ok_when_backlog_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     // 序列化 acquire_next 测试：防止并行测试间相互获取 task
     let _guard = acquire_next_test_mutex().lock().await;
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
@@ -118,6 +123,7 @@ async fn test_acquire_next_with_real_db_returns_ok_when_backlog_empty() {
 
 #[tokio::test]
 async fn test_acquire_next_with_real_db_acquires_created_task() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     // 序列化 acquire_next 测试：防止并行测试间相互获取 task
     let _guard = acquire_next_test_mutex().lock().await;
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
@@ -140,6 +146,7 @@ async fn test_acquire_next_with_real_db_acquires_created_task() {
 
 #[tokio::test]
 async fn test_mark_completed_with_real_db_succeeds() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let task = make_test_task();
     repo.create(&task).await.expect("create failed");
@@ -158,6 +165,7 @@ async fn test_mark_completed_with_real_db_succeeds() {
 
 #[tokio::test]
 async fn test_mark_failed_with_real_db_succeeds() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let task = make_test_task();
     repo.create(&task).await.expect("create failed");
@@ -176,6 +184,7 @@ async fn test_mark_failed_with_real_db_succeeds() {
 
 #[tokio::test]
 async fn test_mark_cancelled_with_real_db_succeeds() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let task = make_test_task();
     repo.create(&task).await.expect("create failed");
@@ -194,6 +203,7 @@ async fn test_mark_cancelled_with_real_db_succeeds() {
 
 #[tokio::test]
 async fn test_exists_by_url_with_real_db_returns_false_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let unknown_url = format!("http://nonexistent-{}.com", Uuid::new_v4());
     let result = repo.exists_by_url(&unknown_url).await;
@@ -203,6 +213,7 @@ async fn test_exists_by_url_with_real_db_returns_false_for_unknown() {
 
 #[tokio::test]
 async fn test_exists_by_url_with_real_db_returns_true_for_existing() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let task = make_test_task_with_unique_url();
     repo.create(&task).await.expect("create failed");
@@ -214,6 +225,7 @@ async fn test_exists_by_url_with_real_db_returns_true_for_existing() {
 
 #[tokio::test]
 async fn test_find_existing_urls_returns_empty_for_empty_input() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     // Empty input should short-circuit to Ok(empty set) without DB access
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.find_existing_urls(&[]).await;
@@ -223,6 +235,7 @@ async fn test_find_existing_urls_returns_empty_for_empty_input() {
 
 #[tokio::test]
 async fn test_find_existing_urls_with_real_db_returns_empty_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let urls = vec![format!("http://nonexistent-{}.com", Uuid::new_v4())];
     let result = repo.find_existing_urls(&urls).await;
@@ -239,6 +252,7 @@ async fn test_find_existing_urls_with_real_db_returns_empty_for_unknown() {
 
 #[tokio::test]
 async fn test_find_existing_urls_with_real_db_returns_matching_urls() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let task1 = make_test_task_with_unique_url();
     let task2 = make_test_task_with_unique_url();
@@ -262,6 +276,7 @@ async fn test_find_existing_urls_with_real_db_returns_matching_urls() {
 
 #[tokio::test]
 async fn test_reset_stuck_tasks_with_real_db_returns_zero_when_none_stuck() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.reset_stuck_tasks(Duration::minutes(30)).await;
     assert!(
@@ -276,6 +291,7 @@ async fn test_reset_stuck_tasks_with_real_db_returns_zero_when_none_stuck() {
 
 #[tokio::test]
 async fn test_reset_stuck_tasks_with_real_db_resets_stuck_task() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let mut task = make_test_task();
     // Force task into Active state with an old started_at to be considered stuck.
@@ -311,6 +327,7 @@ async fn test_reset_stuck_tasks_with_real_db_resets_stuck_task() {
 
 #[tokio::test]
 async fn test_cancel_tasks_by_crawl_id_with_real_db_returns_zero_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.cancel_tasks_by_crawl_id(Uuid::new_v4()).await;
     assert!(
@@ -323,6 +340,7 @@ async fn test_cancel_tasks_by_crawl_id_with_real_db_returns_zero_for_unknown() {
 
 #[tokio::test]
 async fn test_cancel_tasks_by_crawl_id_with_real_db_cancels_matching() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let crawl_id = Uuid::new_v4();
     let mut task1 = make_test_task();
@@ -367,6 +385,7 @@ async fn test_cancel_tasks_by_crawl_id_with_real_db_cancels_matching() {
 
 #[tokio::test]
 async fn test_expire_tasks_with_real_db_returns_zero_when_none_expired() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     // 序列化：防止 acquire_next 测试获取此测试创建的 queued task
     let _guard = acquire_next_test_mutex().lock().await;
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
@@ -383,6 +402,7 @@ async fn test_expire_tasks_with_real_db_returns_zero_when_none_expired() {
 
 #[tokio::test]
 async fn test_expire_tasks_with_real_db_expires_past_expires_at() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     // 序列化：防止 acquire_next 测试获取此测试创建的 queued task（status→active），
     // 导致 expire_tasks 不再匹配 status='queued' 条件
     let _guard = acquire_next_test_mutex().lock().await;
@@ -409,6 +429,7 @@ async fn test_expire_tasks_with_real_db_expires_past_expires_at() {
 
 #[tokio::test]
 async fn test_find_by_crawl_id_with_real_db_returns_empty_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.find_by_crawl_id(Uuid::new_v4()).await;
     assert!(
@@ -424,6 +445,7 @@ async fn test_find_by_crawl_id_with_real_db_returns_empty_for_unknown() {
 
 #[tokio::test]
 async fn test_find_by_crawl_id_with_real_db_returns_matching_tasks() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let crawl_id = Uuid::new_v4();
     let mut task1 = make_test_task();
@@ -449,6 +471,7 @@ async fn test_find_by_crawl_id_with_real_db_returns_matching_tasks() {
 
 #[tokio::test]
 async fn test_query_tasks_with_real_db_returns_empty_for_unknown_team() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
         team_id: Uuid::new_v4(),
@@ -466,6 +489,7 @@ async fn test_query_tasks_with_real_db_returns_empty_for_unknown_team() {
 
 #[tokio::test]
 async fn test_query_tasks_with_real_db_returns_matching_tasks() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let team_id = Uuid::new_v4();
     let mut task1 = make_test_task();
@@ -491,6 +515,7 @@ async fn test_query_tasks_with_real_db_returns_matching_tasks() {
 
 #[tokio::test]
 async fn test_batch_cancel_returns_empty_for_empty_input() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     // Empty input should short-circuit to Ok((empty, empty)) without DB access
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.batch_cancel(Vec::new(), Uuid::new_v4(), false).await;
@@ -502,6 +527,7 @@ async fn test_batch_cancel_returns_empty_for_empty_input() {
 
 #[tokio::test]
 async fn test_batch_cancel_with_real_db_returns_errors_for_unknown_ids() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let unknown_id = Uuid::new_v4();
     let task_ids = vec![unknown_id];
@@ -519,6 +545,7 @@ async fn test_batch_cancel_with_real_db_returns_errors_for_unknown_ids() {
 
 #[tokio::test]
 async fn test_batch_cancel_with_real_db_cancels_owned_tasks() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let team_id = Uuid::new_v4();
     let mut task1 = make_test_task();
@@ -556,6 +583,7 @@ async fn test_batch_cancel_with_real_db_cancels_owned_tasks() {
 
 #[test]
 fn test_error_database_display() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let err = RepositoryError::Database(anyhow::anyhow!("conn refused"));
     assert!(err.to_string().contains("Database error"));
     assert!(err.to_string().contains("conn refused"));
@@ -563,12 +591,14 @@ fn test_error_database_display() {
 
 #[test]
 fn test_error_not_found_display() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let err = RepositoryError::NotFound;
     assert!(err.to_string().contains("Record not found"));
 }
 
 #[test]
 fn test_from_dberr_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::Custom("query failed".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -581,6 +611,7 @@ fn test_from_dberr_to_repository_error() {
 
 #[test]
 fn test_pool_accessor_returns_reference_to_same_pool() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let pool = create_test_db_pool();
     let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
     let pool_ref = repo.pool();
@@ -590,6 +621,7 @@ fn test_pool_accessor_returns_reference_to_same_pool() {
 
 #[test]
 fn test_new_with_zero_lock_duration() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let pool = create_test_db_pool();
     let repo = TaskRepositoryImpl::new(pool, Duration::zero());
     let _ = repo;
@@ -597,6 +629,7 @@ fn test_new_with_zero_lock_duration() {
 
 #[test]
 fn test_new_with_large_lock_duration() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let pool = create_test_db_pool();
     let repo = TaskRepositoryImpl::new(pool, Duration::days(7));
     let _ = repo;
@@ -604,6 +637,7 @@ fn test_new_with_large_lock_duration() {
 
 #[test]
 fn test_make_test_task_construction() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let task = make_test_task();
     assert_eq!(task.task_type, TaskType::Scrape);
     assert_eq!(task.url, "http://example.com");
@@ -613,6 +647,7 @@ fn test_make_test_task_construction() {
 
 #[test]
 fn test_task_query_params_default() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let params = TaskQueryParams::default();
     // Default should have nil Uuid for team_id
     assert_eq!(params.team_id, Uuid::nil());
@@ -631,6 +666,7 @@ fn test_task_query_params_default() {
 
 #[tokio::test]
 async fn test_query_tasks_with_crawl_id_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
         team_id: Uuid::new_v4(),
@@ -646,6 +682,7 @@ async fn test_query_tasks_with_crawl_id_returns_empty() {
 
 #[tokio::test]
 async fn test_query_tasks_with_statuses_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
         team_id: Uuid::new_v4(),
@@ -661,6 +698,7 @@ async fn test_query_tasks_with_statuses_returns_empty() {
 
 #[tokio::test]
 async fn test_query_tasks_with_task_types_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
         team_id: Uuid::new_v4(),
@@ -676,6 +714,7 @@ async fn test_query_tasks_with_task_types_returns_empty() {
 
 #[tokio::test]
 async fn test_query_tasks_with_all_optional_filters_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
         team_id: Uuid::new_v4(),
@@ -699,6 +738,7 @@ async fn test_query_tasks_with_all_optional_filters_returns_empty() {
 
 #[tokio::test]
 async fn test_find_existing_urls_with_multiple_urls_returns_empty_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let urls = vec![
         format!("http://nonexistent-{}.com", Uuid::new_v4()),
@@ -712,6 +752,7 @@ async fn test_find_existing_urls_with_multiple_urls_returns_empty_for_unknown() 
 
 #[tokio::test]
 async fn test_batch_cancel_with_multiple_ids_returns_errors_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let id1 = Uuid::new_v4();
     let id2 = Uuid::new_v4();
@@ -730,6 +771,7 @@ async fn test_batch_cancel_with_multiple_ids_returns_errors_for_unknown() {
 
 #[tokio::test]
 async fn test_batch_cancel_with_force_true_returns_errors_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let task_ids = vec![Uuid::new_v4()];
     let result = repo.batch_cancel(task_ids, Uuid::new_v4(), true).await;
@@ -741,6 +783,7 @@ async fn test_batch_cancel_with_force_true_returns_errors_for_unknown() {
 
 #[tokio::test]
 async fn test_reset_stuck_tasks_with_zero_duration_returns_zero_or_more() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.reset_stuck_tasks(Duration::zero()).await;
     assert!(
@@ -755,6 +798,7 @@ async fn test_reset_stuck_tasks_with_zero_duration_returns_zero_or_more() {
 
 #[tokio::test]
 async fn test_reset_stuck_tasks_with_negative_duration_returns_zero_or_more() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     // Negative duration means cutoff is in the future; no tasks should
     // have started_at past a future cutoff.
@@ -769,6 +813,7 @@ async fn test_reset_stuck_tasks_with_negative_duration_returns_zero_or_more() {
 
 #[tokio::test]
 async fn test_exists_by_url_with_empty_string_returns_false() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.exists_by_url("").await;
     assert!(result.is_ok(), "exists_by_url failed: {:?}", result.err());
@@ -782,6 +827,7 @@ async fn test_exists_by_url_with_empty_string_returns_false() {
 
 #[test]
 fn test_from_dberr_record_not_found_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::RecordNotFound("task missing".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -790,6 +836,7 @@ fn test_from_dberr_record_not_found_to_repository_error() {
 
 #[test]
 fn test_from_dberr_connection_acquire_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -797,6 +844,7 @@ fn test_from_dberr_connection_acquire_to_repository_error() {
 
 #[test]
 fn test_from_dberr_record_not_inserted_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::RecordNotInserted;
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -804,6 +852,7 @@ fn test_from_dberr_record_not_inserted_to_repository_error() {
 
 #[test]
 fn test_from_dberr_query_runtime_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -816,41 +865,49 @@ fn test_from_dberr_query_runtime_to_repository_error() {
 
 #[test]
 fn test_task_type_scrape_display() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     assert_eq!(format!("{}", TaskType::Scrape), "scrape");
 }
 
 #[test]
 fn test_task_type_crawl_display() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     assert_eq!(format!("{}", TaskType::Crawl), "crawl");
 }
 
 #[test]
 fn test_task_type_extract_display() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     assert_eq!(format!("{}", TaskType::Extract), "extract");
 }
 
 #[test]
 fn test_task_status_queued_display() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     assert_eq!(format!("{}", TaskStatus::Queued), "queued");
 }
 
 #[test]
 fn test_task_status_active_display() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     assert_eq!(format!("{}", TaskStatus::Active), "active");
 }
 
 #[test]
 fn test_task_status_completed_display() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     assert_eq!(format!("{}", TaskStatus::Completed), "completed");
 }
 
 #[test]
 fn test_task_status_failed_display() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     assert_eq!(format!("{}", TaskStatus::Failed), "failed");
 }
 
 #[test]
 fn test_task_status_cancelled_display() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     assert_eq!(format!("{}", TaskStatus::Cancelled), "cancelled");
 }
 
@@ -861,6 +918,7 @@ fn test_task_status_cancelled_display() {
 
 #[test]
 fn test_from_dberr_connection_acquire_closed_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed);
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -868,6 +926,7 @@ fn test_from_dberr_connection_acquire_closed_to_repository_error() {
 
 #[test]
 fn test_from_dberr_record_not_updated_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::RecordNotUpdated;
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -875,6 +934,7 @@ fn test_from_dberr_record_not_updated_to_repository_error() {
 
 #[test]
 fn test_from_dberr_query_sqlx_error_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let inner = sea_orm::sqlx::Error::RowNotFound;
     let db_err = sea_orm::DbErr::Query(sea_orm::RuntimeErr::SqlxError(std::sync::Arc::new(inner)));
     let repo_err: RepositoryError = db_err.into();
@@ -883,6 +943,7 @@ fn test_from_dberr_query_sqlx_error_to_repository_error() {
 
 #[test]
 fn test_from_dberr_conn_runtime_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal("conn lost".to_string()));
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -891,6 +952,7 @@ fn test_from_dberr_conn_runtime_to_repository_error() {
 
 #[test]
 fn test_from_dberr_exec_runtime_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::Exec(sea_orm::RuntimeErr::Internal("exec failed".to_string()));
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -899,6 +961,7 @@ fn test_from_dberr_exec_runtime_to_repository_error() {
 
 #[test]
 fn test_from_dberr_type_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::Type("invalid type".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -907,6 +970,7 @@ fn test_from_dberr_type_to_repository_error() {
 
 #[test]
 fn test_from_dberr_json_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::Json("parse error".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -915,6 +979,7 @@ fn test_from_dberr_json_to_repository_error() {
 
 #[test]
 fn test_from_dberr_attr_not_set_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::AttrNotSet("name".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -923,6 +988,7 @@ fn test_from_dberr_attr_not_set_to_repository_error() {
 
 #[test]
 fn test_from_dberr_convert_from_u64_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::ConvertFromU64("String");
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -930,6 +996,7 @@ fn test_from_dberr_convert_from_u64_to_repository_error() {
 
 #[test]
 fn test_from_dberr_unpack_insert_id_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::UnpackInsertId;
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -937,6 +1004,7 @@ fn test_from_dberr_unpack_insert_id_to_repository_error() {
 
 #[test]
 fn test_from_dberr_update_get_primary_key_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::UpdateGetPrimaryKey;
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -944,6 +1012,7 @@ fn test_from_dberr_update_get_primary_key_to_repository_error() {
 
 #[test]
 fn test_from_dberr_migration_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::Migration("schema mismatch".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -952,6 +1021,7 @@ fn test_from_dberr_migration_to_repository_error() {
 
 #[test]
 fn test_from_dberr_mutex_poison_error_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::MutexPoisonError;
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -959,6 +1029,7 @@ fn test_from_dberr_mutex_poison_error_to_repository_error() {
 
 #[test]
 fn test_from_dberr_rbac_error_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::RbacError("forbidden".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -967,6 +1038,7 @@ fn test_from_dberr_rbac_error_to_repository_error() {
 
 #[test]
 fn test_from_dberr_access_denied_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::AccessDenied {
         permission: "write".to_string(),
         resource: "task".to_string(),
@@ -979,6 +1051,7 @@ fn test_from_dberr_access_denied_to_repository_error() {
 
 #[test]
 fn test_from_dberr_backend_not_supported_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::BackendNotSupported {
         db: "mysql",
         ctx: "not configured",
@@ -989,6 +1062,7 @@ fn test_from_dberr_backend_not_supported_to_repository_error() {
 
 #[test]
 fn test_from_dberr_try_into_err_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let source_err: std::sync::Arc<dyn std::error::Error + Send + Sync> = std::sync::Arc::new(
         std::io::Error::new(std::io::ErrorKind::InvalidData, "bad value"),
     );
@@ -1003,6 +1077,7 @@ fn test_from_dberr_try_into_err_to_repository_error() {
 
 #[test]
 fn test_from_dberr_key_arity_mismatch_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::KeyArityMismatch {
         expected: 2,
         received: 1,
@@ -1013,6 +1088,7 @@ fn test_from_dberr_key_arity_mismatch_to_repository_error() {
 
 #[test]
 fn test_from_dberr_primary_key_not_set_to_repository_error() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let db_err = sea_orm::DbErr::PrimaryKeyNotSet { ctx: "update" };
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -1024,6 +1100,7 @@ fn test_from_dberr_primary_key_not_set_to_repository_error() {
 
 #[test]
 fn test_repository_error_database_display_exact() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let err = RepositoryError::Database(anyhow::anyhow!("connection refused"));
     let msg = err.to_string();
     assert!(msg.contains("Database error"));
@@ -1032,6 +1109,7 @@ fn test_repository_error_database_display_exact() {
 
 #[test]
 fn test_repository_error_database_display_with_empty_message() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let err = RepositoryError::Database(anyhow::anyhow!(""));
     let msg = err.to_string();
     assert!(msg.contains("Database error"));
@@ -1039,12 +1117,14 @@ fn test_repository_error_database_display_with_empty_message() {
 
 #[test]
 fn test_repository_error_not_found_display_exact() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let err = RepositoryError::NotFound;
     assert_eq!(err.to_string(), "Record not found");
 }
 
 #[test]
 fn test_repository_error_implements_debug() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let err1 = RepositoryError::Database(anyhow::anyhow!("e"));
     let err2 = RepositoryError::NotFound;
     let debug1 = format!("{:?}", err1);
@@ -1059,6 +1139,7 @@ fn test_repository_error_implements_debug() {
 
 #[tokio::test]
 async fn test_exists_by_url_with_unicode_returns_false_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.exists_by_url("http://例子.com/测试").await;
     assert!(result.is_ok(), "exists_by_url failed: {:?}", result.err());
@@ -1067,6 +1148,7 @@ async fn test_exists_by_url_with_unicode_returns_false_for_unknown() {
 
 #[tokio::test]
 async fn test_exists_by_url_with_long_url_returns_false_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let long_url = format!(
         "http://nonexistent-{}.com/{}",
@@ -1080,6 +1162,7 @@ async fn test_exists_by_url_with_long_url_returns_false_for_unknown() {
 
 #[tokio::test]
 async fn test_find_existing_urls_with_unicode_urls_returns_empty_for_unknown() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let urls = vec![
         format!("http://例子-{}.com", Uuid::new_v4()),
@@ -1092,6 +1175,7 @@ async fn test_find_existing_urls_with_unicode_urls_returns_empty_for_unknown() {
 
 #[tokio::test]
 async fn test_find_existing_urls_with_empty_string_in_list_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let urls = vec!["".to_string()];
     let result = repo.find_existing_urls(&urls).await;
@@ -1102,6 +1186,7 @@ async fn test_find_existing_urls_with_empty_string_in_list_returns_empty() {
 
 #[tokio::test]
 async fn test_find_existing_urls_with_mixed_empty_and_nonempty_returns_only_matches() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let task = make_test_task_with_unique_url();
     repo.create(&task).await.expect("create failed");
@@ -1121,6 +1206,7 @@ async fn test_find_existing_urls_with_mixed_empty_and_nonempty_returns_only_matc
 
 #[tokio::test]
 async fn test_find_by_id_with_nil_uuid_returns_none() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.find_by_id(Uuid::nil()).await;
     assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
@@ -1130,6 +1216,7 @@ async fn test_find_by_id_with_nil_uuid_returns_none() {
 
 #[tokio::test]
 async fn test_mark_completed_with_nil_uuid_succeeds_silently() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     // mark_completed silently returns Ok(()) when the task is not found
     // (this is the current implementation behavior).
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
@@ -1139,6 +1226,7 @@ async fn test_mark_completed_with_nil_uuid_succeeds_silently() {
 
 #[tokio::test]
 async fn test_mark_failed_with_nil_uuid_succeeds_silently() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.mark_failed(Uuid::nil()).await;
     assert!(result.is_ok(), "mark_failed failed: {:?}", result.err());
@@ -1146,6 +1234,7 @@ async fn test_mark_failed_with_nil_uuid_succeeds_silently() {
 
 #[tokio::test]
 async fn test_mark_cancelled_with_nil_uuid_succeeds_silently() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.mark_cancelled(Uuid::nil()).await;
     assert!(result.is_ok(), "mark_cancelled failed: {:?}", result.err());
@@ -1153,6 +1242,7 @@ async fn test_mark_cancelled_with_nil_uuid_succeeds_silently() {
 
 #[tokio::test]
 async fn test_acquire_next_with_nil_worker_id_returns_ok() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     // 序列化 acquire_next 测试：防止并行测试间相互获取 task
     let _guard = acquire_next_test_mutex().lock().await;
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
@@ -1164,6 +1254,7 @@ async fn test_acquire_next_with_nil_worker_id_returns_ok() {
 
 #[tokio::test]
 async fn test_cancel_tasks_by_crawl_id_with_nil_uuid_returns_zero() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.cancel_tasks_by_crawl_id(Uuid::nil()).await;
     assert!(
@@ -1177,6 +1268,7 @@ async fn test_cancel_tasks_by_crawl_id_with_nil_uuid_returns_zero() {
 
 #[tokio::test]
 async fn test_find_by_crawl_id_with_nil_uuid_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo.find_by_crawl_id(Uuid::nil()).await;
     assert!(
@@ -1190,6 +1282,7 @@ async fn test_find_by_crawl_id_with_nil_uuid_returns_empty() {
 
 #[tokio::test]
 async fn test_batch_cancel_with_nil_uuids_returns_errors() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let task_ids = vec![Uuid::nil()];
     let result = repo.batch_cancel(task_ids, Uuid::nil(), false).await;
@@ -1212,6 +1305,7 @@ async fn test_batch_cancel_with_nil_uuids_returns_errors() {
 
 #[tokio::test]
 async fn test_query_tasks_with_zero_limit_offset_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
         team_id: Uuid::new_v4(),
@@ -1228,6 +1322,7 @@ async fn test_query_tasks_with_zero_limit_offset_returns_empty() {
 
 #[tokio::test]
 async fn test_query_tasks_with_max_limit_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
         team_id: Uuid::new_v4(),
@@ -1244,6 +1339,7 @@ async fn test_query_tasks_with_max_limit_returns_empty() {
 
 #[tokio::test]
 async fn test_query_tasks_with_nil_team_id_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
         team_id: Uuid::nil(),
@@ -1258,6 +1354,7 @@ async fn test_query_tasks_with_nil_team_id_returns_empty() {
 
 #[tokio::test]
 async fn test_query_tasks_with_empty_statuses_vec_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
         team_id: Uuid::new_v4(),
@@ -1273,6 +1370,7 @@ async fn test_query_tasks_with_empty_statuses_vec_returns_empty() {
 
 #[tokio::test]
 async fn test_query_tasks_with_empty_task_types_vec_returns_empty() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
         team_id: Uuid::new_v4(),
@@ -1292,6 +1390,7 @@ async fn test_query_tasks_with_empty_task_types_vec_returns_empty() {
 
 #[test]
 fn test_repository_clone_preserves_pool_identity() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let pool = create_test_db_pool();
     let repo = TaskRepositoryImpl::new(pool.clone(), Duration::minutes(5));
     let cloned = repo.clone();
@@ -1300,6 +1399,7 @@ fn test_repository_clone_preserves_pool_identity() {
 
 #[test]
 fn test_new_with_distinct_pools_do_not_share_identity() {
+    if crate::common::test_helpers::skip_if_no_test_db() { return; }
     let pool1 = create_test_db_pool();
     let pool2 = create_test_db_pool();
     let repo1 = TaskRepositoryImpl::new(pool1, Duration::minutes(5));

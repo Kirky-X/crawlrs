@@ -223,6 +223,7 @@ mod tests {
 
     #[test]
     fn test_new_creates_repository_instance() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let pool = create_test_db_pool();
         let repo = ScrapeResultRepositoryImpl::new(pool);
         // pool() accessor should return the same Arc
@@ -234,6 +235,7 @@ mod tests {
 
     #[test]
     fn test_to_active_model_converts_all_fields() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let result = sample_scrape_result();
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
 
@@ -253,6 +255,7 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_none_screenshot() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut result = sample_scrape_result();
         result.screenshot = None;
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -261,6 +264,7 @@ mod tests {
 
     #[test]
     fn test_to_domain_converts_all_fields() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let model = sample_db_model();
         let domain = ScrapeResultRepositoryImpl::to_domain(model.clone());
 
@@ -279,6 +283,7 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_null_headers_uses_default_object() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut model = sample_db_model();
         model.headers = None;
         let domain = ScrapeResultRepositoryImpl::to_domain(model);
@@ -287,6 +292,7 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_null_meta_data_uses_default_object() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut model = sample_db_model();
         model.meta_data = None;
         let domain = ScrapeResultRepositoryImpl::to_domain(model);
@@ -295,6 +301,7 @@ mod tests {
 
     #[test]
     fn test_to_domain_roundtrip_preserves_core_fields() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let original = sample_scrape_result();
         let active = ScrapeResultRepositoryImpl::to_active_model(&original);
         // Reconstruct a Model from the ActiveModel (all fields are Set)
@@ -323,6 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_creates_record() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let mut result = sample_scrape_result();
         result.id = Uuid::new_v4();
@@ -347,6 +355,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_id_returns_none_for_unknown() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_id(Uuid::new_v4()).await;
         assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
@@ -358,6 +367,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_ids_returns_empty_for_unknown() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .find_by_task_ids(&[Uuid::new_v4(), Uuid::new_v4()])
@@ -377,6 +387,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_ids_with_empty_slice_returns_empty_vec() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_ids(&[]).await;
         assert!(
@@ -388,6 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_avg_response_time_returns_zero_for_unknown_team() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // Unknown team_id → JOIN yields no rows → COALESCE returns 0.0.
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_team_avg_response_time(Uuid::new_v4()).await;
@@ -403,6 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_ids_with_single_id_returns_empty_for_unknown() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_ids(&[Uuid::new_v4()]).await;
         assert!(
@@ -418,6 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_ids_with_many_ids_returns_empty_for_unknown() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let ids: Vec<Uuid> = (0..100).map(|_| Uuid::new_v4()).collect();
         let result = repo.find_by_task_ids(&ids).await;
@@ -434,6 +448,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_id_with_nil_uuid_returns_none() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         // Use a fresh random UUID instead of Uuid::nil() to avoid cross-test
         // data pollution (other tests may insert records with nil task_id).
@@ -447,6 +462,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_with_nil_task_id_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let mut result = sample_scrape_result();
         result.id = Uuid::new_v4();
@@ -457,6 +473,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_avg_response_time_with_nil_uuid_returns_zero() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // nil UUID as team_id: no tasks carry team_id=Nil, so JOIN yields 0 rows.
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_team_avg_response_time(Uuid::nil()).await;
@@ -468,6 +485,7 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_empty_content() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut result = sample_scrape_result();
         result.content = "".to_string();
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -476,6 +494,7 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_empty_url() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut result = sample_scrape_result();
         result.url = "".to_string();
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -484,6 +503,7 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_zero_status_code() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut result = sample_scrape_result();
         result.status_code = 0;
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -492,6 +512,7 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_large_status_code() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut result = sample_scrape_result();
         result.status_code = 599;
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -500,6 +521,7 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_zero_response_time() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut result = sample_scrape_result();
         result.response_time_ms = 0;
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -508,6 +530,7 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_empty_headers_and_metadata() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut result = sample_scrape_result();
         result.headers = serde_json::json!({});
         result.meta_data = serde_json::json!({});
@@ -519,6 +542,7 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_complex_headers() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut result = sample_scrape_result();
         result.headers = serde_json::json!({
             "content-type": "application/json",
@@ -536,6 +560,7 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_zero_response_time() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut model = sample_db_model();
         model.response_time_ms = 0;
         let domain = ScrapeResultRepositoryImpl::to_domain(model);
@@ -544,6 +569,7 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_empty_strings() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut model = sample_db_model();
         model.url = "".to_string();
         model.content = "".to_string();
@@ -556,6 +582,7 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_both_headers_and_metadata_null() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut model = sample_db_model();
         model.headers = None;
         model.meta_data = None;
@@ -567,6 +594,7 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_screenshot_present() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let mut model = sample_db_model();
         model.screenshot = Some("base64data".to_string());
         let domain = ScrapeResultRepositoryImpl::to_domain(model);
@@ -577,6 +605,7 @@ mod tests {
 
     #[test]
     fn test_sample_scrape_result_construction_values() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let result = sample_scrape_result();
         assert_eq!(result.status_code, 200);
         assert_eq!(result.content_type, "text/html");
@@ -588,6 +617,7 @@ mod tests {
 
     #[test]
     fn test_sample_db_model_construction_values() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let model = sample_db_model();
         assert_eq!(model.status_code, 404);
         assert_eq!(model.content_type, "text/plain");

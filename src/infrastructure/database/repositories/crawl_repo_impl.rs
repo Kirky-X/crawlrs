@@ -298,6 +298,7 @@ mod tests {
 
     #[test]
     fn test_new_creates_repository_instance() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool);
         // Repository wraps the pool Arc; construction itself does not
@@ -312,6 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         let result = repo.create(&crawl).await;
@@ -335,6 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_id_with_real_db_returns_none_for_unknown() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::new_v4()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
@@ -343,6 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let mut crawl = make_test_crawl();
         // create first
@@ -367,6 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_increment_completed_tasks_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         repo.create(&crawl).await.expect("create failed");
@@ -389,6 +394,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_increment_failed_tasks_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         repo.create(&crawl).await.expect("create failed");
@@ -411,6 +417,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         repo.create(&crawl).await.expect("create failed");
@@ -429,6 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_increment_total_tasks_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         repo.create(&crawl).await.expect("create failed");
@@ -451,6 +459,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_team_id_paginated_with_real_db_returns_empty_for_unknown() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 10, 0).await;
         assert!(
@@ -466,6 +475,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_by_team_id_with_real_db_returns_zero_for_unknown() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.count_by_team_id(Uuid::new_v4()).await;
         assert!(
@@ -478,6 +488,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_team_id_paginated_with_real_db_returns_matching_crawls() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         let mut crawl1 = make_test_crawl();
@@ -503,6 +514,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_by_team_id_with_real_db_counts_matching() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         let mut crawl1 = make_test_crawl();
@@ -523,6 +535,7 @@ mod tests {
 
     #[test]
     fn test_error_database_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = RepositoryError::Database(anyhow::anyhow!("conn refused"));
         assert!(err.to_string().contains("Database error"));
         assert!(err.to_string().contains("conn refused"));
@@ -530,12 +543,14 @@ mod tests {
 
     #[test]
     fn test_error_not_found_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = RepositoryError::NotFound;
         assert!(err.to_string().contains("Record not found"));
     }
 
     #[test]
     fn test_from_dberr_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::Custom("query failed".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -548,6 +563,7 @@ mod tests {
 
     #[test]
     fn test_pool_accessor_returns_reference_to_same_pool() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let pool = create_test_db_pool();
         let repo = CrawlRepositoryImpl::new(pool.clone());
         let pool_ref = repo.pool();
@@ -556,6 +572,7 @@ mod tests {
 
     #[test]
     fn test_make_test_crawl_construction() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let crawl = make_test_crawl();
         assert_eq!(crawl.name, "test crawl");
         assert_eq!(crawl.url, "http://example.com");
@@ -568,6 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_to_processing_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         repo.create(&crawl).await.expect("create failed");
@@ -589,6 +607,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_to_failed_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         repo.create(&crawl).await.expect("create failed");
@@ -610,6 +629,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_to_cancelled_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         repo.create(&crawl).await.expect("create failed");
@@ -631,6 +651,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_to_queued_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         repo.create(&crawl).await.expect("create failed");
@@ -661,6 +682,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_team_id_paginated_with_zero_limit_returns_empty() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 0, 0).await;
         assert!(
@@ -676,6 +698,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_team_id_paginated_with_large_offset_returns_empty() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .find_by_team_id_paginated(Uuid::new_v4(), 10, u32::MAX)
@@ -693,6 +716,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_team_id_paginated_with_max_limit_returns_empty() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .find_by_team_id_paginated(Uuid::new_v4(), u32::MAX, 0)
@@ -710,6 +734,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_team_id_paginated_with_nil_team_id_returns_empty() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id_paginated(Uuid::nil(), 10, 0).await;
         assert!(
@@ -727,6 +752,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_id_with_nil_uuid_returns_none() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::nil()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
@@ -736,6 +762,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_by_team_id_with_nil_uuid_returns_zero() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.count_by_team_id(Uuid::nil()).await;
         assert!(
@@ -749,6 +776,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_increment_completed_tasks_with_nil_uuid_succeeds_silently() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         // increment_completed_tasks silently returns Ok(()) when the crawl is
         // not found (this is the current implementation behavior).
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
@@ -762,6 +790,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_increment_failed_tasks_with_nil_uuid_succeeds_silently() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.increment_failed_tasks(Uuid::nil()).await;
         assert!(
@@ -773,6 +802,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_increment_total_tasks_with_nil_uuid_succeeds_silently() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo.increment_total_tasks(Uuid::nil()).await;
         assert!(
@@ -788,6 +818,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_record_not_found_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::RecordNotFound("crawl missing".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -796,6 +827,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_connection_acquire_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -803,6 +835,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_record_not_inserted_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::RecordNotInserted;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -810,6 +843,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_query_runtime_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err =
             sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
         let repo_err: RepositoryError = db_err.into();
@@ -823,26 +857,31 @@ mod tests {
 
     #[test]
     fn test_crawl_status_queued_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(format!("{}", CrawlStatus::Queued), "queued");
     }
 
     #[test]
     fn test_crawl_status_processing_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(format!("{}", CrawlStatus::Processing), "processing");
     }
 
     #[test]
     fn test_crawl_status_completed_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(format!("{}", CrawlStatus::Completed), "completed");
     }
 
     #[test]
     fn test_crawl_status_failed_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(format!("{}", CrawlStatus::Failed), "failed");
     }
 
     #[test]
     fn test_crawl_status_cancelled_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(format!("{}", CrawlStatus::Cancelled), "cancelled");
     }
 
@@ -852,6 +891,7 @@ mod tests {
 
     #[test]
     fn test_error_not_found_display_exact() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = RepositoryError::NotFound;
         assert_eq!(format!("{}", err), "Record not found");
     }
@@ -863,6 +903,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_connection_acquire_closed_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed);
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -870,6 +911,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_record_not_updated_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::RecordNotUpdated;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -877,6 +919,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_query_sqlx_error_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let inner = sea_orm::sqlx::Error::RowNotFound;
         let db_err =
             sea_orm::DbErr::Query(sea_orm::RuntimeErr::SqlxError(std::sync::Arc::new(inner)));
@@ -886,6 +929,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_conn_runtime_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal("conn lost".to_string()));
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -894,6 +938,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_exec_runtime_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::Exec(sea_orm::RuntimeErr::Internal("exec failed".to_string()));
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -902,6 +947,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_type_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::Type("invalid type".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -910,6 +956,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_json_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::Json("parse error".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -918,6 +965,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_attr_not_set_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::AttrNotSet("name".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -926,6 +974,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_convert_from_u64_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::ConvertFromU64("String");
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -933,6 +982,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_unpack_insert_id_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::UnpackInsertId;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -940,6 +990,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_update_get_primary_key_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::UpdateGetPrimaryKey;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -947,6 +998,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_migration_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::Migration("schema mismatch".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -955,6 +1007,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_mutex_poison_error_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::MutexPoisonError;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -962,6 +1015,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_rbac_error_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::RbacError("forbidden".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -970,6 +1024,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_access_denied_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::AccessDenied {
             permission: "write".to_string(),
             resource: "crawl".to_string(),
@@ -982,6 +1037,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_backend_not_supported_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::BackendNotSupported {
             db: "mysql",
             ctx: "not configured",
@@ -992,6 +1048,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_try_into_err_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let source_err: std::sync::Arc<dyn std::error::Error + Send + Sync> = std::sync::Arc::new(
             std::io::Error::new(std::io::ErrorKind::InvalidData, "bad value"),
         );
@@ -1006,6 +1063,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_key_arity_mismatch_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::KeyArityMismatch {
             expected: 2,
             received: 1,
@@ -1016,6 +1074,7 @@ mod tests {
 
     #[test]
     fn test_from_dberr_primary_key_not_set_to_repository_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let db_err = sea_orm::DbErr::PrimaryKeyNotSet { ctx: "update" };
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -1027,6 +1086,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_database_display_exact() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = RepositoryError::Database(anyhow::anyhow!("connection refused"));
         let msg = err.to_string();
         assert!(msg.contains("Database error"));
@@ -1035,6 +1095,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_database_display_with_empty_message() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = RepositoryError::Database(anyhow::anyhow!(""));
         let msg = err.to_string();
         assert!(msg.contains("Database error"));
@@ -1042,6 +1103,7 @@ mod tests {
 
     #[test]
     fn test_repository_error_implements_debug() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err1 = RepositoryError::Database(anyhow::anyhow!("e"));
         let err2 = RepositoryError::NotFound;
         let debug1 = format!("{:?}", err1);
@@ -1056,6 +1118,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_to_completed_with_real_db_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let crawl = make_test_crawl();
         repo.create(&crawl).await.expect("create failed");
@@ -1081,6 +1144,7 @@ mod tests {
 
     #[test]
     fn test_new_with_distinct_pools_do_not_share_identity() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let pool1 = create_test_db_pool();
         let pool2 = create_test_db_pool();
         let repo1 = CrawlRepositoryImpl::new(pool1);

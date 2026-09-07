@@ -245,6 +245,7 @@ mod tests {
 
     #[test]
     fn test_new_creates_repository_instance() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let pool = create_test_db_pool();
         let repo = CreditsRepositoryImpl::new(pool);
         // Repository wraps the pool Arc; construction itself does not
@@ -259,6 +260,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_balance_returns_zero_for_unknown_team() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         // get_balance on unknown team auto-initializes with 0 and returns Ok(0).
@@ -277,6 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_deduct_credits_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         // Initialize with 200 credits first so deduction won't go negative.
@@ -307,6 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_credits_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         let result = repo
@@ -333,6 +337,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_transaction_history_returns_empty_for_unknown_team() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_transaction_history(Uuid::new_v4(), Some(10)).await;
         assert!(
@@ -348,6 +353,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_team_credits_succeeds() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         let result = repo.initialize_team_credits(team_id, 0).await;
@@ -380,6 +386,7 @@ mod tests {
 
     #[test]
     fn test_error_database_error_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = CreditsRepositoryError::DatabaseError("conn refused".to_string());
         assert!(err.to_string().contains("Database error"));
         assert!(err.to_string().contains("conn refused"));
@@ -387,6 +394,7 @@ mod tests {
 
     #[test]
     fn test_error_insufficient_credits_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = CreditsRepositoryError::InsufficientCredits {
             available: 50,
             required: 100,
@@ -398,6 +406,7 @@ mod tests {
 
     #[test]
     fn test_error_credits_not_found_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let team_id = Uuid::new_v4();
         let err = CreditsRepositoryError::CreditsNotFound(team_id);
         assert!(err.to_string().contains("Credits not found for team"));
@@ -411,6 +420,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_transaction_history_with_no_limit() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         // limit=None exercises the branch where no `.limit()` is applied
         let result = repo.get_transaction_history(Uuid::new_v4(), None).await;
@@ -427,6 +437,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_transaction_history_with_zero_limit() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_transaction_history(Uuid::new_v4(), Some(0)).await;
         assert!(
@@ -439,6 +450,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_transaction_history_with_large_limit() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .get_transaction_history(Uuid::new_v4(), Some(u32::MAX))
@@ -456,6 +468,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_balance_with_nil_uuid() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         // Nil UUID is a valid UUID; behavior depends on DB state (auto-init or existing).
         // We only assert Ok because nil UUID is shared across test runs and prior
@@ -470,6 +483,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_deduct_credits_with_reference_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         repo.initialize_team_credits(team_id, 200)
@@ -501,6 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_deduct_credits_with_zero_amount() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         repo.initialize_team_credits(team_id, 100)
@@ -534,6 +549,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_deduct_credits_with_description_containing_quotes() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         repo.initialize_team_credits(team_id, 100)
@@ -562,6 +578,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_credits_with_reference_id() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         let reference_id = Uuid::new_v4();
@@ -589,6 +606,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_credits_with_zero_amount() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         let result = repo
@@ -619,6 +637,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_credits_with_description_containing_quotes() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         let description = "it's a 'test'".to_string();
@@ -643,6 +662,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_team_credits_with_non_zero_balance() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         let result = repo.initialize_team_credits(team_id, 1000).await;
@@ -655,6 +675,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_team_credits_with_negative_balance() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         // i64 allows negative; the method should still create the record.
@@ -672,6 +693,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_team_credits_with_nil_uuid() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         // Nil UUID is a valid UUID. Behavior depends on DB state:
         // - If no credits row exists: creates one with balance 0, returns Ok(0)
@@ -691,6 +713,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_deduct_credits_with_crawl_type() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         repo.initialize_team_credits(team_id, 100)
@@ -724,6 +747,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_credits_with_extract_type() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let team_id = Uuid::new_v4();
         let result = repo
@@ -758,26 +782,31 @@ mod tests {
 
     #[test]
     fn test_credits_transaction_type_search_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(format!("{}", CreditsTransactionType::Search), "search");
     }
 
     #[test]
     fn test_credits_transaction_type_scrape_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(format!("{}", CreditsTransactionType::Scrape), "scrape");
     }
 
     #[test]
     fn test_credits_transaction_type_extract_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(format!("{}", CreditsTransactionType::Extract), "extract");
     }
 
     #[test]
     fn test_credits_transaction_type_crawl_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(format!("{}", CreditsTransactionType::Crawl), "crawl");
     }
 
     #[test]
     fn test_credits_transaction_type_manual_adjustment_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(
             format!("{}", CreditsTransactionType::ManualAdjustment),
             "manual_adjustment"
@@ -786,6 +815,7 @@ mod tests {
 
     #[test]
     fn test_credits_transaction_type_subscription_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(
             format!("{}", CreditsTransactionType::Subscription),
             "subscription"
@@ -794,6 +824,7 @@ mod tests {
 
     #[test]
     fn test_credits_transaction_type_refund_display() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         assert_eq!(format!("{}", CreditsTransactionType::Refund), "refund");
     }
 
@@ -803,12 +834,14 @@ mod tests {
 
     #[test]
     fn test_error_database_error_with_empty_message() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = CreditsRepositoryError::DatabaseError("".to_string());
         assert_eq!(format!("{}", err), "Database error: ");
     }
 
     #[test]
     fn test_error_database_error_with_long_message() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let long_msg = "x".repeat(1000);
         let err = CreditsRepositoryError::DatabaseError(long_msg.clone());
         let msg = format!("{}", err);
@@ -817,6 +850,7 @@ mod tests {
 
     #[test]
     fn test_error_insufficient_credits_with_zero_values() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = CreditsRepositoryError::InsufficientCredits {
             available: 0,
             required: 0,
@@ -828,6 +862,7 @@ mod tests {
 
     #[test]
     fn test_error_insufficient_credits_with_large_values() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = CreditsRepositoryError::InsufficientCredits {
             available: i64::MAX,
             required: i64::MAX,
@@ -838,6 +873,7 @@ mod tests {
 
     #[test]
     fn test_error_credits_not_found_with_nil_uuid() {
+        if crate::common::test_helpers::skip_if_no_test_db() { return; }
         let err = CreditsRepositoryError::CreditsNotFound(Uuid::nil());
         let msg = format!("{}", err);
         assert!(msg.contains("00000000-0000-0000-0000-000000000000"));
