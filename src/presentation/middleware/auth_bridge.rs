@@ -718,9 +718,9 @@ mod tests {
     /// R-auth-engine-003：Exception(code=-1) → InvalidKey（401）
     #[test]
     fn test_from_garrison_exception_code_neg1_to_invalid_key() {
-        let err = garrison::error::GarrisonError::Exception(
+        let err = garrison::error::GarrisonError::Exception(Box::new(
             garrison::exception::GarrisonException::new(-1, "test"),
-        );
+        ));
         let auth_err = AuthError::from_garrison(err);
         match auth_err {
             AuthError::InvalidKey => {}
@@ -731,9 +731,9 @@ mod tests {
     /// R-auth-engine-003：Exception(code=-2) → Forbidden（403）
     #[test]
     fn test_from_garrison_exception_code_neg2_to_forbidden() {
-        let err = garrison::error::GarrisonError::Exception(
+        let err = garrison::error::GarrisonError::Exception(Box::new(
             garrison::exception::GarrisonException::new(-2, "test"),
-        );
+        ));
         let auth_err = AuthError::from_garrison(err);
         match auth_err {
             AuthError::Forbidden(_) => {}
@@ -744,9 +744,9 @@ mod tests {
     /// R-auth-engine-003：Exception(其他 code) → InternalError（500，fail-safe）
     #[test]
     fn test_from_garrison_exception_other_code_to_internal_error() {
-        let err = garrison::error::GarrisonError::Exception(
+        let err = garrison::error::GarrisonError::Exception(Box::new(
             garrison::exception::GarrisonException::new(100, "test"),
-        );
+        ));
         let auth_err = AuthError::from_garrison(err);
         match auth_err {
             AuthError::InternalError(_) => {}

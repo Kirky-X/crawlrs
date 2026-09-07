@@ -714,6 +714,39 @@ fn event_to_audit_entry(event: &GarrisonEvent) -> GarrisonResult<AuditLogEntry> 
             Some(truncate_string(reason, MAX_DENIAL_REASON_LEN)),
             Some(login_id.as_str()),
         ),
+        GarrisonEvent::InvitationCreated { code, issuer_id } => {
+            let entry = build_entry(
+                "invitation.created",
+                AuditDecision::Allow,
+                None,
+                Some(issuer_id.as_str()),
+                event,
+            )
+            .with_metadata("code", serde_json::Value::String(truncate_string(code, 64)));
+            return Ok(entry.build());
+        }
+        GarrisonEvent::InvitationRevoked { code, issuer_id } => {
+            let entry = build_entry(
+                "invitation.revoked",
+                AuditDecision::Allow,
+                None,
+                Some(issuer_id.as_str()),
+                event,
+            )
+            .with_metadata("code", serde_json::Value::String(truncate_string(code, 64)));
+            return Ok(entry.build());
+        }
+        GarrisonEvent::InvitationRedeemed { code, redeemer_id } => {
+            let entry = build_entry(
+                "invitation.redeemed",
+                AuditDecision::Allow,
+                None,
+                Some(redeemer_id.as_str()),
+                event,
+            )
+            .with_metadata("code", serde_json::Value::String(truncate_string(code, 64)));
+            return Ok(entry.build());
+        }
     };
 
     // 通用路径（无特殊 metadata 处理的变体）
@@ -879,6 +912,10 @@ fn extract_request_context(event: &GarrisonEvent) -> Option<&RequestContext> {
         | GarrisonEvent::Replaced {
             request_context, ..
         } => request_context.as_ref(),
+        // 邀请事件不携带 RequestContext
+        GarrisonEvent::InvitationCreated { .. }
+        | GarrisonEvent::InvitationRevoked { .. }
+        | GarrisonEvent::InvitationRedeemed { .. } => None,
     }
 }
 
