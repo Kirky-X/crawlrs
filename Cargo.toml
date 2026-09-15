@@ -7,7 +7,7 @@
 name = "crawlrs"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.95"
+rust-version = "1.97"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]
 license = "Apache-2.0"
 description = "crawlrs - Enterprise-grade web scraping and crawling platform built with Rust"
@@ -22,15 +22,32 @@ exclude = []
 
 [features]
 # 默认构建保持现有全功能行为：平台全套（多租户 + 认证 + 限流 + Webhook + metrics + content）
-default = ["platform"]
+default = ["platform", "db-postgres"]
 
 # platform：完整平台服务能力面。agent-lib / 嵌入式接入方用 `--no-default-features` 剥离。
 # 挂载 platform 的服务端依赖：dbnexus（DB）、axum（HTTP）、sdforge（SDK 宏）。
 # garrison/inventory（auth 隐含）、sysinfo（metrics 隐含）已分别挂既有 feature。
+# 数据库驱动不在 platform 内——由 db-postgres / db-sqlite / db-mysql 按构建选择。
 platform = [
     "teams", "auth", "rate-limit", "webhook", "metrics", "content",
     "dep:dbnexus", "dep:dbnexus-macros", "dep:axum", "dep:sdforge",
-    "inklog/http", "inklog/postgres", "http",
+    "inklog/http", "http",
+]
+
+# === 数据库驱动（互斥由 dbnexus 编译期强制：embedded 与 server-side 不可混，postgres/mysql 互斥）===
+# 每组透传全链路驱动选择：dbnexus（DB 抽象）+ garrison（认证存储）+ limiteron（限流存储）+ inklog（日志落库）。
+# runtime-tokio-rustls 为三组共享的 sea-orm 运行时（互斥组内唯一启用）。
+db-postgres = [
+    "dbnexus?/postgres", "dbnexus?/runtime-tokio-rustls", "dbnexus?/replica-routing",
+    "garrison?/db-postgres", "limiteron?/postgres", "inklog/postgres",
+]
+db-sqlite = [
+    "dbnexus?/sqlite", "dbnexus?/runtime-tokio-rustls", "dbnexus?/replica-routing",
+    "garrison?/db-sqlite", "limiteron?/sqlite", "inklog/sqlite",
+]
+db-mysql = [
+    "dbnexus?/mysql", "dbnexus?/runtime-tokio-rustls", "dbnexus?/replica-routing",
+    "garrison?/db-mysql", "limiteron?/mysql", "inklog/mysql",
 ]
 # sdforge 0.4 `#[forge]` 宏生成 `cfg(feature = "http")` 门控的 HTTP 路由注册代码
 # （inventory submit）。下游 crate 必须显式声明本 feature 才会生成路由。
@@ -44,11 +61,11 @@ llm = ["dep:genai"]
 # --- 引擎特性 ---
 engine-playwright = ["dep:chromiumoxide", "dep:chromiumoxide_fetcher"]
 engine-flaresolverr = []
-# TLS 指纹一致性伪装引擎（Phase 1 / D4）：引入 wreq（BoringSSL 后端）实现 WreqEngine。
+# TLS 指纹一致性伪装引擎引入 wreq（BoringSSL 后端）实现 WreqEngine。
 # 注意：wreq-util（Emulation 便捷枚举）为 GPL-3.0，违反 deny.toml license 白名单，
 # 故 TlsEmulation 由本项目自有枚举映射到 wreq 的 EmulationProvider（Apache-2.0 API），不引入 wreq-util。
 engine-tls-fingerprint = ["dep:wreq"]
-# MLLM 自主导航爬取引擎（Phase 3）：依赖浏览器引擎 + 视觉 LLM
+# MLLM 自主导航爬取引擎依赖浏览器引擎 + 视觉 LLM
 engine-mllm = ["engine-playwright", "llm"]
 
 # --- 内容处理特性（content-processing） ---
@@ -56,7 +73,7 @@ engine-mllm = ["engine-playwright", "llm"]
 # htmd: HTML→Markdown 转换
 content = ["dep:aho-corasick", "dep:htmd"]
 
-# --- 正文提取特性（content-processing, T043/R-content-003） ---
+# --- 正文提取特性（content-processing） ---
 # rs-trafilatura: 主路径，移植自 trafilatura，文章正文提取质量最高
 trafilatura = ["dep:rs-trafilatura"]
 # dom_smoothie: 性能回退，移植自 readability.js，DOM 结构启发式
@@ -71,15 +88,12 @@ agent-lib = ["content", "trafilatura", "dom-smoothie"]
 # --- 基础设施特性 ---
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
 
-# --- 业务能力特性（feature-gate-optional-modules） ---
-# 阶段说明：Stage 0 仅声明 feature + 常量；cfg 门控与 Noop* 实现见 Stage 1-4；
-# `--no-default-features` 在所有门控就位前会失败（预期，Stage 5 统一验证）。
-#
+# --- 业务能力特性 ---
 # `teams` 隐含 `auth`：多租户需认证识别租户
 teams = ["auth"]
 # `auth` 关闭时走 default_identity_middleware 注入固定 AuthState
 # （DEFAULT_TEAM_ID/DEFAULT_API_KEY_ID 见 src/common/constants.rs::default_identity）
-# garrison-auth-migration：auth-on 改由 garrison 提供认证引擎，故 `auth` 隐含 `dep:garrison`
+# auth-on 改由 garrison 提供认证引擎，故 `auth` 隐含 `dep:garrison`
 auth = ["dep:garrison", "dep:inventory"]
 # `rate-limit` 门控 limiteron 依赖；关闭时注入 NoopRateLimitingService
 rate-limit = ["dep:limiteron"]
@@ -116,7 +130,7 @@ subtle = "2.6"
 
 # HTTP client and networking
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "cookies", "http2", "charset", "system-proxy", "gzip", "brotli", "stream"] }
-# TLS 指纹引擎（Phase 1 / D4）：BoringSSL 后端 HTTP 客户端，Apache-2.0。
+# TLS 指纹引擎 BoringSSL 后端 HTTP 客户端，Apache-2.0。
 # wreq 5.x 稳定版已全部 yanked，暂用 6.0.0-rc.31（唯一可用版本）。
 # EmulationProvider/EmulationProviderFactory/TlsConfig
 # 均为 wreq 自有 API，无需引入 GPL 的 wreq-util。构建需 cmake + C 编译器（BoringSSL）。
@@ -125,9 +139,9 @@ url = "2.5"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 # Database
-# SAST 修复：jsonwebtoken 已单独声明（仅 hmac+sha2+rand 最小 feature，不开 rsa/p256/p384/ed25519-dalek）
+# SAST jsonwebtoken 已单独声明（仅 hmac+sha2+rand 最小 feature，不开 rsa/p256/p384/ed25519-dalek）
 dbnexus = { workspace = true, optional = true }
-dbnexus-macros = { version = "0.6.0-rc.2", path = "../base/dbnexus/macros", default-features = false, features = [], optional = true }
+dbnexus-macros = { version = "0.6.0-rc.4", path = "../base/dbnexus/macros", default-features = false, features = [], optional = true }
 
 sea-orm = { workspace = true }
 
@@ -145,7 +159,7 @@ dirs = "7.0"
 
 # Logging and observability
 log.workspace = true
-inklog = { version = "0.3.0-rc.2", path = "../base/inklog", default-features = false, features = ["cli"] }
+inklog = { version = "0.3.0-rc.4", path = "../base/inklog", default-features = false, features = ["cli"] }
 sdforge = { workspace = true, optional = true }
 metrics = { version = "0.24", optional = true }
 metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"], optional = true }
@@ -159,15 +173,15 @@ robotstxt = { version = "0.3" }
 chromiumoxide = { version = "0.9", optional = true }
 chromiumoxide_fetcher = { version = "0.9", optional = true }
 
-# Anti-bot detection — gated by `content` feature (T008/R-antibot-002)
+# Anti-bot detection — gated by `content` feature
 # aho-corasick: Tier2 通用词字面量集的多模式匹配（AC 自动机）
 aho-corasick = { version = "1.1", optional = true }
 
-# Markdown conversion — gated by `content` feature (T039/R-content-001)
-# htmd: HTML→Markdown 转换主路径（Stage2 P1）
+# Markdown conversion — gated by `content` feature
+# htmd: HTML→Markdown 转换主路径
 htmd = { version = "0.5", optional = true }
 
-# Content extraction — gated by `trafilatura` / `dom-smoothie` / `extractors` features (T043/R-content-003)
+# Content extraction — gated by `trafilatura` / `dom-smoothie` / `extractors` features
 # rs-trafilatura: 主路径，移植自 trafilatura（提取文章正文 + 元数据）
 rs-trafilatura = { version = "0.2", default-features = false, optional = true }
 # dom_smoothie: 性能回退，移植自 readability.js（DOM 启发式提取）
@@ -192,7 +206,7 @@ bcrypt = "0.19"
 zeroize = "1.9"
 # Standard Webhooks — webhook 签名/验签标准化（T-webhook-001）
 standardwebhooks = { version = "1.0", default-features = false }
-# SAST 修复：jsonwebtoken v11 将 features 重组为加密后端选择
+# SAST jsonwebtoken v11 将 features 重组为加密后端选择
 # rustCrypto: 纯 Rust 加密后端（替代旧版独立的 hmac/sha2/rand features）
 jsonwebtoken = { version = "11.0", default-features = false, features = ["rust_crypto"] }
 
@@ -202,8 +216,8 @@ ipnetwork = "0.21"
 hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
 
 # Rate limiting and circuit breaking — gated by `rate-limit` feature
-limiteron = { version = "0.3.0-rc.2", path = "../base/limiteron", default-features = false, optional = true, features = [
-    "postgres",
+limiteron = { version = "0.3.0-rc.4", path = "../base/limiteron", default-features = false, optional = true, features = [
+    # postgres 驱动由 crawlrs db-* 特性组透传 limiteron?/postgres
     "ban-manager",
     "quota-control",
     "circuit-breaker",
@@ -212,12 +226,12 @@ limiteron = { version = "0.3.0-rc.2", path = "../base/limiteron", default-featur
 ] }
 
 # Authentication & authorization framework — gated by `auth` feature
-# garrison-auth-migration (R-auth-engine-001)：auth-on 改由 garrison 提供认证引擎
+# auth-on 改由 garrison 提供认证引擎
 # 版本与 dbnexus/oxcache/trait-kit/confers/inklog/sdforge/limiteron 同作者对齐（共享 rc.43 链）
 garrison = { version = "0.9.0-rc.1", path = "/home/kirky/projects/garrison", default-features = false, optional = true, features = [
     "backend-embedded",
     "web-axum",
-    "db-postgres",
+    # db-postgres 不在此写死：由 crawlrs db-* 特性组透传 garrison?/db-*
     "cache-memory",
     "protocol-apikey",
     "protocol-jwt",
@@ -231,7 +245,7 @@ garrison = { version = "0.9.0-rc.1", path = "/home/kirky/projects/garrison", def
     "tenant-isolation",
     "tracing-log",
     # three-tier-cache：启用 garrison 内置 L1(oxcache 30s)+L2(DAO 300s)+L3(interface 回调) 三层缓存，
-    # 避免 get_permission_list/get_role_list 每次认证都触发 N+1+M 数据库查询（P-CRITICAL-001 修复）。
+    # 避免 get_permission_list/get_role_list 每次认证都触发 N+1+M 数据库查询（P-）。
     "three-tier-cache",
     # protocol-zeroize：JWT secret 使用 Zeroizing<String> 包装，Drop 时清零内存（CWE-316 防护）。
     "protocol-zeroize",
@@ -243,10 +257,10 @@ parking_lot = "0.12"
 # Regular expressions
 regex.workspace = true
 
-# Bloom filter & interner — URL 分层去重（T050-T053/R-frontier-001）
+# Bloom filter & interner — URL 分层去重
 # ahash: bloom 双哈希种子（已存在，复用）
 # hashbrown: spider ListBucket 同款 HashSet，比 std HashSet 性能更好
-# 规则25：显式声明所需特性，禁止 default-features = true
+# 显式声明所需特性，禁止 default-features = true
 # hashbrown 0.17 的 ahash 通过 default-hasher 特性提供
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "equivalent", "inline-more"] }
 
@@ -255,8 +269,8 @@ genai = { version = "0.6", optional = true }
 toml = "1.1"
 
 # Dependency Injection
-trait-kit = { version = "0.5.0-rc.2", path = "../base/trait-kit", features = ["async", "confers"] }
-oxcache = { version = "0.5.0-rc.2", path = "../base/oxcache", default-features = false, features = ["memory", "serialization", "macros", "batch", "metrics", "bloom"] }
+trait-kit = { version = "0.5.0-rc.5", path = "../base/trait-kit", features = ["async", "confers"] }
+oxcache = { version = "0.5.0-rc.4", path = "../base/oxcache", default-features = false, features = ["memory", "serialization", "macros", "batch", "metrics", "bloom"] }
 ahash = "0.8"
 
 # Internationalization (i18n) — Mozilla Fluent system
@@ -287,7 +301,9 @@ testcontainers-modules = { version = "0.15", features = ["postgres"] }
 [[test]]
 name = "integration_tests"
 path = "tests/integration/mod.rs"
-required-features = ["full"]
+# test-mocks：garrison 全局态重置 API（reset_garrison_global_state_for_integration_test）
+# 经该特性门控，集成测试与生产 clippy 面（--features full）解耦
+required-features = ["full", "test-mocks"]
 
 [[test]]
 name = "main"
@@ -304,11 +320,6 @@ required-features = ["test-mocks"]
 name = "route_diag_test"
 path = "tests/route_diag_test.rs"
 required-features = ["platform"]
-
-[[example]]
-name = "tls_fingerprint_check"
-path = "examples/tls_fingerprint_check.rs"
-required-features = ["engine-tls-fingerprint"]
 
 [[bench]]
 name = "benchmark"
@@ -346,7 +357,7 @@ members = ["examples"]
 [workspace.package]
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.95"
+rust-version = "1.97"
 authors = ["Kirky.X <Kirky-X@outlook.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/Kirky-X/crawlrs"
@@ -358,14 +369,14 @@ tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "fs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # Configuration
-confers = { version = "0.6.0-rc.2", path = "../base/confers", default-features = false, features = ["validation", "toml", "env"] }
+confers = { version = "0.6.0-rc.4", path = "../base/confers", default-features = false, features = ["validation", "toml", "env"] }
 figment = { version = "0.10", default-features = false, features = ["toml", "json", "yaml", "env"] }
 # Error handling
 anyhow = "1.0"
 # Logging
 log = "0.4"
 # Utilities
-uuid = { version = "1.24", features = ["v4", "serde"] }
+uuid = { version = "1.26", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 rand = "0.10"
 validator = { version = "0.21", features = ["derive"] }
@@ -374,17 +385,19 @@ regex = "1.13"
 # Encoding
 base64 = "0.23"
 # Database
-dbnexus = { version = "0.6.0-rc.2", path = "../base/dbnexus", default-features = false, features = ["postgres", "runtime-tokio-rustls", "cache", "macros", "migration", "config-env", "config-toml", "chrono", "with-uuid", "with-json", "replica-routing", "yaml", "permission"] }
-sea-orm = { version = "2.0.1", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
+# 驱动与 runtime 特性不在此声明（Cargo feature 只加不减，写死会锁死单一后端），
+# 由 crawlrs 的 db-postgres / db-sqlite / db-mysql 特性组按构建选择
+dbnexus = { version = "0.6.0-rc.4", path = "../base/dbnexus", default-features = false, features = ["cache", "macros", "migration", "config-env", "config-toml", "chrono", "with-uuid", "with-json", "yaml", "permission"] }
+sea-orm = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK
-sdforge = { version = "0.5.0-rc.2", path = "../base/sdforge", default-features = false, features = ["http"] }
+sdforge = { version = "0.5.0-rc.4", path = "../base/sdforge", default-features = false, features = ["http"] }
 # Web framework
 axum = "0.8"
 
 # =============================================================================
 # Target-Specific Dependencies
 # =============================================================================
-# libc：MmapBloom 的 mmap/munmap 调用所需（T051/R-frontier-001）
+# libc：MmapBloom 的 mmap/munmap 调用所需
 # - Linux: MAP_HUGETLB 大页支持（性能优化）
 # - 其他 Unix (macOS/BSD): 普通 mmap
 # - 非 Unix (Windows/WASM): 不引入，bloom.rs 自动 fallback 到 Vec<u8> heap
@@ -404,7 +417,7 @@ trait-kit = { path = "../base/trait-kit" }
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("platform", "agent-lib", "engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability"))'
+    'cfg(feature, values("platform", "agent-lib", "engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability", "db-postgres", "db-sqlite", "db-mysql"))'
 ]
 
 
