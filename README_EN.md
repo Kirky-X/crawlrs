@@ -4,11 +4,30 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=build)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/releases) [![License](https://img.shields.io/github/license/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE) ![Rust](https://img.shields.io/badge/rust-1.95%2B-orange)
 
-[**中文**](README.md) | **English**
+[**中文**](README.md) | English
 
 **Enterprise-grade web scraping platform built with Rust**
 
 [✨ Features](#-features) • [🚀 Quick Start](#-quick-start) • [📚 Documentation](#-documentation) • [💻 Examples](#-examples) • [🤝 Contributing](#-contributing)
+
+</div>
+
+---
+
+<div align="center">
+
+### 🎯 Submit a Task in One Line, Five Engines Relay to Deliver
+
+Dispatch any task through one unified REST API — engine scheduling, anti-bot and rate limiting are handled by crawlrs:
+
+<table style="width:100%; border-collapse: collapse">
+<tr>
+<td align="center" width="25%">📮<br><b>Task Intake</b><br><span style="color:#64748B">Sync · Async · Batch</span></td>
+<td align="center" width="25%">🚂<br><b>Auto Routing</b><br><span style="color:#64748B">Hybrid · Race · Fallback</span></td>
+<td align="center" width="25%">🛡️<br><b>Anti-Bot Escalation</b><br><span style="color:#64748B">Probe · Mask · Retry · Proxy</span></td>
+<td align="center" width="25%">🧠<br><b>AI Augmentation</b><br><span style="color:#64748B">RAG · Graph · DRL</span></td>
+</tr>
+</table>
 
 </div>
 
@@ -61,19 +80,13 @@
 </tr>
 </table>
 
-> For engine-level enhancement modules (anti-bot, intelligent enhancements, etc.), see their design and code locations in the [🏗️ Architecture Document · Crawl Capability Enhancement Modules](docs/ARCHITECTURE.md).
+Beyond the core capabilities above, crawlrs also provides site mapping, an async task queue (worker mode), multi-level caching and proxy support; for the design and code locations of the engine-level enhancement modules (anti-bot countermeasures, intelligent enhancements, etc.), see the [🏗️ Architecture Document · Crawl Capability Enhancement Modules](docs/ARCHITECTURE.md).
 
 ---
 
 ## 🚀 Quick Start
 
 ### 📦 Installation
-
-| Prerequisite | Minimum | Notes |
-|---------|---------|------|
-| Rust | 1.97 (`rust-version` in `Cargo.toml`) | Latest stable is fine |
-| PostgreSQL | 16+ | Default database backend (`db-postgres`) |
-| Docker | 20+ | Integration tests (testcontainers) and containerized deployment |
 
 ```bash
 git clone https://github.com/Kirky-X/crawlrs.git
@@ -89,7 +102,11 @@ cargo build --release --features standard
 cargo build --release --features full
 ```
 
+Requires Rust 1.97 or later (`rust-version` in `Cargo.toml`, latest stable is fine); the default database backend is PostgreSQL 16+ (`db-postgres`); Docker 20+ is used for integration tests (testcontainers) and containerized deployment.
+
 ### 💡 Minimal Example
+
+The following example is adapted from the [`config/default.toml`](config/default.toml) template and the startup flow in the [📖 User Guide](docs/USER_GUIDE.md):
 
 ```bash
 # 1. Prepare configuration (full template in config/default.toml, env vars in .env.example)
@@ -110,7 +127,9 @@ cargo run --bin crawlrs -- migrate
 
 # 3. Start the server (API mode; worker mode: cargo run --bin crawlrs worker)
 cargo run --bin crawlrs
+```
 
+```bash
 # 4. Verify the installation
 curl http://localhost:8899/health
 # {"status":"healthy","version":"0.2.0"}
@@ -309,7 +328,7 @@ Please do not report security vulnerabilities through public issues — email [K
 
 ## 🤝 Contributing
 
-For the full contribution process, development environment and code conventions, see the [🤝 Contributing Guide](docs/CONTRIBUTING.md).
+For the detailed contribution process and code conventions, see the [🤝 Contributing Guide](docs/CONTRIBUTING.md).
 
 ### 🛠️ Development Environment
 
@@ -345,8 +364,6 @@ Want to contribute code?<br>
 </td>
 </tr>
 </table>
-
-<img src="https://contrib.rocks/image?repo=Kirky-X/crawlrs" alt="Contributors">
 
 ---
 

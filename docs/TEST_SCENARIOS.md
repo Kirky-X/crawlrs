@@ -48,8 +48,10 @@
 | 认证端到端 | `cargo test --test integration_tests -- --ignored auth_garrison_test` | full | 需真实 PostgreSQL |
 | TLS 指纹引擎 | `cargo test --test integration_tests -- --ignored wreq_fingerprint_test` | full,engine-tls-fingerprint | 需出网 |
 | Python API/性能 | `./scripts/run-tests.sh local` | 运行中的服务实例 | 本地/手动 |
-| E2E API 冒烟 | `tests/e2e/api_test.sh` | 运行中的服务实例 | 手动 |
-| E2E 质量套件 | `./tests/e2e/e2e-suite.sh` | 全部 | 本地/手动，6 阶段 |
+| E2E API 冒烟 | `tests/e2e/api_test.sh` | 运行中的服务实例 | 手动 / liveapi 阶段自动 |
+| API 语义级验证 | `tests/e2e/api_semantics_test.py` | 运行中的服务实例 | liveapi 阶段自动 / 手动 |
+| 活体 API E2E 编排 | `tests/e2e/live-api-e2e.sh` | Docker（compose PG） | 手动 / liveapi 阶段 |
+| E2E 质量套件 | `./tests/e2e/e2e-suite.sh` | 全部 | 本地/手动，7 阶段 |
 | 特性编译矩阵 | `tests/e2e/feature-matrix.sh` | 全部 | e2e Stage 1 |
 | 手动真爬验证 | `tests/manual/test_real_crawl.py` | 运行中的服务实例 | 手动 |
 | 压测 | `tests/stress/k6_script.js` | 运行中的服务实例 | `k6 run tests/stress/k6_script.js` |
@@ -186,12 +188,13 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 
 CI 的 test / integration-test / coverage job 均以 `postgres:16` service 容器为前提：先执行 `for f in migrations/*.sql; do psql ... -f "$f"; done` 应用迁移，再运行测试；`DATABASE_URL` / `TEST_DATABASE_URL` 指向 `postgres://postgres:postgres@localhost:5432/crawlrs_test`。test job 的工具链矩阵为 Rust 1.95 / stable（见 `ci.yml`）。
 
-### 🎼 E2E 套件（6 阶段）
+### 🎼 E2E 套件（7 阶段）
 
 ```bash
-./tests/e2e/e2e-suite.sh                    # 全量（矩阵+静态+测试+集成+bench+报告）
+./tests/e2e/e2e-suite.sh                    # 全量（矩阵+静态+测试+集成+bench+活体API+报告）
 ./tests/e2e/e2e-suite.sh static unit        # 只跑指定阶段
 ./tests/e2e/e2e-suite.sh --skip matrix      # 跳过耗时阶段
+./tests/e2e/e2e-suite.sh --quick            # 快速矩阵（liveapi 自动跳过）
 TEST_DATABASE_URL=postgres://... ./tests/e2e/e2e-suite.sh   # 复用外部 PG（自动应用 migrations）
 ```
 
@@ -202,9 +205,21 @@ TEST_DATABASE_URL=postgres://... ./tests/e2e/e2e-suite.sh   # 复用外部 PG（
 | Stage 3 unit | `--lib`（default/full）、`--test main`、`--test sdk_api_test`、`--test route_diag_test` |
 | Stage 4 integration | `--test integration_tests --include-ignored`（含 garrison 认证端到端） |
 | Stage 5 bench | `cargo bench` 缩短采样；首跑建立 `e2e-baseline`，此后自动对比检测回退 |
-| Stage 6 report | 汇总 `test-results/e2e-report.txt`；EXIT trap 清理 compose 容器/卷与泄漏的 testcontainers 容器 |
+| Stage 6 liveapi | `tests/e2e/live-api-e2e.sh`：compose 拉起 PG → 迁移 → 构建 → `crawlrs bootstrap`（伪 TTY 捕获 admin key，日志自动掩码）→ 起服（8901 端口）→ 状态码冒烟（`api_test.sh`）+ 语义级验证（`api_semantics_test.py`，40+ 场景：响应包封一致性/安全脱敏/状态转换/数据过滤/并发）→ 产物 `test-results/{api-smoke.log, api-audit.jsonl, api-semantics-matrix.md}` |
+| Stage 7 report | 汇总 `test-results/e2e-report.txt`；EXIT trap 清理 compose 容器/卷与泄漏的 testcontainers 容器 |
 
 任一阶段失败即非零退出；日志集中在 `test-results/`；单阶段超时护栏 `E2E_STAGE_TIMEOUT`（默认 1800s）。
+
+单独运行活体 API E2E：
+
+```bash
+./tests/e2e/live-api-e2e.sh                 # 全流程（DB→bootstrap→起服→冒烟+语义→清理）
+./tests/e2e/live-api-e2e.sh --skip-build    # 跳过 cargo build
+KEEP_ENV=1 ./tests/e2e/live-api-e2e.sh      # 结束后保留 DB/服务便于排查
+# 已有运行中的服务时，直接指定凭证运行语义验证：
+python3 tests/e2e/api_semantics_test.py --base-url http://localhost:8899 \
+    --api-key "$KEY" --team-id "$TEAM_ID" --audit-log test-results/api-audit.jsonl
+```
 
 ### 🐳 环境与清理
 

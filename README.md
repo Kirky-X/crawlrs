@@ -14,6 +14,25 @@
 
 ---
 
+<div align="center">
+
+### 🎯 一句话下发任务，五引擎接力执行
+
+通过统一 REST API 派发任务，引擎调度、反爬与限流由 crawlrs 自动接管：
+
+<table style="width:100%; border-collapse: collapse">
+<tr>
+<td align="center" width="25%">📮<br><b>任务接入</b><br><span style="color:#64748B">同步 · 异步 · 批量</span></td>
+<td align="center" width="25%">🚂<br><b>自动选路</b><br><span style="color:#64748B">混合调度 · 竞速 · 降级</span></td>
+<td align="center" width="25%">🛡️<br><b>反爬升级</b><br><span style="color:#64748B">探测 · 伪装 · 重试 · 代理</span></td>
+<td align="center" width="25%">🧠<br><b>AI 增强</b><br><span style="color:#64748B">RAG · 图谱 · DRL</span></td>
+</tr>
+</table>
+
+</div>
+
+---
+
 ## 📋 目录
 
 - [✨ 功能特性](#-功能特性)
@@ -61,19 +80,13 @@
 </tr>
 </table>
 
-> 反爬对抗、智能增强等引擎级增强模块的设计与代码位置详见 [🏗️ 架构文档 · 爬取能力增强模块](docs/ARCHITECTURE.md)。
+除上述核心能力外，crawlrs 还提供站点映射、异步任务队列（Worker 模式）、多层缓存与代理支持等能力；引擎级增强模块（反爬对抗、智能增强等）的设计与代码位置详见 [🏗️ 架构文档 · 爬取能力增强模块](docs/ARCHITECTURE.md)。
 
 ---
 
 ## 🚀 快速开始
 
 ### 📦 安装
-
-| 前置要求 | 最低版本 | 说明 |
-|---------|---------|------|
-| Rust | 1.97（`Cargo.toml` 的 `rust-version`） | 最新稳定版即可 |
-| PostgreSQL | 16+ | 默认数据库后端（`db-postgres`） |
-| Docker | 20+ | 集成测试（testcontainers）与容器化部署 |
 
 ```bash
 git clone https://github.com/Kirky-X/crawlrs.git
@@ -89,7 +102,11 @@ cargo build --release --features standard
 cargo build --release --features full
 ```
 
+要求 Rust 1.97 及以上（`Cargo.toml` 的 `rust-version`，最新稳定版即可）；默认数据库后端为 PostgreSQL 16+（`db-postgres`）；Docker 20+ 用于集成测试（testcontainers）与容器化部署。
+
 ### 💡 最小示例
+
+以下示例改编自 [`config/default.toml`](config/default.toml) 配置模板与 [📖 用户指南](docs/USER_GUIDE.md) 的启动流程：
 
 ```bash
 # 1. 准备配置（完整模板见 config/default.toml，环境变量见 .env.example）
@@ -110,7 +127,9 @@ cargo run --bin crawlrs -- migrate
 
 # 3. 启动服务（API 模式；worker 模式：cargo run --bin crawlrs worker）
 cargo run --bin crawlrs
+```
 
+```bash
 # 4. 验证安装
 curl http://localhost:8899/health
 # {"status":"healthy","version":"0.2.0"}
@@ -308,7 +327,7 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 ## 🤝 参与贡献
 
-完整的贡献流程、开发环境与代码规范见 [🤝 贡献指南](docs/CONTRIBUTING.md)。
+详细的贡献流程与代码规范请参阅 [🤝 贡献指南](docs/CONTRIBUTING.md)。
 
 ### 🛠️ 开发环境
 
@@ -344,8 +363,6 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 </td>
 </tr>
 </table>
-
-<img src="https://contrib.rocks/image?repo=Kirky-X/crawlrs" alt="Contributors">
 
 ---
 
