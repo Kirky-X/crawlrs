@@ -44,6 +44,10 @@ enabled = true
 default_rpm = 60
 default_limit = 60
 burst_size = 20
+# 限流计数/封禁存储后端：
+# - "memory"   进程内存储（默认，单进程语义，重启即清零）
+# - "database" Postgres 共享存储（db-postgres 构建），api/worker 双进程共享，重启不丢失
+storage_backend = "memory"
 
 # Cache Configuration (Unified oxcache)
 [cache]

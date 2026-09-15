@@ -334,8 +334,23 @@ async fn sdk_create_crawl(
 /// Collects routes via sdforge's inventory system and returns an Axum router.
 /// Callers must inject the required `Extension<Arc<dyn Trait>>` layers for
 /// each `#[state]` parameter the wrappers depend on.
+///
+/// `openapi` feature 启用时额外挂载 `GET /openapi.json`，输出聚合自全部
+/// `#[forge]` 路由的 OpenAPI 3.1 规范（相对本路由挂载点，生产路径为
+/// `/v1/sdk/openapi.json`）。
 pub fn build_sdk_router() -> axum::Router {
-    sdforge::http::build()
+    let router = sdforge::http::build();
+
+    #[cfg(feature = "openapi")]
+    let router = router.route("/openapi.json", axum::routing::get(openapi_json_handler));
+
+    router
+}
+
+/// OpenAPI 3.1 spec endpoint（`openapi` feature 门控）。
+#[cfg(feature = "openapi")]
+async fn openapi_json_handler() -> axum::Json<utoipa::openapi::OpenApi> {
+    axum::Json(sdforge::openapi::generate_openapi_spec())
 }
 
 // mocks 仅在 test build 或显式启用 `test-mocks` feature 时编译。

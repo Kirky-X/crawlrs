@@ -9,13 +9,83 @@ use super::config_loader::{detect_available_port, load_settings};
 use crate::config::settings::Settings;
 use crate::infrastructure::security::env_var_security::{EnvVarSecurityMonitor, EnvVarValidator};
 use anyhow::Result;
+use confers::security::rules::{
+    CorsValidator, JwtSecretValidator, SecurityValidatorRegistry, ViolationSeverity,
+};
+use confers::types::{AnnotatedValue, ConfigValue, SourceId};
+use confers::ConfigProvider;
 use log::{debug, error, info, warn};
+use std::collections::HashMap;
+
+/// 将 [`Settings`] 适配为 confers [`ConfigProvider`] 的只读视图。
+///
+/// confers 内置安全校验器按固定键名读取配置（如 `jwt.secret`、`cors.allowed_origins`），
+/// 与 crawlrs 的键名（`auth.jwt_secret`）不一致，此处做显式键名别名映射：
+///
+/// - `jwt.secret` ← `settings.auth.jwt_secret()`（仅 `auth` feature 下提供；
+///   auth-off 时 garrison 不读取密钥，无需校验）
+/// - `cors.allowed_origins` ← `settings.cors.allowed_origins`
+/// - `cors.allowed_methods` ← `create_cors_layer` 的实际生效策略
+///   （恒为固定方法列表或 `Any`，非空，如实镜像以免误报）
+struct SettingsSecurityProvider {
+    values: HashMap<String, AnnotatedValue>,
+}
+
+impl SettingsSecurityProvider {
+    fn new(settings: &Settings) -> Self {
+        let mut values = HashMap::new();
+
+        #[cfg(feature = "auth")]
+        values.insert(
+            "jwt.secret".to_string(),
+            AnnotatedValue::new(
+                ConfigValue::from(settings.auth.jwt_secret().to_string()),
+                SourceId::default(),
+                "jwt.secret",
+            ),
+        );
+
+        values.insert(
+            "cors.allowed_origins".to_string(),
+            AnnotatedValue::new(
+                ConfigValue::from(settings.cors.allowed_origins.clone()),
+                SourceId::default(),
+                "cors.allowed_origins",
+            ),
+        );
+        // 与 bootstrap/routes.rs create_cors_layer 保持一致的非空方法集
+        values.insert(
+            "cors.allowed_methods".to_string(),
+            AnnotatedValue::new(
+                ConfigValue::from("GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS".to_string()),
+                SourceId::default(),
+                "cors.allowed_methods",
+            ),
+        );
+
+        Self { values }
+    }
+}
+
+impl ConfigProvider for SettingsSecurityProvider {
+    fn get_raw(&self, key: &str) -> Option<&AnnotatedValue> {
+        self.values.get(key)
+    }
+
+    fn keys(&self) -> Vec<String> {
+        self.values.keys().cloned().collect()
+    }
+}
 
 /// Validate configuration security settings.
 ///
-/// In production mode, this function will return an error if any security
-/// issues are detected in the configuration. In non-production modes, it
-/// will only log warnings.
+/// 基于 confers `security-rules` 内置校验器执行启动期安全检查：
+///
+/// - `JwtSecretValidator`（`auth` feature）：JWT 密钥长度 ≥32 字节且非常见弱密钥
+/// - `CorsValidator`：CORS 通配符告警、方法集非空检查
+///
+/// 分级策略与 `validate_environment` 一致：`Critical` 违规在生产环境阻断启动，
+/// 非生产环境仅告警；`Warning` 违规一律只告警（不阻断）。
 ///
 /// # Arguments
 ///
@@ -26,16 +96,60 @@ use log::{debug, error, info, warn};
 ///
 /// Returns `Ok(())` if validation passes, or an error with details about
 /// the security issue.
-pub fn validate_security(_settings: &Settings, _is_production: bool) -> Result<()> {
+pub fn validate_security(settings: &Settings, is_production: bool) -> Result<()> {
     // 说明：
     //
-    // 原注释"Validation is now handled by confers automatically via #[config(validate)]"
-    // 是错误的——confers 0.4 集成的是 `garde::Validate`，而 `Settings` 用的是
-    // `validator::Validate`，两者不兼容。`validator::Validate::validate` 已在
-    // `load_settings()` 中显式调用（覆盖所有 `#[validate(...)]` 注解）。
-    //
-    // 此函数保留为生产环境特定检查的扩展点（如密钥强度、JWT 长度等业务规则）。
-    debug!("Security validation configured via validator::Validate in load_settings()");
+    // 早期版本此函数为空扩展点（confers 0.4 的 #[config(validate)] 绑定 garde，
+    // 与 Settings 的 validator::Validate 不兼容，故 validator 注解校验留在
+    // `load_settings()` 中）。现接入 confers `security-rules` 注册表，补齐
+    // 密钥强度 / CORS 等 cross-field 业务规则校验。
+    debug!("Running security rule validators (confers security-rules)");
+
+    let provider = SettingsSecurityProvider::new(settings);
+    let mut registry = SecurityValidatorRegistry::new();
+
+    // JWT 密钥校验仅在 auth 生效时注册：auth-off 走 default_identity_middleware，
+    // jwt_secret 不参与运行时，报 Critical 属误报。
+    #[cfg(feature = "auth")]
+    registry.register(Box::new(JwtSecretValidator::new()));
+    registry.register(Box::new(CorsValidator::new()));
+
+    let report = registry.validate_all(&provider);
+
+    for violation in &report.violations {
+        match violation.severity {
+            ViolationSeverity::Critical => error!("Security violation: {}", violation),
+            ViolationSeverity::Warning => warn!("Security warning: {}", violation),
+        }
+    }
+    info!(
+        "Security rules validation complete: {} validator(s) passed, {} critical, {} warning(s)",
+        report.passed.len(),
+        report.critical_count(),
+        report.warning_count()
+    );
+
+    if report.is_ok(false) {
+        return Ok(());
+    }
+
+    let details = report
+        .violations
+        .iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let msg = format!("Configuration security validation failed: {}", details);
+
+    if is_production {
+        error!("CRITICAL: {}", msg);
+        return Err(anyhow::anyhow!("{}", msg));
+    }
+
+    warn!(
+        "Security violations present in non-production environment (not blocking): {}",
+        msg
+    );
     Ok(())
 }
 
@@ -241,9 +355,77 @@ mod tests {
     #[test]
     fn test_validate_security_returns_ok_for_production() {
         let settings = load_settings().expect("Failed to load settings");
+        // auth-on 时生产环境要求强 JWT 密钥（≥32 字节），空默认密钥会被拒绝
+        let mut settings = settings;
+        settings.auth.jwt_secret = "a-very-strong-jwt-secret-that-is-32-chars!!".to_string();
         let result = validate_security(&settings, true);
-        // validate_security always returns Ok(()) - it's a placeholder
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "production with strong jwt secret should pass, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "auth")]
+    fn test_validate_security_empty_jwt_secret_blocks_production() {
+        let settings = load_settings().expect("Failed to load settings");
+        let mut settings = settings;
+        settings.auth.jwt_secret = String::new();
+        let result = validate_security(&settings, true);
+        assert!(
+            result.is_err(),
+            "production with empty jwt secret must fail security validation"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("JWT secret"),
+            "error should mention JWT secret, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "auth")]
+    fn test_validate_security_weak_jwt_secret_blocks_production() {
+        let settings = load_settings().expect("Failed to load settings");
+        let mut settings = settings;
+        settings.auth.jwt_secret = "changeme".to_string();
+        let result = validate_security(&settings, true);
+        assert!(
+            result.is_err(),
+            "production with weak jwt secret must fail security validation"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "auth")]
+    fn test_validate_security_weak_jwt_secret_warns_only_in_non_production() {
+        let settings = load_settings().expect("Failed to load settings");
+        let mut settings = settings;
+        settings.auth.jwt_secret = "changeme".to_string();
+        let result = validate_security(&settings, false);
+        assert!(
+            result.is_ok(),
+            "non-production with weak jwt secret should not block startup, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_validate_security_cors_wildcard_warns_but_does_not_block() {
+        let settings = load_settings().expect("Failed to load settings");
+        // default.toml 的 allowed_origins = "*"：CorsValidator 记 Warning（非 Critical），
+        // 即使生产环境也不阻断启动（与 create_cors_layer 的开发回退语义一致）
+        assert!(settings.cors.allowed_origins.contains('*'));
+        let mut settings = settings;
+        settings.auth.jwt_secret = "a-very-strong-jwt-secret-that-is-32-chars!!".to_string();
+        let result = validate_security(&settings, true);
+        assert!(
+            result.is_ok(),
+            "cors wildcard is a warning, must not block production startup, got: {:?}",
+            result.err()
+        );
     }
 
     #[test]

@@ -6,11 +6,14 @@
 //! 优雅退出协调器
 //!
 //! 提供 worker service 的统一关闭编排：
-//! - `ShutdownCoordinator`：共享的关闭 flag + 完成通知，供 worker 循环轮询
+//! - `ShutdownCoordinator`：共享的关闭 flag + 完成通知，供 worker 循环轮询；
+//!   内嵌 trait-kit `AsyncShutdownCoordinator` 承载分阶段停机 hook
+//!   （StopRequests → DrainQueue → CloseConnections，每阶段独立超时）
 //! - `listen_unix_signals`：监听 SIGTERM/SIGINT 并触发关闭
 //!
 //! 设计接收信号 → 设置 `AtomicBool` flag → 等待活跃任务完成
-//! （graceful period 30s，可配置）→ 强制退出。
+//! （graceful period 30s，可配置）→ 按阶段执行注册的停机 hook
+//! （如 in-flight 任务回滚）→ 强制退出。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -19,7 +22,12 @@ use tokio::sync::Notify;
 
 use crate::domain::repositories::task_repository::TaskRepository;
 use log::{error, info};
+use trait_kit::kit::shutdown::AsyncShutdownCoordinator;
 use uuid::Uuid;
+
+/// 分阶段停机阶段（re-export 自研 trait-kit `shutdown` kit）：
+/// StopRequests → DrainQueue → CloseConnections。
+pub use trait_kit::kit::shutdown::ShutdownPhase;
 
 /// 默认优雅退出门限（秒）。
 pub const DEFAULT_GRACEFUL_PERIOD_SECS: u64 = 30;
@@ -34,15 +42,65 @@ pub struct ShutdownCoordinator {
     notify: Arc<Notify>,
     /// 等待活跃任务完成的宽限时长。
     graceful_period: Duration,
+    /// 分阶段停机 hook 执行器（吸收自研 trait-kit `shutdown` kit）：
+    /// 全局超时取 `graceful_period`，阶段间按序执行，超时标记不 panic。
+    phased: AsyncShutdownCoordinator,
 }
 
 impl ShutdownCoordinator {
     /// 创建协调器。
     pub fn new(graceful_period: Duration) -> Self {
+        let phased = AsyncShutdownCoordinator::new();
+        // 全局超时与宽限期对齐：阶段间软限制，超预算跳过剩余 hook 并标记 timed_out
+        let _ = phased.set_global_timeout(graceful_period);
         Self {
             flag: AtomicBool::new(false),
             notify: Arc::new(Notify::new()),
             graceful_period,
+            phased,
+        }
+    }
+
+    /// 注册分阶段停机 hook。
+    ///
+    /// hook 在 `run_phased_shutdown()` 中按
+    /// StopRequests → DrainQueue → CloseConnections 顺序执行；
+    /// 注册失败（内部锁中毒，不可恢复）仅记录 error。
+    pub fn register_shutdown_hook<F>(&self, phase: ShutdownPhase, hook: F)
+    where
+        F: FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        if let Err(e) = self.phased.register_hook(phase, hook) {
+            error!("Failed to register shutdown hook: {}", e);
+        }
+    }
+
+    /// 执行分阶段停机 hook（信号触发、worker 排空之后调用）。
+    ///
+    /// 返回所有阶段是否成功（无超时、无失败）。
+    pub async fn run_phased_shutdown(&self) -> bool {
+        match self.phased.shutdown().await {
+            Ok(result) => {
+                let timed_out = result.timed_out_phases();
+                if !timed_out.is_empty() {
+                    let names = timed_out
+                        .iter()
+                        .map(|p| p.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    error!("Phased shutdown timed out in phase(s): {}", names);
+                }
+                let ok = result.is_ok();
+                info!("Phased shutdown complete (ok={}, phases executed)", ok);
+                ok
+            }
+            Err(e) => {
+                error!("Phased shutdown failed: {}", e);
+                false
+            }
         }
     }
 
@@ -245,6 +303,94 @@ mod tests {
             elapsed < Duration::from_secs(5),
             "should unblock promptly on trigger, got {:?}",
             elapsed
+        );
+    }
+
+    // ========== 分阶段停机 hook（trait-kit shutdown 吸收） ==========
+
+    #[tokio::test]
+    async fn test_phased_shutdown_runs_registered_hook() {
+        let coordinator = Arc::new(ShutdownCoordinator::new(Duration::from_secs(30)));
+        let counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counter_in_hook = counter.clone();
+        coordinator.register_shutdown_hook(ShutdownPhase::DrainQueue, move || {
+            let counter = counter_in_hook.clone();
+            Box::pin(async move {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            })
+        });
+
+        assert!(coordinator.run_phased_shutdown().await);
+        assert_eq!(
+            counter.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "registered DrainQueue hook must execute exactly once"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_phased_shutdown_executes_phases_in_order() {
+        let coordinator = Arc::new(ShutdownCoordinator::new(Duration::from_secs(30)));
+        let order = Arc::new(parking_lot::Mutex::<Vec<&'static str>>::new(Vec::new()));
+
+        // 故意按逆序注册，验证执行顺序由阶段决定而非注册顺序
+        let o_close = order.clone();
+        coordinator.register_shutdown_hook(ShutdownPhase::CloseConnections, move || {
+            let o = o_close.clone();
+            Box::pin(async move { o.lock().push("close") })
+        });
+        let o_stop = order.clone();
+        coordinator.register_shutdown_hook(ShutdownPhase::StopRequests, move || {
+            let o = o_stop.clone();
+            Box::pin(async move { o.lock().push("stop") })
+        });
+        let o_drain = order.clone();
+        coordinator.register_shutdown_hook(ShutdownPhase::DrainQueue, move || {
+            let o = o_drain.clone();
+            Box::pin(async move { o.lock().push("drain") })
+        });
+
+        assert!(coordinator.run_phased_shutdown().await);
+        assert_eq!(
+            *order.lock(),
+            vec!["stop", "drain", "close"],
+            "hooks must run in phase order regardless of registration order"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_phased_shutdown_skips_remaining_hooks_on_global_timeout() {
+        // 全局超时 = graceful_period（50ms）；首个 hook 睡 100ms 耗尽预算后，
+        // 同阶段剩余 hook 应被跳过且阶段标记 timed_out（返回 false）。
+        let coordinator = Arc::new(ShutdownCoordinator::new(Duration::from_millis(50)));
+        let slow_ran = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let skipped_ran = Arc::new(std::sync::atomic::AtomicU32::new(0));
+
+        let slow_flag = slow_ran.clone();
+        coordinator.register_shutdown_hook(ShutdownPhase::DrainQueue, move || {
+            let flag = slow_flag.clone();
+            Box::pin(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                flag.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            })
+        });
+        let skipped_flag = skipped_ran.clone();
+        coordinator.register_shutdown_hook(ShutdownPhase::DrainQueue, move || {
+            let flag = skipped_flag.clone();
+            Box::pin(async move {
+                flag.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            })
+        });
+
+        assert!(
+            !coordinator.run_phased_shutdown().await,
+            "budget-exceeding shutdown must report not-ok"
+        );
+        assert_eq!(slow_ran.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            skipped_ran.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "hook after global budget exhaustion must be skipped"
         );
     }
 

@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use limiteron::prelude::*;
 use limiteron::storage::{BanStorage, MemoryBanStorage, MemoryStorage, Storage};
-use log::{debug, warn};
+use log::{debug, info, warn};
 
 use crate::domain::repositories::{
     credits_repository::CreditsRepository, task_repository::TaskRepository,
@@ -24,6 +24,29 @@ use crate::domain::services::rate_limiting_service::{
     BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult, QuotaService,
     RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError, RateLimitingService,
 };
+
+// dbnexus 适配器仅 db-postgres + dbnexus 同时启用时可用
+// （db-postgres 透传 limiteron?/postgres，limiteron 的适配器导出挂 postgres/sqlite/mysql 门控）
+#[cfg(all(feature = "db-postgres", feature = "platform"))]
+use limiteron::adapters::{DBNexusBanStorageAdapter, DBNexusStorageAdapter};
+
+/// 限流存储句柄：携带后端选择与其所需资源。
+///
+/// - [`StorageHandle::Memory`]：进程内存储（默认，历史行为）
+/// - [`StorageHandle::Database`]：limiteron dbnexus Postgres 适配器，
+///   api/worker 双进程共享限流计数与封禁记录，重启不丢失
+///
+/// `Database` 变体仅在 `db-postgres` + `dbnexus` 构建下存在；
+/// 其他数据库构建（sqlite/mysql）暂不支持（limiteron 适配器的 DDL 为 Postgres 方言）。
+#[derive(Clone, Default)]
+pub enum StorageHandle {
+    /// 进程内内存存储
+    #[default]
+    Memory,
+    /// Postgres 共享存储（db-postgres + dbnexus 构建）
+    #[cfg(all(feature = "db-postgres", feature = "platform"))]
+    Database(Arc<dbnexus::DbPool>),
+}
 
 /// 限流服务配置
 #[derive(Debug, Clone)]
@@ -68,15 +91,22 @@ pub struct LimiteronService {
 
 impl LimiteronService {
     /// 创建新的 LimiteronService
+    ///
+    /// # Arguments
+    ///
+    /// * `task_repository` - 任务仓库
+    /// * `tasks_backlog_repository` - 积压任务仓库
+    /// * `credits_repository` - 积分仓库
+    /// * `config` - 限流服务配置
+    /// * `storage` - 存储后端句柄（memory / postgres 共享存储）
     pub async fn new(
         task_repository: Arc<dyn TaskRepository>,
         tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
         credits_repository: Arc<dyn CreditsRepository>,
         config: RateLimitingConfig,
+        storage: StorageHandle,
     ) -> Result<Self, RateLimitingError> {
-        // 创建内存存储（生产环境应使用 PostgreSQL 存储）
-        let storage: Arc<dyn Storage> = Arc::new(MemoryStorage::new());
-        let ban_storage: Arc<dyn BanStorage> = Arc::new(MemoryBanStorage::new());
+        let (storage, ban_storage, l1_enabled) = Self::build_storage(storage).await?;
 
         // 创建流量控制配置
         let flow_config = Self::build_flow_control_config(&config)?;
@@ -86,7 +116,9 @@ impl LimiteronService {
             .with_config(flow_config)
             .with_storage(storage)
             .with_ban_storage(ban_storage)
-            .with_l1_cache_enabled(false) // 禁用 L1 缓存，使用 MemoryStorage 后端
+            // Memory 后端无需 L1（后端本身就是内存）；Database 后端启用 L1
+            // 挡住高频键的 DB 往返
+            .with_l1_cache_enabled(l1_enabled)
             .build()
             .await
             .map_err(|e| RateLimitingError::ConfigurationError(e.to_string()))?;
@@ -98,6 +130,72 @@ impl LimiteronService {
             tasks_backlog_repository,
             credits_repository,
         })
+    }
+
+    /// 依据存储句柄构建 Governor 的 storage / ban_storage。
+    ///
+    /// 返回 `(storage, ban_storage, l1_enabled)`；Database 后端启动前先执行
+    /// 幂等建表（`CREATE TABLE IF NOT EXISTS`，逐条执行以兼容 sqlx 预编译通道）。
+    async fn build_storage(
+        handle: StorageHandle,
+    ) -> Result<(Arc<dyn Storage>, Arc<dyn BanStorage>, bool), RateLimitingError> {
+        #[cfg(all(feature = "db-postgres", feature = "platform"))]
+        if let StorageHandle::Database(pool) = &handle {
+            Self::ensure_storage_schema(pool).await?;
+            info!("LimiteronService: using Postgres shared storage (cross-process rate limiting)");
+            return Ok((
+                Arc::new(DBNexusStorageAdapter::new(pool.clone())),
+                Arc::new(DBNexusBanStorageAdapter::new(pool.clone())),
+                true,
+            ));
+        }
+
+        #[cfg(all(feature = "db-postgres", feature = "platform"))]
+        let _ = &handle; // Memory 分支下避免 unused 警告
+
+        debug!("LimiteronService: using in-memory storage (single-process semantics)");
+        Ok((
+            Arc::new(MemoryStorage::new()),
+            Arc::new(MemoryBanStorage::new()),
+            false,
+        ))
+    }
+
+    /// 幂等初始化 limiteron 存储表（postgres 方言）。
+    ///
+    /// `create_all_tables_ddl()` 返回 `;` 连接的多语句串；sqlx 预编译通道
+    /// 不支持单次执行多语句，这里按 `;` 拆分逐条执行。
+    #[cfg(all(feature = "db-postgres", feature = "platform"))]
+    async fn ensure_storage_schema(pool: &Arc<dbnexus::DbPool>) -> Result<(), RateLimitingError> {
+        use sea_orm::ConnectionTrait;
+
+        let ddl = limiteron::create_all_tables_ddl();
+        let session = pool.get_session("admin").await.map_err(|e| {
+            RateLimitingError::ConfigurationError(format!(
+                "rate limit storage: failed to get db session: {}",
+                e
+            ))
+        })?;
+        let conn = session.connection().map_err(|e| {
+            RateLimitingError::ConfigurationError(format!(
+                "rate limit storage: failed to get connection: {}",
+                e
+            ))
+        })?;
+
+        for statement in ddl.split(';') {
+            let statement = statement.trim();
+            if statement.is_empty() {
+                continue;
+            }
+            conn.execute_unprepared(statement).await.map_err(|e| {
+                RateLimitingError::ConfigurationError(format!(
+                    "rate limit storage: schema init failed: {}",
+                    e
+                ))
+            })?;
+        }
+        Ok(())
     }
 
     /// 从配置构建 FlowControlConfig
@@ -1070,6 +1168,8 @@ mod tests {
             backlog_repo as Arc<dyn TasksBacklogRepository>,
             credits_repo as Arc<dyn CreditsRepository>,
             config,
+            // 测试统一走 Memory 后端（Database 后端需要真实 Postgres，由集成测试覆盖）
+            StorageHandle::Memory,
         )
         .await
         .expect("Failed to build LimiteronService")

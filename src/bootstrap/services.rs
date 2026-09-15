@@ -57,7 +57,9 @@ use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLog
 use crate::infrastructure::geolocation::GeoLocationServiceImpl;
 // rate-limit feature 关闭时不导入 LimiteronService
 #[cfg(feature = "rate-limit")]
-use crate::infrastructure::services::limiteron_service::{LimiteronService, RateLimitingConfig};
+use crate::infrastructure::services::limiteron_service::{
+    LimiteronService, RateLimitingConfig, StorageHandle,
+};
 // rate-limit feature 关闭时导入 NoopRateLimitingService
 #[cfg(not(feature = "rate-limit"))]
 use crate::infrastructure::services::noop_rate_limiting_service::NoopRateLimitingService;
@@ -191,14 +193,17 @@ pub fn init_team_semaphore(settings: &Settings) -> Arc<TeamSemaphore> {
 
 /// Initialize rate limiting service.
 ///
-/// 根据 `rate-limit` feature 选择装配：
-/// - `rate-limit` on：使用 `LimiteronService`（内存存储）
-/// - `rate-limit` off：使用 `NoopRateLimitingService`（放行所有请求）
+/// 根据 `rate-limit` feature 与 `rate_limiting.storage_backend` 配置选择装配：
+/// - `rate-limit` off：`NoopRateLimitingService`（放行所有请求）
+/// - `rate-limit` on + `storage_backend = memory`：`LimiteronService`（进程内存储）
+/// - `rate-limit` on + `storage_backend = database`（db-postgres 构建）：
+///   `LimiteronService` + Postgres 共享存储（api/worker 双进程一致）
 ///
 /// # Arguments
 ///
 /// * `repositories` - Application repositories
 /// * `settings` - Application settings
+/// * `db_pool` - dbnexus 连接池（`database` 后端所需；不可用时回退 memory）
 ///
 /// # Returns
 ///
@@ -206,6 +211,7 @@ pub fn init_team_semaphore(settings: &Settings) -> Arc<TeamSemaphore> {
 pub async fn init_rate_limiting_service(
     repositories: &Repositories,
     settings: &Settings,
+    db_pool: Option<Arc<DbPool>>,
 ) -> Arc<dyn RateLimitingService> {
     #[cfg(feature = "rate-limit")]
     {
@@ -243,11 +249,46 @@ pub async fn init_rate_limiting_service(
             rate_limit_ttl_seconds: 3600,
         };
 
+        // 存储后端选择：非法值/缺池回退 memory（限流链路 fail-open 语义）
+        let storage = match settings.rate_limiting.storage_backend.as_str() {
+            "memory" => StorageHandle::Memory,
+            "database" => {
+                #[cfg(all(feature = "db-postgres", feature = "platform"))]
+                match db_pool {
+                    Some(pool) => StorageHandle::Database(pool),
+                    None => {
+                        log::warn!(
+                            "rate_limiting.storage_backend=database but no db pool available; \
+                             falling back to memory storage"
+                        );
+                        StorageHandle::Memory
+                    }
+                }
+                #[cfg(not(all(feature = "db-postgres", feature = "platform")))]
+                {
+                    let _ = db_pool;
+                    log::warn!(
+                        "rate_limiting.storage_backend=database requires the db-postgres \
+                         build (Postgres dialect DDL); falling back to memory storage"
+                    );
+                    StorageHandle::Memory
+                }
+            }
+            other => {
+                log::warn!(
+                    "Unknown rate_limiting.storage_backend '{}'; falling back to memory storage",
+                    other
+                );
+                StorageHandle::Memory
+            }
+        };
+
         let service = LimiteronService::new(
             repositories.task_repo.clone(),
             repositories.tasks_backlog_repo.clone(),
             repositories.credits_repo.clone(),
             rate_limiting_config,
+            storage,
         )
         .await
         .expect("Failed to create LimiteronService");
@@ -260,6 +301,7 @@ pub async fn init_rate_limiting_service(
         // 避免 unused 参数 warning
         let _ = repositories;
         let _ = settings;
+        let _ = db_pool;
         log::warn!(
             "rate-limit feature disabled, using NoopRateLimitingService — \
              all requests are allowed without rate limiting"
@@ -669,7 +711,12 @@ pub async fn init_services(
     let request_coalescer = Arc::new(RequestCoalescer::new());
 
     // Initialize rate limiting service
-    let rate_limiting_service = init_rate_limiting_service(repositories, settings).await;
+    let rate_limiting_service = init_rate_limiting_service(
+        repositories,
+        settings,
+        Some(infrastructure.db.clone_inner()),
+    )
+    .await;
 
     // Initialize rate limit middleware
     let rate_limit_middleware = init_rate_limit_middleware(rate_limiting_service.clone());
@@ -1163,7 +1210,7 @@ mod tests {
                 return;
             }
         };
-        let settings = tcf::settings_with_urls(&pg.url).unwrap();
+        let mut settings = tcf::settings_with_urls(&pg.url).unwrap();
         // 高并行度下连接池创建可能因资源耗尽而失败，此时跳过而非 panic
         let db = match init_database(&settings).await {
             Ok(d) => d,
@@ -1174,8 +1221,15 @@ mod tests {
         };
         let repos = init_repositories(db.clone(), &settings);
 
-        let service = init_rate_limiting_service(&repos, &settings).await;
+        // database 后端路径：真实 Postgres 下执行幂等建表 + DBNexus 适配器装配
+        settings.rate_limiting.storage_backend = "database".to_string();
+        let service = init_rate_limiting_service(&repos, &settings, Some(db.clone_inner())).await;
         // Verify the service is usable (Arc strong count >= 1).
+        assert!(Arc::strong_count(&service) >= 1);
+
+        // memory 后端路径：默认配置下同样可装配
+        settings.rate_limiting.storage_backend = "memory".to_string();
+        let service = init_rate_limiting_service(&repos, &settings, Some(db.clone_inner())).await;
         assert!(Arc::strong_count(&service) >= 1);
     }
 

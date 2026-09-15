@@ -142,6 +142,16 @@ pub struct RateLimitingSettings {
     /// 突发请求数大小
     #[config(default = 20)]
     pub burst_size: u32,
+
+    /// 限流计数/封禁记录的存储后端
+    ///
+    /// - `memory`（默认）：进程内存储，单进程语义，重启即清零（历史行为）
+    /// - `database`：Postgres 共享存储（仅 db-postgres 构建生效），
+    ///   api/worker 双进程共享计数与封禁，重启不丢失
+    ///
+    /// 非法值在装配时告警并回退 `memory`（限流链路 fail-open 语义）。
+    #[config(default = "memory".to_string())]
+    pub storage_backend: String,
 }
 
 /// 并发控制配置设置
@@ -328,11 +338,13 @@ mod tests {
             default_rpm: 200,
             default_limit: 150,
             burst_size: 50,
+            storage_backend: "memory".to_string(),
         };
         assert!(!settings.enabled);
         assert_eq!(settings.default_rpm, 200);
         assert_eq!(settings.default_limit, 150);
         assert_eq!(settings.burst_size, 50);
+        assert_eq!(settings.storage_backend, "memory");
     }
 
     // ========== ConcurrencySettings ==========

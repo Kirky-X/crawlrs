@@ -180,14 +180,26 @@ mod app {
         worker_manager.wait_for_shutdown().await;
         log::info!("Shutting down worker service...");
 
-        // Roll back in-flight tasks so they aren't stuck in Active
+        // 分阶段停机（吸收自研 trait-kit `shutdown` kit）：
+        // in-flight 回滚挂入 DrainQueue 阶段，由协调器按阶段超时执行；
+        // 后续新增停机清理（连接池关闭、日志落盘）注册到对应阶段即可，无需改编排。
         let repo_for_rollback = app_state.task_repo();
-        crawlrs::workers::shutdown::rollback_pending_tasks(
-            &repo_for_rollback,
-            std::time::Duration::from_secs(settings.workers.graceful_shutdown_seconds),
-            &worker_ids,
-        )
-        .await;
+        let rollback_graceful =
+            std::time::Duration::from_secs(settings.workers.graceful_shutdown_seconds);
+        coordinator.register_shutdown_hook(
+            crawlrs::workers::shutdown::ShutdownPhase::DrainQueue,
+            move || {
+                Box::pin(async move {
+                    crawlrs::workers::shutdown::rollback_pending_tasks(
+                        &repo_for_rollback,
+                        rollback_graceful,
+                        &worker_ids,
+                    )
+                    .await;
+                })
+            },
+        );
+        coordinator.run_phased_shutdown().await;
 
         Ok(())
     }
