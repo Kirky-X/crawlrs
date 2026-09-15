@@ -282,6 +282,13 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
         .await
         .map_err(|_e| DbErr::ConnectionAcquire(ConnAcquireErr::ConnectionClosed))?;
 
+    // 池级 prepared statement LRU（吸收自研 dbnexus `prepare-cache`）：
+    // 配置 prepare_cache_capacity 启用，命中后跳过 prepare/parse 往返；
+    // None 保持关闭（行为同历史版本）
+    if let Some(capacity) = settings.prepare_cache_capacity {
+        pool.enable_prepare_cache(capacity);
+    }
+
     Ok(pool)
 }
 
@@ -301,6 +308,7 @@ mod tests {
             max_lifetime: Some(1800),
             connection_keepalive: Some(30),
             health_check_interval: Some(60),
+            prepare_cache_capacity: None,
         }
     }
 
@@ -604,6 +612,7 @@ mod tests {
             max_lifetime: None,
             connection_keepalive: None,
             health_check_interval: None,
+            prepare_cache_capacity: None,
         };
         let result = create_pool(&settings).await;
         assert!(result.is_err());
@@ -881,6 +890,7 @@ mod tests {
             max_lifetime: Some(1800),
             connection_keepalive: Some(30),
             health_check_interval: Some(60),
+            prepare_cache_capacity: None,
         };
 
         let pool = create_pool(&settings).await;
@@ -907,6 +917,7 @@ mod tests {
             max_lifetime: Some(1800),
             connection_keepalive: Some(30),
             health_check_interval: Some(60),
+            prepare_cache_capacity: None,
         };
 
         let pool = create_pool(&settings).await.unwrap();

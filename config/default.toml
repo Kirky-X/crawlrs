@@ -12,6 +12,8 @@ max_connections = 20
 min_connections = 5
 connect_timeout = 30
 idle_timeout = 600
+# 池级 prepared statement LRU 缓存容量（dbnexus prepare-cache），None 关闭
+prepare_cache_capacity = 128
 
 # Docker Database Configuration (overridden by environment variables)
 # WARNING: Do NOT hardcode passwords in this file!

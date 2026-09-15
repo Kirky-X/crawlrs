@@ -99,6 +99,7 @@ pub fn database_settings(url: &str) -> crate::config::DatabaseSettings {
         max_lifetime: Some(1800),
         connection_keepalive: Some(30),
         health_check_interval: Some(60),
+        prepare_cache_capacity: None,
     }
 }
 

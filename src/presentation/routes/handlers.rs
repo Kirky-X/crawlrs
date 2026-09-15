@@ -207,6 +207,29 @@ pub async fn readiness_check(
     };
     details.insert("cache".to_string(), cache_status);
 
+    // 连接池结构化健康快照（吸收自研 dbnexus `health-check`）
+    //
+    // `SELECT 1` 验证真实连通性；快照补充池视角（容量/空闲/等待等），
+    // 仅作诊断信息附加，不影响就绪判定（快照失败不阻断响应）。
+    let mut pool_snapshot =
+        match tokio::time::timeout(Duration::from_secs(1), db_pool.health_snapshot()).await {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                log::warn!("Readiness check: pool health snapshot timeout (1s)");
+                json!({"status": "timeout"})
+            }
+        };
+    // 附带 prepare-cache 命中统计（dbnexus prepare-cache 启用且有统计时）
+    if let Some(stats) = db_pool.prepare_cache_stats() {
+        pool_snapshot["prepare_cache"] = json!({
+            "size": stats.size,
+            "hits": stats.hits,
+            "misses": stats.misses,
+            "evictions": stats.evictions,
+        });
+    }
+    details.insert("database_pool".to_string(), pool_snapshot);
+
     let status = if all_ready { "ready" } else { "not_ready" };
     let status_code = if all_ready {
         StatusCode::OK

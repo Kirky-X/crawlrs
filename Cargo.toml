@@ -257,6 +257,8 @@ garrison = { version = "0.9.0-rc.1", path = "/home/kirky/projects/garrison", def
     "three-tier-cache",
     # protocol-zeroize：JWT secret 使用 Zeroizing<String> 包装，Drop 时清零内存（CWE-316 防护）。
     "protocol-zeroize",
+    # db-retry：garrison DAO 认证查询启用 dbnexus/retry 幂等重试（仅幂等 SQL，瞬态故障自愈）
+    "db-retry",
 ] }
 
 # Concurrency and synchronization
@@ -398,7 +400,7 @@ base64 = "0.23"
 # Database
 # 驱动与 runtime 特性不在此声明（Cargo feature 只加不减，写死会锁死单一后端），
 # 由 crawlrs 的 db-postgres / db-sqlite / db-mysql 特性组按构建选择
-dbnexus = { version = "0.6.0-rc.4", path = "../base/dbnexus", default-features = false, features = ["cache", "macros", "migration", "config-env", "config-toml", "chrono", "with-uuid", "with-json", "yaml", "permission"] }
+dbnexus = { version = "0.6.0-rc.4", path = "../base/dbnexus", default-features = false, features = ["cache", "macros", "migration", "config-env", "config-toml", "chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
 sea-orm = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK
 sdforge = { version = "0.5.0-rc.4", path = "../base/sdforge", default-features = false, features = ["http"] }

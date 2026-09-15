@@ -62,6 +62,13 @@ pub struct DatabaseSettings {
     /// 健康检查间隔（秒）
     #[config(default = Some(60))]
     pub health_check_interval: Option<u64>,
+
+    /// 预编译语句缓存容量（吸收自研 dbnexus `prepare-cache`）
+    ///
+    /// 池级 prepared statement LRU，命中后跳过 prepare/parse 往返，降低热路径延迟。
+    /// `None` 关闭；`Some(n)` 为缓存容量（默认 128）。
+    #[config(default = Some(128))]
+    pub prepare_cache_capacity: Option<usize>,
 }
 
 impl std::fmt::Debug for DatabaseSettings {
@@ -75,6 +82,7 @@ impl std::fmt::Debug for DatabaseSettings {
             .field("max_lifetime", &self.max_lifetime)
             .field("connection_keepalive", &self.connection_keepalive)
             .field("health_check_interval", &self.health_check_interval)
+            .field("prepare_cache_capacity", &self.prepare_cache_capacity)
             .finish()
     }
 }
@@ -294,6 +302,7 @@ mod tests {
             max_lifetime: Some(1800),
             connection_keepalive: Some(30),
             health_check_interval: Some(60),
+            prepare_cache_capacity: None,
         };
         assert_eq!(settings.url(), "postgresql://user:pass@localhost/db");
     }
@@ -309,6 +318,7 @@ mod tests {
             max_lifetime: Some(1800),
             connection_keepalive: Some(30),
             health_check_interval: Some(60),
+            prepare_cache_capacity: None,
         };
         let debug_str = format!("{:?}", settings);
         assert!(debug_str.contains("***REDACTED***"));
