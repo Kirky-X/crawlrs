@@ -11,7 +11,7 @@
 //! - Tier2：通用词字面量集，纯字面量走 `aho_corasick::AhoCorasick` 自动机，仅对 <10KB 页扫描。
 //! - Tier3：结构完整性正则（无 `<body>` / 可见文本过短 / 脚本重无内容）。
 //!
-//! 规则 10：本文件仅承载常量与模式定义，`classify` 实现在 `classifier.rs`。
+//! 本文件仅承载常量与模式定义，`classify` 实现在 `classifier.rs`。
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use once_cell::sync::Lazy;
@@ -197,7 +197,7 @@ mod tests {
             .iter()
             .find(|(re, _)| re.is_match(body))
             .map(|(_, t)| *t)
-            .map_or(false, |t| t == expected)
+            == Some(expected)
     }
 
     // -------- Tier1：每个 WAF 至少 1 个标记测试（共 8 个 WAF） --------

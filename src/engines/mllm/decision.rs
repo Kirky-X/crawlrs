@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! T047: MLLM 导航决策类型
+//! MLLM 导航决策类型
 //!
 //! 定义视觉模型输出的结构化决策枚举和 JSON 解析器。
 

@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! URL 归一化器（design.md §9，T050/R-frontier-001）
+//! URL 归一化器
 //!
 //! 将等价 URL 归一为同一规范串，便于 Bloom/Interner/DB 三层去重命中。
 //!
@@ -24,7 +24,7 @@
 //! - http/https：切换协议
 //! - index.html：路径末尾追加/去除 `index.html`、`index.htm`、`index.php`
 //!
-//! ## 错误显性化（规则 12）
+//! ## 错误显性化
 //!
 //! `normalize` 解析失败返回 [`UrlError::InvalidUrl`]，不静默返回原串。
 
@@ -104,7 +104,7 @@ impl UrlNormalizer {
         if let Some(host) = normalized.host_str() {
             let lower = host.to_lowercase();
             if lower != host {
-                // set_host 失败时返回错误（规则 12：显性化）
+                // set_host 失败时返回错误（显性化）
                 normalized
                     .set_host(Some(&lower))
                     .map_err(|e| UrlError::InvalidUrl(format!("set_host failed: {e}")))?;
@@ -135,11 +135,11 @@ impl UrlNormalizer {
     /// 同键多值保持原相对顺序（稳定排序），仅按 key 排序。
     /// 例如 `?b=2&a=1&b=3` → `?a=1&b=2&b=3`。
     ///
-    /// 规则 12：serde_urlencoded 解析失败时保留原始 query 串（不静默丢弃），
+    /// serde_urlencoded 解析失败时保留原始 query 串（不静默丢弃），
     /// 避免 query 不同的 URL 被误判为等价。
     fn sort_query(query: &str) -> String {
         // serde_urlencoded 解析为 Vec<(String, String)>，保持多值顺序
-        // 解析失败时返回原始 query（规则 12：不吞错为空 Vec）
+        // 解析失败时返回原始 query（不吞错为空 Vec）
         let pairs: Vec<(String, String)> = match serde_urlencoded::from_str(query) {
             Ok(p) => p,
             Err(_) => return query.to_string(),

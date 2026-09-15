@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 优先级前沿队列（T065，R-frontier-003）
+//! 优先级前沿队列
 //!
 //! 参考 crawl4ai `deep_crawling/frontier.py` 与 spider frontier 设计：
 //!
@@ -35,7 +35,7 @@ use url::Url;
 // ScoredUrl
 // =============================================================================
 
-/// 带分数的 URL（T065，R-frontier-003）
+/// 带分数的 URL
 ///
 /// 由 [`crate::workers::crawl::UrlScorer`] 评分后包装为 `ScoredUrl`，
 /// 推入 [`Frontier`] 等待出队。
@@ -48,7 +48,7 @@ use url::Url;
 /// # 域名提取
 ///
 /// [`ScoredUrl::new`] 从 URL 解析域名（小写化）。解析失败时返回 `Err`，
-/// 由调用方决定是否丢弃（规则 12：失败必须显性化）。
+/// 由调用方决定是否丢弃（失败必须显性化）。
 #[derive(Debug, Clone)]
 pub struct ScoredUrl {
     /// 已归一化的 URL
@@ -133,7 +133,7 @@ impl Ord for ScoredUrl {
 // Frontier
 // =============================================================================
 
-/// 优先级前沿队列（T065，R-frontier-003）
+/// 优先级前沿队列
 ///
 /// 按域名分组 `BinaryHeap` + round-robin 出队，避免单域名饥饿。
 ///
@@ -172,7 +172,7 @@ pub struct Frontier {
 struct FrontierInner {
     /// 每域名的优先级队列
     ///
-    /// 性能审查 M-1/M-2 修复：用 `Arc<str>` 作为 key 替代 `String`，
+    /// 用 `Arc<str>` 作为 key 替代 `String`，
     /// `Arc::clone` 是 O(1) 原子引用计数加 1（无堆分配），远快于 `String::clone` 的 O(n) memcpy。
     /// 用 `Arc` 而非 `Rc` 是因为 `Frontier` 通过 `Arc<Frontier>` 跨 tokio task 共享，需 `Send + Sync`。
     /// 同时 `domain_order` 也用 `Arc<str>`，使 `pop` 时 `domain_order[idx].clone()` 也降为 O(1)。
@@ -204,7 +204,7 @@ impl Frontier {
     /// 按 `scored.domain` 分组推入对应域名的 `BinaryHeap`。
     /// 新域名会追加到 `domain_order` 末尾。
     ///
-    /// 性能审查 M-1 修复：用 `Arc<str>` 替代 `String` 作为 domain key，
+    /// 用 `Arc<str>` 替代 `String` 作为 domain key，
     /// `Arc::clone` 是 O(1) 原子引用计数加 1（无堆分配），原 3 次 String clone 改为 1 次 `Arc::from` 堆分配 + 2 次 O(1) Arc::clone。
     /// 借用检查器不允许 entry().or_insert_with(closure) 内访问 `inner.domain_order`（双可变借用），
     /// 故仍用 contains_key + insert 模式，但 Arc<str> 已消除主要开销。
@@ -226,7 +226,7 @@ impl Frontier {
     ///
     /// 所有域名为空时返回 `None`。
     ///
-    /// 性能审查 M-2 修复：原 `domain_order[idx].clone()` 是 O(n) String clone，
+    /// 原 `domain_order[idx].clone()` 是 O(n) String clone，
     /// 改为 `Arc<str>` 后变为 O(1) 原子引用计数加 1。
     pub fn pop(&self) -> Option<ScoredUrl> {
         let mut inner = self.inner.lock();
@@ -290,7 +290,7 @@ impl Default for Frontier {
 // FrontierError
 // =============================================================================
 
-/// Frontier 错误类型（T065）
+/// Frontier 错误类型
 ///
 /// URL 解析失败或无 host 时由 [`ScoredUrl::new`] 返回。
 #[derive(Debug, thiserror::Error)]

@@ -11,9 +11,9 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 use std::time::Duration;
 
-// ========== T059/R-cache-002: MockCacheService ==========
+// ========== MockCacheService ==========
 
-/// 可观测的 MockCacheService 用于 T059 缓存门控测试
+/// 可观测的 MockCacheService 用于缓存门控测试
 ///
 /// - `data`：内存存储，可预填充模拟 cache hit
 /// - `get_count`/`set_count`：原子计数器，验证读/写行为
@@ -68,7 +68,7 @@ impl CacheService for MockCacheService {
         _ttl_seconds: u64,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
         self.set_count.fetch_add(1, Ordering::Relaxed);
-        // R-cache-002 修复：必须真正写入 data，否则写后读测试（test_try_write_scrape_cache_key_matches_read_key）
+        // 必须真正写入 data，否则写后读测试（test_try_write_scrape_cache_key_matches_read_key）
         // 会因 miss 失败。原实现以 `_key`/`_value` 命名导致数据被丢弃，违反规则 12（失败显性化）。
         // `_ttl_seconds` 保留下划线前缀：内存 mock 无过期语义，TTL 不影响读写一致性验证。
         self.data
@@ -103,7 +103,7 @@ fn make_task(payload: Value) -> Task {
     )
 }
 
-/// H-4 测试辅助：构造 CoalesceCoordinator + 新 RequestCoalescer（架构审查 H-2 修复）
+/// 测试辅助：构造 CoalesceCoordinator + 新 RequestCoalescer
 ///
 /// 集中装配逻辑，避免在 16+ 处测试中重复 `Arc::new(CoalesceCoordinator::new(...))`。
 /// 默认使用新的 `RequestCoalescer` 实例（与多数单测场景一致）。
@@ -118,7 +118,7 @@ fn make_coalesce_coordinator(
     ))
 }
 
-/// H-4 测试辅助：构造 CoalesceCoordinator + 指定 RequestCoalescer（架构审查 H-2 修复）
+/// 测试辅助：构造 CoalesceCoordinator + 指定 RequestCoalescer
 ///
 /// 用于需要共享 `request_coalescer` 实例的测试（如 line 4629）。
 fn make_coalesce_coordinator_with_coalescer(
@@ -142,7 +142,7 @@ fn parse_dto_for_test(task: &Task) -> Option<ScrapeRequestDto> {
     serde_json::from_value(task.payload.clone()).ok()
 }
 
-/// T019：构造测试用 MemoryScheduler
+/// 构造测试用 MemoryScheduler
 ///
 /// 默认返回 Normal 状态的调度器（内存使用率 0.5）。
 /// 需要模拟 Critical/Pressure 的测试可自行构造 MemoryScheduler。
@@ -176,7 +176,7 @@ fn make_test_memory_scheduler() -> Arc<MemoryScheduler> {
     ))
 }
 
-// ========== T062 安全审查 MEDIUM-2: redact_url_for_log tests ==========
+// ========== redact_url_for_log tests ==========
 
 #[test]
 fn test_redact_url_for_log_strips_query_params() {
@@ -251,8 +251,8 @@ fn test_redact_url_for_log_empty_query_only() {
     assert!(!redacted.contains("secret"));
 }
 
-// ========== T062 安全审查 LOW-2: filter_sensitive_headers tests ==========
-// 性能审查 MEDIUM-1：函数改为原地修改 (&mut HashMap)，测试同步更新
+// ========== filter_sensitive_headers tests ==========
+// 函数改为原地修改 (&mut HashMap)，测试同步更新
 
 #[test]
 fn test_filter_sensitive_headers_removes_set_cookie() {
@@ -1104,14 +1104,22 @@ impl TaskRepository for MockTaskRepository {
     async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
-    async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_completed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
-    async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_failed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
     async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
         Ok(false)
@@ -1148,6 +1156,15 @@ impl TaskRepository for MockTaskRepository {
     ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
         Ok((vec![], vec![]))
     }
+
+    async fn renew_lock(
+        &self,
+        _task_id: Uuid,
+        _worker_id: Uuid,
+        _extend_seconds: i64,
+    ) -> Result<bool, RepositoryError> {
+        Ok(true)
+    }
 }
 
 /// Mock ScrapeResultRepository — all methods return Ok with default values.
@@ -1167,9 +1184,13 @@ impl ScrapeResultRepository for MockScrapeResultRepository {
     async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
         Ok(0.0)
     }
+
+    async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+        Ok(0)
+    }
 }
 
-/// T042: 捕获 save_result 调用以验证 meta_data 持久化
+/// 捕获 save_result 调用以验证 meta_data 持久化
 ///
 /// 用于 markdown 持久化测试：调用方通过 `captured()` 获取保存的 ScrapeResult。
 struct CapturingScrapeResultRepository {
@@ -1202,6 +1223,10 @@ impl ScrapeResultRepository for CapturingScrapeResultRepository {
     }
     async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
         Ok(0.0)
+    }
+
+    async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+        Ok(0)
     }
 }
 
@@ -1249,8 +1274,8 @@ struct MockWebhookService;
 
 #[async_trait::async_trait]
 impl WebhookService for MockWebhookService {
-    async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
-        Ok(())
+    async fn send_webhook(&self, _event: &WebhookEvent) -> Result<u16> {
+        Ok(200)
     }
     async fn trigger_completion(&self, _task: &Task) -> Result<()> {
         Ok(())
@@ -1264,6 +1289,9 @@ impl WebhookService for MockWebhookService {
 #[derive(Debug, Default)]
 struct MockCreditsRepo {
     deducted: Arc<std::sync::Mutex<Vec<(Uuid, i64)>>>,
+    /// Records (reference_id/task_id, transaction_type) of every deduction so
+    /// `has_deduction_for_task` can enforce idempotency in tests (T018).
+    deduction_keys: Arc<std::sync::Mutex<Vec<(Uuid, String)>>>,
 }
 
 #[async_trait::async_trait]
@@ -1275,15 +1303,34 @@ impl CreditsRepository for MockCreditsRepo {
         &self,
         team_id: Uuid,
         amount: i64,
-        _transaction_type: CreditsTransactionType,
+        transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<Uuid>,
+        reference_id: Option<Uuid>,
     ) -> Result<(), CreditsRepositoryError> {
         self.deducted
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push((team_id, amount));
+        if let Some(task_id) = reference_id {
+            self.deduction_keys
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((task_id, transaction_type.to_string()));
+        }
         Ok(())
+    }
+    async fn has_deduction_for_task(
+        &self,
+        task_id: Uuid,
+        transaction_type: CreditsTransactionType,
+    ) -> Result<bool, CreditsRepositoryError> {
+        let keys = self
+            .deduction_keys
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        Ok(keys
+            .iter()
+            .any(|(id, ty)| *id == task_id && *ty == transaction_type.to_string()))
     }
     async fn add_credits(
         &self,
@@ -1403,11 +1450,11 @@ async fn build_mock_worker() -> ScrapeWorker {
         crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: settings_arc,
         default_concurrency_limit: 10,
@@ -1418,7 +1465,7 @@ async fn build_mock_worker() -> ScrapeWorker {
     })
 }
 
-/// T059/R-cache-002：构造使用指定 MockCacheService 的 worker
+/// 构造使用指定 MockCacheService 的 worker
 ///
 /// 返回 (worker, cache_arc) —— 调用方通过 cache_arc.get_count()/set_count()
 /// 验证缓存读/写行为，或通过 cache_arc 预填充数据模拟 cache hit。
@@ -1438,11 +1485,11 @@ async fn build_mock_worker_with_cache(cache: Arc<MockCacheService>) -> ScrapeWor
         crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: settings_arc,
         default_concurrency_limit: 10,
@@ -1453,7 +1500,7 @@ async fn build_mock_worker_with_cache(cache: Arc<MockCacheService>) -> ScrapeWor
     })
 }
 
-/// T042: 构造使用 CapturingScrapeResultRepository 的 worker
+/// 构造使用 CapturingScrapeResultRepository 的 worker
 ///
 /// 返回 (worker, capturing_repo_arc) —— 调用方通过 capturing_repo_arc.captured()
 /// 获取 save_result 保存的 ScrapeResult 以断言 meta_data 内容。
@@ -1476,11 +1523,11 @@ async fn build_mock_worker_with_capturing_repo(
         crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: settings_arc,
         default_concurrency_limit: 10,
@@ -1494,18 +1541,18 @@ async fn build_mock_worker_with_capturing_repo(
 
 // --- should_crawl tests ---
 //
-// 架构审查 M-4 修复：原 should_crawl 方法在生产 impl 块中（虽然 #[cfg(test)] 门控），
-// 违反规则9（生产 impl 块不应保留测试 helper）。已移到 test mod 内独立 impl 块，
+// 原 should_crawl 方法在生产 impl 块中（虽然 #[cfg(test)] 门控），
+// 违反“生产 impl 块不应保留测试 helper”。已移到 test mod 内独立 impl 块，
 // 保持 test_mock_should_crawl_* 系列调用方式（`worker.should_crawl(...)`）不变。
 impl super::ScrapeWorker {
     /// 测试专用：验证 UrlPatternFilter 行为等价性
     ///
-    /// 性能审查 H-3 修复后：生产路径 extract_and_queue_links 已改为循环外构造一次
+    /// 生产路径 extract_and_queue_links 已改为循环外构造一次
     /// UrlPatternFilter 复用，不再调用 should_crawl。此方法保留供测试验证行为等价性。
     fn should_crawl(&self, url: &str, config: &CrawlConfigDto) -> bool {
-        // T066/R-frontier-002：委托 UrlPatternFilter（行为等价，回归测试断言）
+        // 委托 UrlPatternFilter（行为等价，回归测试断言）
         //
-        // 边界场景：Some(vec![]) 空 include 列表 → 无 pattern 可匹配 → 拒绝（vacuous truth）。
+        // 边界场景：Some(vec!) 空 include 列表 → 无 pattern 可匹配 → 拒绝（vacuous truth）。
         // UrlPatternFilter 将空 include 视为"无限制"（返回 true），需在此显式处理。
         if matches!(&config.include_patterns, Some(patterns) if patterns.is_empty()) {
             return false;
@@ -1789,7 +1836,7 @@ async fn test_mock_build_extract_request_basic() {
     assert!(!request.options.needs_screenshot);
     assert!(!request.options.mobile);
     assert!(request.options.proxy.is_none());
-    // T019 修复：build_extract_request 不再跳过 TLS 验证
+    // build_extract_request 不再跳过 TLS 验证
     assert!(!request.options.skip_tls_verification);
     assert!(!request.options.needs_tls_fingerprint);
     assert!(!request.options.use_fire_engine);
@@ -2284,6 +2331,119 @@ async fn test_mock_deduct_token_credits_with_tokens() {
         .await;
 }
 
+// --- T018: deduction idempotency (R-data-integrity-005) ---
+
+#[tokio::test]
+async fn test_deduct_feature_credits_is_idempotent_per_task() {
+    // A stale worker re-running the post-completion charge path must not
+    // double-charge: the second deduct_feature_credits call for the same task is
+    // suppressed by the has_deduction_for_task idempotency guard.
+    let credits_repo = Arc::new(MockCreditsRepo::default());
+    let deducted_log = credits_repo.deducted.clone();
+    let worker = build_worker_for_success_tests(
+        Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
+        Arc::new(EngineClient::new()),
+        credits_repo as Arc<dyn CreditsRepository>,
+        Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+    )
+    .await;
+
+    let team_id = Uuid::new_v4();
+    let task_id = Uuid::new_v4();
+    // screenshot=true, proxy=true → extra_credits = 3 (> 0, triggers deduction)
+    worker
+        .deduct_feature_credits(team_id, task_id, true, true)
+        .await;
+    worker
+        .deduct_feature_credits(team_id, task_id, true, true)
+        .await;
+
+    let deductions = deducted_log.lock().unwrap();
+    assert_eq!(
+        deductions.len(),
+        1,
+        "duplicate feature-credit deduction must be suppressed, got {:?}",
+        deductions
+    );
+    assert_eq!(
+        deductions[0].1, 3,
+        "the single deduction should be screenshot(2)+proxy(1)=3 credits"
+    );
+}
+
+#[tokio::test]
+async fn test_deduct_token_credits_is_idempotent_per_task() {
+    let credits_repo = Arc::new(MockCreditsRepo::default());
+    let deducted_log = credits_repo.deducted.clone();
+    let worker = build_worker_for_success_tests(
+        Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
+        Arc::new(EngineClient::new()),
+        credits_repo as Arc<dyn CreditsRepository>,
+        Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+    )
+    .await;
+
+    let team_id = Uuid::new_v4();
+    let task_id = Uuid::new_v4();
+    let usage = TokenUsage {
+        prompt_tokens: 100,
+        completion_tokens: 50,
+        total_tokens: 150,
+    };
+    worker
+        .deduct_token_credits(team_id, task_id, &usage, "test idempotent")
+        .await;
+    worker
+        .deduct_token_credits(team_id, task_id, &usage, "test idempotent")
+        .await;
+
+    let deductions = deducted_log.lock().unwrap();
+    assert_eq!(
+        deductions.len(),
+        1,
+        "duplicate token-credit deduction must be suppressed, got {:?}",
+        deductions
+    );
+}
+
+#[tokio::test]
+async fn test_deduct_feature_and_token_credits_are_independent_per_task() {
+    // A task legitimately incurs BOTH a Scrape (feature) and an Extract (token)
+    // charge; the guard is keyed by (task_id, type) so the second, different-type
+    // deduction must NOT be suppressed.
+    let credits_repo = Arc::new(MockCreditsRepo::default());
+    let deducted_log = credits_repo.deducted.clone();
+    let worker = build_worker_for_success_tests(
+        Arc::new(MockTaskRepository) as Arc<dyn TaskRepository>,
+        Arc::new(EngineClient::new()),
+        credits_repo as Arc<dyn CreditsRepository>,
+        Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+    )
+    .await;
+
+    let team_id = Uuid::new_v4();
+    let task_id = Uuid::new_v4();
+    worker
+        .deduct_feature_credits(team_id, task_id, true, false)
+        .await;
+    let usage = TokenUsage {
+        prompt_tokens: 100,
+        completion_tokens: 50,
+        total_tokens: 150,
+    };
+    worker
+        .deduct_token_credits(team_id, task_id, &usage, "test independent")
+        .await;
+
+    let deductions = deducted_log.lock().unwrap();
+    assert_eq!(
+        deductions.len(),
+        2,
+        "feature (Scrape) and token (Extract) charges are independent, got {:?}",
+        deductions
+    );
+}
+
 // --- handle_scrape_success tests ---
 
 #[tokio::test]
@@ -2337,10 +2497,165 @@ async fn test_mock_handle_scrape_success_with_extraction_rules() {
     let result = worker
         .handle_scrape_success(&task, dto.as_ref(), response)
         .await;
-    assert!(result.is_ok());
+    // 守卫胜利：mark_completed 返回 1 → Ok(true)
+    assert!(matches!(result, Ok(true)));
 }
 
-// --- T042/R-content-001: Markdown 集成测试（gated `markdown` 特性） ---
+/// 丢守卫（mark_completed 返回 0）→ 返回 Ok(false)，不做扣费/投递
+/// （R-data-integrity-005：守卫归属即计费幂等）
+#[tokio::test]
+async fn test_handle_scrape_success_returns_false_when_guard_lost() {
+    struct GuardLostRepo;
+
+    #[async_trait::async_trait]
+    impl TaskRepository for GuardLostRepo {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
+            Ok(task.clone())
+        }
+        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+            Ok(None)
+        }
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            // 模拟锁已被其他 worker 抢占
+            Ok(0)
+        }
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
+        }
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
+        }
+        async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
+            Ok(false)
+        }
+        async fn find_existing_urls(
+            &self,
+            _urls: &[String],
+        ) -> Result<HashSet<String>, RepositoryError> {
+            Ok(HashSet::new())
+        }
+        async fn reset_stuck_tasks(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
+            Ok(0)
+        }
+        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+            Ok(vec![])
+        }
+        async fn query_tasks(
+            &self,
+            _params: TaskQueryParams,
+        ) -> Result<(Vec<Task>, u64), RepositoryError> {
+            Ok((vec![], 0))
+        }
+        async fn batch_cancel(
+            &self,
+            _task_ids: Vec<Uuid>,
+            _team_id: Uuid,
+            _force: bool,
+        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+            Ok((vec![], vec![]))
+        }
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
+    }
+
+    let engine_client = Arc::new(EngineClient::new());
+    let settings =
+        crate::bootstrap::config::load_settings().expect("Failed to load settings for mock worker");
+    let settings_arc = Arc::new(settings.clone());
+    let team_semaphore = Arc::new(TeamSemaphore::new(10));
+    let task_repo: Arc<dyn TaskRepository> = Arc::new(GuardLostRepo);
+    let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+    let coalesce_coordinator = make_coalesce_coordinator(task_repo.clone(), result_repo.clone());
+    let credits_repo = Arc::new(MockCreditsRepo::default());
+
+    let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+        repository: task_repo,
+        result_repository: result_repo,
+        crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+        webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+        credits_repository: credits_repo.clone() as Arc<dyn CreditsRepository>,
+        engine_client,
+        create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
+            as Arc<dyn CreateScrapeUseCaseTrait>,
+        team_semaphore,
+        coalesce_coordinator,
+        robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+        settings: settings_arc,
+        default_concurrency_limit: 10,
+        extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+        #[cfg(feature = "metrics")]
+        memory_scheduler: make_test_memory_scheduler(),
+    });
+
+    let task = make_task(json!({
+        "url": "https://example.com",
+        "extraction_rules": {
+            "title": {
+                "selector": "h1",
+                "attr": null,
+                "is_array": false,
+                "use_llm": null,
+                "llm_prompt": null,
+                "output_format": null
+            }
+        }
+    }));
+    let response = ScrapeResponse {
+        content: "<html><body><h1>Title</h1></body></html>".to_string(),
+        status_code: 200,
+        screenshot: None,
+        content_type: "text/html".to_string(),
+        headers: HashMap::new(),
+        response_time_ms: 50,
+        final_url: None,
+        markdown: None,
+    };
+    let dto = parse_dto_for_test(&task);
+    let result = worker
+        .handle_scrape_success(&task, dto.as_ref(), response)
+        .await;
+    // 丢守卫必须返回 Ok(false)，且本 worker 未执行任何扣费
+    assert!(
+        matches!(result, Ok(false)),
+        "guard loss must return Ok(false)"
+    );
+    assert!(
+        credits_repo.deducted.lock().unwrap().is_empty(),
+        "stale worker must not deduct any credits"
+    );
+}
+
+// --- Markdown 集成测试（gated `markdown` 特性） ---
 
 /// formats 含 "markdown" 时应生成 Markdown 并持久化到 meta_data
 #[cfg(feature = "content")]
@@ -2647,12 +2962,48 @@ async fn test_mock_handle_crawl_failure_basic() {
 #[tokio::test]
 async fn test_mock_process_scrape_task_engine_error() {
     let worker = build_mock_worker().await;
-    // Empty payload → build_scrape_request falls back to default request.
-    // EngineClient::new() has no engines → scrape() returns an error.
-    // The error path either marks the task as failed or calls handle_failure.
-    let task = make_task(json!({}));
+    // 有效 payload（含 url）→ 解析成功 → EngineClient::new() 无引擎 → scrape() 报错。
+    // 错误路径内部处理（mark_failed 或 handle_failure），process_scrape_task 返回 Ok(())。
+    // 注：T022 后畸形 payload 会在解析阶段直接 mark_failed，不再进入引擎，
+    // 故此处用有效 payload 才能真正覆盖"引擎错误"路径。
+    let task = make_task(json!({"url": "https://example.com"}));
     let result = worker.process_scrape_task(task).await;
     assert!(result.is_ok()); // Error is handled internally, returns Ok(())
+}
+
+// --- T022: malformed payload marks task Failed (R-data-integrity-009) ---
+
+#[tokio::test]
+async fn test_process_scrape_task_malformed_payload_marks_failed() {
+    // `{}` 缺少必填字段 url（且 ScrapeRequestDto deny_unknown_fields），
+    // parse_scrape_request_dto 失败。worker 必须将任务标记 Failed 并终止，
+    // 不得静默回退默认 ScrapeRequest 继续执行。
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let task_repo_check = task_repo.clone();
+    let worker = build_worker_for_success_tests(
+        task_repo as Arc<dyn TaskRepository>,
+        Arc::new(EngineClient::new()),
+        Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+        Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+    )
+    .await;
+
+    let task = make_task(json!({}));
+    let result = worker.process_scrape_task(task).await;
+    assert!(
+        result.is_ok(),
+        "畸形 payload 在内部处理为 Failed，process_scrape_task 返回 Ok(())"
+    );
+    assert_eq!(
+        task_repo_check.mark_failed_count(),
+        1,
+        "畸形 payload 必须恰好一次将任务标记 Failed"
+    );
+    assert_eq!(
+        task_repo_check.mark_completed_count(),
+        0,
+        "畸形 payload 不得进入完成路径"
+    );
 }
 
 #[tokio::test]
@@ -3081,12 +3432,12 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
     let engines = crate::bootstrap::engines::init_engine_components(
         infra.http_client.clone(),
         // proxy_provider=None, proxy_strategy=RoundRobin, proxy_url=None：测试环境无代理配置
-        // H1/H2 修复：proxy_provider 改为 Option<Arc<dyn ProxyProvider>>，新增 strategy 参数
+        // proxy_provider 改为 Option<Arc<dyn ProxyProvider>>，新增 strategy 参数
         None,
         crate::config::settings::ProxyStrategy::RoundRobin,
         None,
         &settings.engines,
-        // T061：注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
+        // 注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
         &settings.timeouts.engines,
     );
     let services = init_services(
@@ -3097,7 +3448,7 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
     )
     .await;
 
-    // H-4 职责拆分：构造 CoalesceCoordinator（共享 task_repo + result_repo + request_coalescer）
+    // 构造 CoalesceCoordinator（共享 task_repo + result_repo + request_coalescer）
     let coalesce_coordinator = make_coalesce_coordinator_with_coalescer(
         infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>,
         infra.repositories.result_repo.clone() as Arc<dyn ScrapeResultRepository>,
@@ -3115,7 +3466,7 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
         engine_client: engines.engine_client.clone(),
         create_scrape_use_case: services.create_scrape_use_case.clone(),
         team_semaphore: services.team_semaphore.clone(),
-        coalesce_coordinator: coalesce_coordinator,
+        coalesce_coordinator,
         robots_checker: services.robots_checker.clone(),
         settings: settings_arc,
         default_concurrency_limit: settings.concurrency.default_team_limit as usize,
@@ -3258,12 +3609,12 @@ async fn tc_scrape_worker_builder_builds_full_worker() {
     };
     let engines = crate::bootstrap::engines::init_engine_components(
         infra.http_client.clone(),
-        // proxy_pool=None, proxy_url=None：此处无代理配置（T056：用 ProxyPool 替代单 proxy_url）
+        // proxy_pool=None, proxy_url=None：此处无代理配置（用 ProxyPool 替代单 proxy_url）
         None,
         crate::config::settings::ProxyStrategy::RoundRobin,
         None,
         &settings.engines,
-        // T061：注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
+        // 注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
         &settings.timeouts.engines,
     );
     let services = init_services(
@@ -3459,11 +3810,11 @@ async fn build_mock_worker_with_tokens() -> ScrapeWorker {
         crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: settings_arc,
         default_concurrency_limit: 10,
@@ -4008,7 +4359,7 @@ struct ConfigurableTaskRepo {
     update_count: AtomicU32,
     create_count: AtomicU32,
     mark_completed_count: AtomicU32,
-    /// T019：捕获最近一次 update 的 task，用于验证 reschedule 后的状态
+    /// 捕获最近一次 update 的 task，用于验证 reschedule 后的状态
     last_updated_task: std::sync::Mutex<Option<Task>>,
 }
 
@@ -4049,7 +4400,7 @@ impl ConfigurableTaskRepo {
         *self.existing_urls_result.lock().unwrap() = urls;
     }
 
-    /// T019：获取最近一次 update 捕获的 task（用于验证 reschedule 状态）
+    /// 获取最近一次 update 捕获的 task（用于验证 reschedule 状态）
     fn last_updated_task(&self) -> Option<Task> {
         self.last_updated_task.lock().unwrap().clone()
     }
@@ -4072,7 +4423,7 @@ impl TaskRepository for ConfigurableTaskRepo {
     }
     async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
         self.update_count.fetch_add(1, Ordering::SeqCst);
-        // T019：捕获 update 的 task 用于验证 reschedule 状态
+        // 捕获 update 的 task 用于验证 reschedule 状态
         *self.last_updated_task.lock().unwrap() = Some(task.clone());
         if self.fail_update.load(Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
@@ -4081,24 +4432,65 @@ impl TaskRepository for ConfigurableTaskRepo {
         }
         Ok(task.clone())
     }
+    // 守卫式更新与 update 走同一计数/捕获（生产实现中两者互斥使用）
+    async fn update_task_guarded(&self, task: &Task) -> Result<u64, RepositoryError> {
+        self.update_count.fetch_add(1, Ordering::SeqCst);
+        *self.last_updated_task.lock().unwrap() = Some(task.clone());
+        if self.fail_update.load(Ordering::SeqCst) {
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "Mock update error"
+            )));
+        }
+        Ok(1)
+    }
+
+    // 条件回队同样计入 update 语义：捕获 status=Queued + scheduled_at 的任务快照
+    async fn requeue_task(
+        &self,
+        id: Uuid,
+        _lock_token: Option<Uuid>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<bool, RepositoryError> {
+        self.update_count.fetch_add(1, Ordering::SeqCst);
+        let mut captured = Task::new(
+            id,
+            TaskType::Scrape,
+            Uuid::nil(),
+            Uuid::nil(),
+            String::new(),
+            serde_json::json!({}),
+        );
+        captured.status = TaskStatus::Queued;
+        captured.scheduled_at = scheduled_at;
+        *self.last_updated_task.lock().unwrap() = Some(captured);
+        Ok(true)
+    }
     async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
-    async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn mark_completed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
         self.mark_completed_count.fetch_add(1, Ordering::SeqCst);
-        Ok(())
+        Ok(1)
     }
-    async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn mark_failed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
         self.mark_failed_count.fetch_add(1, Ordering::SeqCst);
         if self.fail_mark_failed.load(Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock mark_failed error"
             )));
         }
-        Ok(())
+        Ok(1)
     }
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
     async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
         Ok(false)
@@ -4139,6 +4531,15 @@ impl TaskRepository for ConfigurableTaskRepo {
         _force: bool,
     ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
         Ok((vec![], vec![]))
+    }
+
+    async fn renew_lock(
+        &self,
+        _task_id: Uuid,
+        _worker_id: Uuid,
+        _extend_seconds: i64,
+    ) -> Result<bool, RepositoryError> {
+        Ok(true)
     }
 }
 
@@ -4252,6 +4653,10 @@ impl ScrapeResultRepository for FailingScrapeResultRepo {
     async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
         Ok(0.0)
     }
+
+    async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+        Ok(0)
+    }
 }
 
 // --- FailingWebhookService ---
@@ -4261,7 +4666,7 @@ struct FailingWebhookService;
 
 #[async_trait::async_trait]
 impl WebhookService for FailingWebhookService {
-    async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
+    async fn send_webhook(&self, _event: &WebhookEvent) -> Result<u16> {
         Err(anyhow::anyhow!("Mock webhook error"))
     }
     async fn trigger_completion(&self, _task: &Task) -> Result<()> {
@@ -4484,12 +4889,12 @@ async fn build_configurable_worker(
         crawl_repository: crawl_repo,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
-        robots_checker: robots_checker,
+        team_semaphore,
+        coalesce_coordinator,
+        robots_checker,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
@@ -4516,13 +4921,13 @@ async fn build_worker_with_failing_deps(
         repository: task_repo,
         result_repository: result_repo,
         crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
-        webhook_service: webhook_service,
+        webhook_service,
         credits_repository: credits_repo,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
@@ -4613,8 +5018,8 @@ async fn test_process_task_concurrency_limit_exceeded_reschedules() {
         engine_client: Arc::new(EngineClient::new()),
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
@@ -4636,9 +5041,9 @@ async fn test_process_task_concurrency_limit_exceeded_reschedules() {
     );
 }
 
-// ========== T019：内存感知准入检查测试（R-runtime-001）==========
+// ========== 内存感知准入检查测试 ==========
 
-/// T019：构造 Critical 状态的 MemoryScheduler，验证 process_task 延后任务而非执行
+/// 构造 Critical 状态的 MemoryScheduler，验证 process_task 延后任务而非执行
 #[cfg(feature = "metrics")]
 #[tokio::test]
 async fn test_process_task_memory_critical_defers_task() {
@@ -4690,8 +5095,8 @@ async fn test_process_task_memory_critical_defers_task() {
         engine_client: Arc::new(EngineClient::new()),
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
@@ -4752,7 +5157,7 @@ async fn test_process_task_memory_critical_defers_task() {
     }
 }
 
-/// T019：构造 Pressure 状态的 MemoryScheduler，验证 process_task 延后任务
+/// 构造 Pressure 状态的 MemoryScheduler，验证 process_task 延后任务
 #[cfg(feature = "metrics")]
 #[tokio::test]
 async fn test_process_task_memory_pressure_defers_task() {
@@ -4803,8 +5208,8 @@ async fn test_process_task_memory_pressure_defers_task() {
         engine_client: Arc::new(EngineClient::new()),
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
@@ -4832,7 +5237,7 @@ async fn test_process_task_memory_pressure_defers_task() {
     );
 }
 
-/// T019：Normal 状态下任务正常进入并发获取流程（不延后）
+/// Normal 状态下任务正常进入并发获取流程（不延后）
 #[cfg(feature = "metrics")]
 #[tokio::test]
 async fn test_process_task_memory_normal_proceeds() {
@@ -5365,11 +5770,11 @@ async fn test_handle_crawl_success_save_result_failure_propagates_error() {
         crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
@@ -5423,11 +5828,11 @@ async fn test_handle_crawl_success_increment_completed_error_does_not_propagate(
         crawl_repository: crawl_repo,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
@@ -5479,11 +5884,11 @@ async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
         crawl_repository: Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
@@ -5529,11 +5934,11 @@ async fn test_process_crawl_task_robots_denied_marks_failed() {
         crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(DenyingRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
@@ -5581,6 +5986,7 @@ impl SuccessEngineRouter {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 10,
+                final_url: None,
             },
         }
     }
@@ -5675,15 +6081,15 @@ async fn build_worker_for_success_tests(
         crawl_repository: Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: credits_repo,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
-        extraction_service: extraction_service,
+        extraction_service,
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -5782,11 +6188,11 @@ async fn test_process_scrape_task_success_handle_scrape_failure_calls_handle_fai
         crawl_repository: Arc::new(ConfigurableCrawlRepo::new()) as Arc<dyn CrawlRepository>,
         webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
         credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
-        engine_client: engine_client,
+        engine_client,
         create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
             as Arc<dyn CreateScrapeUseCaseTrait>,
-        team_semaphore: team_semaphore,
-        coalesce_coordinator: coalesce_coordinator,
+        team_semaphore,
+        coalesce_coordinator,
         robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
@@ -5871,7 +6277,7 @@ async fn test_extract_and_queue_links_find_existing_urls_failure_returns_err() {
     )
     .await;
 
-    // T053/R-frontier-001：预填充 Bloom 让 page1/page2 走 DB 校验路径
+    // 预填充 Bloom 让 page1/page2 走 DB 校验路径
     // （Bloom 空时所有 URL DefinitelyNew 直接入队，不会调用 find_existing_urls）
     let dedup_arc = worker.deduplicator_for_test();
     {
@@ -6356,7 +6762,7 @@ async fn test_extract_and_queue_links_skips_existing_urls() {
     )
     .await;
 
-    // T053/R-frontier-001：预填充 Bloom 让 page1 走 DB 校验路径
+    // 预填充 Bloom 让 page1 走 DB 校验路径
     // （Bloom 空时所有 URL DefinitelyNew 直接入队，不查 DB）
     // 只 insert page1，page2 仍 DefinitelyNew 直接入队
     let dedup_arc = worker.deduplicator_for_test();
@@ -6396,7 +6802,7 @@ async fn test_extract_and_queue_links_skips_existing_urls() {
     );
 }
 
-// T053/R-frontier-001：新增测试，验证 Bloom 未命中时直接入队（不查 DB）
+// 新增测试，验证 Bloom 未命中时直接入队（不查 DB）
 #[tokio::test]
 async fn test_extract_and_queue_links_bloom_miss_directly_enqueues() {
     let task_repo = Arc::new(ConfigurableTaskRepo::new());
@@ -6654,7 +7060,7 @@ async fn test_should_crawl_multiple_exclude_patterns_any_blocks() {
 }
 
 // =========================================================================
-// T059/R-cache-002: 高级缓存模式门控测试
+// 高级缓存模式门控测试
 // =========================================================================
 
 // --- generate_scrape_cache_key ---

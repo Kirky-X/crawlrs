@@ -6,7 +6,7 @@
 ![Version](https://img.shields.io/badge/version-0.2.0-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 
-**Version:** 0.2.0 | **Last Updated:** 2025-07-21 | **Author:** Kirky.X
+**Version:** 0.2.0 | **Last Updated:** 2026-09-15 | **Author:** Kirky.X
 
 </div>
 
@@ -42,7 +42,7 @@ crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, l
 2. **Scalability** - Horizontal scaling capabilities via stateless workers
 3. **Type Safety** - Leverage Rust's type system for compile-time safety
 4. **Flexibility** - Trait-based architecture for engines and extensions
-5. **Observability** - Built-in metrics and inklog 0.1 structured logging via the `log::` facade
+5. **Observability** - Built-in metrics and inklog 0.3 structured logging via the `log::` facade
 
 ### Technology Stack
 
@@ -53,12 +53,12 @@ crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, l
 | ORM | Sea-ORM (via dbnexus) | 2.0.1 |
 | HTTP Client | Reqwest | 0.13 |
 | Database | PostgreSQL | 16+ |
-| Cache | oxcache (in-memory) | 0.3 |
-| Rate Limiting | limiteron | 0.2 |
-| DI Framework | trait-kit | 0.3 |
-| Config | confers | 0.4 |
-| SDK Generator | sdforge | 0.4 |
-| Logging | inklog | 0.1 |
+| Cache | oxcache (in-memory) | 0.5.0-rc.2 |
+| Rate Limiting | limiteron | 0.3.0-rc.2 |
+| DI Framework | trait-kit | 0.5.0-rc.2 |
+| Config | confers | 0.6.0-rc.2 |
+| SDK Generator | sdforge | 0.5.0-rc.2 |
+| Logging | inklog | 0.3.0-rc.2 |
 | Browser Engine | chromiumoxide | 0.9 |
 | HTML Parser | scraper | 0.27 |
 
@@ -173,8 +173,8 @@ flowchart TD
     end
 
     subgraph Infra [Infrastructure Layer]
-        DB[(Postgres Database<br/>dbnexus 0.4)]
-        RC[(oxcache 0.3<br/>in-memory)]
+        DB[(Postgres Database<br/>dbnexus 0.6.0-rc.2)]
+        RC[(oxcache 0.5.0-rc.2<br/>in-memory)]
         EXT[External APIs]
         MON[inklog / Prometheus]
         SEC[SSRF / Geolocation / DNS]
@@ -271,9 +271,9 @@ presentation/
 └── mod.rs
 ```
 
-**SDK Interface Layer (sdforge 0.4):**
+**SDK Interface Layer (sdforge 0.5):**
 
-The presentation layer includes an SDK interface built on **sdforge 0.4**, which wraps domain services as HTTP endpoints via sdforge's `#[service_api]` macro. All SDK handlers extract authentication context from `AuthState` (populated by `auth_middleware`), never from the request body.
+The presentation layer includes an SDK interface built on **sdforge 0.5**, which wraps domain services as HTTP endpoints via sdforge's `#[service_api]` macro. All SDK handlers extract authentication context from `AuthState` (populated by `auth_middleware`), never from the request body.
 
 **Handler Flow:**
 
@@ -567,7 +567,7 @@ infrastructure/
 
 **Database Layer:**
 
-**Technology:** dbnexus 0.4 (builds on Sea-ORM 2.0.1)
+**Technology:** dbnexus 0.6.0-rc.2 (builds on Sea-ORM 2.0.1)
 
 dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access. PostgreSQL is the only supported backend.
 
@@ -591,7 +591,7 @@ dbnexus provides connection pooling, permission control, migration framework, me
 
 **Cache Layer:**
 
-**Technology:** oxcache 0.3 (in-memory, no Redis backend)
+**Technology:** oxcache 0.5.0-rc.2 (in-memory, no Redis backend)
 
 ```rust
 // Cache types
@@ -609,9 +609,9 @@ oxcache features activated: memory, serialization, macros, batch-write, metrics,
 
 ## Core Components
 
-### Dependency Injection (trait-kit 0.3)
+### Dependency Injection (trait-kit 0.5.0-rc.2)
 
-DI uses **trait-kit 0.3** with async module builders. Three top-level modules are registered:
+DI uses **trait-kit 0.5.0-rc.2** with async module builders. Three top-level modules are registered:
 - `InfrastructureModule` - Database pool, HTTP client, cache, repositories
 - `EngineModule` - ReqwestEngine, PlaywrightEngine, FlareSolverrEngine, EngineRouter, EngineClient
 - `ServiceModule` - Rate limiting, search, webhook, team services, workers
@@ -698,7 +698,7 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 | Feature | Default | Depends On | Off-mode Behavior |
 |---------|---------|------------|-------------------|
 | `teams` | on | `auth` | `/v1/teams/*` routes not registered; `extract_handler` loses GR generic + geo-restriction block; `CrawlRsState.{team_service, geo_location_service, geo_restriction_repo}` not compiled; `team_id` falls back to `DEFAULT_TEAM_ID` |
-| `auth` | on | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.8.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`，无 DB 查询、无暴力破解防护 |
+| `auth` | on | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.9.0-rc.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`，无 DB 查询、无暴力破解防护 |
 | `rate-limit` | on | `dep:limiteron` | `LimiteronService` replaced by `NoopRateLimitingService` (check_rate_limit→Allowed, check_and_deduct_quota→Ok, get_quota_balance→Ok(i64::MAX), process_backlog_tasks→Ok(0)); `limiteron_service`/`distributed_rate_limit_middleware`/`limiteron_rate_limit_middleware` modules not compiled |
 | `webhook` | on | — | `WebhookServiceImpl`/`WebhookManagementServiceImpl`/`webhook_sender`/`webhook_handler`/`webhook_worker` modules not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn blocks skipped; `WebhookService` trait preserved and assembled with `NoopWebhookService` (all ops return `Ok(())`) |
 
@@ -706,12 +706,13 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 
 ```toml
 [features]
-default = ["teams", "auth", "rate-limit", "webhook"]
+default = ["platform", "db-postgres"]
+platform = ["teams", "auth", "rate-limit", "webhook", "metrics", "content"]
 teams   = ["auth"]
-auth    = ["dep:garrison", "dep:inventory"]   # 0.2.0: garrison v0.8.1 接管认证引擎
+auth    = ["dep:garrison", "dep:inventory"]   # 0.2.0: garrison v0.9.0-rc.1 接管认证引擎
 rate-limit = ["dep:limiteron"]
 webhook = []
-full    = ["standard", "engine-flaresolverr", "extractor-full", "http"]
+full    = ["standard", "engine-flaresolverr", "extractors", "llm"]
 ```
 
 ### Gating pattern examples
@@ -1171,7 +1172,7 @@ gated `markdown` 特性：
 
 ### Content Extraction (`src/domain/services/content_extractor/`)
 
-gated `extractor-trafilatura`/`extractor-dom-smoothie`/`extractor-full`：
+gated `trafilatura`/`dom-smoothie`/`extractors`：
 
 - `traits.rs`：`ContentExtractor` trait + `ExtractedContent{text,title,author,confidence,page_type}`
 - `trafilatura_extractor.rs`（主路径）→ `dom_smoothie_extractor.rs`（回退）→ `css_rule_extractor.rs`（兆底）
@@ -1326,7 +1327,7 @@ Worker lifecycle:
 
 ### Architecture
 
-Caching uses **oxcache 0.3** with a single in-memory backend (moka). There is no Redis or multi-tier cache.
+Caching uses **oxcache 0.5.0-rc.2** with a single in-memory backend (moka). There is no Redis or multi-tier cache.
 
 ```mermaid
 flowchart TD
@@ -1390,9 +1391,9 @@ pub trait CacheService: Send + Sync {
 
 ## Rate Limiting
 
-**Technology:** limiteron 0.2 (PostgreSQL-backed)
+**Technology:** limiteron 0.3.0-rc.2 (PostgreSQL-backed)
 
-Rate limiting is implemented using **limiteron 0.2**, which provides PostgreSQL-backed token bucket rate limiting with the following features:
+Rate limiting is implemented using **limiteron 0.3.0-rc.2**, which provides PostgreSQL-backed token bucket rate limiting with the following features:
 
 | Feature | Purpose |
 |---------|---------|
@@ -1410,7 +1411,7 @@ Three rate limiting middleware implementations coexist:
 
 1. **Basic Rate Limit** (`rate_limit_middleware.rs`) - In-memory token bucket for simple scenarios
 2. **Distributed Rate Limit** (`distributed_rate_limit_middleware.rs`) - Coordination across instances
-3. **Limiteron Rate Limit** (`limiteron_rate_limit_middleware.rs`) - PostgreSQL-backed via limiteron 0.2
+3. **Limiteron Rate Limit** (`limiteron_rate_limit_middleware.rs`) - PostgreSQL-backed via limiteron 0.3.0-rc.2
 
 ### Multi-Level Limiting
 
@@ -1470,7 +1471,7 @@ Configured with rules for:
 
 ### Authentication
 
-> **0.2.0 变更（`garrison-auth-migration`）：** 认证引擎由 garrison v0.8.1 接管。旧的手写 SHA-256 `api_key_hash` 查表、`AuthRateLimiter`、`AuthScopeService` 已被删除；`api_keys.key_hash` / `scopes` 表标记为弃用（`deprecated_at` 列）。
+> **0.2.0 变更（`garrison-auth-migration`）：** 认证引擎由 garrison v0.9.0-rc.1 接管。旧的手写 SHA-256 `api_key_hash` 查表、`AuthRateLimiter`、`AuthScopeService` 已被删除；`api_keys.key_hash` / `scopes` 表标记为弃用（`deprecated_at` 列）。
 
 **Garrison 接管的认证流程：**
 
@@ -1496,7 +1497,7 @@ pub struct AuthState {
 
 ### Garrison 认证引擎
 
-garrison v0.8.1 提供五大组件，crawlrs 通过 `auth` feature 隐式依赖：
+garrison v0.9.0-rc.1 提供五大组件，crawlrs 通过 `auth` feature 隐式依赖：
 
 | 组件 | 职责 | crawlrs 集成方式 |
 |------|------|------------------|
@@ -1727,4 +1728,4 @@ flowchart TD
 
 ---
 
-**Last Updated:** 2025-07-21
+**Last Updated:** 2026-09-15

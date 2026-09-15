@@ -3,14 +3,14 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information
 
-//! 正文提取 trait 与类型定义（design.md §11，T044/R-content-002）
+//! 正文提取 trait 与类型定义
 //!
 //! 提供 [`ContentExtractor`] trait 抽象 + [`ExtractedContent`] 输出结构 +
 //! [`PageType`] 页面分类枚举 + [`ExtractError`] 类型化错误 + [`Result`] 别名。
 //! 多实现按优先级由
 //! [`crate::domain::services::content_extractor::facade::ContentExtractionFacade`] 路由。
 //!
-//! 实现说明（R-content-003）：
+//! 实现说明
 //! - `TrafilaturaExtractor`（gated `trafilatura`）：主路径，质量最高
 //! - `DomSmoothieExtractor`（gated `dom-smoothie`）：性能回退，DOM 启发式
 //! - `CssRuleExtractor`：兜底（无 feature 依赖），复用 `ExtractionService::get_clean_text`
@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 ///
 /// 来源：trafilatura `webpage_type` 与 dom_smoothie `Article` 启发式分类的统一抽象。
 ///
-/// 注：错误状态不通过枚举变体表达（架构审查 H-1：PageType::Error 反模式），
-/// 而是通过 `Result<ExtractedContent, ExtractError>` 显式返回（规则12：失败必须显性化）。
+/// 注：错误状态不通过枚举变体表达（PageType::Error 反模式），
+/// 而是通过 `Result<ExtractedContent, ExtractError>` 显式返回（失败必须显性化）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PageType {
@@ -36,7 +36,7 @@ pub enum PageType {
     Unknown,
 }
 
-/// 正文提取结果（R-content-002）
+/// 正文提取结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedContent {
     /// 提取的正文文本（非空）
@@ -77,7 +77,7 @@ impl ExtractedContent {
     }
 }
 
-/// 正文提取服务 trait（design.md §11 / R-content-002）
+/// 正文提取服务 trait
 ///
 /// 实现方需保证线程安全（`Send + Sync`）以便在 `ContentExtractionFacade` 中共享。
 /// HTML 预处理复用现有 [`crate::domain::services::extraction_service::ExtractionService::get_clean_text`]，
@@ -99,9 +99,9 @@ pub trait ContentExtractor: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
-/// 正文提取错误（类型化错误，禁止吞掉底层错误，规则 12）
+/// 正文提取错误（类型化错误，禁止吞掉底层错误）
 ///
-/// 使用 `thiserror::Error` 派生（架构审查 M-1：恢复社区惯例，避免手写 Display+Error 的退化），
+/// 使用 `thiserror::Error` 派生（恢复社区惯例，避免手写 Display+Error 的退化），
 /// 便于上层 `?` 传播与日志结构化输出。
 #[derive(Debug, thiserror::Error)]
 pub enum ExtractError {
@@ -225,6 +225,6 @@ mod tests {
         let r: Result<()> = Err(ExtractError::NoContent);
         assert!(r.is_err());
         let r: Result<i32> = Ok(42);
-        assert_eq!(r.unwrap(), 42);
+        assert!(r.is_ok_and(|v| v == 42));
     }
 }

@@ -7,12 +7,12 @@
 
 use crate::config::settings::Settings;
 use crate::di::{CrawlRsState, CrawlRsStateExt};
-// R-teams-004 / T014：teams-off 时不导入 teams 相关类型
+// teams-off 时不导入 teams 相关类型
 #[cfg(feature = "teams")]
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 #[cfg(feature = "teams")]
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
-// R-wh-001 / T028：webhook feature 关闭时不导入 WebhookRepoImpl
+// webhook feature 关闭时不导入 WebhookRepoImpl
 use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
 use crate::infrastructure::database::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::infrastructure::database::repositories::task_repo_impl::TaskRepositoryImpl;
@@ -30,7 +30,7 @@ use axum::{routing::get, Extension, Router};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
-// auth feature 关闭时需要的默认身份常量与 scope 构造器（T009）
+// auth feature 关闭时需要的默认身份常量与 scope 构造器
 #[cfg(not(feature = "auth"))]
 use crate::common::constants::default_identity::{DEFAULT_API_KEY_ID, DEFAULT_TEAM_ID};
 #[cfg(not(feature = "auth"))]
@@ -56,7 +56,7 @@ fn create_cors_layer(settings: &Settings) -> CorsLayer {
     let cors_layer = if allowed_origins.is_empty() || allowed_origins.iter().any(|o| o == "*") {
         // 生产环境不应使用通配符，这里仅作为开发回退
         log::warn!("CORS 使用通配符 '*'，建议在生产环境中配置具体的来源");
-        // R-security-002：非 test/development 环境下对 CORS 通配符输出显式生产告警
+        // 非 test/development 环境下对 CORS 通配符输出显式生产告警
         let env = std::env::var(crate::common::constants::env_vars::ENV)
             .or_else(|_| std::env::var(crate::common::constants::env_vars::APP_ENVIRONMENT))
             .unwrap_or_else(|_| "development".to_string());
@@ -130,19 +130,19 @@ pub fn create_public_routes(state: &CrawlRsState) -> Router {
 /// - `api_key_id`: `DEFAULT_API_KEY_ID`（固定值，与 team_id 区分）
 /// - `scope`: `ApiKeyScope::full_access()`（read/write/admin=true、limit=u32::MAX）
 ///
-/// 其余字段（`api_key_cache` / `auth_rate_limiter` / `trusted_proxies`）已在 Stage 3 DTO 化中删除，
+/// 其余字段（`api_key_cache` / `auth_rate_limiter` / `trusted_proxies`）已在 DTO 化中删除，
 /// 单租户降级模式下不查 DB 加载 scope、不做缓存、不做暴力破解防护、不解析 trusted proxies。
 ///
 /// 此函数仅在三处路由装配点（`create_protected_routes_with_state` /
 /// `create_v2_routes_with_state` / `build_api_app_with_state` 的 SDK 路由）
 /// 调用，构造的模板通过 `from_fn_with_state(template, default_identity_middleware)`
 /// 注入到 `FromFnLayer`，由 layer 在每请求 `Service::call` 内 `clone()` 一次传给
-/// `default_identity_middleware`（见 diting 架构审查 MEDIUM-1 / 性能审查 LOW-2）。
+/// `default_identity_middleware`。
 ///
 /// # Security
 ///
 /// 首次调用时通过 `OnceLock` 保证只打印一次 WARNING 日志，告知运维本实例运行在
-/// 无鉴权模式（见 tiangang 安全审查 MEDIUM-2）。三处路由装配点都会调用此函数，
+/// 无鉴权模式。三处路由装配点都会调用此函数，
 /// 但日志只在第一次调用时输出，避免启动日志噪声。
 #[cfg(not(feature = "auth"))]
 fn build_default_identity_template(state: &CrawlRsState) -> AuthState {
@@ -177,13 +177,13 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let rate_limiting_service = state.rate_limiting_service.clone();
     let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
     let crawl_repo = state.crawl_repo.clone();
-    // R-wh-001 / T028：webhook 相关字段在 webhook-off 时不编译
+    // webhook 相关字段在 webhook-off 时不编译
     #[cfg(feature = "webhook")]
     let webhook_repo = state.webhook_repo.clone();
     #[cfg(feature = "webhook")]
     let webhook_event_repo = state.webhook_event_repo();
     let search_engine_service = state.search_client();
-    // R-teams-004 / T014：teams 相关字段在 teams-off 时不编译
+    // teams 相关字段在 teams-off 时不编译
     #[cfg(feature = "teams")]
     let team_service = state.team_service.clone();
     #[cfg(feature = "teams")]
@@ -191,9 +191,9 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let credits_repo = state.credits_repo();
 
     // 构造一次具体实现，同时用于 trait object Extension 和泛型 handler Extension
-    // （架构 HIGH-2：消除重复构造——之前 trait object 和 concrete 各 new 一次）
+    // 架构消除重复构造——之前 trait object 和 concrete 各 new 一次
     //
-    // R-teams-004 / T014：teams-off 时不构造 geo_restriction_repo_impl / geo_restriction_repo
+    // teams-off 时不构造 geo_restriction_repo_impl / geo_restriction_repo
     //   （DatabaseGeoRestrictionRepository 仅供 teams-on 的 extract_handler 使用）
     #[cfg(feature = "teams")]
     let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
@@ -202,7 +202,7 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = geo_restriction_repo_impl.clone();
 
     // WebhookRepoImpl 同理：构造一次，复用给 Extension layer
-    // R-wh-001 / T028：webhook-off 时不构造 WebhookRepoImpl
+    // webhook-off 时不构造 WebhookRepoImpl
     //   （WebhookRepoImpl 仅供 webhook-on 的 webhook_handler 使用）
     #[cfg(feature = "webhook")]
     let webhook_repo_impl: Arc<WebhookRepoImpl> =
@@ -230,11 +230,11 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .merge(management_routes::register_audit_routes())
         .merge(management_routes::register_admin_routes());
 
-    // 认证中间件层（条件编译，T009）
+    // 认证中间件层（条件编译）
     //
     // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 通过 State<Arc<DbPool>> 提取器
     //   注入 DbPool，中间件在每请求中调用 garrison RBAC + `bridge_to_auth_state` 动态填充
-    //   AuthState（Stage 3 DTO 化后仅含 pool/team_id/api_key_id/scope 四字段）。
+    //   AuthState（DTO 化后仅含 pool/team_id/api_key_id/scope 四字段）。
     // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
     //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool，
     //   `default_identity_middleware` 克隆模板并注入 extensions（不查 DB、不校验 token）。
@@ -254,9 +254,19 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
             template,
             crate::presentation::middleware::auth_middleware::default_identity_middleware,
         ))
+        // CWE-307：IP 上下文层位于认证中间件**外侧**（后挂载 = 先执行），把
+        // ConnectInfo 解析的客户端 IP 注入 garrison task-local，firewall-bruteforce
+        // 依此做 IP 级失败计数（缺省 fail-open）。
     };
+    // CWE-307：IP 上下文层位于认证中间件**外侧**（后挂载 = 先执行），把
+    // ConnectInfo 解析的客户端 IP 注入 garrison task-local，firewall-bruteforce
+    // 依此做 IP 级失败计数（缺省 fail-open）。
+    #[cfg(feature = "auth")]
+    let app = app.layer(axum::middleware::from_fn(
+        crate::presentation::middleware::auth_middleware::garrison_ip_context_middleware,
+    ));
 
-    // R-teams-004 / T014：teams 相关 Extension 层在 teams-off 时不装配
+    // teams 相关 Extension 层在 teams-off 时不装配
     //
     // teams-on：附加 geo_restriction_repo / team_service / geo_location_service / geo_restriction_repo_impl
     //   四个 Extension 层（供 teams-on 版本的 extract_handler / team_handler / crawl_handler 等使用）
@@ -268,7 +278,7 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .layer(Extension(team_service))
         .layer(Extension(geo_restriction_repo_impl));
 
-    // R-wh-001 / T028：webhook 相关 Extension 层在 webhook-off 时不装配
+    // webhook 相关 Extension 层在 webhook-off 时不装配
     //
     // webhook-on：附加 webhook_repo / webhook_event_repo / webhook_repo_impl
     //   三个 Extension 层（供 webhook_handler 使用）
@@ -300,7 +310,7 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
 /// * `state` - Application state with resolved dependencies
 pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
     let crawl_repo = state.crawl_repo.clone();
-    // R-wh-001 / T028：webhook 相关字段在 webhook-off 时不编译
+    // webhook 相关字段在 webhook-off 时不编译
     #[cfg(feature = "webhook")]
     let webhook_repo = state.webhook_repo.clone();
     #[cfg(feature = "webhook")]
@@ -344,7 +354,7 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>
         .layer(Extension(task_repo_impl.clone()))
         .layer(Extension(result_repo_impl.clone()))
         .layer(Extension(crawl_repo.clone()));
-    // R-wh-001 / T028：webhook Extension 层在 webhook-off 时不装配
+    // webhook Extension 层在 webhook-off 时不装配
     #[cfg(feature = "webhook")]
     let app = app
         .layer(Extension(webhook_repo.clone()))
@@ -367,7 +377,17 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>
             template,
             crate::presentation::middleware::auth_middleware::default_identity_middleware,
         ))
+        // CWE-307：IP 上下文层位于认证中间件**外侧**（后挂载 = 先执行），把
+        // ConnectInfo 解析的客户端 IP 注入 garrison task-local，firewall-bruteforce
+        // 依此做 IP 级失败计数（缺省 fail-open）。
     };
+    // CWE-307：IP 上下文层位于认证中间件**外侧**（后挂载 = 先执行），把
+    // ConnectInfo 解析的客户端 IP 注入 garrison task-local，firewall-bruteforce
+    // 依此做 IP 级失败计数（缺省 fail-open）。
+    #[cfg(feature = "auth")]
+    let app = app.layer(axum::middleware::from_fn(
+        crate::presentation::middleware::auth_middleware::garrison_ip_context_middleware,
+    ));
 
     app
 }
@@ -391,13 +411,13 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
     let search_engine_service = state.search_client();
     let queue = state.task_queue.clone();
-    // R-teams-004 / T014：teams-off 时不构造 geo_restriction_repo
+    // teams-off 时不构造 geo_restriction_repo
     //   （DatabaseGeoRestrictionRepository 仅供 teams-on SDK 路由使用）
     #[cfg(feature = "teams")]
     let geo_restriction_repo = state.geo_restriction_repo();
     let credits_repo = state.credits_repo();
     let crawl_repo = state.crawl_repo.clone();
-    // R-wh-001 / T028：webhook 相关字段在 webhook-off 时不编译
+    // webhook 相关字段在 webhook-off 时不编译
     #[cfg(feature = "webhook")]
     let webhook_event_repo = state.webhook_event_repo();
     #[cfg(feature = "webhook")]
@@ -424,6 +444,10 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
             state.db_pool.clone(),
             crate::presentation::middleware::auth_middleware::auth_middleware_inner,
         ));
+    #[cfg(feature = "auth")]
+    let sdk_router = sdk_router.layer(axum::middleware::from_fn(
+        crate::presentation::middleware::auth_middleware::garrison_ip_context_middleware,
+    ));
     #[cfg(not(feature = "auth"))]
     let sdk_router = {
         let template = build_default_identity_template(state);
@@ -450,7 +474,7 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
             crate::presentation::middleware::security_headers_middleware::security_headers_middleware,
         ))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
-        // 架构 HIGH-3：以下 Extension layers 供 SDK 路由使用（SDK router 仅 layer 了
+        // 架构以下 Extension layers 供 SDK 路由使用（SDK router 仅 layer 了
         // search_service / task_queue / crawl_repo 三个）。protected/v2 路由已在各自
         // 子函数中 layer 过，此处重复 layer 对它们无功能影响（Axum 外层 Extension 覆盖
         // 内层），但为 SDK 路由提供必要的依赖注入。
@@ -466,13 +490,13 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
         .layer(Extension(rate_limiting_service.clone()))
         .layer(Extension(state.audit_service()));
 
-    // R-wh-001 / T028：webhook Extension 层在 webhook-off 时不装配
+    // webhook Extension 层在 webhook-off 时不装配
     #[cfg(feature = "webhook")]
     let app = app
         .layer(Extension(webhook_event_repo))
         .layer(Extension(webhook_repo.clone()));
 
-    // R-teams-004 / T014：teams-on 时附加 geo_restriction_repo Extension
+    // teams-on 时附加 geo_restriction_repo Extension
     //   （供 SDK 路由中的 teams 相关 handler 使用）
     // teams-off：跳过，geo_restriction_repo 变量未声明
     #[cfg(feature = "teams")]
@@ -1463,7 +1487,7 @@ mod tests {
         );
     }
 
-    /// T027-4：验证 `POST /v1/admin/api-keys` 路由按 auth feature 门控注册。
+    /// 验证 `POST /v1/admin/api-keys` 路由按 auth feature 门控注册。
     ///
     /// # auth-on
     ///
@@ -1477,14 +1501,13 @@ mod tests {
     ///
     /// # Spec
     ///
-    /// - R-key-lifecycle-001
     #[cfg(feature = "auth")]
     #[tokio::test]
     async fn test_admin_api_keys_endpoint_registered_when_auth_on() {
         if skip_if_no_test_db() {
             return;
         }
-        // T034 修复：build_test_state() → init_services() → init_garrison_auth() →
+        // build_test_state() → init_services() → init_garrison_auth() →
         // set_garrison_dao，缺少此守卫会与其它调用 init_services 的并行测试竞态，
         // 导致 "global DAO already injected" panic。
         let _garrison_guard = crate::common::test_helpers::acquire_garrison_global_state().await;
@@ -1520,7 +1543,7 @@ mod tests {
         );
     }
 
-    /// T027-4（auth-off 分支）：验证 `POST /v1/admin/api-keys` 路由在 auth-off 时不注册。
+    /// （auth-off 分支）：验证 `POST /v1/admin/api-keys` 路由在 auth-off 时不注册。
     ///
     /// `api_key_handler` 模块被 `#[cfg(feature = "auth")]` 门控，auth-off 时不编译，
     /// 路由也不注册——请求返回 404。

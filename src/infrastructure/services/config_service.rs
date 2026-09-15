@@ -154,6 +154,38 @@ pub struct ConfigServiceComponent {
     flaresolverr_url: Option<String>,
 }
 
+/// 解析 webhook 签名密钥（CWE-798 / CWE-326：禁止硬编码弱默认）。
+///
+/// - `WEBHOOK_SECRET` 已设置且非空 → 直接使用；
+/// - 未设置且为生产环境 → 返回空串并 `error!`；真正的启动拦截由
+///   `bootstrap::config::config_validator` 基于 `settings.webhook.secret`
+///   的 fail-fast 校验完成，服务不会带着空密钥上线；
+/// - 未设置且为非生产环境 → 生成 32 字节随机十六进制密钥并 `warn!`
+///   （进程内临时密钥，重启后失效，仅用于本地开发）。
+fn resolve_webhook_secret(app_environment: &str) -> String {
+    if let Some(secret) = std::env::var("WEBHOOK_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        return secret;
+    }
+    let env_lower = app_environment.to_lowercase();
+    if env_lower == "production" || env_lower == "prod" {
+        log::error!(
+            "WEBHOOK_SECRET is not set in production: startup will be rejected by \
+             webhook secret validation (hardcoded weak default has been removed)"
+        );
+        String::new()
+    } else {
+        let bytes: [u8; 32] = rand::random();
+        log::warn!(
+            "WEBHOOK_SECRET is not set: generated an ephemeral random webhook secret \
+             for this process only; signatures cannot be verified across restarts"
+        );
+        hex::encode(bytes)
+    }
+}
+
 impl ConfigServiceComponent {
     /// 从 Settings 创建配置服务
     pub fn from_settings(
@@ -173,6 +205,9 @@ impl ConfigServiceComponent {
                     None
                 }
             });
+        let app_environment = std::env::var("CRAWLRS_ENV")
+            .or_else(|_| std::env::var("APP_ENVIRONMENT"))
+            .unwrap_or_else(|_| "development".to_string());
 
         Self {
             proxy_url,
@@ -183,11 +218,8 @@ impl ConfigServiceComponent {
             default_timeout,
             browser_timeout,
             browser_launch_timeout: 30,
-            app_environment: std::env::var("CRAWLRS_ENV")
-                .or_else(|_| std::env::var("APP_ENVIRONMENT"))
-                .unwrap_or_else(|_| "development".to_string()),
-            webhook_secret: std::env::var("WEBHOOK_SECRET")
-                .unwrap_or_else(|_| "default-webhook-secret".to_string()),
+            app_environment: app_environment.clone(),
+            webhook_secret: resolve_webhook_secret(&app_environment),
             health_check_url: std::env::var("CRAWLRS_HEALTH_CHECK_URL").ok(),
             ssrf_protection_disabled: std::env::var("CRAWLRS_DISABLE_SSRF_PROTECTION").is_ok(),
             network_tests_enabled: std::env::var("CRAWLRS_ENABLE_NETWORK_TESTS").is_ok(),
@@ -426,12 +458,34 @@ mod tests {
     }
 
     #[test]
-    fn test_config_service_webhook_secret_default() {
+    fn test_config_service_webhook_secret_random_in_dev() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("WEBHOOK_SECRET");
+        std::env::remove_var("CRAWLRS_ENV");
+        std::env::remove_var("APP_ENVIRONMENT");
 
         let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
-        assert_eq!(config.get_webhook_secret(), "default-webhook-secret");
+        let secret = config.get_webhook_secret();
+        // 弱默认已移除：非生产环境自动生成 64 位十六进制随机密钥，且两次生成不同
+        assert_eq!(secret.len(), 64);
+        assert!(secret.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(secret, "default-webhook-secret");
+        let config2 = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert_ne!(config2.get_webhook_secret(), secret);
+    }
+
+    #[test]
+    fn test_config_service_webhook_secret_empty_in_production() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("WEBHOOK_SECRET");
+        std::env::set_var("CRAWLRS_ENV", "production");
+
+        // 生产环境未设置：组件返回空串（真正的启动拦截在 config_validator 的
+        // fail-fast 校验），绝不回退硬编码默认值
+        let config = ConfigServiceComponent::from_settings(false, "", 30, 30);
+        assert_eq!(config.get_webhook_secret(), "");
+
+        std::env::remove_var("CRAWLRS_ENV");
     }
 
     #[test]

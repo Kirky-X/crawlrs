@@ -47,7 +47,7 @@ impl DnsCacheService {
         match self.cache.get(&cache_key).await {
             Ok(Some(entry)) => {
                 debug!("DNS cache hit for {}", cache_key);
-                // Phase 4a: DNS 缓存命中指标 (T064)
+                // DNS 缓存命中指标
                 counter!(
                     "crawlrs_cache_hit_total",
                     "cache_type" => "dns",
@@ -58,7 +58,7 @@ impl DnsCacheService {
             }
             Ok(None) => {
                 debug!("DNS cache miss for {}, performing lookup", cache_key);
-                // Phase 4a: DNS 缓存未命中指标 (T064)
+                // DNS 缓存未命中指标
                 counter!(
                     "crawlrs_cache_hit_total",
                     "cache_type" => "dns",

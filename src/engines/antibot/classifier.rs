@@ -92,7 +92,7 @@ fn strip_scripts_and_styles(body: &str) -> String {
 
 /// Tier1 检测：扫描 body（含大页 strip 后深扫）返回命中的 `(tech, reason)` 元组
 ///
-/// 性能审查 MEDIUM-3 修复：`stripped_cache` 由 [`classify`] 顶层传入，
+/// `stripped_cache` 由 [`classify`] 顶层传入，
 /// 跨 tier1_match / Step 5 / tier3_signals 共享同一份 `strip_scripts_and_styles` 结果。
 /// 原实现对大页 + Tier1 未命中 + Tier3 路径会重复 strip 2 次（每次 ~1-5ms / 100KB）。
 fn tier1_match(body: &str, stripped_cache: &OnceCell<String>) -> Option<(AntiBotTech, String)> {
@@ -136,7 +136,7 @@ fn tier1_reason(tech: AntiBotTech) -> String {
 /// 可见文本统计需先剥离 `<script>`/`<style>` 块，否则脚本内容会被计入
 /// 可见文本，使"脚本重无内容"信号失效。
 ///
-/// 性能审查 MEDIUM-3 修复：`stripped_cache` 由 [`classify`] 顶层传入，
+/// `stripped_cache` 由 [`classify`] 顶层传入，
 /// 复用 tier1_match / Step 5 已计算的 stripped 结果（若已计算），避免重复 strip。
 fn tier3_signals(body: &str, stripped_cache: &OnceCell<String>) -> (usize, Vec<&'static str>) {
     let mut signals: Vec<&'static str> = Vec::new();
@@ -173,7 +173,7 @@ fn tier3_signals(body: &str, stripped_cache: &OnceCell<String>) -> (usize, Vec<&
 /// 实现与 crawl4ai `antibot_detector.py` 对齐：先看状态码与 data-HTML，再依次走 Tier1 →
 /// Tier2 → Tier3，并在大页场景下 strip script/style 后深扫。
 pub fn classify(status: u16, body: &str, headers: &HeaderMap, _url: &str) -> Option<Detection> {
-    // 性能审查 MEDIUM-3 修复：strip_scripts_and_styles 结果缓存
+    // strip_scripts_and_styles 结果缓存
     //
     // 原实现对大页 + Tier1 未命中 + Tier3 路径会重复调用 strip_scripts_and_styles
     // 2-3 次（tier1_match 内 + Step 5 near-empty 检测 + tier3_signals 内），每次
@@ -251,7 +251,7 @@ pub fn classify(status: u16, body: &str, headers: &HeaderMap, _url: &str) -> Opt
     // 双条件：body 整体字节少 AND 剥离 script/style + tag 后可见文本也少。
     // 仅凭 body.len() 会让短小但内容充实的正常页（~100 字可见文本）被误判。
     //
-    // 性能审查 MEDIUM-3 修复：复用 stripped_cache，与 tier1_match / tier3_signals
+    // 复用 stripped_cache，与 tier1_match / tier3_signals
     // 共享同一份 stripped 结果（若已计算则零成本复用）。
     if (200..300).contains(&status) {
         if body.len() < NEAR_EMPTY_BODY_LEN {

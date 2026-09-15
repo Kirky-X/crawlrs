@@ -3,13 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 高级缓存模式（design.md §13，T057-T059 / R-cache-001、R-cache-002）
+//! 高级缓存模式
 //!
 //! 提供 4 种 `CacheMode` 与 `CacheContext` 门控，允许调用方按场景精细控制
 //! 缓存读写行为。`scrape_worker` 在读写 `CacheService` 前经 `CacheContext`
 //! 门控，复用现有 `CacheService`，不改 oxcache 底层。
 //!
-//! # 跨层位置说明（MEDIUM-1 跨层依赖修复）
+//! # 跨层位置说明
 //!
 //! 本模块原位于 `infrastructure::oxcache::cache_mode`，因 `CacheMode` 是策略
 //! 枚举（domain 概念），被 `engines` 和 `application` 层依赖，造成跨层依赖
@@ -28,17 +28,17 @@
 //! | ReadOnly | true | false | 只读：命中直返，未命中抓取不写回 |
 //! | Bypass | false | true | 应急绕过：跳过读（不信任缓存），正常写回（更新缓存） |
 //!
-//! # WriteOnly 已删除（架构审查 CRITICAL-1 修复，规则4 + 规则5）
+//! # WriteOnly 已删除
 //!
 //! 原设计中 `WriteOnly` 与 `Bypass` 在 `should_read`/`should_write`/`is_cacheable`
-//! 三维行为完全等价 `(false, true)`，违反规则4（暴露冲突不要折中）与规则5（简洁优先）。
+//! 三维行为完全等价 `(false, true)`，违反“暴露冲突不要折中”与“简洁优先”原则。
 //! 经用户决策（删除 WriteOnly，统一用 Bypass），合并为单一 `Bypass` 变体。
 //! 调用方需要"只写不读"语义时统一用 `Bypass`。
 
 use crate::common::HttpMethod;
 use serde::{Deserialize, Serialize};
 
-/// 缓存模式枚举（design.md §13）
+/// 缓存模式枚举
 ///
 /// 控制 `CacheContext` 的读写行为。详见模块级文档的语义矩阵。
 ///
@@ -63,7 +63,7 @@ pub enum CacheMode {
     Bypass,
 }
 
-/// 不可缓存 URL scheme 黑名单（T062 安全审查 LOW-1 修复）
+/// 不可缓存 URL scheme 黑名单
 ///
 /// 这些 scheme 的请求不应进入缓存：
 /// - `data:` / `blob:`：内联资源，无网络往返，缓存无意义
@@ -82,7 +82,7 @@ const UNCACHEABLE_SCHEMES: &[&str] = &[
     "about:",
 ];
 
-/// 缓存上下文（design.md §13）
+/// 缓存上下文
 ///
 /// 封装单次抓取请求的缓存决策输入：URL、HTTP method、缓存模式。
 /// `scrape_worker` 在读写 `CacheService` 前构造 `CacheContext` 并调用
@@ -122,11 +122,11 @@ impl CacheContext {
         }
     }
 
-    /// 是否可缓存（design.md §13：非 data:/blob:/POST 等）
+    /// 是否可缓存（非 data:/blob:/POST 等）
     ///
     /// 判断条件（任一命中即返回 `false`）：
     /// - URL scheme 在不可缓存黑名单中（`data:` / `blob:` / `javascript:` / `file:` /
-    ///   `vbscript:` / `about:`，T062 安全审查 LOW-1 扩展）
+    ///   `vbscript:` / `about:` 扩展）
     /// - HTTP method 非幂等（`POST`）
     ///
     /// 其余情况返回 `true`。
@@ -135,7 +135,7 @@ impl CacheContext {
     /// 仍由 `mode` 决定；调用方应先查 `is_cacheable`，若 `false` 则跳过整个
     /// 缓存流程（既不读也不写），避免对不可缓存请求做无意义的缓存操作。
     ///
-    /// # T062 安全审查 LOW-1 修复说明
+    /// # 说明
     ///
     /// 原 impl 仅检查 `data:` 和 `blob:`，未覆盖以下危险 scheme：
     /// - `javascript:`：缓存后可能被其他请求读到并触发 XSS 执行
@@ -144,8 +144,8 @@ impl CacheContext {
     /// - `about:`：浏览器内部页面（about:blank 等），无网络往返
     #[must_use]
     pub fn is_cacheable(&self) -> bool {
-        // 1. URL scheme 检查：不可缓存 scheme 黑名单（T062 安全审查 LOW-1 扩展）
-        //    性能审查 LOW-1：用字节切片 + eq_ignore_ascii_case 零分配比较，
+        // 1. URL scheme 检查：不可缓存 scheme 黑名单（扩展）
+        //    用字节切片 + eq_ignore_ascii_case 零分配比较，
         //    替代原 to_ascii_lowercase() 的 String 分配（热路径每次请求一次）。
         //    URL scheme 按 RFC 3986 为 ASCII，字节切片安全。
         for scheme in UNCACHEABLE_SCHEMES {
@@ -181,7 +181,7 @@ mod tests {
     }
 
     // =========================================================================
-    // should_read: 4 模式覆盖（R-cache-001）
+    // should_read: 4 模式覆盖
     // =========================================================================
 
     #[test]
@@ -226,7 +226,7 @@ mod tests {
     }
 
     // =========================================================================
-    // should_write: 4 模式覆盖（R-cache-001）
+    // should_write: 4 模式覆盖
     // =========================================================================
 
     #[test]
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn test_should_write_bypass_returns_true() {
         // Bypass：跳过读，正常写回（更新缓存）
-        // 合并原 WriteOnly 语义（架构审查 CRITICAL-1 修复）
+        // 合并原 WriteOnly 语义
         let ctx = CacheContext {
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
@@ -273,7 +273,7 @@ mod tests {
     }
 
     // =========================================================================
-    // should_read / should_write 组合矩阵（R-cache-001 完整覆盖）
+    // should_read / should_write 组合矩阵（完整覆盖）
     // =========================================================================
 
     #[test]
@@ -352,7 +352,7 @@ mod tests {
     }
 
     // =========================================================================
-    // T062 安全审查 LOW-1：扩展 scheme 黑名单测试
+    // 扩展 scheme 黑名单测试
     // =========================================================================
 
     #[test]
@@ -583,9 +583,6 @@ mod tests {
     fn test_cache_mode_serde_rejects_write_only() {
         // WriteOnly 已删除，反序列化应失败
         let result: Result<CacheMode, _> = serde_json::from_str("\"writeOnly\"");
-        assert!(
-            result.is_err(),
-            "writeOnly should be rejected after CRITICAL-1 fix"
-        );
+        assert!(result.is_err(), "writeOnly should be rejected");
     }
 }

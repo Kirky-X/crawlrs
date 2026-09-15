@@ -22,7 +22,7 @@ use anyhow::Result;
 use log::{error, info, warn};
 use uuid::Uuid;
 
-// T026 拆分：提取到独立模块的函数导入
+// 提取到独立模块的函数导入
 use crate::workers::scrape_executor::{process_text_encoding, save_result};
 
 impl ScrapeWorker {
@@ -32,14 +32,18 @@ impl ScrapeWorker {
             Ok(result) => result,
             Err(e) => {
                 error!("Failed to parse crawl payload: {}", e);
-                self.repository.mark_failed(task.id).await?;
+                self.repository
+                    .mark_failed(task.id, Some(self.worker_id))
+                    .await?;
                 return Ok(());
             }
         };
 
         // 2. Robots.txt Check
         if !check_robots_txt_fn(&task, self.robots_checker.as_ref()).await {
-            self.repository.mark_failed(task.id).await?;
+            self.repository
+                .mark_failed(task.id, Some(self.worker_id))
+                .await?;
             return Ok(());
         }
 
@@ -52,7 +56,9 @@ impl ScrapeWorker {
                     task.id,
                     task.team_id
                 );
-                self.repository.mark_failed(task.id).await?;
+                self.repository
+                    .mark_failed(task.id, Some(self.worker_id))
+                    .await?;
                 return Ok(());
             }
         }
@@ -110,6 +116,20 @@ impl ScrapeWorker {
             .extract_data_with_rules(task, &processed_response, config)
             .await;
 
+        // 先以锁守卫终结任务：只有仍持有锁时才落库结果，
+        // 防止锁过期被其他 worker 认领后双写结果
+        let marked = self
+            .repository
+            .mark_completed(task.id, Some(self.worker_id))
+            .await?;
+        if marked == 0 {
+            warn!(
+                "Crawl task {} no longer owned by worker {}, skipping result",
+                task.id, self.worker_id
+            );
+            return Ok(());
+        }
+
         save_result(
             task,
             &processed_response,
@@ -118,7 +138,6 @@ impl ScrapeWorker {
         )
         .await?;
 
-        self.repository.mark_completed(task.id).await?;
         if let Err(e) = self
             .crawl_repository
             .increment_completed_tasks(crawl_id)
@@ -130,7 +149,7 @@ impl ScrapeWorker {
             );
         }
 
-        // T067/R-frontier-004：自适应停止条件检查
+        // 自适应停止条件检查
         //
         // 每完成一个爬取步骤后，评估是否应提前终止整个 crawl：
         // - `MaxPagesReached`: completed_tasks >= max_pages（可配置上限）
@@ -153,7 +172,7 @@ impl ScrapeWorker {
 
             if let Some(reason) = stop_condition.should_stop(&stats) {
                 info!(
-                    "T067: adaptive stop for crawl {}: {} (pages={}, pending={})",
+                    "adaptive stop for crawl {}: {} (pages={}, pending={})",
                     crawl_id,
                     reason.description(),
                     pages_crawled,

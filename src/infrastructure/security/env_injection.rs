@@ -279,14 +279,16 @@ impl EnvVarSecurityMonitor {
 
     /// 对环境变量值进行脱敏处理
     fn mask_value(&self, value: &str) -> String {
-        if value.len() <= 4 {
+        // 按字符而非字节处理（CWE-134）：非 ASCII 值的字节切片会 panic
+        let chars: Vec<char> = value.chars().collect();
+        if chars.len() <= 4 {
             return "****".to_string();
         }
 
         let visible_chars = 2;
-        let start = &value[..visible_chars];
-        let end = &value[value.len() - visible_chars..];
-        let masked_length = value.len() - (visible_chars * 2);
+        let start: String = chars[..visible_chars].iter().collect();
+        let end: String = chars[chars.len() - visible_chars..].iter().collect();
+        let masked_length = chars.len() - (visible_chars * 2);
 
         format!("{}*{}{}", start, "*".repeat(masked_length.min(20)), end)
     }

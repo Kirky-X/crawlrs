@@ -3,12 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information
 
-//! Trafilatura 正文提取器（design.md §11，T046/R-content-002、R-content-003）
+//! Trafilatura 正文提取器
 //!
 //! [`TrafilaturaExtractor`] 是基于 [`rs_trafilatura`] crate 的主路径实现，
 //! 文章正文提取质量最高。
 //!
-//! 特性门控：本模块整体 gated `trafilatura`（T043 声明的 `dep:rs-trafilatura`）。
+//! 特性门控：本模块整体 gated `trafilatura`（声明的 `dep:rs-trafilatura`）。
 //! 特性未启用时由 [`super::facade::ContentExtractionFacade`] 跳过本实现回退到下一优先级。
 //!
 //! 提取策略：
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn default_equals_new() {
         let a = TrafilaturaExtractor::new();
-        let b = TrafilaturaExtractor::default();
+        let b = TrafilaturaExtractor;
         let html = r#"<html><body><article><p>some content</p></article></body></html>"#;
         let ra = a
             .extract(html, "https://example.com/")
@@ -269,7 +269,7 @@ mod tests {
 
         // 低比例 → 接近 0.7
         let c = TrafilaturaExtractor::calculate_confidence(1, 1000);
-        assert!(c >= 0.7 && c < 0.75, "ratio=0.001 → near 0.7, got: {c}");
+        assert!((0.7..0.75).contains(&c), "ratio=0.001 → near 0.7, got: {c}");
     }
 
     /// 超长 HTML 应能正常提取（不 panic）

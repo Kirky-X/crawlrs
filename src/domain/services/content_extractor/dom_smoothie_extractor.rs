@@ -3,12 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information
 
-//! DomSmoothie 正文提取器（design.md §11，T047/R-content-002、R-content-003）
+//! DomSmoothie 正文提取器
 //!
 //! [`DomSmoothieExtractor`] 是基于 [`dom_smoothie`] crate（readability.js 移植）的性能回退实现，
 //! DOM 启发式提取，比 Trafilatura 略低质量但速度更快。
 //!
-//! 特性门控：本模块整体 gated `dom-smoothie`（T043 声明的 `dep:dom_smoothie`）。
+//! 特性门控：本模块整体 gated `dom-smoothie`（声明的 `dep:dom_smoothie`）。
 //! 特性未启用时由 [`super::facade::ContentExtractionFacade`] 跳过本实现。
 //!
 //! 提取策略：
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn default_equals_new() {
         let a = DomSmoothieExtractor::new();
-        let b = DomSmoothieExtractor::default();
+        let b = DomSmoothieExtractor;
         let html = r#"<html><body><article><p>some content</p></article></body></html>"#;
         let ra = a
             .extract(html, "https://example.com/")

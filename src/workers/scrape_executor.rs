@@ -24,7 +24,7 @@ use crate::workers::cache_utils::{redact_url_for_log, SanitizedScrapeResponse};
 
 /// 处理文本编码转换
 ///
-/// 性能审查 H-2 修复：返回 `Cow<'_, str>`，禁用路径返回 `Cow::Borrowed`，
+/// 返回 `Cow<'_, str>`，禁用路径返回 `Cow::Borrowed`，
 /// 避免每次抓取都 clone 整个 content（可能数 MB）。
 ///
 /// # Arguments
@@ -42,7 +42,7 @@ pub async fn process_text_encoding<'a>(
     // 创建文本处理集成器
     let text_integration = CrawlTextIntegration::new(false); // Disable by default for now
 
-    // 性能审查 H-2 修复：禁用时返回借用引用，避免 clone 整个 content（数 MB）
+    // 禁用时返回借用引用，避免 clone 整个 content（数 MB）
     if !text_integration.is_enabled() {
         return Ok(std::borrow::Cow::Borrowed(&response.content));
     }
@@ -112,7 +112,7 @@ pub async fn save_result(
         meta_data = data;
     }
 
-    // T042/R-content-001：将 response.markdown 合并到 meta_data JSON
+    // 将 response.markdown 合并到 meta_data JSON
     if let Some(ref markdown) = response.markdown {
         match &mut meta_data {
             Value::Null => {
@@ -151,7 +151,7 @@ pub async fn save_result(
     Ok(())
 }
 
-/// 读抓取结果缓存（T059/R-cache-002）
+/// 读抓取结果缓存
 ///
 /// 返回 `Ok(None)` 表示缓存未命中；`Ok(Some)` 表示命中；`Err` 表示缓存故障。
 ///
@@ -182,7 +182,7 @@ pub async fn try_read_scrape_cache(
     }
 }
 
-/// 写抓取结果缓存（T059/R-cache-002）
+/// 写抓取结果缓存
 ///
 /// 序列化 `ScrapeResponse` → JSON → 写入 `CacheService`（带 TTL）。
 /// 通过 [`SanitizedScrapeResponse`] 跳过敏感响应头，防止凭证泄露。
@@ -200,7 +200,7 @@ pub async fn try_write_scrape_cache(
     cache_service: &dyn CacheService,
     ttl_seconds: u64,
 ) -> Result<()> {
-    // 性能 HIGH-1：借用序列化，避免克隆整个 ScrapeResponse
+    // 性能借用序列化，避免克隆整个 ScrapeResponse
     let sanitized = SanitizedScrapeResponse::from_response(response);
     let json = serde_json::to_string(&sanitized)
         .context("Failed to serialize ScrapeResponse for cache")?;
@@ -290,6 +290,10 @@ mod tests {
         }
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
             Ok(0.0)
+        }
+
+        async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+            Ok(0)
         }
     }
 

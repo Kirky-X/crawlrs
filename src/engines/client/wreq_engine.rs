@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! TLS 指纹一致性伪装引擎（Phase 1 / D4，feature-gated on `engine-tls-fingerprint`）
+//! TLS 指纹一致性伪装引擎（feature-gated on `engine-tls-fingerprint`）
 //!
 //! 基于 `wreq`（BoringSSL 后端，Apache-2.0）实现，产出真实浏览器 JA3/JA4 + HTTP/2 指纹，
 //! 用于 `needs_tls_fingerprint` 请求（抗指纹识别反爬）。
@@ -44,7 +44,7 @@ use std::time::{Duration, Instant};
 /// 默认代理策略（无 settings 注入时使用）
 const DEFAULT_PROXY_STRATEGY: ProxyStrategy = ProxyStrategy::RoundRobin;
 
-/// 将 [`TlsEmulation`] 映射为 `wreq::Emulation`（Phase 1 / D4）。
+/// 将 [`TlsEmulation`] 映射为 `wreq::Emulation`。
 ///
 /// # 许可证
 ///
@@ -64,15 +64,15 @@ pub fn emulation_provider(_emulation: TlsEmulation) -> wreq::Emulation {
 /// 与 [`ReqwestEngine`](crate::engines::client::ReqwestEngine) 结构对齐，但：
 /// - 使用 `wreq::Client`（BoringSSL → 真实 JA4 指纹）
 /// - UA 经 `ua_pool` 选取，同一请求的 `ua` 与 `tls_emulation` 绑定一致
-/// - 代理经 `ProxyProvider` trait 调度（与 ReqwestEngine 的 H2 修复一致；
-///   design.md D4 原写 `Option<Arc<ProxyPool>>`，遵循代码库惯例改用 trait 抽象）
+/// - 代理经 `ProxyProvider` trait 调度（与 ReqwestEngine 的一致；
+///   原写 `Option<Arc<ProxyPool>>`，遵循代码库惯例改用 trait 抽象）
 pub struct WreqEngine {
     /// wreq 客户端（构造时构建，含 TLS 指纹模拟配置）
     /// 生产路径使用 `build_resolve_client` 静态方法构建 per-request client；
     /// 此字段保留供测试路径 `get_client` 使用。
     #[allow(dead_code)]
     client: wreq::Client,
-    /// UA 池（R-identity-001）：每请求选一致 UA + Accept-Language + sec-ch-ua + tls_emulation
+    /// UA 池每请求选一致 UA + Accept-Language + sec-ch-ua + tls_emulation
     ua_pool: Arc<UaPool>,
     /// 代理提供者（H2：依赖抽象 trait）
     proxy_provider: Option<Arc<dyn ProxyProvider>>,
@@ -80,13 +80,91 @@ pub struct WreqEngine {
     proxy_strategy: ProxyStrategy,
     /// 引擎级请求超时（秒）—— 注入自 settings.timeouts.engines.default_timeout_seconds
     timeout_seconds: u64,
-    /// 单引擎最大响应时间（MRT，design.md §14 / T062）。
+    /// 单引擎最大响应时间（MRT）。
     /// 注入自 `settings.timeouts.engines.tls_seconds`（默认 15 秒）。
     mrt: Duration,
 }
 
+/// 构建 SSRF 安全的 wreq 重定向策略。
+///
+/// 与 reqwest 侧 `create_ssrf_safe_redirect_policy` 对齐：逐跳校验 scheme、
+/// 静态内网 hostname/IP 字面量，并对重定向目标 hostname 做 DNS 解析检查
+/// （全部 IP 必须为公网；解析失败按 fail-closed 拒绝跟随）。
+fn create_ssrf_safe_wreq_redirect_policy(max_redirects: usize) -> wreq::redirect::Policy {
+    use crate::engines::shared::is_private_ip;
+    use crate::infrastructure::security::ssrf::is_internal_url;
+    use std::net::ToSocketAddrs;
+
+    wreq::redirect::Policy::custom(move |attempt| {
+        if attempt.previous.len() >= max_redirects {
+            return attempt.error("too many redirects");
+        }
+
+        let uri = &*attempt.uri;
+
+        // 1) 只允许 http/https
+        if uri.scheme_str() != Some("http") && uri.scheme_str() != Some("https") {
+            log::warn!(
+                "SSRF protection: Blocking wreq redirect with non-HTTP scheme: {:?}",
+                uri.scheme_str()
+            );
+            return attempt.stop();
+        }
+
+        // 2) 静态检查：IP 字面量私网 / 内部 hostname
+        let uri_str = uri.to_string();
+        if is_internal_url(&uri_str) {
+            log::warn!(
+                "SSRF protection: Blocking wreq redirect to internal URL: {}",
+                uri_str
+            );
+            return attempt.stop();
+        }
+
+        // 3) DNS 级检查：重定向目标全部解析 IP 必须公网（fail-closed）
+        if let Some(host) = uri.host() {
+            let port = uri
+                .port_u16()
+                .unwrap_or(if uri.scheme_str() == Some("https") {
+                    443
+                } else {
+                    80
+                });
+            match (host, port).to_socket_addrs() {
+                Ok(addrs) => {
+                    let mut any = false;
+                    for addr in addrs {
+                        any = true;
+                        if is_private_ip(addr.ip()) {
+                            log::warn!(
+                                "SSRF protection: wreq redirect host {} resolves to private IP {}, blocking",
+                                host,
+                                addr.ip()
+                            );
+                            return attempt.stop();
+                        }
+                    }
+                    if !any {
+                        return attempt.stop();
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "SSRF protection: wreq redirect DNS failed for host {} ({}), blocking",
+                        host,
+                        e
+                    );
+                    return attempt.stop();
+                }
+            }
+        }
+
+        attempt.follow()
+    })
+}
+
 impl WreqEngine {
-    /// 创建 WreqEngine（无代理提供者，Phase 1 / D4）。
+    /// 创建 WreqEngine（无代理提供者）。
     ///
     /// `ua_pool`：共享 UA 池；`mrt`：引擎级 MRT；`timeout_seconds`：请求超时。
     ///
@@ -128,11 +206,11 @@ impl WreqEngine {
         })
     }
 
-    /// 构建基础 wreq 客户端（含默认 Chrome 系 TLS 指纹模拟 + 超时 + 重定向跟随）。
+    /// 构建基础 wreq 客户端（含默认 Chrome 系 TLS 指纹模拟 + 超时 + SSRF 安全重定向）。
     fn build_base_client(timeout_seconds: u64) -> Result<wreq::Client, EngineError> {
         wreq::Client::builder()
             .emulation(emulation_provider(TlsEmulation::Chrome131))
-            .redirect(wreq::redirect::Policy::default())
+            .redirect(create_ssrf_safe_wreq_redirect_policy(5))
             .timeout(Duration::from_secs(timeout_seconds))
             .build()
             .map_err(|e| EngineError::Internal(format!("wreq client build failed: {e}")))
@@ -158,7 +236,7 @@ impl WreqEngine {
             }
         };
         match wreq::Client::builder()
-            .redirect(wreq::redirect::Policy::default())
+            .redirect(create_ssrf_safe_wreq_redirect_policy(5))
             .proxy(proxy)
             .timeout(Duration::from_secs(timeout_seconds))
             .build()
@@ -178,7 +256,7 @@ impl WreqEngine {
         }
     }
 
-    /// 获取 UA 池引用（测试验证 R-identity-001）。
+    /// 获取 UA 池引用（测试验证）。
     #[must_use]
     pub fn ua_pool(&self) -> &UaPool {
         &self.ua_pool
@@ -210,7 +288,7 @@ impl WreqEngine {
 
     /// 获取用于本次请求的 client 与使用的代理 URL。
     ///
-    /// 代理优先级（对齐 ReqwestEngine / design.md §12）：
+    /// 代理优先级（对齐 ReqwestEngine）：
     /// 1. 请求级代理（`request.proxy`）覆盖池
     /// 2. 代理提供者按 `proxy_strategy` 调度（RoundRobin → next / Sticky → sticky）
     /// 3. 无代理 → 基础 client
@@ -288,7 +366,7 @@ impl WreqEngine {
     ) -> Result<wreq::Client, EngineError> {
         let mut builder = wreq::Client::builder()
             .emulation(emulation_provider(TlsEmulation::Chrome131))
-            .redirect(wreq::redirect::Policy::default())
+            .redirect(create_ssrf_safe_wreq_redirect_policy(5))
             .timeout(Duration::from_secs(timeout_seconds));
 
         // SSRF resolve 覆盖：hostname → 验证过的 IP
@@ -358,7 +436,7 @@ impl ScraperEngine for WreqEngine {
             return Err(EngineError::Other("SSRF: no resolved IPs".to_string()));
         }
 
-        // R-identity-001：选与请求匹配的 UA profile（ua + accept_language + sec-ch-ua + tls_emulation）
+        // 选与请求匹配的 UA profile（ua + accept_language + sec-ch-ua + tls_emulation）
         let profile = self.ua_pool.pick(request.mobile);
 
         // 确定本次请求使用的代理 URL（与 get_client 逻辑一致）
@@ -464,6 +542,7 @@ impl ScraperEngine for WreqEngine {
             content_type,
             headers: response_headers,
             response_time_ms: start.elapsed().as_millis() as u64,
+            final_url: None,
         })
     }
 
@@ -491,7 +570,7 @@ impl ScraperEngine for WreqEngine {
         true
     }
 
-    /// T062：返回注入的 MRT（默认 15s，对应 `tls_seconds`）。
+    /// 返回注入的 MRT（默认 15s，对应 `tls_seconds`）。
     fn max_response_time(&self) -> Duration {
         self.mrt
     }
@@ -720,7 +799,7 @@ mod tests {
         assert_eq!(used_proxy.as_deref(), Some("http://override:9999"));
     }
 
-    // === 指纹映射测试（T015 联动：TlsEmulation → EmulationProvider）===
+    // === 指纹映射测试（联动：TlsEmulation → EmulationProvider）===
 
     #[test]
     fn test_emulation_provider_roundtrips_all_variants() {
@@ -771,7 +850,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // === JA4 指纹外部验证（T024 / R-tls-005）===
+    // === JA4 指纹外部验证 ===
     // 需网络访问，默认 ignore。运行：cargo test --features engine-tls-fingerprint -- --ignored
 
     /// 向 ja4er.com 发送请求，验证返回的 JA4 指纹非空且包含 Chrome 特征。

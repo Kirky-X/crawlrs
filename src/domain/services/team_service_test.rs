@@ -198,6 +198,37 @@ async fn test_blocked_countries_denies() {
 }
 
 #[tokio::test]
+async fn test_blocked_takes_precedence_over_allowed() {
+    let geo_service = Arc::new(MockGeoService::new("US".to_string()));
+    let geo_repo = Arc::new(MockGeoRestrictionRepository);
+    let service = TeamService::new(geo_service, geo_repo);
+
+    // 国家同时出现在 allowed 与 blocked 名单：必须拒绝（黑名单优先）
+    let restrictions = TeamGeoRestrictions {
+        enable_geo_restrictions: true,
+        allowed_countries: Some(vec!["US".to_string()]),
+        blocked_countries: Some(vec!["US".to_string()]),
+        ip_whitelist: None,
+        ..Default::default()
+    };
+
+    let result = service
+        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .await;
+
+    match result {
+        Ok(GeoRestrictionResult::Denied(msg)) => {
+            assert!(
+                msg.contains("US"),
+                "expected country-specific denial, got: {}",
+                msg
+            );
+        }
+        _ => panic!("Expected Denied result when country is in both allowed and blocked lists"),
+    }
+}
+
+#[tokio::test]
 async fn test_case_insensitive_country_matching() {
     let geo_service: Arc<dyn GeoLocationService> = Arc::new(MockGeoService::new("US".to_string()));
     let geo_repo = Arc::new(MockGeoRestrictionRepository);
@@ -395,17 +426,24 @@ async fn test_get_team_geo_restrictions_success_returns_config() {
 }
 
 #[tokio::test]
-async fn test_get_team_geo_restrictions_failure_returns_default() {
+async fn test_get_team_geo_restrictions_failure_falls_back_to_deny_all() {
     let geo_repo: Arc<dyn GeoRestrictionRepository> = Arc::new(FailingGeoRestrictionRepository);
     let service = make_service(Arc::new(MockGeoService::new("US".to_string())), geo_repo);
 
     let result = service.get_team_geo_restrictions(Uuid::new_v4()).await;
-    // On failure, should return default (empty) restrictions
-    assert!(!result.enable_geo_restrictions);
-    assert!(result.allowed_countries.is_none());
+    // fail-closed：仓储故障回落"启用限制 + 空 allowed 名单"的 deny-all 配置，
+    // 绝不回落无限制默认值
+    assert!(result.enable_geo_restrictions);
+    assert_eq!(result.allowed_countries, Some(Vec::new()));
     assert!(result.blocked_countries.is_none());
     assert!(result.ip_whitelist.is_none());
     assert!(result.domain_blacklist.is_none());
+
+    // deny-all 配置经校验路径必须拒绝任意国家
+    let verdict = service
+        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &result)
+        .await;
+    assert!(matches!(verdict, Ok(GeoRestrictionResult::Denied(_))));
 }
 
 // ---- validate_geographic_restriction: country not in allowed list ----
@@ -697,7 +735,7 @@ async fn test_validate_domain_blacklist_empty_blacklist_returns_allowed() {
 
 #[tokio::test]
 async fn test_validate_domain_blacklist_no_substring_false_positive() {
-    // Security fix: substring matching was removed to prevent false positives.
+    // Security substring matching was removed to prevent false positives.
     // "evil" in blacklist should NOT block "www.evil-domain.com" (different domain).
     let service = make_service(
         Arc::new(MockGeoService::new("US".to_string())),

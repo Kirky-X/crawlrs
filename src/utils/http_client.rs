@@ -125,7 +125,9 @@ fn create_client(timeout_secs: u64, max_redirects: u8) -> Client {
 ///
 /// A `reqwest::redirect::Policy` that validates redirect URLs
 pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect::Policy {
+    use crate::engines::shared::is_private_ip;
     use crate::infrastructure::security::ssrf::is_internal_url;
+    use std::net::ToSocketAddrs;
 
     reqwest::redirect::Policy::custom(move |attempt| {
         // Check redirect count
@@ -138,15 +140,69 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
         }
 
         // Get redirect URL
-        let redirect_url = attempt.url().to_string();
+        let redirect_url = attempt.url();
 
-        // Validate redirect URL for SSRF
-        if is_internal_url(&redirect_url) {
+        // 1) 只允许 http/https
+        if redirect_url.scheme() != "http" && redirect_url.scheme() != "https" {
+            log::warn!(
+                "SSRF protection: Blocking redirect with non-HTTP scheme: {}",
+                redirect_url.scheme()
+            );
+            return attempt.stop();
+        }
+
+        // 2) 静态检查：IP 字面量私网地址 / 内部 hostname（localhost、元数据端点等）
+        if is_internal_url(redirect_url.as_str()) {
             log::warn!(
                 "SSRF protection: Blocking redirect to internal URL: {}",
                 redirect_url
             );
             return attempt.stop();
+        }
+
+        // 3) DNS 级检查：重定向目标 hostname 解析出的全部 IP 必须是公网地址。
+        //    阻断「302 → 攻击者域名 → 解析到 169.254.169.254/内网 IP」的绕过
+        //    （该路径不受初始请求 resolve_to_addrs pin 的约束）。策略闭包为同步
+        //    上下文，使用阻塞式解析；解析失败按 fail-closed 拒绝跟随。
+        if let Some(host) = redirect_url.host_str() {
+            let port = redirect_url.port_or_known_default().unwrap_or(
+                if redirect_url.scheme() == "https" {
+                    443
+                } else {
+                    80
+                },
+            );
+            match (host, port).to_socket_addrs() {
+                Ok(addrs) => {
+                    let mut any = false;
+                    for addr in addrs {
+                        any = true;
+                        if is_private_ip(addr.ip()) {
+                            log::warn!(
+                                "SSRF protection: Redirect host {} resolves to private IP {}, blocking",
+                                host,
+                                addr.ip()
+                            );
+                            return attempt.stop();
+                        }
+                    }
+                    if !any {
+                        log::warn!(
+                            "SSRF protection: No DNS result for redirect host {}, blocking",
+                            host
+                        );
+                        return attempt.stop();
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "SSRF protection: DNS resolution failed for redirect host {} ({}), blocking",
+                        host,
+                        e
+                    );
+                    return attempt.stop();
+                }
+            }
         }
 
         // Log redirect for debugging
@@ -163,6 +219,107 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
         // Follow the redirect
         attempt.follow()
     })
+}
+
+/// 响应体读取错误：大小超限或网络流错误。
+///
+/// 由 [`read_body_limited`] 返回，调用方按各自错误体系映射
+/// （引擎 → `EngineError`，搜索 → `SearchError`，agent_lib → `AgentLibError`）。
+#[derive(Debug)]
+pub enum BodyReadError {
+    /// 响应体超过 `max_bytes` 上限（content_length 预检或流式累积触发）。
+    LimitExceeded {
+        /// 配置的上限字节数
+        max_bytes: usize,
+    },
+    /// 读取响应体流时发生网络错误。
+    Network(reqwest::Error),
+}
+
+impl std::fmt::Display for BodyReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BodyReadError::LimitExceeded { max_bytes } => {
+                write!(f, "response body exceeds {} byte limit", max_bytes)
+            }
+            BodyReadError::Network(e) => write!(f, "failed to read response body: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for BodyReadError {}
+
+/// 从字节流累积读取，累计字节数一旦超过 `max_bytes` 立即中断（R-engines-005）。
+///
+/// 抽为泛型以便用合成流单测累积分支（无需真实分块 HTTP 服务器）。
+/// `bytes_stream()` 等非 Unpin 流由调用方 `Box::pin` 后传入。
+async fn accumulate_limited<S, B>(mut stream: S, max_bytes: usize) -> Result<Vec<u8>, BodyReadError>
+where
+    S: futures::Stream<Item = Result<B, reqwest::Error>> + Unpin,
+    B: AsRef<[u8]>,
+{
+    use futures::StreamExt;
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(BodyReadError::Network)?;
+        let chunk = chunk.as_ref();
+        if buf.len() + chunk.len() > max_bytes {
+            return Err(BodyReadError::LimitExceeded { max_bytes });
+        }
+        buf.extend_from_slice(chunk);
+    }
+    Ok(buf)
+}
+
+/// 读取响应体，受 `max_bytes` 上限约束（防止超大响应导致 OOM）。
+///
+/// 两步防护（R-engines-005）：
+/// 1. **content_length 预检**：若响应声明的 `Content-Length` 已超限，读取前直接拒绝，
+///    不消耗带宽/内存。
+/// 2. **bytes_stream 累积**：逐块读取并累加，一旦累计字节数将超过上限立即中断
+///    （覆盖 chunked 传输无 Content-Length 或声明值不实的情况）。
+///
+/// 编码：优先按 `Content-Type` 的 `charset` 参数解码（encoding_rs），缺省或无法
+/// 识别时回退 UTF-8 lossy（与 reqwest `.text()` 行为一致）。
+pub async fn read_body_limited(
+    resp: reqwest::Response,
+    max_bytes: usize,
+) -> Result<String, BodyReadError> {
+    // 在消费 body 前提取 charset（bytes_stream 会消耗 response）。
+    // 遍历所有 `;` 分段查找 charset=，兼容 charset 不在第二段的 Content-Type。
+    let charset = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|ct| {
+            ct.split(';')
+                .map(|part| part.trim())
+                .find_map(|part| part.strip_prefix("charset="))
+        })
+        .map(|s| s.trim().trim_matches('"').to_string());
+
+    // 1. content_length 预检
+    if let Some(len) = resp.content_length() {
+        if len as usize > max_bytes {
+            return Err(BodyReadError::LimitExceeded { max_bytes });
+        }
+    }
+
+    // 2. bytes_stream 累积 + 上限中断
+    let bytes = accumulate_limited(Box::pin(resp.bytes_stream()), max_bytes).await?;
+
+    // 编码解码
+    let decoded = match charset.as_deref() {
+        Some(label) => {
+            let encoding =
+                encoding_rs::Encoding::for_label(label.as_bytes()).unwrap_or(encoding_rs::UTF_8);
+            let (text, _, _) = encoding.decode(&bytes);
+            text.into_owned()
+        }
+        None => String::from_utf8_lossy(&bytes).into_owned(),
+    };
+
+    Ok(decoded)
 }
 
 #[cfg(test)]
@@ -577,7 +734,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ssrf_safe_redirect_policy_blocks_non_http_scheme() {
-        // A redirect to a non-HTTP scheme (file://) should be blocked.
+        // A redirect to a non-HTTP scheme (file) should be blocked.
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -903,6 +1060,95 @@ mod tests {
         assert!(
             result.is_err(),
             "redirect to unreachable external URL should fail after attempt.follow()"
+        );
+    }
+
+    // ========== read_body_limited 上限测试（R-engines-005） ==========
+
+    #[tokio::test]
+    async fn test_read_body_limited_within_limit() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/small"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("hello world"))
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let resp = client
+            .get(format!("{}/small", mock_server.uri()))
+            .send()
+            .await
+            .expect("request should succeed");
+
+        let body = read_body_limited(resp, 1024).await.expect("within limit");
+        assert_eq!(body, "hello world");
+    }
+
+    #[tokio::test]
+    async fn test_read_body_limited_rejects_oversized_content_length() {
+        // content_length 预检：声明长度超限 → 读取前拒绝
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let big = "x".repeat(2048);
+        Mock::given(method("GET"))
+            .and(path("/big"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(big.as_str(), "text/plain"))
+            .mount(&mock_server)
+            .await;
+
+        let client = create_http_client_with_redirects(5, 10);
+        let resp = client
+            .get(format!("{}/big", mock_server.uri()))
+            .send()
+            .await
+            .expect("request should succeed");
+
+        // 上限 1024 < 2048 声明长度 → LimitExceeded
+        let err = read_body_limited(resp, 1024)
+            .await
+            .expect_err("should reject oversized content_length before reading");
+        assert!(
+            matches!(err, BodyReadError::LimitExceeded { max_bytes: 1024 }),
+            "expected LimitExceeded, got {:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_accumulate_limited_within_limit() {
+        // 合成分块流：累计未超限 → 完整拼接
+        let chunks: Vec<Result<bytes::Bytes, reqwest::Error>> = vec![
+            Ok(bytes::Bytes::from_static(b"hello ")),
+            Ok(bytes::Bytes::from_static(b"world")),
+        ];
+        let out = accumulate_limited(futures::stream::iter(chunks), 1024)
+            .await
+            .expect("within limit");
+        assert_eq!(out, b"hello world");
+    }
+
+    #[tokio::test]
+    async fn test_accumulate_limited_exceeds_returns_error() {
+        // 分块累积：总字节数超过上限时立即中断返回 LimitExceeded（而非 OOM）。
+        // 覆盖 chunked 传输无 content_length 预检、仅靠累积守卫的场景。
+        let chunks: Vec<Result<bytes::Bytes, reqwest::Error>> = vec![
+            Ok(bytes::Bytes::from_static(b"aaaa")),
+            Ok(bytes::Bytes::from_static(b"bbbb")),
+            Ok(bytes::Bytes::from_static(b"cccc")),
+        ];
+        let err = accumulate_limited(futures::stream::iter(chunks), 8)
+            .await
+            .expect_err("should exceed limit on third chunk");
+        assert!(
+            matches!(err, BodyReadError::LimitExceeded { max_bytes: 8 }),
+            "expected LimitExceeded, got {:?}",
+            err
         );
     }
 }

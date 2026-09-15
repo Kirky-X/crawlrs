@@ -68,6 +68,7 @@ impl ScraperEngine for TestScraperEngineImpl {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 100,
+                final_url: None,
             })
         } else {
             Ok(InternalScrapeResponse {
@@ -77,6 +78,7 @@ impl ScraperEngine for TestScraperEngineImpl {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 100,
+                final_url: None,
             })
         }
     }
@@ -103,6 +105,7 @@ async fn test_aggregate_concurrent_search() {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 100,
+            final_url: None,
         }),
         10, // max_calls
     );
@@ -118,6 +121,7 @@ async fn test_aggregate_concurrent_search() {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 100,
+            final_url: None,
         }),
         10, // max_calls
     );
@@ -174,6 +178,7 @@ async fn test_aggregate_partial_failure() {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 100,
+            final_url: None,
         }),
         10, // max_calls
     );
@@ -209,7 +214,7 @@ async fn test_aggregate_partial_failure() {
     assert_eq!(response.content, "Result 2");
 }
 
-// === T013（R-antibot-003）：反爬挑战页改派浏览器引擎 ===
+// === 反爬挑战页改派浏览器引擎 ===
 //
 // 验证：HTTP 引擎返回 Cloudflare 挑战页 HTML（status=200），被 antibot::classify 判
 // needs_browser=true，路由将其视为失败、强制后续 attempt needs_js=true，由浏览器引擎
@@ -270,6 +275,7 @@ async fn test_t013_antibot_cloudflare_forces_needs_js_for_next_attempt() {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 50,
+            final_url: None,
         },
     });
 
@@ -288,6 +294,7 @@ async fn test_t013_antibot_cloudflare_forces_needs_js_for_next_attempt() {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 200,
+            final_url: None,
         },
     });
 
@@ -358,7 +365,7 @@ async fn test_t013_antibot_cloudflare_forces_needs_js_for_next_attempt() {
     );
 }
 
-/// T013 边界：HTTP 引擎返回正常页面（非反爬挑战），不应触发 force_needs_js
+/// 边界：HTTP 引擎返回正常页面（非反爬挑战），不应触发 force_needs_js
 #[cfg(feature = "content")]
 #[tokio::test]
 async fn test_t013_normal_response_does_not_trigger_force_needs_js() {
@@ -405,6 +412,7 @@ async fn test_t013_normal_response_does_not_trigger_force_needs_js() {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 30,
+            final_url: None,
         },
     });
 
@@ -420,6 +428,7 @@ async fn test_t013_normal_response_does_not_trigger_force_needs_js() {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 0,
+            final_url: None,
         },
     });
 
@@ -470,7 +479,7 @@ async fn test_t013_normal_response_does_not_trigger_force_needs_js() {
     );
 }
 
-// === T015（R-jsrender-001）：SPA 空壳响应触发改派浏览器引擎 ===
+// === SPA 空壳响应触发改派浏览器引擎 ===
 //
 // 验证：HTTP 引擎（needs_js==false）返回含 `__NEXT_DATA__` 的 SPA 空壳响应，
 // JsUpgradeProbe 判定 upgrade=true，路由以 needs_js=true 重新 route_internal
@@ -532,6 +541,7 @@ async fn test_t015_spa_shell_triggers_js_upgrade_re_dispatch() {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 30,
+            final_url: None,
         },
     });
 
@@ -549,6 +559,7 @@ async fn test_t015_spa_shell_triggers_js_upgrade_re_dispatch() {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 200,
+            final_url: None,
         },
     });
 
@@ -621,7 +632,7 @@ async fn test_t015_spa_shell_triggers_js_upgrade_re_dispatch() {
     );
 }
 
-/// T015 边界：HTTP 引擎返回非 SPA 页面（无 JS 框架信号），不应触发改派
+/// 边界：HTTP 引擎返回非 SPA 页面（无 JS 框架信号），不应触发改派
 #[tokio::test]
 async fn test_t015_non_spa_response_does_not_trigger_re_dispatch() {
     use std::sync::Mutex;
@@ -667,6 +678,7 @@ async fn test_t015_non_spa_response_does_not_trigger_re_dispatch() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 30,
+                final_url: None,
             },
         });
 
@@ -681,6 +693,7 @@ async fn test_t015_non_spa_response_does_not_trigger_re_dispatch() {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 0,
+            final_url: None,
         },
     });
 
@@ -734,7 +747,7 @@ async fn test_t015_non_spa_response_does_not_trigger_re_dispatch() {
     );
 }
 
-/// T028（R-identity-002）：验证 Transient 错误重试时 UA 按 attempt seed 轮换。
+/// 验证 Transient 错误重试时 UA 按 attempt seed 轮换。
 ///
 /// 场景：3 个失败引擎（Transient）+ 1 个成功引擎，max_retries=4。
 /// 预期 directive 序列：
@@ -810,6 +823,7 @@ async fn test_t028_ua_rotated_across_transient_retries() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 10,
+                final_url: None,
             }),
         })
     }
@@ -904,7 +918,7 @@ async fn test_t028_ua_rotated_across_transient_retries() {
     );
 }
 
-/// C-1 回归测试：重试轮换 UA 时所有指纹相关 header 必须同步一致。
+/// 回归测试：重试轮换 UA 时所有指纹相关 header 必须同步一致。
 ///
 /// 场景：3 个失败引擎（Transient）+ 1 个成功引擎，max_retries=4。
 /// 预期：attempt 3/4 触发 `directive.rotate_ua=true` 时，
@@ -919,10 +933,13 @@ async fn test_c1_fingerprint_headers_rotated_together() {
     use crate::utils::ua_pool::UaPool;
     use std::sync::Mutex;
 
+    /// 每次调用记录的指纹 header 三元组（UA / AL / sec-ch-ua）
+    type RecordedHeaders = Vec<(Option<String>, Option<String>, Option<String>)>;
+
     /// 记录每次调用全部指纹相关 header（UA / AL / sec-ch-ua）
     struct FingerprintRecordingEngine {
         name: &'static str,
-        recorded: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
+        recorded: Arc<Mutex<RecordedHeaders>>,
         error_msg: Option<String>,
         response: Option<InternalScrapeResponse>,
     }
@@ -960,7 +977,7 @@ async fn test_c1_fingerprint_headers_rotated_together() {
 
     fn make_failing(
         name: &'static str,
-        rec: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
+        rec: Arc<Mutex<RecordedHeaders>>,
     ) -> Arc<dyn ScraperEngine> {
         Arc::new(FingerprintRecordingEngine {
             name,
@@ -972,7 +989,7 @@ async fn test_c1_fingerprint_headers_rotated_together() {
 
     fn make_success(
         name: &'static str,
-        rec: Arc<Mutex<Vec<(Option<String>, Option<String>, Option<String>)>>>,
+        rec: Arc<Mutex<RecordedHeaders>>,
     ) -> Arc<dyn ScraperEngine> {
         Arc::new(FingerprintRecordingEngine {
             name,
@@ -987,6 +1004,7 @@ async fn test_c1_fingerprint_headers_rotated_together() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 10,
+                final_url: None,
             }),
         })
     }
@@ -1059,7 +1077,7 @@ async fn test_c1_fingerprint_headers_rotated_together() {
     let p3 = pool.pick_seeded(2, false);
     let p4 = pool.pick_seeded(3, false);
 
-    // C-1 核心：UA + Accept-Language + sec-ch-ua 三者必须来自同一 profile
+    // 核心：UA + Accept-Language + sec-ch-ua 三者必须来自同一 profile
     assert_eq!(
         ua3, p3.ua,
         "attempt 3 User-Agent must match pick_seeded(2).ua"
@@ -1105,7 +1123,7 @@ async fn test_c1_fingerprint_headers_rotated_together() {
     );
 }
 
-/// T028（R-identity-002）：验证 RetryTracker 在 FeatureToggle cap=3 时停止重试。
+/// 验证 RetryTracker 在 FeatureToggle cap=3 时停止重试。
 ///
 /// 场景：5 个引擎全部返回 `EngineError::FeatureToggle`，max_retries=5（高于 cap=3）。
 /// 预期：tracker 在第 3 次 record 后 ft=3 → should_retry(FeatureToggle) 返回 false → 停止。
@@ -1195,16 +1213,16 @@ async fn test_t028_retry_tracker_caps_feature_toggle() {
     );
 
     // 验证只有前 3 个引擎被调用（cap=3 → 3 次 record 后停止）
-    for i in 0..3 {
-        let c = counts[i].lock().unwrap();
+    for (i, count) in counts.iter().enumerate().take(3) {
+        let c = count.lock().unwrap();
         assert_eq!(
             *c, 1,
             "engine {} should be called exactly once (within cap)",
             i
         );
     }
-    for i in 3..5 {
-        let c = counts[i].lock().unwrap();
+    for (i, count) in counts.iter().enumerate().skip(3) {
+        let c = count.lock().unwrap();
         assert_eq!(
             *c, 0,
             "engine {} should NOT be called (RetryTracker stopped after cap=3)",

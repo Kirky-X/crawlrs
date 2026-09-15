@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! T035: 并发竞速路由 — 从 `EngineRouter` 拆分的 partial impl block
+//! 并发竞速路由 — 从 `EngineRouter` 拆分的 partial impl block
 //!
 //! 同时发起多个引擎请求，返回最快成功的结果。
 
@@ -83,87 +83,121 @@ impl EngineRouter {
                     let engine_start = Instant::now();
                     match engine_clone.scrape(&request_clone).await {
                         Ok(response) => Ok((engine_name, response, engine_start.elapsed())),
-                        Err(e) => Err((engine_name, e)),
+                        Err(e) => Err((engine_name, e, engine_start.elapsed())),
                     }
                 });
 
             race_futures.push(race_future);
         }
 
-        // 并发执行，返回最快成功的
+        // 并发执行：循环 select_all，最快「成功」者胜出。
+        // 失败的 future 从竞速集中移除并记录指标后继续等待其余候选，
+        // 全部失败或整体超时才返回错误（与模块文档语义一致）。
         let timeout_duration = remaining.max(Duration::from_millis(100));
+        let deadline = time::Instant::now() + timeout_duration;
+        let total_candidates = race_futures.len();
 
-        // 使用 SelectAll 进行竞速
-        let select_all_future = future::select_all(race_futures);
+        let mut pending = race_futures;
+        let mut last_error: Option<EngineError> = None;
 
-        match time::timeout(timeout_duration, select_all_future).await {
-            Ok((result, _index, _others)) => {
-                match result {
-                    Ok((engine_name, response, response_time)) => {
-                        self.update_engine_stats(&engine_name, true, response_time);
-                        self.circuit_breaker.record_success(&engine_name);
-                        self.metrics
-                            .successful_requests
-                            .fetch_add(1, Ordering::Relaxed);
-                        self.metrics
-                            .record_engine_latency(&engine_name, response_time);
-                        self.metrics.record_engine_success(&engine_name);
-
-                        // Phase 4a: Prometheus 指标埋点 (T062/T063)
-                        counter!(
-                            "crawlrs_engine_success_total",
-                            "engine" => engine_name.clone(),
-                            "result" => "success"
-                        )
-                        .increment(1);
-                        histogram!(
-                            "crawlrs_engine_duration_seconds",
-                            "engine" => engine_name.clone()
-                        )
-                        .record(response_time.as_secs_f64());
-
-                        // T070/§17：记录胜出引擎延迟到 Hedge 控制器，
-                        // 为未来顺序路径提供 P84 阈值估算（接入 race 路径为可选增强）
-                        self.hedge_controller.record_latency(response_time);
-
-                        info!(
-                            "Race mode: {} won in {:?}, total time: {:?}",
-                            engine_name,
-                            response_time,
-                            start_time.elapsed()
-                        );
-
-                        // 取消其他正在进行的任务
-                        Ok(response)
-                    }
-                    Err((engine_name, e)) => {
-                        self.metrics
-                            .record_engine_failure(&engine_name, &e.to_string());
-
-                        // Phase 4a: Prometheus 指标埋点 (T062/T063)
-                        counter!(
-                            "crawlrs_engine_success_total",
-                            "engine" => engine_name.clone(),
-                            "result" => "failure"
-                        )
-                        .increment(1);
-
-                        if e.is_retryable() {
-                            self.circuit_breaker.record_failure(&engine_name);
-                            Err(e)
-                        } else {
-                            Err(e)
-                        }
-                    }
-                }
+        loop {
+            if pending.is_empty() {
+                warn!(
+                    "Race mode: all {} candidates failed for {}",
+                    total_candidates, request.url
+                );
+                return Err(last_error.unwrap_or(EngineError::AllEnginesFailed(
+                    "race mode: all engines failed".to_string(),
+                )));
             }
-            Err(_) => {
-                // 超时
+
+            if time::Instant::now() >= deadline {
                 warn!(
                     "Race mode timed out after {:?} for request to {}",
                     timeout_duration, request.url
                 );
-                Err(EngineError::Timeout(timeout_duration))
+                return Err(EngineError::Timeout(timeout_duration));
+            }
+
+            match time::timeout_at(deadline, future::select_all(pending)).await {
+                Ok((result, _index, others)) => {
+                    pending = others;
+                    match result {
+                        Ok((engine_name, response, response_time)) => {
+                            self.update_engine_stats(&engine_name, true, response_time);
+                            self.circuit_breaker.record_success(&engine_name);
+                            self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+                            self.metrics
+                                .successful_requests
+                                .fetch_add(1, Ordering::Relaxed);
+                            self.metrics
+                                .record_engine_latency(&engine_name, response_time);
+                            self.metrics.record_engine_success(&engine_name);
+
+                            // Prometheus 指标埋点
+                            counter!(
+                                "crawlrs_engine_success_total",
+                                "engine" => engine_name.clone(),
+                                "result" => "success"
+                            )
+                            .increment(1);
+                            histogram!(
+                                "crawlrs_engine_duration_seconds",
+                                "engine" => engine_name.clone()
+                            )
+                            .record(response_time.as_secs_f64());
+
+                            // §17：记录胜出引擎延迟到 Hedge 控制器，
+                            // 为未来顺序路径提供 P84 阈值估算（接入 race 路径为可选增强）
+                            self.hedge_controller.record_latency(response_time);
+
+                            info!(
+                                "Race mode: {} won in {:?}, total time: {:?}",
+                                engine_name,
+                                response_time,
+                                start_time.elapsed()
+                            );
+
+                            // 取消其他正在进行的任务
+                            return Ok(response);
+                        }
+                        Err((engine_name, e, response_time)) => {
+                            // 指标口径与顺序模式对齐：total/failed 同步累计
+                            self.update_engine_stats(&engine_name, false, response_time);
+                            self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+                            self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
+                            self.metrics
+                                .record_engine_failure(&engine_name, &e.to_string());
+
+                            // Prometheus 指标埋点
+                            counter!(
+                                "crawlrs_engine_success_total",
+                                "engine" => engine_name.clone(),
+                                "result" => "failure"
+                            )
+                            .increment(1);
+
+                            debug!(
+                                "Race mode: {} failed ({}) in {:?}, continuing with remaining candidates",
+                                engine_name, e, response_time
+                            );
+
+                            if e.is_retryable() {
+                                self.circuit_breaker.record_failure(&engine_name);
+                            }
+                            last_error = Some(e);
+                            // 继续竞速剩余候选
+                        }
+                    }
+                }
+                Err(_) => {
+                    // 超时
+                    warn!(
+                        "Race mode timed out after {:?} for request to {}",
+                        timeout_duration, request.url
+                    );
+                    return Err(EngineError::Timeout(timeout_duration));
+                }
             }
         }
     }

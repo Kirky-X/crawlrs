@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! URL 评分器实现（T064，R-frontier-003）
+//! URL 评分器实现
 //!
 //! 参考 crawl4ai `deep_crawling/scorers.py`，提供三个具体 scorer：
 //!
@@ -12,7 +12,7 @@
 //! - [`CompositeScorer`]：加权聚合多个 scorer，归一化输出
 //!
 //! 三者实现 [`crate::workers::crawl::UrlScorer`] trait，
-//! 经 [`CompositeScorer`] 聚合后供 Frontier（T065）排序出队优先级。
+//! 经 [`CompositeScorer`] 聚合后供 Frontier 排序出队优先级。
 
 use url::Url;
 
@@ -22,7 +22,7 @@ use super::{ScoringContext, UrlScorer};
 // KeywordRelevanceScorer
 // =============================================================================
 
-/// 关键词相关性评分器（T064，R-frontier-003）
+/// 关键词相关性评分器
 ///
 /// 基于 [`ScoringContext::keywords`] 关键词列表，统计在 URL 中命中的比例。
 /// 命中判定为大小写不敏感的子串包含（`url.to_lowercase().contains(keyword)`）。
@@ -65,7 +65,7 @@ impl KeywordRelevanceScorer {
 
 impl UrlScorer for KeywordRelevanceScorer {
     fn score(&self, url: &str, context: &ScoringContext) -> f32 {
-        // 性能审查 M-4 修复：直接消费 iterator，避免 collect Vec<&String>
+        // 直接消费 iterator，避免 collect Vec<&String>
         // 原实现每次评分分配 Vec + 对每个 keyword 重复 to_ascii_lowercase
         //
         // 优化：
@@ -93,7 +93,7 @@ impl UrlScorer for KeywordRelevanceScorer {
 // PathDepthScorer
 // =============================================================================
 
-/// 路径深度评分器（T064，R-frontier-003）
+/// 路径深度评分器
 ///
 /// 基于 URL path 的段数（depth）评分，**浅路径高分**（hub/index 页面优先出队），
 /// 因为浅路径通常是导航页/列表页，爬取后能发现更多链接，提升爬取覆盖效率。
@@ -169,7 +169,7 @@ impl UrlScorer for PathDepthScorer {
 // CompositeScorer
 // =============================================================================
 
-/// 组合评分器（T064，R-frontier-003）
+/// 组合评分器
 ///
 /// 加权聚合多个 [`UrlScorer`]，输出归一化加权平均分数。
 ///

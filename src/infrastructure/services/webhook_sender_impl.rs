@@ -121,7 +121,7 @@ impl WebhookSender for WebhookSenderImpl {
         let response = match request_builder.send().await {
             Ok(resp) => resp,
             Err(e) => {
-                // Phase 4a: 网络层失败指标 (T065)
+                // 网络层失败指标
                 counter!(
                     "crawlrs_webhook_delivery_total",
                     "result" => "failure",
@@ -136,7 +136,7 @@ impl WebhookSender for WebhookSenderImpl {
 
         // 检查响应状态
         if Self::is_success_status(status) {
-            // Phase 4a: Prometheus webhook 投递指标 (T065)
+            // Prometheus webhook 投递指标
             counter!(
                 "crawlrs_webhook_delivery_total",
                 "result" => "success",
@@ -150,9 +150,12 @@ impl WebhookSender for WebhookSenderImpl {
                 .await
                 .unwrap_or_else(|_| "Unable to read response body".to_string());
 
-            // 截断过长的响应体
-            let truncated_body = if body.len() > 200 {
-                format!("{}... (truncated)", &body[..200])
+            // 截断过长的响应体（char 边界安全，中文/emoji 不 panic）
+            let truncated_body = if body.chars().count() > 200 {
+                format!(
+                    "{}... (truncated)",
+                    crate::common::text_slice::truncate_chars(&body, 200)
+                )
             } else {
                 body
             };
@@ -162,7 +165,7 @@ impl WebhookSender for WebhookSenderImpl {
                 status, truncated_body
             );
 
-            // Phase 4a: Prometheus webhook 投递失败指标 (T065)
+            // Prometheus webhook 投递失败指标
             counter!(
                 "crawlrs_webhook_delivery_total",
                 "result" => "failure",

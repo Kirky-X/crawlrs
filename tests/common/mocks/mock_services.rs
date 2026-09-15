@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! T043: 统一 mock 服务实现 — MockWebhookService, MockCacheService
+//! 统一 mock 服务实现 — MockWebhookService, MockCacheService
 
 #![allow(dead_code)]
 
@@ -25,8 +25,8 @@ pub struct MockWebhookService;
 
 #[async_trait::async_trait]
 impl WebhookService for MockWebhookService {
-    async fn send_webhook(&self, _event: &WebhookEvent) -> anyhow::Result<()> {
-        Ok(())
+    async fn send_webhook(&self, _event: &WebhookEvent) -> anyhow::Result<u16> {
+        Ok(200)
     }
     async fn trigger_completion(&self, _task: &Task) -> anyhow::Result<()> {
         Ok(())

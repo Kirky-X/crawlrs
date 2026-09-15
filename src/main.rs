@@ -121,7 +121,7 @@ mod app {
     ) -> anyhow::Result<()> {
         log::info!("Starting Worker service...");
 
-        // R-security-004/005：优雅退出编排（design.md D3，T010）
+        // 优雅退出编排
         //
         // 创建共享 ShutdownCoordinator，spawn 信号监听任务（SIGTERM/SIGINT →
         // trigger），替换裸 `tokio::signal::ctrl_c().await`：
@@ -173,15 +173,19 @@ mod app {
         log::info!("Starting {} worker(s)", worker_count);
         worker_manager.start_workers(worker_count).await;
 
+        // 记录本进程 worker 认领身份，供停机回滚限定范围（不误回滚其他副本）
+        let worker_ids = worker_manager.worker_ids();
+
         // Keep the main thread alive until shutdown signal
         worker_manager.wait_for_shutdown().await;
         log::info!("Shutting down worker service...");
 
-        // Roll back in-flight tasks so they aren't stuck in Active (R-security-005)
+        // Roll back in-flight tasks so they aren't stuck in Active
         let repo_for_rollback = app_state.task_repo();
         crawlrs::workers::shutdown::rollback_pending_tasks(
             &repo_for_rollback,
             std::time::Duration::from_secs(settings.workers.graceful_shutdown_seconds),
+            &worker_ids,
         )
         .await;
 
@@ -277,17 +281,31 @@ mod app {
                 .await
                 .map_err(|e| anyhow::anyhow!("insert api_key: {}", e))?;
 
-            println!("Created admin API key:");
-            println!("  api_key_id: {}", api_key_id);
-            println!("  team_id:    {}", team_id);
-            println!("  api_key:    {}", plaintext_key);
-            println!("  scopes:     read, write, admin");
-            println!();
-            println!("Use this key as Bearer token:");
-            println!(
-                "  curl -H 'Authorization: Bearer {}' http://localhost:8899/v1/teams/me",
-                plaintext_key
-            );
+            // 完整 key 仅在交互终端展示（运维在场可立即保存）；管道/日志采集下
+            // stdout 会被留存，只输出掩码避免凭证入库。
+            use std::io::IsTerminal;
+            if std::io::stdout().is_terminal() {
+                println!("Created admin API key:");
+                println!("  api_key_id: {}", api_key_id);
+                println!("  team_id:    {}", team_id);
+                println!("  api_key:    {}", plaintext_key);
+                println!("  scopes:     read, write, admin");
+                println!();
+                println!("Use this key as Bearer token:");
+                println!(
+                    "  curl -H 'Authorization: Bearer {}' http://localhost:8899/v1/teams/me",
+                    plaintext_key
+                );
+            } else {
+                println!("Created admin API key:");
+                println!("  api_key_id: {}", api_key_id);
+                println!("  team_id:    {}", team_id);
+                println!(
+                    "  api_key:    {} (masked; rerun in a terminal to display the full key)",
+                    crawlrs::common::mask_secret(&plaintext_key)
+                );
+                println!("  scopes:     read, write, admin");
+            }
         }
 
         #[cfg(not(feature = "auth"))]
@@ -313,7 +331,7 @@ mod app {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize inklog logger: {}", e))?;
 
-        // T056/C1 修复：移除 CRAWLRS_PROXY_URL 环境变量桥接。
+        // 移除 CRAWLRS_PROXY_URL 环境变量桥接。
         // 代理已统一由 EngineModule 构造 ProxyPool 注入 ReqwestEngine，
         // 通过 settings.proxy.urls 直接读取，无需通过环境变量中转。
         // 双重生效会导致：http_client 级别代理 + ReqwestEngine 级别代理 同时生效冲突。

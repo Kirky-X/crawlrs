@@ -195,6 +195,7 @@ impl TaskRepository for TaskRepositoryImpl {
                WHERE id = (
                    SELECT id FROM tasks
                    WHERE status = 'queued'
+                     AND (scheduled_at IS NULL OR scheduled_at <= NOW())
                    ORDER BY priority ASC, created_at ASC
                    FOR UPDATE SKIP LOCKED
                    LIMIT 1
@@ -218,6 +219,10 @@ impl TaskRepository for TaskRepositoryImpl {
         // Uses partial index idx_tasks_acquire_stale for Index Scan with LIMIT 1.
         // Reaches here only when step 1 returned no row, so queued tasks always
         // take priority over recovery (no starvation).
+        //
+        // 毒丸熔断（R-data-integrity-003）：恢复即 attempt_count + 1，且仅恢复
+        // attempt_count < max_retries 的任务——每次僵尸恢复都消耗一次尝试额度，
+        // 防止反复崩溃的任务被无限重跑。
         let stmt_stale = Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"UPDATE tasks
@@ -225,10 +230,13 @@ impl TaskRepository for TaskRepositoryImpl {
                    started_at = NOW(),
                    lock_token = $1,
                    lock_expires_at = NOW() + ($2 * INTERVAL '1 second'),
-                   updated_at = NOW()
+                   updated_at = NOW(),
+                   attempt_count = attempt_count + 1
                WHERE id = (
                    SELECT id FROM tasks
                    WHERE status = 'active' AND lock_expires_at < NOW()
+                     AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+                     AND attempt_count < max_retries
                    ORDER BY priority ASC, created_at ASC
                    FOR UPDATE SKIP LOCKED
                    LIMIT 1
@@ -246,13 +254,53 @@ impl TaskRepository for TaskRepositoryImpl {
             Some(row) => {
                 let entity = task_entity::Model::from_query_result(&row, "")
                     .map_err(|e| RepositoryError::Database(e.into()))?;
-                Ok(Some(TaskMapper::to_domain(entity)))
+                return Ok(Some(TaskMapper::to_domain(entity)));
             }
-            None => Ok(None),
+            // 无可恢复任务：检查是否存在超出 max_retries 的毒丸任务并 dead-letter，
+            // 避免其永久滞留 active 状态
+            None => {
+                let stmt_dead_letter = Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    r#"UPDATE tasks
+                       SET status = 'failed',
+                           completed_at = NOW(),
+                           lock_token = NULL,
+                           lock_expires_at = NULL,
+                           updated_at = NOW()
+                       WHERE id = (
+                           SELECT id FROM tasks
+                           WHERE status = 'active' AND lock_expires_at < NOW()
+                             AND attempt_count >= max_retries
+                           ORDER BY priority ASC, created_at ASC
+                           FOR UPDATE SKIP LOCKED
+                           LIMIT 1
+                       )
+                       RETURNING id"#,
+                    [],
+                );
+                let dead: Option<sea_orm::QueryResult> = conn
+                    .query_one_raw(stmt_dead_letter)
+                    .await
+                    .map_err(|e| RepositoryError::Database(e.into()))?;
+                if let Some(dead_row) = dead {
+                    if let Ok(dead_id) = dead_row.try_get_by_index::<Uuid>(0) {
+                        log::warn!(
+                            "Dead-lettered poison task {} (attempt_count >= max_retries, \
+                             lock expired; will not be retried again)",
+                            dead_id
+                        );
+                    }
+                }
+                Ok(None)
+            }
         }
     }
 
-    async fn mark_completed(&self, id: Uuid) -> Result<(), RepositoryError> {
+    async fn mark_completed(
+        &self,
+        id: Uuid,
+        lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -263,7 +311,7 @@ impl TaskRepository for TaskRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        task_entity::Entity::update_many()
+        let result = task_entity::Entity::update_many()
             .col_expr(
                 task_entity::Column::Status,
                 Expr::value(TaskStatus::Completed.to_string()),
@@ -280,14 +328,23 @@ impl TaskRepository for TaskRepositoryImpl {
                 TaskStatus::Queued.to_string(),
                 TaskStatus::Active.to_string(),
             ]))
+            // 锁守卫：无锁任务（queued）或锁仍归属调用者的任务才可终结
+            .filter(match lock_token {
+                Some(w) => task_entity::Column::LockToken.eq(w),
+                None => task_entity::Column::LockToken.is_null(),
+            })
             .exec(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        Ok(())
+        Ok(result.rows_affected)
     }
 
-    async fn mark_failed(&self, id: Uuid) -> Result<(), RepositoryError> {
+    async fn mark_failed(
+        &self,
+        id: Uuid,
+        lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -298,7 +355,7 @@ impl TaskRepository for TaskRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        task_entity::Entity::update_many()
+        let result = task_entity::Entity::update_many()
             .col_expr(
                 task_entity::Column::Status,
                 Expr::value(TaskStatus::Failed.to_string()),
@@ -315,14 +372,151 @@ impl TaskRepository for TaskRepositoryImpl {
                 TaskStatus::Queued.to_string(),
                 TaskStatus::Active.to_string(),
             ]))
+            // 锁守卫：无锁任务（queued）或锁仍归属调用者的任务才可终结
+            .filter(match lock_token {
+                Some(w) => task_entity::Column::LockToken.eq(w),
+                None => task_entity::Column::LockToken.is_null(),
+            })
             .exec(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        Ok(())
+        Ok(result.rows_affected)
     }
 
-    async fn mark_cancelled(&self, id: Uuid) -> Result<(), RepositoryError> {
+    /// 条件回队（R-data-integrity-001）
+    ///
+    /// 仅当任务仍处于 queued/active 且锁仍归属调用者（或无锁）时置回 queued，
+    /// 清空认领信息并应用重排时间；防止覆盖并发发生的取消/终结等状态迁移。
+    async fn requeue_task(
+        &self,
+        id: Uuid,
+        lock_token: Option<Uuid>,
+        scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<bool, RepositoryError> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let result = task_entity::Entity::update_many()
+            .col_expr(
+                task_entity::Column::Status,
+                Expr::value(TaskStatus::Queued.to_string()),
+            )
+            .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockExpiresAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
+            .col_expr(
+                task_entity::Column::StartedAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
+            .col_expr(task_entity::Column::ScheduledAt, Expr::value(scheduled_at))
+            .filter(task_entity::Column::Id.eq(id))
+            .filter(task_entity::Column::Status.is_in([
+                TaskStatus::Queued.to_string(),
+                TaskStatus::Active.to_string(),
+            ]))
+            // 锁守卫：无锁任务（queued）或锁仍归属调用者的任务才可回队
+            .filter(match lock_token {
+                Some(w) => task_entity::Column::LockToken.eq(w),
+                None => task_entity::Column::LockToken.is_null(),
+            })
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        if result.rows_affected == 0 {
+            log::warn!(
+                "requeue_task: task {} not requeued (already migrated by another worker)",
+                id
+            );
+        }
+        Ok(result.rows_affected > 0)
+    }
+
+    /// 守卫式生命周期更新（R-data-integrity-001）
+    ///
+    /// 按内存快照写入生命周期字段，但仅当 DB 行仍为 queued/active 且
+    /// lock_token 与快照一致时生效；防止覆盖并发发生的取消/终结。
+    async fn update_task_guarded(
+        &self,
+        task: &crate::domain::models::task_model::Task,
+    ) -> Result<u64, RepositoryError> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let result = task_entity::Entity::update_many()
+            .col_expr(
+                task_entity::Column::Status,
+                Expr::value(task.status.to_string()),
+            )
+            .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .col_expr(
+                task_entity::Column::ScheduledAt,
+                Expr::value(task.scheduled_at),
+            )
+            .col_expr(task_entity::Column::StartedAt, Expr::value(task.started_at))
+            .col_expr(
+                task_entity::Column::CompletedAt,
+                Expr::value(task.completed_at),
+            )
+            .col_expr(
+                task_entity::Column::AttemptCount,
+                Expr::value(task.attempt_count),
+            )
+            .col_expr(
+                task_entity::Column::RetryCount,
+                Expr::value(task.retry_count),
+            )
+            .col_expr(
+                task_entity::Column::Payload,
+                Expr::value(task.payload.clone()),
+            )
+            .col_expr(task_entity::Column::LockToken, Expr::value(task.lock_token))
+            .col_expr(
+                task_entity::Column::LockExpiresAt,
+                Expr::value(task.lock_expires_at),
+            )
+            .filter(task_entity::Column::Id.eq(task.id))
+            .filter(task_entity::Column::Status.is_in([
+                TaskStatus::Queued.to_string(),
+                TaskStatus::Active.to_string(),
+            ]))
+            // 锁守卫：调用者快照中的锁身份必须与 DB 当前值一致
+            .filter(match task.lock_token {
+                Some(w) => task_entity::Column::LockToken.eq(w),
+                None => task_entity::Column::LockToken.is_null(),
+            })
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        if result.rows_affected == 0 {
+            log::warn!(
+                "update_task_guarded: task {} not updated (guard failed: migrated by another worker)",
+                task.id
+            );
+        }
+        Ok(result.rows_affected)
+    }
+
+    async fn mark_cancelled(&self, id: Uuid) -> Result<u64, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -352,9 +546,39 @@ impl TaskRepository for TaskRepositoryImpl {
             ]))
             .exec(conn)
             .await
+            .map(|res| res.rows_affected)
+            .map_err(|e| RepositoryError::Database(e.into()))
+    }
+
+    async fn renew_lock(
+        &self,
+        task_id: Uuid,
+        worker_id: Uuid,
+        extend_seconds: i64,
+    ) -> Result<bool, RepositoryError> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        Ok(())
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        // 锁续期心跳：仅 active 且锁仍归属该 worker 的任务可续期
+        let new_expiry = Utc::now() + chrono::Duration::seconds(extend_seconds);
+        let result = task_entity::Entity::update_many()
+            .col_expr(task_entity::Column::LockExpiresAt, Expr::value(new_expiry))
+            .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(task_entity::Column::Id.eq(task_id))
+            .filter(task_entity::Column::LockToken.eq(worker_id))
+            .filter(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        Ok(result.rows_affected > 0)
     }
 
     async fn exists_by_url(&self, url: &str) -> Result<bool, RepositoryError> {
@@ -444,6 +668,56 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok(result.rows_affected)
     }
 
+    /// 按本副本 worker 身份回滚（R-data-integrity-004）
+    ///
+    /// 在 [`Self::reset_stuck_tasks`] 基础上增加 `lock_token ∈ worker_ids` 过滤，
+    /// 停机时只回滚本进程 worker 认领的任务，不触碰其他副本在跑任务。
+    async fn reset_stuck_tasks_for_workers(
+        &self,
+        timeout: Duration,
+        worker_ids: &[Uuid],
+    ) -> Result<u64, RepositoryError> {
+        if worker_ids.is_empty() {
+            return Ok(0);
+        }
+        let cutoff = Utc::now() - timeout;
+
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let result = task_entity::Entity::update_many()
+            .col_expr(
+                task_entity::Column::Status,
+                Expr::value(TaskStatus::Queued.to_string()),
+            )
+            .col_expr(
+                task_entity::Column::StartedAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
+            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockExpiresAt,
+                Expr::value(None::<chrono::DateTime<Utc>>),
+            )
+            .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(task_entity::Column::Status.eq(TaskStatus::Active.to_string()))
+            .filter(task_entity::Column::StartedAt.lt(cutoff))
+            // 身份过滤：仅本副本 worker 认领的任务（lock_token 即认领时的 worker_id）
+            .filter(task_entity::Column::LockToken.is_in(worker_ids.to_vec()))
+            .exec(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        Ok(result.rows_affected)
+    }
+
     async fn cancel_tasks_by_crawl_id(&self, crawl_id: Uuid) -> Result<u64, RepositoryError> {
         let session = self
             .pool
@@ -506,6 +780,13 @@ impl TaskRepository for TaskRepositoryImpl {
                     .add(task_entity::Column::StartedAt.lt(stale_threshold)),
             );
 
+        // 持锁守卫（R-data-integrity-007）：仅过期锁已释放（lock_expires_at IS NULL）
+        // 或锁租约已过期（lock_expires_at < now）的任务。仍在心跳续约（持有效锁）的
+        // 长任务即使 started_at 早于 stale_threshold 也不会被误杀。
+        let lock_lease_free = Condition::any()
+            .add(task_entity::Column::LockExpiresAt.is_null())
+            .add(task_entity::Column::LockExpiresAt.lt(now));
+
         let update_result = task_entity::Entity::update_many()
             .col_expr(
                 task_entity::Column::Status,
@@ -513,6 +794,7 @@ impl TaskRepository for TaskRepositoryImpl {
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
             .filter(stale_condition)
+            .filter(lock_lease_free)
             .exec(conn)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
@@ -556,6 +838,15 @@ impl TaskRepository for TaskRepositoryImpl {
 
         let mut query =
             task_entity::Entity::find().filter(task_entity::Column::TeamId.eq(params.team_id));
+
+        if let Some(task_ids) = &params.task_ids {
+            if task_ids.is_empty() {
+                return Ok((Vec::new(), 0));
+            }
+            // 精确按 task_ids 过滤：sync_wait 轮询与查询 API 依赖此条件
+            // 圈定目标任务集合，缺失会导致用"团队最新 N 条"算错完成率
+            query = query.filter(task_entity::Column::Id.is_in(task_ids.clone()));
+        }
 
         if let Some(crawl_id) = params.crawl_id {
             query = query.filter(task_entity::Column::CrawlId.eq(crawl_id));

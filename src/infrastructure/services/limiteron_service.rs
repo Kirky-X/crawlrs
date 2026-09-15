@@ -500,6 +500,43 @@ impl QuotaService for LimiteronService {
         }
     }
 
+    async fn refund_quota(
+        &self,
+        team_id: uuid::Uuid,
+        amount: i64,
+        description: String,
+        reference_id: Option<uuid::Uuid>,
+    ) -> Result<(), RateLimitingError> {
+        debug!(
+            "LimiteronService: Refunding quota for team: {}, amount: {}",
+            team_id, amount
+        );
+
+        match self
+            .credits_repository
+            .add_credits(
+                team_id,
+                amount,
+                crate::domain::models::CreditsTransactionType::Refund,
+                description,
+                reference_id,
+            )
+            .await
+        {
+            Ok(_) => {
+                debug!(
+                    "LimiteronService: Quota refunded successfully for team: {}",
+                    team_id
+                );
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("LimiteronService: Credits error refunding: {:?}", e);
+                Err(RateLimitingError::CreditsError)
+            }
+        }
+    }
+
     async fn get_quota_balance(&self, team_id: uuid::Uuid) -> Result<i64, RateLimitingError> {
         match self.credits_repository.get_balance(team_id).await {
             Ok(balance) => Ok(balance),
@@ -728,14 +765,22 @@ mod tests {
         async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
             Ok(false)
@@ -774,6 +819,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 

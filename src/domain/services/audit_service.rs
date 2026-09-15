@@ -13,7 +13,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-// AuditLogBuilder 已拆分到独立文件（架构 MEDIUM 1：单一职责）
+// AuditLogBuilder 已拆分到独立文件（架构单一职责）
 // 这里 re-export 保持外部 import 路径向后兼容：
 // `crawlrs::domain::services::audit_service::AuditLogBuilder` 仍可用
 pub use crate::domain::services::audit_log_builder::AuditLogBuilder;
@@ -298,7 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_service_log_deny_with_none_fields_preserves_none() {
-        // M-2 fix: None 字段必须保留为 None（写入数据库 NULL），而非 unwrap_or_default()
+        // None 字段必须保留为 None（写入数据库 NULL），而非 unwrap_or_default()
         // 转换为 nil UUID (`00000000-...`)。nil UUID 会被 find_by_api_key_id(nil_uuid) 误匹配，
         // 混淆真实 API key 的审计日志。
         let repo = Arc::new(MockAuditLogRepository::new());
@@ -558,7 +558,7 @@ mod tests {
     }
 
     // ---- AuditServiceError From impls ----
-    // 注意：AuditServiceError 已不再实现 From<sea_orm::DbErr>（分层违规 HIGH 1 修复）。
+    // 注意：AuditServiceError 已不再实现 From<sea_orm::DbErr>（分层违规）。
     // DbErr 必须先经 AuditRepositoryError::DatabaseError 包装，再 .into() 为 AuditServiceError。
 
     #[test]

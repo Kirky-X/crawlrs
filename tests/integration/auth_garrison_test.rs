@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! garrison 认证集成测试（R-auth-engine-003 / T031）。
+//! garrison 认证集成测试。
 //!
 //! 端到端覆盖 `auth_middleware_inner` 的 garrison 校验 → AuthState 桥接路径：
 //! - 有效 key 注入正确 `team_id` / `scope`
@@ -12,9 +12,11 @@
 //!
 //! ## 标记 `#[ignore]` 的原因
 //!
-//! garrison `GarrisonManager::init` 是全局单例，调用后无法重置——
-//! 并行测试会污染单例状态。本文件所有测试用 `#[ignore]` 标记，
-//! 仅在手动运行（`cargo test --test main -- --ignored auth_garrison_test`）时执行。
+//! garrison `GarrisonManager::init` 是全局单例，并行测试会污染单例状态。
+//! 本文件所有测试用 `#[ignore]` 标记，仅在 E2E 套件 `--include-ignored`
+//! 或手动运行时执行：`GARRISON_TEST_LOCK` 串行化全部用例，setup 经
+//! `reset_garrison_global_state_for_integration_test()`（test-mocks 门控）
+//! 在每个用例前重置 DAO + AUDIT_SERVICE 全局态，同进程顺序运行安全。
 //!
 //! ## 前置条件
 //!
@@ -24,8 +26,7 @@
 //!
 //! ## Spec
 //!
-//! - R-auth-engine-003：garrison 校验 → AuthState 桥接
-//! - tasks.md T031
+//! - garrison 校验 → AuthState 桥接
 
 #![cfg(all(test, feature = "auth"))]
 
@@ -81,7 +82,7 @@ fn resolve_test_db_url() -> Option<String> {
 /// 让 confers 在 `load_settings()` 时读取。
 ///
 /// `AuthSettings.jwt_secret` 字段是 `pub(crate)`，外部测试无法直接赋值，
-/// 故走环境变量路径（与生产部署一致，符合规则8 惯例优先）。
+/// 故走环境变量路径（与生产部署一致，符合“惯例优先”原则）。
 fn make_test_settings() -> crawlrs::config::Settings {
     // 设置环境变量供 confers 读取（幂等，重复设置不报错）
     std::env::set_var("CRAWLRS__AUTH__JWT_SECRET", TEST_JWT_SECRET);
@@ -120,6 +121,11 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
     let pool = create_test_db_pool().await;
     let settings = make_test_settings();
 
+    // 0. 重置 garrison 全局态（GARRISON_TEST_LOCK 已序列化，无并发窗口）：
+    //    同一进程内多个 ignored 用例顺序运行时，前一用例已注入 DAO，
+    //    不重置会让 init_garrison_auth 报 "global DAO already injected"。
+    crawlrs::infrastructure::auth::reset_garrison_global_state_for_integration_test();
+
     // 1. 初始化 garrison 单例（含 GARRISON_DAO 注入 + GarrisonManager::init）
     init_garrison_auth(&settings, pool.clone())
         .await
@@ -132,7 +138,7 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
         .await
         .expect("Failed to get db session");
     let conn = session.connection().expect("Failed to get db connection");
-    // 安全审查 C1 修复：原 `format!` + `execute_unprepared` 拼接 SQL（CWE-89），
+    // 原 `format!` + `execute_unprepared` 拼接 SQL（CWE-89），
     // 改用 sea-orm ActiveModel 参数化插入，与 `src/presentation/handlers/api_key_handler.rs::seed_team_in_db` 一致。
     let now = time_utils::to_db_datetime(Utc::now());
     let team_active = TeamActiveModel {
@@ -151,7 +157,7 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
         .await
         .expect("Failed to insert test team");
 
-    // 3. 生成新 api_key_id（同时作为 garrison login_id，design.md §5 约定）
+    // 3. 生成新 api_key_id（同时作为 garrison login_id 约定）
     let api_key_id = Uuid::new_v4();
 
     // 4. 获取 garrison DAO（已由 init_garrison_auth 注入全局态）
@@ -175,7 +181,7 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
         .map(|(k_id, _)| k_id.to_string())
         .expect("garrison returned malformed key (no '.' separator)");
 
-    // 安全审查 C1 修复：原 `format!` + `execute_unprepared` 拼接 SQL（CWE-89），
+    // 原 `format!` + `execute_unprepared` 拼接 SQL（CWE-89），
     // 改用 sea-orm ActiveModel 参数化插入，与 `src/presentation/handlers/api_key_handler.rs::insert_api_key_mapping` 一致。
     // `garrison_key_id` 来自 garrison 返回值的子串，虽当前不含特殊字符，
     // 但参数化是防御编程的硬性要求，杜绝未来 garrison 返回值变更引入注入风险。
@@ -184,7 +190,7 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
         id: ActiveValue::Set(api_key_id),
         team_id: ActiveValue::Set(team_id),
         key: ActiveValue::Set(garrison_key_id),
-        // garrison 自管哈希；新 key 此字段为 None（T028 弃用标记，#[allow(deprecated)] 消除 warning）
+        // garrison 自管哈希；新 key 此字段为 None（弃用标记，#[allow(deprecated)] 消除 warning）
         key_hash: ActiveValue::Set(None),
         created_at: ActiveValue::Set(now),
         updated_at: ActiveValue::Set(None),
@@ -198,17 +204,39 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
 }
 
 /// 构建挂载 `auth_middleware_inner` 的测试 Router。
+/// 测试注入 `ConnectInfo`（生产由 `into_make_service_with_connect_info` 提供），
+/// 使 `garrison_ip_context_middleware`（若路由装配）或中间件层的 IP 提取与
+/// 生产行为一致。外层注入，先于认证中间件执行。
+async fn inject_connect_info(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            45_678,
+        ))));
+    next.run(req).await
+}
+
 fn build_test_router(pool: Arc<dbnexus::DbPool>) -> Router {
+    // 与生产 bootstrap::routes 一致：IP 上下文层（外，先执行）→ 认证中间件（内）。
+    // inject_connect_info 模拟 into_make_service_with_connect_info 提供的扩展，
+    // 必须位于 IP 上下文层**外侧**（最后挂载 = 最先执行）。
     Router::new()
         .route("/v1/protected", get(|| async { "ok" }))
         .route_layer(from_fn_with_state(pool, auth_middleware_inner))
+        .layer(axum::middleware::from_fn(
+            crawlrs::presentation::middleware::auth_middleware::garrison_ip_context_middleware,
+        ))
+        .layer(axum::middleware::from_fn(inject_connect_info))
 }
 
 // ============================================================================
 // 测试用例（全部 #[ignore] 标记，需手动运行）
 // ============================================================================
 
-/// R-auth-engine-003 / T031：有效 API Key 注入正确的 team_id 与 admin scope。
+/// 有效 API Key 注入正确的 team_id 与 admin scope。
 ///
 /// # 验证
 ///
@@ -217,7 +245,7 @@ fn build_test_router(pool: Arc<dbnexus::DbPool>) -> Router {
 /// - AuthState.team_id 与 setup 创建的 team_id 一致
 /// - AuthState.scope.has_permission(Admin) == true
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-#[ignore = "需真实 DB + garrison 单例（无法重置，会污染其他测试）—— 手动运行：cargo test --test main -- --ignored test_valid_key_injects_correct_team_id_and_scope"]
+#[ignore = "需真实 DB + garrison 单例——E2E 套件经 --include-ignored 运行（setup 经 reset_garrison_global_state_for_integration_test 重置全局态）"]
 async fn test_valid_key_injects_correct_team_id_and_scope() {
     let _guard = GARRISON_TEST_LOCK.lock().await;
 
@@ -248,7 +276,7 @@ async fn test_valid_key_injects_correct_team_id_and_scope() {
     let _ = expected_team_id; // suppress unused warning
 }
 
-/// R-auth-engine-003 / T031：无效 API Key 返回 401 Unauthorized。
+/// 无效 API Key 返回 401 Unauthorized。
 ///
 /// # 验证
 ///
@@ -282,7 +310,7 @@ async fn test_invalid_key_returns_401() {
     );
 }
 
-/// R-auth-engine-003 / T031：连续失败触发 garrison firewall 限速返回 429。
+/// 连续失败触发 garrison firewall 限速返回 429。
 ///
 /// # 验证
 ///
@@ -294,7 +322,7 @@ async fn test_invalid_key_returns_401() {
 /// garrison 默认 `BruteForceConfig`：5 次失败/60 秒窗口/300 秒锁定。
 /// 测试需连续发送 6 次失败请求触发限速。IP 来源是 `127.0.0.1`（本地测试）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-#[ignore = "需真实 DB + garrison 单例 + firewall-bruteforce feature—— 手动运行：cargo test --test main -- --ignored test_rate_limit_returns_429"]
+#[ignore = "需真实 DB + garrison 单例 + firewall-bruteforce feature——E2E 套件经 --include-ignored 运行（setup 重置全局态）"]
 async fn test_rate_limit_returns_429() {
     let _guard = GARRISON_TEST_LOCK.lock().await;
 

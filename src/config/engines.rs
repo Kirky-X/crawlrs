@@ -79,7 +79,7 @@ pub struct FlareSolverrTlsSettings {
     pub url: String,
 }
 
-/// Wreq TLS 指纹引擎配置设置（Phase 1 / D4）
+/// Wreq TLS 指纹引擎配置设置
 ///
 /// 配置 `wreq`（BoringSSL 后端）TLS 指纹引擎的参数，用于 `needs_tls_fingerprint`
 /// 请求的真实 JA3/JA4 伪装。
@@ -100,7 +100,7 @@ pub struct TlsFingerprintEngineSettings {
     pub timeout_seconds: u32,
 }
 
-/// MLLM 自主导航爬取引擎配置（Phase 3）
+/// MLLM 自主导航爬取引擎配置
 ///
 /// 配置视觉大模型驱动的浏览器自主导航引擎。
 /// 依赖 `engine-playwright`（浏览器）+ `llm`（视觉模型）。
@@ -159,6 +159,6 @@ pub struct EngineSettings {
     /// Wreq TLS 指纹引擎配置
     pub tls_fingerprint: TlsFingerprintEngineSettings,
 
-    /// MLLM 自主导航引擎配置（Phase 3）
+    /// MLLM 自主导航引擎配置
     pub mllm: MllmEngineSettings,
 }

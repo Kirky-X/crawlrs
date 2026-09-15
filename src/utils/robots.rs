@@ -312,7 +312,13 @@ impl RobotsChecker {
                 }
             } else if lower_line.starts_with("crawl-delay:") && current_agent_matched {
                 if let Ok(d) = line[12..].trim().parse::<f64>() {
-                    delay = Some(d);
+                    // CWE-626：`Duration::from_secs_f64` 对负数/inf/nan 会 panic，
+                    // 恶意 robots.txt 不得中断爬取——视为无效指令，交由调用方默认策略
+                    if d.is_finite() && d >= 0.0 {
+                        delay = Some(d);
+                    } else {
+                        log::warn!("Ignoring non-finite or negative Crawl-delay value: {}", d);
+                    }
                 }
             }
         }
@@ -655,6 +661,23 @@ Crawl-delay: 30
             delay, None,
             "invalid Crawl-delay value should be ignored (return None)"
         );
+    }
+
+    #[test]
+    fn test_parse_crawl_delay_non_finite_or_negative_no_panic() {
+        let checker = make_checker();
+        for bad in ["inf", "nan", "-5"] {
+            let content = format!("User-agent: *\nCrawl-delay: {}\n", bad);
+            let delay = checker.parse_crawl_delay(&content, "MyBot/1.0");
+            assert_eq!(
+                delay, None,
+                "Crawl-delay '{}' must be rejected without panic",
+                bad
+            );
+        }
+        // 合法小数仍生效
+        let ok = checker.parse_crawl_delay("User-agent: *\nCrawl-delay: 1.5\n", "MyBot/1.0");
+        assert_eq!(ok, Some(Duration::from_secs_f64(1.5)));
     }
 
     #[test]
@@ -1076,6 +1099,7 @@ Crawl-delay: 8
                     content_type: "text/plain".to_string(),
                     headers: HashMap::new(),
                     response_time_ms: 0,
+                    final_url: None,
                 }),
                 error: None,
                 call_count: AtomicU64::new(0),

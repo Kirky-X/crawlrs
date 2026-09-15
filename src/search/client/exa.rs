@@ -336,9 +336,9 @@ impl ExaSearchEngine {
                 }
             }
 
-            // 截断描述到合理长度
-            if description.len() > 500 {
-                description.truncate(500);
+            // 截断描述到合理长度（char 边界安全，中文描述不 panic）
+            if description.chars().count() > 500 {
+                description = crate::common::text_slice::truncate_chars(&description, 500);
                 description.push_str("...");
             }
 

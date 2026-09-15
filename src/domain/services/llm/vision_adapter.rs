@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! T049: 视觉模型适配器
+//! 视觉模型适配器
 //!
 //! 封装 genai crate 的多模态（vision）调用，将 base64 截图 + 文本 prompt
 //! 构造为 `ContentPart::Binary` + `ContentPart::Text` 的 multipart 消息，

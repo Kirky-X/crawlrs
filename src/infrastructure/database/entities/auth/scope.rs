@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-// T028：`Model` 已弃用（garrison RBAC 接管），sea-orm `DeriveEntityModel` 派生宏
+// `Model` 已弃用（garrison RBAC 接管），sea-orm `DeriveEntityModel` 派生宏
 // 生成的代码会访问 `Model`，引发 deprecated warning。文件级 `#[allow(deprecated)]`
 // 消除派生宏 warning，仅对本文件生效。待全量重签完成后随 `scopes` 表一并移除。
 #![allow(deprecated)]
@@ -11,7 +11,7 @@
 use sea_orm::entity::prelude::*;
 use uuid::Uuid;
 
-/// 旧 `scopes` 表 entity（已弃用，R-key-lifecycle-003 / T028）。
+/// 旧 `scopes` 表 entity（已弃用）。
 ///
 /// # 弃用说明
 ///

@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! URL 过滤器实现（T063，R-frontier-002）
+//! URL 过滤器实现
 //!
 //! 参考 crawl4ai `deep_crawling/filters.py`，提供三个具体 filter：
 //!
@@ -22,7 +22,7 @@ use super::{FilterContext, UrlFilter};
 // DomainFilter
 // =============================================================================
 
-/// 域名过滤器（T063，R-frontier-002）
+/// 域名过滤器
 ///
 /// 支持三种模式：
 ///
@@ -157,7 +157,7 @@ impl UrlFilter for DomainFilter {
 // ContentTypeFilter
 // =============================================================================
 
-/// Content-Type 过滤器（T063，R-frontier-002）
+/// Content-Type 过滤器
 ///
 /// 根据源页面的 Content-Type 决定是否接受其外链 URL。
 ///
@@ -243,7 +243,7 @@ impl UrlFilter for ContentTypeFilter {
 // UrlPatternFilter
 // =============================================================================
 
-/// URL 模式过滤器（T063，R-frontier-002）
+/// URL 模式过滤器
 ///
 /// 兼容现有 `should_crawl` 的 include/exclude 行为：
 ///
@@ -255,7 +255,7 @@ impl UrlFilter for ContentTypeFilter {
 /// 1. **regex 优先**：尝试用 pattern 编译为 `Regex`，编译成功则用 `re.is_match(url)`
 /// 2. **字符串 contains 回退**：regex 编译失败时回退到 `url.contains(pattern)`
 ///
-/// 这与原 `scrape_worker::should_crawl` 完全等价（T066 回归测试断言）。
+/// 这与原 `scrape_worker::should_crawl` 完全等价（回归测试断言）。
 ///
 /// # 测试覆盖场景
 ///
@@ -267,7 +267,7 @@ impl UrlFilter for ContentTypeFilter {
 ///
 /// # 性能
 ///
-/// regex 编译开销通过外部 `regex_cache` 缓存（T066 接入时复用 scrape_worker 的
+/// regex 编译开销通过外部 `regex_cache` 缓存（接入时复用 scrape_worker 的
 /// `get_cached_regex`）。当前 filter 内部用 `OnceLock<Regex>` 每个 pattern 编译一次。
 #[derive(Debug)]
 pub struct UrlPatternFilter {

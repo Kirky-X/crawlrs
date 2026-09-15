@@ -5,7 +5,7 @@
 
 //! UA Pool — 一致性 User-Agent / Header / Viewport 绑定池
 //!
-//! 设计目标（specmark crawler-capability-absorption §2 / R-identity-001）：
+//! 设计目标（specmark §2）：
 //! - 内置 ≥20 桌面 + ≥20 移动真实 profile，覆盖 Chrome/Firefox/Safari/Edge
 //!   跨 Windows/macOS/Linux/iOS/Android
 //! - 每 profile 绑定一致的 UA + Accept-Language + sec-ch-ua + viewport，
@@ -17,7 +17,7 @@
 
 use rand::seq::IndexedRandom;
 
-/// TLS 指纹模拟类型（Phase 1 / D4，R-identity-001）
+/// TLS 指纹模拟类型
 ///
 /// 决定抓取时使用的浏览器 TLS/JA4 + HTTP/2 指纹模板。映射到 `wreq::EmulationProvider`
 /// （`src/engines/client/wreq_engine.rs::emulation_provider()`），由 WreqEngine 消费。
@@ -61,7 +61,7 @@ pub struct UaProfile {
     pub viewport: (u32, u32),
     /// 是否移动端 profile
     pub mobile: bool,
-    /// TLS 指纹模拟类型（Phase 1 / D4）：必须与 `ua` 声明的浏览器家族一致
+    /// TLS 指纹模拟类型必须与 `ua` 声明的浏览器家族一致
     pub tls_emulation: TlsEmulation,
 }
 
@@ -93,7 +93,7 @@ impl UaPool {
     /// 随机选取一个 profile
     ///
     /// # Panics
-    /// 仅当对应分组为空时 panic（内置 pool 不可能为空，规则 12：失败显性化）
+    /// 仅当对应分组为空时 panic（内置 pool 不可能为空失败显性化）
     #[must_use]
     pub fn pick(&self, mobile: bool) -> &UaProfile {
         let pool = if mobile { &self.mobile } else { &self.desktop };
@@ -600,14 +600,14 @@ fn mobile_profiles() -> Vec<UaProfile> {
 }
 
 // =============================================================================
-// Tests — TDD: 验证 R-identity-001 验收标准
+// Tests — TDD: 验证验收标准
 // =============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // === R-identity-001: profile 数量 ≥ 20 ===
+    // === profile 数量 ≥ 20 ===
 
     #[test]
     fn test_desktop_pool_has_at_least_20_profiles() {
@@ -629,7 +629,7 @@ mod tests {
         );
     }
 
-    // === R-identity-001: 桌面 profile 不配移动 viewport / mobile 标志 ===
+    // === 桌面 profile 不配移动 viewport / mobile 标志 ===
 
     #[test]
     fn test_desktop_profiles_have_mobile_false() {
@@ -673,7 +673,7 @@ mod tests {
         }
     }
 
-    // === R-identity-001: 移动 profile mobile=true 且 viewport 合理 ===
+    // === 移动 profile mobile=true 且 viewport 合理 ===
 
     #[test]
     fn test_mobile_profiles_have_mobile_true() {
@@ -719,7 +719,7 @@ mod tests {
         }
     }
 
-    // === R-identity-001: 浏览器覆盖度（Chrome/Firefox/Safari/Edge）===
+    // === 浏览器覆盖度（Chrome/Firefox/Safari/Edge）===
 
     #[test]
     fn test_desktop_pool_covers_all_major_browsers() {
@@ -762,7 +762,7 @@ mod tests {
         assert!(has_edge, "mobile pool must cover Edge");
     }
 
-    // === R-identity-001: 平台覆盖度（Windows/macOS/Linux/iOS/Android）===
+    // === 平台覆盖度（Windows/macOS/Linux/iOS/Android）===
 
     #[test]
     fn test_desktop_pool_covers_major_platforms() {
@@ -783,7 +783,7 @@ mod tests {
         assert!(platforms.contains("Android"), "must cover Android");
     }
 
-    // === R-identity-001: sec-ch-ua 一致性（Chromium→非空，Firefox/Safari→空）===
+    // === sec-ch-ua 一致性（Chromium→非空，Firefox/Safari→空）===
 
     #[test]
     fn test_sec_ch_ua_consistency_chromium() {
@@ -825,7 +825,7 @@ mod tests {
         }
     }
 
-    // === R-identity-001: viewport 与 platform 一致 ===
+    // === viewport 与 platform 一致 ===
 
     #[test]
     fn test_ios_profiles_have_ios_viewport() {
@@ -861,7 +861,7 @@ mod tests {
         }
     }
 
-    // === R-identity-001: pick() 返回有效 profile ===
+    // === pick() 返回有效 profile ===
 
     #[test]
     fn test_pick_desktop_returns_desktop_profile() {
@@ -893,7 +893,7 @@ mod tests {
         );
     }
 
-    // === R-identity-001: pick_seeded() 同 seed 稳定返回 ===
+    // === pick_seeded() 同 seed 稳定返回 ===
 
     #[test]
     fn test_pick_seeded_is_deterministic_same_seed() {
@@ -1022,7 +1022,7 @@ mod tests {
         }
     }
 
-    // === Phase 1 / D4 (T015-T016): tls_emulation 与 UA 浏览器家族一致性 ===
+    // === tls_emulation 与 UA 浏览器家族一致性 ===
 
     /// 从 UA 字符串推导期望的 `TlsEmulation`（与 `tls_emulation` 字段赋值逻辑镜像）。
     ///

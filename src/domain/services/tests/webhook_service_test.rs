@@ -47,6 +47,10 @@ impl WebhookEventRepository for MockWebhookEventRepository {
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
         Ok(event.clone())
     }
+
+    async fn claim_pending(&self, limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError> {
+        self.find_pending(limit).await
+    }
 }
 
 /// Repository mock that always fails on create
@@ -82,6 +86,10 @@ impl WebhookEventRepository for FailingWebhookEventRepository {
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
         Ok(event.clone())
     }
+
+    async fn claim_pending(&self, limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError> {
+        self.find_pending(limit).await
+    }
 }
 
 /// Sender mock that always succeeds
@@ -108,6 +116,7 @@ impl WebhookSender for MockWebhookSender {
         _payload: &Value,
         _headers: Option<&HashMap<String, String>>,
     ) -> Result<u16> {
+        self.sent_count.fetch_add(1, Ordering::SeqCst);
         Ok(200)
     }
 }
@@ -132,7 +141,7 @@ impl WebhookSender for FailingWebhookSender {
         _payload: &Value,
         _headers: Option<&HashMap<String, String>>,
     ) -> Result<u16> {
-        Err(anyhow!("send_with_status failed"))
+        Err(anyhow::anyhow!("send failed"))
     }
 }
 
@@ -335,7 +344,9 @@ fn test_generate_signature_method_returns_standardwebhooks_format() {
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
     );
-    let sig = service.generate_signature(r#"{"a":1}"#, 1_700_000_000);
+    let sig = service
+        .generate_signature("msg_1", r#"{"a":1}"#, 1_700_000_000)
+        .expect("signature");
     // standardwebhooks format: "v1,<base64>"
     assert!(sig.starts_with("v1,"), "signature should start with v1,");
     assert!(
@@ -351,8 +362,10 @@ fn test_generate_signature_method_is_deterministic() {
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
     );
-    let sig1 = service.generate_signature("payload", 1_234);
-    let sig2 = service.generate_signature("payload", 1_234);
+    let sig1 = service.generate_signature("msg_1", "payload", 1_234);
+    let sig1 = sig1.expect("signature");
+    let sig2 = service.generate_signature("msg_1", "payload", 1_234);
+    let sig2 = sig2.expect("signature");
     assert_eq!(sig1, sig2);
 }
 
@@ -363,8 +376,10 @@ fn test_generate_signature_method_changes_with_timestamp() {
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
     );
-    let sig1 = service.generate_signature("payload", 1_234);
-    let sig2 = service.generate_signature("payload", 1_235);
+    let sig1 = service.generate_signature("msg_1", "payload", 1_234);
+    let sig1 = sig1.expect("signature");
+    let sig2 = service.generate_signature("msg_1", "payload", 1_235);
+    let sig2 = sig2.expect("signature");
     assert_ne!(sig1, sig2);
 }
 
@@ -375,8 +390,10 @@ fn test_generate_signature_method_changes_with_payload() {
         Arc::new(MockWebhookEventRepository::default()),
         "supersecret",
     );
-    let sig1 = service.generate_signature("payload1", 1_234);
-    let sig2 = service.generate_signature("payload2", 1_234);
+    let sig1 = service.generate_signature("msg_1", "payload1", 1_234);
+    let sig1 = sig1.expect("signature");
+    let sig2 = service.generate_signature("msg_1", "payload2", 1_234);
+    let sig2 = sig2.expect("signature");
     assert_ne!(sig1, sig2);
 }
 
@@ -388,7 +405,9 @@ fn test_generate_signature_method_with_empty_secret_returns_signature() {
         Arc::new(MockWebhookEventRepository::default()),
         "",
     );
-    let sig = service.generate_signature("payload", 1);
+    let sig = service
+        .generate_signature("msg_1", "payload", 1)
+        .expect("empty secret should still sign");
     // standardwebhooks format: "v1,<base64>" even with empty secret
     assert!(
         sig.starts_with("v1,"),
@@ -439,9 +458,8 @@ async fn test_send_webhook_includes_signature_and_timestamp_headers() {
             &self,
             _url: &str,
             _payload: &Value,
-            headers: Option<&HashMap<String, String>>,
+            _headers: Option<&HashMap<String, String>>,
         ) -> Result<()> {
-            *self.captured.lock().unwrap() = headers.cloned();
             Ok(())
         }
 
@@ -449,8 +467,9 @@ async fn test_send_webhook_includes_signature_and_timestamp_headers() {
             &self,
             _url: &str,
             _payload: &Value,
-            _headers: Option<&HashMap<String, String>>,
+            headers: Option<&HashMap<String, String>>,
         ) -> Result<u16> {
+            *self.captured.lock().unwrap() = headers.cloned();
             Ok(200)
         }
     }
@@ -647,19 +666,19 @@ async fn test_trigger_failure_includes_error_in_payload() {
         async fn send(
             &self,
             _url: &str,
-            payload: &Value,
+            _payload: &Value,
             _headers: Option<&HashMap<String, String>>,
         ) -> Result<()> {
-            *self.captured.lock().unwrap() = Some(payload.clone());
             Ok(())
         }
 
         async fn send_with_status(
             &self,
             _url: &str,
-            _payload: &Value,
+            payload: &Value,
             _headers: Option<&HashMap<String, String>>,
         ) -> Result<u16> {
+            *self.captured.lock().unwrap() = Some(payload.clone());
             Ok(200)
         }
     }
@@ -702,19 +721,19 @@ async fn test_trigger_completion_payload_has_completed_status() {
         async fn send(
             &self,
             _url: &str,
-            payload: &Value,
+            _payload: &Value,
             _headers: Option<&HashMap<String, String>>,
         ) -> Result<()> {
-            *self.captured.lock().unwrap() = Some(payload.clone());
             Ok(())
         }
 
         async fn send_with_status(
             &self,
             _url: &str,
-            _payload: &Value,
+            payload: &Value,
             _headers: Option<&HashMap<String, String>>,
         ) -> Result<u16> {
+            *self.captured.lock().unwrap() = Some(payload.clone());
             Ok(200)
         }
     }
@@ -885,7 +904,7 @@ fn test_verify_webhook_signature_correct_signature_succeeds_at_boundary() {
     ));
 }
 
-// ---- verify_webhook_signature_from_parts（架构 MEDIUM-2） ----
+// ---- verify_webhook_signature_from_parts（架构） ----
 
 /// 合法签名 + 合法时间戳字符串 → Ok
 #[test]
@@ -973,7 +992,7 @@ fn test_verify_webhook_signature_from_parts_wrong_payload() {
     assert_eq!(result.unwrap_err(), WEBHOOK_AUTH_FAILED);
 }
 
-// 架构 MEDIUM-1：constant_time_eq 单元测试已迁移至
+// 架构 constant_time_eq 单元测试已迁移至
 // infrastructure::security::constant_time_compare::tests（7 个测试覆盖更全面）。
 // 此处不再重复测试公共 helper，避免测试代码冗余。
 
@@ -1098,12 +1117,12 @@ struct MockWebhookService {
 
 #[async_trait]
 impl WebhookService for MockWebhookService {
-    async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
+    async fn send_webhook(&self, _event: &WebhookEvent) -> Result<u16> {
         self.send_count.fetch_add(1, Ordering::SeqCst);
         if self.should_fail {
             Err(anyhow!("mock send failed"))
         } else {
-            Ok(())
+            Ok(200)
         }
     }
 
@@ -1121,6 +1140,9 @@ impl WebhookService for MockWebhookService {
 struct ConfigurableWebhookEventRepository {
     events: std::sync::Mutex<Vec<WebhookEvent>>,
     update_count: AtomicU32,
+    /// 注入前 N 次 update 失败（T023：验证状态回写失败的重试与 Err 传播）。
+    /// 默认 0 = update 始终成功，既有测试不受影响。
+    fail_update_times: AtomicU32,
 }
 
 #[async_trait]
@@ -1159,11 +1181,22 @@ impl WebhookEventRepository for ConfigurableWebhookEventRepository {
 
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
         self.update_count.fetch_add(1, Ordering::SeqCst);
+        // T023: 注入前 N 次 update 失败以验证状态回写重试与 Err 传播
+        if self.fail_update_times.load(Ordering::SeqCst) > 0 {
+            self.fail_update_times.fetch_sub(1, Ordering::SeqCst);
+            return Err(RepositoryError::Database(anyhow::anyhow!(
+                "mock status write-back failed"
+            )));
+        }
         let mut events = self.events.lock().unwrap();
         if let Some(e) = events.iter_mut().find(|e| e.id == event.id) {
             *e = event.clone();
         }
         Ok(event.clone())
+    }
+
+    async fn claim_pending(&self, limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError> {
+        self.find_pending(limit).await
     }
 }
 
@@ -1201,6 +1234,10 @@ impl WebhookEventRepository for FindPendingFailingEventRepository {
 
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
         Ok(event.clone())
+    }
+
+    async fn claim_pending(&self, limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError> {
+        self.find_pending(limit).await
     }
 }
 
@@ -1371,6 +1408,79 @@ async fn test_trigger_webhook_send_failure_propagates() {
     );
 }
 
+// ---- T023: trigger_webhook 状态回写可靠性（R-data-integrity-010）----
+
+#[tokio::test]
+async fn test_trigger_webhook_writeback_fails_once_then_retry_succeeds() {
+    let team_id = Uuid::new_v4();
+    let webhook = make_test_webhook(team_id, "https://example.com/hook");
+    let webhook_repo = Arc::new(MockWebhookRepository::with_webhooks(vec![webhook.clone()]));
+    // 首次状态回写失败，重试（第 2 次）成功
+    let event_repo = Arc::new(ConfigurableWebhookEventRepository {
+        fail_update_times: AtomicU32::new(1),
+        ..Default::default()
+    });
+    let webhook_service = Arc::new(MockWebhookService::default());
+    let service =
+        make_management_service(webhook_repo, event_repo.clone(), webhook_service.clone());
+
+    let result = service
+        .trigger_webhook(
+            webhook.id,
+            WebhookEventType::ScrapeCompleted,
+            json!({"task_id": "abc"}),
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "transient write-back failure recovered by retry should succeed"
+    );
+    // 外发只调用一次（回写失败不触发重复外发）
+    assert_eq!(webhook_service.send_count.load(Ordering::SeqCst), 1);
+    // 回写尝试 2 次（首次失败 + 重试成功）
+    assert_eq!(event_repo.update_count.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn test_trigger_webhook_writeback_failure_exhausts_retry_returns_err() {
+    let team_id = Uuid::new_v4();
+    let webhook = make_test_webhook(team_id, "https://example.com/hook");
+    let webhook_repo = Arc::new(MockWebhookRepository::with_webhooks(vec![webhook.clone()]));
+    // 状态回写始终失败（首次 + 重试均失败）
+    let event_repo = Arc::new(ConfigurableWebhookEventRepository {
+        fail_update_times: AtomicU32::new(2),
+        ..Default::default()
+    });
+    let webhook_service = Arc::new(MockWebhookService::default());
+    let service =
+        make_management_service(webhook_repo, event_repo.clone(), webhook_service.clone());
+
+    let result = service
+        .trigger_webhook(
+            webhook.id,
+            WebhookEventType::ScrapeCompleted,
+            json!({"task_id": "abc"}),
+        )
+        .await;
+
+    // 外发成功但状态回写重试后仍失败 → 返回 Err（已发送但状态未知）
+    assert!(
+        result.is_err(),
+        "exhausted write-back retry must propagate Err"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("delivered but status write-back failed"),
+        "should report sent-but-status-unknown, got: {}",
+        err
+    );
+    // 外发只调用一次（不因回写失败重复外发）
+    assert_eq!(webhook_service.send_count.load(Ordering::SeqCst), 1);
+    // 回写尝试恰好 2 次（首次 + 重试 1 次，不多不少）
+    assert_eq!(event_repo.update_count.load(Ordering::SeqCst), 2);
+}
+
 #[tokio::test]
 async fn test_trigger_webhook_event_create_failure_propagates() {
     let team_id = Uuid::new_v4();
@@ -1508,8 +1618,8 @@ async fn test_retry_failed_find_pending_error_propagates() {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("Failed to find pending webhook events"),
-        "should report find_pending failure, got: {}",
+        err.contains("Failed to claim pending webhook events"),
+        "should report claim_pending failure, got: {}",
         err
     );
 }

@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! AIMD 自适应并发控制（design.md §8，T036/R-runtime-003）
+//! AIMD 自适应并发控制
 //!
 //! 移植 spider `adaptive_concurrency.rs`：AIMD（Additive Increase / Multiplicative Decrease）
 //! 拥塞控制算法，动态调整并发上限。
@@ -14,7 +14,7 @@
 //!   - **Multiplicative Decrease**：单次失败后 `target /= 2`（clamp 到 `min_limit`）
 //! - [`AdaptiveSemaphore`]：桥接 `tokio::sync::Semaphore`，`set_target` 调和可用许可
 //!
-//! 集成路径（T037/T038）：`TeamSemaphore::with_adaptive` + `scrape_worker::record_*`。
+//! 集成路径 `TeamSemaphore::with_adaptive` + `scrape_worker::record_*`。
 //! 默认关闭（`concurrency.adaptive_enabled=false`），开启后增强固定并发为动态带宽利用。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -56,12 +56,12 @@ impl AIMDController {
     ///
     /// # Panics
     ///
-    /// 参数不变式违反时 panic（fail-fast，规则 12 显性化失败）：
+    /// 参数不变式违反时 panic（fail-fast 显性化失败）：
     /// - `min_limit >= 1`：否则乘性减少可降至 0，导致 `acquire_owned()` 永久阻塞
     /// - `max_limit >= min_limit`：否则 clamp 语义未定义
     ///
     /// 使用 `assert!` 而非 `debug_assert!`：参数错误属编程错误，应在 release 构建下
-    /// 也立即暴露而非静默吞掉（架构审查 H-1）。
+    /// 也立即暴露而非静默吞掉。
     pub fn with_bounds(initial: usize, min_limit: usize, max_limit: usize) -> Self {
         assert!(min_limit >= 1, "min_limit must be >= 1, got {min_limit}");
         assert!(
@@ -82,7 +82,7 @@ impl AIMDController {
     ///
     /// # Panics
     ///
-    /// 参数不变式违反时 panic（同 `with_bounds`，规则 12）：
+    /// 参数不变式违反时 panic（同 `with_bounds`）：
     /// - `min_limit >= 1`
     /// - `max_limit >= min_limit`
     /// - `increase_threshold >= 1`：否则永远不触发 +1，等价于固定并发
@@ -116,7 +116,7 @@ impl AIMDController {
     /// 连续 `increase_threshold` 次成功后 `current_limit += 1`（clamp `max_limit`）。
     /// 返回更新后的 target。
     ///
-    /// # 内存序说明（架构审查 M-2）
+    /// # 内存序说明
     ///
     /// 全部使用 `Ordering::Relaxed`：AIMD 算法是自校正的，无需跨变量同步：
     /// - `current_limit` 的 CAS 保证不会超过 `max_limit`（单一变量不变式）
@@ -244,7 +244,7 @@ impl AdaptiveSemaphore {
         self.semaphore.clone().try_acquire_owned().ok()
     }
 
-    /// 安全审查 H-01：查询当前可用许可数（用于判断团队是否空闲）
+    /// 查询当前可用许可数（用于判断团队是否空闲）
     pub fn available_permits(&self) -> usize {
         self.semaphore.available_permits()
     }

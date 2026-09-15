@@ -3,24 +3,18 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-#![allow(deprecated)]
-
 //! SmartSearchEngine 智能搜索引擎演示
 //!
 //! 本示例演示了 SmartSearchEngine 的核心功能和用法，包括：
-//! - 基本搜索引擎创建和使用
-//! - 工厂方法创建引擎
-//! - 自定义配置参数
-//! - 测试数据模式
+//! - 基于 EngineClient 创建智能搜索引擎
+//! - 工厂方法 `create_smart_search` 创建引擎
+//! - 发起搜索并处理结果/错误/超时
 
 use crawlrs::engines::client::reqwest::ReqwestEngine;
 use crawlrs::engines::engine_client::{EngineClient, ScraperEngine};
-use crawlrs::search::engine_trait::SearchEngine;
-use crawlrs::search::engine_trait::SearchRequest;
-use crawlrs::search::smart::{SmartSearchEngine, SmartSearchEngineConfig};
-use crawlrs::search::types::SearchEngineType;
+use crawlrs::search::engine_trait::{SearchEngine, SearchRequest};
+use crawlrs::search::smart::{create_smart_search, SmartSearchEngine};
 use log::info;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 
@@ -38,8 +32,6 @@ async fn main() {
 
     demo_basic_usage().await;
     demo_factory_usage().await;
-    demo_configuration().await;
-    demo_test_data_mode().await;
 
     info!("\n==========================================");
     info!("演示完成");
@@ -51,9 +43,9 @@ async fn demo_basic_usage() {
     info!("----------------------------------------");
 
     let client = create_test_client();
-    let bing_engine = create_bing_smart_search(client);
+    let engine = Arc::new(SmartSearchEngine::new(client));
 
-    info!("✅ 已创建 Bing 智能搜索引擎");
+    info!("✅ 已创建智能搜索引擎");
 
     let request = SearchRequest {
         query: TEST_QUERY.to_string(),
@@ -61,12 +53,7 @@ async fn demo_basic_usage() {
         ..Default::default()
     };
 
-    match timeout(
-        Duration::from_secs(TIMEOUT_SECS),
-        bing_engine.search(&request),
-    )
-    .await
-    {
+    match timeout(Duration::from_secs(TIMEOUT_SECS), engine.search(&request)).await {
         Ok(Ok(results)) => {
             info!("✅ 搜索成功！找到 {} 个结果", results.items.len());
             for (i, result) in results.items.iter().enumerate().take(3) {
@@ -87,70 +74,28 @@ async fn demo_factory_usage() {
     info!("📖 演示二：工厂方法用法");
     info!("----------------------------------------");
 
-    info!("ℹ️  工厂方法需要 ConfigServiceTrait 实现，此示例已跳过");
-    info!("   实际使用时可通过依赖注入获取 SearchEngineFactory");
-    info!("");
-}
-
-async fn demo_configuration() {
-    info!("📖 演示三：自定义配置");
-    info!("----------------------------------------");
-
     let client = create_test_client();
+    let engine = create_smart_search(client);
 
-    let config = SmartSearchEngineConfig {
-        engine_type: SearchEngineType::Baidu, // Baidu 不需要 JS
-        rate_limiting_enabled: true,
-        rate_limiting_service: None,
-        timeout_seconds: 60,
-        test_data_enabled: false,
-        test_data_path: None,
-        max_retries: 3,
-        retry_delay_ms: 1000,
-    };
+    info!("✅ 已通过 create_smart_search 工厂创建搜索引擎");
 
-    let _engine = Arc::new(SmartSearchEngine::new(client, config));
-    info!("✅ 已创建带自定义配置的智能搜索引擎");
-    info!("   - 超时时间: {} 秒", 60);
-    info!("   - 最大重试次数: {}", 3);
-    info!("   - 重试间隔: {} 毫秒", 1000);
-    info!("   - 速率限制: 启用");
-    info!("");
-}
-
-async fn demo_test_data_mode() {
-    info!("📖 演示四：测试数据模式");
-    info!("----------------------------------------");
-
-    let client = create_test_client();
-
-    let test_data_path = PathBuf::from("test-data/search-engines");
-
-    let config = SmartSearchEngineConfig {
-        engine_type: SearchEngineType::Baidu, // Baidu 不需要 JS
-        rate_limiting_enabled: false,
-        rate_limiting_service: None,
-        timeout_seconds: 30,
-        test_data_enabled: true,
-        test_data_path: Some(test_data_path.clone()),
-        max_retries: 1,
-        retry_delay_ms: 100,
-    };
-
-    let _engine = Arc::new(SmartSearchEngine::new(client, config));
-    info!("✅ 已创建启用测试数据模式的智能搜索引擎");
-    info!("   测试数据路径: {:?}", test_data_path);
-
-    if test_data_path.exists() {
-        info!("   测试数据目录存在");
-    } else {
-        info!("   ⚠️ 测试数据目录不存在（这是正常的，如果未创建测试数据）");
+    let request = SearchRequest::new(TEST_QUERY).with_limit(RESULT_LIMIT);
+    match timeout(Duration::from_secs(TIMEOUT_SECS), engine.search(&request)).await {
+        Ok(Ok(results)) => {
+            info!("✅ 搜索成功！找到 {} 个结果", results.items.len());
+        }
+        Ok(Err(e)) => {
+            info!("⚠️ 搜索出错: {:?}", e);
+        }
+        Err(_) => {
+            info!("⏱️ 搜索超时");
+        }
     }
     info!("");
 }
 
 fn create_test_client() -> Arc<EngineClient> {
-    let reqwest_engine: Arc<dyn ScraperEngine> = Arc::new(ReqwestEngine::new_with_timeout_and_mrt(
+    let reqwest_engine: Arc<dyn ScraperEngine> = Arc::new(ReqwestEngine::new_with_timeout(
         Arc::new(
             reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
@@ -158,21 +103,6 @@ fn create_test_client() -> Arc<EngineClient> {
                 .unwrap(),
         ),
         60,
-        Duration::from_secs(30),
     ));
     Arc::new(EngineClient::with_engines(vec![reqwest_engine]))
-}
-
-fn create_bing_smart_search(client: Arc<EngineClient>) -> Arc<SmartSearchEngine> {
-    let config = SmartSearchEngineConfig {
-        engine_type: SearchEngineType::Bing,
-        rate_limiting_enabled: true,
-        rate_limiting_service: None,
-        timeout_seconds: 90,
-        test_data_enabled: false,
-        test_data_path: None,
-        max_retries: 3,
-        retry_delay_ms: 1000,
-    };
-    Arc::new(SmartSearchEngine::new(client, config))
 }

@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! T042: 统一 mock 仓库实现 — 消除 25+ 重复定义
+//! 统一 mock 仓库实现 — 消除 25+ 重复定义
 //!
 //! 所有 mock 默认返回 noop/空值。需要特定行为的测试可自行扩展或配置。
 
@@ -45,14 +45,22 @@ impl TaskRepository for MockTaskRepository {
     async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
-    async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_completed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
-    async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_failed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
     async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
         Ok(false)
@@ -89,6 +97,15 @@ impl TaskRepository for MockTaskRepository {
     ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
         Ok((vec![], vec![]))
     }
+
+    async fn renew_lock(
+        &self,
+        _task_id: Uuid,
+        _worker_id: Uuid,
+        _extend_seconds: i64,
+    ) -> Result<bool, RepositoryError> {
+        Ok(true)
+    }
 }
 
 // ============================================================================
@@ -111,6 +128,10 @@ impl ScrapeResultRepository for MockScrapeResultRepository {
     }
     async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
         Ok(0.0)
+    }
+
+    async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+        Ok(0)
     }
 }
 

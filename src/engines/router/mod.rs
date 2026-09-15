@@ -95,12 +95,12 @@ pub struct EngineRouter {
     race_mode_enabled: bool,
     /// 动态阈值因子 (根据历史数据调整)
     dynamic_threshold_factor: f64,
-    /// UA 池（性能审查 H-1 修复：原在 route() 内每请求 UaPool::new() 分配 44 个 profile）
+    /// UA 池（原在 route() 内每请求 UaPool::new() 分配 44 个 profile）
     ///
     /// UaPool 内部全 `&'static str`，构造后只读，可安全跨线程共享（Send+Sync 自动派生）。
     /// 用 `Arc` 是因为 `EngineRouter` 本身可能被 Clone 共享。
     ua_pool: Arc<UaPool>,
-    /// Hedge 控制器（design.md §17，T070/R-runtime-004）
+    /// Hedge 控制器
     ///
     /// 记录 race 胜出引擎延迟，估算 P84 阈值，供未来顺序路径决策是否发送副本请求。
     /// `HedgeController` 内部全 `Atomic*`，无锁线程安全，可直接共享无需 `Arc`。
@@ -135,8 +135,8 @@ impl EngineRouter {
             feature_filter_enabled: true,                       // 默认启用特征检测过滤
             race_mode_enabled: false,                           // 默认禁用并发竞速模式
             dynamic_threshold_factor: 1.0,                      // 默认动态阈值因子
-            ua_pool: Arc::new(UaPool::new()),                   // 性能审查 H-1：构造一次共享
-            hedge_controller: HedgeController::with_defaults(), // T070：默认参数
+            ua_pool: Arc::new(UaPool::new()),                   // 构造一次共享
+            hedge_controller: HedgeController::with_defaults(), // 默认参数
         }
     }
 
@@ -173,8 +173,8 @@ impl EngineRouter {
             feature_filter_enabled: true,
             race_mode_enabled: false,
             dynamic_threshold_factor: 1.0,
-            ua_pool: Arc::new(UaPool::new()), // 性能审查 H-1：构造一次共享
-            hedge_controller: HedgeController::with_defaults(), // T070：默认参数
+            ua_pool: Arc::new(UaPool::new()), // 构造一次共享
+            hedge_controller: HedgeController::with_defaults(), // 默认参数
         }
     }
 
@@ -212,17 +212,17 @@ impl EngineRouter {
         &self.metrics
     }
 
-    /// 获取 Hedge 控制器引用（design.md §17，T070）
+    /// 获取 Hedge 控制器引用
     ///
     /// 返回 `&HedgeController`，外部可读取 P84 阈值、样本数等观测值，
     /// 也可调用 `should_hedge` 决策是否发起副本（未来顺序路径用）。
     /// `record_latency` / `reset` 已限定为 `pub(crate)`，外部无法篡改状态
-    /// （架构审查 M-1：接口隔离修复）。
+    /// （接口隔离修复）。
     pub fn hedge_controller(&self) -> &HedgeController {
         &self.hedge_controller
     }
 
-    // T034: select_optimal_engines, should_filter_by_feature, calculate_engine_score,
+    // select_optimal_engines, should_filter_by_feature, calculate_engine_score,
     // sort_candidates_by_strategy 已拆分到 engine_selector.rs (partial impl block)
 
     /// 更新引擎统计信息
@@ -281,7 +281,7 @@ impl EngineRouter {
             .and_then(|result| result)
     }
 
-    /// H-1 修复：提取 RetryTracker 上限检查的公共逻辑（DRY）
+    /// 提取 RetryTracker 上限检查的公共逻辑（DRY）
     ///
     /// 在 AntiBot 和 retryable error 两个分支中，原代码有以下重复：
     /// 1. `if !tracker.should_retry(reason)` → warn + metrics + return
@@ -332,8 +332,8 @@ impl EngineRouter {
         false
     }
 
-    // T035: route_internal 已拆分到 route_sequential.rs (partial impl block)
-    // T035: route_race_mode 已拆分到 route_race.rs (partial impl block)
+    // route_internal 已拆分到 route_sequential.rs (partial impl block)
+    // route_race_mode 已拆分到 route_race.rs (partial impl block)
 
     /// 聚合多个引擎的搜索结果
     ///
@@ -471,7 +471,7 @@ impl EngineRouterTrait for EngineRouter {
     }
 }
 
-/// T013（R-antibot-003）：检查引擎"成功"响应是否为反爬挑战页。
+/// 检查引擎"成功"响应是否为反爬挑战页。
 ///
 /// 将 `InternalScrapeResponse` 的 `HashMap<String,String>` headers 转为
 /// `reqwest::header::HeaderMap` 后调用 `antibot::classify`。仅在 `antibot`
@@ -494,7 +494,7 @@ pub(super) fn check_antibot_response(
     crate::engines::antibot::classify(response.status_code, &response.content, &header_map, url)
 }
 
-/// T015（R-jsrender-001）：对引擎"成功"响应运行 JS 升级探测。
+/// 对引擎"成功"响应运行 JS 升级探测。
 ///
 /// 将 `InternalScrapeResponse` 的 headers 转为 `reqwest::header::HeaderMap` 后
 /// 调用 [`crate::engines::upgrade_probe::JsUpgradeProbe::evaluate`]。返回
@@ -517,14 +517,14 @@ pub(super) fn check_js_upgrade_probe(
             }
         }
     }
-    // 性能审查 HIGH-1 修复：evaluate docstring 明确「body_prefix」语义，
+    // evaluate docstring 明确「body_prefix」语义，
     // 传入完整 body 会让多次 `contains`/`find` 退化为 O(body_len)。
-    // 截取前 PROBE_PREFIX_LEN 字节，覆盖典型 SPA 空壳的 head+顶层 body。
-    let prefix_end = response
-        .content
-        .len()
-        .min(crate::engines::upgrade_probe::PROBE_PREFIX_LEN);
-    let body_prefix = &response.content[..prefix_end];
+    // 截取前 PROBE_PREFIX_LEN 字节（char 边界安全，中文页面不 panic），
+    // 覆盖典型 SPA 空壳的 head+顶层 body。
+    let body_prefix = crate::common::text_slice::safe_prefix(
+        &response.content,
+        crate::engines::upgrade_probe::PROBE_PREFIX_LEN,
+    );
     probe.evaluate(&header_map, body_prefix)
 }
 
@@ -536,8 +536,8 @@ mod tests;
 #[path = "../tests/router_tests_impl.rs"]
 mod tests_impl;
 
-// T034: 引擎选择逻辑拆分
+// 引擎选择逻辑拆分
 mod engine_selector;
-// T035: 路由模式拆分
+// 路由模式拆分
 mod route_race;
 mod route_sequential;

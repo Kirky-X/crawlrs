@@ -19,6 +19,14 @@ mod tests {
     use crate::common::constants::crawl_task::MAX_SYNC_WAIT_MS;
     use crate::config::settings::Settings;
     use crate::domain::models::{Task, TaskStatus, TaskType};
+    use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
+    use crate::domain::services::team_service::TeamService;
+    use axum::extract::ConnectInfo;
+    use std::net::SocketAddr;
+
+    fn make_addr() -> SocketAddr {
+        "127.0.0.1:8080".parse().expect("valid socket addr")
+    }
     use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
     use crate::domain::repositories::task_repository::TaskRepository;
     use crate::domain::services::rate_limiting_service::RateLimitingService;
@@ -40,7 +48,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_minimal_valid() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":"https://example.com"}"#;
         let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.url, "https://example.com");
@@ -50,7 +60,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_with_all_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "url": "https://example.com",
             "formats": ["html", "markdown"],
@@ -72,7 +84,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_rejects_unknown_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":"https://example.com","unknown_field":"value"}"#;
         let result: Result<ScrapeRequestDto, _> = serde_json::from_str(json);
         assert!(result.is_err());
@@ -80,7 +94,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_empty_url_fails_validation() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":""}"#;
         let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
         let validation = dto.validate();
@@ -89,7 +105,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_sync_wait_ms_at_max() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":"https://example.com","sync_wait_ms":30000}"#;
         let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.validate().is_ok());
@@ -97,7 +115,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_sync_wait_ms_exceeds_max() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":"https://example.com","sync_wait_ms":30001}"#;
         let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.validate().is_err());
@@ -105,7 +125,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_sync_wait_ms_zero_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":"https://example.com","sync_wait_ms":0}"#;
         let dto: ScrapeRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.validate().is_ok());
@@ -115,7 +137,9 @@ mod tests {
 
     #[test]
     fn test_scrape_response_dto_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let dto = ScrapeResponseDto {
             id: task_id,
@@ -131,7 +155,9 @@ mod tests {
 
     #[test]
     fn test_scrape_response_dto_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = format!(
             r#"{{"id":"{}","url":"https://test.com","credits_used":5}}"#,
             Uuid::new_v4()
@@ -143,7 +169,9 @@ mod tests {
 
     #[test]
     fn test_scrape_response_dto_default_credits_used() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = format!(r#"{{"id":"{}","url":"https://test.com"}}"#, Uuid::new_v4());
         let dto: ScrapeResponseDto = serde_json::from_str(&json).unwrap();
         assert_eq!(dto.credits_used, 0);
@@ -153,7 +181,9 @@ mod tests {
 
     #[test]
     fn test_scrape_result_dto_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ScrapeResultDto {
             content: "<html>test</html>".to_string(),
             status_code: 200,
@@ -176,7 +206,9 @@ mod tests {
 
     #[test]
     fn test_scrape_result_dto_with_screenshot() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ScrapeResultDto {
             content: "content".to_string(),
             status_code: 200,
@@ -197,7 +229,9 @@ mod tests {
 
     #[test]
     fn test_scrape_status_response_dto_pending() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let dto = ScrapeStatusResponseDto {
             id: task_id,
@@ -219,7 +253,9 @@ mod tests {
 
     #[test]
     fn test_scrape_status_response_dto_failed_with_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ScrapeStatusResponseDto {
             id: Uuid::new_v4(),
             status: "failed".to_string(),
@@ -244,7 +280,9 @@ mod tests {
 
     #[test]
     fn test_cancel_scrape_response_dto_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = CancelScrapeResponseDto {
             message: "Scrape task cancelled".to_string(),
         };
@@ -255,7 +293,9 @@ mod tests {
 
     #[test]
     fn test_cancel_scrape_response_dto_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"message":"done"}"#;
         let dto: CancelScrapeResponseDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.message, "done");
@@ -265,7 +305,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_wait_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"type":"wait","milliseconds":1000}"#;
         let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
         match action {
@@ -276,7 +318,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_click_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r##"{"type":"click","selector":"#button"}"##;
         let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
         match action {
@@ -287,7 +331,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_scroll_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"type":"scroll","direction":"down"}"#;
         let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
         match action {
@@ -298,7 +344,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_screenshot_with_full_page() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"type":"screenshot","full_page":true}"#;
         let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
         match action {
@@ -309,7 +357,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_input_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r##"{"type":"input","selector":"#search","text":"hello"}"##;
         let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
         match action {
@@ -325,7 +375,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_wait_serialization_roundtrip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let action = ScrapeActionDto::Wait { milliseconds: 2000 };
         let json = serde_json::to_string(&action).unwrap();
         let deserialized: ScrapeActionDto = serde_json::from_str(&json).unwrap();
@@ -337,7 +389,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_click_serialization_roundtrip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let action = ScrapeActionDto::Click {
             selector: ".btn".to_string(),
         };
@@ -351,7 +405,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_scroll_serialization_roundtrip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let action = ScrapeActionDto::Scroll {
             direction: "up".to_string(),
         };
@@ -365,7 +421,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_screenshot_without_full_page() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"type":"screenshot"}"#;
         let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
         match action {
@@ -376,7 +434,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_screenshot_full_page_false() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"type":"screenshot","full_page":false}"#;
         let action: ScrapeActionDto = serde_json::from_str(json).unwrap();
         match action {
@@ -387,7 +447,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_unknown_type_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"type":"unknown","data":123}"#;
         let result: Result<ScrapeActionDto, _> = serde_json::from_str(json);
         assert!(result.is_err());
@@ -395,7 +457,9 @@ mod tests {
 
     #[test]
     fn test_scrape_action_camel_case_tag() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // The enum uses rename_all = "camelCase" for the tag
         // Verify that "wait" stays lowercase (already camelCase)
         let json = r#"{"type":"wait","milliseconds":100}"#;
@@ -410,7 +474,9 @@ mod tests {
 
     #[test]
     fn test_scrape_options_dto_minimal() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"headers":{}}"#;
         let dto: crate::application::dto::scrape_request::ScrapeOptionsDto =
             serde_json::from_str(json).unwrap();
@@ -423,7 +489,9 @@ mod tests {
 
     #[test]
     fn test_scrape_options_dto_full() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "headers": {"User-Agent": "test"},
             "wait_for": 1000,
@@ -451,7 +519,9 @@ mod tests {
 
     #[test]
     fn test_scrape_options_dto_deny_unknown_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"headers":{},"unknown":1}"#;
         let result: Result<crate::application::dto::scrape_request::ScrapeOptionsDto, _> =
             serde_json::from_str(json);
@@ -460,7 +530,9 @@ mod tests {
 
     #[test]
     fn test_scrape_options_dto_serialization_roundtrip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = crate::application::dto::scrape_request::ScrapeOptionsDto {
             headers: Some(serde_json::json!({"X-Test": "value"})),
             wait_for: Some(500),
@@ -488,7 +560,9 @@ mod tests {
 
     #[test]
     fn test_screenshot_options_dto_minimal() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{}"#;
         let dto: crate::application::dto::scrape_request::ScreenshotOptionsDto =
             serde_json::from_str(json).unwrap();
@@ -500,7 +574,9 @@ mod tests {
 
     #[test]
     fn test_screenshot_options_dto_full() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r##"{
             "full_page": true,
             "selector": "#content",
@@ -517,7 +593,9 @@ mod tests {
 
     #[test]
     fn test_screenshot_options_dto_serialization_roundtrip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = crate::application::dto::scrape_request::ScreenshotOptionsDto {
             full_page: Some(false),
             selector: Some("div.main".to_string()),
@@ -537,7 +615,9 @@ mod tests {
 
     #[test]
     fn test_max_sync_wait_ms_constant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(MAX_SYNC_WAIT_MS, 30000);
     }
 
@@ -545,7 +625,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_ms_at_max_passes_handler_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Handler check: if ms > MAX_SYNC_WAIT_MS { return error }
         let ms: u32 = 30000;
         assert!(ms <= MAX_SYNC_WAIT_MS, "ms at max should pass");
@@ -553,14 +635,18 @@ mod tests {
 
     #[test]
     fn test_sync_wait_ms_above_max_fails_handler_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let ms: u32 = 30001;
         assert!(ms > MAX_SYNC_WAIT_MS, "ms above max should fail");
     }
 
     #[test]
     fn test_sync_wait_ms_none_skips_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // When sync_wait_ms is None, the handler skips the check
         let ms: Option<u32> = None;
         // if let Some(ms) = payload.sync_wait_ms { ... } — no branch taken
@@ -569,7 +655,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_ms_zero_passes_handler_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let ms: u32 = 0;
         assert!(ms <= MAX_SYNC_WAIT_MS);
     }
@@ -578,7 +666,9 @@ mod tests {
 
     #[test]
     fn test_status_code_async_mode_returns_created() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // sync_wait_ms == 0 → async mode → CREATED
         let sync_wait_ms: u32 = 0;
         let is_timeout = false;
@@ -596,7 +686,9 @@ mod tests {
 
     #[test]
     fn test_status_code_sync_mode_timeout_returns_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // sync_wait_ms > 0 && is_timeout → ACCEPTED
         let sync_wait_ms: u32 = 5000;
         let is_timeout = true;
@@ -614,7 +706,9 @@ mod tests {
 
     #[test]
     fn test_status_code_sync_mode_completed_returns_created() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // sync_wait_ms > 0 && !is_timeout → CREATED
         let sync_wait_ms: u32 = 5000;
         let is_timeout = false;
@@ -634,7 +728,9 @@ mod tests {
 
     #[test]
     fn test_scrape_result_dto_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "content": "<html></html>",
             "status_code": 200,
@@ -655,7 +751,9 @@ mod tests {
 
     #[test]
     fn test_scrape_result_dto_deserialization_minimal() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "content": "text",
             "status_code": 404,
@@ -675,7 +773,9 @@ mod tests {
 
     #[test]
     fn test_scrape_status_response_dto_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let json = format!(
             r#"{{
@@ -702,7 +802,9 @@ mod tests {
 
     #[test]
     fn test_scrape_status_response_dto_with_result() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "id": "00000000-0000-0000-0000-000000000001",
             "status": "completed",
@@ -734,7 +836,9 @@ mod tests {
 
     #[test]
     fn test_scrape_response_dto_roundtrip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ScrapeResponseDto {
             id: Uuid::new_v4(),
             url: "https://roundtrip.com".to_string(),
@@ -751,7 +855,9 @@ mod tests {
 
     #[test]
     fn test_task_status_display_for_scrape_response() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // The handler uses task.status.to_string() for the status field
         assert_eq!(TaskStatus::Queued.to_string(), "queued");
         assert_eq!(TaskStatus::Active.to_string(), "active");
@@ -764,7 +870,9 @@ mod tests {
 
     #[test]
     fn test_task_construction_for_scrape() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let api_key_id = Uuid::new_v4();
         let now = chrono::Utc::now();
@@ -806,7 +914,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_with_options_and_actions() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r##"{
             "url": "https://example.com",
             "formats": ["html"],
@@ -828,7 +938,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_with_metadata() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "url": "https://example.com",
             "metadata": {"user_id": 123, "session": "abc"}
@@ -842,7 +954,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_with_webhook() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "url": "https://example.com",
             "webhook": "https://hooks.example.com/abc"
@@ -856,7 +970,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_url_too_long_fails_validation() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // URL longer than 2048 chars should fail validation
         let long_url = "https://example.com/".to_string() + &"a".repeat(2048);
         let json = serde_json::json!({
@@ -869,7 +985,9 @@ mod tests {
 
     #[test]
     fn test_scrape_request_dto_url_at_max_length_passes() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // URL at exactly 2048 chars should pass
         let base = "https://example.com/";
         let padding = "a".repeat(2048 - base.len());
@@ -1059,21 +1177,29 @@ mod tests {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
             if self.mark_cancelled_should_fail {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "mark_cancelled failed"
                 )));
             }
-            Ok(())
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -1130,6 +1256,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 
@@ -1271,6 +1406,16 @@ mod tests {
         async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
             Ok(1000)
         }
+
+        async fn refund_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
     }
 
     #[async_trait]
@@ -1325,6 +1470,10 @@ mod tests {
 
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
             Ok(0.0)
+        }
+
+        async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+            Ok(0)
         }
     }
 
@@ -1421,7 +1570,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_scrape_success_async() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
@@ -1438,6 +1589,9 @@ mod tests {
                 rate_limiting_service: rate_limit,
                 auth_state: auth,
             },
+            Extension(None::<Arc<dyn GeoRestrictionRepository>>),
+            Extension(None::<Arc<TeamService>>),
+            ConnectInfo(make_addr()),
             Json(payload),
         )
         .await
@@ -1448,7 +1602,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_scrape_sync_wait_ms_exceeds_max() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
@@ -1465,6 +1621,9 @@ mod tests {
                 rate_limiting_service: rate_limit,
                 auth_state: auth,
             },
+            Extension(None::<Arc<dyn GeoRestrictionRepository>>),
+            Extension(None::<Arc<TeamService>>),
+            ConnectInfo(make_addr()),
             Json(payload),
         )
         .await
@@ -1475,7 +1634,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_scrape_ssrf_blocked_localhost() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
@@ -1492,6 +1653,9 @@ mod tests {
                 rate_limiting_service: rate_limit,
                 auth_state: auth,
             },
+            Extension(None::<Arc<dyn GeoRestrictionRepository>>),
+            Extension(None::<Arc<TeamService>>),
+            ConnectInfo(make_addr()),
             Json(payload),
         )
         .await
@@ -1502,7 +1666,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_scrape_ssrf_blocked_127001() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
@@ -1519,6 +1685,9 @@ mod tests {
                 rate_limiting_service: rate_limit,
                 auth_state: auth,
             },
+            Extension(None::<Arc<dyn GeoRestrictionRepository>>),
+            Extension(None::<Arc<TeamService>>),
+            ConnectInfo(make_addr()),
             Json(payload),
         )
         .await
@@ -1529,7 +1698,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_scrape_rate_limited_denied() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_denied());
@@ -1546,6 +1717,9 @@ mod tests {
                 rate_limiting_service: rate_limit,
                 auth_state: auth,
             },
+            Extension(None::<Arc<dyn GeoRestrictionRepository>>),
+            Extension(None::<Arc<TeamService>>),
+            ConnectInfo(make_addr()),
             Json(payload),
         )
         .await
@@ -1556,7 +1730,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_scrape_rate_limited_retry_after() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_retry_after());
@@ -1573,6 +1749,9 @@ mod tests {
                 rate_limiting_service: rate_limit,
                 auth_state: auth,
             },
+            Extension(None::<Arc<dyn GeoRestrictionRepository>>),
+            Extension(None::<Arc<TeamService>>),
+            ConnectInfo(make_addr()),
             Json(payload),
         )
         .await
@@ -1583,7 +1762,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_scrape_quota_exceeded() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue = Arc::new(MockTaskQueue::new_success());
         let task_repo = Arc::new(MockTaskRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_quota_exceeded());
@@ -1600,6 +1781,9 @@ mod tests {
                 rate_limiting_service: rate_limit,
                 auth_state: auth,
             },
+            Extension(None::<Arc<dyn GeoRestrictionRepository>>),
+            Extension(None::<Arc<TeamService>>),
+            ConnectInfo(make_addr()),
             Json(payload),
         )
         .await
@@ -1610,7 +1794,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_scrape_enqueue_failure() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue = Arc::new(MockTaskQueue::new_failing());
         let task_repo = Arc::new(MockTaskRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
@@ -1627,6 +1813,9 @@ mod tests {
                 rate_limiting_service: rate_limit,
                 auth_state: auth,
             },
+            Extension(None::<Arc<dyn GeoRestrictionRepository>>),
+            Extension(None::<Arc<TeamService>>),
+            ConnectInfo(make_addr()),
             Json(payload),
         )
         .await
@@ -1637,7 +1826,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_scrape_sync_mode_completed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // sync_wait_ms > 0 with task becoming completed via linked queue/repo → CREATED
         // The queue and repo share the same task store, so when enqueue inserts
         // the task, the sync-wait poll will find it. We mark it Completed via
@@ -1661,6 +1852,9 @@ mod tests {
                 rate_limiting_service: rate_limit,
                 auth_state: auth,
             },
+            Extension(None::<Arc<dyn GeoRestrictionRepository>>),
+            Extension(None::<Arc<TeamService>>),
+            ConnectInfo(make_addr()),
             Json(payload),
         )
         .await
@@ -1674,7 +1868,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_scrape_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let task = make_task(team_id, TaskStatus::Queued);
         let task_id = task.id;
@@ -1696,7 +1892,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_scrape_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_auth_state();
         let task_id = Uuid::new_v4();
@@ -1716,7 +1914,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_scrape_forbidden() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task = make_task(Uuid::new_v4(), TaskStatus::Queued);
         let task_id = task.id;
         let repo = Arc::new(MockTaskRepository::with_task(task));
@@ -1738,7 +1938,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_scrape_find_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockTaskRepository::failing_find());
         let auth = make_auth_state();
         let task_id = Uuid::new_v4();
@@ -1758,7 +1960,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_scrape_mark_cancelled_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let task = make_task(team_id, TaskStatus::Queued);
         let task_id = task.id;
@@ -1787,7 +1991,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_scrape_status_in_progress() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let task = make_task(team_id, TaskStatus::Active);
         let task_id = task.id;
@@ -1811,7 +2017,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_scrape_status_completed_with_result() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let mut task = make_task(team_id, TaskStatus::Completed);
         task.completed_at = Some(chrono::Utc::now());
@@ -1837,7 +2045,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_scrape_status_completed_no_result() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let mut task = make_task(team_id, TaskStatus::Completed);
         task.completed_at = Some(chrono::Utc::now());
@@ -1862,7 +2072,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_scrape_status_completed_result_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let mut task = make_task(team_id, TaskStatus::Completed);
         task.completed_at = Some(chrono::Utc::now());
@@ -1888,7 +2100,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_scrape_status_failed_task() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let mut task = make_task(team_id, TaskStatus::Failed);
         task.completed_at = Some(chrono::Utc::now());
@@ -1914,7 +2128,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_scrape_status_failed_task_no_error_field() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let mut task = make_task(team_id, TaskStatus::Failed);
         task.completed_at = Some(chrono::Utc::now());
@@ -1940,7 +2156,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_scrape_status_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_repo = Arc::new(MockTaskRepository::new());
         let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
         let auth = make_auth_state();
@@ -1962,7 +2180,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_scrape_status_forbidden() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task = make_task(Uuid::new_v4(), TaskStatus::Active);
         let task_id = task.id;
         let task_repo = Arc::new(MockTaskRepository::with_task(task));
@@ -1986,7 +2206,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_scrape_status_find_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_repo = Arc::new(MockTaskRepository::failing_find());
         let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
         let auth = make_auth_state();

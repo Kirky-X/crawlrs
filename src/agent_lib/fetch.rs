@@ -24,7 +24,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::StreamExt;
 use reqwest::header::LOCATION;
 use reqwest::redirect::Policy;
 use reqwest::Response;
@@ -115,10 +114,10 @@ pub async fn fetch(url: &str, opts: &FetchOptions) -> Result<FetchedContent, Age
     loop {
         // 每跳出口裁决（请求前判定，deny 未发起连接）。
         //
-        // 设计 D3：egress=Some 时 guard 是逐跳唯一权威（agentstem 将
+        // 设计 egress=Some 时 guard 是逐跳唯一权威（agentstem 将
         // EgressPolicy::validate_url 六道护栏包装为 guard，allow=validate_url==Ok），
         // crawlrs 不再独立执行 SSRF 拦截，否则 allowlist 注入的内部 URL 会被
-        // crawlrs 二次拒绝（B005 验收：allowlist 经 EgressGuard 生效）。
+        // crawlrs 二次拒绝（allowlist 经 EgressGuard 生效）。
         if let Some(guard) = &opts.egress {
             if !guard.allow(&current) {
                 return Err(AgentLibError::EgressDenied {
@@ -241,45 +240,21 @@ fn build_pinned_client(
 }
 
 /// 读取响应体，受 `max_bytes` 限制。
+///
+/// 委托给共享实现 [`crate::utils::http_client::read_body_limited`]（content-length
+/// 预检 + `bytes_stream` 累积截断 + charset 解码），把中立错误映射为 [`AgentLibError`]，
+/// 消除与引擎/搜索客户端的重复实现。
 async fn read_body_limited(resp: Response, max_bytes: usize) -> Result<String, AgentLibError> {
-    let charset = resp
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|ct| ct.split(';').nth(1))
-        .and_then(|p| p.trim().strip_prefix("charset="))
-        .map(|s| s.trim().trim_matches('"').to_string());
-
-    // content-length 预检
-    if let Some(len) = resp.content_length() {
-        if len as usize > max_bytes {
-            return Err(AgentLibError::MaxBytesExceeded { max_bytes });
-        }
-    }
-
-    // bytes_stream 累积 + 截断
-    let mut stream = resp.bytes_stream();
-    let mut bytes: Vec<u8> = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AgentLibError::Network(e.to_string()))?;
-        if bytes.len() + chunk.len() > max_bytes {
-            return Err(AgentLibError::MaxBytesExceeded { max_bytes });
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-
-    // 编码解码：charset 指定则用之，否则 UTF-8 lossy
-    let decoded = match charset.as_deref() {
-        Some(label) => {
-            let encoding =
-                encoding_rs::Encoding::for_label(label.as_bytes()).unwrap_or(encoding_rs::UTF_8);
-            let (text, _, _) = encoding.decode(&bytes);
-            text.into_owned()
-        }
-        None => String::from_utf8_lossy(&bytes).into_owned(),
-    };
-
-    Ok(decoded)
+    crate::utils::http_client::read_body_limited(resp, max_bytes)
+        .await
+        .map_err(|e| match e {
+            crate::utils::http_client::BodyReadError::LimitExceeded { max_bytes } => {
+                AgentLibError::MaxBytesExceeded { max_bytes }
+            }
+            crate::utils::http_client::BodyReadError::Network(e) => {
+                AgentLibError::Network(e.to_string())
+            }
+        })
 }
 
 /// 正文提取 → Markdown 转换（标题前置 + 失败回退整页）。

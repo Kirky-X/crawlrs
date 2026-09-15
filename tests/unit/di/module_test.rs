@@ -431,7 +431,7 @@ fn traitkit_error_converts_to_dependency_missing() {
 // CrawlRsState::from_kit() 错误路径（非 Docker 依赖）
 // =============================================================================
 //
-// T054: R-di-007 要求"测试覆盖 CrawlRsStateExt trait 方法"。28 个 accessor 方法
+// 要求"测试覆盖 CrawlRsStateExt trait 方法"。28 个 accessor 方法
 // 已由 src/di/axum_state.rs 内联 3 个 tc_ 测试覆盖（Docker 依赖）。这里补充
 // 非 Docker 路径：from_kit() 在 InfrastructureModule 未注册时返回错误。
 //

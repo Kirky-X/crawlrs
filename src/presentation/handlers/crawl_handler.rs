@@ -37,7 +37,9 @@ mod tests {
 
     #[test]
     fn test_validation_error_maps_to_bad_request() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::ValidationError("max_depth exceeds limit".to_string());
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -46,7 +48,9 @@ mod tests {
 
     #[test]
     fn test_repository_database_error_maps_to_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::Repository(RepositoryError::Database(anyhow::anyhow!(
             "connection refused"
         )));
@@ -57,7 +61,9 @@ mod tests {
 
     #[test]
     fn test_repository_not_found_maps_to_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::Repository(RepositoryError::NotFound);
         let (status, _msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -65,7 +71,9 @@ mod tests {
 
     #[test]
     fn test_not_found_maps_to_404() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::NotFound;
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -74,7 +82,9 @@ mod tests {
 
     #[test]
     fn test_anyhow_error_maps_to_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::Anyhow(anyhow::anyhow!("unexpected failure"));
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -83,7 +93,9 @@ mod tests {
 
     #[test]
     fn test_anyhow_error_with_context_preserved() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::Anyhow(
             anyhow::anyhow!("base error").context("with additional context"),
         );
@@ -96,7 +108,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_minimal() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "url": "https://example.com",
             "config": {"max_depth": 2}
@@ -111,7 +125,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_full() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "url": "https://example.com",
             "name": "My Crawl",
@@ -143,7 +159,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_with_max_depth_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":"https://example.com","config":{"max_depth":0}}"#;
         let dto: CrawlRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.config.max_depth, 0);
@@ -151,7 +169,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_with_max_depth_five() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":"https://example.com","config":{"max_depth":5}}"#;
         let dto: CrawlRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.config.max_depth, 5);
@@ -159,7 +179,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_deny_unknown_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":"https://example.com","config":{"max_depth":2},"unknown_field":42}"#;
         let result: Result<CrawlRequestDto, _> = serde_json::from_str(json);
         assert!(result.is_err(), "unknown fields should be rejected");
@@ -167,7 +189,9 @@ mod tests {
 
     #[test]
     fn test_crawl_config_dto_deny_unknown_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"max_depth":2,"unknown":true}"#;
         let result: Result<CrawlConfigDto, _> = serde_json::from_str(json);
         assert!(result.is_err());
@@ -177,7 +201,9 @@ mod tests {
 
     #[test]
     fn test_max_depth_at_boundary_passes() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let config = CrawlConfigDto {
             max_depth: 5,
             include_patterns: None,
@@ -197,7 +223,9 @@ mod tests {
 
     #[test]
     fn test_max_depth_exceeds_limit_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let config = CrawlConfigDto {
             max_depth: 6,
             include_patterns: None,
@@ -217,7 +245,9 @@ mod tests {
 
     #[test]
     fn test_max_depth_zero_passes() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let config = CrawlConfigDto {
             max_depth: 0,
             include_patterns: None,
@@ -238,7 +268,9 @@ mod tests {
 
     #[test]
     fn test_crawl_config_dto_clone() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let config = CrawlConfigDto {
             max_depth: 3,
             include_patterns: Some(vec!["/blog/*".to_string()]),
@@ -264,7 +296,9 @@ mod tests {
 
     #[test]
     fn test_crawl_config_dto_serialization_roundtrip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let config = CrawlConfigDto {
             max_depth: 2,
             include_patterns: Some(vec!["/api/*".to_string()]),
@@ -288,7 +322,9 @@ mod tests {
 
     #[test]
     fn test_crawl_config_dto_debug() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let config = CrawlConfigDto {
             max_depth: 1,
             include_patterns: None,
@@ -312,7 +348,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_validate_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = CrawlRequestDto {
             url: "https://example.com".to_string(),
             validated_url: None,
@@ -338,7 +376,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_validate_empty_url_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = CrawlRequestDto {
             url: "".to_string(),
             validated_url: None,
@@ -364,7 +404,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_validate_sync_wait_ms_too_large_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = CrawlRequestDto {
             url: "https://example.com".to_string(),
             validated_url: None,
@@ -390,7 +432,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_validate_sync_wait_ms_zero_passes() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = CrawlRequestDto {
             url: "https://example.com".to_string(),
             validated_url: None,
@@ -418,7 +462,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_result_timeout() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = SyncWaitResult {
             waited_time_ms: 5000,
             is_timeout: true,
@@ -429,7 +475,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_result_no_timeout() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = SyncWaitResult {
             waited_time_ms: 0,
             is_timeout: false,
@@ -442,7 +490,9 @@ mod tests {
 
     #[test]
     fn test_status_code_accepted_when_timeout() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let sync_wait_ms = 5000u32;
         let wait_result = SyncWaitResult {
             waited_time_ms: 5000,
@@ -458,7 +508,9 @@ mod tests {
 
     #[test]
     fn test_status_code_created_when_no_timeout() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let sync_wait_ms = 5000u32;
         let wait_result = SyncWaitResult {
             waited_time_ms: 1000,
@@ -474,7 +526,9 @@ mod tests {
 
     #[test]
     fn test_status_code_created_when_sync_wait_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let sync_wait_ms = 0u32;
         let wait_result = SyncWaitResult {
             waited_time_ms: 0,
@@ -492,7 +546,9 @@ mod tests {
 
     #[test]
     fn test_validation_error_empty_message() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::ValidationError(String::new());
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -501,7 +557,9 @@ mod tests {
 
     #[test]
     fn test_anyhow_error_chained_context() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::Anyhow(
             anyhow::anyhow!("root cause")
                 .context("middle context")
@@ -514,7 +572,9 @@ mod tests {
 
     #[test]
     fn test_repository_database_error_with_complex_message() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::Repository(RepositoryError::Database(anyhow::anyhow!(
             "connection pool exhausted after 30s timeout"
         )));
@@ -528,13 +588,17 @@ mod tests {
 
     #[test]
     fn test_crawl_task_credits_cost_value() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(CRAWL_TASK_CREDITS_COST, 10);
     }
 
     #[test]
     fn test_default_timeout_ms_constant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(DEFAULT_TIMEOUT_MS, 5000);
     }
 
@@ -547,7 +611,9 @@ mod tests {
     #[test]
     #[allow(clippy::unnecessary_literal_unwrap)]
     fn test_sync_wait_ms_defaults_to_default_timeout_when_none() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Verify: payload.sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32)
         // exercises the unwrap_or branch (not just the constant value).
         let payload_sync_wait_ms: Option<u32> = None;
@@ -558,14 +624,18 @@ mod tests {
 
     #[test]
     fn test_sync_wait_ms_uses_custom_value_when_some() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let sync_wait_ms = 10000;
         assert_eq!(sync_wait_ms, 10000);
     }
 
     #[test]
     fn test_sync_wait_ms_zero_uses_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let sync_wait_ms = 0;
         assert_eq!(sync_wait_ms, 0);
     }
@@ -574,7 +644,9 @@ mod tests {
 
     #[test]
     fn test_max_depth_six_fails_handler_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Handler: if payload.config.max_depth > 5 { return error }
         let max_depth: u32 = 6;
         assert!(max_depth > 5, "max_depth of 6 should fail handler check");
@@ -582,21 +654,27 @@ mod tests {
 
     #[test]
     fn test_max_depth_five_passes_handler_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let max_depth: u32 = 5;
         assert!(max_depth <= 5, "max_depth of 5 should pass handler check");
     }
 
     #[test]
     fn test_max_depth_zero_passes_handler_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let max_depth: u32 = 0;
         assert!(max_depth <= 5);
     }
 
     #[test]
     fn test_max_depth_one_passes_handler_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let max_depth: u32 = 1;
         assert!(max_depth <= 5);
     }
@@ -605,7 +683,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_with_expires_at() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "url": "https://example.com",
             "config": {"max_depth": 2},
@@ -621,7 +701,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_with_name() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "url": "https://example.com",
             "name": "My Crawl Task",
@@ -635,7 +717,9 @@ mod tests {
 
     #[test]
     fn test_crawl_config_dto_minimal() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"max_depth": 1}"#;
         let config: CrawlConfigDto = serde_json::from_str(json).unwrap();
         assert_eq!(config.max_depth, 1);
@@ -651,7 +735,9 @@ mod tests {
 
     #[test]
     fn test_crawl_config_dto_with_patterns() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "max_depth": 3,
             "include_patterns": ["/blog/*", "/news/*"],
@@ -665,7 +751,9 @@ mod tests {
 
     #[test]
     fn test_crawl_config_dto_with_headers_and_proxy() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "max_depth": 2,
             "headers": {"Authorization": "Bearer token"},
@@ -680,7 +768,9 @@ mod tests {
 
     #[test]
     fn test_crawl_use_case_error_validation_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::ValidationError("invalid input".to_string());
         let display = format!("{}", err);
         assert!(display.contains("Validation failed"));
@@ -689,7 +779,9 @@ mod tests {
 
     #[test]
     fn test_crawl_use_case_error_repository_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::Repository(RepositoryError::NotFound);
         let display = format!("{}", err);
         assert!(display.contains("Repository error"));
@@ -697,7 +789,9 @@ mod tests {
 
     #[test]
     fn test_crawl_use_case_error_not_found_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::NotFound;
         let display = format!("{}", err);
         assert!(display.contains("Crawl not found"));
@@ -705,7 +799,9 @@ mod tests {
 
     #[test]
     fn test_crawl_use_case_error_anyhow_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = CrawlUseCaseError::Anyhow(anyhow::anyhow!("something went wrong"));
         let display = format!("{}", err);
         assert!(display.contains("something went wrong"));
@@ -715,7 +811,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_result_default_when_no_tasks() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Handler creates this when tasks list is empty
         let result = SyncWaitResult {
             waited_time_ms: 0,
@@ -727,7 +825,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_result_default_on_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Handler creates this when find_by_crawl_id fails
         let result = SyncWaitResult {
             waited_time_ms: 0,
@@ -738,7 +838,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_result_timeout_with_waited_time() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Handler creates this when sync_wait_ms > 0 and tasks exist but timeout
         let sync_wait_ms = 5000u32;
         let result = SyncWaitResult {
@@ -753,7 +855,9 @@ mod tests {
 
     #[test]
     fn test_no_sync_wait_returns_created() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // When sync_wait_ms is 0 (after unwrap_or), status is always CREATED
         let sync_wait_ms: u32 = 0;
         let wait_result = SyncWaitResult {
@@ -770,7 +874,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_with_timeout_returns_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let sync_wait_ms: u32 = 3000;
         let wait_result = SyncWaitResult {
             waited_time_ms: 3000,
@@ -786,7 +892,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_without_timeout_returns_created() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let sync_wait_ms: u32 = 3000;
         let wait_result = SyncWaitResult {
             waited_time_ms: 1000,
@@ -804,7 +912,9 @@ mod tests {
 
     #[test]
     fn test_crawl_config_dto_with_empty_extraction_rules() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "max_depth": 1,
             "extraction_rules": {}
@@ -818,7 +928,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_serialization_roundtrip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = CrawlRequestDto {
             url: "https://example.com".to_string(),
             validated_url: None,
@@ -850,7 +962,9 @@ mod tests {
 
     #[test]
     fn test_crawl_request_dto_validated_url_is_skipped_in_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = CrawlRequestDto {
             url: "https://example.com".to_string(),
             validated_url: None,
@@ -885,21 +999,21 @@ mod tests {
     use crate::domain::auth::ApiKeyScope;
     use crate::domain::models::ScrapeResult;
     use crate::domain::models::{Crawl, CrawlStatus, Task, TaskStatus, TaskType};
-    // R-wh-003 / T027：webhook feature 关闭时不导入 Webhook 模型
+    // webhook feature 关闭时不导入 Webhook 模型
     #[cfg(feature = "webhook")]
     use crate::domain::models::Webhook;
     use crate::domain::repositories::crawl_repository::CrawlRepository;
-    // R-teams-004 / T014：teams feature 关闭时不导入 geo_restriction 相关类型
+    // teams feature 关闭时不导入 geo_restriction 相关类型
     #[cfg(feature = "teams")]
     use crate::domain::repositories::geo_restriction_repository::{
         GeoRestrictionRepository, GeoRestrictionRepositoryError,
     };
     use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
     use crate::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
-    // R-wh-003 / T027：webhook feature 关闭时不导入 WebhookRepository
+    // webhook feature 关闭时不导入 WebhookRepository
     #[cfg(feature = "webhook")]
     use crate::domain::repositories::webhook_repository::WebhookRepository;
-    // R-teams-004 / T014：teams feature 关闭时不导入 geo_location 相关类型
+    // teams feature 关闭时不导入 geo_location 相关类型
     #[cfg(feature = "teams")]
     use crate::domain::services::geo_location::{GeoLocation, GeoLocationService};
     use crate::domain::services::rate_limiting_service::{
@@ -907,7 +1021,7 @@ mod tests {
         QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
         RateLimitingService,
     };
-    // R-teams-004 / T014：teams feature 关闭时不导入 team_service 相关类型
+    // teams feature 关闭时不导入 team_service 相关类型
     #[cfg(feature = "teams")]
     use crate::domain::services::team_service::{TeamGeoRestrictions, TeamService};
     use async_trait::async_trait;
@@ -1070,16 +1184,24 @@ mod tests {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -1142,10 +1264,19 @@ mod tests {
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
         }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
     }
 
     // --- MockWebhookRepository ---
-    // R-wh-003 / T027：webhook feature 关闭时不编译此 mock
+    // webhook feature 关闭时不编译此 mock
 
     #[cfg(feature = "webhook")]
     struct MockWebhookRepository;
@@ -1211,10 +1342,14 @@ mod tests {
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
             Ok(0.0)
         }
+
+        async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+            Ok(0)
+        }
     }
 
     // --- MockGeoRestrictionRepository ---
-    // R-teams-004 / T014：teams feature 关闭时不编译此 mock
+    // teams feature 关闭时不编译此 mock
 
     #[cfg(feature = "teams")]
     struct MockGeoRestrictionRepository {
@@ -1268,7 +1403,7 @@ mod tests {
     }
 
     // --- MockGeoLocationService ---
-    // R-teams-004 / T014：teams feature 关闭时不编译此 mock
+    // teams feature 关闭时不编译此 mock
 
     #[cfg(feature = "teams")]
     struct MockGeoLocationService;
@@ -1409,6 +1544,16 @@ mod tests {
         async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
             Ok(1000)
         }
+
+        async fn refund_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
     }
 
     impl RateLimitingService for MockRateLimitingService {}
@@ -1522,7 +1667,7 @@ mod tests {
 
     /// Build a CrawlHandlerState from configurable mock dependencies.
     ///
-    /// R-teams-004 / R-wh-003：feature-off 时跳过对应依赖构造。
+    /// feature-off 时跳过对应依赖构造。
     /// `geo_restriction_repo` / `team_service`（teams-on）与 `webhook_repo`（webhook-on）
     /// 在函数内部按 feature 条件构造，调用方无需关心 feature 组合。
     fn build_handler_state(
@@ -1536,7 +1681,7 @@ mod tests {
         let scrape_result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(scrape_result_repo);
         let rate_limiting_service: Arc<dyn RateLimitingService> = Arc::new(rate_limiting_service);
 
-        // R-teams-004 / T014：teams-on 时构造 geo_restriction_repo / team_service
+        // teams-on 时构造 geo_restriction_repo / team_service
         #[cfg(feature = "teams")]
         let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::new());
@@ -1546,7 +1691,7 @@ mod tests {
             geo_restriction_repo.clone(),
         ));
 
-        // R-wh-003 / T027：webhook-on 时构造 webhook_repo
+        // webhook-on 时构造 webhook_repo
         #[cfg(feature = "webhook")]
         let webhook_repo: Arc<dyn WebhookRepository> = Arc::new(MockWebhookRepository);
 
@@ -1568,7 +1713,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_success_no_sync_wait() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
@@ -1594,7 +1741,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_success_sync_wait_empty_tasks() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
@@ -1621,7 +1770,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_success_sync_wait_completed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let task = make_task(Uuid::new_v4(), team_id, TaskStatus::Completed);
         let state = build_handler_state(
@@ -1651,7 +1802,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_sync_wait_timeout_returns_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         // Queued tasks never complete → polling loops until sync_wait_ms elapses
         let task = make_task(Uuid::new_v4(), team_id, TaskStatus::Queued);
@@ -1681,7 +1834,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_sync_wait_find_error_returns_created() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::failing_find_by_crawl(),
@@ -1708,7 +1863,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_max_depth_exceeds_returns_unprocessable_entity() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
@@ -1734,7 +1891,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_ssrf_private_ip_returns_bad_request() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
@@ -1761,7 +1920,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_rate_limited_returns_too_many_requests() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
@@ -1787,7 +1948,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_quota_exceeded_returns_payment_required() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
@@ -1813,7 +1976,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_use_case_validation_error_returns_bad_request() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // max_concurrency > 100 triggers use_case ValidationError (not handler check)
         let state = build_handler_state(
             MockCrawlRepository::new(),
@@ -1840,7 +2005,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_use_case_repository_error_returns_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::failing_create(),
             MockTaskRepository::new(),
@@ -1868,7 +2035,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_success_returns_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Queued);
         let crawl_id = crawl.id;
@@ -1895,7 +2064,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_not_found_returns_404() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
@@ -1919,7 +2090,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_wrong_team_returns_404() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let crawl = make_crawl(Uuid::new_v4(), CrawlStatus::Queued);
         let crawl_id = crawl.id;
         let state = build_handler_state(
@@ -1946,7 +2119,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_repo_error_returns_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::failing_find(),
             MockTaskRepository::new(),
@@ -1972,7 +2147,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_results_success_returns_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Completed);
         let crawl_id = crawl.id;
@@ -2000,7 +2177,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_results_crawl_not_found_returns_404() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
@@ -2024,7 +2203,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_results_repo_error_returns_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Completed);
         let crawl_id = crawl.id;
@@ -2054,7 +2235,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_success_returns_no_content() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Queued);
         let crawl_id = crawl.id;
@@ -2081,7 +2264,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_not_found_returns_404() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::new(),
@@ -2105,7 +2290,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_wrong_team_returns_404() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let crawl = make_crawl(Uuid::new_v4(), CrawlStatus::Queued);
         let crawl_id = crawl.id;
         let state = build_handler_state(
@@ -2131,7 +2318,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_already_completed_returns_no_content() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Completed);
         let crawl_id = crawl.id;
@@ -2159,7 +2348,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_repo_error_returns_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let state = build_handler_state(
             MockCrawlRepository::failing_find(),
             MockTaskRepository::new(),
@@ -2183,7 +2374,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_update_error_returns_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let crawl = make_crawl(team_id, CrawlStatus::Queued);
         let crawl_id = crawl.id;

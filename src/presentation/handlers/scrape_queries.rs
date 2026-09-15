@@ -68,7 +68,7 @@ pub async fn get_scrape_status(
                             screenshot: result.screenshot,
                             created_at: result.created_at.naive_utc(),
                         };
-                        // T010: redact sensitive headers before returning to client
+                        // redact sensitive headers before returning to client
                         dto.filter_sensitive_headers();
                         Some(dto)
                     }

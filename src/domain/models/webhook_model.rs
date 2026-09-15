@@ -271,6 +271,9 @@ pub enum WebhookStatus {
     /// Waiting to be delivered
     #[default]
     Pending,
+    /// Claimed by a sender (inline dispatch or worker) and in-flight.
+    /// 防止多实例/worker 重复投递；超过 5 分钟未终结会被重新认领。
+    Processing,
     /// Successfully delivered
     Delivered,
     /// Delivery failed, will retry
@@ -283,6 +286,7 @@ impl std::fmt::Display for WebhookStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WebhookStatus::Pending => write!(f, "pending"),
+            WebhookStatus::Processing => write!(f, "processing"),
             WebhookStatus::Delivered => write!(f, "delivered"),
             WebhookStatus::Failed => write!(f, "failed"),
             WebhookStatus::Dead => write!(f, "dead"),
@@ -296,6 +300,7 @@ impl std::str::FromStr for WebhookStatus {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "pending" => Ok(WebhookStatus::Pending),
+            "processing" => Ok(WebhookStatus::Processing),
             "delivered" => Ok(WebhookStatus::Delivered),
             "failed" => Ok(WebhookStatus::Failed),
             "dead" => Ok(WebhookStatus::Dead),

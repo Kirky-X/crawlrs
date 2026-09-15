@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! WreqEngine JA3/JA4 TLS 指纹端到端验证（Phase 1 / D4，T024）。
+//! WreqEngine JA3/JA4 TLS 指纹端到端验证。
 //!
 //! 校验 `WreqEngine`（BoringSSL / wreq 后端）对真实 TLS 目标能完成握手并产出指纹。
 //!
@@ -18,10 +18,10 @@
 //! IP 直连（`set_host(resolved_first)`）。这会导致 TLS 连接的 SNI 变为裸 IP，证书名称
 //! 校验失败（服务器证书只覆盖域名 SAN）。这是**全库共享的既有缺陷**（ReqwestEngine 对
 //! example.com / tls.peet.ws 同样无法带证书校验直连），非本引擎特有，修复需改动共享 SSRF
-//! /TLS 逻辑，超出 Phase 1 范围。
+//! /TLS 逻辑，超出范围。
 //!
 //! 因此本测试如 ReqwestEngine 既有工作路径一样，使用 `skip_tls_verification=true`
-//! （引擎显式支持的开关，见 `InternalScrapeRequest.skip_tls_verification`）绕过证书名称
+//! （引擎显式支持的开关 `InternalScrapeRequest.skip_tls_verification`）绕过证书名称
 //! 校验，使 IP 直连能完成握手——服务端仍会如实回传本引擎的 TLS/HTTP2 指纹。
 //!
 //! # 保真度说明（rule 12 显性化）
@@ -67,7 +67,7 @@ fn extract_ja4(body: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// T024：WreqEngine 对真实 TLS 目标能建立握手并产出 ja4 指纹。
+/// WreqEngine 对真实 TLS 目标能建立握手并产出 ja4 指纹。
 ///
 /// 因 SSRF IP-rewrite 破坏 SNI 校验（见模块文档），使用 `skip_tls_verification`
 /// 绕过证书名称校验以完成握手。不硬编码断言具体 Chrome 131 JA4（见模块文档
@@ -125,7 +125,7 @@ async fn wreq_engine_emits_tls_ja4_fingerprint() {
     );
 }
 
-/// T024：验证引擎在 `needs_tls_fingerprint=true` 时被优先（support_score 专长路径）。
+/// 验证引擎在 `needs_tls_fingerprint=true` 时被优先（support_score 专长路径）。
 /// 纯单元断言，无网络。
 #[test]
 fn wreq_engine_scores_tls_requests_highest() {
@@ -156,6 +156,6 @@ fn wreq_engine_scores_tls_requests_highest() {
     req.needs_tls_fingerprint = true;
     assert!(
         engine.support_score(&req) > baseline,
-        "T024：TLS 指纹请求应获得最高优先分数"
+        "TLS 指纹请求应获得最高优先分数"
     );
 }

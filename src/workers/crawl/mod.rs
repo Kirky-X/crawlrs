@@ -3,26 +3,26 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 深度爬取模块（design.md §15/§16，Stage4）
+//! 深度爬取模块（§16）
 //!
 //! 参考 crawl4ai `deep_crawling/{filters,scorers,frontier}.py` 与
 //! `adaptive_crawler.py`，提供 URL 过滤、评分、优先级队列与自适应停止条件。
 //!
 //! # 模块组成
 //!
-//! - [`filters`]：URL 过滤器 trait + FilterChain + 三个具体 filter（T063）
-//! - [`scorers`]：URL 评分器 trait + CompositeScorer + 两个具体 scorer（T064）
-//! - [`frontier`]：优先级队列 ScoredUrl + 域名 round-robin（T065）
-//! - [`adaptive`]：自适应策略 + 停止条件（T067）
+//! - [`filters`]：URL 过滤器 trait + FilterChain + 三个具体 filter
+//! - [`scorers`]：URL 评分器 trait + CompositeScorer + 两个具体 scorer
+//! - [`frontier`]：优先级队列 ScoredUrl + 域名 round-robin
+//! - [`adaptive`]：自适应策略 + 停止条件
 
 pub mod adaptive;
-/// DRL 自适应爬取策略（T083-T087）
+/// DRL 自适应爬取策略
 ///
 /// ONNX 模型推理 + 启发式退化。
 pub mod drl_policy;
 pub mod filters;
 pub mod frontier;
-/// 知识图谱覆盖感知爬取（T077-T082）
+/// 知识图谱覆盖感知爬取
 ///
 /// 爬取过程中构建 KG，用 Chao1 估计覆盖率，
 /// 结构空洞检测指导 URL 优先级。
@@ -31,7 +31,7 @@ pub mod scorers;
 
 use std::sync::Arc;
 
-/// URL 过滤器 trait（T063，R-frontier-002）
+/// URL 过滤器 trait
 ///
 /// 实现者定义 URL 是否被接受。[`FilterChain`] 串联多个 filter，
 /// 全部 `accept` 才放行（AND 语义）。
@@ -56,7 +56,7 @@ pub trait UrlFilter: Send + Sync {
     fn accept(&self, url: &str, context: &FilterContext) -> bool;
 }
 
-/// URL 评分器 trait（T064，R-frontier-003）
+/// URL 评分器 trait
 ///
 /// 实现者定义 URL 的相关性分数，[`scorers::CompositeScorer`] 加权聚合多个 scorer。
 /// 分数归一化到 `[0.0, 1.0]`，越高表示越相关，应优先出队。
@@ -83,7 +83,7 @@ pub trait UrlScorer: Send + Sync {
     fn score(&self, url: &str, context: &ScoringContext) -> f32;
 }
 
-/// 过滤上下文（T063）
+/// 过滤上下文
 ///
 /// 提供 filter 决策所需的辅助信息，避免每个 filter 自行解析 URL 或重复查询。
 ///
@@ -133,7 +133,7 @@ impl FilterContext {
     }
 }
 
-/// 评分上下文（T064）
+/// 评分上下文
 ///
 /// 提供 scorer 决策所需的辅助信息。
 ///
@@ -142,7 +142,7 @@ impl FilterContext {
 /// - `keywords`: 关键词列表（用于 [`scorers::KeywordRelevanceScorer`]）。
 ///   通常由 CrawlConfigDto 的 `keywords` 字段或 LLM 查询扩展生成。
 /// - `source_url`: 源页面 URL（预留扩展，用于上下文相关评分，如 source 同 path 前缀加分）。
-/// - `kg_priority_boost`: KG 结构空洞优先级提升因子（T082，R-frontier-006）。
+/// - `kg_priority_boost`: KG 结构空洞优先级提升因子。
 ///   由 [`crate::workers::crawl::knowledge_graph::KnowledgeGraphAccumulator::url_priority_boost`]
 ///   计算，默认 1.0（不提升）。>1.0 表示该 URL 可能填补结构空洞，应获得更高优先级。
 #[derive(Debug, Clone)]
@@ -190,7 +190,7 @@ impl ScoringContext {
         self
     }
 
-    /// 设置 KG 结构空洞优先级提升因子（T082，R-frontier-006）
+    /// 设置 KG 结构空洞优先级提升因子
     ///
     /// 由 `KnowledgeGraphAccumulator::url_priority_boost()` 计算。
     /// 值 >1.0 表示 URL 可能填补结构空洞，应获得更高优先级。
@@ -202,7 +202,7 @@ impl ScoringContext {
     }
 }
 
-/// 过滤器链（T063，R-frontier-002）
+/// 过滤器链
 ///
 /// 串联多个 [`UrlFilter`]，全部 `accept` 才放行（AND 语义）。
 /// 任一 filter 返回 `false` 立即短路返回 `false`，不调用后续 filter。

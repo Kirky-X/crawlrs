@@ -41,6 +41,7 @@ async fn test_route_respects_max_engine_attempts() {
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
                     response_time_ms: 10,
+                    final_url: None,
                 })
             } else {
                 Err(EngineError::Timeout(Duration::from_millis(10)))
@@ -141,13 +142,14 @@ impl ScraperEngine for MockEngine {
     ) -> Result<InternalScrapeResponse, EngineError> {
         Ok(InternalScrapeResponse {
                 status_code: 200,
-                // T013：内容需 ≥200 字节且可见文本 ≥50 字符，
+                // 内容需 ≥200 字节且可见文本 ≥50 字符，
                 // 否则被 antibot::classify Step 5 误判为 near-empty structural block。
                 content: "<html><body><h1>Mock Response</h1><p>This is a mock response for testing router logic. It contains enough visible text to avoid being flagged as a near-empty shell by the antibot classifier.</p></body></html>".to_string(),
                 screenshot: None,
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 10,
+                final_url: None,
             })
     }
 
@@ -604,7 +606,7 @@ fn test_router_metrics_record_engine_selection() {
 #[test]
 fn test_router_metrics_record_engine_latency() {
     let metrics = RouterMetrics::new();
-    // 架构审查 HIGH-1 修复后：record_engine_latency 自带 entry().or_insert() 自动初始化，
+    // record_engine_latency 自带 entry().or_insert() 自动初始化，
     // 不再依赖 record_engine_selection 预初始化 latencies=0
     metrics.record_engine_latency("engine1", Duration::from_millis(100));
     metrics.record_engine_latency("engine1", Duration::from_millis(200));
@@ -621,7 +623,7 @@ fn test_router_metrics_record_engine_latency() {
 #[test]
 fn test_router_metrics_record_engine_success() {
     let metrics = RouterMetrics::new();
-    // 架构审查 HIGH-1 修复后：record_engine_success 自带 entry().or_insert() 自动初始化，
+    // record_engine_success 自带 entry().or_insert() 自动初始化，
     // 不再需要测试手动 insert 0 预初始化
     metrics.record_engine_success("engine1");
     metrics.record_engine_success("engine1");
@@ -632,7 +634,7 @@ fn test_router_metrics_record_engine_success() {
 #[test]
 fn test_router_metrics_record_engine_failure() {
     let metrics = RouterMetrics::new();
-    // 架构审查 HIGH-1 修复后：record_engine_failure 自带 entry().or_insert() 自动初始化
+    // record_engine_failure 自带 entry().or_insert() 自动初始化
     // failure_count 和 failure_classification 都不再需要测试手动 insert 0 预初始化
     metrics.record_engine_failure("engine1", "timeout error");
     metrics.record_engine_failure("engine1", "network error");
@@ -698,7 +700,7 @@ fn test_router_metrics_get_avg_latency_ns_with_data() {
 #[test]
 fn test_router_metrics_record_engine_success_initializes_to_one() {
     // Verify that record_engine_success self-initializes the counter to 1
-    // when key doesn't exist (架构审查 HIGH-1 修复：原实现 noop when key missing
+    // when key doesn't exist (原实现 noop when key missing
     // 导致 success_count 永远为 0，与"成功必须被计数"的业务语义冲突)。
     let metrics = RouterMetrics::new();
     metrics.record_engine_success("engine1");
@@ -1016,6 +1018,7 @@ async fn test_route_race_mode_success() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: self.delay_ms,
+                final_url: None,
             })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1042,7 +1045,7 @@ async fn test_route_race_mode_success() {
     assert!(response.content.starts_with("from-"));
 }
 
-/// T070/§17：验证 race 胜出后延迟被记录到 hedge_controller
+/// §17：验证 race 胜出后延迟被记录到 hedge_controller
 #[tokio::test]
 async fn test_route_race_mode_records_hedge_latency() {
     struct FastEngine {
@@ -1063,6 +1066,7 @@ async fn test_route_race_mode_records_hedge_latency() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: self.delay_ms,
+                final_url: None,
             })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1168,6 +1172,7 @@ async fn test_aggregate_no_candidates() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 10,
+                final_url: None,
             })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1275,6 +1280,7 @@ async fn test_route_support_score_zero_filtered() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 10,
+                final_url: None,
             })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1310,12 +1316,13 @@ async fn test_trait_aggregate_delegates_to_impl() {
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
                     status_code: 200,
-                    // T013：同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
+                    // 同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
                     content: "<html><body><h1>OK</h1><p>Succeeding engine response for testing trait delegation. It has enough visible text to pass the antibot classifier near-empty check.</p></body></html>".to_string(),
                     screenshot: None,
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
                     response_time_ms: 10,
+                    final_url: None,
                 })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1346,12 +1353,13 @@ async fn test_trait_route_delegates_to_impl() {
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
                     status_code: 200,
-                    // T013：同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
+                    // 同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
                     content: "<html><body><h1>OK</h1><p>Succeeding engine response for testing trait delegation. It has enough visible text to pass the antibot classifier near-empty check.</p></body></html>".to_string(),
                     screenshot: None,
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
                     response_time_ms: 10,
+                    final_url: None,
                 })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1388,6 +1396,7 @@ async fn test_feature_filter_excludes_low_score_engine_for_screenshot() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 10,
+                final_url: None,
             })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1462,6 +1471,7 @@ async fn test_route_skips_engine_when_circuit_breaker_open() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 1,
+                final_url: None,
             })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1565,16 +1575,16 @@ async fn test_route_returns_timeout_when_remaining_time_zero() {
     }
 }
 
-// === T062: MRT 瀑布式超时测试（red → green） ===
+// === MRT 瀑布式超时测试（red → green） ===
 //
-// design.md §14 / T062：router 顺序 fallback 路径用 `min(remaining, engine.mrt())`
+// router 顺序 fallback 路径用 `min(remaining, engine.mrt())`
 // 包裹单引擎调用，超 MRT 即切下一引擎（瀑布式），不切整体失败。
 // race_mode 路径不受影响（保留作为可选模式）。
 
-/// T062 red：engine1 的 scrape() 耗时超过其 MRT → router 应通过 tokio::time::timeout
+/// engine1 的 scrape() 耗时超过其 MRT → router 应通过 tokio::time::timeout
 /// 在 MRT 时刻取消 engine1，记录 Timeout 失败，瀑布式切到 engine2 → engine2 立即成功。
 ///
-/// 未实现 T062 时：engine1 直接 sleep 500ms 后返回 Ok，engine2 永远不会被调用，
+/// 未实现时：engine1 直接 sleep 500ms 后返回 Ok，engine2 永远不会被调用，
 /// 总耗时 ~500ms，测试失败（断言 engine2_called=true 与 elapsed<400ms）。
 #[tokio::test]
 async fn test_route_mrt_waterfall_first_engine_exceeds_mrt_falls_to_second() {
@@ -1606,6 +1616,7 @@ async fn test_route_mrt_waterfall_first_engine_exceeds_mrt_falls_to_second() {
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
                     response_time_ms: self.sleep_dur.as_millis() as u64,
+                    final_url: None,
                 })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1637,6 +1648,7 @@ async fn test_route_mrt_waterfall_first_engine_exceeds_mrt_falls_to_second() {
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
                     response_time_ms: 1,
+                    final_url: None,
                 })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1698,10 +1710,10 @@ async fn test_route_mrt_waterfall_first_engine_exceeds_mrt_falls_to_second() {
     );
 }
 
-/// T062 red：engine 在其 MRT 内完成 → router 不应误超时，直接返回成功。
+/// engine 在其 MRT 内完成 → router 不应误超时，直接返回成功。
 ///
 /// 这是一个回归保护测试：确保 MRT 包裹不会破坏正常行为。
-/// 即使未实现 T062，此测试也应通过（因为 engine1 直接返回 Ok）。
+/// 即使未实现，此测试也应通过（因为 engine1 直接返回 Ok）。
 #[tokio::test]
 async fn test_route_mrt_engine_within_mrt_succeeds_normally() {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1728,6 +1740,7 @@ async fn test_route_mrt_engine_within_mrt_succeeds_normally() {
                     content_type: "text/html".to_string(),
                     headers: HashMap::new(),
                     response_time_ms: self.sleep_dur.as_millis() as u64,
+                    final_url: None,
                 })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1763,7 +1776,7 @@ async fn test_route_mrt_engine_within_mrt_succeeds_normally() {
     );
 }
 
-/// T062 red：当 remaining < mrt 时，router 应使用 remaining 作为超时
+/// 当 remaining < mrt 时，router 应使用 remaining 作为超时
 /// （即请求整体超时优先于单引擎 MRT）。
 ///
 /// 场景：request.timeout=80ms, engine.mrt=10s
@@ -1794,6 +1807,7 @@ async fn test_route_mrt_uses_min_remaining_when_remaining_less_than_mrt() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 0,
+                final_url: None,
             })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1956,6 +1970,7 @@ async fn test_route_race_mode_returns_timeout_on_select_all_timeout() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 5000,
+                final_url: None,
             })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -2000,7 +2015,7 @@ async fn test_route_race_mode_returns_timeout_on_select_all_timeout() {
     }
 }
 
-// === T066: sort_candidates_by_strategy 不同策略排序测试 ===
+// === sort_candidates_by_strategy 不同策略排序测试 ===
 
 #[test]
 fn test_sort_candidates_fastest_response() {
@@ -2107,7 +2122,7 @@ fn test_sort_candidates_smart_hybrid_score_priority() {
     );
 }
 
-// === T066: select_optimal_engines 熔断器过滤测试 ===
+// === select_optimal_engines 熔断器过滤测试 ===
 
 #[test]
 fn test_select_optimal_engines_circuit_breaker_skips_open() {

@@ -17,6 +17,7 @@ use crate::search::engine_trait::{SearchEngine, SearchRequest};
 use crate::search::error::SearchError;
 use crate::search::response::{Response, ResponseItem};
 use crate::search::types::{EngineHealth, SearchEngineType};
+use crate::utils::http_client::{read_body_limited, BodyReadError};
 
 /// Tavily API 默认基础 URL
 const DEFAULT_TAVILY_ENDPOINT: &str = "https://api.tavily.com";
@@ -122,13 +123,16 @@ impl SearchEngine for TavilySearchEngine {
             ));
         }
 
-        let body_text = response.text().await?;
-        if body_text.len() > MAX_RESPONSE_SIZE {
-            return Err(SearchError::Parse(format!(
-                "Tavily response exceeds 256KB limit: {} bytes",
-                body_text.len()
-            )));
-        }
+        // 响应体大小上限（R-engines-005）：content_length 预检 + bytes_stream 累积读取，
+        // 替代「先 `.text()` 全量读入再检查长度」的旧逻辑（防止超大响应先 OOM 再报错）。
+        let body_text = read_body_limited(response, MAX_RESPONSE_SIZE)
+            .await
+            .map_err(|e| match e {
+                BodyReadError::LimitExceeded { max_bytes } => {
+                    SearchError::Parse(format!("Tavily response exceeds {} byte limit", max_bytes))
+                }
+                BodyReadError::Network(e) => SearchError::Network(e),
+            })?;
 
         let results = Self::parse_response(&body_text)?;
 

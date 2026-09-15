@@ -13,13 +13,14 @@ use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::infrastructure::oxcache::CacheService;
 use crate::queue::task_queue::TaskQueue;
-// T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
+use uuid::Uuid;
+// 请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
-// H-4 职责拆分：CoalesceCoordinator（封装 try_coalesce 逻辑，注入 ScrapeWorker）
+// CoalesceCoordinator（封装 try_coalesce 逻辑，注入 ScrapeWorker）
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 use crate::workers::expiration_worker::ExpirationWorker;
 use crate::workers::scrape_worker::{ScrapeWorker, ScrapeWorkerDeps};
-// R-security-004/005：优雅退出协调器（design.md D3，T007）
+// 优雅退出协调器
 use crate::workers::shutdown::ShutdownCoordinator;
 use crate::workers::{AbstractWorker, Worker};
 use log::info;
@@ -28,7 +29,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::settings::Settings;
 use crate::utils::robots::RobotsCheckerTrait;
-// T019（R-runtime-001）：MemoryScheduler 接入 WorkerManager
+// MemoryScheduler 接入 WorkerManager
 #[cfg(feature = "metrics")]
 use crate::workers::scheduler::memory_scheduler::MemoryScheduler;
 
@@ -43,12 +44,12 @@ pub struct WorkerManager {
     engine_client: Arc<EngineClient>,
     create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     team_semaphore: Arc<TeamSemaphore>,
-    /// 请求合并器（T035/R-runtime-002）
+    /// 请求合并器
     ///
     /// 由 `WorkerManagerDeps` 从 `ServicesComponents.request_coalescer` 注入，
     /// 所有 worker 共享同一实例。
     request_coalescer: Arc<RequestCoalescer>,
-    /// 请求合并协调器（H-4 职责拆分）
+    /// 请求合并协调器
     ///
     /// 由 `WorkerManager::new` 从 `repository` + `result_repository` +
     /// `request_coalescer` 构造，封装 `try_coalesce` 逻辑。所有 worker 共享
@@ -60,28 +61,33 @@ pub struct WorkerManager {
     handles: Vec<JoinHandle<()>>,
     extraction_service:
         Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
-    /// 内存感知调度器（T019/R-runtime-001）
+    /// 内存感知调度器
     ///
     /// 由 `WorkerManager::new` 从 `shared_system_monitor()` + `ConcurrencySettings`
     /// 阈值构造，所有 worker 共享同一实例。
     #[cfg(feature = "metrics")]
     memory_scheduler: Arc<MemoryScheduler>,
-    /// URL 分层去重器（T053/R-frontier-001）
+    /// URL 分层去重器
     ///
     /// 所有 worker 共享同一实例，最大化 Bloom 预筛效果。
     /// `RwLock` 因为 Bloom insert 需 `&mut self`，contains 只需 `&self`。
     deduplicator: Arc<parking_lot::RwLock<crate::utils::dedup::Deduplicator>>,
-    /// 高级缓存服务（T059/R-cache-002）
+    /// 高级缓存服务
     ///
     /// 由 `WorkerManagerDeps` 从 `InfrastructureComponents.cache_service` 注入，
     /// 所有 worker 共享同一实例，用于 `process_scrape_task` 读写抓取结果缓存。
     cache_service: Arc<dyn CacheService>,
-    /// 优雅退出协调器（R-security-004/005，design.md D3）
+    /// 优雅退出协调器
     ///
     /// 由 main.rs 创建并通过 `WorkerManagerDeps` 注入，所有 worker 共享同一实例。
     /// `start_workers` 注入到每个 `ScrapeWorker`，关闭信号到达后 worker 循环
     /// 停止接受新任务并在完成当前任务后退出。
     shutdown_coordinator: Arc<ShutdownCoordinator>,
+    /// 本进程已启动 worker 的认领身份（worker_id 即任务 lock_token）
+    ///
+    /// 优雅停机回滚在途任务时据此限定回滚范围（R-data-integrity-004），
+    /// 防止多副本部署下误回滚其他副本正在执行的任务。
+    worker_ids: parking_lot::Mutex<Vec<Uuid>>,
 }
 
 /// Worker Manager Dependencies
@@ -95,15 +101,15 @@ pub struct WorkerManagerDeps {
     pub engine_client: Arc<EngineClient>,
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     pub team_semaphore: Arc<TeamSemaphore>,
-    /// 请求合并器（T035/R-runtime-002）
+    /// 请求合并器
     pub request_coalescer: Arc<RequestCoalescer>,
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
     pub http_client: Arc<reqwest::Client>,
     pub extraction_service:
         Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
-    /// 高级缓存服务（T059/R-cache-002）
+    /// 高级缓存服务
     pub cache_service: Arc<dyn CacheService>,
-    /// 优雅退出协调器（R-security-004/005，design.md D3）
+    /// 优雅退出协调器
     pub shutdown_coordinator: Arc<ShutdownCoordinator>,
 }
 
@@ -115,7 +121,7 @@ pub struct WorkerManagerConfig {
 
 impl WorkerManager {
     pub fn new(deps: WorkerManagerDeps, config: WorkerManagerConfig) -> Self {
-        // T019（R-runtime-001）：构造内存感知调度器
+        // 构造内存感知调度器
         //
         // 复用 `shared_system_monitor()` 全局单例（init_metrics 启动时已初始化），
         // 从 `ConcurrencySettings` 读取阈值（pressure/critical/timeout）。
@@ -134,7 +140,7 @@ impl WorkerManager {
             ))
         };
 
-        // H-4 职责拆分：在 move 前构造 CoalesceCoordinator，共享 repository +
+        // 在 move 前构造 CoalesceCoordinator，共享 repository +
         // result_repository + request_coalescer（所有 worker 共享同一实例）
         let coalesce_coordinator = Arc::new(CoalesceCoordinator::new(
             deps.repository.clone(),
@@ -161,15 +167,16 @@ impl WorkerManager {
             extraction_service: deps.extraction_service,
             #[cfg(feature = "metrics")]
             memory_scheduler,
-            // T053/R-frontier-001：所有 worker 共享 Deduplicator 实例
+            // 所有 worker 共享 Deduplicator 实例
             // 共享 Bloom 让已爬 URL 在任一 worker 触发后立即对其他 worker 可见，
             // 最大化降 DB 查询量效果。
             deduplicator: Arc::new(parking_lot::RwLock::new(
                 crate::utils::dedup::Deduplicator::new(),
             )),
-            // T059/R-cache-002：所有 worker 共享 CacheService 实例
+            // 所有 worker 共享 CacheService 实例
             cache_service: deps.cache_service,
             shutdown_coordinator: deps.shutdown_coordinator,
+            worker_ids: parking_lot::Mutex::new(Vec::new()),
         }
     }
 
@@ -182,14 +189,18 @@ impl WorkerManager {
     /// * `count` - 要启动的工作进程数量
     pub async fn start_workers(&mut self, count: usize) {
         // 启动过期清理工作器（使用新模板模式）
-        let expiration_processor = Arc::new(ExpirationWorker::new(self.repository.clone()));
+        let expiration_processor = Arc::new(ExpirationWorker::new(
+            self.repository.clone(),
+            self.result_repository.clone(),
+            self.settings.retention.scrape_results_days,
+        ));
         let expiration_worker =
             AbstractWorker::new(expiration_processor, std::time::Duration::from_secs(3600));
         self.handles.push(tokio::spawn(async move {
             expiration_worker.run().await;
         }));
 
-        // 性能审查 H-1 修复：定期调度 RequestCoalescer::purge_stale
+        // 定期调度 RequestCoalescer::purge_stale
         //
         // worker panic / 死锁可能导致 CoalesceGuard 未 Drop，使 in-flight 条目
         // 永久驻留 DashMap 阻塞同 URL 后续请求。每 60s 调用 purge_stale 清理
@@ -201,7 +212,7 @@ impl WorkerManager {
             interval.tick().await; // 跳过首次立即触发
             loop {
                 interval.tick().await;
-                // T023 修复：检查关闭信号，避免关闭后继续无意义循环
+                // 检查关闭信号，避免关闭后继续无意义循环
                 if shutdown_for_purge.is_shutting_down() {
                     info!("purge_stale loop exiting due to shutdown");
                     break;
@@ -232,10 +243,13 @@ impl WorkerManager {
                 #[cfg(feature = "metrics")]
                 memory_scheduler: self.memory_scheduler.clone(),
             })
-            // R-security-004/005：注入共享优雅退出协调器（design.md D3，T007）
+            // 注入共享优雅退出协调器
             .with_shutdown_coordinator(self.shutdown_coordinator.clone())
-            // T053/R-frontier-001：注入共享 deduplicator（替换 ScrapeWorker::new 内部默认实例）
+            // 注入共享 deduplicator（替换 ScrapeWorker::new 内部默认实例）
             .with_deduplicator_opt(Some(self.deduplicator.clone()));
+
+            // 记录本 worker 的认领身份（lock_token），供停机回滚限定范围
+            self.worker_ids.lock().push(worker.worker_id());
 
             let queue = self.queue.clone();
             // We spawn the worker loop on a separate task to avoid blocking the main thread
@@ -247,7 +261,15 @@ impl WorkerManager {
         }
     }
 
-    /// 触发优雅退出（R-security-004/005，design.md D3）
+    /// 本进程所有已启动 worker 的认领身份（worker_id == 任务 lock_token）。
+    ///
+    /// 供优雅停机回滚（`rollback_pending_tasks`）限定回滚范围：
+    /// 只回滚本进程认领的在途任务（R-data-integrity-004）。
+    pub fn worker_ids(&self) -> Vec<Uuid> {
+        self.worker_ids.lock().clone()
+    }
+
+    /// 触发优雅退出
     ///
     /// 等价于信号监听任务（`listen_unix_signals`）收到 SIGTERM/SIGINT 后
     /// 调用 `ShutdownCoordinator::trigger()`。置位后各 worker 循环停止接受
@@ -260,9 +282,9 @@ impl WorkerManager {
     ///
     /// 依赖注入的 `ShutdownCoordinator`：
     /// - `wait_for_completion()` 阻塞等待关闭信号，并在关闭后给进行中的任务
-    ///   至多 `graceful_period` 的宽限期完成（R-security-004）；
+    ///   至多 `graceful_period` 的宽限期完成
     /// - 宽限期结束后 abort 所有剩余句柄（含不检查关闭 flag 的辅助 worker：
-    ///   expiration / purge_stale 等无限循环），强制退出（R-security-005）。
+    ///   expiration / purge_stale 等无限循环），强制退出。
     pub async fn wait_for_shutdown(&mut self) {
         let _ = self.shutdown_coordinator.wait_for_completion().await;
 
@@ -271,7 +293,7 @@ impl WorkerManager {
         for handle in &handles {
             handle.abort();
         }
-        // T023 修复：abort 后 await 所有 handles，确保任务真正退出
+        // abort 后 await 所有 handles，确保任务真正退出
         // 带 5s 超时防止某个 handle 卡死阻塞关闭流程
         for handle in handles {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -744,14 +766,22 @@ mod tests {
         async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
             Ok(false)
@@ -791,6 +821,15 @@ mod tests {
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
         }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
     }
 
     struct MockScrapeResultRepository;
@@ -808,6 +847,10 @@ mod tests {
         }
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
             Ok(0.0)
+        }
+
+        async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+            Ok(0)
         }
     }
 
@@ -857,8 +900,8 @@ mod tests {
 
     #[async_trait]
     impl WebhookService for MockWebhookService {
-        async fn send_webhook(&self, _event: &WebhookEvent) -> anyhow::Result<()> {
-            Ok(())
+        async fn send_webhook(&self, _event: &WebhookEvent) -> anyhow::Result<u16> {
+            Ok(200)
         }
         async fn trigger_completion(&self, _task: &Task) -> anyhow::Result<()> {
             Ok(())
@@ -999,7 +1042,7 @@ mod tests {
         }
     }
 
-    /// Noop CacheService for testing（T059/R-cache-002）
+    /// Noop CacheService for testing
     ///
     /// 所有操作返回 Ok(None)/Ok(())，不实际存储数据。
     /// 用于 `WorkerManagerDeps` 构造时满足 `cache_service` 字段类型要求。
@@ -1133,7 +1176,7 @@ mod tests {
     }
 
     // ========== wait_for_shutdown: completes and aborts handles on shutdown trigger ==========
-    // Covers the graceful-shutdown branch (R-security-004/005): once the coordinator
+    // Covers the graceful-shutdown branch once the coordinator
     // is triggered (equivalently: SIGTERM/SIGINT received), wait_for_shutdown drains
     // handles within the graceful period and aborts leftovers.
     //

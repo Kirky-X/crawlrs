@@ -57,7 +57,7 @@ pub fn extract_clean_text_from_element(element: &ElementRef) -> String {
 /// Escape HTML entities in text to prevent XSS attacks, then trim whitespace.
 ///
 /// 统一封装 `html_escape::encode_text` + `trim`，消除 google.rs/sogou.rs/bing.rs
-/// 中重复的 XSS 防护代码（架构 MEDIUM 4：抽出 HtmlParser 公共原语）。
+/// 中重复的 XSS 防护代码（架构抽出 HtmlParser 公共原语）。
 ///
 /// # Arguments
 ///
@@ -73,14 +73,14 @@ pub fn escape_html_text(text: &str) -> String {
 /// Build a URL query string from key-value pairs.
 ///
 /// 使用 `fold` 累积构建查询字符串，避免 `collect::<Vec<_>>().join("&")` 的中间 Vec
-/// 分配（性能 LOW-11：URL 构建优化）。统一 google.rs/smart/mod.rs 中 5 处重复的
+/// 分配（性能 URL 构建优化）。统一 google.rs/smart/mod.rs 中 5 处重复的
 /// query string 构建逻辑。
 ///
 /// **安全**：key 和 value 都会通过 `urlencoding::encode` 进行 URL 编码，防止
-/// `&` / `=` 注入破坏查询参数解析（安全 LOW-1 + 架构 LOW-3）。
+/// `&` / `=` 注入破坏查询参数解析（安全 + 架构）。
 ///
 /// **性能**：使用 `String::with_capacity` 预分配容量（按 value 编码后最大膨胀 3 倍
-/// 估算），避免 `push_str` 触发多次扩容（性能 LOW-1）。
+/// 估算），避免 `push_str` 触发多次扩容（性能）。
 ///
 /// # Arguments
 ///

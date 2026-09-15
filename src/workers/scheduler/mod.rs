@@ -6,7 +6,7 @@
 //! 内存感知调度器模块
 //!
 //! 提供基于内存使用率的任务准入决策与公平优先级队列。
-//! 详见 `design.md` §5（crawler-capability-absorption Stage 1）。
+//! 详见 ` ` §5。
 //!
 //! [`memory_scheduler`] 依赖 `SystemMonitorTrait`（位于 `metrics` 特性门控的
 //! `infrastructure::observability::metrics` 模块），故仅在 `metrics` 启用时编译；

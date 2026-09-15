@@ -13,6 +13,7 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
 use async_trait::async_trait;
+// 部分方法签名使用裸 `Uuid`（get_quota_balance/refund_quota），统一引入类型别名
 use axum::{
     body::Body,
     extract::Request,
@@ -22,6 +23,7 @@ use axum::{
     routing::get,
 };
 use tower::ServiceExt;
+use uuid::Uuid;
 
 use crawlrs::domain::models::CreditsTransactionType;
 use crawlrs::domain::services::rate_limiting_service::{
@@ -167,6 +169,16 @@ impl QuotaService for MockRateLimitingService {
     }
     async fn get_quota_balance(&self, _team_id: uuid::Uuid) -> Result<i64, RateLimitingError> {
         Ok(1000)
+    }
+
+    async fn refund_quota(
+        &self,
+        _team_id: Uuid,
+        _amount: i64,
+        _description: String,
+        _reference_id: Option<Uuid>,
+    ) -> Result<(), RateLimitingError> {
+        Ok(())
     }
 }
 

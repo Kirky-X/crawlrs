@@ -281,7 +281,7 @@ fn should_show_detailed_errors() -> bool {
 /// - 端口号
 /// - URL 中的敏感参数
 ///
-/// T020: 所有 regex 预编译为模块级 Lazy 静态变量，避免每次调用重新编译。
+/// 所有 regex 预编译为模块级 Lazy 静态变量，避免每次调用重新编译。
 fn sanitize_engine_error(error: &str) -> String {
     static RE_FILE_PATH: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"/[a-zA-Z0-9_/.-]+\.(rs|toml|env|yml|json|txt)").unwrap());
@@ -442,7 +442,7 @@ impl From<crate::engines::engine_client::EngineError> for CrawlRsError {
             }
             crate::engines::engine_client::EngineError::Other(msg) => CrawlRsError::Engine(msg),
             crate::engines::engine_client::EngineError::Internal(msg) => CrawlRsError::Engine(msg),
-            // 引擎级 MRT 超时（架构审查 MEDIUM-2）：映射到 Timeout，
+            // 引擎级 MRT 超时：映射到 Timeout，
             // 错误信息携带 engine 名字 + mrt 时长，便于调用方定位瀑布式 fallback 失败点
             crate::engines::engine_client::EngineError::EngineMrtExceeded { engine, mrt } => {
                 CrawlRsError::Timeout(format!(

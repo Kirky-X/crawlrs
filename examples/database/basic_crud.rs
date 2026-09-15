@@ -20,7 +20,7 @@
 //! - PostgreSQL 数据库（连接字符串可通过环境变量 `DATABASE_URL` 覆盖）
 //! - 已启用 `dbnexus-postgres` 特性的 crawlrs 主项目
 
-use dbnexus::{CacheConfig, DbConfig, DbPool, Session};
+use dbnexus::{CacheConfig, DbConfig, DbPool, PoolConfig, Session};
 use log::info;
 
 /// 数据库连接 URL（示例值，生产环境请通过环境变量覆盖）
@@ -42,10 +42,13 @@ async fn main() {
     let config = build_sample_config();
     info!("✅ 已构造 DbConfig:");
     info!("   url: {}", config.url);
-    info!("   max_connections: {}", config.max_connections);
-    info!("   min_connections: {}", config.min_connections);
-    info!("   idle_timeout: {}s", config.idle_timeout);
-    info!("   acquire_timeout: {}ms", config.acquire_timeout);
+    info!("   max_connections: {}", config.pool_config.max_connections);
+    info!("   min_connections: {}", config.pool_config.min_connections);
+    info!("   idle_timeout: {}s", config.pool_config.idle_timeout);
+    info!(
+        "   acquire_timeout: {}ms",
+        config.pool_config.acquire_timeout
+    );
     info!("   admin_role: {}", config.admin_role);
     info!("   auto_migrate: {}", config.auto_migrate);
     info!("");
@@ -95,10 +98,12 @@ async fn main() {
 fn build_sample_config() -> DbConfig {
     DbConfig {
         url: DATABASE_URL.to_string(),
-        max_connections: 100,
-        min_connections: 10,
-        idle_timeout: 300,
-        acquire_timeout: 30_000,
+        pool_config: PoolConfig {
+            max_connections: 100,
+            min_connections: 10,
+            idle_timeout: 300,
+            acquire_timeout: 30_000,
+        },
         permissions_path: None,
         migrations_dir: None,
         auto_migrate: false,
@@ -107,6 +112,9 @@ fn build_sample_config() -> DbConfig {
         warmup_timeout: 30,
         warmup_retries: 3,
         cache_config: CacheConfig::default(),
+        retry_policy: None,
+        failover_config: None,
+        replica_config: None,
     }
 }
 

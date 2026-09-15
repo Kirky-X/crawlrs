@@ -181,11 +181,34 @@ pub fn skip_if_no_test_db() -> bool {
 /// do not load `permissions.yaml`, avoiding YAML/JSON parsing differences
 /// in dbnexus 0.4.0.
 ///
+/// # 每调用独立池（而非进程共享单池）
+///
+/// dbnexus 池内每个 `DbConnection` 是一个完整的 sea-orm/sqlx 连接池，其后台
+/// 维护任务绑定到**创建时的 tokio runtime**。`#[tokio::test]` 每个用例一个
+/// current-thread runtime，用例结束即销毁——若跨用例共享池，前一个 runtime
+/// 创建的连接被后续用例借出时，其后台任务已随原 runtime 消亡，查询将以
+/// "Connection pool timed out" 挂满 30s（实测复现，失败用例随调度时序漂移）。
+/// 因此本函数每次调用构造独立池：连接的创建、使用、销毁全程位于同一测试
+/// 自己的 runtime，构造上排除跨 runtime 复用。
+///
+/// `min_connections = 0` 禁用预热（预热连接产生在构造辅助线程的临时 runtime，
+/// 随构造即死）；`max_connections = 4` 限制 12 路并行测试的 PG 连接占用峰值
+/// （compose test-db `max_connections=300`）。
+///
 /// # Panics
 ///
 /// Panics if no database source is available (no env var AND no Docker),
 /// or if pool construction fails.
 pub fn create_test_db_pool() -> Arc<DbPool> {
+    build_independent_test_db_pool()
+}
+
+/// 构造一个独立的 `DbPool`（每次调用新池，不跨测试共享）。
+///
+/// 池结构体在专用线程的临时 runtime 中构造——`min_connections = 0` 下该
+/// runtime 不会创建任何连接，仅完成池元数据初始化；真正的连接由使用方在
+/// 自己的 runtime 中惰性创建（[`create_test_db_pool`] 的说明）。
+pub fn build_independent_test_db_pool() -> Arc<DbPool> {
     std::thread::scope(|s| {
         let handle = s.spawn(|| {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -197,17 +220,28 @@ pub fn create_test_db_pool() -> Arc<DbPool> {
                 "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
             );
             rt.block_on(async {
-                let cfg = DbConfig {
+                DbPool::with_config(DbConfig {
                     url,
+                    pool_config: dbnexus::PoolConfig {
+                        max_connections: TEST_POOL_MAX_CONNECTIONS,
+                        min_connections: 0,
+                        acquire_timeout: TEST_POOL_ACQUIRE_TIMEOUT_MS,
+                        ..dbnexus::PoolConfig::default()
+                    },
                     ..Default::default()
-                };
-                DbPool::with_config(cfg).await
+                })
+                .await
             })
             .expect("failed to create DbPool for test")
         });
         Arc::new(handle.join().expect("DbPool construction thread panicked"))
     })
 }
+
+/// 每池连接上限：12 路并行测试 × 4 ≈ 48，远低于 PG `max_connections=300`。
+const TEST_POOL_MAX_CONNECTIONS: u32 = 4;
+/// 获取超时 30s：容忍爬取类用例（tc_）长时间持会话造成的排队。
+const TEST_POOL_ACQUIRE_TIMEOUT_MS: u64 = 30_000;
 
 /// 全局 mutex 用于序列化所有 `acquire_next` 相关测试。
 ///
@@ -231,7 +265,7 @@ pub fn acquire_next_test_mutex() -> &'static Mutex<()> {
 
 /// 持有 garrison 全局态锁的 RAII guard。
 ///
-/// T034 修复：`init_services` 调用 `set_garrison_dao` + `set_audit_service`
+/// `init_services` 调用 `set_garrison_dao` + `set_audit_service`
 /// 注入全局态，若其他测试已注入会导致 fail-fast panic。此 guard 在 setup
 /// 阶段持有两把 `tokio::sync::Mutex` 锁并 reset 全局态，确保 `init_services` 调用安全。
 ///
@@ -250,7 +284,7 @@ pub fn acquire_next_test_mutex() -> &'static Mutex<()> {
 /// 先获取 DAO 锁，再获取 AUDIT_SERVICE 锁。两把锁都是 `tokio::sync::Mutex`，
 /// async-aware，安全跨 await 持有（避免 `std::sync::Mutex` 阻塞 runtime 线程）。
 ///
-/// # cfg 门控（架构审查 M1 修复）
+/// # cfg 门控
 ///
 /// auth feature 关闭时，`garrison_dao`/`garrison_listener` 模块不编译。
 /// 此 guard 与 [`acquire_garrison_global_state`] 在 auth-off 时退化为 no-op
@@ -262,7 +296,7 @@ pub struct GarrisonGlobalStateGuard {
     _audit_guard: tokio::sync::MutexGuard<'static, ()>,
 }
 
-/// auth-off 时的 no-op guard（架构审查 M1 修复）。
+/// auth-off 时的 no-op guard。
 ///
 /// 当 `auth` feature 关闭时，`garrison_dao`/`garrison_listener` 模块不编译，
 /// 不存在需要保护的全局态。此空 struct 让调用方代码在两种 feature 下都能编译。
@@ -290,7 +324,7 @@ pub async fn acquire_garrison_global_state() -> GarrisonGlobalStateGuard {
     }
 }
 
-/// auth-off 时的 no-op 实现（架构审查 M1 修复）。
+/// auth-off 时的 no-op 实现。
 #[cfg(not(feature = "auth"))]
 pub async fn acquire_garrison_global_state() -> NoopGarrisonGuard {
     NoopGarrisonGuard

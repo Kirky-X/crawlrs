@@ -22,7 +22,7 @@ use crate::engines::engine_client::EngineError;
 use crate::infrastructure::services::config_service::BrowserConfigTrait;
 use chromiumoxide::{Browser, BrowserConfig, Page};
 use futures::StreamExt;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -46,7 +46,7 @@ pub struct BrowserPoolConfig {
     pub enable_reuse: bool,
     /// 浏览器启动参数
     pub browser_args: Vec<String>,
-    /// TabPool 最大容量（T068，R-jsrender-004）
+    /// TabPool 最大容量
     ///
     /// 每个 Browser 实例独立的 Tab 池容量。0 = 禁用 tab 复用。
     /// 默认 10（每个 Browser 缓存最多 10 个空闲 Page）。
@@ -138,7 +138,7 @@ struct PooledBrowser {
     is_healthy: AtomicBool,
     /// 实例 ID
     instance_id: u64,
-    /// Tab 池（T068，per-Browser 实例）
+    /// Tab 池（per-Browser 实例）
     ///
     /// 每个 Browser 实例维护独立的 TabPool，避免 Page 跨 Browser 复用导致的
     /// CDP session 失效问题（chromiumoxide Page 持有的 session 与 Browser 绑定）。
@@ -293,7 +293,7 @@ impl BrowserPoolState {
         self.create_new_instance(permit).await
     }
 
-    /// 获取 Browser 实例 + 对应的 TabPool（T068，R-jsrender-004）
+    /// 获取 Browser 实例 + 对应的 TabPool
     ///
     /// 内部调用 [`acquire`] 获取 Browser，再从 `in_use` 中取出对应 PooledBrowser 的
     /// `tab_pool` 引用。返回的 `(instance_id, browser, tab_pool)` 三元组用于上层
@@ -427,6 +427,26 @@ impl BrowserPoolState {
         }
     }
 
+    /// 同步尽力从 in_use 移除泄漏槽位（Drop 路径无法 await）。
+    ///
+    /// 归还通道满/关闭时 BrowserInstance 被 drop，若 in_use 条目不清理会造成信号量
+    /// permit 泄漏、池容量永久收缩。try_write 成功即移除并递减 total_instances
+    /// （permit 随 PooledBrowser drop 自动释放），返回 true；锁被占用返回 false，
+    /// 由调用方退化为 spawn 异步 return_instance。
+    fn try_reclaim_in_use_slot(&self, instance_id: u64) -> bool {
+        match self.in_use.try_write() {
+            Ok(mut in_use) => {
+                if in_use.remove(&instance_id).is_some() {
+                    self.total_instances.fetch_sub(1, Ordering::Relaxed);
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(_) => false,
+        }
+    }
+
     async fn launch_browser(&self) -> Result<Arc<Browser>, EngineError> {
         let remote_debugging_url = self.browser_config.get_remote_debugging_url();
         let proxy_url = self.browser_config.get_proxy_url();
@@ -537,7 +557,7 @@ impl BrowserPoolState {
 
     async fn cleanup_idle_instances(&self) {
         // SEC-002: 三阶段模式避免写锁持有期间执行 I/O（与 health_check_all 统一）
-        // Phase 1: 读锁收集空闲实例
+        // 读锁收集空闲实例
         let idle_ids = {
             let available = self.available.read().await;
             let now = Instant::now();
@@ -549,7 +569,7 @@ impl BrowserPoolState {
                 .collect::<Vec<_>>()
         };
 
-        // Phase 2: 写锁移除空闲实例
+        // 写锁移除空闲实例
         let removed = {
             let mut available = self.available.write().await;
             idle_ids
@@ -558,7 +578,7 @@ impl BrowserPoolState {
                 .collect::<Vec<_>>()
         };
 
-        // Phase 3: 锁外 drop（total_instances 更新 + permit 自动释放）
+        // 锁外 drop（total_instances 更新 + permit 自动释放）
         for pooled in removed {
             self.total_instances.fetch_sub(1, Ordering::Relaxed);
             info!("Cleaned up idle browser instance {}", pooled.instance_id);
@@ -568,7 +588,7 @@ impl BrowserPoolState {
 
     async fn health_check_all(&self) {
         // SEC-002 + PERF-001: 三阶段模式避免写锁持有期间执行 I/O
-        // Phase 1: 读锁收集待检查实例（clone Arc 避免持锁）
+        // 读锁收集待检查实例（clone Arc 避免持锁）
         let candidates = {
             let available = self.available.read().await;
             available
@@ -577,7 +597,7 @@ impl BrowserPoolState {
                 .collect::<Vec<_>>()
         };
 
-        // Phase 2: 锁外执行健康检查
+        // 锁外执行健康检查
         let mut unhealthy_ids = Vec::new();
         for (id, pooled) in &candidates {
             if !self.check_browser_health(&pooled.browser).await {
@@ -586,7 +606,7 @@ impl BrowserPoolState {
             }
         }
 
-        // Phase 3: 写锁移除不健康实例，drop 在锁外
+        // 写锁移除不健康实例，drop 在锁外
         let removed = {
             let mut available = self.available.write().await;
             unhealthy_ids
@@ -637,6 +657,8 @@ pub struct BrowserInstance {
     instance_id: u64,
     /// 归还通道发送端（PERF-005: Arc 包装，与 BrowserPoolState 共享）
     return_sender: Option<Arc<mpsc::Sender<ReturnMessage>>>,
+    /// 池状态引用：归还通道满/关闭时用于直接回收 in_use 槽位，防止 permit 泄漏。
+    state: Arc<BrowserPoolState>,
 }
 
 impl BrowserInstance {
@@ -651,12 +673,47 @@ impl BrowserInstance {
     pub async fn release(mut self) {
         if let Some(browser) = self.browser.take() {
             if let Some(sender) = &self.return_sender {
-                let _ = sender
+                if let Err(mpsc::error::SendError(msg)) = sender
                     .send(ReturnMessage {
                         instance_id: self.instance_id,
                         browser,
                     })
-                    .await;
+                    .await
+                {
+                    // 通道关闭（receiver 已随后台任务终止）：直接回收 in_use 槽位，
+                    // 防止信号量 permit 泄漏导致池容量永久收缩（R-engines-003）。
+                    error!(
+                        "Return channel closed during release of browser instance {}; reclaiming in_use slot directly",
+                        msg.instance_id
+                    );
+                    self.state
+                        .return_instance(msg.instance_id, msg.browser)
+                        .await;
+                }
+            }
+        }
+    }
+
+    /// 归还通道不可用（满/关闭）时直接回收 in_use 槽位（Drop 无法 await）。
+    ///
+    /// 先尝试同步 `try_write` 移除（短临界区通常成功，permit 随 PooledBrowser drop
+    /// 释放）；锁被占用则退化为 spawn 异步 `return_instance`，保证容量最终可恢复。
+    fn reclaim_slot(&self, instance_id: u64, browser: Arc<Browser>) {
+        if self.state.try_reclaim_in_use_slot(instance_id) {
+            return;
+        }
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                let state = Arc::clone(&self.state);
+                handle.spawn(async move {
+                    state.return_instance(instance_id, browser).await;
+                });
+            }
+            Err(_) => {
+                error!(
+                    "No tokio runtime to reclaim browser instance {} in_use slot; pool capacity may leak",
+                    instance_id
+                );
             }
         }
     }
@@ -666,17 +723,26 @@ impl Drop for BrowserInstance {
     fn drop(&mut self) {
         if let Some(browser) = self.browser.take() {
             if let Some(sender) = &self.return_sender {
-                // 尝试非阻塞发送，如果失败则直接丢弃浏览器
+                // 非阻塞归还；通道满/关闭时不能直接丢弃浏览器——否则 in_use 槽位与
+                // 信号量 permit 泄漏，池容量永久收缩。改为 error! + 直接回收槽位。
                 match sender.try_send(ReturnMessage {
                     instance_id: self.instance_id,
                     browser,
                 }) {
                     Ok(_) => {}
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        warn!("Return channel full, dropping browser instance");
+                    Err(mpsc::error::TrySendError::Full(msg)) => {
+                        error!(
+                            "Return channel full for browser instance {}; reclaiming in_use slot directly to avoid permit leak",
+                            msg.instance_id
+                        );
+                        self.reclaim_slot(msg.instance_id, msg.browser);
                     }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        debug!("Return channel closed, dropping browser instance");
+                    Err(mpsc::error::TrySendError::Closed(msg)) => {
+                        error!(
+                            "Return channel closed for browser instance {}; reclaiming in_use slot directly to avoid permit leak",
+                            msg.instance_id
+                        );
+                        self.reclaim_slot(msg.instance_id, msg.browser);
                     }
                 }
             }
@@ -684,7 +750,7 @@ impl Drop for BrowserInstance {
     }
 }
 
-/// 浏览器 Page 包装器（T068，R-jsrender-004）
+/// 浏览器 Page 包装器
 ///
 /// 同时持有 [`BrowserInstance`] 和 [`Page`]，drop 时自动归还两者：
 ///
@@ -814,10 +880,11 @@ impl BrowserPool {
             browser: Some(browser),
             instance_id,
             return_sender,
+            state: self.state.clone(),
         })
     }
 
-    /// 获取 Browser + Page（T068，R-jsrender-004）
+    /// 获取 Browser + Page
     ///
     /// 在 [`acquire`](Self::acquire) 基础上额外从对应 Browser 的 [`TabPool`]
     /// 获取/复用 [`Page`]。返回的 [`PooledPage`] 在 drop 时自动归还 Browser 与 Page。
@@ -839,12 +906,27 @@ impl BrowserPool {
         let page = match tab_pool.acquire(&browser).await {
             Ok(page) => page,
             Err(e) => {
-                // acquire Page 失败，归还 Browser 到 return channel
-                let _ = self.state.clone_return_sender().try_send(ReturnMessage {
+                // acquire Page 失败，归还 Browser 到 return channel；通道满/关闭时
+                // 直接 await return_instance 移除 in_use 槽位，防止 permit 泄漏
+                // 导致池容量收缩（R-engines-003）。
+                let err_msg = e.to_string();
+                match self.state.clone_return_sender().try_send(ReturnMessage {
                     instance_id,
                     browser,
-                });
-                return Err(EngineError::BrowserError(e.to_string()));
+                }) {
+                    Ok(_) => {}
+                    Err(mpsc::error::TrySendError::Full(msg))
+                    | Err(mpsc::error::TrySendError::Closed(msg)) => {
+                        error!(
+                            "Return channel unavailable while reclaiming browser instance {} after page acquire failure ({}); removing in_use slot directly",
+                            instance_id, err_msg
+                        );
+                        self.state
+                            .return_instance(msg.instance_id, msg.browser)
+                            .await;
+                    }
+                }
+                return Err(EngineError::BrowserError(err_msg));
             }
         };
 
@@ -856,6 +938,7 @@ impl BrowserPool {
                 browser: Some(browser),
                 instance_id,
                 return_sender,
+                state: self.state.clone(),
             }),
             tab_pool,
         })
@@ -1018,7 +1101,7 @@ mod tests {
         assert_eq!(config.idle_timeout_secs, 300);
         assert_eq!(config.health_check_interval_secs, 60);
         assert!(config.enable_reuse);
-        // T068：tab_pool_max_size 默认 10
+        // tab_pool_max_size 默认 10
         assert_eq!(config.tab_pool_max_size, 10);
         // SEC-001: 默认不包含 --no-sandbox（生产环境安全默认）
         assert!(
@@ -1056,6 +1139,34 @@ mod tests {
         pool.shutdown().await;
         let result = pool.acquire_page().await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_try_reclaim_in_use_slot_absent_id_is_noop() {
+        // T026：归还通道满/关闭时 Drop 通过 try_reclaim_in_use_slot 同步移除
+        // in_use 槽位以回收 permit。无浏览器环境下无法在 in_use 放置真实
+        // PooledBrowser（需 Chrome，与本文件其余测试一致），故验证回收的安全属性：
+        // 对不存在的 instance_id 回收返回 false，且不误减 total_instances（防止过度
+        // 递减破坏计数）。in_use 收缩的正向断言需真实浏览器，属集成测试范畴。
+        let config = BrowserPoolConfig::default();
+        let browser_config = Arc::new(BrowserConfigComponent::default());
+        let state = Arc::new(BrowserPoolState::new(
+            config,
+            browser_config,
+            Arc::new(BrowserDownloadManager::new(BrowserDownloadConfig::default())),
+        ));
+        // 预置非零 total_instances，验证回收不存在槽位时不会误减
+        state.total_instances.store(3, Ordering::Relaxed);
+        assert!(
+            !state.try_reclaim_in_use_slot(999),
+            "reclaiming an absent instance must return false"
+        );
+        assert_eq!(
+            state.total_instances.load(Ordering::Relaxed),
+            3,
+            "absent-id reclaim must not decrement total_instances"
+        );
+        assert_eq!(state.in_use.read().await.len(), 0);
     }
 
     #[test]
@@ -1119,7 +1230,7 @@ mod tests {
         // 要么在 shutdown 后返回错误。关键是无 panic。
         let mut error_count = 0;
         for handle in handles {
-            if let Err(_) = handle.await.unwrap() {
+            if handle.await.unwrap().is_err() {
                 error_count += 1;
             }
         }

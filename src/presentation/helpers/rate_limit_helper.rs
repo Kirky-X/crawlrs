@@ -25,7 +25,7 @@ use std::fmt::Display;
 /// This helper consolidates the rate limit check logic that was repeated
 /// across multiple handlers (crawl, scrape, search, webhook).
 ///
-/// 性能 LOW-3（注释修正）：`api_key` 参数接受 `impl Display`，handler 可直接传 `Uuid`。
+/// 性能 `api_key` 参数接受 `impl Display`，handler 可直接传 `Uuid`。
 /// **注意**：这并未消除 `String` 分配 — `helper` 内部仍调用 `api_key.to_string()`。
 /// 真正的变化是把分配从 handler 挪到 helper，handler 调用点更简洁（删除中间变量）。
 /// 若要真正消除分配，需要 `RateLimitingService::check_rate_limit` 接受 `&dyn Display`
@@ -104,7 +104,7 @@ where
 ///
 /// This variant is for handlers that return `Result<T, CrawlRsError>`.
 ///
-/// 性能 LOW-3（注释修正）：同 `check_rate_limit`，`impl Display` 未消除分配，
+/// 性能同 `check_rate_limit`，`impl Display` 未消除分配，
 /// 仅把分配从 handler 挪到 helper。详见 `check_rate_limit` 文档。
 ///
 /// 安全策略（与 `rate_limit_middleware` 函数一致）：当 `service.check_rate_limit` 返回
@@ -330,6 +330,16 @@ mod tests {
 
         async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
             Ok(1000)
+        }
+
+        async fn refund_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
         }
     }
 

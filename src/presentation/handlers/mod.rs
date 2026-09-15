@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-/// R-auth-engine-002 / T027-3：API Key 签发 handler（garrison ApiKeyHandler 桥接）。
+/// API Key 签发 handler（garrison ApiKeyHandler 桥接）。
 /// 仅在 `auth` feature 启用时编译——`api_key_handler` 依赖 garrison 全局 DAO。
 #[cfg(feature = "auth")]
 pub mod api_key_handler;
@@ -25,12 +25,12 @@ pub mod search_handler;
 pub mod task_commands;
 pub mod task_handler;
 pub mod task_queries;
-// R-teams-002 / T012：teams feature 关闭时不编译 team_handler 模块
-// （/v1/teams/* 路由也不会注册，见 bootstrap::routes）
+// teams feature 关闭时不编译 team_handler 模块
+// v1/teams/* 路由也不会注册 bootstrap::routes
 #[cfg(feature = "teams")]
 pub mod team_handler;
-/// R-wh-001 / T026：webhook feature 关闭时不编译此模块
-/// （/v1/webhooks/* 路由也不会注册，见 bootstrap::routes）
+/// webhook feature 关闭时不编译此模块
+/// v1/webhooks/* 路由也不会注册 bootstrap::routes
 #[cfg(feature = "webhook")]
 pub mod webhook_handler;
 

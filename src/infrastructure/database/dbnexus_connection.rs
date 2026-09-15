@@ -310,7 +310,9 @@ mod tests {
 
     #[test]
     fn test_database_pool_from_arc_dbpool_yields_inner_reference() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
         assert!(
@@ -321,7 +323,9 @@ mod tests {
 
     #[test]
     fn test_database_pool_into_arc_dbpool_preserves_identity() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
         let arc: Arc<DbPool> = db_pool.into();
@@ -333,7 +337,9 @@ mod tests {
 
     #[test]
     fn test_database_pool_clone_inner_returns_arc_clone() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
         let cloned_inner = db_pool.clone_inner();
@@ -345,7 +351,9 @@ mod tests {
 
     #[test]
     fn test_database_pool_inner_returns_reference_to_same_arc() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
         let inner_ref = db_pool.inner();
@@ -354,7 +362,9 @@ mod tests {
 
     #[test]
     fn test_database_pool_stats_default_is_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool);
         let stats = db_pool.stats();
@@ -366,7 +376,9 @@ mod tests {
 
     #[test]
     fn test_database_pool_stats_returns_clone_of_inner_stats() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let custom_stats = PoolStats {
             active_connections: 7,
@@ -389,7 +401,9 @@ mod tests {
 
     #[test]
     fn test_database_pool_clone_preserves_inner_and_stats() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let db_pool = DatabasePool {
             inner: pool.clone(),
@@ -417,7 +431,9 @@ mod tests {
 
     #[test]
     fn test_database_pool_deref_targets_inner_dbpool() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
         let derefed: &DbPool = &db_pool;
@@ -432,7 +448,9 @@ mod tests {
 
     #[test]
     fn test_database_pool_as_ref_targets_inner_dbpool() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool.clone());
         let as_ref: &DbPool = AsRef::as_ref(&db_pool);
@@ -451,7 +469,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_succeeds_with_real_db() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_session("admin").await;
         assert!(
@@ -463,7 +483,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_admin_session_succeeds_with_real_db() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_admin_session().await;
         assert!(
@@ -475,7 +497,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_system_session_succeeds_with_real_db() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_system_session().await;
         assert!(
@@ -487,7 +511,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_readonly_session_returns_error_with_real_db() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_readonly_session().await;
         assert!(matches!(result, Err(sea_orm::DbErr::ConnectionAcquire(_))));
@@ -495,7 +521,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_with_empty_role_returns_error_with_real_db() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_session("").await;
         assert!(result.is_err());
@@ -503,7 +531,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_session_with_unicode_role_returns_error_with_real_db() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_session("管理员").await;
         assert!(result.is_err());
@@ -512,7 +542,9 @@ mod tests {
     #[tokio::test]
     #[allow(unused_comparisons, clippy::absurd_extreme_comparisons)]
     async fn test_get_pool_stats_returns_status_from_real_pool() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // get_pool_stats reads status from inner DbPool; real pool reports
         // non-negative counts (exact values depend on pool warm-up strategy).
         let db_pool = DatabasePool::from(create_test_db_pool());
@@ -530,7 +562,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_invalid_url_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let settings = make_settings("not-a-valid-url");
         let result = create_pool(&settings).await;
         assert!(
@@ -541,7 +575,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_unreachable_host_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Valid format but unreachable host (port 1 triggers connection failure)
         let settings = make_settings("postgres://postgres:postgres@127.0.0.1:1/postgres");
         let result = create_pool(&settings).await;
@@ -553,7 +589,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_all_none_settings_uses_defaults_and_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 覆盖 max_connections/unwrap_or(100)、min_connections/unwrap_or(10)、
         // idle_timeout/unwrap_or(300)、acquire_timeout/unwrap_or(30000)、
         // connect_timeout/unwrap_or(30)、max_lifetime/unwrap_or(1800) 等分支
@@ -573,7 +611,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_postgresql_url_format_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 覆盖 settings.url.starts_with("postgresql") 分支
         let settings = make_settings("postgresql://user:pass@127.0.0.1:1/db");
         let result = create_pool(&settings).await;
@@ -582,7 +622,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_postgres_url_format_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 覆盖 settings.url.starts_with("postgres") 分支
         let settings = make_settings("postgres://user:pass@127.0.0.1:1/db");
         let result = create_pool(&settings).await;
@@ -595,7 +637,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_retry_invalid_url_fails_all_retries() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let settings = make_settings("not-a-valid-url");
         let result = create_pool_with_retry(&settings, 3, 0).await;
         assert!(result.is_err());
@@ -603,7 +647,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_retry_zero_retries_returns_timeout_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 0 retries means loop body never executes, falls through to
         // last_error.unwrap_or_else(Timeout) — covers the Timeout fallback branch.
         let settings = make_settings("not-a-valid-url");
@@ -617,7 +663,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_retry_one_retry_invalid_url_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let settings = make_settings("not-a-valid-url");
         let result = create_pool_with_retry(&settings, 1, 0).await;
         assert!(result.is_err());
@@ -625,7 +673,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_retry_two_retries_invalid_url_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Two retries: covers warn! branch on attempt 1 and the final failure path.
         let settings = make_settings("not-a-valid-url");
         let result = create_pool_with_retry(&settings, 2, 0).await;
@@ -634,7 +684,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_retry_unreachable_host_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let settings = make_settings("postgres://postgres:postgres@127.0.0.1:1/postgres");
         let result = create_pool_with_retry(&settings, 2, 0).await;
         assert!(result.is_err());
@@ -646,7 +698,9 @@ mod tests {
 
     #[test]
     fn test_pool_stats_default_is_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let stats = PoolStats::default();
         assert_eq!(stats.active_connections, 0);
         assert_eq!(stats.idle_connections, 0);
@@ -655,7 +709,9 @@ mod tests {
 
     #[test]
     fn test_pool_stats_clone_preserves_values() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let stats = PoolStats {
             active_connections: 5,
             idle_connections: 3,
@@ -669,7 +725,9 @@ mod tests {
 
     #[test]
     fn test_pool_stats_debug_format_works() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let stats = PoolStats {
             active_connections: 1,
             idle_connections: 2,
@@ -683,7 +741,9 @@ mod tests {
 
     #[test]
     fn test_pool_stats_zero_values() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let stats = PoolStats {
             active_connections: 0,
             idle_connections: 0,
@@ -696,7 +756,9 @@ mod tests {
 
     #[test]
     fn test_pool_stats_max_u32_values() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let stats = PoolStats {
             active_connections: u32::MAX,
             idle_connections: u32::MAX,
@@ -736,7 +798,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_crawlrs_env_production_disables_sql_logging() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let _guard = EnvVarGuard::set("CRAWLRS_ENV", "production");
         let settings = make_settings("not-a-valid-url");
         let result = create_pool(&settings).await;
@@ -745,7 +809,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_crawlrs_env_prod_disables_sql_logging() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let _guard = EnvVarGuard::set("CRAWLRS_ENV", "prod");
         let settings = make_settings("not-a-valid-url");
         let result = create_pool(&settings).await;
@@ -754,7 +820,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_app_environment_production_disables_sql_logging() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 覆盖 or_else 分支：CRAWLRS_ENV 未设置时回退到 APP_ENVIRONMENT
         let _guard1 = EnvVarGuard::set("CRAWLRS_ENV", "");
         let _guard2 = EnvVarGuard::set("APP_ENVIRONMENT", "production");
@@ -765,7 +833,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_app_environment_prod_disables_sql_logging() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let _guard1 = EnvVarGuard::set("CRAWLRS_ENV", "");
         let _guard2 = EnvVarGuard::set("APP_ENVIRONMENT", "prod");
         let settings = make_settings("not-a-valid-url");
@@ -775,7 +845,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_pool_with_development_env_enables_sql_logging() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 覆盖 development 默认分支（is_production = false）
         let _guard = EnvVarGuard::set("CRAWLRS_ENV", "development");
         let settings = make_settings("not-a-valid-url");
@@ -790,7 +862,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires running PostgreSQL; run with: cargo test test_create_pool -- --ignored"]
     async fn test_create_pool() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // This test requires a running PostgreSQL instance
         // Skip in CI without database
         if std::env::var("SKIP_DATABASE_TESTS").is_ok() {
@@ -816,7 +890,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires running PostgreSQL; run with: cargo test test_get_session -- --ignored"]
     async fn test_get_session() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         if std::env::var("SKIP_DATABASE_TESTS").is_ok() {
             return;
         }

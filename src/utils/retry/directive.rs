@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 重试指令（design.md §4 — crawler-capability-absorption Stage 2，T026）
+//! 重试指令
 //!
 //! `RetryDirective` 描述"本次重试"应执行的身份升级动作集：
 //! - `rotate_ua`：轮换 User-Agent（`UaPool::pick_seeded(attempt)`）
@@ -85,7 +85,7 @@ impl RetryDirective {
 mod tests {
     use super::*;
 
-    /// R-identity-002: attempt=0（首次尝试）所有字段 false
+    /// attempt=0（首次尝试）所有字段 false
     #[test]
     fn attempt_0_all_false() {
         let d = RetryDirective::for_attempt(RetryReason::Transient, 0);
@@ -96,7 +96,7 @@ mod tests {
         assert!(!d.force_browser);
     }
 
-    /// R-identity-002: attempt=1 仅 rotate_ua=true
+    /// attempt=1 仅 rotate_ua=true
     #[test]
     fn attempt_1_only_ua() {
         let d = RetryDirective::for_attempt(RetryReason::Transient, 1);
@@ -107,7 +107,7 @@ mod tests {
         assert!(!d.force_browser);
     }
 
-    /// R-identity-002: attempt=2 开启 ua + proxy + viewport
+    /// attempt=2 开启 ua + proxy + viewport
     #[test]
     fn attempt_2_ua_proxy_viewport() {
         let d = RetryDirective::for_attempt(RetryReason::Transient, 2);
@@ -118,7 +118,7 @@ mod tests {
         assert!(!d.force_browser);
     }
 
-    /// R-identity-002: attempt≥3 全部开启
+    /// attempt≥3 全部开启
     #[test]
     fn attempt_3_all_enabled() {
         let d = RetryDirective::for_attempt(RetryReason::Transient, 3);
@@ -140,7 +140,7 @@ mod tests {
         assert!(d.force_browser);
     }
 
-    /// R-identity-002: FeatureToggle + attempt=0 → rotate_ua=true（特例）
+    /// FeatureToggle + attempt=0 → rotate_ua=true（特例）
     #[test]
     fn feature_toggle_attempt_0_rotates_ua() {
         let d = RetryDirective::for_attempt(RetryReason::FeatureToggle, 0);

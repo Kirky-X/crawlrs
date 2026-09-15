@@ -4,12 +4,16 @@
 [advisories]
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "deny"
-# 以下 advisory 为传递依赖中已停止维护的 crate，无可用升级，待上游迁移后移除：
-# - RUSTSEC-2026-0173: proc-macro-error2（dbnexus-macros 传递依赖，宏仅编译期执行）
-# - RUSTSEC-2023-0071: rsa Marvin Attack（garrison → jsonwebtoken v10.4.0 → rsa v0.9.10）
-#   风险评估：crawlrs 仅用 HS256 对称 JWT，不调用 rsa crate 任何函数，攻击面为零
-#   待上游升级后移除对应 ignore
-ignore = ["RUSTSEC-2026-0173", "RUSTSEC-2023-0071"]
+# RUSTSEC-2023-0071: rsa Marvin Attack（jsonwebtoken v11.0 rust_crypto 后端携带 rsa v0.9.10，
+# crawlrs 与 garrison 双路径传递）。风险评估：crawlrs 仅用 HS256 对称 JWT，
+# 不调用 rsa crate 任何函数，攻击面为零。待上游提供无 rsa 的后端或 rsa 发布修复后移除。
+# （原 RUSTSEC-2026-0173 proc-macro-error2 已不再出现于依赖树，ignore 已移除。）
+#
+# RUSTSEC-2026-0285: rustls TLS 1.3 握手消息跨加密层边界被错误接受（crypto-failure，
+# CVSS 5.3 MEDIUM，官方 patched >=0.23.45，2026-09-14 发布）。复查（2026-09-15）：
+# 依赖树 rustls 已锁定 0.23.45 = 修复版本，`cargo deny check` 报告 advisories ok，
+# 无需 ignore 也无需进一步升级。后续 rustls 相关依赖变更时随 `cargo deny check` 一并复核。
+ignore = ["RUSTSEC-2023-0071"]
 
 [licenses]
 allow = [

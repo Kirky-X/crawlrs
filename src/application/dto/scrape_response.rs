@@ -13,6 +13,7 @@ const SENSITIVE_HEADERS: &[&str] = &[
     "set-cookie",
     "authorization",
     "x-auth-token",
+    "x-api-key",
     "proxy-authorization",
     "cookie",
 ];
@@ -58,10 +59,23 @@ impl ScrapeResultDto {
     /// Remove sensitive headers (e.g. Set-Cookie, Authorization) from the `headers` field.
     ///
     /// This prevents accidental leakage of credentials to API consumers.
+    ///
+    /// Header 名称按 ASCII 大小写不敏感匹配（HTTP/1.1 折叠大小写合法，
+    /// 上游站点可能输出 `SET-COOKIE` 等变体）；命中的键保留、值替换为
+    /// `[REDACTED]`，避免向客户端暴露键的存在性差异。
     pub fn filter_sensitive_headers(&mut self) {
         if let Some(Value::Object(ref mut map)) = self.headers {
-            for key in SENSITIVE_HEADERS {
-                map.remove(*key);
+            let sensitive: Vec<String> = map
+                .keys()
+                .filter(|key| {
+                    SENSITIVE_HEADERS
+                        .iter()
+                        .any(|s| s.eq_ignore_ascii_case(key))
+                })
+                .cloned()
+                .collect();
+            for key in sensitive {
+                map.insert(key, Value::String("[REDACTED]".to_string()));
             }
         }
     }
@@ -95,4 +109,51 @@ pub struct ScrapeStatusResponseDto {
 pub struct CancelScrapeResponseDto {
     /// 取消成功的消息
     pub message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn redacts_sensitive_headers_regardless_of_case() {
+        let mut dto = ScrapeResultDto {
+            content: String::new(),
+            status_code: 200,
+            content_type: None,
+            response_time_ms: 0,
+            headers: Some(json!({
+                "Set-Cookie": "session=abc",
+                "X-Api-Key": "k-123",
+                "AUTHORIZATION": "Bearer t",
+                "Content-Type": "text/html",
+            })),
+            meta_data: None,
+            screenshot: None,
+            created_at: NaiveDateTime::default(),
+        };
+        dto.filter_sensitive_headers();
+        let map = dto.headers.as_ref().unwrap().as_object().unwrap();
+        assert_eq!(map.get("Set-Cookie").unwrap(), "[REDACTED]");
+        assert_eq!(map.get("X-Api-Key").unwrap(), "[REDACTED]");
+        assert_eq!(map.get("AUTHORIZATION").unwrap(), "[REDACTED]");
+        assert_eq!(map.get("Content-Type").unwrap(), "text/html");
+    }
+
+    #[test]
+    fn redacts_headers_when_no_headers_present() {
+        let mut dto = ScrapeResultDto {
+            content: String::new(),
+            status_code: 200,
+            content_type: None,
+            response_time_ms: 0,
+            headers: None,
+            meta_data: None,
+            screenshot: None,
+            created_at: NaiveDateTime::default(),
+        };
+        dto.filter_sensitive_headers();
+        assert!(dto.headers.is_none());
+    }
 }

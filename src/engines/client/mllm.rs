@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! T052: MLLM 自主导航爬取引擎
+//! MLLM 自主导航爬取引擎
 //!
 //! 实现 `ScraperEngine` trait，在 `scrape()` 内封装 agentic loop：
 //! 导航 → 截图 → vision_analyze → execute_decision → 循环，
@@ -265,6 +265,7 @@ impl ScraperEngine for MllmEngine {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: start.elapsed().as_millis() as u64,
+                final_url: None,
             })
         })
         .await

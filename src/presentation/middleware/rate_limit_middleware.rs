@@ -49,11 +49,12 @@ const IP_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 /// - If false: Reject the request with 503 Service Unavailable - for security (default)
 ///
 /// Controlled via RATE_LIMIT_FAIL_OPEN environment variable at startup.
-pub(crate) static RATE_LIMIT_FAIL_OPEN: once_cell::sync::Lazy<bool> = once_cell::sync::Lazy::new(|| {
-    std::env::var("RATE_LIMIT_FAIL_OPEN")
-        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        .unwrap_or(false)
-});
+pub(crate) static RATE_LIMIT_FAIL_OPEN: once_cell::sync::Lazy<bool> =
+    once_cell::sync::Lazy::new(|| {
+        std::env::var("RATE_LIMIT_FAIL_OPEN")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false)
+    });
 
 /// 简单的内存速率限制器（用于测试和 IP 限流）
 #[derive(Clone)]
@@ -206,6 +207,19 @@ fn extract_bearer_token(req: &Request) -> Option<String> {
     Some(token.to_string())
 }
 
+/// 计算 API key 的 SHA-256 摘要前缀（`sha256:` + 12 位 hex），用于日志输出。
+///
+/// ## 安全（CWE-532）
+///
+/// 限速日志不得携带明文 key 的任何连续片段（含“前 N 字符”形式）；
+/// 与 auth_middleware 的 `hash_token` 同一摘要算法，仅截短前缀便于日志阅读。
+fn hash_for_log(key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(key.as_bytes());
+    let hex = hex::encode(digest);
+    format!("sha256:{}", &hex[..12])
+}
+
 /// 从请求中提取客户端 IP 地址
 ///
 /// # 安全说明
@@ -328,8 +342,8 @@ pub async fn rate_limit_middleware(
     {
         Ok(RateLimitResult::Denied { reason }) => {
             debug!(
-                "Rate limit exceeded for API key starting with {}: {}",
-                &api_key[..std::cmp::min(8, api_key.len())],
+                "Rate limit exceeded for API key {}: {}",
+                hash_for_log(&api_key),
                 reason
             );
 
@@ -351,8 +365,8 @@ pub async fn rate_limit_middleware(
             retry_after_seconds,
         }) => {
             debug!(
-                "Rate limit retry after for API key starting with {}: {} seconds",
-                &api_key[..std::cmp::min(8, api_key.len())],
+                "Rate limit retry after for API key {}: {} seconds",
+                hash_for_log(&api_key),
                 retry_after_seconds
             );
 
@@ -376,8 +390,8 @@ pub async fn rate_limit_middleware(
         }
         Ok(RateLimitResult::Allowed) => {
             debug!(
-                "Rate limit check passed for API key starting with: {}",
-                &api_key[..std::cmp::min(8, api_key.len())]
+                "Rate limit check passed for API key: {}",
+                hash_for_log(&api_key)
             );
             next.run(req).await
         }
@@ -390,9 +404,9 @@ pub async fn rate_limit_middleware(
                 warn!(
                     "SEC-003: Rate limiting service error - failing open (allowing request). \
                      Consider setting RATE_LIMIT_FAIL_OPEN=false for stricter security. \
-                     error={} api_key_prefix={:?} path={}",
+                     error={} api_key={} path={}",
                     e,
-                    &api_key[..std::cmp::min(8, api_key.len())],
+                    hash_for_log(&api_key),
                     path
                 );
                 next.run(req).await
@@ -400,9 +414,9 @@ pub async fn rate_limit_middleware(
                 // Fail-closed: 拒绝请求以确保安全
                 error!(
                     "SEC-003: Rate limiting service error - failing closed (rejecting request) \
-                     error={} api_key_prefix={:?} path={}",
+                     error={} api_key={} path={}",
                     e,
-                    &api_key[..std::cmp::min(8, api_key.len())],
+                    hash_for_log(&api_key),
                     path
                 );
 
@@ -920,7 +934,7 @@ mod tests {
         use axum::routing::get;
         use tower::ServiceExt;
 
-        // T003: RATE_LIMIT_FAIL_OPEN defaults to false (fail-closed),
+        // RATE_LIMIT_FAIL_OPEN defaults to false (fail-closed),
         // so service errors should reject the request with 503
         let mock = Arc::new(MockRateLimitingService::error()) as Arc<dyn RateLimitingService>;
         let app = axum::Router::new()
@@ -1154,6 +1168,16 @@ mod tests {
         }
         async fn get_quota_balance(&self, _team_id: uuid::Uuid) -> Result<i64, RateLimitingError> {
             Ok(1000)
+        }
+
+        async fn refund_quota(
+            &self,
+            _team_id: uuid::Uuid,
+            _amount: i64,
+            _description: String,
+            _reference_id: Option<uuid::Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
         }
     }
 

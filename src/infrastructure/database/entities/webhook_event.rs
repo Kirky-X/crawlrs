@@ -12,6 +12,8 @@ use serde_json::Value as JsonValue;
 pub enum SeaWebhookStatus {
     #[sea_orm(string_value = "pending")]
     Pending,
+    #[sea_orm(string_value = "processing")]
+    Processing,
     #[sea_orm(string_value = "delivered")]
     Delivered,
     #[sea_orm(string_value = "failed")]

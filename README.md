@@ -135,7 +135,7 @@
 | **缓存** | 基于 oxcache 的多层缓存（L1 内存 moka 后端），支持 search/dns/regex 分类型 TTL |
 | **指标与监控** | Prometheus 兼容的导出 |
 | **Webhooks** | 事件驱动的任务完成通知 |
-| **API Key 认证** | garrison v0.8.1 接管认证：RBAC + JWT + firewall-bruteforce + audit-log，作用域访问控制和团队隔离 |
+| **API Key 认证** | garrison v0.9.0-rc.1 接管认证：RBAC + JWT + firewall-bruteforce + audit-log，作用域访问控制和团队隔离 |
 | **审计日志** | 完整的请求跟踪 |
 | **代理支持** | 统一出站代理配置 |
 | **LLM 抽取** | 基于 genai 的 LLM 内容抽取 |
@@ -180,9 +180,9 @@ cargo build --release --features "engine-playwright,metrics"
 
 ### 特性标志
 
-> **注意：** `default = ["teams", "auth", "rate-limit", "webhook"]` — 默认启用全部业务能力特性（多租户 + 认证 + 限流 + Webhook），保持现有全功能行为。使用预设（`standard` / `full`）或显式列出所需特性可叠加引擎与基础设施特性。
+> **注意：** `default = ["platform", "db-postgres"]`，其中 `platform` 展开为 `teams, auth, rate-limit, webhook, metrics, content` — 默认启用全部业务能力 + 指标 + 内容处理特性。使用预设（`standard` / `full`）或显式列出所需特性可叠加引擎与基础设施特性。
 
-> **核心栈为非可选。** 核心依赖（oxcache 0.3 / dbnexus 0.4 / confers 0.4 / sdforge 0.4 / inklog 0.1 / trait-kit 0.3 + scraper / chardetng / encoding_rs / robotstxt）与 HTTP 抓取栈始终编译，不再以 feature 形式暴露。
+> **核心栈为非可选。** 核心依赖（oxcache 0.5 / dbnexus 0.6 / confers 0.6 / sdforge 0.5 / inklog 0.3 / trait-kit 0.5 + scraper / chardetng / encoding_rs / robotstxt）与 HTTP 抓取栈始终编译，不再以 feature 形式暴露。
 
 | 特性 | 描述 | 默认 |
 |---------|-------------|----------|
@@ -206,16 +206,16 @@ cargo build --release --features "engine-playwright,metrics"
 
 ### 预设与编译体积
 
-本项目通过 Cargo 特性控制可选功能。核心栈（oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。业务能力特性（`teams` / `auth` / `rate-limit` / `webhook`）默认启用，可通过 `--no-default-features` 关闭以构建单租户/无认证部署。
+本项目通过 Cargo 特性控制可选功能。核心栈（oxcache 0.5 / dbnexus 0.6 / confers 0.6 / sdforge 0.5 / inklog 0.3 / trait-kit 0.5 + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。业务能力特性（`teams` / `auth` / `rate-limit` / `webhook`）+ 指标（`metrics`）+ 内容处理（`content`）默认启用，可通过 `--no-default-features` 关闭以构建单租户/无认证部署。
 
 | 预设 | 特性组合 | 二进制大小 | 适用场景 |
 |-----|---------|-----------|---------|
-| default | `teams, auth, rate-limit, webhook` | ~30MB | 单租户/多租户全功能（业务能力默认开） |
+| default | `platform (= teams, auth, rate-limit, webhook, metrics, content), db-postgres` | ~30MB | 单租户/多租户全功能（业务能力 + 指标 + 内容处理默认开） |
 | standard | `default + engine-playwright, metrics, content` | ~40MB | 生产推荐（JS 渲染 + 内容处理 + 指标） |
 | full | `standard + engine-flaresolverr + extractors + llm` | ~55MB | 所有功能 |
 | no-default | `--no-default-features` | ~22MB | 单租户/无认证部署（业务能力全关，Noop 实现） |
 
-> **注意：** `default` 包含业务能力特性，因此预设表已包含业务能力。如需关闭业务能力，使用 `--no-default-features` 显式列出所需特性（如 `--no-default-features --features rate-limit`）。
+> **注意：** `default` 包含 `platform` 元特性（业务能力 + 指标 + 内容处理），因此预设表已包含这些能力。如需关闭业务能力，使用 `--no-default-features` 显式列出所需特性（如 `--no-default-features --features rate-limit`）。
 
 ### 自定义组合
 
@@ -262,7 +262,7 @@ cargo build --release --no-default-features --features teams
 | 特性 | 默认 | 依赖关系 | 关闭时行为 | 关联常量/Noop 实现 |
 |------|------|----------|------------|---------------------|
 | `teams` | ✅ 启用 | 隐含 `auth` | 降级为单租户，所有请求归属 `DEFAULT_TEAM_ID`（`Uuid::from_u128(1)`） | `DEFAULT_TEAM_ID` |
-| `auth` | ✅ 启用 | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.8.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce + audit-log。关闭时走 `default_identity_middleware` 注入固定 `AuthState`（`DEFAULT_API_KEY_ID` + `full_access` scope） | `DEFAULT_API_KEY_ID`（`Uuid::from_u128(2)`）、`default_identity_middleware`、`auth_bridge::map_perms_to_scope` |
+| `auth` | ✅ 启用 | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.9.0-rc.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce + audit-log。关闭时走 `default_identity_middleware` 注入固定 `AuthState`（`DEFAULT_API_KEY_ID` + `full_access` scope） | `DEFAULT_API_KEY_ID`（`Uuid::from_u128(2)`）、`default_identity_middleware`、`auth_bridge::map_perms_to_scope` |
 | `rate-limit` | ✅ 启用 | `dep:limiteron` | 注入 `NoopRateLimitingService`，`check_rate_limit` 返回 `Allowed`、`check_and_deduct_quota` 返回 `Ok(())`、`get_quota_balance` 返回 `Ok(i64::MAX)` | `NoopRateLimitingService` |
 | `webhook` | ✅ 启用 | 无 | 注入 `NoopWebhookService`，`trigger_completion` / `trigger_failure` 返回 `Ok(())`；移除 `/v1/webhooks` 路由与 `webhook_worker` | `NoopWebhookService` |
 
@@ -439,7 +439,7 @@ curl -H "Authorization: Bearer garrison_key_id.garrison_secret" \
   http://localhost:8899/v1/scrape
 ```
 
-> **0.2.0 起（`garrison-auth-migration`）：** 认证引擎由 **garrison v0.8.1** 接管。Bearer token 格式为 `garrison_key_id.garrison_secret`，由 garrison 签发与校验。crawlrs 不再自管 `key_hash`，旧的 `CRAWLRS__AUTH__KEYS` / `[auth] keys` 配置项已弃用。
+> **0.2.0 起（`garrison-auth-migration`）：** 认证引擎由 **garrison v0.9.0-rc.1** 接管。Bearer token 格式为 `garrison_key_id.garrison_secret`，由 garrison 签发与校验。crawlrs 不再自管 `key_hash`，旧的 `CRAWLRS__AUTH__KEYS` / `[auth] keys` 配置项已弃用。
 
 **Garrison 提供的认证能力：**
 
@@ -580,17 +580,16 @@ flowchart TB
 |-----------|------------|---------|
 | Web 框架 | Axum | 0.8 |
 | 异步运行时 | Tokio | 1.53 |
-| 数据库 ORM | Sea-ORM 2.0.1（通过 dbnexus 0.4） | - |
+| 数据库 ORM | Sea-ORM 2.0.1（通过 dbnexus 0.6.0-rc.2） | - |
 | 数据库 | PostgreSQL | 16+ |
-| 缓存 | oxcache (moka) | 0.3 |
+| 缓存 | oxcache (moka) | 0.5.0-rc.2 |
 | HTTP 客户端 | Reqwest | 0.13 |
 | 浏览器自动化 | chromiumoxide | 0.9 |
-| 结构化日志 | inklog | 0.1 |
-| API SDK | sdforge | 0.4 |
-| 多后端缓存 | oxcache | 0.3 |
-| 速率限制 | limiteron | 0.2 |
-| 配置管理 | confers | 0.4 |
-| DI 框架 | trait-kit | 0.3 |
+| 结构化日志 | inklog | 0.3.0-rc.2 |
+| API SDK | sdforge | 0.5.0-rc.2 |
+| 速率限制 | limiteron | 0.3.0-rc.2 |
+| 配置管理 | confers | 0.6.0-rc.2 |
+| DI 框架 | trait-kit | 0.5.0-rc.2 |
 | HTML 解析 | scraper | 0.27 |
 
 ---

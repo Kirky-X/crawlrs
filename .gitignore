@@ -10,6 +10,7 @@
 # Section 0: IDE/Tool temp files
 # -----------------------------------------------------------------------------
 .mimocode/
+.mimosa/
 
 # -----------------------------------------------------------------------------
 # Section 1: Rust/Cargo Build Artifacts
@@ -168,6 +169,9 @@ docker/data/*
 
 # Docker test results
 docker/test-results/
+
+# E2E suite results（scripts/e2e-suite.sh 输出）
+test-results/
 
 # -----------------------------------------------------------------------------
 # Section 6: Python

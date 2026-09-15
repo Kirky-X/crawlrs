@@ -108,16 +108,24 @@ impl TaskRepository for MockTaskRepository {
         Ok(None)
     }
 
-    async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_completed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
 
-    async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_failed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
 
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
 
     async fn query_tasks(
@@ -163,6 +171,15 @@ impl TaskRepository for MockTaskRepository {
         _urls: &[String],
     ) -> Result<HashSet<String>, RepositoryError> {
         Ok(HashSet::new())
+    }
+
+    async fn renew_lock(
+        &self,
+        _task_id: Uuid,
+        _worker_id: Uuid,
+        _extend_seconds: i64,
+    ) -> Result<bool, RepositoryError> {
+        Ok(true)
     }
 }
 
@@ -230,6 +247,10 @@ impl ScrapeResultRepository for MockScrapeResultRepository {
     async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
         Ok(0.0)
     }
+
+    async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+        Ok(0)
+    }
 }
 
 /// Mock CrawlRepository that always succeeds.
@@ -287,8 +308,8 @@ impl WebhookService for MockWebhookService {
     async fn send_webhook(
         &self,
         _event: &crawlrs::domain::models::WebhookEvent,
-    ) -> anyhow::Result<()> {
-        Ok(())
+    ) -> anyhow::Result<u16> {
+        Ok(200)
     }
 
     async fn trigger_completion(&self, _task: &Task) -> anyhow::Result<()> {
@@ -428,7 +449,7 @@ impl ExtractionServiceTrait for MockExtractionService {
     }
 }
 
-/// Noop CacheService for testing（T059/R-cache-002）。
+/// Noop CacheService for testing。
 struct MockCacheService;
 
 #[async_trait::async_trait]
@@ -799,7 +820,7 @@ fn test_worker_manager_deps_with_shared_repository() {
 
     let _manager = WorkerManager::new(deps, config);
     // repo Arc is still valid.
-    // strong_count = 3: original + deps.repository + coalesce_coordinator (H-4 职责拆分)
+    // strong_count = 3: original + deps.repository + coalesce_coordinator
     assert_eq!(Arc::strong_count(&repo), 3); // original + deps + coalesce_coordinator
 }
 

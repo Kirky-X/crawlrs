@@ -28,7 +28,7 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
 use crate::domain::services::retry_handler::RetryHandler;
 use crate::domain::services::webhook_service::WebhookService;
-// T053/R-frontier-001：URL 分层去重器（Bloom 预筛 + DB 保权威）
+// URL 分层去重器（Bloom 预筛 + DB 保权威）
 use crate::utils::dedup::Deduplicator;
 
 use crate::common::CacheContext;
@@ -42,29 +42,29 @@ use crate::engines::engine_client::{
 use crate::infrastructure::oxcache::CacheService;
 use crate::infrastructure::security::ssrf::is_internal_url;
 use crate::queue::task_queue::TaskQueue;
-// H-4 职责拆分：请求合并协调器（替代原 request_coalescer 字段 + try_coalesce 方法）
+// 请求合并协调器（替代原 request_coalescer 字段 + try_coalesce 方法）
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
-// R-security-004/005：优雅退出协调器（design.md D3，T007/T008）
+// 优雅退出协调器
 use crate::workers::shutdown::ShutdownCoordinator;
-// HIGH-2 SRP 拆分：cache key 生成、URL 脱敏
+// cache key 生成、URL 脱敏
 use crate::workers::cache_utils::{self, redact_url_for_log};
-// H-4 职责拆分：Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
+// Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
 #[cfg(feature = "content")]
 use crate::workers::markdown_post_processor::MarkdownPostProcessor;
-// T074/R-content-001：正文提取门面（与 markdown 特性配合，only_main_content 前置提取）
+// 正文提取门面（与 markdown 特性配合，only_main_content 前置提取）
 #[cfg(feature = "content")]
 use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::utils::retry_policy::RetryPolicy;
-// T028/R-identity-002：重试指令与分类器（消费 RetryTracker + RetryDirective）
+// 重试指令与分类器（消费 RetryTracker + RetryDirective）
 use crate::utils::retry::{RetryDirective, RetryTracker};
-// T067/R-frontier-004：自适应爬取停止条件
+// 自适应爬取停止条件
 use crate::utils::robots::RobotsCheckerTrait;
-// T019（R-runtime-001）：内存感知调度器接入 scrape_worker
+// 内存感知调度器接入 scrape_worker
 // MemoryScheduler 依赖 SystemMonitorTrait（metrics 特性门控），故整块接入由 metrics 门控
 #[cfg(feature = "metrics")]
 use crate::workers::scheduler::memory_scheduler::{Admission, MemoryScheduler};
 
-// T026 拆分：提取到独立模块的函数导入
+// 提取到独立模块的函数导入
 pub(super) use super::crawl_link_extractor::{
     check_robots_txt as check_robots_txt_fn, extract_and_queue_links as extract_and_queue_links_fn,
     update_crawl_completion_status as update_crawl_completion_status_fn,
@@ -91,14 +91,14 @@ pub struct ScrapeWorker {
     engine_client: Arc<EngineClient>,
     _create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     team_semaphore: Arc<TeamSemaphore>,
-    /// 请求合并协调器（H-4 职责拆分，T035/R-runtime-002）
+    /// 请求合并协调器
     ///
     /// 同 URL 并发请求只允许首个执行实际抓取，其余 worker 等待广播后从
     /// `result_repo` 读取结果，避免重复网络往返。所有 worker 共享同一实例
     /// （由 `WorkerManager` 从 `ServicesComponents.request_coalescer` +
     /// `repository` + `result_repository` 构造注入）。
     coalesce_coordinator: Arc<CoalesceCoordinator>,
-    /// Markdown 后处理器（H-4 职责拆分，T042/R-content-001）
+    /// Markdown 后处理器
     ///
     /// 无状态服务，根据任务 `formats` 字段判断是否生成 Markdown。
     /// gated `markdown` 特性：关闭时本字段不存在，相关分支也不编译。
@@ -111,13 +111,13 @@ pub struct ScrapeWorker {
     default_concurrency_limit: usize,
     retry_handler: RetryHandler,
     extraction_service: Arc<dyn ExtractionServiceTrait>,
-    /// 内存感知调度器（T019/R-runtime-001）
+    /// 内存感知调度器
     ///
     /// `metrics` 启用时由 `WorkerManager` 注入；`process_task` 在获取并发许可前
     /// 调用 `admit()`，Pressure 时延后、Critical 时重排到 backlog。
     #[cfg(feature = "metrics")]
     memory_scheduler: Arc<MemoryScheduler>,
-    /// URL 分层去重器（T053/R-frontier-001）
+    /// URL 分层去重器
     ///
     /// UrlNormalizer + Bloom + HashSet 三层组合，用于 `extract_and_queue_links`
     /// 预筛 URL 是否已爬：
@@ -127,14 +127,14 @@ pub struct ScrapeWorker {
     /// `RwLock` 因为 `extract_and_queue_links` 是 `&self`，但 bloom insert 需 `&mut`。
     /// `Arc` 是为后续支持跨 worker 共享（当前每 worker 独立实例）。
     deduplicator: Arc<parking_lot::RwLock<Deduplicator>>,
-    /// 高级缓存服务（T059/R-cache-002）
+    /// 高级缓存服务
     ///
     /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
     /// 所有 worker 共享同一实例。`process_scrape_task` 在读写缓存前经
     /// `CacheContext` 门控：`is_cacheable() && should_read()` 查缓存命中直返，
     /// `is_cacheable() && should_write()` 抓取成功后写回。
     cache_service: Arc<dyn CacheService>,
-    /// 优雅退出协调器（R-security-004/005，design.md D3）
+    /// 优雅退出协调器
     ///
     /// 由 `WorkerManager` 注入，所有 worker 共享同一实例。`run()` 循环开头
     /// 检查 `is_shutting_down()`，置位后不再 acquire 新任务，完成当前任务即退出。
@@ -151,6 +151,11 @@ impl std::fmt::Debug for ScrapeWorker {
 }
 
 impl ScrapeWorker {
+    /// 本 worker 的认领身份（即任务 lock_token）
+    pub fn worker_id(&self) -> Uuid {
+        self.worker_id
+    }
+
     /// 创建新的抓取工作器实例
     ///
     /// 接受 `ScrapeWorkerDeps` 参数对象，聚合所有外部依赖。
@@ -184,17 +189,17 @@ impl ScrapeWorker {
             extraction_service: deps.extraction_service,
             #[cfg(feature = "metrics")]
             memory_scheduler: deps.memory_scheduler,
-            // T053/R-frontier-001：默认每 worker 独立 Deduplicator
+            // 默认每 worker 独立 Deduplicator
             // 后续可由 WorkerManager 通过 Builder 注入共享实例优化 DB 查询量
             deduplicator: Arc::new(parking_lot::RwLock::new(Deduplicator::new())),
             cache_service: deps.cache_service,
-            // R-security-004/005：默认独立协调器，由 WorkerManager 通过
+            // 默认独立协调器，由 WorkerManager 通过
             // `with_shutdown_coordinator` 注入共享实例。
             shutdown_coordinator: Arc::new(ShutdownCoordinator::default()),
         }
     }
 
-    /// 注入优雅退出协调器（R-security-004/005）
+    /// 注入优雅退出协调器
     ///
     /// 由 `WorkerManager` 在构造后调用，使所有 worker 共享同一实例；
     /// 关闭信号到达后 `run()` 循环检查 `is_shutting_down()` 协同退出。
@@ -208,7 +213,7 @@ impl ScrapeWorker {
         info!("Scrape worker {} started", self.worker_id);
 
         loop {
-            // R-security-004：优雅退出检查（design.md D3，T008）
+            // 优雅退出检查
             //
             // flag 置位后不再 acquire 新任务；若当前有任务正在执行，
             // 该任务完成返回后本循环即退出（不抢占正在执行的任务）。
@@ -280,10 +285,18 @@ impl ScrapeWorker {
         self.team_semaphore.try_acquire(task.team_id)
     }
 
-    async fn process_task(&self, mut task: Task) -> Result<()> {
+    async fn process_task(&self, task: Task) -> Result<()> {
         debug!(
             "process_task: task_id={}, url={}, task_type={}",
             task.id, task.url, task.task_type
+        );
+        // 锁续期心跳执行期间按锁时长的 1/3 周期续期，
+        // 防止长任务锁过期被其他 worker 抢占。RAII guard 在任意返回路径自动停止。
+        let _lock_heartbeat = crate::workers::lock_heartbeat::LockHeartbeat::start(
+            self.repository.clone(),
+            task.id,
+            self.worker_id,
+            self.settings.concurrency.task_lock_duration_seconds,
         );
         info!("Processing task");
 
@@ -291,7 +304,18 @@ impl ScrapeWorker {
         if let Some(expires_at) = task.expires_at {
             if Utc::now() > expires_at {
                 warn!("Task {} expired at {}", task.id, expires_at);
-                self.repository.mark_failed(task.id).await?;
+                let marked = self
+                    .repository
+                    .mark_failed(task.id, Some(self.worker_id))
+                    .await?;
+                if marked == 0 {
+                    // 已被其他 worker 终结/认领，不重复发失败 webhook
+                    warn!(
+                        "Task {} already terminal or re-claimed, skip expiry handling",
+                        task.id
+                    );
+                    return Ok(());
+                }
                 // Trigger failure webhook if needed
                 self.trigger_webhook(&task, Some("Task expired".to_string()))
                     .await;
@@ -299,11 +323,11 @@ impl ScrapeWorker {
             }
         }
 
-        // T019（R-runtime-001）：内存感知准入检查
+        // 内存感知准入检查
         //
         // 在获取并发许可（Team Semaphore）之前先采样内存状态并决定是否放行：
         // - Normal  → Proceed：进入并发获取流程
-        // - Pressure → Defer：复用现有 backlog 重排逻辑延后（design.md §5：
+        // - Pressure → Defer：复用现有 backlog 重排逻辑延后（
         //   不新建持久队列，复用 scheduled_at + Queued 状态机）
         // - Critical → Reschedule：同样经 backlog 重排，但语义为拒绝当前批次
         //
@@ -321,9 +345,11 @@ impl ScrapeWorker {
                         task.id, task.team_id
                     );
                     // 复用现有 backlog 重排逻辑：延后 30 秒重新入队
-                    task.scheduled_at = Some(Utc::now() + chrono::Duration::seconds(30));
-                    task.status = TaskStatus::Queued;
-                    self.repository.update(&task).await?;
+                    // （条件回队：锁守卫防止覆盖并发发生的取消/终结）
+                    let scheduled_at = Utc::now() + chrono::Duration::seconds(30);
+                    self.repository
+                        .requeue_task(task.id, task.lock_token, Some(scheduled_at))
+                        .await?;
                     return Ok(());
                 }
                 Admission::Reschedule => {
@@ -331,10 +357,11 @@ impl ScrapeWorker {
                         "Memory critical detected, rescheduling task {} (team_id={}) to backlog",
                         task.id, task.team_id
                     );
-                    // Critical 同样复用 backlog 重排逻辑（design.md：不新建持久队列）
-                    task.scheduled_at = Some(Utc::now() + chrono::Duration::seconds(30));
-                    task.status = TaskStatus::Queued;
-                    self.repository.update(&task).await?;
+                    // Critical 同样复用 backlog 重排逻辑（不新建持久队列）
+                    let scheduled_at = Utc::now() + chrono::Duration::seconds(30);
+                    self.repository
+                        .requeue_task(task.id, task.lock_token, Some(scheduled_at))
+                        .await?;
                     return Ok(());
                 }
             }
@@ -350,10 +377,11 @@ impl ScrapeWorker {
                     task.team_id, task.id
                 );
                 // Reschedule logic (Backlog)
-                // Delay by 30 seconds
-                task.scheduled_at = Some(Utc::now() + chrono::Duration::seconds(30));
-                task.status = TaskStatus::Queued;
-                self.repository.update(&task).await?;
+                // Delay by 30 seconds（条件回队，锁守卫防覆盖并发状态迁移）
+                let scheduled_at = Utc::now() + chrono::Duration::seconds(30);
+                self.repository
+                    .requeue_task(task.id, task.lock_token, Some(scheduled_at))
+                    .await?;
                 return Ok(());
             }
         };
@@ -383,7 +411,7 @@ impl ScrapeWorker {
     async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
         debug!("task_id: {}", task.id);
 
-        // PERF-H1 修复：解析一次 payload，dto 与 ScrapeRequest 复用同一份解析结果。
+        // PERF- 解析一次 payload，dto 与 ScrapeRequest 复用同一份解析结果。
         //
         // 旧实现：
         //   1) build_scrape_request(&task) 内部 from_value(payload.clone()) 得 dto
@@ -412,11 +440,17 @@ impl ScrapeWorker {
                 (Some(dto), req)
             }
             Err(e) => {
-                error!("Failed to parse task payload, using default: {}", e);
-                let req = ScrapeRequest::new(task.url.clone()).timeout(Duration::from_secs(
-                    self.settings.timeouts.engines.default_timeout_seconds,
-                ));
-                (None, req)
+                // payload 反序列化失败即失败（R-data-integrity-009）：不再静默回退
+                // 默认 ScrapeRequest 带残缺配置执行，改为标记任务 Failed 并终止。
+                // 仅输出 task_id 与错误摘要，绝不打印原始 payload（可能含敏感/超大内容）。
+                error!(
+                    "payload_invalid: task {} marked failed after payload deserialization error: {}",
+                    task.id, e
+                );
+                self.repository
+                    .mark_failed(task.id, Some(self.worker_id))
+                    .await?;
+                return Ok(());
             }
         };
 
@@ -431,12 +465,14 @@ impl ScrapeWorker {
                     task.id,
                     task.team_id
                 );
-                self.repository.mark_failed(task.id).await?;
+                self.repository
+                    .mark_failed(task.id, Some(self.worker_id))
+                    .await?;
                 return Ok(());
             }
         }
 
-        // T035/R-runtime-002 + H-4 职责拆分：请求合并——同 URL 并发只允许首个执行实际抓取
+        // 请求合并——同 URL 并发只允许首个执行实际抓取
         //
         // 调用 CoalesceCoordinator（独立组件），返回 `Some(guard)` 表示获得执行权，
         // guard 在抓取完成（含错误路径）后随作用域结束 Drop，自动从 in_flight 移除条目并广播给等待方。
@@ -444,20 +480,20 @@ impl ScrapeWorker {
         // 或任务被延后重排），调用方应直接返回 Ok。
         let _coalesce_guard = match self
             .coalesce_coordinator
-            .try_coalesce(&task.url, &task)
+            .try_coalesce(&task.url, &task, self.worker_id)
             .await?
         {
             Some(g) => g,
             None => return Ok(()),
         };
 
-        // T038/R-runtime-003：抓取成功/失败回填 AIMDController
+        // 抓取成功/失败回填 AIMDController
         //
         // 由 `TeamSemaphore` 封装——Fixed 模式 noop；Adaptive 模式调用
         // `AIMDController::record_*` 并经 `AdaptiveSemaphore::set_target` 推入新 target。
         // guard 在 match 块作用域结束时 Drop，确保先广播给等待方再释放。
 
-        // T059/R-cache-002：高级缓存模式门控
+        // 高级缓存模式门控
         //
         // 构造 `CacheContext`，按 `cache_mode` 决定读写行为：
         // - 读缓存：`is_cacheable() && should_read()` → 查缓存，命中直返跳过 `engine_client.scrape()`
@@ -471,7 +507,7 @@ impl ScrapeWorker {
             mode: scrape_request.options.cache_mode.unwrap_or_default(),
         };
 
-        // HIGH-1 改进：cache key 纳入 ScrapeOptions 影响字段（headers/needs_js/session_id）
+        // cache key 纳入 ScrapeOptions 影响字段（headers/needs_js/session_id）
         //
         // 由 `cache_utils::generate_scrape_cache_key` 统一生成，读/写共用同一 key。
         // 旧实现仅 `scrape:{method}:{url}` 会导致同 URL 不同 options 的缓存串扰
@@ -482,7 +518,7 @@ impl ScrapeWorker {
         let cached_response = if cache_ctx.is_cacheable() && cache_ctx.should_read() {
             match try_read_scrape_cache(&cache_ctx, &cache_key, self.cache_service.as_ref()).await {
                 Ok(Some(cached)) => {
-                    // 性能审查 LOW-1：debug 禁用时跳过 redact_url_for_log 调用（~1μs）
+                    // debug 禁用时跳过 redact_url_for_log 调用（~1μs）
                     // log crate 的 debug! 宏本身已 lazy format_args，但函数参数在宏调用前已求值，
                     // 需 log_enabled! 守卫才能避免 redact_url_for_log 的 Url::parse + String 分配。
                     if log::log_enabled!(log::Level::Debug) {
@@ -496,8 +532,8 @@ impl ScrapeWorker {
                 }
                 Ok(None) => None,
                 Err(e) => {
-                    // 规则12：缓存读失败不吞，记录后降级为 miss（不阻塞抓取）
-                    // T062 安全审查 MEDIUM-2：日志使用脱敏 URL，防止 query 参数泄露
+                    // 缓存读失败不吞，记录后降级为 miss（不阻塞抓取）
+                    // 日志使用脱敏 URL，防止 query 参数泄露
                     warn!(
                         "Cache read failed, falling back to scrape url={} error={}",
                         redact_url_for_log(&cache_ctx.url),
@@ -526,8 +562,8 @@ impl ScrapeWorker {
                         )
                         .await
                         {
-                            // 规则12：缓存写失败不吞，记录但不影响抓取结果
-                            // T062 安全审查 MEDIUM-2：日志使用脱敏 URL
+                            // 缓存写失败不吞，记录但不影响抓取结果
+                            // 日志使用脱敏 URL
                             warn!(
                                 "Cache write failed url={} error={}",
                                 redact_url_for_log(&cache_ctx.url),
@@ -546,23 +582,39 @@ impl ScrapeWorker {
                 debug!("status_code: {}", response.status_code);
                 info!("Scrape successful, status: {}", response.status_code);
 
-                // 性能审查 H-1 修复：handle_scrape_success 改为 owned ScrapeResponse，
+                // handle_scrape_success 改为 owned ScrapeResponse，
                 // 调用前提前提取 has_screenshot 标志（response 将被 move 消费）
                 let has_screenshot = response.screenshot.is_some();
                 let has_proxy = scrape_request.options.proxy.is_some();
 
-                if let Err(e) = self
+                match self
                     .handle_scrape_success(&task, scrape_request_dto.as_ref(), response)
                     .await
                 {
-                    error!("Scrape success handler failed: {}", e);
-                    debug!("error: {}", e);
-                    self.handle_failure(&mut task).await?;
-                } else {
-                    debug!("Scrape success handler completed successfully");
-                    // 扣除基础费用及高级功能费用 (PRD-253)
-                    self.deduct_feature_credits(task.team_id, task.id, has_screenshot, has_proxy)
+                    Err(e) => {
+                        error!("Scrape success handler failed: {}", e);
+                        debug!("error: {}", e);
+                        self.handle_failure(&mut task).await?;
+                    }
+                    Ok(false) => {
+                        // 丢守卫：认领方会重新执行并扣费，本 worker 不做任何计费
+                        warn!(
+                            "Task {} completion guard lost; feature credits not deducted by worker {}",
+                            task.id, self.worker_id
+                        );
+                    }
+                    Ok(true) => {
+                        debug!("Scrape success handler completed successfully");
+                        // 守卫胜利者扣除高级功能费用 (PRD-253)；token 费用已在
+                        // handle_scrape_success 内部于守卫胜利后统一扣除
+                        self.deduct_feature_credits(
+                            task.team_id,
+                            task.id,
+                            has_screenshot,
+                            has_proxy,
+                        )
                         .await;
+                    }
                 }
                 Ok(())
             }
@@ -571,12 +623,12 @@ impl ScrapeWorker {
                 error!("Scrape failed: {}", e);
                 debug!("error: {}", e);
 
-                // T028/R-identity-002：分类错误并计算重试指令（observability + reason-specific 限制）
+                // 分类错误并计算重试指令（observability + reason-specific 限制）
                 let retry_reason = e.retry_reason();
                 let directive =
                     RetryDirective::for_attempt(retry_reason, task.attempt_count as u32);
                 debug!(
-                    "T028 retry classification: reason={:?} attempt={} directive={:?}",
+                    "retry classification: reason={:?} attempt={} directive={:?}",
                     retry_reason, task.attempt_count, directive
                 );
 
@@ -591,16 +643,17 @@ impl ScrapeWorker {
                     if let Ok(Some(mut t)) = self.repository.find_by_id(task.id).await {
                         t.status = TaskStatus::Failed;
                         t.completed_at = Some(Utc::now());
-                        // 性能审查 M-5 修复：直接操作 t.payload，避免 clone 整个 JSON
+                        // 直接操作 t.payload，避免 clone 整个 JSON
                         // （原实现 let mut payload = t.payload.clone() + 后续 t.payload = payload
                         // 在失败路径上多分配一次 JSON Value）
                         if let Some(obj) = t.payload.as_object_mut() {
                             obj.insert("error".to_string(), json!(e.to_string()));
                         }
-                        self.repository.update(&t).await?;
+                        // 守卫式写入：锁被抢占/任务被终结时放弃写入
+                        self.repository.update_task_guarded(&t).await?;
                     }
                 } else {
-                    // T028/R-identity-002：reason-specific 重试限制检查
+                    // reason-specific 重试限制检查
                     // RetryTracker 各 reason 独立计数——AntiBot/FeatureToggle 达上限后
                     // 即使总 max_retries 未耗尽也立即标记失败，避免无谓重试。
                     let mut tracker = RetryTracker::new_default();
@@ -609,7 +662,7 @@ impl ScrapeWorker {
                     }
                     if !tracker.should_retry(retry_reason) {
                         info!(
-                            "T028: reason {:?} retry limit reached (attempt={}), \
+                            "retry limit reached for reason {:?} (attempt={}), \
                              marking task {} as failed",
                             retry_reason, task.attempt_count, task.id
                         );
@@ -623,7 +676,8 @@ impl ScrapeWorker {
                                     json!(format!("{:?}", retry_reason)),
                                 );
                             }
-                            self.repository.update(&t).await?;
+                            // 守卫式写入：锁被抢占/任务被终结时放弃写入
+                            self.repository.update_task_guarded(&t).await?;
                         }
                     } else {
                         self.handle_failure(&mut task).await?;
@@ -637,11 +691,11 @@ impl ScrapeWorker {
         }
     }
 
-    // H-4 职责拆分：`try_coalesce` 方法已迁移至 `CoalesceCoordinator`（独立组件）。
+    // `try_coalesce` 方法已迁移至 `CoalesceCoordinator`（独立组件）。
     // 原 `request_coalescer` 字段已替换为 `coalesce_coordinator: Arc<CoalesceCoordinator>`。
     // 调用方在 `process_scrape_task` 中通过 `self.coalesce_coordinator.try_coalesce(...)` 触发。
 
-    // T033 拆分：process_crawl_task / handle_crawl_success / handle_crawl_failure
+    // process_crawl_task / handle_crawl_success / handle_crawl_failure
     // 已迁移至 `crawl_task.rs`（partial impl block）
 
     /// 使用配置的规则提取数据（支持 rules > prompt > schema 优先级）
@@ -759,9 +813,9 @@ impl ScrapeWorker {
             .await
     }
 
-    // T033 拆分：handle_crawl_failure 已迁移至 `crawl_task.rs`
+    // handle_crawl_failure 已迁移至 `crawl_task.rs`
 
-    // T033 拆分：process_extract_task / handle_rules_extraction / handle_prompt_extraction
+    // process_extract_task / handle_rules_extraction / handle_prompt_extraction
     // / handle_schema_extraction / save_extract_result 已迁移至 `extract_task.rs`
 
     async fn handle_scrape_success(
@@ -769,11 +823,11 @@ impl ScrapeWorker {
         task: &Task,
         scrape_request_dto: Option<&ScrapeRequestDto>,
         response: ScrapeResponse,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         debug!("task_id: {}", task.id);
 
         // 文本编码处理 - 集成文本处理功能
-        // 性能审查 H-2 修复：process_text_encoding 返回 Cow<'_, str>，禁用路径零 clone
+        // process_text_encoding 返回 Cow<'_, str>，禁用路径零 clone
         let processed_content = match process_text_encoding(task, &response).await {
             Ok(content) => content.into_owned(),
             Err(e) => {
@@ -782,19 +836,19 @@ impl ScrapeWorker {
             }
         };
 
-        // PERF-H1 修复：复用 process_scrape_task 已解析的 ScrapeRequestDto 引用，
+        // PERF- 复用 process_scrape_task 已解析的 ScrapeRequestDto 引用，
         // 不再在 handle_scrape_success 内部二次 from_value(task.payload.clone())。
         let parsed_req = scrape_request_dto;
 
         // 创建处理后的响应用于后续处理
-        // T042/R-content-001 + H-4 职责拆分：调用 MarkdownPostProcessor（独立组件）
+        // 调用 MarkdownPostProcessor（独立组件）
         // 若 formats 含 "markdown" 则生成 Markdown，否则返回 Ok(None)
         //
-        // 架构审查 M-1（错误显性化）：generate() 现返回 Result<Option<String>, _>，
+        // （错误显性化）：generate() 现返回 Result<Option<String>, _>，
         // 区分"未请求 markdown"（Ok(None)）与"转换失败/空结果"（Err）。
-        // 调用方策略（design.md §10）：markdown 为增强字段，失败不阻断基础抓取结果，
+        // 调用方策略：markdown 为增强字段，失败不阻断基础抓取结果，
         // 错误时记录告警并继续（generated_markdown = None）。
-        // T074/R-content-001：generate() 改为 async，支持 only_main_content 前置正文提取
+        // generate() 改为 async，支持 only_main_content 前置正文提取
         #[cfg(feature = "content")]
         let generated_markdown: Option<String> = if let Some(req) = parsed_req.as_ref() {
             self.markdown_post_processor
@@ -813,7 +867,7 @@ impl ScrapeWorker {
         #[cfg(not(feature = "content"))]
         let generated_markdown: Option<String> = None;
 
-        // 性能审查 H-1 修复：handle_scrape_success 改为 owned ScrapeResponse，
+        // handle_scrape_success 改为 owned ScrapeResponse，
         // 构造 processed_response 时直接 move 字段，避免 clone screenshot(100KB+)/headers/...
         let processed_response = ScrapeResponse {
             content: processed_content,
@@ -827,6 +881,9 @@ impl ScrapeWorker {
         };
 
         // 解析 ScrapeRequest 以检查是否有提取规则
+        // Token 扣费延后：先收集用量，仅在赢得 mark_completed 守卫后统一扣除，
+        // 防止丢守卫的陈旧 worker 与认领方对同一次任务双扣费（R-data-integrity-005）
+        let mut pending_token_usages: Vec<crate::domain::services::llm::TokenUsage> = Vec::new();
         let mut extracted_data = None;
         if let Some(req) = parsed_req.as_ref() {
             if let Some(rules) = &req.extraction_rules {
@@ -837,7 +894,7 @@ impl ScrapeWorker {
                 {
                     Ok((data, usage)) => {
                         extracted_data = Some(data);
-                        // Record usage (PRD-334: Tokens Billing)
+                        // Record usage (PRD-334: Tokens Billing) — 扣费延后至守卫胜利后
                         if usage.total_tokens > 0 {
                             // 1. Record in-memory for real-time tracking
                             self.token_usage
@@ -845,33 +902,8 @@ impl ScrapeWorker {
                                 .or_insert_with(|| AtomicI64::new(0))
                                 .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
 
-                            // 2. Convert to credits and deduct from database
-                            // Rate: 10 credits per 1000 tokens, minimum 1 credit for any usage
-                            let credits_to_deduct =
-                                std::cmp::max(1, (usage.total_tokens as i64 * 10 + 999) / 1000);
-                            if credits_to_deduct > 0 {
-                                if let Err(e) = self
-                                    .credits_repository
-                                    .deduct_credits(
-                                        task.team_id,
-                                        credits_to_deduct,
-                                        crate::domain::models::CreditsTransactionType::Extract,
-                                        format!(
-                                            "Tokens used for extraction ({} tokens)",
-                                            usage.total_tokens
-                                        ),
-                                        Some(task.id),
-                                    )
-                                    .await
-                                {
-                                    error!("Failed to deduct credits for token usage: {}", e);
-                                } else {
-                                    info!(
-                                        "Deducted {} credits for {} tokens for team {}",
-                                        credits_to_deduct, usage.total_tokens, task.team_id
-                                    );
-                                }
-                            }
+                            // 2. Defer DB deduction until the completion guard is won
+                            pending_token_usages.push(usage);
                         }
                     }
                     Err(e) => {
@@ -887,13 +919,13 @@ impl ScrapeWorker {
                     {
                         Ok((data, usage)) => {
                             extracted_data = Some(data);
-                            self.deduct_token_credits(
-                                task.team_id,
-                                task.id,
-                                &usage,
-                                "Tokens used for prompt extraction",
-                            )
-                            .await;
+                            if usage.total_tokens > 0 {
+                                self.token_usage
+                                    .entry(task.team_id)
+                                    .or_insert_with(|| AtomicI64::new(0))
+                                    .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
+                                pending_token_usages.push(usage);
+                            }
                         }
                         Err(e) => {
                             error!("Prompt extraction failed for url {}: {}", task.url, e);
@@ -907,13 +939,13 @@ impl ScrapeWorker {
                 {
                     Ok((data, usage)) => {
                         extracted_data = Some(data);
-                        self.deduct_token_credits(
-                            task.team_id,
-                            task.id,
-                            &usage,
-                            "Tokens used for schema extraction",
-                        )
-                        .await;
+                        if usage.total_tokens > 0 {
+                            self.token_usage
+                                .entry(task.team_id)
+                                .or_insert_with(|| AtomicI64::new(0))
+                                .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
+                            pending_token_usages.push(usage);
+                        }
                     }
                     Err(e) => {
                         error!("Schema extraction failed for url {}: {}", task.url, e);
@@ -922,6 +954,10 @@ impl ScrapeWorker {
             }
         }
 
+        // 先落库结果（save_result 按 task_id 幂等 upsert），再以锁守卫终结任务：
+        // 中间崩溃的窗口退化为"结果已存、任务可被僵尸恢复重跑"，重跑后幂等覆盖
+        // 不会产生双结果；而旧顺序（先 Completed 后存结果）中间崩溃会留下
+        // "任务 Completed 但结果永久缺失"的不可恢复状态。
         save_result(
             task,
             &processed_response,
@@ -929,18 +965,34 @@ impl ScrapeWorker {
             self.result_repository.as_ref(),
         )
         .await?;
-        debug!("task_id: {}, About to mark task as completed", task.id);
-        self.repository.mark_completed(task.id).await?;
+        let marked = self
+            .repository
+            .mark_completed(task.id, Some(self.worker_id))
+            .await?;
+        if marked == 0 {
+            warn!(
+                "Task {} no longer owned by worker {}, skipping token/feature credit \
+                 deduction and webhook delivery",
+                task.id, self.worker_id
+            );
+            return Ok(false);
+        }
+
+        // 守卫胜利：统一执行延后的 token 扣费（仅本 worker 认领期间产生的用量）
+        for usage in &pending_token_usages {
+            self.deduct_token_credits(task.team_id, task.id, usage, "Tokens used for extraction")
+                .await;
+        }
         debug!(
             "task_id: {}, Successfully marked task as completed",
             task.id
         );
 
         self.trigger_webhook(task, None).await;
-        Ok(())
+        Ok(true)
     }
 
-    // H-4 职责拆分：`maybe_generate_markdown` 方法已迁移至 `MarkdownPostProcessor`（独立组件）。
+    // `maybe_generate_markdown` 方法已迁移至 `MarkdownPostProcessor`（独立组件）。
     // 原 `HtmdMarkdownService` 调用已替换为 `self.markdown_post_processor.generate(...)`，
     // 由 `handle_scrape_success` 中调用。
 
@@ -983,6 +1035,35 @@ impl ScrapeWorker {
         }
 
         if extra_credits > 0 {
+            // 幂等守卫（R-data-integrity-005）：丢失完成守卫的陈旧 worker 若重跑本
+            // 扣费路径，不得对同一任务二次扣费。已存在同任务 Scrape 扣费流水则跳过。
+            match self
+                .credits_repository
+                .has_deduction_for_task(
+                    task_id,
+                    crate::domain::models::CreditsTransactionType::Scrape,
+                )
+                .await
+            {
+                Ok(true) => {
+                    warn!(
+                        "Skipping duplicate feature-credit deduction for task {} (already charged)",
+                        task_id
+                    );
+                    return;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    // fail-closed：无法确认幂等时不扣费，避免客户可见的双扣费事故；
+                    // 显式 error 记录供对账补偿（漏扣可事后追偿，双扣不可逆）。
+                    error!(
+                        "Idempotency check failed for task {} feature credits: {}; \
+                         skipping deduction to avoid double-charge",
+                        task_id, e
+                    );
+                    return;
+                }
+            }
             if let Err(e) = self
                 .credits_repository
                 .deduct_credits(
@@ -998,6 +1079,14 @@ impl ScrapeWorker {
                 .await
             {
                 error!("Failed to deduct extra credits for task {}: {}", task_id, e);
+                // 欠费追偿记录负数流水，余额进入负值并留 DEBT 标记
+                self.record_debt(
+                    team_id,
+                    task_id,
+                    extra_credits,
+                    "screenshot/proxy extra credits",
+                )
+                .await;
             }
         }
     }
@@ -1010,6 +1099,33 @@ impl ScrapeWorker {
         description: &str,
     ) {
         if usage.total_tokens > 0 {
+            // 幂等守卫（R-data-integrity-005）：已存在同任务 Extract 扣费流水则跳过，
+            // 防止陈旧 worker 重跑扣费路径造成双扣费；in-memory 计数一并跳过避免虚高。
+            match self
+                .credits_repository
+                .has_deduction_for_task(
+                    task_id,
+                    crate::domain::models::CreditsTransactionType::Extract,
+                )
+                .await
+            {
+                Ok(true) => {
+                    warn!(
+                        "Skipping duplicate token-credit deduction for task {} (already charged)",
+                        task_id
+                    );
+                    return;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    error!(
+                        "Idempotency check failed for task {} token credits: {}; \
+                         skipping deduction to avoid double-charge",
+                        task_id, e
+                    );
+                    return;
+                }
+            }
             // 1. Record in-memory for real-time tracking
             self.token_usage
                 .entry(team_id)
@@ -1032,6 +1148,9 @@ impl ScrapeWorker {
                     .await
                 {
                     error!("Failed to deduct credits for token usage: {}", e);
+                    // 欠费追偿同上，记录负数流水
+                    self.record_debt(team_id, task_id, credits_to_deduct, "LLM token usage")
+                        .await;
                 } else {
                     info!(
                         "Deducted {} credits for {} tokens for team {}",
@@ -1042,7 +1161,38 @@ impl ScrapeWorker {
         }
     }
 
-    /// 从 Task payload 解析出 [`ScrapeRequestDto`]（PERF-H1 重构：拆分两步式）。
+    /// 欠费追偿后置扣费失败时以负数流水入账。
+    ///
+    /// `add_credits_safe` 存储过程不检查下限，负数金额使余额进入负值，
+    /// 并在 `credits_transactions` 留下 `DEBT:` 标记流水，供补账与对账使用，
+    /// 避免后置扣费失败被静默吞掉形成坏账。
+    async fn record_debt(&self, team_id: Uuid, task_id: Uuid, amount: i64, reason: &str) {
+        if let Err(debt_err) = self
+            .credits_repository
+            .add_credits(
+                team_id,
+                -amount,
+                crate::domain::models::CreditsTransactionType::ManualAdjustment,
+                format!("DEBT: post-task charge failed ({})", reason),
+                Some(task_id),
+            )
+            .await
+        {
+            error!(
+                "CRITICAL: Failed to record debt of {} credits for team {} (task {}): {}",
+                amount, team_id, task_id, debt_err
+            );
+        } else {
+            log::warn!(
+                "Recorded debt of {} credits for team {} (task {})",
+                amount,
+                team_id,
+                task_id
+            );
+        }
+    }
+
+    /// 从 Task payload 解析出 [`ScrapeRequestDto`]（PERF- 拆分两步式）。
     ///
     /// 该方法仅负责反序列化，调用方可继续调 [`Self::build_scrape_request_from_dto`]
     /// 构造 [`ScrapeRequest`]，或直接复用 dto 引用避免二次解析。
@@ -1056,7 +1206,7 @@ impl ScrapeWorker {
         serde_json::from_value(task.payload.clone()).context("Failed to parse task payload")
     }
 
-    /// 从已解析的 [`ScrapeRequestDto`] 构造 [`ScrapeRequest`]（PERF-H1 重构：拆分两步式）。
+    /// 从已解析的 [`ScrapeRequestDto`] 构造 [`ScrapeRequest`]（PERF- 拆分两步式）。
     ///
     /// 不再读取 `task.payload`，避免重复解析与 clone。
     pub(crate) fn build_scrape_request_from_dto(dto: &ScrapeRequestDto) -> Result<ScrapeRequest> {
@@ -1150,7 +1300,7 @@ impl ScrapeWorker {
                 block_ads: false,
                 block_media: false,
                 session_id: None,
-                // T058/R-cache-002：cache_mode 桥接（bypass_cache 优先级处理）
+                // cache_mode 桥接（bypass_cache 优先级处理）
                 //
                 // bypass_cache=Some(true) 覆盖 cache_mode 为 Bypass（应急绕过读，正常写回）。
                 // 其余情况按 cache_mode 走；两者皆 None 时等价于 Enabled（默认）。
@@ -1278,9 +1428,9 @@ impl ScrapeWorker {
     }
 }
 
-// T033 拆分：Crawl 任务处理方法（partial impl block）
+// Crawl 任务处理方法（partial impl block）
 mod crawl_task;
-// T033 拆分：Extract 任务处理方法（partial impl block）
+// Extract 任务处理方法（partial impl block）
 mod extract_task;
 
 // Builder 子模块

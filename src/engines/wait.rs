@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! `WaitFor::wait` 方法实现（T069，R-jsrender-004）
+//! `WaitFor::wait` 方法实现
 //!
 //! `WaitFor` 枚举本身定义在 [`crate::engines::engine_client::WaitFor`]（非 feature-gated），
 //! 此模块仅包含依赖 `chromiumoxide::Page` 的 `wait` 方法实现，由 `engine-playwright`

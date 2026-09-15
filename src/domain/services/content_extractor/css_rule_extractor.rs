@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information
 
-//! CSS 规则兜底提取器（design.md §11，T045/R-content-002）
+//! CSS 规则兜底提取器
 //!
 //! [`CssRuleExtractor`] 是无 feature 依赖的兜底实现，复用现有
 //! [`ExtractionService::get_clean_text`] 完成正文清洗（spec constraint：不引入第三套清理实现）。
@@ -16,7 +16,7 @@
 //! 5. 页面类型：默认 `PageType::Unknown`（CSS 启发式不足以分类）
 //!
 //! 设计取舍：作为 fallback 兜底，质量最低。Trafilatura/DomSmoothie 启用后由 Facade 优先选择。
-//! 三特性均关闭时 Facade 退化为本实现，保证编译通过且功能可用（R-content-003）。
+//! 三特性均关闭时 Facade 退化为本实现，保证编译通过且功能可用。
 
 use scraper::{Html, Selector};
 
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn default_equals_new() {
         let a = CssRuleExtractor::new();
-        let b = CssRuleExtractor::default();
+        let b = CssRuleExtractor;
         let html = "<p>same content</p>";
         let ra = a
             .extract(html, "https://example.com/")

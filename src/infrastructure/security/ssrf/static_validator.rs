@@ -82,7 +82,7 @@ pub fn is_internal_url(url_str: &str) -> bool {
         host
     };
 
-    // Check for IPv4-mapped IPv6 addresses (::ffff:192.168.1.1)
+    // Check for IPv4-mapped IPv6 addresses (ffff:192.168.1.1)
     if host.contains("::ffff:") || host.contains("::FFFF:") {
         return true;
     }

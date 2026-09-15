@@ -6,6 +6,7 @@
 //! Crawl command handlers — POST/DELETE scrape mutation operations.
 
 use axum::{
+    extract::ConnectInfo,
     extract::{Extension, Json, Path},
     http::StatusCode,
     response::IntoResponse,
@@ -19,7 +20,9 @@ use crate::{
     application::dto::scrape_response::{CancelScrapeResponseDto, ScrapeResponseDto},
     common::constants::crawl_task::MAX_SYNC_WAIT_MS,
     domain::models::{Task, TaskType},
+    domain::repositories::geo_restriction_repository::GeoRestrictionRepository,
     domain::repositories::task_repository::TaskRepository,
+    domain::services::team_service::TeamService,
     i18n::{I18nBundle, Locale},
     presentation::extractors::AppDeps,
     presentation::handlers::response_builder::{
@@ -30,6 +33,7 @@ use crate::{
     presentation::helpers::rate_limit_helper::check_rate_limit,
     presentation::middleware::auth_middleware::AuthState,
 };
+use std::net::SocketAddr;
 
 /// Create a new scrape task.
 ///
@@ -50,6 +54,11 @@ pub async fn create_scrape(
         rate_limiting_service,
         auth_state,
     }: AppDeps,
+    // scrape 入口补齐地理限制检查。geo repo / team_service 以 Option 注入——
+    // teams-off（Extension 未装配）时为 None，跳过检查，行为与单租户降级一致。
+    Extension(geo_restriction_repo): Extension<Option<Arc<dyn GeoRestrictionRepository>>>,
+    Extension(team_service): Extension<Option<Arc<TeamService>>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<ScrapeRequestDto>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
@@ -64,8 +73,8 @@ pub async fn create_scrape(
         }
     }
 
-    // 1. 检查限流（架构 MEDIUM-1：限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
-    // 性能 LOW-1：直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
+    // 1. 检查限流（架构限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
+    // 性能直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
     // 消除 handler 中的中间变量分配。
     if let Err(response) = check_rate_limit(
         rate_limiting_service.as_ref(),
@@ -88,6 +97,53 @@ pub async fn create_scrape(
             if let Some(response) = check_ssrf_url(proxy_url, team_id, auth_state.api_key_id).await
             {
                 return response;
+            }
+        }
+    }
+
+    // 2.7 地理限制检查（scrape 入口此前缺失，与 extract/crawl 对齐）
+    if let (Some(geo_repo), Some(team_service)) =
+        (geo_restriction_repo.as_ref(), team_service.as_ref())
+    {
+        let client_ip = addr.ip().to_string();
+        let restrictions = match geo_repo.get_team_restrictions(team_id).await {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Failed to get team restrictions: {:?}", e);
+                return errors::internal_server_error("Failed to validate geographic access");
+            }
+        };
+
+        match team_service
+            .validate_geographic_restriction(team_id, &client_ip, &restrictions)
+            .await
+        {
+            Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
+                if let Err(e) = geo_repo
+                    .log_geo_restriction_action(
+                        team_id,
+                        &client_ip,
+                        "",
+                        "ALLOWED",
+                        "Scrape request - geographic restriction check passed",
+                    )
+                    .await
+                {
+                    error!("Failed to log geographic restriction action: {:?}", e);
+                }
+            }
+            Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
+                if let Err(e) = geo_repo
+                    .log_geo_restriction_action(team_id, &client_ip, "", "DENIED", &reason)
+                    .await
+                {
+                    error!("Failed to log geographic restriction action: {:?}", e);
+                }
+                return errors::forbidden(reason);
+            }
+            Err(e) => {
+                error!("Geographic restriction validation error: {:?}", e);
+                return errors::internal_server_error("Failed to validate geographic access");
             }
         }
     }
@@ -150,6 +206,21 @@ pub async fn create_scrape(
                 "Failed to enqueue task for team {}: {}. Payload: {:?}",
                 team_id, e, payload
             );
+            // 补偿：入队失败时退还已扣的 1 credit，避免客户积分静默丢失
+            if let Err(refund_err) = rate_limiting_service
+                .refund_quota(
+                    team_id,
+                    1,
+                    format!("Refund: enqueue failed for {}", payload.url),
+                    Some(task.id),
+                )
+                .await
+            {
+                error!(
+                    "CRITICAL: Failed to refund 1 credit for team {} after enqueue failure: {}",
+                    team_id, refund_err
+                );
+            }
             errors::internal_server_error(e.to_string())
         }
     }

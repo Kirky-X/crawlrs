@@ -75,14 +75,22 @@ impl TaskRepository for MockTaskRepository {
     async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
-    async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_completed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
-    async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_failed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
     async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
         Ok(false)
@@ -123,6 +131,15 @@ impl TaskRepository for MockTaskRepository {
         _force: bool,
     ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
         Ok((vec![], vec![]))
+    }
+
+    async fn renew_lock(
+        &self,
+        _task_id: Uuid,
+        _worker_id: Uuid,
+        _extend_seconds: i64,
+    ) -> Result<bool, RepositoryError> {
+        Ok(true)
     }
 }
 

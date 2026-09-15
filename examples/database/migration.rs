@@ -151,10 +151,12 @@ async fn run_migrations(pool: &DbPool, migrations_dir: &str) -> Result<u32, dbne
 fn build_config_with_auto_migrate(url: &str) -> dbnexus::DbConfig {
     dbnexus::DbConfig {
         url: url.to_string(),
-        max_connections: 10,
-        min_connections: 1,
-        idle_timeout: 300,
-        acquire_timeout: 30_000,
+        pool_config: dbnexus::PoolConfig {
+            max_connections: 10,
+            min_connections: 1,
+            idle_timeout: 300,
+            acquire_timeout: 30_000,
+        },
         permissions_path: None,
         migrations_dir: Some(PathBuf::from("migrations")),
         auto_migrate: true,
@@ -163,5 +165,8 @@ fn build_config_with_auto_migrate(url: &str) -> dbnexus::DbConfig {
         warmup_timeout: 30,
         warmup_retries: 3,
         cache_config: dbnexus::CacheConfig::default(),
+        retry_policy: None,
+        failover_config: None,
+        replica_config: None,
     }
 }

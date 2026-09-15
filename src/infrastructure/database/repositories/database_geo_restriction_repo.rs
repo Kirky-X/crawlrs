@@ -191,7 +191,9 @@ mod error_path_tests {
 
     #[test]
     fn test_new_creates_repository_instance() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let repo = DatabaseGeoRestrictionRepository::new(pool);
         let _clone = repo.clone();
@@ -199,7 +201,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_get_team_restrictions_returns_team_not_found_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo.get_team_restrictions(Uuid::new_v4()).await;
         match result {
@@ -210,7 +214,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_update_team_restrictions_returns_team_not_found_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         let result = repo
@@ -224,7 +230,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_log_geo_restriction_action_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(
@@ -246,14 +254,18 @@ mod error_path_tests {
 
     #[test]
     fn test_error_database_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = GeoRestrictionRepositoryError::Database("connection refused".to_string());
         assert_eq!(format!("{}", err), "Database error: connection refused");
     }
 
     #[test]
     fn test_error_team_not_found_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id = Uuid::new_v4();
         let err = GeoRestrictionRepositoryError::TeamNotFound(id);
         assert_eq!(format!("{}", err), format!("Team not found: {}", id));
@@ -261,7 +273,9 @@ mod error_path_tests {
 
     #[test]
     fn test_error_other_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = GeoRestrictionRepositoryError::Other("something went wrong".to_string());
         assert_eq!(format!("{}", err), "Other error: something went wrong");
     }
@@ -270,7 +284,9 @@ mod error_path_tests {
 
     #[test]
     fn test_team_geo_restrictions_default() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         assert!(!restrictions.enable_geo_restrictions);
         assert!(restrictions.allowed_countries.is_none());
@@ -281,7 +297,9 @@ mod error_path_tests {
 
     #[test]
     fn test_team_geo_restrictions_with_all_fields_populated() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions {
             enable_geo_restrictions: true,
             allowed_countries: Some(vec!["US".to_string(), "CA".to_string()]),
@@ -298,7 +316,9 @@ mod error_path_tests {
 
     #[test]
     fn test_team_geo_restrictions_with_empty_vectors() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions {
             enable_geo_restrictions: true,
             allowed_countries: Some(Vec::new()),
@@ -314,7 +334,9 @@ mod error_path_tests {
 
     #[test]
     fn test_team_geo_restrictions_clone_preserves_values() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let original = crate::domain::services::team_service::TeamGeoRestrictions {
             enable_geo_restrictions: true,
             allowed_countries: Some(vec!["US".to_string()]),
@@ -338,7 +360,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_get_team_restrictions_with_nil_uuid_returns_team_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo.get_team_restrictions(Uuid::nil()).await;
         match result {
@@ -349,7 +373,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_update_team_restrictions_with_enabled_flag_returns_team_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions {
             enable_geo_restrictions: true,
@@ -369,7 +395,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_update_team_restrictions_with_nil_uuid_returns_team_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         let result = repo
@@ -383,7 +411,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_log_geo_restriction_action_with_empty_strings_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(Uuid::new_v4(), "", "", "", "")
@@ -397,7 +427,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_log_geo_restriction_action_with_unicode_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(
@@ -417,7 +449,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_log_geo_restriction_action_with_special_characters_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(
@@ -437,7 +471,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_log_geo_restriction_action_with_nil_uuid_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(Uuid::nil(), "127.0.0.1", "US", "blocked", "test")
@@ -453,14 +489,18 @@ mod error_path_tests {
 
     #[test]
     fn test_error_database_display_with_empty_message() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = GeoRestrictionRepositoryError::Database("".to_string());
         assert_eq!(format!("{}", err), "Database error: ");
     }
 
     #[test]
     fn test_error_database_display_with_long_message() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let long_msg = "x".repeat(1000);
         let err = GeoRestrictionRepositoryError::Database(long_msg.clone());
         let msg = format!("{}", err);
@@ -469,7 +509,9 @@ mod error_path_tests {
 
     #[test]
     fn test_error_team_not_found_with_nil_uuid() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = GeoRestrictionRepositoryError::TeamNotFound(Uuid::nil());
         assert_eq!(
             format!("{}", err),
@@ -479,7 +521,9 @@ mod error_path_tests {
 
     #[test]
     fn test_error_other_with_empty_message() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = GeoRestrictionRepositoryError::Other("".to_string());
         assert_eq!(format!("{}", err), "Other error: ");
     }
@@ -490,7 +534,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_custom_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Custom("query failed".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -503,7 +549,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_record_not_found_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::RecordNotFound("team missing".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -516,7 +564,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_connection_acquire_timeout_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -529,7 +579,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_connection_acquire_closed_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed);
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -542,7 +594,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_record_not_inserted_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::RecordNotInserted;
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
@@ -553,7 +607,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_record_not_updated_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::RecordNotUpdated;
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
@@ -564,7 +620,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_query_runtime_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err =
             sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
@@ -578,7 +636,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_conn_runtime_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal("conn lost".to_string()));
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -591,7 +651,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_exec_runtime_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Exec(sea_orm::RuntimeErr::Internal("exec failed".to_string()));
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -604,7 +666,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_type_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Type("invalid type".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -617,7 +681,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_json_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Json("parse error".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -630,7 +696,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_attr_not_set_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::AttrNotSet("name".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -643,7 +711,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_migration_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Migration("schema mismatch".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -656,7 +726,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_rbac_error_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::RbacError("forbidden".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
@@ -669,7 +741,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_access_denied_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::AccessDenied {
             permission: "write".to_string(),
             resource: "team".to_string(),
@@ -686,7 +760,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_mutex_poison_error_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::MutexPoisonError;
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
@@ -697,7 +773,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_backend_not_supported_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::BackendNotSupported {
             db: "mysql",
             ctx: "not configured",
@@ -711,7 +789,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_unpack_insert_id_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::UnpackInsertId;
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
@@ -722,7 +802,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_update_get_primary_key_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::UpdateGetPrimaryKey;
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
@@ -733,7 +815,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_convert_from_u64_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::ConvertFromU64("String");
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
@@ -744,7 +828,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_try_into_err_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let source_err: std::sync::Arc<dyn std::error::Error + Send + Sync> = std::sync::Arc::new(
             std::io::Error::new(std::io::ErrorKind::InvalidData, "bad value"),
         );
@@ -762,7 +848,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_key_arity_mismatch_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::KeyArityMismatch {
             expected: 2,
             received: 1,
@@ -776,7 +864,9 @@ mod error_path_tests {
 
     #[test]
     fn test_dberr_primary_key_not_set_to_database_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::PrimaryKeyNotSet { ctx: "update" };
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
@@ -789,7 +879,9 @@ mod error_path_tests {
 
     #[test]
     fn test_error_other_display_with_long_message() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let long_msg = "x".repeat(1000);
         let err = GeoRestrictionRepositoryError::Other(long_msg.clone());
         let msg = format!("{}", err);
@@ -798,7 +890,9 @@ mod error_path_tests {
 
     #[test]
     fn test_error_database_display_with_special_characters() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = GeoRestrictionRepositoryError::Database(
             "error with 'quotes' and \"double\" and; semicolon".to_string(),
         );
@@ -810,7 +904,9 @@ mod error_path_tests {
 
     #[test]
     fn test_error_implements_debug_for_all_variants() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let variants: Vec<GeoRestrictionRepositoryError> = vec![
             GeoRestrictionRepositoryError::Database("e".into()),
             GeoRestrictionRepositoryError::TeamNotFound(Uuid::nil()),
@@ -826,7 +922,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_get_team_restrictions_with_max_uuid_returns_team_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let max_uuid = Uuid::from_u128(u128::MAX);
         let result = repo.get_team_restrictions(max_uuid).await;
@@ -838,7 +936,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_update_team_restrictions_with_empty_vectors_returns_team_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions {
             enable_geo_restrictions: false,
@@ -858,7 +958,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_log_geo_restriction_action_with_long_reason_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let long_reason = "x".repeat(2000);
         let result = repo
@@ -873,7 +975,9 @@ mod error_path_tests {
 
     #[tokio::test]
     async fn test_log_geo_restriction_action_with_max_uuid_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let max_uuid = Uuid::from_u128(u128::MAX);
         let result = repo

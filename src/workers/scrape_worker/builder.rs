@@ -46,18 +46,18 @@ pub struct ScrapeWorkerBuilder {
     settings: Option<Arc<Settings>>,
     default_concurrency_limit: usize,
     extraction_service: Option<Arc<dyn ExtractionServiceTrait>>,
-    /// 内存感知调度器（T019/R-runtime-001），仅 metrics 特性启用时存在
+    /// 内存感知调度器，仅 metrics 特性启用时存在
     #[cfg(feature = "metrics")]
     memory_scheduler: Option<Arc<MemoryScheduler>>,
-    /// URL 分层去重器（T053/R-frontier-001），可选注入
+    /// URL 分层去重器，可选注入
     ///
     /// 不设置时使用 `Deduplicator::new()`（默认配置：保留 query，1M 容量）
     deduplicator: Option<Arc<parking_lot::RwLock<Deduplicator>>>,
-    /// 高级缓存服务（T059/R-cache-002，必需）
+    /// 高级缓存服务（必需）
     ///
     /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入。
     cache_service: Option<Arc<dyn CacheService>>,
-    /// 优雅退出协调器（R-security-004/005，可选）
+    /// 优雅退出协调器（可选）
     ///
     /// 不设置时使用独立默认实例（`ShutdownCoordinator::default()`）。
     shutdown_coordinator: Option<Arc<ShutdownCoordinator>>,
@@ -182,7 +182,7 @@ impl ScrapeWorkerBuilder {
         self
     }
 
-    /// 设置高级缓存服务（T059/R-cache-002，必需）
+    /// 设置高级缓存服务（必需）
     ///
     /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
     /// 用于 `process_scrape_task` 读写抓取结果缓存。
@@ -191,14 +191,14 @@ impl ScrapeWorkerBuilder {
         self
     }
 
-    /// 设置内存感知调度器（T019/R-runtime-001，metrics 特性启用时必需）
+    /// 设置内存感知调度器（metrics 特性启用时必需）
     #[cfg(feature = "metrics")]
     pub fn with_memory_scheduler(mut self, memory_scheduler: Arc<MemoryScheduler>) -> Self {
         self.memory_scheduler = Some(memory_scheduler);
         self
     }
 
-    /// 设置 URL 分层去重器（T053/R-frontier-001，可选）
+    /// 设置 URL 分层去重器（可选）
     ///
     /// 不调用时使用默认 `Deduplicator::new()`。生产环境推荐由 `WorkerManager`
     /// 创建一个共享实例注入所有 worker，最大化 Bloom 预筛效果。
@@ -210,7 +210,7 @@ impl ScrapeWorkerBuilder {
         self
     }
 
-    /// 设置优雅退出协调器（R-security-004/005，可选）
+    /// 设置优雅退出协调器（可选）
     ///
     /// 由 `WorkerManager` 注入共享实例，使所有 worker 在关闭信号到达时
     /// 协同退出。不设置时使用独立默认实例。
@@ -254,7 +254,7 @@ impl ScrapeWorkerBuilder {
             .shutdown_coordinator
             .unwrap_or_else(|| Arc::new(ShutdownCoordinator::default()));
 
-        // H-4 职责拆分：构造 CoalesceCoordinator（共享 repository + result_repository + 新建 coalescer）
+        // 构造 CoalesceCoordinator（共享 repository + result_repository + 新建 coalescer）
         let request_coalescer = Arc::new(RequestCoalescer::new());
         let coalesce_coordinator = Arc::new(CoalesceCoordinator::new(
             repository.clone(),

@@ -19,6 +19,12 @@ pub trait WebhookEventRepository: Send + Sync {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError>;
     /// 查找待处理的Webhook事件
     async fn find_pending(&self, limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError>;
+    /// 原子认领待投递的Webhook事件
+    ///
+    /// 将候选事件（pending、到达重试时间的 failed、超时未终结的 processing）
+    /// 以 `FOR UPDATE SKIP LOCKED` 方式原子置为 `processing` 并返回，
+    /// 保证多实例/多进程下同一事件只被一个消费者投递。
+    async fn claim_pending(&self, limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError>;
     /// 根据团队ID分页查询Webhook事件
     async fn find_by_team_id_paginated(
         &self,

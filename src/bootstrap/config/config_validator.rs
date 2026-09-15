@@ -27,7 +27,7 @@ use log::{debug, error, info, warn};
 /// Returns `Ok(())` if validation passes, or an error with details about
 /// the security issue.
 pub fn validate_security(_settings: &Settings, _is_production: bool) -> Result<()> {
-    // 安全审查 H-1 修复说明：
+    // 说明：
     //
     // 原注释"Validation is now handled by confers automatically via #[config(validate)]"
     // 是错误的——confers 0.4 集成的是 `garde::Validate`，而 `Settings` 用的是
@@ -95,7 +95,7 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
         env_lower == "test" || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
     let is_dev = env_lower == "development" || env_lower == "dev" || is_test;
 
-    // SSRF 防护禁用开关风险告警（R-sec-002）
+    // SSRF 防护禁用开关风险告警
     // 仅在非 test/development 环境下告警；开发/测试场景允许禁用以方便调试
     if std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok() && !is_dev
     {
@@ -175,7 +175,7 @@ pub fn load_and_configure(is_production: bool) -> Result<(Settings, u16)> {
     debug!("Step 4/4: Detecting available port...");
     let port = detect_available_port(&mut settings)?;
 
-    // Webhook secret fail-fast（R-security-001）
+    // Webhook secret fail-fast
     // 当 `webhook` feature 启用且运行在非 test/development 环境时，空的
     // `webhook.secret` 配置必须阻止服务启动，避免以无签名校验的 Webhook 上生产。
     validate_webhook_secret_fail_fast(is_production, &settings.webhook.secret)?;
@@ -184,7 +184,7 @@ pub fn load_and_configure(is_production: bool) -> Result<(Settings, u16)> {
     Ok((settings, port))
 }
 
-/// Webhook secret 启动 fail-fast 校验（R-security-001）。
+/// Webhook secret 启动 fail-fast 校验。
 ///
 /// 当 `webhook` feature 启用且 `is_production=true`（且当前非 test/development 环境）
 /// 时，空的 webhook secret 返回 `Err` 阻止启动。
@@ -203,6 +203,17 @@ fn validate_webhook_secret_fail_fast(is_production: bool, secret: &str) -> Resul
         );
         return Err(anyhow::anyhow!(
             "webhook.secret must not be empty in production (webhook feature enabled)"
+        ));
+    }
+    // CWE-798：历史上代码内存在的硬编码弱默认，被原样配置进生产同样视为未设置
+    if is_production && !is_test_env && secret == "default-webhook-secret" {
+        error!(
+            "CRITICAL: webhook.secret must not be the removed hardcoded default \
+             'default-webhook-secret' in production"
+        );
+        return Err(anyhow::anyhow!(
+            "webhook.secret must not be the hardcoded default 'default-webhook-secret' \
+             in production"
         ));
     }
     Ok(())
@@ -664,7 +675,7 @@ mod tests {
         );
     }
 
-    // ========== SSRF protection disable warning (T002) ==========
+    // ========== SSRF protection disable warning ==========
 
     #[test]
     fn test_validate_environment_warns_when_ssrf_disabled_in_non_dev_env() {
@@ -812,7 +823,7 @@ mod tests {
         assert_eq!(settings.server.host, "0.0.0.0");
     }
 
-    // ========== Webhook secret fail-fast tests (R-security-001 / T001-T002) ==========
+    // ========== Webhook secret fail-fast tests ==========
 
     #[test]
     #[cfg(feature = "webhook")]

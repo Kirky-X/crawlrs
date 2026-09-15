@@ -5,7 +5,7 @@
 
 //! Garrison DAO 工厂与全局态。
 //!
-//! ## 设计决策（R-key-lifecycle-001）
+//! ## 设计决策
 //!
 //! 复用 garrison v0.8.1 内建 [`GarrisonDaoOxcache`]，**不自实现 `CrawlrsGarrisonDao`**。
 //! 理由：
@@ -13,12 +13,12 @@
 //! 1. [`GarrisonDaoOxcache::new()`] 已实现完整 [`GarrisonDao`] trait，自管理 oxcache 实例；
 //! 2. 按 proposal「全量重签 + garrison 原生存储」，garrison 用自己的 schema（`garrison:apikey:<ns>:<key>`），
 //!    不读 crawlrs 旧 `api_keys`/`scopes` 表，故无需共享 crawlrs 的 `pool`/`cache`；
-//! 3. 避免重复造轮子（规则5 简洁优先 + 规则8 惯例优先于新颖）。
+//! 3. 避免重复造轮子（简洁优先惯例优先于新颖）。
 //!
 //! 若未来需要 L2 持久化（postgres），配合 garrison `init_dbnexus` + `GarrisonMigration` 即可，
 //! 仍不需要自实现 `CrawlrsGarrisonDao`。
 //!
-//! ## 全局 DAO 注入（T027）
+//! ## 全局 DAO 注入
 //!
 //! [`GarrisonManager::init`] 持有 dao 后通过 `GarrisonSession::dao()` 暴露给 garrison
 //! 内部模块（`pub(crate)`），但**外部业务代码无法访问**——garrison 0.8.1 未对外暴露
@@ -95,7 +95,6 @@ pub(crate) fn test_mutex() -> &'static tokio::sync::Mutex<()> {
 ///
 /// # Spec
 ///
-/// - R-key-lifecycle-001
 ///
 /// # 使用示例
 ///
@@ -129,7 +128,7 @@ pub async fn init_garrison_dao() -> garrison::prelude::GarrisonResult<Arc<dyn Ga
 ///
 /// # Spec
 ///
-/// - R-key-lifecycle-001：业务 handler 需 dao 来构造 `ApiKeyHandler::generate_with_namespace`
+/// - 业务 handler 需 dao 来构造 `ApiKeyHandler::generate_with_namespace`
 pub fn set_garrison_dao(dao: Arc<dyn GarrisonDao>) -> Result<(), Arc<dyn GarrisonDao>> {
     let mut guard = GARRISON_DAO.write();
     if guard.is_some() {
@@ -146,7 +145,6 @@ pub fn set_garrison_dao(dao: Arc<dyn GarrisonDao>) -> Result<(), Arc<dyn Garriso
 ///
 /// # Spec
 ///
-/// - R-key-lifecycle-001
 pub fn get_garrison_dao() -> Option<Arc<dyn GarrisonDao>> {
     GARRISON_DAO.read().clone()
 }
@@ -155,7 +153,8 @@ pub fn get_garrison_dao() -> Option<Arc<dyn GarrisonDao>> {
 ///
 /// 单测在 setup/teardown 中调用以避免测试间全局态污染。
 /// 生产代码禁止调用——会导致 dao 丢失，API Key 签发请求返回 500。
-#[cfg(test)]
+/// `test-mocks` 门控：集成测试二进制（tests/integration）经此特性获得重置能力。
+#[cfg(any(test, feature = "test-mocks"))]
 pub(crate) fn reset_garrison_dao_for_test() {
     *GARRISON_DAO.write() = None;
 }
@@ -175,7 +174,7 @@ mod tests {
     //  multi_thread flavor，参考其 `test_builder_sync_mode_true_enables_backend_sync`）
     // `worker_threads = 1` 保持单线程语义，仅启用 `block_in_place` 支持。
 
-    /// R-key-lifecycle-001：init_garrison_dao 返回可用 Arc<dyn GarrisonDao>
+    /// init_garrison_dao 返回可用 Arc<dyn GarrisonDao>
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_init_garrison_dao_returns_usable_dao() {
         let dao = init_garrison_dao().await;
@@ -196,7 +195,7 @@ mod tests {
         assert!(after_delete.is_none(), "value must be deleted");
     }
 
-    /// R-key-lifecycle-001：连续两次调用返回独立 DAO 实例（不共享内部状态）
+    /// 连续两次调用返回独立 DAO 实例（不共享内部状态）
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_init_garrison_dao_returns_independent_instances() {
         let dao1 = init_garrison_dao().await.unwrap();
@@ -213,9 +212,9 @@ mod tests {
         dao1.delete(key).await.unwrap();
     }
 
-    // ========== T027: 全局 dao set/get/reset_for_test 测试 ==========
+    // ========== 全局 dao set/get/reset_for_test 测试 ==========
 
-    /// T027：set_garrison_dao 首次注入返回 Ok，二次注入返回 Err(dao)
+    /// set_garrison_dao 首次注入返回 Ok，二次注入返回 Err(dao)
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_set_garrison_dao_first_call_ok_second_err() {
         let _guard = test_mutex().lock().await;
@@ -240,7 +239,7 @@ mod tests {
         reset_garrison_dao_for_test();
     }
 
-    /// T027：get_garrison_dao 在注入前返回 None，注入后返回 Some(clone)
+    /// get_garrison_dao 在注入前返回 None，注入后返回 Some(clone)
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_get_garrison_dao_before_and_after_set() {
         let _guard = test_mutex().lock().await;
@@ -268,7 +267,7 @@ mod tests {
         reset_garrison_dao_for_test();
     }
 
-    /// T027：reset_garrison_dao_for_test 清空全局态
+    /// reset_garrison_dao_for_test 清空全局态
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_reset_garrison_dao_for_test_clears_global() {
         let _guard = test_mutex().lock().await;
@@ -288,7 +287,7 @@ mod tests {
         );
     }
 
-    /// T027：get_garrison_dao 返回的 Arc 可独立持有（clone 后 reset 不影响）
+    /// get_garrison_dao 返回的 Arc 可独立持有（clone 后 reset 不影响）
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn test_get_garrison_dao_returned_arc_survives_reset() {
         let _guard = test_mutex().lock().await;

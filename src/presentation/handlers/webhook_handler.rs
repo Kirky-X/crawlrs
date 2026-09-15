@@ -10,15 +10,15 @@ use crate::config::settings::Settings;
 use crate::domain::models::Webhook;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
-// 架构 MEDIUM-2：domain 层提供 `verify_webhook_signature_from_parts`（timestamp 解析 +
+// 架构 domain 层提供 `verify_webhook_signature_from_parts`（timestamp 解析 +
 // HMAC 验证 + 时间戳窗口检查），presentation 层仅负责 HTTP header → &str 提取。
 // 之前的 `verify_webhook_signature_from_headers` 跨层混合 HTTP 解析 + 域逻辑，违反 SRP。
 use crate::domain::services::webhook_service::{
     verify_webhook_signature_from_parts, WEBHOOK_AUTH_FAILED,
 };
 use crate::domain::use_cases::create_webhook::CreateWebhookUseCase;
-// 架构 MEDIUM-2：与 crawl/scrape handler 统一使用 `infrastructure::security::ssrf::validate_url`。
-// `engines::validators::validate_url` 仅是 re-export（见 engines/validators.rs line 39-42），
+// 架构与 crawl/scrape handler 统一使用 `infrastructure::security::ssrf::validate_url`。
+// `engines::validators::validate_url` 仅是 re-export（engines/validators.rs line 39-42），
 // 直接使用源模块避免读者跳两次 import 才找到实现。
 use crate::infrastructure::security::ssrf::validate_url;
 use crate::presentation::errors::CrawlRsError;
@@ -37,7 +37,7 @@ const MSG_ID_HEADER: &str = standardwebhooks::HEADER_WEBHOOK_ID;
 
 /// 构造统一的 webhook 认证失败错误
 ///
-/// 架构 MEDIUM-2：错误消息常量 `WEBHOOK_AUTH_FAILED` 已迁移至
+/// 架构错误消息常量 `WEBHOOK_AUTH_FAILED` 已迁移至
 /// `domain::services::webhook_service`，本 helper 仅负责将 `&'static str`
 /// 映射为 `CrawlRsError::Authentication`（presentation 层错误类型）。
 fn auth_error() -> CrawlRsError {
@@ -46,7 +46,7 @@ fn auth_error() -> CrawlRsError {
 
 /// 从请求头中提取 signature + timestamp 字符串并委托给 domain 层验证
 ///
-/// 架构 MEDIUM-2：本函数仅承担 **HTTP 协议层**职责（HeaderMap → &str 提取），
+/// 架构本函数仅承担 **HTTP 协议层**职责（HeaderMap → &str 提取），
 /// 不再混合 timestamp 解析 + HMAC 验证等域逻辑。
 /// 失败时返回统一的 `WEBHOOK_AUTH_FAILED` 错误消息（来自 domain 层），避免泄露具体失败阶段。
 fn verify_webhook_signature_from_headers(
@@ -82,10 +82,10 @@ pub async fn create_webhook<R: WebhookRepository>(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<(StatusCode, Json<Webhook>), CrawlRsError> {
-    // 架构 MEDIUM-3：限流检查必须在最早阶段执行（与 search/scrape/crawl handler 一致），
+    // 架构限流检查必须在最早阶段执行（与 search/scrape/crawl handler 一致），
     // 防止攻击者通过大量无效签名请求耗服（每个请求都做 HMAC 计算会消耗 CPU）。
     // 限流命中时直接返回 429，避免不必要的 HMAC + JSON 解析 + SSRF 验证。
-    // 性能 LOW-1：直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
+    // 性能直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
     // 消除 handler 中的中间变量分配。
     check_rate_limit_as_app_error(
         rate_limiting_service.as_ref(),
@@ -179,18 +179,18 @@ mod tests {
 
     /// 测试用 webhook 签名密钥
     ///
-    /// 安全 MEDIUM-1：测试 secret 通过 `validate_security` 验证，确保满足生产安全要求
+    /// 安全测试 secret 通过 `validate_security` 验证，确保满足生产安全要求
     /// （长度 >= 32，不在弱密钥列表中）。值明显标记为测试专用，避免与生产 secret 混淆。
     const TEST_WEBHOOK_SECRET: &str = "test-webhook-secret-key-32-chars-long!!";
 
     /// 构造带已知 webhook secret 的 Settings（其他字段使用默认值）
     ///
-    /// 安全 MEDIUM-1：调用 `validate_security` 验证 secret 满足生产安全要求，
+    /// 安全调用 `validate_security` 验证 secret 满足生产安全要求，
     /// 防止测试中使用弱密钥导致安全验证逻辑被绕过。
     fn make_test_settings_with_secret(secret: &str) -> Arc<Settings> {
         let mut settings = Settings::default();
         settings.webhook.secret = secret.to_string();
-        // MEDIUM-3 修复后 validate_security 在 auth-on 时校验 jwt_secret，
+        // validate_security 在 auth-on 时校验 jwt_secret，
         // 测试中注入强 jwt_secret（32+ 字节）以满足校验。
         #[cfg(feature = "auth")]
         {
@@ -238,7 +238,9 @@ mod tests {
 
     #[test]
     fn test_create_webhook_request_valid() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":"https://example.com/webhook"}"#;
         let req: CreateWebhookRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.url, "https://example.com/webhook");
@@ -246,7 +248,9 @@ mod tests {
 
     #[test]
     fn test_create_webhook_request_rejects_unknown_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"url":"https://example.com","extra":"field"}"#;
         let result: Result<CreateWebhookRequest, _> = serde_json::from_str(json);
         assert!(result.is_err());
@@ -254,7 +258,9 @@ mod tests {
 
     #[test]
     fn test_create_webhook_request_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let req = CreateWebhookRequest {
             url: "https://example.com/hook".to_string(),
         };
@@ -265,7 +271,9 @@ mod tests {
 
     #[test]
     fn test_create_webhook_request_round_trip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let original = CreateWebhookRequest {
             url: "https://my.webhook.site/abc123".to_string(),
         };
@@ -278,7 +286,9 @@ mod tests {
 
     #[test]
     fn test_webhook_to_response_mapping() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let webhook_id = Uuid::new_v4();
         let team_id = Uuid::new_v4();
         let webhook = Webhook {
@@ -304,7 +314,9 @@ mod tests {
 
     #[test]
     fn test_webhook_response_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = WebhookResponse {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
@@ -322,7 +334,9 @@ mod tests {
 
     #[test]
     fn test_webhook_response_secret_none_serialized() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = WebhookResponse {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
@@ -341,7 +355,9 @@ mod tests {
 
     #[test]
     fn test_webhook_list_response_empty() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = WebhookListResponse {
             webhooks: vec![],
             total: 0,
@@ -354,7 +370,9 @@ mod tests {
 
     #[test]
     fn test_webhook_list_response_with_items() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let webhook1 = WebhookListEntry {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
@@ -383,7 +401,9 @@ mod tests {
 
     #[test]
     fn test_webhook_list_response_total_matches_count() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let webhooks: Vec<WebhookListEntry> = (0..5)
             .map(|_| WebhookListEntry {
                 id: Uuid::new_v4(),
@@ -406,7 +426,9 @@ mod tests {
 
     #[test]
     fn test_webhook_new_constructor() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id = Uuid::new_v4();
         let team_id = Uuid::new_v4();
         let webhook = Webhook::new(id, team_id, "https://example.com/hook".to_string());
@@ -431,27 +453,9 @@ mod tests {
     /// "Cannot start a runtime from within a runtime", so we construct the pool
     /// on a dedicated OS thread with its own runtime.
     fn make_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                let url = crate::common::test_helpers::resolve_test_database_url().expect(
-                    "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
-                );
-                rt.block_on(async {
-                    let cfg = dbnexus::DbConfig {
-                        url,
-                        ..Default::default()
-                    };
-                    DbPool::with_config(cfg).await
-                })
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
+        // 统一走共享 helper：每调用独立池（min=0 无预热、max=4），
+        // 避免预热连接绑定到构造临时 runtime 而失效（test_helpers 说明）。
+        crate::common::test_helpers::create_test_db_pool()
     }
 
     /// Build an `AuthState` suitable for handler unit tests.
@@ -641,6 +645,16 @@ mod tests {
         async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
             Ok(0)
         }
+
+        async fn refund_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
     }
 
     // 组合 trait（向后兼容，空实现即可）
@@ -650,7 +664,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_webhook_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -684,7 +700,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_webhook_ssrf_blocked() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -723,7 +741,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_webhook_rate_limit_exceeded() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_denied("too many requests"));
         let auth = make_test_auth_state();
@@ -762,7 +782,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_webhook_repo_create_failure() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::with_create_error(
             RepositoryError::Database(anyhow::anyhow!("repo down")),
         ));
@@ -805,7 +827,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_webhooks_empty() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let auth = make_test_auth_state();
 
@@ -826,7 +850,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_webhooks_with_items() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let webhook1 = Webhook::new(
             Uuid::new_v4(),
@@ -860,7 +886,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_webhooks_repo_failure() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::with_find_result(Err(
             RepositoryError::Database(anyhow::anyhow!("find_by_team_id failed")),
         )));
@@ -887,7 +915,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_webhook_debug_log_evaluated() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // With debug logging enabled, the log::debug! format args on lines
         // 34-37 are evaluated (even though CapturingLogger discards them).
         ensure_debug_logger();
@@ -940,7 +970,9 @@ mod tests {
     /// 缺少签名头 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_missing_signature_header_returns_401() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -984,7 +1016,9 @@ mod tests {
     /// 缺少时间戳头 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_missing_timestamp_header_returns_401() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -1027,7 +1061,9 @@ mod tests {
     /// 时间戳格式无效 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_invalid_timestamp_format_returns_401() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -1073,7 +1109,9 @@ mod tests {
     /// 签名错误 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_wrong_signature_returns_401() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -1113,7 +1151,9 @@ mod tests {
     /// 时间戳过期（超出 5 分钟窗口）→ 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_expired_timestamp_returns_401() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -1156,7 +1196,9 @@ mod tests {
     /// 使用不同 secret 计算的签名 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_wrong_secret_returns_401() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();
@@ -1200,7 +1242,9 @@ mod tests {
     /// Body 不是有效 UTF-8 → 401 Authentication
     #[tokio::test]
     async fn test_create_webhook_invalid_utf8_body_returns_401() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockWebhookRepository::new());
         let rate_limit = Arc::new(MockRateLimitingService::new_allowed());
         let auth = make_test_auth_state();

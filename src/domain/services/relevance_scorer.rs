@@ -172,7 +172,7 @@ impl RelevanceScorer {
             .collect();
 
         // Calculate TF-IDF-like weights for query terms
-        // T021: single-pass HashMap counting instead of O(N²) iter().filter().count()
+        // single-pass HashMap counting instead of O(N²) iter().filter().count()
         let total_terms = terms.len();
         let mut term_counts: HashMap<&String, f64> = HashMap::new();
         for term in &terms {

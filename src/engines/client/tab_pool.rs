@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Chrome CDP Tab 池（T068，R-jsrender-004）
+//! Chrome CDP Tab 池
 //!
 //! 移植 spider `tab_pool.rs`，提供 [`chromiumoxide::Page`]（tab）级复用：
 //!
@@ -32,7 +32,6 @@
 //! # 参考
 //!
 //! - spider `spider/src/utils/tab_pool.rs`
-//! - design.md §17
 
 use chromiumoxide::{Browser, Page};
 use std::time::Duration;
@@ -43,7 +42,7 @@ use std::time::Duration;
 /// 与 spider 默认值一致（5s）。
 const RESET_NAVIGATION_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Chrome CDP Tab 池（T068，R-jsrender-004）
+/// Chrome CDP Tab 池
 ///
 /// parking_lot::Mutex 保护 Vec 尾端 push/pop 实现 LIFO，
 /// 短临界区锁（无 await 在锁内），性能优于 DashMap per-shard 开销。
@@ -123,6 +122,14 @@ impl TabPool {
                 return; // page drop 在函数返回时
             }
         }
+
+        // 禁用 CDP Fetch domain（best-effort）：若上一个借用方启用过请求拦截
+        // （block_ads/block_media），其拦截 task 已在 scrape 退出时被 abort，但
+        // Fetch domain 仍处启用态；不禁用会导致复用该 Page 的下一请求被暂停却无
+        // 处理者而挂起。未启用 Fetch 的 Page 上此调用为无害 no-op（错误忽略）。
+        let _ = page
+            .execute(chromiumoxide::cdp::browser_protocol::fetch::DisableParams::default())
+            .await;
 
         // 导航到 about:blank 清理状态（5s 超时）
         let ok = matches!(

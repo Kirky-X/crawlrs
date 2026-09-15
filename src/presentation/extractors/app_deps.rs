@@ -164,14 +164,22 @@ mod tests {
         async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
             Ok(false)
@@ -210,6 +218,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 
@@ -301,6 +318,16 @@ mod tests {
         async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
             Ok(1000)
         }
+
+        async fn refund_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
     }
 
     #[async_trait]
@@ -338,7 +365,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_extracts_all_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut parts = make_parts_with_extensions();
         let result = AppDeps::from_request_parts(&mut parts, &()).await;
         assert!(result.is_ok(), "AppDeps should extract successfully");
@@ -346,7 +375,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_missing_task_queue_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
         parts
@@ -371,7 +402,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_missing_settings_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
         parts
@@ -396,7 +429,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_missing_task_repo_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
         parts
@@ -421,7 +456,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_missing_rate_limit_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
         parts
@@ -446,7 +483,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_missing_auth_state_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
         parts
@@ -468,7 +507,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_deps_empty_extensions_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
 
@@ -478,7 +519,9 @@ mod tests {
 
     #[test]
     fn test_app_deps_clone() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let deps = AppDeps {
             queue: Arc::new(MockTaskQueue),
             settings: Arc::new(Settings::default()),
@@ -498,7 +541,9 @@ mod tests {
 
     #[test]
     fn test_app_deps_struct_fields_accessible() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let deps = AppDeps {
             queue: Arc::new(MockTaskQueue),
             settings: Arc::new(Settings::default()),

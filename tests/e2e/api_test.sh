@@ -7,9 +7,15 @@
 set -euo pipefail
 
 BASE_URL="http://localhost:8899"
-API_KEY="f16a1aa65edb4c6cb4a768218c961e90.fbd1c1156df2401688c1db3a40760530"
+
+# 凭证仅从环境注入，禁止在脚本内硬编码（历史泄漏密钥需在服务端吊销轮换）
+API_KEY="${CRAWLRS_TEST_API_KEY:-}"
+TEAM_ID="${CRAWLRS_TEST_TEAM_ID:-}"
+if [[ -z "$API_KEY" || -z "$TEAM_ID" ]]; then
+    echo "SKIP: 需要设置 CRAWLRS_TEST_API_KEY 与 CRAWLRS_TEST_TEAM_ID 环境变量后方可运行本脚本"
+    exit 0
+fi
 AUTH_HEADER="Authorization: Bearer $API_KEY"
-TEAM_ID="2a8621b0-eb31-41b4-a0ef-dac14ae9dded"
 
 # ── 计数器 ──
 PASS=0; FAIL=0; SKIP=0; TOTAL=0

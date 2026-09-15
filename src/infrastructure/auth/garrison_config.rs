@@ -11,10 +11,10 @@
 //!
 //! ## Spec
 //!
-//! - R-session-jwt-001：`build_garrison_config` 在 `jwt_secret` 为空/弱（<32 字节）时返回 `Err`；
+//! - `build_garrison_config` 在 `jwt_secret` 为空/弱（<32 字节）时返回 `Err`；
 //!   `token_style` 为 `jwt`。
 //!
-//! ## R-session-jwt-002 取舍决策
+//! ## 取舍决策
 //!
 //! **不暴露 HTTP 刷新端点**（不新增 `POST /v1/auth/token/refresh` 路由）。
 //! 仅保留 garrison 内部 `token_style=jwt` 签发能力，JWT 校验由 garrison
@@ -34,7 +34,7 @@ pub const MIN_JWT_SECRET_BYTES: usize = 32;
 
 /// [`build_garrison_config`] 的类型化错误。
 ///
-/// 用类型化错误替代 `String`（规则8 惯例优先于新颖），使调用方可 `match` 判断原因
+/// 用类型化错误替代 `String`（惯例优先于新颖），使调用方可 `match` 判断原因
 /// 而非字符串匹配；可经 `?` 透传到上层 `GarrisonResult` 或 crawlrs 自有 Error 枚举。
 #[derive(Debug, Error)]
 pub enum GarrisonConfigError {
@@ -76,7 +76,6 @@ pub enum GarrisonConfigError {
 ///
 /// # Spec
 ///
-/// - R-session-jwt-001
 pub fn build_garrison_config(jwt_secret: &str) -> Result<GarrisonConfig, GarrisonConfigError> {
     if jwt_secret.is_empty() {
         return Err(GarrisonConfigError::EmptySecret);
@@ -88,7 +87,7 @@ pub fn build_garrison_config(jwt_secret: &str) -> Result<GarrisonConfig, Garriso
         });
     }
 
-    // 基于 garrison 默认配置覆盖业务字段（规则5：复用而非重写）。
+    // 基于 garrison 默认配置覆盖业务字段（复用而非重写）。
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_algorithm = "HS256".to_string();
@@ -106,7 +105,7 @@ pub fn build_garrison_config(jwt_secret: &str) -> Result<GarrisonConfig, Garriso
 mod tests {
     use super::*;
 
-    /// R-session-jwt-001：jwt_secret 为空时返回 `Err(EmptySecret)`
+    /// jwt_secret 为空时返回 `Err(EmptySecret)`
     #[test]
     fn test_build_garrison_config_rejects_empty_secret() {
         let result = build_garrison_config("");
@@ -117,7 +116,7 @@ mod tests {
         );
     }
 
-    /// R-session-jwt-001：jwt_secret 弱（<32 字节）时返回 `Err(WeakSecret { len, min })`
+    /// jwt_secret 弱（<32 字节）时返回 `Err(WeakSecret { len, min })`
     #[test]
     fn test_build_garrison_config_rejects_weak_secret() {
         let weak = "too_short"; // 9 字节
@@ -129,7 +128,7 @@ mod tests {
         );
     }
 
-    /// R-session-jwt-001：强密钥（>=32 字节）返回 Ok 且 token_style=jwt
+    /// 强密钥（>=32 字节）返回 Ok 且 token_style=jwt
     #[test]
     fn test_build_garrison_config_strong_secret_returns_jwt_config() {
         let strong = "a-very-strong-secret-key-32-bytes-or-more!!"; // 44 字节
@@ -142,7 +141,7 @@ mod tests {
         );
     }
 
-    /// R-session-jwt-001：恰好 32 字节边界返回 Ok
+    /// 恰好 32 字节边界返回 Ok
     #[test]
     fn test_build_garrison_config_boundary_32_bytes_accepted() {
         let boundary = "0123456789abcdef0123456789abcdef"; // 32 字节
@@ -153,7 +152,7 @@ mod tests {
         );
     }
 
-    /// R-session-jwt-001：业务字段覆盖正确（is_read_cookie=false / frontend_separation=true）
+    /// 业务字段覆盖正确（is_read_cookie=false / frontend_separation=true）
     #[test]
     fn test_build_garrison_config_business_fields_overridden() {
         let strong = "a-very-strong-secret-key-32-bytes-or-more!!";

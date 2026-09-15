@@ -13,13 +13,13 @@
 //! 三种模式（Full / Cdp / Tls）共享同一个 FlareSolverr API 客户端实现，
 //! 仅在 support_score 和 name 上有差异，Tls 模式额外拒绝截图请求。
 //!
-//! ## T056 范围外说明（ProxyProvider 接入）
+//! ## 范围外说明（ProxyProvider 接入）
 //!
 //! 本引擎仍使用单 `proxy_url`（`Option<&str>`）而非 `ProxyProvider` trait。
-//! 这是 design.md 明确标注的 T056 范围外项：
+//! 这是明确标注的范围外项：
 //! - FlareSolverr 通过 HTTP API 调用外部服务，proxy_url 仅记录到 `X-Proxy-URL` header
 //!   供 FlareSolverr 服务自身识别代理（不同于 ReqwestEngine 直接通过 reqwest::Proxy 使用代理）
-//! - 接入 ProxyProvider 需要 FlareSolverr 服务端支持代理轮换语义，超出 T056 范围
+//! - 接入 ProxyProvider 需要 FlareSolverr 服务端支持代理轮换语义，超出范围
 //! - 后续如需接入，可在 `with_mode_and_proxy` / `with_url` 等构造函数中扩展
 //!
 //! This engine is particularly useful for:
@@ -41,13 +41,13 @@ use std::time::Duration;
 
 /// FlareSolverrEngine TLS 模式默认 MRT（15 秒，对应 `EngineTimeoutSettings::tls_seconds`）。
 ///
-/// design.md §14 / T060：TLS 模式专注 TLS 指纹对抗，速度较快，15 秒足够；
+/// TLS 模式专注 TLS 指纹对抗，速度较快，15 秒足够；
 /// 超时即切下一引擎（瀑布式）。
 const DEFAULT_FLARESOLVERR_TLS_MRT_SECONDS: u64 = 15;
 
 /// FlareSolverrEngine CDP / Full 模式默认 MRT（30 秒，对应 `EngineTimeoutSettings::cdp_seconds`）。
 ///
-/// design.md §14 / T060：CDP/Full 模式涉及完整浏览器自动化，30 秒覆盖绝大多数场景。
+/// CDP/Full 模式涉及完整浏览器自动化，30 秒覆盖绝大多数场景。
 const DEFAULT_FLARESOLVERR_CDP_MRT_SECONDS: u64 = 30;
 
 /// FlareSolverr 工作模式枚举
@@ -99,7 +99,7 @@ impl FlareSolverrMode {
         }
     }
 
-    /// 获取该模式下的默认 MRT（Maximum Response Time，T060）。
+    /// 获取该模式下的默认 MRT（Maximum Response Time）。
     ///
     /// - `Full` / `Cdp`：30 秒（`cdp_seconds`，涉及完整浏览器）
     /// - `Tls`：15 秒（`tls_seconds`，仅 TLS 指纹对抗，速度较快）
@@ -127,7 +127,7 @@ pub struct FlareSolverrConfig {
     pub mode: FlareSolverrMode,
     /// 代理 URL（用于 Cdp/Tls 模式记录到 X-Proxy-URL header）
     pub proxy_url: Option<String>,
-    /// 单引擎最大响应时间（MRT，design.md §14 / T060）。
+    /// 单引擎最大响应时间（MRT）。
     ///
     /// `None` 时按 [`FlareSolverrMode::default_mrt`] 推导（Tls=15s，Cdp/Full=30s）。
     /// `Some(d)` 时使用注入值，生产环境应从 `EngineTimeoutSettings` 注入：
@@ -307,7 +307,7 @@ impl FlareSolverrEngine {
         Self::with_config(client, config)
     }
 
-    /// Create a new FlareSolverrEngine from configuration URL with explicit MRT (Full mode, T060/T061)。
+    /// Create a new FlareSolverrEngine from configuration URL with explicit MRT (Full mode)。
     ///
     /// 生产环境应从 `settings.timeouts.engines.cdp_seconds` 注入 `mrt`（Full 模式属 CDP 类）。
     /// URL 必须为 http/https 协议，否则使用默认占位符（避免 SSRF 风险）。
@@ -335,7 +335,7 @@ impl FlareSolverrEngine {
         Self::with_config(client, config)
     }
 
-    /// Create a FlareSolverrEngine in CDP mode with URL, proxy and explicit MRT (T060/T061)。
+    /// Create a FlareSolverrEngine in CDP mode with URL, proxy and explicit MRT。
     ///
     /// 生产环境应从 `settings.timeouts.engines.cdp_seconds` 注入 `mrt`。
     /// URL 必须为 http/https 协议，否则使用默认占位符。
@@ -362,7 +362,7 @@ impl FlareSolverrEngine {
         Self::with_config(client, config)
     }
 
-    /// Create a FlareSolverrEngine in TLS mode with URL, proxy and explicit MRT (T060/T061)。
+    /// Create a FlareSolverrEngine in TLS mode with URL, proxy and explicit MRT。
     ///
     /// 生产环境应从 `settings.timeouts.engines.tls_seconds` 注入 `mrt`。
     /// URL 必须为 http/https 协议，否则使用默认占位符。
@@ -432,7 +432,7 @@ impl FlareSolverrEngine {
         self.config.mode
     }
 
-    /// 获取引擎级 MRT（用于测试验证 T060）。
+    /// 获取引擎级 MRT（用于测试验证）。
     ///
     /// 返回构造时注入的 `mrt`；若未注入则按 [`FlareSolverrMode::default_mrt`] 推导：
     /// - `Full` / `Cdp`：30 秒
@@ -570,7 +570,7 @@ impl FlareSolverrEngineBuilder {
         self
     }
 
-    /// Set engine MRT (Maximum Response Time, T060/T061).
+    /// Set engine MRT (Maximum Response Time).
     ///
     /// `None` 时按 [`FlareSolverrMode::default_mrt`] 推导。
     /// 生产环境应从 `EngineTimeoutSettings` 注入对应字段。
@@ -681,6 +681,13 @@ impl ScraperEngine for FlareSolverrEngine {
             return Err(EngineError::Other("Unsupported HTTP method".to_string()));
         }
 
+        // 引擎层 SSRF 校验（与 handler/router 层独立的纵深防御）：
+        // FlareSolverr 是外部服务，目标 URL 由它自行解析并跟随重定向，
+        // 入口不校验等于完全绕过整条 SSRF 防护链
+        crate::engines::validators::validate_url(&request.url)
+            .await
+            .map_err(|e| EngineError::SsrfProtection(format!("SSRF protection: {}", e)))?;
+
         // Tls 模式拒绝截图请求（保持原 FireEngineTls 行为）
         if self.config.mode == FlareSolverrMode::Tls && request.needs_screenshot {
             return Err(EngineError::Other(
@@ -694,13 +701,13 @@ impl ScraperEngine for FlareSolverrEngine {
         let proxy_url = request.proxy.as_ref().or(self.config.proxy_url.as_ref());
 
         // Prepare custom headers:合并 proxy 信息 + 用户传入的 headers
-        // 不再静默丢弃用户 headers（B2/HIGH 修复）
+        // 不再静默丢弃用户 headers
         let mut custom_headers: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
 
         if let Some(proxy) = proxy_url {
             custom_headers.insert("X-Proxy-URL".to_string(), proxy.clone());
-            // 使用脱敏后的 proxy URL 打印日志（避免凭证泄露 - 安全 HIGH 修复）
+            // 使用脱敏后的 proxy URL 打印日志（避免凭证泄露 - 安全修复）
             debug!(
                 "{} using proxy: {}",
                 self.config.mode.engine_name(),
@@ -773,19 +780,21 @@ impl ScraperEngine for FlareSolverrEngine {
             .json(&fs_request)
             .send()
             .await
-            .map_err(|e| EngineError::Other(format!("FlareSolverr request failed: {}", e)))?;
+            .map_err(|e| {
+                // 服务不可达/网络抖动属于可重试的基础设施错误，允许 fallback 到下一引擎
+                EngineError::RequestFailed(format!("FlareSolverr request failed: {}", e))
+            })?;
 
         // Get raw text first to debug any encoding issues
-        let raw_text = raw_response
-            .text()
-            .await
-            .map_err(|e| EngineError::Other(format!("Failed to get response text: {}", e)))?;
+        let raw_text = raw_response.text().await.map_err(|e| {
+            EngineError::RequestFailed(format!("Failed to get response text: {}", e))
+        })?;
 
         debug!("FlareSolverr raw response length: {}", raw_text.len());
 
         // Try to parse as JSON
         let response: FlareSolverrResponse = serde_json::from_str(&raw_text).map_err(|e| {
-            EngineError::Other(format!(
+            EngineError::RequestFailed(format!(
                 "Failed to parse FlareSolverr response: {} (first 200 chars: {:?})",
                 e,
                 &raw_text[..raw_text.len().min(200)]
@@ -795,7 +804,7 @@ impl ScraperEngine for FlareSolverrEngine {
         // Check response status
         if response.status != "ok" {
             error!("FlareSolverr error: {}", response.message);
-            return Err(EngineError::Other(format!(
+            return Err(EngineError::RequestFailed(format!(
                 "FlareSolverr error: {}",
                 response.message
             )));
@@ -803,7 +812,7 @@ impl ScraperEngine for FlareSolverrEngine {
 
         // Get solution
         let solution = response.solution.ok_or_else(|| {
-            EngineError::Other("No solution in FlareSolverr response".to_string())
+            EngineError::RequestFailed("No solution in FlareSolverr response".to_string())
         })?;
 
         // Check for CAPTCHA or bot detection pages
@@ -817,7 +826,9 @@ impl ScraperEngine for FlareSolverrEngine {
 
         if is_captcha_page {
             warn!("FlareSolverr returned CAPTCHA/bot detection page");
-            return Err(EngineError::Other(
+            // 与 reqwest 路径的同类场景对齐：反爬命中是可重试错误，
+            // 允许 router fallback/升级到浏览器引擎
+            return Err(EngineError::AntiBotDetected(
                 "FlareSolverr blocked by CAPTCHA or bot detection".to_string(),
             ));
         }
@@ -843,6 +854,7 @@ impl ScraperEngine for FlareSolverrEngine {
             screenshot: solution.screenshot,
             headers,
             response_time_ms,
+            final_url: None,
         };
 
         info!(
@@ -934,7 +946,7 @@ impl ScraperEngine for FlareSolverrEngine {
         self.config.mode.supports_tls_fingerprint()
     }
 
-    /// T060：覆写 MRT，按 mode 区分（design.md §14）。
+    /// 覆写 MRT，按 mode 区分。
     ///
     /// - `Tls`：15 秒（`tls_seconds`，速度较快）
     /// - `Cdp` / `Full`：30 秒（`cdp_seconds`，涉及完整浏览器）

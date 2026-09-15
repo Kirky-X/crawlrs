@@ -330,7 +330,9 @@ mod tests {
 
     #[test]
     fn test_new_creates_repository_instance() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let _repo = TasksBacklogRepositoryImpl::new(pool);
     }
@@ -340,7 +342,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let backlog = sample_tasks_backlog();
         let result = repo.create(&backlog).await;
@@ -373,7 +377,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_id_returns_none_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::new_v4()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
@@ -382,7 +388,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_id_returns_none_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_id(Uuid::new_v4()).await;
         assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
@@ -394,7 +402,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let mut backlog = sample_tasks_backlog();
         // create first
@@ -423,7 +433,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let backlog = sample_tasks_backlog();
         repo.create(&backlog).await.expect("create failed");
@@ -441,7 +453,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_pending_tasks_returns_empty_for_unknown_team() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_pending_tasks(Some(Uuid::new_v4()), Some(10)).await;
         assert!(
@@ -457,7 +471,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_pending_tasks_with_team_id_returns_empty_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_pending_tasks(Some(Uuid::new_v4()), None).await;
         assert!(
@@ -473,7 +489,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_expired_tasks_returns_empty_when_none_expired() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         // No tasks have expired in a fresh test DB for this team_id.
         // We only assert Ok because the shared test DB may have other
@@ -489,7 +507,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_by_status_returns_zero_for_unknown_team() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .count_by_status(Some(Uuid::new_v4()), TasksBacklogStatus::Pending)
@@ -500,7 +520,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_batch_returns_zero_for_unknown_ids() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .update_status_batch(&[Uuid::new_v4()], TasksBacklogStatus::Processing)
@@ -515,7 +537,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_batch_with_empty_ids_returns_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         // Empty ids: update_many with IN () — Postgres returns Ok(0 rows affected).
         let result = repo
@@ -533,7 +557,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_database_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = RepositoryError::Database(anyhow::anyhow!("connection refused"));
         let msg = format!("{}", err);
         assert!(msg.contains("Database error"));
@@ -542,7 +568,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_not_found_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = RepositoryError::NotFound;
         assert_eq!(format!("{}", err), "Record not found");
     }
@@ -551,7 +579,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_record_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::RecordNotFound("backlog missing".to_string());
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
@@ -562,7 +592,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_query_runtime() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err =
             sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
         let repo_err: RepositoryError = db_err.into();
@@ -574,7 +606,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_connection_acquire() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
@@ -585,7 +619,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_record_not_inserted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::RecordNotInserted;
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
@@ -598,7 +634,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_connection_path() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let inner = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
         let db_err = dbnexus::DbError::Connection(inner);
         let any_err: anyhow::Error = db_err.into();
@@ -609,7 +647,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_config_path() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = dbnexus::DbError::Config("invalid url".to_string());
         let any_err: anyhow::Error = db_err.into();
         let repo_err = RepositoryError::Database(any_err);
@@ -619,7 +659,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_permission_path() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = dbnexus::DbError::Permission("forbidden".to_string());
         let any_err: anyhow::Error = db_err.into();
         let repo_err = RepositoryError::Database(any_err);
@@ -629,7 +671,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_transaction_path() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = dbnexus::DbError::Transaction("deadlock".to_string());
         let any_err: anyhow::Error = db_err.into();
         let repo_err = RepositoryError::Database(any_err);
@@ -639,7 +683,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_migration_path() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = dbnexus::DbError::Migration("schema mismatch".to_string());
         let any_err: anyhow::Error = db_err.into();
         let repo_err = RepositoryError::Database(any_err);
@@ -651,31 +697,41 @@ mod tests {
 
     #[test]
     fn test_tasks_backlog_status_pending_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(format!("{}", TasksBacklogStatus::Pending), "pending");
     }
 
     #[test]
     fn test_tasks_backlog_status_processing_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(format!("{}", TasksBacklogStatus::Processing), "processing");
     }
 
     #[test]
     fn test_tasks_backlog_status_completed_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(format!("{}", TasksBacklogStatus::Completed), "completed");
     }
 
     #[test]
     fn test_tasks_backlog_status_failed_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(format!("{}", TasksBacklogStatus::Failed), "failed");
     }
 
     #[test]
     fn test_tasks_backlog_status_expired_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(format!("{}", TasksBacklogStatus::Expired), "expired");
     }
 
@@ -683,7 +739,9 @@ mod tests {
 
     #[test]
     fn test_tasks_backlog_status_from_str_pending() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(
             TasksBacklogStatus::from_str("pending").unwrap(),
             TasksBacklogStatus::Pending
@@ -692,7 +750,9 @@ mod tests {
 
     #[test]
     fn test_tasks_backlog_status_from_str_processing() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(
             TasksBacklogStatus::from_str("processing").unwrap(),
             TasksBacklogStatus::Processing
@@ -701,7 +761,9 @@ mod tests {
 
     #[test]
     fn test_tasks_backlog_status_from_str_completed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(
             TasksBacklogStatus::from_str("completed").unwrap(),
             TasksBacklogStatus::Completed
@@ -710,7 +772,9 @@ mod tests {
 
     #[test]
     fn test_tasks_backlog_status_from_str_failed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(
             TasksBacklogStatus::from_str("failed").unwrap(),
             TasksBacklogStatus::Failed
@@ -719,7 +783,9 @@ mod tests {
 
     #[test]
     fn test_tasks_backlog_status_from_str_expired() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(
             TasksBacklogStatus::from_str("expired").unwrap(),
             TasksBacklogStatus::Expired
@@ -728,7 +794,9 @@ mod tests {
 
     #[test]
     fn test_tasks_backlog_status_from_str_case_insensitive() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // implementation lowercases input, so "PENDING" should parse
         assert_eq!(
             TasksBacklogStatus::from_str("PENDING").unwrap(),
@@ -738,7 +806,9 @@ mod tests {
 
     #[test]
     fn test_tasks_backlog_status_from_str_invalid_returns_err() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = TasksBacklogStatus::from_str("unknown");
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -750,7 +820,9 @@ mod tests {
 
     #[test]
     fn test_from_model_converts_all_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let now = fixed_offset_dt(1_700_000_000);
         let scheduled = fixed_offset_dt(1_700_000_100);
         let expires = fixed_offset_dt(1_700_000_200);
@@ -790,7 +862,9 @@ mod tests {
 
     #[test]
     fn test_from_model_with_invalid_status_falls_back_to_pending() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let now = fixed_offset_dt(1_700_000_000);
         let model = tasks_backlog::Model {
             id: Uuid::new_v4(),
@@ -816,7 +890,9 @@ mod tests {
 
     #[test]
     fn test_from_model_with_none_optional_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let now = fixed_offset_dt(1_700_000_000);
         let model = tasks_backlog::Model {
             id: Uuid::new_v4(),
@@ -848,7 +924,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_connection_acquire_closed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed);
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -856,7 +934,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_record_not_updated() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::RecordNotUpdated;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -864,7 +944,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_query_sqlx_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let inner = sea_orm::sqlx::Error::RowNotFound;
         let db_err =
             sea_orm::DbErr::Query(sea_orm::RuntimeErr::SqlxError(std::sync::Arc::new(inner)));
@@ -874,7 +956,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_conn_runtime() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal("conn lost".to_string()));
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -883,7 +967,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_exec_runtime() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Exec(sea_orm::RuntimeErr::Internal("exec failed".to_string()));
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -892,7 +978,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_type() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Type("invalid type".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -901,7 +989,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_json() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Json("parse error".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -910,7 +1000,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_attr_not_set() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::AttrNotSet("name".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -919,7 +1011,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_convert_from_u64() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::ConvertFromU64("String");
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -927,7 +1021,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_unpack_insert_id() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::UnpackInsertId;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -935,7 +1031,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_update_get_primary_key() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::UpdateGetPrimaryKey;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -943,7 +1041,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_migration() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::Migration("schema mismatch".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -952,7 +1052,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_mutex_poison_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::MutexPoisonError;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -960,7 +1062,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_rbac_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::RbacError("forbidden".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -969,7 +1073,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_access_denied() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::AccessDenied {
             permission: "write".to_string(),
             resource: "backlog".to_string(),
@@ -982,7 +1088,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_backend_not_supported() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::BackendNotSupported {
             db: "mysql",
             ctx: "not configured",
@@ -993,7 +1101,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_try_into_err() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let source_err: std::sync::Arc<dyn std::error::Error + Send + Sync> = std::sync::Arc::new(
             std::io::Error::new(std::io::ErrorKind::InvalidData, "bad value"),
         );
@@ -1008,7 +1118,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_key_arity_mismatch() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::KeyArityMismatch {
             expected: 2,
             received: 1,
@@ -1019,7 +1131,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_from_dberr_primary_key_not_set() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::PrimaryKeyNotSet { ctx: "delete" };
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
@@ -1034,7 +1148,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_id_with_nil_uuid_returns_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_id(Uuid::nil()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
@@ -1044,7 +1160,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_id_with_nil_uuid_returns_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_id(Uuid::nil()).await;
         assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
@@ -1053,7 +1171,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_with_nil_uuid_succeeds_silently() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         // delete_by_id is idempotent: returns Ok(()) even when no row matches.
         let result = repo.delete(Uuid::nil()).await;
@@ -1062,7 +1182,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_pending_tasks_with_nil_team_id_returns_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_pending_tasks(Some(Uuid::nil()), Some(5)).await;
         assert!(
@@ -1076,7 +1198,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_pending_tasks_with_both_none_returns_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_pending_tasks(None, None).await;
         assert!(
@@ -1090,7 +1214,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_expired_tasks_without_limit_returns_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_expired_tasks(None).await;
         assert!(
@@ -1103,7 +1229,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_by_status_with_team_id_returns_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .count_by_status(Some(Uuid::new_v4()), TasksBacklogStatus::Processing)
@@ -1114,7 +1242,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_by_status_with_nil_team_id_returns_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .count_by_status(Some(Uuid::nil()), TasksBacklogStatus::Completed)
@@ -1126,7 +1256,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_by_status_with_each_status_variant_returns_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         // Use a unique team_id per status to ensure isolation and 0 count.
         for status in [
@@ -1144,7 +1276,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_batch_with_multiple_ids_returns_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let ids = vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
         let result = repo
@@ -1160,7 +1294,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_batch_with_nil_ids_returns_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         // Nil UUID is unlikely to match any backlog id (we generate v4 UUIDs).
         let result = repo
@@ -1176,7 +1312,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_batch_for_each_status_variant_returns_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         for status in [
             TasksBacklogStatus::Pending,
@@ -1202,7 +1340,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_with_unique_uuids_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         // Use new_v4 for all UUIDs to ensure isolation under concurrent runs.
         // (Original test used nil UUIDs which collide on PRIMARY KEY.)
@@ -1227,7 +1367,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_database_display_exact() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = RepositoryError::Database(anyhow::anyhow!("connection refused"));
         let msg = err.to_string();
         assert!(msg.contains("Database error"));
@@ -1236,7 +1378,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_database_display_with_empty_message() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = RepositoryError::Database(anyhow::anyhow!(""));
         let msg = err.to_string();
         assert!(msg.contains("Database error"));
@@ -1244,7 +1388,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_implements_debug() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err1 = RepositoryError::Database(anyhow::anyhow!("e"));
         let err2 = RepositoryError::NotFound;
         let debug1 = format!("{:?}", err1);

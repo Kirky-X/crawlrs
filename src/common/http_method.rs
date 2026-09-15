@@ -7,7 +7,7 @@
 //!
 //! 将 `HttpMethod` 从 `engines::engine_client` 提升至 `common` 层，
 //! 消除原 `infrastructure::oxcache::cache_mode`（现已提升至 `common::cache_mode`）对 `engines` 层的反向依赖
-//! （CRITICAL-1：infrastructure → engines 层级违规修复）。
+//! （infrastructure → engines 层级违规修复）。
 //!
 //! # 设计依据
 //!

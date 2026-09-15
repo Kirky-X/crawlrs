@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! T051: MLLM 动作执行器
+//! MLLM 动作执行器
 //!
 //! 将 `MllmDecision` 转换为 chromiumoxide CDP 操作，
 //! 在浏览器页面上执行点击、滚动、输入、等待等动作。

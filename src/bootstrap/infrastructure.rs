@@ -15,7 +15,7 @@ use crate::infrastructure::repositories::{
     tasks_backlog_repo_impl::TasksBacklogRepositoryImpl,
     webhook_event_repo_impl::WebhookEventRepoImpl, webhook_repo_impl::WebhookRepoImpl,
 };
-// R-teams-004 / T015：teams-off 时不导入 DatabaseGeoRestrictionRepository
+// teams-off 时不导入 DatabaseGeoRestrictionRepository
 #[cfg(feature = "teams")]
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use anyhow::Result;
@@ -41,7 +41,7 @@ pub struct Repositories {
     pub credits_repo: Arc<CreditsRepositoryImpl>,
     /// Geo restriction repository.
     ///
-    /// R-teams-004 / T015：teams feature 关闭时不编译此字段。
+    /// teams feature 关闭时不编译此字段。
     #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<DatabaseGeoRestrictionRepository>,
     /// Tasks backlog repository for backlog processing.
@@ -107,7 +107,7 @@ pub fn init_http_client(
         }
         None => crate::infrastructure::dns::create_ipv4_only_resolver(),
     };
-    // T056/C1 修复：移除 init_http_client 中的代理注入逻辑。
+    // 移除 init_http_client 中的代理注入逻辑。
     // 代理已统一由 EngineModule 构造 ProxyPool 注入 ReqwestEngine（按 ProxyCategory::Html 路由）。
     // 双重注入会导致代理配置冲突：http_client 级别 + ReqwestEngine 级别同时生效。
     let client = reqwest::Client::builder()
@@ -116,6 +116,11 @@ pub fn init_http_client(
         .pool_idle_timeout(Duration::from_secs(90))
         .local_address(Some(Ipv4Addr::UNSPECIFIED.into()))
         .dns_resolver(resolver)
+        // SSRF 纵深：重定向逐跳校验（静态内网 + DNS 解析结果全公网），
+        // 防止 302 → 内网/云元数据端点的绕过
+        .redirect(crate::utils::http_client::create_ssrf_safe_redirect_policy(
+            5,
+        ))
         .build()?;
     let client = Arc::new(client);
 
@@ -152,7 +157,7 @@ pub fn init_repositories(db: Arc<DatabasePool>, settings: &Settings) -> Reposito
     let webhook_event_repo = Arc::new(WebhookEventRepoImpl::new(db.inner().clone()));
     let webhook_repo = Arc::new(WebhookRepoImpl::new(db.inner().clone()));
     let credits_repo = Arc::new(CreditsRepositoryImpl::new(db.inner().clone()));
-    // R-teams-004 / T015：teams-off 时不构造 geo_restriction_repo
+    // teams-off 时不构造 geo_restriction_repo
     #[cfg(feature = "teams")]
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.inner().clone()));
     let tasks_backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db.inner().clone()));
@@ -234,7 +239,7 @@ pub async fn init_oxcache(settings: &Settings) -> Result<Option<Arc<SearchCache>
 ///
 /// Returns an initialized cache service as a trait object.
 pub async fn init_cache_service(settings: &Settings) -> Result<Arc<dyn CacheService>> {
-    // T027: skip cache initialization when cache is disabled, consistent with init_oxcache
+    // skip cache initialization when cache is disabled, consistent with init_oxcache
     if !settings.cache.enabled {
         info!("Cache is disabled, skipping cache service initialization");
         // Return a no-op cache service that always misses
@@ -350,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_init_http_client_ignores_proxy_settings() {
-        // T056/C1 修复后，init_http_client 不再注入代理。
+        // init_http_client 不再注入代理。
         // 代理统一由 EngineModule 构造 ProxyPool 注入 ReqwestEngine。
         // 此测试验证即使 settings.proxy.enabled=true 且 urls 非空，
         // init_http_client 也只创建无代理的 http_client。
@@ -500,7 +505,7 @@ mod tests {
         assert!(Arc::strong_count(&repos.webhook_event_repo.clone()) >= 1);
         assert!(Arc::strong_count(&repos.webhook_repo.clone()) >= 1);
         assert!(Arc::strong_count(&repos.credits_repo.clone()) >= 1);
-        // R-teams-004 / T015：teams feature 关闭时字段不编译
+        // teams feature 关闭时字段不编译
         #[cfg(feature = "teams")]
         assert!(Arc::strong_count(&repos.geo_restriction_repo.clone()) >= 1);
         assert!(Arc::strong_count(&repos.tasks_backlog_repo.clone()) >= 1);

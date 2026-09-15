@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! JS 注入模块（design.md §6，R-jsrender-002）
+//! JS 注入模块
 //!
 //! 在浏览器页面导航前 / 加载后注入指定 JavaScript 脚本：
 //! - `stealth`：覆盖 `navigator.webdriver` 等反爬指纹属性

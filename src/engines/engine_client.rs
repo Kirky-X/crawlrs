@@ -56,7 +56,7 @@ pub enum EngineError {
     #[error("Browser error: {0}")]
     BrowserError(String),
 
-    /// 反爬虫检测命中（design.md §1.6/1.7，R-antibot-003）
+    /// 反爬虫检测命中（1.7）
     ///
     /// 携带 `antibot::classifier::classify` 给出的 `Detection::reason` 字符串。
     /// 可重试：`is_retryable()=true`，`retry_reason()=AntiBot`，
@@ -64,7 +64,7 @@ pub enum EngineError {
     #[error("Anti-bot detected: {0}")]
     AntiBotDetected(String),
 
-    /// 引擎特性切换（T027，R-identity-002）
+    /// 引擎特性切换
     ///
     /// 当引擎降级或特性切换（如 Chrome → HTTP、JS 渲染失败回退到静态抓取）时触发。
     /// 携带描述信息（如 "chrome_degraded_to_http"）。
@@ -77,7 +77,7 @@ pub enum EngineError {
     #[error("Request expired")]
     Expired,
 
-    /// 引擎级 MRT 超时（架构审查 MEDIUM-2 修复，design.md §14 / T062）
+    /// 引擎级 MRT 超时
     ///
     /// 区别于 `Timeout`（请求整体超时），此变体表示单引擎在 MRT（Maximum Response Time）
     /// 内未完成，router 触发瀑布式 fallback 切换到下一引擎。
@@ -141,7 +141,7 @@ impl EngineError {
         }
     }
 
-    /// 将错误归类为重试原因（design.md §4，R-antibot-003 / R-identity-002）。
+    /// 将错误归类为重试原因。
     ///
     /// 调用方应先查 [`is_retryable()`](Self::is_retryable)：
     /// 不可重试的错误虽返回 [`RetryReason::Transient`]，
@@ -150,7 +150,7 @@ impl EngineError {
     /// 映射：
     /// - `RequestFailed` / `Timeout` / `BrowserError` → `Transient`（同引擎可重试）
     /// - `AntiBotDetected` → `AntiBot`（需切身份 + 浏览器引擎改派）
-    /// - `FeatureToggle` → `FeatureToggle`（需换引擎重试；T027 新增）
+    /// - `FeatureToggle` → `FeatureToggle`（需换引擎重试）
     /// - 其余不可重试变体 → `Transient`（占位）
     pub fn retry_reason(&self) -> RetryReason {
         match self {
@@ -203,7 +203,7 @@ pub trait ScraperEngine: Send + Sync {
         false
     }
 
-    /// 引擎级最大响应时间（MRT, Maximum Response Time）—— design.md §14 / T060。
+    /// 引擎级最大响应时间（MRT, Maximum Response Time）。
     ///
     /// 用于 router 顺序 fallback 路径瀑布式超时：单引擎调用以
     /// `min(remaining_timeout, engine.max_response_time())` 包裹，
@@ -222,7 +222,7 @@ pub trait ScraperEngine: Send + Sync {
     /// 引擎构造时应从 `EngineTimeoutSettings` 注入对应字段，避免硬编码
     /// （参考 `ReqwestEngine::new_with_timeout` 模式）。
     ///
-    /// 架构审查 MEDIUM-1 修复：删除 `DEFAULT_ENGINE_MRT` 常量，默认实现直接返回
+    /// 删除 `DEFAULT_ENGINE_MRT` 常量，默认实现直接返回
     /// `Duration::from_secs(30)`，避免与 `EngineTimeoutSettings::default_timeout_seconds`
     /// 形成隐式耦合（注释承诺"保持一致"但代码无引用关系）。
     fn max_response_time(&self) -> Duration {

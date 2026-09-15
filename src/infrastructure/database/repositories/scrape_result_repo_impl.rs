@@ -174,6 +174,37 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
 
         Ok(avg)
     }
+
+    async fn cleanup_expired(&self, retention_days: i64) -> anyhow::Result<u64> {
+        // 保留期 <= 0 表示禁用清理（旧行为：永不删除）
+        if retention_days <= 0 {
+            return Ok(0);
+        }
+
+        // try_days 在 i64 极端值下返回 None，避免 Duration::days 的 panic 路径
+        let delta = chrono::TimeDelta::try_days(retention_days)
+            .ok_or_else(|| anyhow::anyhow!("retention_days out of range: {}", retention_days))?;
+        let cutoff = chrono::Utc::now() - delta;
+        let cutoff = cutoff.with_timezone(&chrono::FixedOffset::east_opt(0).unwrap());
+
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| anyhow::anyhow!("Failed to get connection: {}", e))?;
+
+        let result = db_entity::Entity::delete_many()
+            .filter(db_entity::Column::CreatedAt.lt(cutoff))
+            .exec(conn)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to cleanup expired results: {}", e))?;
+
+        Ok(result.rows_affected)
+    }
 }
 
 #[cfg(test)]
@@ -223,7 +254,9 @@ mod tests {
 
     #[test]
     fn test_new_creates_repository_instance() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let repo = ScrapeResultRepositoryImpl::new(pool);
         // pool() accessor should return the same Arc
@@ -235,7 +268,9 @@ mod tests {
 
     #[test]
     fn test_to_active_model_converts_all_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = sample_scrape_result();
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
 
@@ -255,7 +290,9 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_none_screenshot() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut result = sample_scrape_result();
         result.screenshot = None;
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -264,7 +301,9 @@ mod tests {
 
     #[test]
     fn test_to_domain_converts_all_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let model = sample_db_model();
         let domain = ScrapeResultRepositoryImpl::to_domain(model.clone());
 
@@ -283,7 +322,9 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_null_headers_uses_default_object() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut model = sample_db_model();
         model.headers = None;
         let domain = ScrapeResultRepositoryImpl::to_domain(model);
@@ -292,7 +333,9 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_null_meta_data_uses_default_object() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut model = sample_db_model();
         model.meta_data = None;
         let domain = ScrapeResultRepositoryImpl::to_domain(model);
@@ -301,7 +344,9 @@ mod tests {
 
     #[test]
     fn test_to_domain_roundtrip_preserves_core_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let original = sample_scrape_result();
         let active = ScrapeResultRepositoryImpl::to_active_model(&original);
         // Reconstruct a Model from the ActiveModel (all fields are Set)
@@ -330,7 +375,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_creates_record() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let mut result = sample_scrape_result();
         result.id = Uuid::new_v4();
@@ -355,7 +402,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_id_returns_none_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_id(Uuid::new_v4()).await;
         assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
@@ -367,7 +416,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_ids_returns_empty_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .find_by_task_ids(&[Uuid::new_v4(), Uuid::new_v4()])
@@ -387,7 +438,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_ids_with_empty_slice_returns_empty_vec() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_ids(&[]).await;
         assert!(
@@ -399,7 +452,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_avg_response_time_returns_zero_for_unknown_team() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Unknown team_id → JOIN yields no rows → COALESCE returns 0.0.
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_team_avg_response_time(Uuid::new_v4()).await;
@@ -415,7 +470,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_ids_with_single_id_returns_empty_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_task_ids(&[Uuid::new_v4()]).await;
         assert!(
@@ -431,7 +488,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_ids_with_many_ids_returns_empty_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let ids: Vec<Uuid> = (0..100).map(|_| Uuid::new_v4()).collect();
         let result = repo.find_by_task_ids(&ids).await;
@@ -448,7 +507,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_task_id_with_nil_uuid_returns_none() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         // Use a fresh random UUID instead of Uuid::nil() to avoid cross-test
         // data pollution (other tests may insert records with nil task_id).
@@ -462,7 +523,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_with_nil_task_id_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let mut result = sample_scrape_result();
         result.id = Uuid::new_v4();
@@ -473,7 +536,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_avg_response_time_with_nil_uuid_returns_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // nil UUID as team_id: no tasks carry team_id=Nil, so JOIN yields 0 rows.
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo.get_team_avg_response_time(Uuid::nil()).await;
@@ -481,11 +546,91 @@ mod tests {
         assert_eq!(result.unwrap(), 0.0);
     }
 
+    // ========== cleanup_expired ==========
+
+    #[tokio::test]
+    async fn test_cleanup_expired_disabled_returns_zero() {
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
+        let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
+        // retention_days = 0 表示禁用清理：直接返回 0，不产生任何删除
+        let result = repo.cleanup_expired(0).await;
+        assert!(
+            result.is_ok(),
+            "cleanup_expired(0) failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 0);
+
+        let result = repo.cleanup_expired(-5).await;
+        assert!(
+            result.is_ok(),
+            "cleanup_expired(-5) failed: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_with_overflow_days_returns_error() {
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
+        let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
+        // i64::MAX 天超出 chrono TimeDelta 范围，应返回错误而非 panic
+        let result = repo.cleanup_expired(i64::MAX).await;
+        assert!(
+            result.is_err(),
+            "overflow retention_days should be an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_deletes_only_ancient_rows() {
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
+        let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
+
+        // 远古行（1970 年）：比 cutoff（now - 20_000 天 ≈ 1971 年）更旧，必被删除
+        let mut ancient = sample_scrape_result();
+        ancient.id = Uuid::new_v4();
+        ancient.task_id = Uuid::new_v4();
+        ancient.created_at = chrono::DateTime::from_timestamp(1_000, 0).expect("valid timestamp");
+        repo.save(ancient.clone())
+            .await
+            .expect("save ancient failed");
+
+        // 保留期内的行（2023 年）：比 cutoff 新，必须存活
+        let mut recent = sample_scrape_result();
+        recent.id = Uuid::new_v4();
+        recent.task_id = Uuid::new_v4();
+        repo.save(recent.clone()).await.expect("save recent failed");
+
+        let deleted = repo.cleanup_expired(20_000).await.expect("cleanup failed");
+        assert!(deleted >= 1, "at least the ancient row should be deleted");
+
+        let ancient_gone = repo
+            .find_by_task_id(ancient.task_id)
+            .await
+            .expect("find ancient failed");
+        assert!(ancient_gone.is_none(), "ancient row must be deleted");
+
+        let recent_alive = repo
+            .find_by_task_id(recent.task_id)
+            .await
+            .expect("find recent failed");
+        assert!(recent_alive.is_some(), "recent row must survive cleanup");
+    }
+
     // ========== to_active_model / to_domain additional boundaries ==========
 
     #[test]
     fn test_to_active_model_with_empty_content() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut result = sample_scrape_result();
         result.content = "".to_string();
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -494,7 +639,9 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_empty_url() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut result = sample_scrape_result();
         result.url = "".to_string();
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -503,7 +650,9 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_zero_status_code() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut result = sample_scrape_result();
         result.status_code = 0;
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -512,7 +661,9 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_large_status_code() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut result = sample_scrape_result();
         result.status_code = 599;
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -521,7 +672,9 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_zero_response_time() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut result = sample_scrape_result();
         result.response_time_ms = 0;
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
@@ -530,7 +683,9 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_empty_headers_and_metadata() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut result = sample_scrape_result();
         result.headers = serde_json::json!({});
         result.meta_data = serde_json::json!({});
@@ -542,7 +697,9 @@ mod tests {
 
     #[test]
     fn test_to_active_model_with_complex_headers() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut result = sample_scrape_result();
         result.headers = serde_json::json!({
             "content-type": "application/json",
@@ -560,7 +717,9 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_zero_response_time() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut model = sample_db_model();
         model.response_time_ms = 0;
         let domain = ScrapeResultRepositoryImpl::to_domain(model);
@@ -569,7 +728,9 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_empty_strings() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut model = sample_db_model();
         model.url = "".to_string();
         model.content = "".to_string();
@@ -582,7 +743,9 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_both_headers_and_metadata_null() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut model = sample_db_model();
         model.headers = None;
         model.meta_data = None;
@@ -594,7 +757,9 @@ mod tests {
 
     #[test]
     fn test_to_domain_with_screenshot_present() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut model = sample_db_model();
         model.screenshot = Some("base64data".to_string());
         let domain = ScrapeResultRepositoryImpl::to_domain(model);
@@ -605,7 +770,9 @@ mod tests {
 
     #[test]
     fn test_sample_scrape_result_construction_values() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = sample_scrape_result();
         assert_eq!(result.status_code, 200);
         assert_eq!(result.content_type, "text/html");
@@ -617,7 +784,9 @@ mod tests {
 
     #[test]
     fn test_sample_db_model_construction_values() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let model = sample_db_model();
         assert_eq!(model.status_code, 404);
         assert_eq!(model.content_type, "text/plain");

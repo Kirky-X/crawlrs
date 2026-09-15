@@ -6,7 +6,7 @@
 /// 基础 HTTP 引擎模块 (始终可用)
 pub mod reqwest;
 
-/// 客户端句柄（H3 修复：tuple 泄漏状态）
+/// 客户端句柄（tuple 泄漏状态）
 pub mod handle;
 
 /// Playwright 浏览器自动化引擎
@@ -17,7 +17,7 @@ pub mod playwright;
 #[cfg(feature = "engine-playwright")]
 pub mod playwright_pool;
 
-/// Chrome CDP Tab 池（T068，R-jsrender-004）
+/// Chrome CDP Tab 池
 ///
 /// Page（tab）级复用，减少 `browser.new_page` 开销。
 /// 依赖 chromiumoxide::Page，仅在浏览器引擎启用时可用。
@@ -33,14 +33,14 @@ pub mod tab_pool;
 #[cfg(feature = "engine-flaresolverr")]
 pub mod flare_solverr;
 
-/// Wreq TLS 指纹引擎（Phase 1 / D4，feature-gated）
+/// Wreq TLS 指纹引擎（feature-gated）
 ///
 /// 基于 `wreq`（BoringSSL 后端，Apache-2.0）实现真实 JA3/JA4 指纹伪装，
 /// 为 `needs_tls_fingerprint` 请求提供专业引擎。不依赖 GPL 的 wreq-util。
 #[cfg(feature = "engine-tls-fingerprint")]
 pub mod wreq_engine;
 
-/// MLLM 自主导航爬取引擎（Phase 3）
+/// MLLM 自主导航爬取引擎
 ///
 /// 使用视觉大模型分析页面截图，自主决策导航操作，实现 agentic loop 式智能爬取。
 /// 依赖 engine-playwright（浏览器）+ llm（视觉模型）。

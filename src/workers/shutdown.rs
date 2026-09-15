@@ -3,13 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 优雅退出协调器（R-security-003 / R-security-004 / R-security-005）
+//! 优雅退出协调器
 //!
 //! 提供 worker service 的统一关闭编排：
 //! - `ShutdownCoordinator`：共享的关闭 flag + 完成通知，供 worker 循环轮询
 //! - `listen_unix_signals`：监听 SIGTERM/SIGINT 并触发关闭
 //!
-//! 设计（design.md D3）：接收信号 → 设置 `AtomicBool` flag → 等待活跃任务完成
+//! 设计接收信号 → 设置 `AtomicBool` flag → 等待活跃任务完成
 //! （graceful period 30s，可配置）→ 强制退出。
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +19,7 @@ use tokio::sync::Notify;
 
 use crate::domain::repositories::task_repository::TaskRepository;
 use log::{error, info};
+use uuid::Uuid;
 
 /// 默认优雅退出门限（秒）。
 pub const DEFAULT_GRACEFUL_PERIOD_SECS: u64 = 30;
@@ -128,32 +129,37 @@ pub async fn listen_unix_signals(coordinator: Arc<ShutdownCoordinator>) -> std::
     Ok(())
 }
 
-/// 回滚已锁定但未完成的任务状态（R-security-005 / T009）。
+/// 回滚已锁定但未完成的任务状态。
 ///
 /// 优雅退出期间，`acquire_next` 已锁定（`Active`）但未完成的任务会永久卡在
 /// 执行态；本函数将其批量重置回 `Queued`（待处理），避免任务丢失。
 ///
 /// 语义上等价于 `TaskRepository::update_status(task_id, Pending)`：
 /// - 本代码库任务状态为 `TaskStatus::Queued`（待处理）/ `TaskStatus::Active`（处理中）；
-/// - 复用 `reset_stuck_tasks(timeout=0)` 的批量 UPDATE（Active → Queued），
+/// - 复用 `reset_stuck_tasks_for_workers(timeout=0)` 的批量 UPDATE（Active → Queued），
 ///   立即重置所有已锁定任务，无需 N+1 循环。
+///
+/// 身份限定（R-data-integrity-004）：仅回滚 `worker_ids` 中本进程 worker
+/// 认领的任务（lock_token == worker_id），多副本部署下不触碰其他副本在跑任务。
 ///
 /// 该操作是 best-effort：以 `graceful_period` 为超时上限，数据库不可达时
 /// 记录 error 后由调用方继续强制退出。
 pub async fn rollback_pending_tasks(
     repository: &Arc<dyn TaskRepository>,
     graceful_period: Duration,
+    worker_ids: &[Uuid],
 ) {
     match tokio::time::timeout(
         graceful_period,
-        repository.reset_stuck_tasks(chrono::Duration::zero()),
+        repository.reset_stuck_tasks_for_workers(chrono::Duration::zero(), worker_ids),
     )
     .await
     {
         Ok(Ok(affected)) => {
             info!(
-                "Rolled back {} in-flight tasks to queued during shutdown",
-                affected
+                "Rolled back {} in-flight tasks to queued during shutdown (workers: {})",
+                affected,
+                worker_ids.len()
             );
         }
         Ok(Err(e)) => {
@@ -204,7 +210,7 @@ mod tests {
         let coordinator = Arc::new(ShutdownCoordinator::new(Duration::from_secs(60)));
         coordinator.trigger();
         let result = coordinator.wait_for_completion().await;
-        assert_eq!(result, true);
+        assert!(result);
     }
 
     #[tokio::test]
@@ -214,7 +220,7 @@ mod tests {
         let start = std::time::Instant::now();
         let result = coordinator.wait_for_completion().await;
         let elapsed = start.elapsed();
-        assert_eq!(result, false, "timeout should return false");
+        assert!(!result, "timeout should return false");
         assert!(
             elapsed >= Duration::from_millis(40),
             "timeout should wait at least ~graceful_period, got {:?}",
@@ -234,7 +240,7 @@ mod tests {
         let start = std::time::Instant::now();
         let result = coordinator.wait_for_completion().await;
         let elapsed = start.elapsed();
-        assert_eq!(result, true);
+        assert!(result);
         assert!(
             elapsed < Duration::from_secs(5),
             "should unblock promptly on trigger, got {:?}",
@@ -242,7 +248,7 @@ mod tests {
         );
     }
 
-    // ========== T011: rollback_pending_tasks integration tests ==========
+    // ========== rollback_pending_tasks integration tests ==========
 
     use crate::domain::models::{Task, TaskType};
     use crate::domain::repositories::task_repository::{
@@ -288,14 +294,22 @@ mod tests {
         async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
             Ok(false)
@@ -338,13 +352,22 @@ mod tests {
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((Vec::new(), Vec::new()))
         }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
     }
 
     #[tokio::test]
     async fn test_rollback_pending_tasks_invokes_reset_with_zero_timeout() {
         let concrete = Arc::new(RecordingTaskRepository::new());
         let repo: Arc<dyn TaskRepository> = concrete.clone();
-        rollback_pending_tasks(&repo, Duration::from_millis(100)).await;
+        rollback_pending_tasks(&repo, Duration::from_millis(100), &[]).await;
 
         assert_eq!(
             concrete.reset_calls(),
@@ -360,13 +383,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown_flow_trigger_rollback_order() {
-        // T010 主流程编排：trigger → wait_for_completion 返回 → rollback。
+        // 主流程编排：trigger → wait_for_completion 返回 → rollback。
         let coordinator = Arc::new(ShutdownCoordinator::new(Duration::from_millis(100)));
         let repo: Arc<dyn TaskRepository> = Arc::new(RecordingTaskRepository::new());
         let coord_in_task = coordinator.clone();
         let worker_task = tokio::spawn(async move {
             coord_in_task.wait_for_completion().await;
-            rollback_pending_tasks(&repo, Duration::from_millis(100)).await;
+            rollback_pending_tasks(&repo, Duration::from_millis(100), &[]).await;
         });
 
         // 模拟外部 SIGTERM：先让 worker 进入等待，再触发。
@@ -406,14 +429,22 @@ mod tests {
         async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Err(RepositoryError::NotFound)
         }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
             Ok(false)
@@ -455,6 +486,15 @@ mod tests {
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
         }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
     }
 
     struct SlowTaskRepository;
@@ -487,14 +527,22 @@ mod tests {
         async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
             Ok(false)
@@ -536,19 +584,28 @@ mod tests {
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
         }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
     }
 
     #[tokio::test]
     async fn test_rollback_pending_tasks_handles_repository_error() {
         let repo: Arc<dyn TaskRepository> = Arc::new(ErrorTaskRepository);
         // 不应 panic，应优雅处理错误
-        rollback_pending_tasks(&repo, Duration::from_secs(1)).await;
+        rollback_pending_tasks(&repo, Duration::from_secs(1), &[]).await;
     }
 
     #[tokio::test]
     async fn test_rollback_pending_tasks_handles_timeout() {
         let repo: Arc<dyn TaskRepository> = Arc::new(SlowTaskRepository);
         // 10ms 超时，SlowTaskRepository 需要 10s
-        rollback_pending_tasks(&repo, Duration::from_millis(10)).await;
+        rollback_pending_tasks(&repo, Duration::from_millis(10), &[]).await;
     }
 }

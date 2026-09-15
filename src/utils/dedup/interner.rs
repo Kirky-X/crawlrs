@@ -4,7 +4,6 @@
 // See LICENSE file in the project root for full license information.
 
 //! URL Interner — Bloom 预筛 + HashSet 精确校验双层缓存
-//! （design.md §9，T052/R-frontier-001）
 //!
 //! 简化移植自 spider `spider/src/utils/interner.rs`（ListBucket）。
 //!

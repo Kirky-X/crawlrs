@@ -10,7 +10,7 @@
 
 pub mod prompt_builder;
 pub mod provider_adapter;
-pub mod vision_adapter; // T049：视觉模型适配器（MLLM 引擎依赖）
+pub mod vision_adapter; // 视觉模型适配器（MLLM 引擎依赖）
 
 #[cfg(test)]
 use prompt_builder::TemplateLoaderTrait;

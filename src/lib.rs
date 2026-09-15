@@ -4,11 +4,35 @@
 // See LICENSE file in the project root for full license information.
 
 // 数据库后端特性说明：
-// - 当前仅支持 PostgreSQL（通过 dbnexus-postgres 特性启用）
-// - 原 dbnexus-sqlite 特性已删除（不再支持 SQLite）
-// - 若未来需要重新支持 SQLite，需重新引入 dbnexus-sqlite 特性并恢复相关测试
-// 注意：未启用任何 db 特性时，依赖 Settings/仓储的代码将不可用，
-// 但 lib 本身仍可编译（用于仅使用 engine/search 等子模块的场景）
+// - 通过 db-postgres / db-sqlite / db-mysql 三组特性选择后端（每组透传
+//   dbnexus + garrison + limiteron + inklog 的驱动选择），互斥由 dbnexus
+//   编译期强制（embedded 与 server-side 不可混，postgres/mysql 互斥）
+// - platform 面必须恰好启用一个 db-* 特性（default 已附带 db-postgres）
+// - 旧 dbnexus-sqlite 已于早期移除，现经 db-sqlite 组重新支持
+
+// platform 无驱动时 Settings/仓储代码无法编译——给出明确的单一错误而非级联报错
+#[cfg(all(
+    feature = "platform",
+    not(any(feature = "db-postgres", feature = "db-sqlite", feature = "db-mysql"))
+))]
+compile_error!(
+    "platform requires exactly one database driver feature: db-postgres / db-sqlite / db-mysql \
+     (see the db-* feature groups in Cargo.toml)"
+);
+
+// db-* 互斥守卫：比 dbnexus 的深层 compile_error 更早、更清晰（default 已含 db-postgres，
+// 追加 db-sqlite/db-mysql 时最先在此报错）
+#[cfg(all(
+    feature = "db-postgres",
+    any(feature = "db-sqlite", feature = "db-mysql")
+))]
+compile_error!(
+    "database driver features are mutually exclusive: pick db-postgres OR db-sqlite OR db-mysql"
+);
+#[cfg(all(feature = "db-sqlite", feature = "db-mysql"))]
+compile_error!(
+    "database driver features are mutually exclusive: pick db-postgres OR db-sqlite OR db-mysql"
+);
 
 /// 通用模块
 ///

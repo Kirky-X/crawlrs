@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 分层去重器（design.md §9，T050-T053/R-frontier-001）
+//! 分层去重器
 //!
 //! 统一 UrlNormalizer + UrlInterner（Bloom + HashSet）的对外接口，
 //! 供 `scrape_worker::extract_and_queue_links` 接入：
@@ -28,12 +28,12 @@
 //! ## 设计原则
 //!
 //! - **DB 保权威**：Bloom 阳性不直接判定为"已存在"，必须回落 DB 校验
-//! - **错误显性化**（规则 12）：去重错误显性返回 [`DedupError`]，不静默跳过
-//! - **简洁优先**（规则 5）：仅暴露 [`Deduplicator::check`] 与 [`Deduplicator::insert`]，
+//! - **错误显性化** 去重错误显性返回 [`DedupError`]，不静默跳过
+//! - **简洁优先** 仅暴露 [`Deduplicator::check`] 与 [`Deduplicator::insert`]，
 //!   内部组合 UrlNormalizer + UrlInterner
 //! - **TOCTOU 防御**：[`Deduplicator::check_and_insert`] 原子化 check + insert，
 //!   避免多 worker 并发时重复入队
-//! - **接口隔离**（规则 10）：`mod.rs` 只放 trait/pub 结构体/re-export，
+//! - **接口隔离** `mod.rs` 只放 trait/pub 结构体/re-export，
 //!   实现见 [`deduplicator`]、[`bloom`]、[`interner`] 子模块
 
 pub mod bloom;
@@ -67,7 +67,7 @@ pub enum DedupResult {
     },
 }
 
-/// 去重错误（规则 12：显性化）
+/// 去重错误（显性化）
 #[derive(Debug, thiserror::Error)]
 pub enum DedupError {
     /// URL 归一化失败

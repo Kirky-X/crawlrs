@@ -131,6 +131,7 @@ impl WebhookEventMapper {
     fn parse_status_from_enum(status: &webhook_event::SeaWebhookStatus) -> WebhookStatus {
         match status {
             webhook_event::SeaWebhookStatus::Pending => WebhookStatus::Pending,
+            webhook_event::SeaWebhookStatus::Processing => WebhookStatus::Processing,
             webhook_event::SeaWebhookStatus::Delivered => WebhookStatus::Delivered,
             webhook_event::SeaWebhookStatus::Failed => WebhookStatus::Failed,
             webhook_event::SeaWebhookStatus::Dead => WebhookStatus::Dead,
@@ -141,6 +142,7 @@ impl WebhookEventMapper {
     fn status_to_enum(status: &WebhookStatus) -> webhook_event::SeaWebhookStatus {
         match status {
             WebhookStatus::Pending => webhook_event::SeaWebhookStatus::Pending,
+            WebhookStatus::Processing => webhook_event::SeaWebhookStatus::Processing,
             WebhookStatus::Delivered => webhook_event::SeaWebhookStatus::Delivered,
             WebhookStatus::Failed => webhook_event::SeaWebhookStatus::Failed,
             WebhookStatus::Dead => webhook_event::SeaWebhookStatus::Dead,

@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
+use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::workers::worker::{ProcessResult, WorkerProcess};
 use async_trait::async_trait;
@@ -11,14 +12,25 @@ use std::sync::Arc;
 
 /// 任务过期清理工作器
 ///
-/// 负责定期扫描并清理过期的任务
+/// 负责定期扫描并清理过期的任务，以及超过保留期的抓取结果
 pub struct ExpirationWorker {
     repository: Arc<dyn TaskRepository>,
+    result_repository: Arc<dyn ScrapeResultRepository>,
+    /// scrape_results 保留天数；<= 0 表示禁用结果清理
+    result_retention_days: i64,
 }
 
 impl ExpirationWorker {
-    pub fn new(repository: Arc<dyn TaskRepository>) -> Self {
-        Self { repository }
+    pub fn new(
+        repository: Arc<dyn TaskRepository>,
+        result_repository: Arc<dyn ScrapeResultRepository>,
+        result_retention_days: i64,
+    ) -> Self {
+        Self {
+            repository,
+            result_repository,
+            result_retention_days,
+        }
     }
 
     async fn cleanup_expired_tasks(&self) -> Result<u64, String> {
@@ -26,6 +38,19 @@ impl ExpirationWorker {
             .expire_tasks()
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// 清理超过保留期的抓取结果
+    ///
+    /// `result_retention_days <= 0` 时为禁用状态，直接返回 0 且不触碰仓库
+    async fn cleanup_expired_results(&self) -> Result<u64, String> {
+        if self.result_retention_days <= 0 {
+            return Ok(0);
+        }
+        self.result_repository
+            .cleanup_expired(self.result_retention_days)
+            .await
+            .map_err(|e| format!("Failed to cleanup expired scrape results: {}", e))
     }
 }
 
@@ -41,7 +66,18 @@ impl WorkerProcess for ExpirationWorker {
                 if count > 0 {
                     info!("Cleaned up {} expired tasks", count);
                 }
-                ProcessResult::Completed
+                match self.cleanup_expired_results().await {
+                    Ok(cleaned) => {
+                        if cleaned > 0 {
+                            info!(
+                                "Cleaned up {} expired scrape results (retention={} days)",
+                                cleaned, self.result_retention_days
+                            );
+                        }
+                        ProcessResult::Completed
+                    }
+                    Err(e) => ProcessResult::Error(e),
+                }
             }
             Err(e) => ProcessResult::Error(format!("Failed to cleanup expired tasks: {}", e)),
         }
@@ -51,7 +87,8 @@ impl WorkerProcess for ExpirationWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::models::Task;
+    use crate::domain::models::{ScrapeResult, Task};
+    use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
     use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
     use async_trait::async_trait;
     use std::collections::HashSet;
@@ -109,16 +146,24 @@ mod tests {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -170,20 +215,103 @@ mod tests {
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
         }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
+    }
+
+    /// Mock ScrapeResultRepository，记录 cleanup_expired 的调用与可配置行为
+    struct MockResultRepository {
+        cleaned_rows: u64,
+        /// Optional error to return from cleanup_expired
+        cleanup_error: Mutex<Option<String>>,
+        cleanup_call_count: AtomicU64,
+        /// Records the retention_days passed to cleanup_expired
+        last_retention_days: Mutex<Option<i64>>,
+    }
+
+    impl MockResultRepository {
+        fn new(cleaned_rows: u64) -> Self {
+            Self {
+                cleaned_rows,
+                cleanup_error: Mutex::new(None),
+                cleanup_call_count: AtomicU64::new(0),
+                last_retention_days: Mutex::new(None),
+            }
+        }
+
+        fn new_with_cleanup_error(msg: &str) -> Self {
+            Self {
+                cleaned_rows: 0,
+                cleanup_error: Mutex::new(Some(msg.to_string())),
+                cleanup_call_count: AtomicU64::new(0),
+                last_retention_days: Mutex::new(None),
+            }
+        }
+
+        fn cleanup_calls(&self) -> u64 {
+            self.cleanup_call_count.load(Ordering::SeqCst)
+        }
+
+        fn last_retention(&self) -> Option<i64> {
+            *self.last_retention_days.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl ScrapeResultRepository for MockResultRepository {
+        async fn save(&self, _result: ScrapeResult) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+            Ok(None)
+        }
+
+        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+            Ok(vec![])
+        }
+
+        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+            Ok(0.0)
+        }
+
+        async fn cleanup_expired(&self, retention_days: i64) -> anyhow::Result<u64> {
+            self.cleanup_call_count.fetch_add(1, Ordering::SeqCst);
+            *self.last_retention_days.lock().unwrap() = Some(retention_days);
+            if let Some(msg) = self.cleanup_error.lock().unwrap().take() {
+                return Err(anyhow::anyhow!(msg));
+            }
+            Ok(self.cleaned_rows)
+        }
+    }
+
+    /// 构造使用给定任务仓库、默认结果仓库（30 天保留）的 worker
+    fn make_worker(task_repo: Arc<MockTaskRepository>) -> ExpirationWorker {
+        ExpirationWorker::new(
+            task_repo as Arc<dyn TaskRepository>,
+            Arc::new(MockResultRepository::new(0)),
+            30,
+        )
     }
 
     #[test]
     fn test_worker_name() {
-        let repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new_with_expired_count(0));
-        let worker = ExpirationWorker::new(repo);
+        let repo = Arc::new(MockTaskRepository::new_with_expired_count(0));
+        let worker = make_worker(repo);
         assert_eq!(worker.name(), "expiration-worker");
     }
 
     #[tokio::test]
     async fn test_process_completes_with_zero_expired() {
         let mock = Arc::new(MockTaskRepository::new_with_expired_count(0));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         let result = worker.process().await;
         assert_eq!(result, ProcessResult::Completed);
         assert_eq!(mock.expire_calls(), 1);
@@ -192,8 +320,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_completes_with_some_expired() {
         let mock = Arc::new(MockTaskRepository::new_with_expired_count(5));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         let result = worker.process().await;
         assert_eq!(result, ProcessResult::Completed);
         assert_eq!(mock.expire_calls(), 1);
@@ -202,8 +329,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_returns_error_on_repo_failure() {
         let mock = Arc::new(MockTaskRepository::new_with_error("db connection lost"));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         let result = worker.process().await;
         match result {
             ProcessResult::Error(msg) => {
@@ -218,8 +344,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_expired_tasks_returns_count() {
         let mock = Arc::new(MockTaskRepository::new_with_expired_count(42));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         let result = worker.cleanup_expired_tasks().await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 42);
@@ -229,8 +354,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_expired_tasks_returns_error_string() {
         let mock = Arc::new(MockTaskRepository::new_with_error("timeout"));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         let result = worker.cleanup_expired_tasks().await;
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -240,8 +364,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_calls_expire_tasks_exactly_once() {
         let mock = Arc::new(MockTaskRepository::new_with_expired_count(0));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         let _ = worker.process().await;
         assert_eq!(mock.expire_calls(), 1);
     }
@@ -249,8 +372,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_multiple_cycles() {
         let mock = Arc::new(MockTaskRepository::new_with_expired_count(3));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         // Run multiple cycles - but note the mock only returns Ok on first call
         // because error is Mutex<Option> and gets taken. Let's test a single cycle
         // properly completes.
@@ -264,8 +386,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_with_count_one() {
         let mock = Arc::new(MockTaskRepository::new_with_expired_count(1));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         let result = worker.process().await;
         assert_eq!(result, ProcessResult::Completed);
         assert_eq!(mock.expire_calls(), 1);
@@ -276,8 +397,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_with_large_count() {
         let mock = Arc::new(MockTaskRepository::new_with_expired_count(u64::MAX));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         let result = worker.process().await;
         assert_eq!(result, ProcessResult::Completed);
         assert_eq!(mock.expire_calls(), 1);
@@ -288,8 +408,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_error_then_success_on_retry() {
         let mock = Arc::new(MockTaskRepository::new_with_error("first call fails"));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         // First call: error is taken from the mock, returns Error
         let result1 = worker.process().await;
         match result1 {
@@ -310,8 +429,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_multiple_cycles_all_complete() {
         let mock = Arc::new(MockTaskRepository::new_with_expired_count(5));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         // The mock returns Ok(5) on every call (error is None)
         for i in 1..=3 {
             let result = worker.process().await;
@@ -325,8 +443,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_expired_tasks_zero_count() {
         let mock = Arc::new(MockTaskRepository::new_with_expired_count(0));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         let result = worker.cleanup_expired_tasks().await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0);
@@ -337,8 +454,8 @@ mod tests {
 
     #[test]
     fn test_new_returns_worker_with_correct_name() {
-        let repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new_with_expired_count(0));
-        let worker = ExpirationWorker::new(repo);
+        let repo = Arc::new(MockTaskRepository::new_with_expired_count(0));
+        let worker = make_worker(repo);
         // Verify the worker was constructed correctly by checking its name
         assert_eq!(worker.name(), "expiration-worker");
     }
@@ -348,8 +465,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_preserves_repository_across_calls() {
         let mock = Arc::new(MockTaskRepository::new_with_expired_count(2));
-        let repo: Arc<dyn TaskRepository> = mock.clone();
-        let worker = ExpirationWorker::new(repo);
+        let worker = make_worker(mock.clone());
         // First call
         let r1 = worker.process().await;
         assert_eq!(r1, ProcessResult::Completed);
@@ -358,5 +474,117 @@ mod tests {
         assert_eq!(r2, ProcessResult::Completed);
         // Both calls should have invoked expire_tasks
         assert_eq!(mock.expire_calls(), 2);
+    }
+
+    // ========== scrape result retention ==========
+
+    #[tokio::test]
+    async fn test_process_cleans_expired_results_and_completes() {
+        let task_mock = Arc::new(MockTaskRepository::new_with_expired_count(0));
+        let result_mock = Arc::new(MockResultRepository::new(7));
+        let worker = ExpirationWorker::new(
+            task_mock.clone() as Arc<dyn TaskRepository>,
+            result_mock.clone() as Arc<dyn ScrapeResultRepository>,
+            30,
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        assert_eq!(task_mock.expire_calls(), 1);
+        assert_eq!(result_mock.cleanup_calls(), 1);
+        assert_eq!(result_mock.last_retention(), Some(30));
+    }
+
+    #[tokio::test]
+    async fn test_retention_disabled_skips_result_cleanup() {
+        let task_mock = Arc::new(MockTaskRepository::new_with_expired_count(0));
+        let result_mock = Arc::new(MockResultRepository::new(0));
+        let worker = ExpirationWorker::new(
+            task_mock.clone() as Arc<dyn TaskRepository>,
+            result_mock.clone() as Arc<dyn ScrapeResultRepository>,
+            0,
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        // 禁用状态下不应触碰结果仓库
+        assert_eq!(result_mock.cleanup_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_negative_retention_skips_result_cleanup() {
+        let task_mock = Arc::new(MockTaskRepository::new_with_expired_count(0));
+        let result_mock = Arc::new(MockResultRepository::new(0));
+        let worker = ExpirationWorker::new(
+            task_mock.clone() as Arc<dyn TaskRepository>,
+            result_mock.clone() as Arc<dyn ScrapeResultRepository>,
+            -1,
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        assert_eq!(result_mock.cleanup_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_process_returns_error_on_result_cleanup_failure() {
+        let task_mock = Arc::new(MockTaskRepository::new_with_expired_count(0));
+        let result_mock = Arc::new(MockResultRepository::new_with_cleanup_error("deadlock"));
+        let worker = ExpirationWorker::new(
+            task_mock.clone() as Arc<dyn TaskRepository>,
+            result_mock.clone() as Arc<dyn ScrapeResultRepository>,
+            30,
+        );
+        let result = worker.process().await;
+        match result {
+            ProcessResult::Error(msg) => {
+                assert!(msg.contains("Failed to cleanup expired scrape results"));
+                assert!(msg.contains("deadlock"));
+            }
+            _ => panic!("Expected ProcessResult::Error, got {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_failure_short_circuits_result_cleanup() {
+        let task_mock = Arc::new(MockTaskRepository::new_with_error("db down"));
+        let result_mock = Arc::new(MockResultRepository::new(0));
+        let worker = ExpirationWorker::new(
+            task_mock.clone() as Arc<dyn TaskRepository>,
+            result_mock.clone() as Arc<dyn ScrapeResultRepository>,
+            30,
+        );
+        let result = worker.process().await;
+        assert!(matches!(result, ProcessResult::Error(_)));
+        // 任务清理失败时不应继续清理结果
+        assert_eq!(result_mock.cleanup_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_results_returns_count() {
+        let task_mock = Arc::new(MockTaskRepository::new_with_expired_count(0));
+        let result_mock = Arc::new(MockResultRepository::new(42));
+        let worker = ExpirationWorker::new(
+            task_mock.clone() as Arc<dyn TaskRepository>,
+            result_mock.clone() as Arc<dyn ScrapeResultRepository>,
+            14,
+        );
+        let result = worker.cleanup_expired_results().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(result_mock.cleanup_calls(), 1);
+        assert_eq!(result_mock.last_retention(), Some(14));
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_results_disabled_returns_zero() {
+        let task_mock = Arc::new(MockTaskRepository::new_with_expired_count(0));
+        let result_mock = Arc::new(MockResultRepository::new(99));
+        let worker = ExpirationWorker::new(
+            task_mock.clone() as Arc<dyn TaskRepository>,
+            result_mock.clone() as Arc<dyn ScrapeResultRepository>,
+            0,
+        );
+        let result = worker.cleanup_expired_results().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+        assert_eq!(result_mock.cleanup_calls(), 0);
     }
 }

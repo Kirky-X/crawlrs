@@ -33,7 +33,7 @@ fn is_http_url(value: &str) -> Result<(), validator::ValidationError> {
     }
 }
 
-/// T029: Validate that metadata JSON nesting depth does not exceed MAX_METADATA_DEPTH.
+/// Validate that metadata JSON nesting depth does not exceed MAX_METADATA_DEPTH.
 fn validate_metadata_depth(value: &serde_json::Value) -> Result<(), validator::ValidationError> {
     fn depth(v: &serde_json::Value) -> usize {
         match v {
@@ -133,7 +133,7 @@ pub struct ScrapeOptionsDto {
     pub needs_tls_fingerprint: Option<bool>,
     /// 是否使用Fire Engine (CDP)
     pub use_fire_engine: Option<bool>,
-    /// 缓存模式（T058/R-cache-002，design.md §13）
+    /// 缓存模式
     ///
     /// 控制本次抓取的缓存读写行为。`None`（默认）等价于 `Some(CacheMode::Enabled)`。
     /// 详见 [`crate::common::CacheMode`]。
@@ -141,14 +141,14 @@ pub struct ScrapeOptionsDto {
     /// 与 `bypass_cache` 的优先级：`bypass_cache=Some(true)` 覆盖 `cache_mode` 为
     /// `Some(CacheMode::Bypass)`（应急绕过读，正常写回）。
     pub cache_mode: Option<CacheMode>,
-    /// 应急绕过缓存读（T058/R-cache-002，design.md §13）
+    /// 应急绕过缓存读
     ///
     /// `Some(true)` → 等价于 `cache_mode=Some(CacheMode::Bypass)`（跳过读，正常写回），
     /// 用于运行时不信任缓存脏数据的应急场景。`Some(false)` 或 `None` → 忽略，按 `cache_mode` 走。
     ///
     /// 详见 [`crate::common::CacheMode::Bypass`]。
     pub bypass_cache: Option<bool>,
-    /// 仅转换正文内容（T074/T075，R-content-001/R-content-002）
+    /// 仅转换正文内容
     ///
     /// `Some(true)` 时 Markdown 转换前先经 `ContentExtractionFacade` 提取正文 HTML，
     /// 去除 nav/footer/sidebar/ads 等非主体内容。`None` 或 `Some(false)` 时整页转换。
@@ -158,7 +158,7 @@ pub struct ScrapeOptionsDto {
 }
 
 impl ScrapeOptionsDto {
-    /// 计算 `cache_mode` 与 `bypass_cache` 桥接后的有效缓存模式（架构审查 HIGH-3 修复）
+    /// 计算 `cache_mode` 与 `bypass_cache` 桥接后的有效缓存模式
     ///
     /// 优先级：`bypass_cache=Some(true)` 覆盖 `cache_mode` 为 `Bypass`；
     /// 其余情况按 `cache_mode` 走；两者皆 `None` 时返回 `None`（等价于 `Enabled`）。

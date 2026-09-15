@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 流式 HTTP→Chrome 升级探测模块（T014）
+//! 流式 HTTP→Chrome 升级探测模块
 //!
 //! 评估 HTTP 响应是否疑似 SPA 空壳，需要升级到浏览器引擎（如 Playwright）渲染。
 //! 强信号立即判定升级；弱信号累加达阈值后升级。
@@ -13,9 +13,9 @@ use reqwest::header::HeaderMap;
 /// 默认升级阈值，score >= threshold 时 upgrade=true
 pub const DEFAULT_THRESHOLD: u32 = 10;
 
-/// 性能审查 HIGH-1 修复：evaluate 仅扫描响应体前缀以降低开销。
+/// evaluate 仅扫描响应体前缀以降低开销。
 ///
-/// 设计意图是 prefix-scan（见 `evaluate` docstring），调用方应截取 body 前
+/// 设计意图是 prefix-scan（`evaluate` docstring），调用方应截取 body 前
 /// `PROBE_PREFIX_LEN` 字节传入。64KB 足以覆盖典型 SPA 空壳的 head+顶层 body。
 pub const PROBE_PREFIX_LEN: usize = 64 * 1024;
 
@@ -603,7 +603,7 @@ mod tests {
 
     #[test]
     fn single_strong_signal_with_multiple_signals_does_not_double_count() {
-        // 同一强信号多次出现只算一次（design.md: 强信号立即升级 = +10）
+        // 同一强信号多次出现只算一次（强信号立即升级 = +10）
         let probe = JsUpgradeProbe::default();
         let body = r#"<html><body>
             <script>window.__INITIAL_STATE__ = {};</script>

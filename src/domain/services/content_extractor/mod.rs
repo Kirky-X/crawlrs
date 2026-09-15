@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 正文提取模块（content-processing R2/R3，T044-T049 / R-content-002、R-content-003）
+//! 正文提取模块（content-processing R2/R3 -）
 //!
 //! 模块结构：
 //! - [`traits`]：`ContentExtractor` trait + `ExtractedContent` + `PageType`
@@ -12,7 +12,7 @@
 //! - [`dom_smoothie_extractor`]：`DomSmoothieExtractor` 性能回退（gated `dom-smoothie`）
 //! - [`facade`]：`ContentExtractionFacade` 优先级路由 + LLM 回退
 //!
-//! 特性门控策略（R-content-003）：
+//! 特性门控策略
 //! - `trafilatura`：启用 trafilatura 实现
 //! - `dom-smoothie`：启用 dom_smoothie 实现
 //! - `extractors`：聚合两者

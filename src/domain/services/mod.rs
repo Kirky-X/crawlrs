@@ -23,7 +23,7 @@
 //! 领域服务与应用程序服务的区别在于：领域服务包含纯粹的业务逻辑，
 //! 而应用程序服务负责协调和编排，可能包含技术实现细节。
 //!
-//! ## Stage 3 重构（R-auth-engine-003）
+//! ## 重构
 //!
 //! 已删除 `auth_scope_service` 模块——API Key 权限范围管理已迁移到 garrison
 //! RBAC，crawlrs 侧不再持有 `AuthScopeService`。Scope 由 `auth_middleware_inner`
@@ -31,9 +31,9 @@
 
 pub mod audit_log_builder;
 pub mod audit_service;
-/// 正文提取模块（content-processing R2/R3，T044-T049/R-content-002、R-content-003）
+/// 正文提取模块（content-processing R2/R3 -）
 ///
-/// 特性门控（R-content-003）：
+/// 特性门控
 /// - `trafilatura`：启用 trafilatura 实现（主路径）
 /// - `dom-smoothie`：启用 dom_smoothie 实现（性能回退）
 /// - `extractors`：聚合两者
@@ -44,19 +44,19 @@ pub mod extraction_utils;
 pub mod geo_location;
 pub mod llm;
 pub mod llm_provider_strategy;
-/// Markdown 转换服务（content-processing R1，T040/R-content-001）
+/// Markdown 转换服务（content-processing R1）
 ///
 /// gated `markdown` 特性（依赖 `htmd`）。`markdown` 已加入 `standard`/`full`。
 #[cfg(feature = "content")]
 pub mod markdown_service;
 /// Noop Webhook 服务实现（webhook feature 关闭时使用）
 ///
-/// R-wh-002 / T025：webhook feature 关闭时编译此模块，
+/// webhook feature 关闭时编译此模块，
 /// 提供 `NoopWebhookService` 替代 `WebhookServiceImpl`，
 /// 所有方法返回 `Ok(())`。
 #[cfg(not(feature = "webhook"))]
 pub mod noop_webhook_service;
-/// RAG 增强提取策略（T072-T076）
+/// RAG 增强提取策略
 ///
 /// DOM 语义分块 + 向量嵌入 + 检索增强 LLM 提取。
 pub mod rag_strategy;
@@ -67,7 +67,7 @@ pub mod search_service;
 pub mod team_semaphore;
 pub mod team_service;
 pub mod webhook_event_builder;
-/// R-wh-001 / T026：webhook feature 关闭时不编译此模块
+/// webhook feature 关闭时不编译此模块
 /// （`WebhookSender` trait 只在 `WebhookServiceImpl` 中使用，后者已被门控）
 #[cfg(feature = "webhook")]
 pub mod webhook_sender;

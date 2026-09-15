@@ -54,14 +54,14 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
                 || (segs[0] & 0xfe00) == 0xfc00 // fc00::/7 ULA
                 || (segs[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
                 || (segs[0] & 0xff00) == 0xff00 // ff00::/8 multicast
-                || segs == [0, 0, 0, 0, 0, 0, 0, 0] // ::/128 unspecified
+                || segs == [0, 0, 0, 0, 0, 0, 0, 0] // /128 unspecified
                 || (segs[0] == 0x2001 && segs[1] == 0x0db8) // 2001:db8::/32 documentation
-                // IPv4-mapped IPv6 (::ffff:x.x.x.x) - use std lib (Rust 1.65+)
+                // IPv4-mapped IPv6 (ffff:x.x.x.x) - use std lib (Rust 1.65+)
                 || ipv6
                     .to_ipv4_mapped()
                     .map(|v4| is_private_ip(IpAddr::V4(v4)))
                     .unwrap_or(false)
-                // IPv4-compatible IPv6 (::x.x.x.x, RFC 4291 deprecated) - bypass risk
+                // IPv4-compatible IPv6 (x.x.x.x, RFC 4291 deprecated) - bypass risk
                 // to_ipv4_mapped() does NOT cover this form; must check explicitly.
                 // Exclude ::/128 (unspecified) and ::1 (loopback) - already handled above.
                 || (segs[0..6] == [0, 0, 0, 0, 0, 0]
@@ -193,14 +193,14 @@ mod tests {
         // Documentation
         assert!(is_private_ip("2001:db8::1".parse().unwrap()));
 
-        // IPv4-mapped IPv6 (::ffff:x.x.x.x) - must check embedded IPv4
+        // IPv4-mapped IPv6 (ffff:x.x.x.x) - must check embedded IPv4
         assert!(is_private_ip("::ffff:10.0.0.1".parse().unwrap()));
         assert!(is_private_ip("::ffff:127.0.0.1".parse().unwrap()));
         assert!(is_private_ip("::ffff:169.254.169.254".parse().unwrap()));
         assert!(is_private_ip("::ffff:192.168.1.1".parse().unwrap()));
         assert!(!is_private_ip("::ffff:8.8.8.8".parse().unwrap()));
 
-        // IPv4-compatible IPv6 (::x.x.x.x, RFC 4291 deprecated) - bypass risk
+        // IPv4-compatible IPv6 (x.x.x.x, RFC 4291 deprecated) - bypass risk
         assert!(is_private_ip("::127.0.0.1".parse().unwrap()));
         assert!(is_private_ip("::169.254.169.254".parse().unwrap()));
         assert!(is_private_ip("::10.0.0.1".parse().unwrap()));

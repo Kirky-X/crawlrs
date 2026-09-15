@@ -11,13 +11,17 @@ pub mod cache_mode;
 pub mod constants;
 pub mod error;
 pub mod http_method;
+pub mod masking;
 pub mod metrics_shim;
+pub mod text_slice;
 pub mod time_utils;
 
 pub use cache_mode::{CacheContext, CacheMode};
 pub use constants::*;
 pub use error::{CrawlRsError, CrawlRsResult};
 pub use http_method::HttpMethod;
+pub use masking::mask_secret;
+pub use text_slice::{safe_prefix, truncate_chars};
 pub use time_utils::{
     from_db_datetime, from_db_datetime_opt, to_db_datetime, to_db_datetime_opt, UTC_OFFSET,
 };

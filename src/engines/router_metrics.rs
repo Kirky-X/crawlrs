@@ -114,7 +114,7 @@ impl RouterMetrics {
     /// 记录引擎选择
     ///
     /// 仅累加 selection 计数；延迟/成功/失败统计各自在 `record_engine_*` 中用 `entry().or_insert(0)`
-    /// 自动初始化，避免重置已累计的值（架构审查 HIGH-1 修复）。
+    /// 自动初始化，避免重置已累计的值。
     ///
     /// 注：`engine_name` 参数保留以维持 API 兼容（调用方按语义传入），但本方法不再使用它
     /// 来初始化 latencies（原 bug：insert(..., 0) 会重置累计延迟）。

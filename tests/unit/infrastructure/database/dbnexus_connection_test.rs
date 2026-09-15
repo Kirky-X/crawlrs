@@ -63,7 +63,7 @@ fn make_settings(url: &str) -> DatabaseSettings {
 
 /// 启动 PostgreSQL testcontainer 并返回连接 URL。
 ///
-/// 返回 `(url,)` 或 None（Docker 不可用或容器启动失败时）。
+/// 返回 `(url)` 或 None（Docker 不可用或容器启动失败时）。
 /// 容器通过 `std::mem::forget` 保持存活直到进程退出。
 async fn setup_real_pg() -> Option<String> {
     if !docker_available().await {

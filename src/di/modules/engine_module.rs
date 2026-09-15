@@ -47,11 +47,11 @@ impl AsyncAutoBuilder for EngineModule {
         Box::pin(async move {
             let settings = kit.require::<SettingsModule>()?;
             let http_client = kit.require::<HttpModule>()?;
-            // T056/R-identity-003 + H1/H2 修复: 构造 ProxyProvider 注入 ReqwestEngine
+            // 构造 ProxyProvider 注入 ReqwestEngine
             // - proxy.enabled=true 且 urls 非空 → Some(Arc<dyn ProxyProvider>)
             // - 否则 → None（ReqwestEngine 不使用代理）
             //
-            // MEDIUM-2 修复：sticky_ttl / cooldown 从 settings.proxy 注入（原硬编码 60s/30s）
+            // sticky_ttl / cooldown 从 settings.proxy 注入（原硬编码 60s/30s）
             //
             // 策略：从 settings.proxy.strategy 注入（H1：RoundRobin / Sticky 路由）
             let proxy_provider: Option<Arc<dyn ProxyProvider>> =
@@ -65,7 +65,7 @@ impl AsyncAutoBuilder for EngineModule {
                     None
                 };
             // FlareSolverr 单代理：取 urls.first() 作为 fallback（FlareSolverr 暂未接入 ProxyProvider，
-            // T056 范围外）。proxy.enabled=false 时为 None。
+            // 范围外）。proxy.enabled=false 时为 None。
             let proxy_url: Option<String> = if settings.proxy.enabled {
                 settings.proxy.urls.first().cloned()
             } else {
@@ -77,7 +77,7 @@ impl AsyncAutoBuilder for EngineModule {
                 settings.proxy.strategy,
                 proxy_url,
                 &settings.engines,
-                // T061：注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
+                // 注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
                 &settings.timeouts.engines,
             );
             Ok(engines)

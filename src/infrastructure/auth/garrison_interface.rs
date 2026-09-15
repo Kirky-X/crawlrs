@@ -18,15 +18,35 @@
 //!
 //! ## Spec
 //!
-//! - R-authz-rbac-001：`get_permission_list(login_id)` 对具 admin 角色的 id 返回含 `crawlrs:admin`；
+//! - `get_permission_list(login_id)` 对具 admin 角色的 id 返回含 `crawlrs:admin`；
 //!   `get_role_list` 返回该 id 角色。
 
 use async_trait::async_trait;
 use dbnexus::DbPool;
 use garrison::context::tenant::current_tenant_id_or_error;
+// garrison 仓库层 backend-agnostic：`sqlite` 模块为唯一真实现（经 make_statement
+// 运行时转换占位符），postgres/mysql 模块仅是命名空间别名 re-export。
+// 此处按 db-* 驱动特性映射为统一别名，三后端共用下方全部逻辑。
+#[cfg(feature = "db-mysql")]
+use garrison::dao::repository::mysql::{
+    DbnexusMysqlPermissionRepository as PermissionRepositoryImpl,
+    DbnexusMysqlRolePermissionRepository as RolePermissionRepositoryImpl,
+    DbnexusMysqlRoleRepository as RoleRepositoryImpl,
+    DbnexusMysqlUserRoleRepository as UserRoleRepositoryImpl,
+};
+#[cfg(feature = "db-postgres")]
 use garrison::dao::repository::postgres::{
-    DbnexusPostgresPermissionRepository, DbnexusPostgresRolePermissionRepository,
-    DbnexusPostgresRoleRepository, DbnexusPostgresUserRoleRepository,
+    DbnexusPostgresPermissionRepository as PermissionRepositoryImpl,
+    DbnexusPostgresRolePermissionRepository as RolePermissionRepositoryImpl,
+    DbnexusPostgresRoleRepository as RoleRepositoryImpl,
+    DbnexusPostgresUserRoleRepository as UserRoleRepositoryImpl,
+};
+#[cfg(feature = "db-sqlite")]
+use garrison::dao::repository::sqlite::{
+    DbnexusPermissionRepository as PermissionRepositoryImpl,
+    DbnexusRolePermissionRepository as RolePermissionRepositoryImpl,
+    DbnexusRoleRepository as RoleRepositoryImpl,
+    DbnexusUserRoleRepository as UserRoleRepositoryImpl,
 };
 use garrison::dao::repository::{
     PermissionRepository, RolePermissionRepository, RoleRepository, UserRoleRepository,
@@ -43,7 +63,6 @@ use std::collections::HashSet;
 ///
 /// # Spec
 ///
-/// - R-authz-rbac-001
 ///
 /// # 使用
 ///
@@ -73,7 +92,6 @@ impl CrawlrsGarrisonInterface {
     ///
     /// # Spec
     ///
-    /// - R-authz-rbac-001
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
@@ -107,16 +125,15 @@ impl GarrisonInterface for CrawlrsGarrisonInterface {
     ///
     /// # Spec
     ///
-    /// - R-authz-rbac-001
     async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         let tenant_id = current_tenant_id_or_error()?;
 
         // DbPool 内部为 Arc<DbPoolInner>，clone 廉价（Arc::clone <10ns），
-        // 入口处克隆一次供多个 repository 共用，避免重复 clone（规则5 简洁优先）。
+        // 入口处克隆一次供多个 repository 共用，避免重复 clone（简洁优先）。
         let pool = self.pool.clone();
 
         // 1. 取用户角色关联
-        let user_role_repo = DbnexusPostgresUserRoleRepository::new(pool.clone());
+        let user_role_repo = UserRoleRepositoryImpl::new(pool.clone());
         let user_roles = user_role_repo.find_by_user_id(tenant_id, login_id).await?;
 
         if user_roles.is_empty() {
@@ -124,10 +141,10 @@ impl GarrisonInterface for CrawlrsGarrisonInterface {
         }
 
         // 2. 对每个 role_id 取 role_permission 关联
-        let role_perm_repo = DbnexusPostgresRolePermissionRepository::new(pool.clone());
-        let perm_repo = DbnexusPostgresPermissionRepository::new(pool);
+        let role_perm_repo = RolePermissionRepositoryImpl::new(pool.clone());
+        let perm_repo = PermissionRepositoryImpl::new(pool);
 
-        // 预估容量避免扩容 rehash（P-MEDIUM-003 修复）。
+        // 预估容量避免扩容 rehash（P-）。
         let mut permission_ids: HashSet<String> = HashSet::with_capacity(user_roles.len());
         for ur in &user_roles {
             let role_perms = role_perm_repo
@@ -152,7 +169,7 @@ impl GarrisonInterface for CrawlrsGarrisonInterface {
         //
         // 去重说明：permission_ids 已是 HashSet（permission_id 唯一），
         // permission_id 与 code 一对一（DB 主键约束），故 code 也唯一，无需额外 seen HashSet
-        // （P-MEDIUM-002 修复：删除冗余去重）。
+        // 删除冗余去重。
         let mut perms: Vec<String> = Vec::with_capacity(permission_ids.len());
         for pid in permission_ids {
             let perm = perm_repo.find_by_id(&pid).await?;
@@ -188,7 +205,6 @@ impl GarrisonInterface for CrawlrsGarrisonInterface {
     ///
     /// # Spec
     ///
-    /// - R-authz-rbac-001
     async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         let tenant_id = current_tenant_id_or_error()?;
 
@@ -196,7 +212,7 @@ impl GarrisonInterface for CrawlrsGarrisonInterface {
         let pool = self.pool.clone();
 
         // 1. 取用户角色关联
-        let user_role_repo = DbnexusPostgresUserRoleRepository::new(pool.clone());
+        let user_role_repo = UserRoleRepositoryImpl::new(pool.clone());
         let user_roles = user_role_repo.find_by_user_id(tenant_id, login_id).await?;
 
         if user_roles.is_empty() {
@@ -204,7 +220,7 @@ impl GarrisonInterface for CrawlrsGarrisonInterface {
         }
 
         // 2. 对每个 role_id 取 role code
-        let role_repo = DbnexusPostgresRoleRepository::new(pool);
+        let role_repo = RoleRepositoryImpl::new(pool);
         let mut roles: Vec<String> = Vec::with_capacity(user_roles.len());
         for ur in &user_roles {
             let role = role_repo.find_by_id(tenant_id, &ur.role_id).await?;
@@ -237,7 +253,7 @@ mod tests {
         TENANT.scope(ctx, f).await
     }
 
-    /// R-authz-rbac-001：构造 interface 不应 panic（需要真实 DbPool，因此依赖 TEST_DATABASE_URL）。
+    /// 构造 interface 不应 panic（需要真实 DbPool，因此依赖 TEST_DATABASE_URL）。
     #[test]
     fn test_interface_construct_does_not_panic() {
         if skip_if_no_test_db() {
@@ -247,7 +263,7 @@ mod tests {
         let _interface = CrawlrsGarrisonInterface::new((*pool).clone());
     }
 
-    /// R-authz-rbac-001：无租户上下文时 `get_role_list` 必须 fail-closed（返回 `Err`）。
+    /// 无租户上下文时 `get_role_list` 必须 fail-closed（返回 `Err`）。
     ///
     /// 此测试验证 rule 12 失败必须显性化——未进入 `TENANT.scope` 时不应静默退化为 `tenant_id=0`。
     #[tokio::test]
@@ -265,7 +281,7 @@ mod tests {
         );
     }
 
-    /// R-authz-rbac-001：无租户上下文时 `get_permission_list` 必须 fail-closed（返回 `Err`）。
+    /// 无租户上下文时 `get_permission_list` 必须 fail-closed（返回 `Err`）。
     #[tokio::test]
     async fn test_get_permission_list_fails_without_tenant_context() {
         if skip_if_no_test_db() {
@@ -280,17 +296,17 @@ mod tests {
         );
     }
 
-    /// R-authz-rbac-001：admin 角色 id 返回含 crawlrs:admin 权限（需真实 DB + garrison 迁移）。
+    /// admin 角色 id 返回含 crawlrs:admin 权限（需真实 DB + garrison 迁移）。
     ///
     /// 此测试为集成测试，前置条件：
     /// 1. `TEST_DATABASE_URL` 指向已运行 garrison postgres migrations 的数据库
     /// 2. 测试数据：login_id=`test-admin` 的用户被分配 `admin` 角色
     /// 3. `admin` 角色已被分配 `crawlrs:admin` 权限
     ///
-    /// **标记 `#[ignore]`**：完整端到端测试在 Stage 7 (`tests/integration/auth_garrison_test.rs`) 进行。
-    /// Stage 1 阶段保留此测试骨架作为占位，避免伪装成有效测试（规则17 测试要验证有意义属性）。
+    /// **标记 `#[ignore]`**：完整端到端测试在 (`tests/integration/auth_garrison_test.rs`) 进行。
+    /// 阶段保留此测试骨架作为占位，避免伪装成有效测试（测试要验证有意义属性）。
     #[tokio::test]
-    #[ignore = "Stage 7 集成测试覆盖：需真实 DB + garrison migrations + 预置 admin 角色数据"]
+    #[ignore = "集成测试覆盖：需真实 DB + garrison migrations + 预置 admin 角色数据"]
     async fn test_admin_role_returns_crawlrs_admin_permission() {
         if skip_if_no_test_db() {
             return;
@@ -310,7 +326,7 @@ mod tests {
                     perms
                 );
             }
-            // 仅打印错误类别，不打印完整错误避免泄露 DB 连接信息（L2 安全修复）。
+            // 仅打印错误类别，不打印完整错误避免泄露 DB 连接信息。
             Err(e) => {
                 panic!(
                     "get_permission_list failed (expected garrison migrations + admin test data): error kind = {:?}",

@@ -12,7 +12,7 @@
 //!
 //! 设计参考：crawl4ai `async_dispatcher.py::MemoryAdaptiveDispatcher`。
 //! 数据源复用 `infrastructure::observability::metrics::SystemMonitorTrait`
-//! （规则 5/7：不重复造 sysinfo 采集）。
+//! （不重复造 sysinfo 采集）。
 
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -75,7 +75,7 @@ impl Default for MemorySchedulerInner {
 /// 调用方在 `acquire_concurrency_permit` 之前调用 [`MemoryScheduler::admit`]
 /// 决定是否继续推进任务。
 pub struct MemoryScheduler {
-    /// 内存数据源（复用现有监控组件，规则 5/7）
+    /// 内存数据源（复用现有监控组件 7）
     monitor: Arc<dyn SystemMonitorTrait>,
     /// 进入 Pressure 状态的内存使用率阈值（0.0 - 1.0）
     pressure_threshold: f64,
@@ -199,7 +199,7 @@ impl MemoryScheduler {
     /// 周期（1 秒）采样内存并更新状态；一旦 Critical 持续时长超过
     /// `critical_timeout`，通过 `shutdown_signal` 发送 `true` 并退出循环。
     ///
-    /// T025 修复：返回 `JoinHandle` 供调用方在关闭时 await，防止任务泄漏。
+    /// 返回 `JoinHandle` 供调用方在关闭时 await，防止任务泄漏。
     ///
     /// 返回 (`watch::Receiver<bool>`, `JoinHandle<()>`)：
     /// - receiver 供调用方监听关闭信号
@@ -450,7 +450,7 @@ mod tests {
     async fn test_shutdown_signal_initially_false() {
         let scheduler = make_static_scheduler(0.5, 0.8, 0.9, Duration::from_secs(30));
         let rx = scheduler.shutdown_signal();
-        assert_eq!(*rx.borrow(), false);
+        assert!(!(*rx.borrow()));
     }
 
     #[tokio::test]
@@ -466,7 +466,7 @@ mod tests {
         // 等待后台任务采样并最终触发关闭信号
         let changed = tokio::time::timeout(Duration::from_secs(5), rx.changed()).await;
         assert!(changed.is_ok(), "spawn_monitor 必须在超时后发送关闭信号");
-        assert_eq!(*rx.borrow(), true);
+        assert!(*rx.borrow());
     }
 
     #[tokio::test]

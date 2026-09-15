@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! API Key 签发 handler（R-key-lifecycle-001 / T027-3）。
+//! API Key 签发 handler。
 //!
 //! ## 职责
 //!
@@ -17,11 +17,11 @@
 //! - garrison 管理哈希存储，crawlrs 的 `key_hash` 字段弃用（设为 `None`）
 //! - crawlrs 的 `key` 字段存储 garrison `key_id`（公开标识，可安全记录到日志）
 //! - 调用方必须持有 admin 权限（CWE-862 IDOR 防护）
-//! - login_id = api_key_id 的 Uuid 字符串形式（design.md §5 约定，供中间件反向解析）
+//! - login_id = api_key_id 的 Uuid 字符串形式（约定，供中间件反向解析）
 //!
 //! ## Spec
 //!
-//! - R-key-lifecycle-001：签发路径改调 garrison ApiKeyHandler
+//! - 签发路径改调 garrison ApiKeyHandler
 
 use crate::common::time_utils;
 use crate::domain::auth::ScopePermission;
@@ -137,7 +137,7 @@ pub async fn create_api_key(
         );
     }
 
-    // 4. 生成新 api_key_id（同时作为 garrison login_id，design.md §5 约定）
+    // 4. 生成新 api_key_id（同时作为 garrison login_id 约定）
     let api_key_id = Uuid::new_v4();
     let expires_in_secs = req.expires_in_secs.unwrap_or(DEFAULT_EXPIRES_IN_SECS);
     let now = Utc::now();
@@ -184,7 +184,7 @@ pub async fn create_api_key(
 
     // 8. 严格解析 garrison 返回的 `key_id.key_secret` 提取 key_id（公开标识，可安全记录）
     //
-    // 安全审查 [HIGH]：原 `unwrap_or_else(|| plaintext_key.clone())` 在 garrison 返回异常格式
+    // 原 `unwrap_or_else(|| plaintext_key.clone())` 在 garrison 返回异常格式
     // 时会把明文 secret 当作 key_id 写入 DB（CWE-916 违规）。改为严格校验：split_once 失败
     // 返回 500 错误且不写入 DB，并记录原始错误供排查。
     let garrison_key_id = match plaintext_key.split_once('.') {
@@ -212,7 +212,7 @@ pub async fn create_api_key(
                 scopes: req.scopes.clone(),
                 expires_at: expires_at.to_rfc3339(),
             };
-            // 安全审查 [MEDIUM]：响应含明文 API Key，必须禁用缓存（CWE-525）
+            // 响应含明文 API Key，必须禁用缓存（CWE-525）
             // Cache-Control: no-store（HTTP/1.1）+ Pragma: no-cache（HTTP/1.0 兼容）+ Expires: 0
             let mut resp =
                 (StatusCode::CREATED, Json(ApiResponse::success(response))).into_response();
@@ -288,7 +288,7 @@ fn validate_request(req: &CreateApiKeyRequest) -> Result<(), String> {
 
 /// 校验 `team_id` 在 `teams` 表中存在。
 ///
-/// # 背景（安全审查 [MEDIUM]）
+/// # 背景
 ///
 /// DB schema（`migrations/001_initial_schema.sql`）的 `api_keys.team_id` 列
 /// **未声明** `FOREIGN KEY ... REFERENCES teams(id)` 约束，仅 `UUID NOT NULL`。
@@ -327,7 +327,7 @@ async fn check_team_exists(
 /// # 输入约定
 ///
 /// 调用前必须经 `validate_request` 校验，本函数对未知 scope 走 `unreachable!`
-/// （规则3：确定性逻辑，不交给运行时判断）。
+/// （确定性逻辑，不交给运行时判断）。
 fn map_scopes_to_garrison_perms(scopes: &[String]) -> Vec<String> {
     scopes
         .iter()
@@ -342,12 +342,12 @@ fn map_scopes_to_garrison_perms(scopes: &[String]) -> Vec<String> {
 
 /// 写入 `api_keys` 表（`id`/`team_id`/`key`=`garrison_key_id`/`key_hash`=`None`）。
 ///
-/// # 失败契约（规则12 显性化）
+/// # 失败契约（显性化）
 ///
 /// 返回 `Err(sea_orm::DbErr)` 由调用方映射为 500，记录到 `log::error!`。
 /// 常见失败场景：unique 冲突（极小概率，UUID 碰撞）/ DB 连接失败 / NOT NULL 约束。
 ///
-/// # 弃用字段访问（T028）
+/// # 弃用字段访问
 ///
 /// `key_hash` 字段已标注 `#[deprecated]`（garrison 自管哈希），但此处仍需
 /// 显式写入 `None`（保留列约束），故加 `#[allow(deprecated)]`。待全量重签
@@ -371,7 +371,7 @@ async fn insert_api_key_mapping(
         id: sea_orm::ActiveValue::Set(api_key_id),
         team_id: sea_orm::ActiveValue::Set(team_id),
         key: sea_orm::ActiveValue::Set(garrison_key_id),
-        // R-key-lifecycle-003：key_hash 弃用（garrison 自管 sha256(secret_hash)）
+        // key_hash 弃用（garrison 自管 sha256(secret_hash)）
         key_hash: sea_orm::ActiveValue::Set(None),
         created_at: sea_orm::ActiveValue::Set(now),
         updated_at: sea_orm::ActiveValue::Set(None),
@@ -419,7 +419,7 @@ mod tests {
 
     /// 注入 garrison DAO 全局态（必须先调 `reset_garrison_dao_for_test()` 清理先前状态）。
     ///
-    /// 安全审查 [LOW]：原 `let _ = ...` 丢弃 `Result` 掩盖了「DAO 已注入」错误。
+    /// 原 `let _ = ...` 丢弃 `Result` 掩盖了「DAO 已注入」错误。
     /// 改为 panic 显性化失败——`Arc<dyn GarrisonDao>` 不实现 `Debug`，无法用 `.expect()`，
     /// 故用 `if let Err(_) = ... { panic!(...) }` 模式。
     async fn inject_test_garrison_dao() {
@@ -436,7 +436,7 @@ mod tests {
 
     /// 在测试 DB 中创建 team 记录，满足 `check_team_exists` 校验。
     ///
-    /// T034 修复：原测试未创建 team 导致 `check_team_exists` 返回 `RecordNotFound`，
+    /// 原测试未创建 team 导致 `check_team_exists` 返回 `RecordNotFound`，
     /// handler 映射为 500 错误。此函数在调用 `create_api_key` 前预置 team。
     ///
     /// # Panics
@@ -468,6 +468,17 @@ mod tests {
         TeamEntity::insert(active)
             .exec(conn)
             .await
+            .map(|_| ())
+            // 并行测试共用同一数据库，其他测试可能已 seed 同一 team（固定 team_id），
+            // 唯一约束冲突视为 seed 成功（幂等），其余错误仍然 panic。
+            .or_else(|e| {
+                let msg = e.to_string();
+                if msg.contains("duplicate key") || msg.contains("23505") {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            })
             .expect("Failed to seed team in DB");
     }
 
@@ -591,7 +602,7 @@ mod tests {
         assert!(err.contains("1 year"), "err: {}", err);
     }
 
-    /// 安全审查 [MEDIUM] 补测：scopes 数量超过 MAX_SCOPES_LEN 时必须被拒绝。
+    /// scopes 数量超过 MAX_SCOPES_LEN 时必须被拒绝。
     #[test]
     fn test_validate_request_scopes_too_long_rejected() {
         // 构造 11 个 scope（超过 MAX_SCOPES_LEN=10）
@@ -637,7 +648,7 @@ mod tests {
         assert!(err.contains("invalid scope"), "err: {}", err);
     }
 
-    /// 安全审查 [HIGH] 补测：garrison 返回不含 '.' 的 malformed key 时，
+    /// garrison 返回不含 '.' 的 malformed key 时，
     /// create_api_key 必须返回 500 且不写 DB（不将明文 secret 当 key_id 持久化）。
     ///
     /// 此测试为纯逻辑验证：通过 mock 替换 garrison ApiKeyHandler 不可行（garrison 类型不公开 mock trait），
@@ -917,7 +928,7 @@ mod tests {
     // 以下测试需要 TEST_DATABASE_URL/DATABASE_URL 与 garrison sync_mode 多线程 runtime，
     // 跳过条件：无测试 DB。运行时使用 `multi_thread` flavor 驱动 garrison block_in_place。
 
-    /// T028：`key_hash` 字段已弃用（garrison 自管哈希），此测试验证新签发 key
+    /// `key_hash` 字段已弃用（garrison 自管哈希），此测试验证新签发 key
     /// 的 `key_hash` 为 `None`，故需访问 deprecated 字段，加 `#[allow(deprecated)]`。
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[allow(deprecated)]
@@ -936,7 +947,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let target_team_id = Uuid::new_v4();
-        // T034 修复：handler 步骤 3 的 `check_team_exists` 要求 team 存在，
+        // handler 步骤 3 的 `check_team_exists` 要求 team 存在，
         // 必须在调用 create_api_key 前预置 team 记录，否则返回 500。
         seed_team_in_db(&auth_state.pool, target_team_id).await;
 

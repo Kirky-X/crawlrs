@@ -10,13 +10,13 @@
 use crate::presentation::handlers::{audit_handler, extract_handler};
 use axum::{routing::get, Router};
 
-// R-wh-001 / T028：webhook-off 时不导入
+// webhook-off 时不导入
 #[cfg(feature = "webhook")]
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
 #[cfg(feature = "webhook")]
 use crate::presentation::handlers::webhook_handler;
 
-// R-teams-002 / T012：teams-off 时不导入
+// teams-off 时不导入
 #[cfg(feature = "teams")]
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 #[cfg(feature = "teams")]
@@ -24,7 +24,7 @@ use crate::presentation::handlers::team_handler;
 #[cfg(feature = "teams")]
 use axum::routing::put;
 
-// R-key-lifecycle-001：auth-off 时不导入
+// auth-off 时不导入
 #[cfg(feature = "auth")]
 use crate::presentation::handlers::api_key_handler;
 

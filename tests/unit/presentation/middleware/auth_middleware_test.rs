@@ -8,7 +8,7 @@
 //! Tests for the unified authentication middleware, covering AuthState construction,
 //! scope_middleware behavior, and auth_middleware integration.
 //!
-//! ## Stage 3 重构（R-auth-engine-003）
+//! ## 重构
 //!
 //! 已删除对 `ApiKeyCache` / `AuthRateLimiter` / `CacheStats` / `with_cache` /
 //! `with_trusted_proxies` / `new_for_middleware` 等已删除 API 的测试。
@@ -17,7 +17,7 @@
 //! （决策 4，内部 LRU，不暴露公共 API）。
 //!
 //! Note: Code paths requiring garrison RBAC (auth_middleware_inner 的 garrison 路径)
-//! 不在此处覆盖——需要 garrison 单例 + 真实 API Key，由 Stage 7 集成测试覆盖。
+//! 不在此处覆盖——需要 garrison 单例 + 真实 API Key，由集成测试覆盖。
 
 #![cfg(all(test, feature = "auth"))]
 
@@ -627,9 +627,9 @@ async fn test_auth_middleware_empty_bearer_token_returns_401() {
     );
 }
 
-// T031（Stage 7）：rate_limit 与 IP 锁定测试已迁移至
+// rate_limit 与 IP 锁定测试已迁移至
 // `tests/integration/auth_garrison_test.rs`——需 garrison 单例 + 真实 IP 上下文，
-// 单元测试无法覆盖（参考文件头注释 §Stage 3 重构）。
+// 单元测试无法覆盖（参考文件头注释 § 重构）。
 
 // ============================================================================
 // AuthError Tests (additional coverage for error variants)

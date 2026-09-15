@@ -210,7 +210,7 @@ fn benchmark_uuid_generation(c: &mut Criterion) {
 }
 
 // =============================================================================
-// T069: URL 验证基准测试
+// URL 验证基准测试
 // =============================================================================
 
 /// 生成测试 URL 集合
@@ -226,7 +226,7 @@ fn generate_test_urls(count: usize) -> Vec<String> {
         .collect()
 }
 
-/// T069: URL 格式验证性能（domain 层纯函数）
+/// URL 格式验证性能（domain 层纯函数）
 fn benchmark_url_validation(c: &mut Criterion) {
     let mut group = c.benchmark_group("url_validation");
 
@@ -249,7 +249,7 @@ fn benchmark_url_validation(c: &mut Criterion) {
     group.finish();
 }
 
-/// T069: SSRF 内部 URL 检测性能（同步快速检查）
+/// SSRF 内部 URL 检测性能（同步快速检查）
 fn benchmark_ssrf_detection(c: &mut Criterion) {
     let mut group = c.benchmark_group("ssrf_detection");
 
@@ -290,10 +290,10 @@ fn benchmark_ssrf_detection(c: &mut Criterion) {
 }
 
 // =============================================================================
-// T070: 缓存命中/未命中基准测试
+// 缓存命中/未命中基准测试
 // =============================================================================
 
-/// T070: RegexCache get_or_insert 性能（命中 vs 未命中）
+/// RegexCache get_or_insert 性能（命中 vs 未命中）
 fn benchmark_regex_cache(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("regex_cache");
@@ -340,7 +340,7 @@ fn benchmark_regex_cache(c: &mut Criterion) {
 }
 
 // =============================================================================
-// T071: 引擎路由决策基准测试
+// 引擎路由决策基准测试
 // =============================================================================
 
 /// 基准测试用 Mock 引擎
@@ -362,6 +362,7 @@ impl ScraperEngine for BenchMockEngine {
             content_type: "text/html".to_string(),
             headers: std::collections::HashMap::new(),
             response_time_ms: 10,
+            final_url: None,
         })
     }
 
@@ -413,7 +414,7 @@ fn make_bench_request() -> InternalScrapeRequest {
     }
 }
 
-/// T071: 引擎路由选择性能（select_optimal_engines + route）
+/// 引擎路由选择性能（select_optimal_engines + route）
 fn benchmark_engine_routing(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("engine_routing");
@@ -469,7 +470,6 @@ criterion_group!(
     benchmark_json_serialization,
     benchmark_url_parsing,
     benchmark_uuid_generation,
-    // T069-T071 新增
     benchmark_url_validation,
     benchmark_ssrf_detection,
     benchmark_regex_cache,

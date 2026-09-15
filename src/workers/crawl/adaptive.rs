@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 自适应爬取策略与停止条件（T067，R-frontier-004）
+//! 自适应爬取策略与停止条件
 //!
 //! 参考 crawl4ai `adaptive_crawler.py`，提供：
 //!
@@ -16,7 +16,7 @@
 //! 设计文档 §16 要求"BM25 相关性用现有 `relevance_scorer.rs`（TF-IDF）扩展"。
 //! 当前阶段 `AdaptiveContext` 仅含 URL 列表（无正文），故 BM25 降级为
 //! **URL 关键词命中率**（复用 [`scorers::KeywordRelevanceScorer`] 逻辑）。
-//! 后续正文提取（T049）接入后可升级为正文 TF-IDF 评分。
+//! 后续正文提取接入后可升级为正文 TF-IDF 评分。
 
 use super::scorers::KeywordRelevanceScorer;
 use super::{ScoringContext, UrlScorer};
@@ -25,7 +25,7 @@ use super::{ScoringContext, UrlScorer};
 // StrategyResult
 // =============================================================================
 
-/// 自适应策略评估结果（T067，R-frontier-004）
+/// 自适应策略评估结果
 ///
 /// 由 [`AdaptiveStrategy::evaluate`] 返回，包含三个维度的爬取进度指标。
 ///
@@ -51,7 +51,7 @@ pub struct StrategyResult {
 // AdaptiveContext
 // =============================================================================
 
-/// 自适应评估上下文（T067）
+/// 自适应评估上下文
 ///
 /// 提供 [`AdaptiveStrategy`] 评估所需的输入数据。
 #[derive(Debug, Clone, Default)]
@@ -100,7 +100,7 @@ impl AdaptiveContext {
 // AdaptiveStrategy
 // =============================================================================
 
-/// 自适应策略（T067，R-frontier-004）
+/// 自适应策略
 ///
 /// 参考 crawl4ai `adaptive_crawler.py`，综合评估爬取进度。
 ///
@@ -209,10 +209,10 @@ impl AdaptiveStrategy {
 // StopReason
 // =============================================================================
 
-/// 停止原因（T067，R-frontier-004）
+/// 停止原因
 ///
 /// 由 [`StopCondition::should_stop`] 返回，记录停止的具体原因与阈值，
-/// 便于日志输出与决策追溯（规则 12：失败/停止必须显性化）。
+/// 便于日志输出与决策追溯（失败/停止必须显性化）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum StopReason {
     /// 已爬取页数达到上限
@@ -282,7 +282,7 @@ impl StopReason {
 // CrawlStats
 // =============================================================================
 
-/// 爬取统计（T067）
+/// 爬取统计
 ///
 /// 提供 [`StopCondition::should_stop`] 决策所需的运行时数据。
 #[derive(Debug, Clone, Default)]
@@ -337,7 +337,7 @@ impl CrawlStats {
 // StopCondition
 // =============================================================================
 
-/// 停止条件（T067，R-frontier-004）
+/// 停止条件
 ///
 /// 可配置多个停止条件，任一满足即停止。检查优先级：
 ///
@@ -471,7 +471,7 @@ impl StopCondition {
 }
 
 // =============================================================================
-// DRL 配置（T087）
+// DRL 配置
 // =============================================================================
 
 /// DRL 策略配置

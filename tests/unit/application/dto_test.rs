@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! DTO tests for extraction fields (unify-extraction-api)
+//! DTO tests for extraction fields
 //!
 //! Verifies that ScrapeRequestDto, CrawlConfigDto, and ExtractRequestDto
 //! correctly accept the new extraction_prompt/extraction_schema fields

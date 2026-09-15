@@ -82,12 +82,23 @@ pub trait GeoLocationService: Send + Sync {
 ///
 /// * `bool` - 如果IP在CIDR范围内返回true，否则返回false
 pub fn is_ip_in_cidr(ip: &IpAddr, cidr: &str) -> bool {
-    // T023: use split_once instead of split().collect::<Vec>()
+    // use split_once instead of split().collect::<Vec>()
     let (network_str, prefix_str) = match cidr.split_once('/') {
         Some(pair) => pair,
         None => return false,
     };
-    let prefix_length = prefix_str.parse::<u8>().unwrap_or(0);
+    // fail-closed（CWE-1229）：畸形前缀（如 "/abc"、"/999"）不得回退为 /0
+    // 全匹配——解析失败按"不匹配"处理并告警，避免白名单被静默放行
+    let prefix_length = match prefix_str.parse::<u8>() {
+        Ok(p) => p,
+        Err(_) => {
+            log::warn!(
+                "Invalid CIDR prefix length in '{}', treating as non-match",
+                cidr
+            );
+            return false;
+        }
+    };
 
     match (ip, network_str.parse::<IpAddr>()) {
         (IpAddr::V4(ip_v4), Ok(IpAddr::V4(network_v4))) => {
@@ -202,6 +213,17 @@ mod tests {
         assert!(!is_ip_in_cidr(&ip, "192.168.1.0"));
         // Unparseable network address → parse::<IpAddr>() fails → _ => false
         assert!(!is_ip_in_cidr(&ip, "not-an-ip/24"));
+    }
+
+    #[test]
+    fn test_is_ip_in_cidr_invalid_prefix_is_fail_closed() {
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        // 非数字前缀：不得回退 /0 全匹配
+        assert!(!is_ip_in_cidr(&ip, "0.0.0.0/abc"));
+        // 超范围前缀（u8 溢出）：不得回退 /0 全匹配
+        assert!(!is_ip_in_cidr(&ip, "0.0.0.0/999"));
+        // 负数前缀：同上
+        assert!(!is_ip_in_cidr(&ip, "0.0.0.0/-1"));
     }
 
     #[test]

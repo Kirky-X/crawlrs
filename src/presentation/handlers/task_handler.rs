@@ -72,31 +72,41 @@ mod tests {
 
     #[test]
     fn test_poll_count_exceeded_true_when_count_equals_max() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(poll_count_exceeded(60, 60));
     }
 
     #[test]
     fn test_poll_count_exceeded_true_when_count_exceeds_max() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(poll_count_exceeded(100, 60));
     }
 
     #[test]
     fn test_poll_count_exceeded_false_when_count_below_max() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!poll_count_exceeded(59, 60));
     }
 
     #[test]
     fn test_poll_count_exceeded_false_when_count_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!poll_count_exceeded(0, 60));
     }
 
     #[test]
     fn test_poll_count_exceeded_with_max_one() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(poll_count_exceeded(1, 1));
         assert!(!poll_count_exceeded(0, 1));
     }
@@ -105,7 +115,9 @@ mod tests {
 
     #[test]
     fn test_completion_rate_empty_task_ids_returns_one() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let tasks = vec![];
         let task_ids: Vec<Uuid> = vec![];
         assert_eq!(calculate_completion_rate(&tasks, &task_ids), 1.0);
@@ -113,7 +125,9 @@ mod tests {
 
     #[test]
     fn test_completion_rate_all_completed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
         let tasks = vec![
@@ -126,7 +140,9 @@ mod tests {
 
     #[test]
     fn test_completion_rate_none_completed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
         let tasks = vec![
@@ -139,7 +155,9 @@ mod tests {
 
     #[test]
     fn test_completion_rate_half_completed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
         let tasks = vec![
@@ -152,7 +170,9 @@ mod tests {
 
     #[test]
     fn test_completion_rate_counts_failed_as_completed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id1 = Uuid::new_v4();
         let tasks = vec![make_test_task(id1, TaskStatus::Failed)];
         let task_ids = vec![id1];
@@ -161,7 +181,9 @@ mod tests {
 
     #[test]
     fn test_completion_rate_counts_cancelled_as_completed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id1 = Uuid::new_v4();
         let tasks = vec![make_test_task(id1, TaskStatus::Cancelled)];
         let task_ids = vec![id1];
@@ -170,7 +192,9 @@ mod tests {
 
     #[test]
     fn test_completion_rate_mixed_statuses() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
         let id3 = Uuid::new_v4();
@@ -189,7 +213,9 @@ mod tests {
 
     #[test]
     fn test_next_interval_no_progress_uses_rate_based() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let interval = calculate_next_interval(0.5, 0.5, 1000, 500, 2000);
         // rate_based = 500 + (1500 * 0.5) = 1250
         assert_eq!(interval, 1250);
@@ -197,7 +223,9 @@ mod tests {
 
     #[test]
     fn test_next_interval_positive_progress_increases() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let interval = calculate_next_interval(0.6, 0.5, 1000, 500, 2000);
         // progress > 0: max(1000 * 1.2, rate_based) = max(1200, 500 + 1500*0.6) = max(1200, 1400) = 1400
         assert!(interval >= 1000);
@@ -206,7 +234,9 @@ mod tests {
 
     #[test]
     fn test_next_interval_negative_progress_decreases() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let interval = calculate_next_interval(0.4, 0.5, 1500, 500, 2000);
         // progress < 0: min(1500 * 0.8, rate_based) = min(1200, 500 + 1500*0.4) = min(1200, 1100) = 1100
         assert!(interval <= 1500);
@@ -215,21 +245,27 @@ mod tests {
 
     #[test]
     fn test_next_interval_clamped_to_min() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let interval = calculate_next_interval(0.0, 0.0, 500, 500, 2000);
         assert!(interval >= 500);
     }
 
     #[test]
     fn test_next_interval_clamped_to_max() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let interval = calculate_next_interval(1.0, 1.0, 2000, 500, 2000);
         assert!(interval <= 2000);
     }
 
     #[test]
     fn test_next_interval_full_completion() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let interval = calculate_next_interval(1.0, 0.0, 500, 500, 2000);
         // rate_based = 500 + 1500*1.0 = 2000
         assert_eq!(interval, 2000);
@@ -239,7 +275,9 @@ mod tests {
 
     #[test]
     fn test_apply_defaults_all_none() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = TaskQueryRequestDto {
             task_ids: None,
             team_id: Uuid::nil(),
@@ -262,7 +300,9 @@ mod tests {
 
     #[test]
     fn test_apply_defaults_with_values() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = TaskQueryRequestDto {
             task_ids: None,
             team_id: Uuid::nil(),
@@ -285,7 +325,9 @@ mod tests {
 
     #[test]
     fn test_apply_defaults_limit_capped_at_max() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = TaskQueryRequestDto {
             task_ids: None,
             team_id: Uuid::nil(),
@@ -307,7 +349,9 @@ mod tests {
 
     #[test]
     fn test_build_task_infos_empty() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let tasks: Vec<Task> = vec![];
         let result = build_task_infos(&tasks, None);
         assert!(result.is_empty());
@@ -315,7 +359,9 @@ mod tests {
 
     #[test]
     fn test_build_task_infos_single_task_no_results() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id = Uuid::new_v4();
         let tasks = vec![make_test_task(id, TaskStatus::Completed)];
         let result = build_task_infos(&tasks, None);
@@ -328,7 +374,9 @@ mod tests {
 
     #[test]
     fn test_build_task_infos_multiple_tasks() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
         let tasks = vec![
@@ -343,7 +391,9 @@ mod tests {
 
     #[test]
     fn test_build_task_infos_preserves_task_type() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let id = Uuid::new_v4();
         let mut task = make_test_task(id, TaskStatus::Queued);
         task.task_type = TaskType::Crawl;
@@ -355,7 +405,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_result_no_wait() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = SyncWaitResult {
             waited_time_ms: 0,
             is_timeout: false,
@@ -366,7 +418,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_result_timeout() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = SyncWaitResult {
             waited_time_ms: 5000,
             is_timeout: true,
@@ -377,7 +431,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_result_completed_before_timeout() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = SyncWaitResult {
             waited_time_ms: 3000,
             is_timeout: false,
@@ -390,7 +446,9 @@ mod tests {
 
     #[test]
     fn test_task_query_response_meta_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let meta = TaskQueryResponseMeta {
             status: "sync_completed".to_string(),
             credits_used: 5,
@@ -405,7 +463,9 @@ mod tests {
 
     #[test]
     fn test_task_query_response_meta_async_status() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let meta = TaskQueryResponseMeta {
             status: "async".to_string(),
             credits_used: 0,
@@ -418,7 +478,9 @@ mod tests {
 
     #[test]
     fn test_task_query_response_meta_timeout_status() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let meta = TaskQueryResponseMeta {
             status: "sync_timeout".to_string(),
             credits_used: 10,
@@ -433,14 +495,18 @@ mod tests {
 
     #[test]
     fn test_validate_request_valid() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = TaskQueryRequestDto::default();
         assert!(validate_request(&request).is_ok());
     }
 
     #[test]
     fn test_validate_request_limit_too_small() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = TaskQueryRequestDto {
             limit: Some(0),
             ..TaskQueryRequestDto::default()
@@ -450,7 +516,9 @@ mod tests {
 
     #[test]
     fn test_validate_request_limit_too_large() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = TaskQueryRequestDto {
             limit: Some(1001),
             ..TaskQueryRequestDto::default()
@@ -460,7 +528,9 @@ mod tests {
 
     #[test]
     fn test_validate_request_sync_wait_ms_exceeds_max() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = TaskQueryRequestDto {
             sync_wait_ms: Some(30001),
             ..TaskQueryRequestDto::default()
@@ -470,7 +540,9 @@ mod tests {
 
     #[test]
     fn test_validate_request_sync_wait_ms_zero_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = TaskQueryRequestDto {
             sync_wait_ms: Some(0),
             ..TaskQueryRequestDto::default()
@@ -480,7 +552,9 @@ mod tests {
 
     #[test]
     fn test_validate_request_sync_wait_ms_at_max_ok() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let request = TaskQueryRequestDto {
             sync_wait_ms: Some(30000),
             ..TaskQueryRequestDto::default()
@@ -492,7 +566,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sync_wait_zero_ms_returns_immediately() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // This test verifies that sync_wait_ms=0 returns immediately without calling the repo
         // We use a dummy that would fail if called, but since sync_wait_ms=0, it won't be called
         struct DummyRepo;
@@ -529,21 +605,23 @@ mod tests {
             async fn mark_completed(
                 &self,
                 _id: Uuid,
-            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+                _lock_token: Option<Uuid>,
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
             async fn mark_failed(
                 &self,
                 _id: Uuid,
-            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+                _lock_token: Option<Uuid>,
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
             async fn mark_cancelled(
                 &self,
                 _id: Uuid,
-            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
@@ -610,6 +688,15 @@ mod tests {
             > {
                 unreachable!("should not be called")
             }
+
+            async fn renew_lock(
+                &self,
+                _task_id: Uuid,
+                _worker_id: Uuid,
+                _extend_seconds: i64,
+            ) -> Result<bool, RepositoryError> {
+                Ok(true)
+            }
         }
 
         let result = handle_sync_wait_and_get_status(&DummyRepo, &[], Uuid::nil(), 0).await;
@@ -621,7 +708,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sync_wait_empty_task_ids_returns_immediately() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Even with sync_wait_ms > 0, empty task_ids should return immediately
         struct DummyRepo;
         #[async_trait::async_trait]
@@ -657,21 +746,23 @@ mod tests {
             async fn mark_completed(
                 &self,
                 _id: Uuid,
-            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+                _lock_token: Option<Uuid>,
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
             async fn mark_failed(
                 &self,
                 _id: Uuid,
-            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+                _lock_token: Option<Uuid>,
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
             async fn mark_cancelled(
                 &self,
                 _id: Uuid,
-            ) -> Result<(), crate::domain::repositories::task_repository::RepositoryError>
+            ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
@@ -738,6 +829,15 @@ mod tests {
             > {
                 unreachable!("should not be called")
             }
+
+            async fn renew_lock(
+                &self,
+                _task_id: Uuid,
+                _worker_id: Uuid,
+                _extend_seconds: i64,
+            ) -> Result<bool, RepositoryError> {
+                Ok(true)
+            }
         }
 
         let result = handle_sync_wait_and_get_status(&DummyRepo, &[], Uuid::nil(), 5000).await;
@@ -768,7 +868,9 @@ mod tests {
 
     #[test]
     fn test_build_scrape_result_json_maps_basic_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let result = make_test_scrape_result(task_id);
         let dto = build_scrape_result_json(&result);
@@ -784,7 +886,9 @@ mod tests {
 
     #[test]
     fn test_build_scrape_result_json_escapes_html_special_chars() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // html_escape::encode_text 应转义 < > & ' "
         let task_id = Uuid::new_v4();
         let mut result = make_test_scrape_result(task_id);
@@ -797,7 +901,9 @@ mod tests {
 
     #[test]
     fn test_build_scrape_result_json_escapes_ampersand() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let mut result = make_test_scrape_result(task_id);
         result.content = "Tom & Jerry".to_string();
@@ -809,7 +915,9 @@ mod tests {
 
     #[test]
     fn test_build_scrape_result_json_clones_metadata() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let result = make_test_scrape_result(task_id);
         let dto = build_scrape_result_json(&result);
@@ -821,7 +929,9 @@ mod tests {
 
     #[test]
     fn test_build_scrape_result_json_status_code_404() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let mut result = make_test_scrape_result(task_id);
         result.status_code = 404;
@@ -832,7 +942,9 @@ mod tests {
 
     #[test]
     fn test_build_scrape_result_json_empty_content() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let mut result = make_test_scrape_result(task_id);
         result.content = String::new();
@@ -843,7 +955,9 @@ mod tests {
 
     #[test]
     fn test_build_scrape_result_json_null_metadata() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let mut result = make_test_scrape_result(task_id);
         result.meta_data = serde_json::Value::Null;
@@ -857,7 +971,9 @@ mod tests {
 
     #[test]
     fn test_build_task_infos_with_matching_result() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let scrape_result = make_test_scrape_result(task_id);
@@ -875,7 +991,9 @@ mod tests {
 
     #[test]
     fn test_build_task_infos_with_results_map_no_match() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Task has no corresponding result in the map
         let task_id = Uuid::new_v4();
         let other_id = Uuid::new_v4();
@@ -892,7 +1010,9 @@ mod tests {
 
     #[test]
     fn test_build_task_infos_mixed_with_and_without_results() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task1_id = Uuid::new_v4();
         let task2_id = Uuid::new_v4();
         let tasks = vec![
@@ -912,7 +1032,9 @@ mod tests {
 
     #[test]
     fn test_build_task_infos_empty_map_returns_none_for_all() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task1_id = Uuid::new_v4();
         let task2_id = Uuid::new_v4();
         let tasks = vec![
@@ -931,7 +1053,9 @@ mod tests {
 
     #[test]
     fn test_build_task_infos_result_html_escaped_in_dto() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 验证 results_map 中的 content 经过 HTML 转义后出现在 TaskInfoDto 中
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
@@ -958,27 +1082,9 @@ mod tests {
     /// `Handle::current().block_on(...)`, we construct the pool on a dedicated
     /// OS thread to avoid runtime-in-runtime panics.
     fn make_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                let url = crate::common::test_helpers::resolve_test_database_url().expect(
-                    "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
-                );
-                rt.block_on(async {
-                    let cfg = dbnexus::DbConfig {
-                        url,
-                        ..Default::default()
-                    };
-                    DbPool::with_config(cfg).await
-                })
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
+        // 统一走共享 helper：每调用独立池（min=0 无预热、max=4），
+        // 避免预热连接绑定到构造临时 runtime 而失效（test_helpers 说明）。
+        crate::common::test_helpers::create_test_db_pool()
     }
 
     /// Build an `AuthState` suitable for handler unit tests.
@@ -1083,16 +1189,24 @@ mod tests {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -1149,13 +1263,24 @@ mod tests {
                 None => Ok((Vec::new(), Vec::new())),
             }
         }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
     }
 
     // ========== query_tasks handler tests ==========
 
     #[tokio::test]
     async fn test_query_tasks_handler_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = Arc::new(MockTaskRepository::with_query_data(vec![task], 1));
@@ -1187,7 +1312,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_tasks_handler_empty_result() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
         let scrape_repo = make_test_scrape_result_repo();
@@ -1220,7 +1347,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_tasks_handler_has_more() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task1 = make_test_task(Uuid::new_v4(), TaskStatus::Completed);
         let task2 = make_test_task(Uuid::new_v4(), TaskStatus::Completed);
         let repo = Arc::new(MockTaskRepository::with_query_data(vec![task1, task2], 10));
@@ -1257,7 +1386,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_tasks_handler_validation_error_limit() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
         let scrape_repo = make_test_scrape_result_repo();
@@ -1280,7 +1411,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_tasks_handler_validation_error_sync_wait() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
         let scrape_repo = make_test_scrape_result_repo();
@@ -1302,7 +1435,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_tasks_handler_repo_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockTaskRepository::with_query_error(
             RepositoryError::Database(anyhow::anyhow!("query failed")),
         ));
@@ -1330,7 +1465,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_tasks_handler_sync_wait_completed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = Arc::new(MockTaskRepository::with_query_data(vec![task], 1));
@@ -1363,7 +1500,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_tasks_handler_include_results_no_match_returns_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // With include_results=true and a real DB pool, fetch_scrape_results
         // queries the DB for the random task_id (no match) and returns an
         // empty map, so the handler succeeds with empty results.
@@ -1404,7 +1543,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_tasks_handler_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
             vec![task_id],
@@ -1436,7 +1577,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_tasks_handler_empty_task_ids() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
@@ -1461,7 +1604,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_tasks_handler_validation_error_sync_wait() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
@@ -1480,7 +1625,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_tasks_handler_repo_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Err(
             RepositoryError::Database(anyhow::anyhow!("batch_cancel failed")),
         )));
@@ -1501,7 +1648,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_tasks_handler_with_failed_tasks() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id1 = Uuid::new_v4();
         let task_id2 = Uuid::new_v4();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
@@ -1534,7 +1683,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_tasks_handler_sync_wait() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let cancelled_task = make_test_task(task_id, TaskStatus::Cancelled);
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result_and_query_data(
@@ -1566,7 +1717,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_wait_for_tasks_completion_already_completed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
@@ -1581,7 +1734,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_wait_for_tasks_completion_timeout() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Active);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
@@ -1593,7 +1748,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_wait_for_tasks_completion_query_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
             anyhow::anyhow!("poll query failed"),
@@ -1608,7 +1765,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sync_wait_and_get_status_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
@@ -1622,7 +1781,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sync_wait_and_get_status_error_continues() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Even when wait_for_tasks_completion returns an error,
         // handle_sync_wait_and_get_status catches it and returns Ok.
         let task_id = Uuid::new_v4();
@@ -1639,7 +1800,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_tasks_for_poll_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
@@ -1652,7 +1815,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_tasks_for_poll_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
             anyhow::anyhow!("poll failed"),
@@ -1665,7 +1830,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_task_query_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
@@ -1681,7 +1848,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_task_query_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
             anyhow::anyhow!("exec failed"),
         ));
@@ -1698,7 +1867,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sync_wait_direct() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = MockTaskRepository::with_query_data(vec![task.clone()], 1);
@@ -1716,7 +1887,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_scrape_results_empty_tasks() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 空 tasks 时 fetch_scrape_results 提前返回，理论上不需要 DB；
         // 但 make_test_scrape_result_repo 仍会构造 DbPool，需 TEST_DATABASE_URL。
         if crate::common::test_helpers::skip_if_no_test_db() {
@@ -1736,7 +1909,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "test semantics invalid after permission feature removal"]
     async fn test_fetch_scrape_results_non_empty_no_db() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // With a lazy (non-connecting) pool, calling find_by_task_ids on
         // non-empty task IDs should fail because the pool cannot connect.
         let repo = make_test_scrape_result_repo();
@@ -1752,7 +1927,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_tasks_handler_include_results_with_empty_tasks_skips_fetch() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // include_results=true but tasks is empty → fetch_scrape_results not called
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
@@ -1782,7 +1959,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_tasks_handler_force_true_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
             vec![task_id],
@@ -1808,7 +1987,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_tasks_handler_force_none_uses_default_false() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
             vec![task_id],
@@ -1837,7 +2018,9 @@ mod tests {
 
     #[test]
     fn test_poll_count_exceeded_logs_debug_with_logger() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         ensure_debug_logger();
         // When count >= max_count, log::debug! should execute
         assert!(poll_count_exceeded(60, 60));
@@ -1846,7 +2029,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_sync_wait_error_logs_error_with_logger() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         ensure_debug_logger();
         // When wait_for_tasks_completion returns an error, log::error! should execute
         let task_id = Uuid::new_v4();
@@ -1861,7 +2046,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_wait_for_tasks_completion_logs_debug_poll_count_with_logger() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         ensure_debug_logger();
         // Trigger poll_count_exceeded path (poll_count >= MAX_POLL_COUNT)
         // Use a very short timeout and active tasks to ensure polling occurs

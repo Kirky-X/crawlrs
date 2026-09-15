@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! T046: MLLM 引擎配置
+//! MLLM 引擎配置
 //!
 //! 定义视觉导航引擎的配置参数。
 

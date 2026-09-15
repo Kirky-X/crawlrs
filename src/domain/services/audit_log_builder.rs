@@ -5,7 +5,7 @@
 
 //! AuditLogBuilder — 用于构建 [`AuditLogEntry`] 的 builder 模式实现。
 //!
-//! 从 `audit_service.rs` 拆出（架构 MEDIUM 1：单文件混合 Service + Builder + Error
+//! 从 `audit_service.rs` 拆出（架构单文件混合 Service + Builder + Error
 //! 三个独立 concern，违反单一职责原则）。本文件只包含 builder 本身，
 //! Service / Error 仍保留在 `audit_service.rs` 中。
 
@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(builder.scope_used, Some(scope));
     }
 
-    // ---- maybe_with_* methods (M-2 fix: preserve None semantics) ----
+    // ---- maybe_with_* methods (preserve None semantics) ----
 
     #[test]
     fn test_maybe_with_api_key_id_none_preserves_none() {
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn test_maybe_with_methods_build_entry_with_none_fields() {
         // End-to-end: maybe_with_* None must produce an entry whose fields are None,
-        // not nil UUID / default scope. This is the M-2 regression guard.
+        // not nil UUID / default scope. This is the regression guard.
         let entry = AuditLogBuilder::new("anonymous.action", AuditDecision::Deny)
             .maybe_with_api_key_id(None)
             .maybe_with_team_id(None)

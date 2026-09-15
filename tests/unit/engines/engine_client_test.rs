@@ -128,6 +128,7 @@ mod engine_client_tests {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 100,
+            final_url: None,
         }
     }
 
@@ -608,6 +609,7 @@ mod engine_client_tests {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 50,
+            final_url: None,
         };
         let router: Arc<dyn EngineRouterTrait> =
             Arc::new(MockEngineRouter::with_success_response(response_data));

@@ -3,15 +3,15 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! HTML → Markdown 转换服务（design.md §10，T040/R-content-001）
+//! HTML → Markdown 转换服务
 //!
 //! 提供 [`MarkdownServiceTrait`] 抽象与 [`HtmdMarkdownService`] 实现，
 //! 后者使用 `htmd` crate 作为转换主路径。
 //!
-//! `only_main_content=true` 时，调用方应先经正文提取器（Stage3 [`crate::domain::services`]
+//! `only_main_content=true` 时，调用方应先经正文提取器（[`crate::domain::services`]
 //! 计划中的 `ContentExtractor`）取正文 HTML 再传入本服务；否则直接对整页 HTML 转换。
 //!
-//! 特性门控：本模块整体 gated `markdown`（T039 声明的 `dep:htmd`）。
+//! 特性门控：本模块整体 gated `markdown`（声明的 `dep:htmd`）。
 
 use thiserror::Error;
 
@@ -23,18 +23,18 @@ pub enum MarkdownError {
     ConversionFailed(String),
 }
 
-/// Markdown 转换服务 trait（design.md §10）
+/// Markdown 转换服务 trait
 ///
 /// 实现方需保证线程安全（`Send + Sync`）以便在 `CrawlRsState` 中共享。
 ///
 /// # `only_main_content` 参数语义
 ///
-/// design.md §10 要求：`only_main_content=true` 时应先经 ContentExtractor（§11）取正文 HTML 再转换；
+/// 要求：`only_main_content=true` 时应先经 ContentExtractor（§11）取正文 HTML 再转换；
 /// `false` 时整页转换。
 ///
-/// **当前阶段性限制**（H-2 修复）：Stage 2 仅落地 `HtmdMarkdownService`，
-/// `ContentExtractor` 在 Stage 3 T044-T049 实现。故当前实现**忽略**此参数，
-/// 无论 true/false 都按整页转换。Stage 3 落地后，调用方应在传入前自行提取正文，
+/// **当前阶段性限制** 仅落地 `HtmdMarkdownService`，
+/// `ContentExtractor` 在 - 实现。故当前实现**忽略**此参数，
+/// 无论 true/false 都按整页转换。落地后，调用方应在传入前自行提取正文，
 /// 或在 trait 上新增 `extract_and_convert` 方法由实现负责完整流程。
 ///
 /// 调用方当前**不应**依赖此参数改变行为。
@@ -44,7 +44,7 @@ pub trait MarkdownServiceTrait: Send + Sync {
     /// # 参数
     ///
     /// - `html`: 待转换的 HTML 字符串
-    /// - `only_main_content`: 是否仅转换正文（**当前 Stage 2 实现忽略此参数**，详见 trait 文档）
+    /// - `only_main_content`: 是否仅转换正文（**当前实现忽略此参数**，详见 trait 文档）
     ///
     /// # 返回值
     ///
@@ -52,7 +52,7 @@ pub trait MarkdownServiceTrait: Send + Sync {
     fn to_markdown(&self, html: &str, only_main_content: bool) -> Result<String, MarkdownError>;
 }
 
-/// 基于 `htmd` 的 Markdown 转换实现（T040/R-content-001）
+/// 基于 `htmd` 的 Markdown 转换实现
 ///
 /// 无状态服务，可在多处共享单例。
 #[derive(Debug, Clone, Default)]
@@ -73,8 +73,8 @@ impl MarkdownServiceTrait for HtmdMarkdownService {
             return Ok(String::new());
         }
 
-        // H-2 修复：当前 Stage 2 实现忽略 `only_main_content` 参数（详见 trait 文档）。
-        // Stage 3 T044-T049 落地 ContentExtractor 后，由调用方在传入前提取正文 HTML，
+        // 当前实现忽略 `only_main_content` 参数（详见 trait 文档）。
+        // - 落地 ContentExtractor 后，由调用方在传入前提取正文 HTML，
         // 或扩展 trait 接口由实现负责完整流程。当前为 stage 限制，非接口虚伪。
         //
         // 显式标记 unused 以避免警告，同时保留参数语义供未来扩展。
@@ -157,7 +157,7 @@ mod tests {
         assert!(md.is_empty(), "expected empty markdown, got: {md}");
     }
 
-    /// `only_main_content=true` 当前等价于 false（Stage3 才有正文提取）
+    /// `only_main_content=true` 当前等价于 false（才有正文提取）
     #[test]
     fn only_main_content_flag_does_not_break_conversion() {
         let svc = HtmdMarkdownService::new();
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn default_equals_new() {
         let a = HtmdMarkdownService::new();
-        let b = HtmdMarkdownService::default();
+        let b = HtmdMarkdownService;
         // 无状态服务，等价性通过可调用相同输入验证
         let html = "<p>test</p>";
         let ra = a.to_markdown(html, false).expect("a convert ok");

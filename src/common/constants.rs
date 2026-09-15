@@ -24,9 +24,9 @@ pub mod cache_config {
 
 /// 默认身份常量 - 用于 `auth` feature 关闭时的单租户降级
 ///
-/// **阶段说明**：Stage 0 仅定义常量；Stage 1 (T007-T009) 实现 `default_identity_middleware`
-/// 并加 `#[cfg(not(feature = "auth"))]` 门控；Stage 3 (T017-T022) 对 limiteron 路径加 cfg 门控。
-/// 在所有门控就位前，`--no-default-features` 构建会失败（预期行为，Stage 5 统一验证）。
+/// **阶段说明** 仅定义常量  实现 `default_identity_middleware`
+/// 并加 `#[cfg(not(feature = "auth"))]` 门控  对 limiteron 路径加 cfg 门控。
+/// 在所有门控就位前，`--no-default-features` 构建会失败（预期行为统一验证）。
 ///
 /// 命名使用 `default_identity` 而非 `auth`，避免与 `domain::auth`（ApiKeyScope 等领域模型）同名歧义。
 pub mod default_identity {
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_auth_default_identity_constants() {
-        // R-flags-004: DEFAULT_TEAM_ID 与 DEFAULT_API_KEY_ID 必须非 nil 且互不相等
+        // DEFAULT_TEAM_ID 与 DEFAULT_API_KEY_ID 必须非 nil 且互不相等
         assert_ne!(
             default_identity::DEFAULT_TEAM_ID,
             uuid::Uuid::nil(),

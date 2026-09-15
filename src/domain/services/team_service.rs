@@ -78,25 +78,8 @@ impl TeamService {
 
         let country_code = self.get_country_code(team_id, ip_address, &ip).await?;
 
-        if let Some(ref allowed) = restrictions.allowed_countries {
-            if !allowed
-                .iter()
-                .any(|code| code.to_uppercase() == country_code)
-            {
-                log::warn!(
-                    "IP {} from country {} not in allowed list for team {} (allowed countries: {:?})",
-                    ip_address,
-                    country_code,
-                    team_id,
-                    allowed
-                );
-                return Ok(GeoRestrictionResult::Denied(format!(
-                    "Access from country {} is not allowed",
-                    country_code
-                )));
-            }
-        }
-
+        // blocked 优先于 allowed（CWE-285）：同时出现在两个名单的国家必须拒绝，
+        // 否则黑名单形同虚设
         if let Some(ref blocked) = restrictions.blocked_countries {
             if blocked
                 .iter()
@@ -108,6 +91,25 @@ impl TeamService {
                     country_code,
                     team_id,
                     blocked
+                );
+                return Ok(GeoRestrictionResult::Denied(format!(
+                    "Access from country {} is not allowed",
+                    country_code
+                )));
+            }
+        }
+
+        if let Some(ref allowed) = restrictions.allowed_countries {
+            if !allowed
+                .iter()
+                .any(|code| code.to_uppercase() == country_code)
+            {
+                log::warn!(
+                    "IP {} from country {} not in allowed list for team {} (allowed countries: {:?})",
+                    ip_address,
+                    country_code,
+                    team_id,
+                    allowed
                 );
                 return Ok(GeoRestrictionResult::Denied(format!(
                     "Access from country {} is not allowed",
@@ -197,12 +199,21 @@ impl TeamService {
                 restrictions
             }
             Err(e) => {
-                log::warn!(
-                    "Failed to get geo restrictions for team {}: {}. Using default configuration.",
+                // fail-closed（CWE-1229）：仓储故障时不得回落"无限制"默认值全量放行，
+                // 改为"启用限制 + 空 allowed 名单"的 deny-all 配置
+                log::error!(
+                    "Failed to get geo restrictions for team {}: {}. \
+                     Falling back to deny-all configuration.",
                     team_id,
                     e
                 );
-                TeamGeoRestrictions::default()
+                TeamGeoRestrictions {
+                    enable_geo_restrictions: true,
+                    allowed_countries: Some(Vec::new()),
+                    blocked_countries: None,
+                    ip_whitelist: None,
+                    domain_blacklist: None,
+                }
             }
         }
     }

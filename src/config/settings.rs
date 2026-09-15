@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 use validator::Validate;
 
 // 重新导出子模块中的类型
-pub use super::app::{ConcurrencySettings, DatabaseSettings, RateLimitingSettings, ServerSettings};
+pub use super::app::{
+    ConcurrencySettings, DatabaseSettings, RateLimitingSettings, RetentionSettings, ServerSettings,
+};
 pub use super::engines::{
     EngineSettings, FlareSolverrCdpSettings, FlareSolverrSettings, FlareSolverrTlsSettings,
 };
@@ -62,6 +64,9 @@ pub struct Settings {
     /// 并发控制配置
     pub concurrency: ConcurrencySettings,
 
+    /// 数据保留配置
+    pub retention: RetentionSettings,
+
     /// Webhook 配置
     pub webhook: WebhookSettings,
 
@@ -96,7 +101,7 @@ pub struct Settings {
     /// 可信代理配置
     pub trusted_proxies: TrustedProxySettings,
 
-    /// 认证配置（R-auth-engine-002 / T011：garrison JWT 密钥等）
+    /// 认证配置（garrison JWT 密钥等）
     pub auth: AuthSettings,
 
     /// 国际化配置（i18n）
@@ -163,7 +168,7 @@ impl WebhookSettings {
 }
 
 // =============================================================================
-// 认证配置（R-auth-engine-002 / T011）
+// 认证配置
 // =============================================================================
 
 /// 认证配置设置。
@@ -219,7 +224,7 @@ impl AuthSettings {
 // 代理配置
 // =============================================================================
 
-/// 代理轮换策略（design.md §12，T055/R-identity-003）
+/// 代理轮换策略
 ///
 /// 决定调用方在 ProxyPool 上的默认行为：
 /// - `RoundRobin`：每次请求调用 `ProxyPool::next(category)` 取下一个
@@ -236,7 +241,7 @@ pub enum ProxyStrategy {
 ///
 /// 配置HTTP代理参数，用于转发爬虫请求。
 ///
-/// 支持多代理轮换池（design.md §12 / R-identity-003）：
+/// 支持多代理轮换池：
 /// - `urls`: 代理 URL 列表，可包含 userinfo（日志输出会脱敏）
 /// - `strategy`: 轮换策略（RoundRobin / Sticky）
 /// - `enabled`: 是否启用代理
@@ -261,7 +266,7 @@ pub struct ProxySettings {
     ///
     /// `ProxyStrategy::Sticky` 时，TTL 内同一 `session_id` 返回同一代理；
     /// TTL 过期或代理冷却中时重选。
-    /// 默认 60 秒（MEDIUM-2 修复：从 di/modules.rs 硬编码移入配置）。
+    /// 默认 60 秒（从 di/modules.rs 硬编码移入配置）。
     #[config(default = 60)]
     #[serde(default = "default_sticky_ttl_seconds")]
     pub sticky_ttl_seconds: u64,
@@ -269,7 +274,7 @@ pub struct ProxySettings {
     /// 失败代理默认冷却时长（秒）
     ///
     /// `mark_failure` 后代理进入冷却，在此期间不被 `next` / `sticky` 选中。
-    /// 默认 30 秒（MEDIUM-2 修复：从 di/modules.rs 硬编码移入配置）。
+    /// 默认 30 秒（从 di/modules.rs 硬编码移入配置）。
     #[config(default = 30)]
     #[serde(default = "default_cooldown_seconds")]
     pub cooldown_seconds: u64,
@@ -322,7 +327,7 @@ impl ProxySettings {
 pub struct WorkerSettings {
     /// Worker数量配置
     pub count: WorkerCount,
-    /// 优雅退出宽限期（秒，R-security-004/005，design.md D3）
+    /// 优雅退出宽限期（秒）
     ///
     /// 收到 SIGTERM/SIGINT 后，worker 停止接受新任务并等待进行中任务完成的
     /// 最大时长；超时后强制退出并回滚未完成任务。默认 30 秒。
@@ -370,7 +375,7 @@ impl WorkerCount {
 ///
 /// 配置各种操作的超时时间
 ///
-/// # 安全验证（T062 安全审查 HIGH-1 修复）
+/// # 安全验证
 ///
 /// `engines` 字段添加 `#[validate(nested)]`，使 `Settings::validate()` 递归
 /// 调用 `EngineTimeoutSettings::validate()`，覆盖所有 `#[validate(range(min=1, max=600))]`
@@ -407,7 +412,7 @@ pub struct WorkerTimeoutSettings {
 
 /// 引擎超时设置
 ///
-/// # 安全验证（T062 安全审查 MEDIUM-1 修复）
+/// # 安全验证
 ///
 /// 所有超时字段均添加 `#[validate(range(min = 1, max = 600))]` 约束：
 /// - `min = 1`：防止配置为 0 秒导致 `tokio::time::timeout(Duration::ZERO, ...)`
@@ -431,7 +436,7 @@ pub struct EngineTimeoutSettings {
     #[validate(range(min = 1, max = 600))]
     pub flaresolverr_timeout_seconds: u64,
 
-    /// HTTP fetch 引擎 MRT（Maximum Response Time，秒）—— design.md §14 / T061。
+    /// HTTP fetch 引擎 MRT（Maximum Response Time，秒）。
     ///
     /// 用于 `ReqwestEngine` 单引擎最大响应时间。router 顺序 fallback 路径
     /// 用 `min(remaining, fetch_seconds)` 包裹单引擎调用，超时即切下一引擎。
@@ -441,7 +446,7 @@ pub struct EngineTimeoutSettings {
     #[validate(range(min = 1, max = 600))]
     pub fetch_seconds: u64,
 
-    /// TLS 指纹引擎 MRT（秒）—— design.md §14 / T061。
+    /// TLS 指纹引擎 MRT（秒）。
     ///
     /// 用于 `FlareSolverrEngine::Tls` 模式单引擎最大响应时间。
     /// 默认 15 秒（TLS 指纹对抗比完整浏览器快）。
@@ -450,7 +455,7 @@ pub struct EngineTimeoutSettings {
     #[validate(range(min = 1, max = 600))]
     pub tls_seconds: u64,
 
-    /// CDP/浏览器引擎 MRT（秒）—— design.md §14 / T061。
+    /// CDP/浏览器引擎 MRT（秒）。
     ///
     /// 用于 `PlaywrightEngine` 和 `FlareSolverrEngine::{Cdp, Full}` 模式
     /// 单引擎最大响应时间。默认 30 秒（覆盖完整浏览器启动 + JS 渲染）。
@@ -739,6 +744,7 @@ mod tests {
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),
+            retention: RetentionSettings::default(),
             webhook: WebhookSettings::default(),
             bing_search: BingSearchSettings::default(),
             search: SearchSettings::default(),
@@ -761,7 +767,7 @@ mod tests {
         assert_eq!(settings.i18n.supported_locales.len(), 2);
     }
 
-    /// R-auth-engine-002：AuthSettings Debug 输出对 jwt_secret 脱敏（CWE-532 防护）。
+    /// AuthSettings Debug 输出对 jwt_secret 脱敏（CWE-532 防护）。
     ///
     /// 验证 `format!("{:?}", auth_settings)` 不含密钥明文，仅含 `"***REDACTED***"`。
     /// 防止日志打印 Settings 时泄露 JWT 签名密钥。
@@ -942,7 +948,7 @@ mod tests {
         assert!(settings.urls.is_empty(), "default urls should be empty");
         assert_eq!(settings.strategy, ProxyStrategy::RoundRobin);
         assert!(!settings.enabled);
-        // MEDIUM-2 修复：默认 sticky_ttl=60s, cooldown=30s
+        // 默认 sticky_ttl=60s, cooldown=30s
         assert_eq!(settings.sticky_ttl_seconds, 60);
         assert_eq!(settings.cooldown_seconds, 30);
     }
@@ -1110,7 +1116,7 @@ mod tests {
         assert_eq!(settings.cdp_seconds, 30);
     }
 
-    /// T061：EngineTimeoutSettings 新增 MRT 字段使用 serde(default) 兼容旧 config 文件。
+    /// EngineTimeoutSettings 新增 MRT 字段使用 serde(default) 兼容旧 config 文件。
     ///
     /// 验证：旧 toml/env 中没有 `fetch_seconds` / `tls_seconds` / `cdp_seconds` 字段时，
     /// 反序列化应回退到默认值（fetch=5, tls=15, cdp=30），不报错。
@@ -1132,7 +1138,7 @@ mod tests {
         assert_eq!(settings.cdp_seconds, 30, "cdp_seconds default");
     }
 
-    /// T061：EngineTimeoutSettings MRT 字段可被显式覆盖。
+    /// EngineTimeoutSettings MRT 字段可被显式覆盖。
     #[test]
     fn test_engine_timeout_settings_mrt_fields_override() {
         let toml = r#"
@@ -1149,7 +1155,7 @@ mod tests {
         assert_eq!(settings.cdp_seconds, 45);
     }
 
-    /// T062 安全审查 MEDIUM-1：EngineTimeoutSettings 的 Validate 派生应拒绝越界值。
+    /// EngineTimeoutSettings 的 Validate 派生应拒绝越界值。
     ///
     /// 验证：所有超时字段（含 MRT）必须 >=1 且 <=600 秒。
     /// - 0 秒 → `tokio::time::timeout(Duration::ZERO, ...)` 立即超时 → 瀑布式 fallback 全部失败 → DoS

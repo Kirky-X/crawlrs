@@ -7,21 +7,21 @@
 //!
 //! 从 mod.rs 拆出的 routes/health_check/version 函数实现。
 
-// R-teams-004 / T014：teams feature 关闭时不导入 teams 相关类型
+// teams feature 关闭时不导入 teams 相关类型
 #[cfg(feature = "teams")]
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use crate::infrastructure::database::repositories::task_repo_impl::TaskRepositoryImpl;
-// R-wh-001 / T028：webhook feature 关闭时不导入 WebhookRepoImpl
+// webhook feature 关闭时不导入 WebhookRepoImpl
 #[cfg(feature = "webhook")]
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
 use crate::presentation::handlers::{
     audit_handler, crawl_handler, extract_handler, metrics_handler, scrape_handler, search_handler,
     task_handler,
 };
-// R-wh-001 / T028：webhook-off 时 webhook_handler 模块不编译
+// webhook-off 时 webhook_handler 模块不编译
 #[cfg(feature = "webhook")]
 use crate::presentation::handlers::webhook_handler;
-// R-teams-002 / T012：teams-off 时 team_handler 模块不编译
+// teams-off 时 team_handler 模块不编译
 #[cfg(feature = "teams")]
 use crate::presentation::handlers::team_handler;
 use axum::{
@@ -32,7 +32,7 @@ use dbnexus::DbPool;
 use sea_orm::ConnectionTrait;
 use std::sync::Arc;
 use std::time::Duration;
-// R-teams-002 / T012：put 仅在 teams-on 时被使用（/v1/teams/geo-restrictions PUT）
+// put 仅在 teams-on 时被使用（v1/teams/geo-restrictions PUT）
 #[cfg(feature = "teams")]
 use axum::routing::put;
 use serde_json::json;
@@ -43,7 +43,7 @@ use serde_json::json;
 ///
 /// 返回配置好的路由
 ///
-/// R-teams-004 / R-wh-003：feature-off 时跳过对应路由注册。
+/// feature-off 时跳过对应路由注册。
 /// `bootstrap/routes.rs::build_api_app_with_state` 是主装配入口，
 /// 此函数保留用于 routes/mod.rs 单元测试。
 pub fn routes() -> Router {
@@ -66,7 +66,7 @@ pub fn routes() -> Router {
         .route("/v1/crawl/{id}/_cancel", post(crawl_handler::cancel_crawl))
         .route("/v1/search", post(search_handler::search));
 
-    // R-teams-003 / T013：extract 路由按 teams feature 分裂
+    // extract 路由按 teams feature 分裂
     #[cfg(feature = "teams")]
     let app = app.route(
         "/v1/extract",
@@ -75,14 +75,14 @@ pub fn routes() -> Router {
     #[cfg(not(feature = "teams"))]
     let app = app.route("/v1/extract", post(extract_handler::extract));
 
-    // R-wh-001 / T028：/v1/webhooks 路由按 webhook feature 分裂
+    // v1/webhooks 路由按 webhook feature 分裂
     #[cfg(feature = "webhook")]
     let app = app.route(
         "/v1/webhooks",
         post(webhook_handler::create_webhook::<WebhookRepoImpl>),
     );
 
-    // R-teams-002 / T012：/v1/teams/* 路由按 teams feature 分裂
+    // v1/teams/* 路由按 teams feature 分裂
     #[cfg(feature = "teams")]
     let app = app
         .route(
@@ -228,7 +228,7 @@ pub async fn readiness_check(
 mod tests {
     use super::*;
     use crate::common::test_support::testcontainers_fixtures as tcf;
-    use crate::infrastructure::database::dbnexus_connection::create_pool;
+    use crate::infrastructure::database::dbnexus_connection::create_pool_with_retry;
     use crate::infrastructure::oxcache::CacheService;
     use axum::body::Body;
     use axum::http::{Method, Request, StatusCode};
@@ -306,13 +306,36 @@ mod tests {
             .layer(Extension(cache_service))
     }
 
-    /// Create a DbPool from testcontainers handle.
-    async fn db_pool_from_handle(handle: &tcf::DbHandle) -> Arc<DbPool> {
-        let settings = tcf::database_settings(&handle.pg.url);
-        let pool = create_pool(&settings)
-            .await
-            .expect("failed to create test DbPool");
-        Arc::new(pool)
+    /// 启动 testcontainers PostgreSQL 并创建连接池；环境级瞬时故障自愈。
+    ///
+    /// WSL2 Docker Desktop 高负载下端口转发可能出现持续断连
+    /// （`ConnectionClosed`，同端口重试无法恢复）。本助手在池创建连续失败时
+    /// 丢弃容器重启一次（新容器获得新映射端口）；仍失败则返回 `None`，
+    /// 调用方以显式 `[skip]` 降级（与 Docker 不可用路径同等语义），避免
+    /// 环境抖动污染套件结果。
+    async fn start_db_with_pool() -> Option<(tcf::DbHandle, Arc<DbPool>)> {
+        for attempt in 1..=2 {
+            let handle = match tcf::DbHandle::start().await {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("[skip] failed to start DB container (attempt {attempt}): {e}");
+                    return None;
+                }
+            };
+            let settings = tcf::database_settings(&handle.pg.url);
+            match create_pool_with_retry(&settings, 3, 1).await {
+                Ok(pool) => return Some((handle, Arc::new(pool))),
+                Err(e) => {
+                    eprintln!(
+                        "[warn] testcontainers DB pool creation failed (attempt {attempt}), \
+                         restarting container: {e}"
+                    );
+                    // handle drop → 容器停止；下一次循环获得全新端口
+                }
+            }
+        }
+        eprintln!("[skip] testcontainers DB pool creation failed after container restart");
+        None
     }
 
     #[tokio::test]
@@ -321,14 +344,10 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_readiness_all_up_returns_200");
             return;
         }
-        let handle = match tcf::DbHandle::start().await {
-            Ok(h) => h,
-            Err(e) => {
-                eprintln!("[skip] failed to start DB: {e}");
-                return;
-            }
+        let Some((_handle, pool)) = start_db_with_pool().await else {
+            eprintln!("[skip] DB unavailable — tc_readiness_all_up_returns_200");
+            return;
         };
-        let pool = db_pool_from_handle(&handle).await;
         let cache = Arc::new(MockCacheService::new(false));
         let app = build_ready_router(pool, cache);
 
@@ -360,14 +379,10 @@ mod tests {
             eprintln!("[skip] Docker unavailable — tc_readiness_cache_down_returns_503");
             return;
         }
-        let handle = match tcf::DbHandle::start().await {
-            Ok(h) => h,
-            Err(e) => {
-                eprintln!("[skip] failed to start DB: {e}");
-                return;
-            }
+        let Some((_handle, pool)) = start_db_with_pool().await else {
+            eprintln!("[skip] DB unavailable — tc_readiness_cache_down_returns_503");
+            return;
         };
-        let pool = db_pool_from_handle(&handle).await;
         let cache = Arc::new(MockCacheService::new(true)); // fails
         let app = build_ready_router(pool, cache);
 

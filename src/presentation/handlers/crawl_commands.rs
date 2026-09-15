@@ -62,7 +62,7 @@ pub async fn create_crawl(
         return errors::unprocessable_entity("max_depth must be between 0 and 5");
     }
 
-    // 1. 检查限流（架构 MEDIUM-1：限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
+    // 1. 检查限流（架构限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
     if let Err(response) = check_rate_limit(
         state.rate_limiting_service.as_ref(),
         auth_state.api_key_id,
@@ -103,6 +103,8 @@ pub async fn create_crawl(
     let use_case = state.create_use_case();
 
     let client_ip = addr.ip().to_string();
+    // 先取出 URL：payload 会在 create_crawl 中被 move，退款日志还需要它
+    let crawl_url = payload.url.clone();
     match use_case
         .create_crawl(team_id, auth_state.api_key_id, payload, &client_ip)
         .await
@@ -151,15 +153,34 @@ pub async fn create_crawl(
 
             success_response(status_code, crawl)
         }
-        Err(e) => match e {
-            CrawlUseCaseError::NotFound => {
-                errors_locale::not_found(&locale, &bundle, "api-crawl-not-found")
+        Err(e) => {
+            // 补偿：create_crawl 失败时退还已扣的 CRAWL_TASK_CREDITS_COST，
+            // 避免客户积分静默丢失
+            if let Err(refund_err) = state
+                .rate_limiting_service
+                .refund_quota(
+                    team_id,
+                    CRAWL_TASK_CREDITS_COST,
+                    format!("Refund: crawl creation failed for {}", crawl_url),
+                    None,
+                )
+                .await
+            {
+                error!(
+                    "CRITICAL: Failed to refund {} credits for team {} after crawl creation failure: {}",
+                    CRAWL_TASK_CREDITS_COST, team_id, refund_err
+                );
             }
-            e => {
-                let (status, msg): (StatusCode, String) = e.into();
-                error_response(status, msg)
+            match e {
+                CrawlUseCaseError::NotFound => {
+                    errors_locale::not_found(&locale, &bundle, "api-crawl-not-found")
+                }
+                e => {
+                    let (status, msg): (StatusCode, String) = e.into();
+                    error_response(status, msg)
+                }
             }
-        },
+        }
     }
 }
 

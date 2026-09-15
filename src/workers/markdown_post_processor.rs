@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Markdown 后处理器（H-4 职责拆分）
+//! Markdown 后处理器
 //!
 //! 从 [`crate::workers::scrape_worker::ScrapeWorker`] 抽取的 markdown 后处理逻辑，
 //! 遵循 SRP：ScrapeWorker 专注任务调度，markdown 转换由本类型独立负责。
@@ -32,18 +32,18 @@ use log::{debug, warn};
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Markdown 后处理错误（架构审查 M-1：错误显性化）
+/// Markdown 后处理错误（错误显性化）
 ///
 /// 原实现 `generate()` 返回 `Option<String>`，将三类不同语义的 `None` 混淆：
 /// 1. 未请求 markdown（非错误，应返回 `Ok(None)`）
 /// 2. 转换失败（应返回 `Err(ConversionFailed)`）
 /// 3. 转换结果为空（应返回 `Err(EmptyResult)`）
 ///
-/// 现通过显式错误类型让调用方区分语义，符合规则12（失败必须显性化）。
-/// 调用方可根据业务策略决定是否阻断主流程（design.md §10：markdown 为增强字段，
+/// 现通过显式错误类型让调用方区分语义，符合“失败必须显性化”原则。
+/// 调用方可根据业务策略决定是否阻断主流程（markdown 为增强字段，
 /// 失败不阻断基础抓取结果，调用方应记录错误并继续）。
 ///
-/// # 类型化错误传递（架构审查 M-1 #7）
+/// # 类型化错误传递（#7）
 ///
 /// `ConversionFailed` 使用 `#[from] MarkdownError` 保留下层错误类型，
 /// 调用方可通过 `downcast_ref::<MarkdownError>()` 拿到原始错误做精细处理，
@@ -60,7 +60,7 @@ pub enum MarkdownPostProcessorError {
     EmptyResult,
 }
 
-/// Markdown 后处理器（H-4 职责拆分）
+/// Markdown 后处理器
 ///
 /// 持有注入的 `MarkdownServiceTrait` 实例（通过 `Arc` 共享），可安全在多处共享单例。
 ///
@@ -92,7 +92,7 @@ pub enum MarkdownPostProcessorError {
 pub struct MarkdownPostProcessor {
     /// 注入的 Markdown 转换服务（DIP：依赖抽象而非具体实现）
     markdown_service: Arc<dyn MarkdownServiceTrait>,
-    /// 可选的正文提取门面（T074/R-content-001）
+    /// 可选的正文提取门面
     ///
     /// `only_main_content=true` 时先经此提取正文，再转 Markdown。
     /// `None` 时跳过正文提取，整页转 Markdown。
@@ -107,7 +107,7 @@ impl MarkdownPostProcessor {
     /// - `markdown_service`：Markdown 转换服务（实现 [`MarkdownServiceTrait`] trait），
     ///   由调用方注入具体实现（如 [`crate::domain::services::markdown_service::HtmdMarkdownService`]）。
     ///   通过 `Arc` 共享，多个 worker 可共用同一实例。
-    /// - `content_extractor`：可选的正文提取门面（T074/R-content-001）。
+    /// - `content_extractor`：可选的正文提取门面。
     ///   `only_main_content=true` 时先提取正文再转 Markdown；`None` 时跳过。
     #[must_use]
     pub fn new(
@@ -128,14 +128,14 @@ impl MarkdownPostProcessor {
     /// - `req`：已解析的 [`ScrapeRequestDto`]，读取 `formats` 字段
     /// - `content`：待转换的 HTML 内容
     ///
-    /// # 返回值（架构审查 M-1：错误显性化）
+    /// # 返回值（错误显性化）
     ///
     /// - `Ok(Some(md))`：成功生成非空 Markdown
     /// - `Ok(None)`：任务未请求 markdown（非错误，调用方应跳过）
     /// - `Err(ConversionFailed(e))`：底层转换服务返回错误
     /// - `Err(EmptyResult)`：转换结果为空（HTML 无可见文本）
     ///
-    /// # 调用方策略（design.md §10）
+    /// # 调用方策略
     ///
     /// markdown 为增强字段，失败不阻断基础抓取结果。调用方应：
     /// ```ignore
@@ -164,7 +164,7 @@ impl MarkdownPostProcessor {
             return Ok(None);
         }
 
-        // T074/R-content-001：only_main_content=true 时先提取正文
+        // only_main_content=true 时先提取正文
         let only_main = req
             .options
             .as_ref()
@@ -225,7 +225,7 @@ impl MarkdownPostProcessor {
                 Err(MarkdownPostProcessorError::EmptyResult)
             }
             Err(e) => {
-                // 架构审查 M-1 #7：保留下层 MarkdownError 类型（通过 #[from] 自动转换），
+                // #7：保留下层 MarkdownError 类型（通过 #[from] 自动转换），
                 // 调用方可 downcast_ref 拿到原始错误做精细处理。
                 warn!("task_id: {}, Markdown conversion failed: {}", task_id, e);
                 Err(MarkdownPostProcessorError::ConversionFailed(e))
@@ -305,7 +305,7 @@ mod tests {
         );
     }
 
-    /// 空 HTML 在请求 markdown 时应返回 Err(EmptyResult)（架构审查 M-1：错误显性化）
+    /// 空 HTML 在请求 markdown 时应返回 Err(EmptyResult)（错误显性化）
     ///
     /// 原实现：返回 `None`（与"未请求 markdown"混淆）
     /// 现实现：返回 `Err(EmptyResult)`（让调用方区分语义）
@@ -340,7 +340,7 @@ mod tests {
 
     /// 确认 Ok(None) 与 Err(EmptyResult) 在调用方正确处理（模拟 scrape_worker 行为）
     ///
-    /// 调用方策略：markdown 为增强字段，失败不阻断主流程（design.md §10）
+    /// 调用方策略：markdown 为增强字段，失败不阻断主流程
     #[tokio::test]
     async fn caller_strategy_continues_on_markdown_error() {
         let p = make_processor();

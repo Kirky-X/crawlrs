@@ -639,7 +639,7 @@ mod tests {
         }
     }
 
-    // === T073: 分块测试 ===
+    // === 分块测试 ===
 
     #[test]
     fn test_chunk_html_article_boundary() {

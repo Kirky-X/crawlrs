@@ -37,7 +37,6 @@ async fn create_db_pool() -> Arc<DbPool> {
             min_connections: 1,
             idle_timeout: 300,
             acquire_timeout: 30000,
-            ..PoolConfig::default()
         },
         permissions_path: Some("tests/integration/helpers/permissions.json".to_string()),
         migrations_dir: None,

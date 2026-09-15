@@ -107,11 +107,11 @@ pub fn database_settings(url: &str) -> crate::config::DatabaseSettings {
 /// Loads the default configuration file, then overrides the database URL
 /// to point at the testcontainers PostgreSQL instance.
 ///
-/// R-auth-engine-002 / T011：auth feature 启用时，注入测试用强密钥（≥32 字节 HS256），
+/// auth feature 启用时，注入测试用强密钥（≥32 字节 HS256），
 /// 避免 `init_services` → `init_garrison_auth` 的 fail-fast panic 触发。
 /// 测试场景下不验证密钥强度，仅满足签名要求。
 ///
-/// ## JWT Secret 来源（tiangang 安全审查 LOW-2）
+/// ## JWT Secret 来源
 ///
 /// 优先从 `CRAWLRS_TEST_JWT_SECRET` 环境变量读取，避免在源码中硬编码密钥
 /// （CWE-798：硬编码凭证）。环境变量未设置时回退到内置测试密钥——
@@ -123,8 +123,8 @@ pub fn database_settings(url: &str) -> crate::config::DatabaseSettings {
 pub fn settings_with_urls(db_url: &str) -> anyhow::Result<crate::config::Settings> {
     let mut settings = crate::bootstrap::config::load_settings()?;
     settings.database = database_settings(db_url);
-    // R-auth-engine-002 / T011：auth-on 时注入测试用强密钥，避免 fail-fast panic
-    // tiangang LOW-2：优先从环境变量读取，避免源码硬编码密钥
+    // auth-on 时注入测试用强密钥，避免 fail-fast panic
+    // 优先从环境变量读取，避免源码硬编码密钥
     #[cfg(feature = "auth")]
     {
         const TEST_JWT_SECRET_ENV: &str = "CRAWLRS_TEST_JWT_SECRET";

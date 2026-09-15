@@ -20,7 +20,7 @@ use crate::engines::engine_client::EngineError;
 use chromiumoxide::page::Page;
 use std::fmt;
 
-/// 注入阶段（design.md §6，R-jsrender-002）
+/// 注入阶段
 ///
 /// 控制 JS 脚本在页面生命周期中的执行时机：
 /// - `BeforeLoad`：在 `page.goto()` 之前注入
@@ -42,7 +42,7 @@ impl fmt::Display for InjectPhase {
     }
 }
 
-/// JS 注入器（design.md §6，R-jsrender-002）
+/// JS 注入器
 ///
 /// 持有 before / after 两个阶段的脚本列表，按 [`InjectPhase`] 选择对应列表
 /// 依次在浏览器页面上 `evaluate`。
@@ -131,7 +131,7 @@ impl JsInjector {
         &self.after
     }
 
-    /// 在指定页面上按阶段执行注入（R-jsrender-002）
+    /// 在指定页面上按阶段执行注入
     ///
     /// 根据 `phase` 选择 `before` 或 `after` 脚本列表，依次调用
     /// `page.evaluate(script)`。
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn stealth_source_comment_preserved() {
-        // 顶部必须保留 crawl4ai 来源注释（规则26 文档同步 + 来源可追溯）
+        // 顶部必须保留 crawl4ai 来源注释（文档同步 + 来源可追溯）
         let injector = JsInjector::stealth();
         let script = &injector.before_scripts()[0];
         assert!(
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn cleanup_after_scripts_in_expected_order() {
-        // 顺序：consent → overlay → flatten（design.md §6）
+        // 顺序：consent → overlay → flatten
         let injector = JsInjector::cleanup();
         let scripts = injector.after_scripts();
         assert!(
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn all_four_scripts_have_crawl4ai_source_header() {
-        // 规则26：所有脚本必须保留来源注释
+        // 所有脚本必须保留来源注释
         let stealth = JsInjector::stealth();
         let cleanup = JsInjector::cleanup();
         for s in stealth

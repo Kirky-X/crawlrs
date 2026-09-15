@@ -155,7 +155,7 @@ pub struct RateLimitingSettings {
 /// * `mem_pressure_threshold` - 内存使用率进入 Pressure 状态的阈值，默认 0.8
 /// * `mem_critical_threshold` - 内存使用率进入 Critical 状态的阈值，默认 0.9
 /// * `critical_timeout_seconds` - Critical 状态持续多久后触发优雅关闭信号，默认 30 秒
-/// * `adaptive_enabled` - 是否启用 AIMD 自适应并发（T037/R-runtime-003），默认 false
+/// * `adaptive_enabled` - 是否启用 AIMD 自适应并发，默认 false
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__CONCURRENCY__")]
 pub struct ConcurrencySettings {
@@ -187,9 +187,9 @@ pub struct ConcurrencySettings {
     #[config(default = 30)]
     pub critical_timeout_seconds: u64,
 
-    /// T037/R-runtime-003：AIMD 自适应并发开关
+    /// AIMD 自适应并发开关
     ///
-    /// - `false`（默认）：使用固定并发（`default_team_limit`），行为等同 Stage 1 之前
+    /// - `false`（默认）：使用固定并发（`default_team_limit`），行为等同之前
     /// - `true`：每队信号量由 `AdaptiveSemaphore` 承载，`scrape_worker` 成功/失败
     ///   回填 `AIMDController::record_*`，动态 target 推入 `AdaptiveSemaphore::set_target`
     ///
@@ -222,6 +222,21 @@ impl ConcurrencySettings {
             self.mem_critical_threshold
         );
     }
+}
+
+/// 数据保留配置设置
+///
+/// 控制各类数据的保留周期，超期数据由 expiration-worker 定期清理
+///
+/// # 字段说明
+///
+/// * `scrape_results_days` - scrape_results 表保留天数，0 表示禁用清理（旧行为：永不删除）
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__RETENTION__")]
+pub struct RetentionSettings {
+    /// 抓取结果保留天数（0 = 永不清理）
+    #[config(default = 30)]
+    pub scrape_results_days: i64,
 }
 
 #[cfg(test)]
@@ -340,7 +355,7 @@ mod tests {
         assert!(settings.adaptive_enabled);
     }
 
-    /// T018：内存感知调度器默认阈值符合 design.md（pressure=0.8, critical=0.9, timeout=30s）
+    /// 内存感知调度器默认阈值符合（pressure=0.8, critical=0.9, timeout=30s）
     #[test]
     fn test_concurrency_settings_memory_defaults() {
         let settings = super::ConcurrencySettings::default();
@@ -351,9 +366,9 @@ mod tests {
         assert!(settings.mem_pressure_threshold < settings.mem_critical_threshold);
     }
 
-    /// T037/R-runtime-003：adaptive_enabled 默认 false（向后兼容）
+    /// adaptive_enabled 默认 false（向后兼容）
     ///
-    /// 默认关闭 AIMD 自适应并发，行为等同 Stage 1 之前的固定并发模式。
+    /// 默认关闭 AIMD 自适应并发，行为等同之前的固定并发模式。
     /// 开启后增强为动态带宽利用（每队 AdaptiveSemaphore + AIMDController）。
     #[test]
     fn test_concurrency_settings_adaptive_enabled_default_false() {

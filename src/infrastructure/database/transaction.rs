@@ -674,7 +674,9 @@ mod tests {
 
     #[test]
     fn test_transaction_config_default() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let config = TransactionConfig::default();
         assert!(matches!(
             config.isolation_level,
@@ -687,7 +689,9 @@ mod tests {
 
     #[test]
     fn test_transaction_config_custom() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let config = TransactionConfig {
             isolation_level: TransactionIsolation::Serializable,
             access_mode: TransactionAccess::ReadOnly,
@@ -705,7 +709,9 @@ mod tests {
 
     #[test]
     fn test_transaction_isolation_variants() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let _ = TransactionIsolation::ReadUncommitted;
         let _ = TransactionIsolation::ReadCommitted;
         let _ = TransactionIsolation::RepeatableRead;
@@ -714,14 +720,18 @@ mod tests {
 
     #[test]
     fn test_transaction_access_mode_variants() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let _ = TransactionAccess::ReadWrite;
         let _ = TransactionAccess::ReadOnly;
     }
 
     #[test]
     fn test_transaction_error_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::BeginFailed("test".to_string());
         assert!(err.to_string().contains("test"));
 
@@ -768,7 +778,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::Custom("custom db error".to_string());
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -781,7 +793,9 @@ mod tests {
 
     #[test]
     fn test_new_creates_manager_without_active_transaction() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         assert!(!manager.is_active());
@@ -791,7 +805,9 @@ mod tests {
 
     #[test]
     fn test_with_config_creates_manager_with_custom_config() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let config = TransactionConfig {
             isolation_level: TransactionIsolation::Serializable,
@@ -808,7 +824,9 @@ mod tests {
 
     #[test]
     fn test_is_active_false_when_no_transaction() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         assert!(!manager.is_active());
@@ -816,7 +834,9 @@ mod tests {
 
     #[test]
     fn test_has_transaction_false_when_no_transaction() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         assert!(!manager.has_transaction());
@@ -824,7 +844,9 @@ mod tests {
 
     #[test]
     fn test_savepoint_count_zero_when_no_transaction() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         assert_eq!(manager.savepoint_count(), 0);
@@ -841,7 +863,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_empty_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = validate_savepoint_name("");
         assert!(matches!(
             result,
@@ -852,7 +876,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_too_long_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let long_name = "a".repeat(64);
         let result = validate_savepoint_name(&long_name);
         assert!(matches!(
@@ -864,7 +890,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_max_length_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 63 chars is the max allowed length
         let max_name = "a".repeat(63);
         let result = validate_savepoint_name(&max_name);
@@ -873,7 +901,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_one_over_max_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let name = "a".repeat(64);
         let result = validate_savepoint_name(&name);
         assert!(matches!(
@@ -885,7 +915,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_invalid_chars_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Contains hyphen which is not allowed
         let result = validate_savepoint_name("invalid-name");
         assert!(matches!(
@@ -897,7 +929,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_with_space_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = validate_savepoint_name("invalid name");
         assert!(matches!(
             result,
@@ -907,7 +941,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_with_special_chars_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         for invalid_name in &["sp@1", "sp.1", "sp/1", "sp-1", "sp!1", "sp#1"] {
             let result = validate_savepoint_name(invalid_name);
             assert!(
@@ -920,7 +956,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_valid_names_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         for valid_name in &["sp1", "savepoint_1", "SAVEPOINT_1", "sp123", "_sp"] {
             let result = validate_savepoint_name(valid_name);
             assert!(
@@ -934,21 +972,27 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_single_char_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = validate_savepoint_name("a");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_savepoint_name_single_underscore_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = validate_savepoint_name("_");
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_savepoint_name_digits_only_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 纯数字也应该通过校验（is_alphanumeric 接受数字）
         let result = validate_savepoint_name("12345");
         assert!(result.is_ok());
@@ -956,7 +1000,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_unicode_alphanumeric_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // ASCII-only whitelist: Unicode letters (中文/日文等) must be rejected
         // because PostgreSQL unquoted identifiers under SQL_ASCII / LATIN1
         // encodings would raise "invalid byte sequence" at SQL execution time.
@@ -966,7 +1012,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_tab_character_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = validate_savepoint_name("sp\t1");
         assert!(matches!(
             result,
@@ -976,7 +1024,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_newline_character_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = validate_savepoint_name("sp\n1");
         assert!(matches!(
             result,
@@ -986,7 +1036,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_emoji_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Emoji 不属于 alphanumeric，应该被拒绝
         let result = validate_savepoint_name("sp🎉");
         assert!(matches!(
@@ -997,7 +1049,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_at_max_boundary_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 63 字符是边界值，应该通过
         let name = "a".repeat(63);
         let result = validate_savepoint_name(&name);
@@ -1006,7 +1060,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_returns_unit_ok_for_valid_input() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 验证 Ok 变体是 unit ()，而非其他类型
         let result = validate_savepoint_name("valid_sp");
         assert!(result.is_ok());
@@ -1024,7 +1080,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_empty_name_rejected_before_active_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.savepoint("").await;
@@ -1038,7 +1096,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_too_long_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let long_name = "a".repeat(64);
@@ -1053,7 +1113,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_max_length_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 63 chars is the max allowed length
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1065,7 +1127,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_invalid_chars_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         // Contains hyphen which is not allowed
@@ -1080,7 +1144,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_with_space_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.savepoint("invalid name").await;
@@ -1092,7 +1158,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_with_special_chars_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         for invalid_name in &["sp@1", "sp.1", "sp/1", "sp-1", "sp!1", "sp#1"] {
@@ -1107,7 +1175,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_valid_name_passes_validation_but_no_tx() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         // Valid names pass validation but fail because no active transaction
@@ -1123,7 +1193,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_release_savepoint_empty_name_rejected_before_active_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.release_savepoint("").await;
@@ -1135,7 +1207,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_release_savepoint_invalid_name_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.release_savepoint("invalid-name").await;
@@ -1147,7 +1221,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_release_savepoint_valid_name_no_tx_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.release_savepoint("valid_sp").await;
@@ -1156,7 +1232,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_to_savepoint_empty_name_rejected_before_active_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.rollback_to_savepoint("").await;
@@ -1168,7 +1246,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_to_savepoint_invalid_name_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.rollback_to_savepoint("invalid-name").await;
@@ -1180,7 +1260,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_to_savepoint_valid_name_no_tx_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.rollback_to_savepoint("valid_sp").await;
@@ -1193,7 +1275,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_begin_succeeds_with_real_db() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.begin().await;
@@ -1210,7 +1294,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_begin_with_config_succeeds_with_real_db() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let config = TransactionConfig {
             isolation_level: TransactionIsolation::Serializable,
@@ -1233,7 +1319,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_without_active_transaction_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.commit().await;
@@ -1242,7 +1330,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_without_active_transaction_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.rollback().await;
@@ -1255,7 +1345,9 @@ mod tests {
 
     #[test]
     fn test_guard_new_creates_uncommitted_guard() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let _guard = TransactionGuard::new(&manager);
@@ -1267,7 +1359,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_guard_commit_without_active_tx_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let guard = TransactionGuard::new(&manager);
@@ -1277,7 +1371,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_guard_rollback_without_active_tx_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let guard = TransactionGuard::new(&manager);
@@ -1287,7 +1383,9 @@ mod tests {
 
     #[test]
     fn test_guard_drop_without_active_tx_does_not_panic() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         {
@@ -1304,7 +1402,9 @@ mod tests {
 
     #[test]
     fn test_drop_without_active_transaction_does_not_panic() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         // Manager drops here — no active transaction, so no warn
@@ -1314,7 +1414,9 @@ mod tests {
 
     #[test]
     fn test_manager_can_be_cloned_via_arc() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         // TransactionManager is not Clone, but we can wrap it in Arc
@@ -1330,7 +1432,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_record_not_found_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::RecordNotFound("task 42".to_string());
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1339,7 +1443,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_connection_acquire_timeout_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1347,7 +1453,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_connection_acquire_closed_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed);
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1355,7 +1463,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_record_not_inserted_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::RecordNotInserted;
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1363,7 +1473,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_query_runtime_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1372,7 +1484,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_query_sqlx_error_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // RuntimeErr::SqlxError 包装底层 sqlx 错误（Arc），验证转换仍走 DatabaseError 分支
         let inner = sea_orm::sqlx::Error::RowNotFound;
         let db_err = DbErr::Query(sea_orm::RuntimeErr::SqlxError(std::sync::Arc::new(inner)));
@@ -1382,7 +1496,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_try_into_err_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // TryIntoErr 包装类型转换失败错误，字段为 from/into/source
         let source_err: Arc<dyn std::error::Error + Send + Sync> = Arc::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -1402,7 +1518,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_conn_runtime_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Conn 变体包装 RuntimeErr
         let db_err = DbErr::Conn(sea_orm::RuntimeErr::Internal("conn lost".to_string()));
         let tx_err: TransactionError = db_err.into();
@@ -1412,7 +1530,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_exec_runtime_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::Exec(sea_orm::RuntimeErr::Internal("exec fail".to_string()));
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1421,7 +1541,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_record_not_updated_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::RecordNotUpdated;
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1429,7 +1551,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_unpack_insert_id_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::UnpackInsertId;
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1437,7 +1561,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_type_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::Type("invalid type".to_string());
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1446,7 +1572,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_json_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::Json("parse error".to_string());
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1455,7 +1583,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_convert_from_u64_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::ConvertFromU64("String");
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1463,7 +1593,9 @@ mod tests {
 
     #[test]
     fn test_from_dberr_attr_type_to_transaction_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = DbErr::AttrNotSet("version".to_string());
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
@@ -1476,7 +1608,9 @@ mod tests {
 
     #[test]
     fn test_transaction_error_begin_failed_display_contains_prefix() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::BeginFailed("conn refused".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Failed to begin transaction"));
@@ -1485,7 +1619,9 @@ mod tests {
 
     #[test]
     fn test_transaction_error_commit_failed_display_contains_prefix() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::CommitFailed("timeout".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Failed to commit transaction"));
@@ -1494,7 +1630,9 @@ mod tests {
 
     #[test]
     fn test_transaction_error_rollback_failed_display_contains_prefix() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::RollbackFailed("deadlock".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Failed to rollback transaction"));
@@ -1503,7 +1641,9 @@ mod tests {
 
     #[test]
     fn test_transaction_error_savepoint_failed_display_contains_both_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::SavepointFailed {
             name: "before_op".to_string(),
             message: "duplicate".to_string(),
@@ -1516,7 +1656,9 @@ mod tests {
 
     #[test]
     fn test_transaction_error_release_savepoint_failed_display_contains_both_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::ReleaseSavepointFailed {
             name: "sp1".to_string(),
             message: "not found".to_string(),
@@ -1529,7 +1671,9 @@ mod tests {
 
     #[test]
     fn test_transaction_error_rollback_to_savepoint_failed_display_contains_both_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::RollbackToSavepointFailed {
             name: "sp2".to_string(),
             message: "connection lost".to_string(),
@@ -1542,7 +1686,9 @@ mod tests {
 
     #[test]
     fn test_transaction_error_database_error_display_contains_message() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::DatabaseError("query panicked".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Database error"));
@@ -1551,7 +1697,9 @@ mod tests {
 
     #[test]
     fn test_transaction_error_invalid_savepoint_name_display_contains_message() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::InvalidSavepointName("too long".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Invalid savepoint name"));
@@ -1560,7 +1708,9 @@ mod tests {
 
     #[test]
     fn test_transaction_error_savepoint_not_found_display_contains_name() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::SavepointNotFound("sp_xyz".to_string());
         let msg = err.to_string();
         assert!(msg.contains("Savepoint not found"));
@@ -1569,14 +1719,18 @@ mod tests {
 
     #[test]
     fn test_transaction_error_no_active_transaction_display_exact() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::NoActiveTransaction;
         assert_eq!(err.to_string(), "No active transaction");
     }
 
     #[test]
     fn test_transaction_error_transaction_already_active_display_exact() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = TransactionError::TransactionAlreadyActive;
         assert_eq!(err.to_string(), "Transaction already active");
     }
@@ -1587,7 +1741,9 @@ mod tests {
 
     #[test]
     fn test_transaction_error_implements_debug_for_all_variants() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 确保所有变体都实现 Debug（#[derive(Debug)] 应保证）
         let variants: Vec<TransactionError> = vec![
             TransactionError::BeginFailed("e".into()),
@@ -1623,21 +1779,27 @@ mod tests {
 
     #[test]
     fn test_transaction_isolation_default_is_read_committed() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let iso: TransactionIsolation = Default::default();
         assert!(matches!(iso, TransactionIsolation::ReadCommitted));
     }
 
     #[test]
     fn test_transaction_access_default_is_read_write() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let acc: TransactionAccess = Default::default();
         assert!(matches!(acc, TransactionAccess::ReadWrite));
     }
 
     #[test]
     fn test_transaction_isolation_clone_preserves_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         for iso in [
             TransactionIsolation::ReadUncommitted,
             TransactionIsolation::ReadCommitted,
@@ -1659,7 +1821,9 @@ mod tests {
 
     #[test]
     fn test_transaction_access_clone_preserves_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         for acc in [TransactionAccess::ReadWrite, TransactionAccess::ReadOnly] {
             let cloned = acc;
             // 验证 Copy trait：赋值不移动原值
@@ -1677,7 +1841,9 @@ mod tests {
 
     #[test]
     fn test_transaction_config_clone_preserves_all_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let config = TransactionConfig {
             isolation_level: TransactionIsolation::RepeatableRead,
             access_mode: TransactionAccess::ReadOnly,
@@ -1696,7 +1862,9 @@ mod tests {
 
     #[test]
     fn test_transaction_config_debug_format_works() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let config = TransactionConfig::default();
         let debug = format!("{:?}", config);
         assert!(debug.contains("TransactionConfig"));
@@ -1710,7 +1878,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_single_char_passes_validation_no_tx() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 单字符名称应该通过校验
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1720,7 +1890,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_single_underscore_passes_validation_no_tx() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.savepoint("_").await;
@@ -1729,7 +1901,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_digits_only_passes_validation_no_tx() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 纯数字也应该通过校验（is_alphanumeric 接受数字）
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1739,7 +1913,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_unicode_alphanumeric_rejected_no_tx() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // ASCII-only whitelist: Unicode letters must be rejected by
         // validate_savepoint_name before reaching the DB layer.
         let pool = create_test_db_pool();
@@ -1753,7 +1929,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_tab_character_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.savepoint("sp\t1").await;
@@ -1765,7 +1943,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_newline_character_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let result = manager.savepoint("sp\n1").await;
@@ -1777,7 +1957,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_emoji_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Emoji 不属于 alphanumeric，应该被拒绝
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1790,7 +1972,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_at_max_boundary_passes_validation_no_tx() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 63 字符是边界值，应该通过
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1801,7 +1985,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_savepoint_name_one_over_max_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 64 字符应该被拒绝
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1820,7 +2006,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_release_savepoint_too_long_name_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let name = "a".repeat(64);
@@ -1833,7 +2021,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_to_savepoint_too_long_name_rejected() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         let name = "a".repeat(64);
@@ -1846,7 +2036,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_release_savepoint_unicode_name_rejected_validation_only_for_chars() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // ASCII-only whitelist: Unicode letters rejected by validate_savepoint_name
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1859,7 +2051,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_rollback_to_savepoint_unicode_name_rejected_no_tx() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // ASCII-only whitelist: Unicode letters rejected by validate_savepoint_name
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -1876,7 +2070,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_begin_with_config_savepoints_disabled_succeeds_with_real_db() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let config = TransactionConfig {
             isolation_level: TransactionIsolation::ReadUncommitted,
@@ -1900,7 +2096,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_begin_with_config_admin_role_succeeds() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let config = TransactionConfig {
             isolation_level: TransactionIsolation::Serializable,
@@ -1921,7 +2119,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_begin_with_config_empty_role_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let config = TransactionConfig {
             isolation_level: TransactionIsolation::ReadCommitted,
@@ -1942,7 +2142,9 @@ mod tests {
 
     #[test]
     fn test_guard_drop_in_inner_scope_does_not_panic() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         {
@@ -1960,7 +2162,9 @@ mod tests {
 
     #[test]
     fn test_guard_can_be_created_and_dropped_multiple_times() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         for _ in 0..5 {
@@ -1972,7 +2176,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_guard_commit_called_twide_after_drop_returns_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 第一次 commit 后 guard 被 consume（self by value），不能再调用
         // 这里测试：commit 失败后 guard 仍然 drop
         let pool = create_test_db_pool();
@@ -1989,7 +2195,9 @@ mod tests {
 
     #[test]
     fn test_drop_with_configured_manager_no_active_transaction_no_panic() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let config = TransactionConfig {
             isolation_level: TransactionIsolation::Serializable,
@@ -2004,7 +2212,9 @@ mod tests {
 
     #[test]
     fn test_drop_after_failed_begin_does_not_panic() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // 模拟 begin 失败后 drop manager
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
@@ -2013,12 +2223,14 @@ mod tests {
     }
 
     // ============================================================
-    // T067: validate_savepoint_name 直接单元测试 + savepoint_count 边界
+    // validate_savepoint_name 直接单元测试 + savepoint_count 边界
     // ============================================================
 
     #[test]
     fn test_validate_savepoint_name_valid_names_direct() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         for name in &["sp1", "savepoint_1", "SAVEPOINT_1", "sp123", "_sp", "a"] {
             assert!(
                 validate_savepoint_name(name).is_ok(),
@@ -2030,7 +2242,9 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_special_chars_direct() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         for name in &["sp@1", "sp.1", "sp/1", "sp-1", "sp!1", "sp#1", "sp 1"] {
             assert!(
                 validate_savepoint_name(name).is_err(),
@@ -2042,13 +2256,17 @@ mod tests {
 
     #[test]
     fn test_validate_savepoint_name_unicode_direct() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(validate_savepoint_name("释放点").is_err());
     }
 
     #[test]
     fn test_savepoint_count_zero_without_active_transaction() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let manager = TransactionManager::new(pool);
         assert_eq!(manager.savepoint_count(), 0);

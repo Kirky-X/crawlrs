@@ -400,7 +400,7 @@ impl KnowledgeGraphAccumulator {
     }
 }
 
-/// KG 优先级提升评分器（T082）
+/// KG 优先级提升评分器
 ///
 /// 实现 `UrlScorer` trait，将 KG 结构空洞检测信号反馈到 URL 优先级。
 /// 匹配结构空洞模式的 URL 获得更高分数。
@@ -435,7 +435,7 @@ impl Default for KnowledgeGraphAccumulator {
 mod tests {
     use super::*;
 
-    // === T078: KG 构建测试 ===
+    // === KG 构建测试 ===
 
     #[test]
     fn test_add_entity_and_count() {
@@ -565,7 +565,7 @@ mod tests {
         assert_eq!(neighbors[0].1, "works_at");
     }
 
-    // === T080: Chao1 覆盖率估计测试 ===
+    // === Chao1 覆盖率估计测试 ===
 
     #[test]
     fn test_estimate_coverage_all_types_well_represented() {

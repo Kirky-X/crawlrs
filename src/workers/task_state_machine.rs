@@ -122,7 +122,7 @@ impl TaskStateMachine {
         let current_status = self.task.status;
         let new_status = Self::next_status(current_status, event)?;
 
-        // T016 修复：increment_retry 移到此处，使 next_status 成为纯函数。
+        // increment_retry 移到此处，使 next_status 成为纯函数。
         // 避免 can_transition / get_transition_description 等只读查询产生副作用。
         if current_status == TaskStatus::Active
             && (event == TaskStateEvent::Fail || event == TaskStateEvent::Retry)
@@ -157,7 +157,7 @@ impl TaskStateMachine {
     /// 基于当前状态和事件计算目标状态。
     /// 如果转换无效，返回错误。
     ///
-    /// T016 修复：不再包含 `increment_retry` 副作用，变为纯函数。
+    /// 不再包含 `increment_retry` 副作用，变为纯函数。
     fn next_status(
         current: TaskStatus,
         event: TaskStateEvent,
@@ -178,7 +178,7 @@ impl TaskStateMachine {
 
             // 有效转换: Active -> Completed/Failed/Cancelled
             (TaskStatus::Active, TaskStateEvent::Complete) => Ok(TaskStatus::Completed),
-            // T016 修复：increment_retry 已移至 handle_event，next_status 为纯函数
+            // increment_retry 已移至 handle_event，next_status 为纯函数
             (TaskStatus::Active, TaskStateEvent::Fail) => Ok(TaskStatus::Failed),
             (TaskStatus::Active, TaskStateEvent::Cancel) => Ok(TaskStatus::Cancelled),
             (TaskStatus::Active, TaskStateEvent::Retry) => Ok(TaskStatus::Active),
@@ -219,14 +219,14 @@ impl TaskStateMachine {
 
     /// 检查是否可以从当前状态转换到目标状态
     ///
-    /// T016 修复：next_status 现为纯函数，can_transition 不再有副作用。
+    /// next_status 现为纯函数，can_transition 不再有副作用。
     pub fn can_transition(&self, event: TaskStateEvent) -> bool {
         Self::next_status(self.task.status, event).is_ok()
     }
 
     /// 获取状态转换描述
     ///
-    /// T016 修复：next_status 现为纯函数，get_transition_description 不再有副作用。
+    /// next_status 现为纯函数，get_transition_description 不再有副作用。
     pub fn get_transition_description(&self, event: TaskStateEvent) -> String {
         match Self::next_status(self.task.status, event) {
             Ok(next) => format!("{:?} -> {:?}", self.task.status, next),
@@ -423,14 +423,14 @@ mod tests {
         let task = create_test_task(TaskStatus::Active);
         let mut sm = TaskStateMachine::new(task);
         assert_eq!(sm.task().retry_count, 0);
-        // T016 修复后 can_transition 不再有副作用，可安全调用
+        // can_transition 不再有副作用，可安全调用
         sm.handle_event(TaskStateEvent::Retry).unwrap();
         assert_eq!(sm.current_status(), TaskStatus::Active);
         assert_eq!(sm.task().retry_count, 1);
         assert_eq!(sm.task().attempt_count, 1);
     }
 
-    // ========== T016: can_transition 无副作用测试 ==========
+    // ========== can_transition 无副作用测试 ==========
 
     #[test]
     fn test_can_transition_has_no_side_effects_on_retry_count() {

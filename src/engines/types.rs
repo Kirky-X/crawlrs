@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
-// HttpMethod 已提升至 `common::http_method`（CRITICAL-1 修复：消除
+// HttpMethod 已提升至 `common::http_method`（消除
 // 原 `infrastructure::oxcache::cache_mode`（现已提升至 `common::cache_mode`）对 `engines` 层的反向依赖）。
 // 此处 `pub use` 重新导出，保持与 `ScrapeRequest` / `ScrapeOptions` 等
 // 引擎类型的协同导入路径（符合代码库既有 `pub use crate::...` 惯例）。
@@ -71,20 +71,20 @@ impl ScrapeRequest {
         self
     }
 
-    /// Configure the request to use MLLM autonomous navigation (Phase 3).
+    /// Configure the request to use MLLM autonomous navigation .
     pub fn needs_mllm(mut self) -> Self {
         self.options.needs_mllm = true;
         self
     }
 }
 
-/// session_id 最大长度（字节）— 防止 DoS（T056 安全审查 MEDIUM-2 修复）
+/// session_id 最大长度（字节）— 防止 DoS
 ///
 /// 限制 ProxyPool::sticky 的 DashMap key 长度，防止恶意超长 session_id
 /// 导致内存耗尽。128 字节对绝大多数会话标识场景足够。
 pub const MAX_SESSION_ID_LEN: usize = 128;
 
-/// 校验 session_id 是否合法（T056 安全审查 MEDIUM-2 修复）
+/// 校验 session_id 是否合法
 ///
 /// # 校验规则
 ///
@@ -108,7 +108,7 @@ pub fn validate_session_id(session_id: &str) -> bool {
     session_id.bytes().all(|b| (0x20..=0x7E).contains(&b))
 }
 
-/// 页面加载后等待策略（T069，R-jsrender-004）
+/// 页面加载后等待策略
 ///
 /// 三种模式：
 /// - [`WaitFor::NetworkIdle`]：等待网络空闲（无新请求持续 500ms）
@@ -182,27 +182,27 @@ pub struct ScrapeOptions {
     pub use_fire_engine: bool,
     /// Block ad / tracker domains via CDP Fetch request interception (default: false)
     ///
-    /// T033 / R-jsrender-003：当为 true 且使用浏览器引擎时，启用广告/追踪域名黑名单拦截，
+    /// 当为 true 且使用浏览器引擎时，启用广告/追踪域名黑名单拦截，
     /// 命中 [`crate::engines::intercept::AD_DOMAIN_BLACKLIST`] 的请求将被 `Fetch.failRequest` 中止。
     pub block_ads: bool,
     /// Block media resources (image/media/font) via CDP Fetch interception (default: false)
     ///
-    /// T033 / R-jsrender-003：当为 true 且使用浏览器引擎时，启用媒体资源类型拦截，
+    /// 当为 true 且使用浏览器引擎时，启用媒体资源类型拦截，
     /// CDP `ResourceType::{Image, Media, Font}` 的请求将被 `Fetch.failRequest` 中止。
     pub block_media: bool,
-    /// 粘性会话 ID（H1 修复：用于 ProxyStrategy::Sticky 时调用 ProxyProvider::sticky）
+    /// 粘性会话 ID（用于 ProxyStrategy::Sticky 时调用 ProxyProvider::sticky）
     ///
     /// 调用方在需要粘性会话（同一会话固定走同一代理）时设置。
     /// `None` 时按 `ProxyStrategy::RoundRobin` 走 `ProxyProvider::next`。
     pub session_id: Option<String>,
-    /// 缓存模式（T058/R-cache-002，design.md §13）
+    /// 缓存模式
     ///
     /// 控制本次抓取的缓存读写行为。`None`（默认）等价于 `Some(CacheMode::Enabled)`，
     /// 由 `scrape_worker` 在读写 `CacheService` 前经 `CacheContext` 门控。
     ///
     /// 5 种模式详见 [`crate::common::CacheMode`]。
     pub cache_mode: Option<CacheMode>,
-    /// 页面加载后等待策略（T069，R-jsrender-004，design.md §17）
+    /// 页面加载后等待策略
     ///
     /// 仅浏览器引擎（Playwright）生效。`None`（默认）时 Playwright 使用
     /// [`WaitFor::NetworkIdle`]（与原 `sync_wait_ms` 默认 1 秒等待语义一致）。
@@ -212,7 +212,7 @@ pub struct ScrapeOptions {
     ///
     /// `sync_wait_ms` 字段保留供非浏览器引擎（如 FlareSolverr）使用。
     pub wait_for: Option<WaitFor>,
-    /// MLLM 自主导航模式（Phase 3）— 由 `engine-mllm` feature 门控
+    /// MLLM 自主导航模式由 `engine-mllm` feature 门控
     ///
     /// 为 true 时路由优先选择 MllmEngine，通过视觉大模型分析截图自主导航。
     pub needs_mllm: bool,
@@ -370,24 +370,24 @@ impl ScrapeOptionsBuilder {
         self
     }
 
-    /// Enable/disable ad & tracker domain blocking via CDP Fetch interception (T033, R-jsrender-003).
+    /// Enable/disable ad & tracker domain blocking via CDP Fetch interception .
     pub fn block_ads(mut self, enabled: bool) -> Self {
         self.0.block_ads = enabled;
         self
     }
 
-    /// Enable/disable media resource (image/media/font) blocking via CDP Fetch interception (T033).
+    /// Enable/disable media resource (image/media/font) blocking via CDP Fetch interception .
     pub fn block_media(mut self, enabled: bool) -> Self {
         self.0.block_media = enabled;
         self
     }
 
-    /// 设置粘性会话 ID（H1 修复：用于 ProxyStrategy::Sticky）
+    /// 设置粘性会话 ID（用于 ProxyStrategy::Sticky）
     ///
     /// 调用方在需要粘性会话（同一会话固定走同一代理）时设置。
     /// `None` 时按 `ProxyStrategy::RoundRobin` 走 `ProxyProvider::next`。
     ///
-    /// # 安全校验（T056 安全审查 MEDIUM-2 修复）
+    /// # 安全校验
     ///
     /// - 长度上限：[`MAX_SESSION_ID_LEN`] 字节（128）
     /// - 字符集：可打印 ASCII（0x20-0x7E），排除控制字符
@@ -413,7 +413,7 @@ impl ScrapeOptionsBuilder {
         self.0
     }
 
-    /// 启用 MLLM 自主导航模式（Phase 3）
+    /// 启用 MLLM 自主导航模式
     ///
     /// 为 true 时路由优先选择 MllmEngine，通过视觉大模型分析截图自主导航。
     pub fn needs_mllm(mut self, enabled: bool) -> Self {
@@ -421,7 +421,7 @@ impl ScrapeOptionsBuilder {
         self
     }
 
-    /// 设置缓存模式（T058/R-cache-002，design.md §13）
+    /// 设置缓存模式
     ///
     /// `None`（默认）等价于 `Some(CacheMode::Enabled)`。
     /// 详见 [`crate::common::CacheMode`]。
@@ -430,7 +430,7 @@ impl ScrapeOptionsBuilder {
         self
     }
 
-    /// 设置页面加载后等待策略（T069，R-jsrender-004，design.md §17）
+    /// 设置页面加载后等待策略
     ///
     /// 仅浏览器引擎（Playwright）生效。`None` 时使用 [`WaitFor::NetworkIdle`]。
     /// 详见 [`WaitFor`]。
@@ -492,7 +492,7 @@ impl Default for ScreenshotConfig {
 ///
 /// This is the canonical response type returned by EngineClient.
 ///
-/// T059/R-cache-002：实现 `Serialize`/`Deserialize` 以支持 `scrape_worker`
+/// 实现 `Serialize`/`Deserialize` 以支持 `scrape_worker`
 /// 缓存门控——抓取成功后序列化为 JSON 字符串写入 `CacheService`，
 /// 读缓存命中时反序列化还原为 `ScrapeResponse` 直返，跳过实际抓取。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -511,7 +511,7 @@ pub struct ScrapeResponse {
     pub response_time_ms: u64,
     /// Final URL after any redirects
     pub final_url: Option<String>,
-    /// Markdown 转换结果（T041/R-content-001）
+    /// Markdown 转换结果
     ///
     /// 仅当请求 `formats` 含 `"markdown"` 且 `markdown` 特性启用时由
     /// `scrape_worker` 填充；其余情况为 `None`，对老调用方透明。
@@ -564,20 +564,20 @@ pub struct InternalScrapeRequest {
     pub actions: Vec<InternalPageAction>,
     pub body: Option<String>,
     pub sync_wait_ms: u32,
-    /// T033 / R-jsrender-003：广告/追踪域名拦截开关（仅浏览器引擎生效）
+    /// 广告/追踪域名拦截开关（仅浏览器引擎生效）
     pub block_ads: bool,
-    /// T033 / R-jsrender-003：媒体资源类型拦截开关（仅浏览器引擎生效）
+    /// 媒体资源类型拦截开关（仅浏览器引擎生效）
     pub block_media: bool,
-    /// 粘性会话 ID（H1 修复：用于 ProxyStrategy::Sticky 时调用 ProxyProvider::sticky）
+    /// 粘性会话 ID（用于 ProxyStrategy::Sticky 时调用 ProxyProvider::sticky）
     ///
     /// 通过 `ScrapeRequest::to_internal` 从 `ScrapeOptions.session_id` 桥接而来。
     pub session_id: Option<String>,
-    /// 页面加载后等待策略（T069，R-jsrender-004，design.md §17）
+    /// 页面加载后等待策略
     ///
     /// 通过 `ScrapeRequest::to_internal` 从 `ScrapeOptions.wait_for` 桥接而来。
     /// 仅浏览器引擎（Playwright）消费；`None` 时 Playwright 使用 [`WaitFor::NetworkIdle`]。
     pub wait_for: Option<WaitFor>,
-    /// MLLM 自主导航模式（Phase 3）
+    /// MLLM 自主导航模式
     pub needs_mllm: bool,
 }
 
@@ -609,6 +609,9 @@ pub struct InternalScrapeResponse {
     pub content_type: String,
     pub headers: HashMap<String, String>,
     pub response_time_ms: u64,
+    /// 引擎实际得到的最终 URL（重定向 / 浏览器页面导航后）。
+    /// `None` 表示引擎未提供，`to_public` 回退为原始请求 URL。
+    pub final_url: Option<String>,
 }
 
 /// Convert from public ScrapeRequest to internal format
@@ -656,7 +659,7 @@ impl ScrapeRequest {
                     format: config.format.clone(),
                 });
 
-        // T056 安全审查 MEDIUM-2 修复：to_internal 二次校验 session_id
+        // to_internal 二次校验 session_id
         // 防止用户绕过 builder 直接构造 ScrapeOptions 注入非法 session_id
         // （超长字符串 DoS / 控制字符日志注入 CWE-117）
         let session_id = match &options.session_id {
@@ -709,7 +712,13 @@ impl InternalScrapeResponse {
             content_type: self.content_type.clone(),
             headers: self.headers.clone(),
             response_time_ms: self.response_time_ms,
-            final_url: Some(original_url.to_string()),
+            // 优先使用引擎实际得到的最终 URL（如 playwright 页面导航、reqwest
+            // 重定向后的 URL）；引擎未提供时回退原始请求 URL，保持既有行为不回归。
+            final_url: Some(
+                self.final_url
+                    .clone()
+                    .unwrap_or_else(|| original_url.to_string()),
+            ),
             markdown: None,
         }
     }

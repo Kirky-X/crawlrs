@@ -62,11 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Axum 中间件链路校准：`create_v2_routes_with_state` 中先 `.layer(team_semaphore_middleware)` 再 `.layer(auth_middleware_inner)`（后 .layer = outer = 先执行），确保 `AuthState.team_id` 在信号量提取前已注入
 - `team_semaphore_middleware`：`extract_team_id` 改为从 `AuthState` 读取 `team_id`（替代直接读取裸 `Uuid` Extension），修复 v2 路由 401
 - API 端点 `DELETE /v1/crawl/{id}`（取消 crawl）替代已废弃 `POST /v1/scrape/{id}/_cancel`
+- 自研依赖版本统一对齐（共享 rc.43 链）：confers 0.6.0-rc.2 / dbnexus 0.6.0-rc.2 / oxcache 0.5.0-rc.2 / trait-kit 0.5.0-rc.2 / sdforge 0.5.0-rc.2 / inklog 0.3.0-rc.2 / limiteron 0.3.0-rc.2 / garrison 0.9.0-rc.1
 
 ### Changed
 
 - 认证失败路径：所有 protected routes 不再走 garrison `TokenSession` 会话查找（因 garrison `check_api_key` 不创建 session）
-- SDK router (sdforge) 的 auth 中间件统一使用 `from_fn_with_state(db_pool, auth_middleware_inner)`，与 protected/v2 三端一致
+- SDK router (sdforge 0.5) 的 auth 中间件统一使用 `from_fn_with_state(db_pool, auth_middleware_inner)`，与 protected/v2 三端一致
 - 公开端点 `PUBLIC_ENDPOINTS` 比较时已规范化尾部斜杠（`/health/` 也命中）
 
 ### Fixed
@@ -85,9 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Enterprise-grade web scraping and crawling platform built with Rust
-- Multi-engine support: Reqwest (HTTP), Playwright (JS rendering), FlareSolverr
-- Search engine aggregation (Google, Bing, DuckDuckGo, SearXNG)
-- Bearer Token authentication with bcrypt hashing and brute-force protection
+- Multi-engine support: Reqwest (HTTP), Playwright (JS rendering via chromiumoxide), FlareSolverr, WreqEngine (TLS fingerprint), MllmEngine (Vision LLM navigation)
+- Search engine aggregation (Google, Bing, Baidu, Sogou)
+- Garrison-based authentication (RBAC + JWT + firewall-bruteforce + audit-log)
 - API key scope system (Read / Write / Admin) with team isolation
 - Credits-based billing system for search/scrape/crawl/extract operations
 - Geographic restriction enforcement (country allow/block lists, IP whitelist)
@@ -95,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Task queue with priority scheduling and retry support
 - Webhook delivery system for event notifications
 - Audit logging for all API operations
-- Rate limiting with circuit breaker support
+- Rate limiting with circuit breaker support (limiteron)
 - LRU cache for API key validation (TTL 120s, capacity 10000)
 - Extraction engine with LLM support (genai integration)
 - Admin CLI tools for credits management

@@ -46,7 +46,7 @@ impl CrawlTextIntegration {
         content_type: Option<&str>,
         status_code: u16,
     ) -> Result<ProcessedScrapeResponse, CrawlProcessingError> {
-        // 性能审查 H-2 修复：禁用时不分配 2 份 String，
+        // 禁用时不分配 2 份 String，
         // 用 Cow 延迟转换并直接返回原始字节引用。
         if !self.is_enabled() {
             debug!("文本处理功能已禁用，直接返回原始内容");
@@ -316,7 +316,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_enable_actually_enables_processing() {
-        // After fix: enable() must actually set enabled=true.
+        // After enable() must actually set enabled=true.
         // Bug was: enable() only logged and did not mutate the enabled flag.
         let integration = CrawlTextIntegration::new(false);
         assert!(!integration.is_enabled());
@@ -336,7 +336,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_disable_actually_disables_processing() {
-        // After fix: disable() must actually set enabled=false.
+        // After disable() must actually set enabled=false.
         // Bug was: disable() only logged and did not mutate the enabled flag.
         let integration = CrawlTextIntegration::new(true);
         assert!(integration.is_enabled());

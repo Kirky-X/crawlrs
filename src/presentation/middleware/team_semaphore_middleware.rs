@@ -20,7 +20,7 @@ use crate::presentation::middleware::auth_types::AuthState;
 ///
 /// `auth_middleware` 注入 `AuthState`（包含 team_id/api_key_id/scope），
 /// 此处从 `AuthState` 读取 team_id（不再读取裸 `Uuid` 扩展——
-/// garrison-auth-migration 后 `inject_auth_state` 不再注入裸 `Uuid`）。
+/// 后 `inject_auth_state` 不再注入裸 `Uuid`）。
 fn extract_team_id(request: &Request) -> Option<uuid::Uuid> {
     request.extensions().get::<AuthState>().map(|s| s.team_id)
 }

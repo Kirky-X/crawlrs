@@ -863,7 +863,7 @@ async fn test_full_app_unknown_route_rejected_by_middleware() {
     let app = build_api_app_with_state(&state, settings);
     // The merged app inherits the protected + v2 middleware layers, which
     // wrap the fallback handler. Unknown paths are rejected by auth (401)
-    // rather than returning 404. Public routes (/health, /v1/version,
+    // rather than returning 404. Public routes (health, /v1/version,
     // /metrics) are matched before the middleware runs and return 200.
     let (status, _, _) = send(app, request(Method::GET, "/this-does-not-exist")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -1118,7 +1118,7 @@ async fn test_app_state_accessors_return_valid_arcs() {
     assert!(Arc::strong_count(&state.task_repo()) >= 1);
     assert!(Arc::strong_count(&state.result_repo()) >= 1);
     assert!(Arc::strong_count(&state.crawl_repo()) >= 1);
-    // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+    // webhook feature 关闭时 accessor 不编译
     #[cfg(feature = "webhook")]
     {
         assert!(Arc::strong_count(&state.webhook_repo()) >= 1);
@@ -1126,7 +1126,7 @@ async fn test_app_state_accessors_return_valid_arcs() {
     }
     assert!(Arc::strong_count(&state.task_queue()) >= 1);
     assert!(Arc::strong_count(&state.rate_limiting_service()) >= 1);
-    // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+    // teams feature 关闭时 accessor 不编译
     #[cfg(feature = "teams")]
     {
         assert!(Arc::strong_count(&state.team_service()) >= 1);

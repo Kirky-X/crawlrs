@@ -18,7 +18,7 @@ use validator::Validate;
 /// Note: confers 0.4's `load_sync()` only applies field-level defaults and env
 /// vars; it no longer auto-discovers config files (breaking change from 0.2.2).
 ///
-/// # 安全验证（T062 安全审查 CRITICAL-1 修复）
+/// # 安全验证
 ///
 /// confers 0.4 `#[config(validate)]` 集成的是 `garde::Validate`，而 `Settings` 用的是
 /// `validator::Validate`，两者不兼容——`#[validate(range(...))]` 等注解不会被
@@ -35,13 +35,13 @@ pub fn load_settings() -> Result<Settings> {
         .build()
         .map_err(|e| anyhow::anyhow!("Configuration load failed: {}", e))?;
 
-    // T062 安全审查 CRITICAL-1 修复：显式调用 validator::Validate::validate()
+    // 显式调用 validator::Validate::validate()
     // 防止环境变量绕过 #[validate(range(min = 1, max = 600))] 等约束
     settings
         .validate()
         .map_err(|e| anyhow::anyhow!("Configuration validation failed: {}", e))?;
 
-    // T005: Validate cross-field invariants (e.g. mem_pressure < mem_critical)
+    // Validate cross-field invariants (e.g. mem_pressure < mem_critical)
     settings.concurrency.validate();
 
     info!("Configuration loaded and validated successfully from config sources");
@@ -129,9 +129,9 @@ mod tests {
 
     #[test]
     fn test_load_settings_has_tls_fingerprint_engine_config() {
-        // T020：`[engines.tls_fingerprint]` 配置段应从 default.toml 正确解析
+        // `[engines.tls_fingerprint]` 配置段应从 default.toml 正确解析
         let settings = load_settings().expect("Failed to load settings");
-        assert_eq!(settings.engines.tls_fingerprint.enabled, false);
+        assert!(!settings.engines.tls_fingerprint.enabled);
         assert_eq!(settings.engines.tls_fingerprint.timeout_seconds, 15);
     }
 

@@ -16,10 +16,11 @@ use crate::application::dto::extract_request::ExtractRequestDto;
 use crate::common::constants::crawl_task;
 use crate::config::settings::Settings;
 use crate::domain::models::{Task, TaskType};
-// R-teams-003 / T013：teams-off 时 extract 不需要 GR / TeamService
+// teams-off 时 extract 不需要 GR / TeamService
 #[cfg(feature = "teams")]
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
+use crate::domain::services::rate_limiting_service::RateLimitingService;
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
 use crate::presentation::handlers::response_builder::{error_response, ApiResponse};
@@ -39,7 +40,7 @@ pub struct ExtractResponseDto {
     pub status: String,
 }
 
-// R-teams-003 / T013：extract 函数签名按 teams feature 分裂
+// extract 函数签名按 teams feature 分裂
 //
 // teams-on：保留 GR 泛型 + geo_restriction_repo + team_service 参数 + 地理限制块
 //   （获取限制 → validate_geographic_restriction → log_geo_restriction_action）
@@ -55,6 +56,7 @@ pub async fn extract<GR>(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
     Extension(_settings): Extension<Arc<Settings>>,
     Extension(task_repository): Extension<Arc<dyn TaskRepository>>,
+    Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(geo_restriction_repo): Extension<Arc<GR>>,
     Extension(team_service): Extension<Arc<TeamService>>,
     Extension(auth_state): Extension<AuthState>,
@@ -171,6 +173,21 @@ where
         serde_json::to_value(&payload).unwrap_or_default(),
     );
 
+    // 配额扣减（extract 入口此前完全不扣费）
+    if let Err(e) = rate_limiting_service
+        .check_and_deduct_quota(
+            team_id,
+            crawl_task::EXTRACT_TASK_CREDITS_COST,
+            crate::domain::models::CreditsTransactionType::Extract,
+            format!("Extract {} URL(s)", payload.urls.len()),
+            None,
+        )
+        .await
+    {
+        error!("Quota check failed for team {}: {}", team_id, e);
+        return error_response(StatusCode::PAYMENT_REQUIRED, e.to_string());
+    }
+
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
             // 处理同步等待逻辑
@@ -212,11 +229,31 @@ where
 
             (status_code, Json(ApiResponse::success(response))).into_response()
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => {
+            // 补偿：入队失败退还已扣的 extract 积分，避免客户积分静默丢失
+            if let Err(refund_err) = rate_limiting_service
+                .refund_quota(
+                    team_id,
+                    crawl_task::EXTRACT_TASK_CREDITS_COST,
+                    format!(
+                        "Refund: extract enqueue failed for {} URL(s)",
+                        payload.urls.len()
+                    ),
+                    Some(task.id),
+                )
+                .await
+            {
+                error!(
+                    "CRITICAL: Failed to refund extract credits for team {}: {}",
+                    team_id, refund_err
+                );
+            }
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
     }
 }
 
-/// R-teams-003 / T013：teams-off 版本的 extract 函数
+/// teams-off 版本的 extract 函数
 ///
 /// 移除 GR 泛型 + geo_restriction_repo + team_service 参数 + 地理限制块
 /// （单租户降级，无地理限制概念，直接建 Task 入队）。
@@ -230,6 +267,7 @@ pub async fn extract(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
     Extension(_settings): Extension<Arc<Settings>>,
     Extension(task_repository): Extension<Arc<dyn TaskRepository>>,
+    Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
     ConnectInfo(_addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<ExtractRequestDto>,
@@ -277,6 +315,21 @@ pub async fn extract(
         serde_json::to_value(&payload).unwrap_or_default(),
     );
 
+    // 配额扣减（extract 入口此前完全不扣费）
+    if let Err(e) = rate_limiting_service
+        .check_and_deduct_quota(
+            team_id,
+            crawl_task::EXTRACT_TASK_CREDITS_COST,
+            crate::domain::models::CreditsTransactionType::Extract,
+            format!("Extract {} URL(s)", payload.urls.len()),
+            None,
+        )
+        .await
+    {
+        error!("Quota check failed for team {}: {}", team_id, e);
+        return error_response(StatusCode::PAYMENT_REQUIRED, e.to_string());
+    }
+
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
             // 处理同步等待逻辑
@@ -318,7 +371,27 @@ pub async fn extract(
 
             (status_code, Json(ApiResponse::success(response))).into_response()
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => {
+            // 补偿：入队失败退还已扣的 extract 积分，避免客户积分静默丢失
+            if let Err(refund_err) = rate_limiting_service
+                .refund_quota(
+                    team_id,
+                    crawl_task::EXTRACT_TASK_CREDITS_COST,
+                    format!(
+                        "Refund: extract enqueue failed for {} URL(s)",
+                        payload.urls.len()
+                    ),
+                    Some(task.id),
+                )
+                .await
+            {
+                error!(
+                    "CRITICAL: Failed to refund extract credits for team {}: {}",
+                    team_id, refund_err
+                );
+            }
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
     }
 }
 
@@ -328,11 +401,127 @@ mod tests {
     use crate::domain::models::TaskStatus;
     use uuid::Uuid;
 
+    use crate::domain::models::CreditsTransactionType;
+    #[allow(unused_imports)]
+    use crate::domain::services::rate_limiting_service::{
+        BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
+        QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
+    };
+
+    /// 本地全放行 mock：extract 入口扣费路径的测试替身
+    struct MockAllAllowRateLimitingService;
+
+    #[async_trait::async_trait]
+    impl RateLimitService for MockAllAllowRateLimitingService {
+        async fn check_rate_limit(
+            &self,
+            _api_key: &str,
+            _endpoint: &str,
+        ) -> Result<RateLimitResult, RateLimitingError> {
+            Ok(RateLimitResult::Allowed)
+        }
+        async fn get_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<RateLimitConfig, RateLimitingError> {
+            Ok(RateLimitConfig::default())
+        }
+        async fn update_team_rate_limit_config(
+            &self,
+            _team_id: Uuid,
+            _config: RateLimitConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+        async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ConcurrencyControlService for MockAllAllowRateLimitingService {
+        async fn check_team_concurrency(
+            &self,
+            _team_id: Uuid,
+            _task_id: Uuid,
+        ) -> Result<ConcurrencyResult, RateLimitingError> {
+            Ok(ConcurrencyResult::Allowed)
+        }
+        async fn release_team_concurrency_slot(
+            &self,
+            _team_id: Uuid,
+            _task_id: Uuid,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+        async fn get_team_current_concurrency(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+        async fn get_team_concurrency_config(
+            &self,
+            _team_id: Uuid,
+        ) -> Result<ConcurrencyConfig, RateLimitingError> {
+            Ok(ConcurrencyConfig::default())
+        }
+        async fn update_team_concurrency_config(
+            &self,
+            _team_id: Uuid,
+            _config: ConcurrencyConfig,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl BacklogService for MockAllAllowRateLimitingService {
+        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+            Ok(0)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl QuotaService for MockAllAllowRateLimitingService {
+        async fn check_and_deduct_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _transaction_type: CreditsTransactionType,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+        async fn refund_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
+        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+            Ok(1000)
+        }
+    }
+
+    impl RateLimitingService for MockAllAllowRateLimitingService {}
+
+    /// 构造全放行限流服务（extract handler 测试用）
+    fn make_rate_limiting_service() -> Arc<dyn RateLimitingService> {
+        Arc::new(MockAllAllowRateLimitingService)
+    }
+
     // ========== ExtractResponseDto tests ==========
 
     #[test]
     fn test_extract_response_dto_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let dto = ExtractResponseDto {
             id: task_id,
@@ -346,7 +535,9 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let json = format!(r#"{{"id":"{}","status":"completed"}}"#, task_id);
         let dto: ExtractResponseDto = serde_json::from_str(&json).unwrap();
@@ -356,7 +547,9 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_accepted_status() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ExtractResponseDto {
             id: Uuid::new_v4(),
             status: "accepted".to_string(),
@@ -370,7 +563,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_minimal_with_prompt() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"urls":["https://example.com"],"prompt":"Extract title"}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.urls.len(), 1);
@@ -381,7 +576,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_with_schema() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"urls":["https://example.com"],"schema":{"type":"object"}}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.schema.is_some());
@@ -390,7 +587,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_with_sync_wait_ms() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"urls":["https://example.com"],"prompt":"test","sync_wait_ms":10000}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.sync_wait_ms, Some(10000));
@@ -398,7 +597,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_multiple_urls() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"urls":["https://a.com","https://b.com","https://c.com"],"prompt":"test"}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.urls.len(), 3);
@@ -406,7 +607,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_empty_urls() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"urls":[],"prompt":"test"}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.urls.is_empty());
@@ -416,19 +619,25 @@ mod tests {
 
     #[test]
     fn test_max_sync_wait_ms_value() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(crawl_task::MAX_SYNC_WAIT_MS, 30000);
     }
 
     #[test]
     fn test_default_timeout_ms_value() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(crawl_task::DEFAULT_TIMEOUT_MS, 5000);
     }
 
     #[test]
     fn test_base_poll_interval_ms_value() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(crawl_task::BASE_POLL_INTERVAL_MS, 1000);
     }
 
@@ -436,7 +645,9 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_clone() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let dto = ExtractResponseDto {
             id: task_id,
@@ -449,7 +660,9 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_debug() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let dto = ExtractResponseDto {
             id: task_id,
@@ -463,7 +676,9 @@ mod tests {
 
     #[test]
     fn test_extract_response_dto_round_trip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let task_id = Uuid::new_v4();
         let original = ExtractResponseDto {
             id: task_id,
@@ -479,7 +694,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_with_rules() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut rules = std::collections::HashMap::new();
         rules.insert(
             "title".to_string(),
@@ -506,7 +723,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_with_model() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"urls":["https://example.com"],"prompt":"test","model":"gpt-4"}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.model.as_deref(), Some("gpt-4"));
@@ -514,7 +733,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_full_payload() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "urls": ["https://a.com", "https://b.com"],
             "prompt": "Extract data",
@@ -533,7 +754,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_minimal_with_only_schema() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"urls":["https://example.com"],"schema":{"type":"object"}}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.prompt.is_none());
@@ -543,7 +766,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_minimal_with_only_rules() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"urls":["https://example.com"],"rules":{}}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.prompt.is_none());
@@ -554,7 +779,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_no_extraction_method() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"urls":["https://example.com"]}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.prompt.is_none());
@@ -564,7 +791,9 @@ mod tests {
 
     #[test]
     fn test_extract_request_dto_sync_wait_ms_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"urls":["https://example.com"],"prompt":"test","sync_wait_ms":0}"#;
         let dto: ExtractRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.sync_wait_ms, Some(0));
@@ -575,7 +804,9 @@ mod tests {
 
     #[test]
     fn test_validation_empty_urls_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ExtractRequestDto {
             urls: vec![],
             prompt: Some("test".to_string()),
@@ -590,7 +821,9 @@ mod tests {
 
     #[test]
     fn test_validation_no_extraction_method_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: None,
@@ -610,7 +843,9 @@ mod tests {
 
     #[test]
     fn test_validation_has_prompt_passes() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: Some("test".to_string()),
@@ -627,7 +862,9 @@ mod tests {
 
     #[test]
     fn test_validation_has_schema_passes() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: None,
@@ -643,7 +880,9 @@ mod tests {
 
     #[test]
     fn test_validation_has_rules_passes() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: None,
@@ -659,7 +898,9 @@ mod tests {
 
     #[test]
     fn test_validation_sync_wait_ms_at_max_passes() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // MAX_SYNC_WAIT_MS is 30000
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
@@ -676,7 +917,9 @@ mod tests {
 
     #[test]
     fn test_validation_sync_wait_ms_exceeds_max() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = ExtractRequestDto {
             urls: vec!["https://example.com".to_string()],
             prompt: Some("test".to_string()),
@@ -694,7 +937,9 @@ mod tests {
 
     #[test]
     fn test_task_construction_for_extract() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Verify that a Task with Extract type can be constructed (mirrors handler logic)
         let task_id = Uuid::new_v4();
         let team_id = Uuid::new_v4();
@@ -731,19 +976,25 @@ mod tests {
 
     #[test]
     fn test_extract_task_credits_cost() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(crawl_task::EXTRACT_TASK_CREDITS_COST, 8);
     }
 
     #[test]
     fn test_scrape_task_credits_cost() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(crawl_task::SCRAPE_TASK_CREDITS_COST, 5);
     }
 
     #[test]
     fn test_crawl_task_credits_cost() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(crawl_task::CRAWL_TASK_CREDITS_COST, 10);
     }
 
@@ -751,7 +1002,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_response_builds_correct_status() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         use axum::body::to_bytes;
         let response = error_response(StatusCode::BAD_REQUEST, "test error");
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -763,7 +1016,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_response_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         use axum::body::to_bytes;
         let response = error_response(StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong");
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
@@ -774,7 +1029,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_response_forbidden() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = error_response(
             StatusCode::FORBIDDEN,
             "Access denied due to geographic restrictions: blocked region",
@@ -903,16 +1160,24 @@ mod tests {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -968,6 +1233,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 
@@ -1092,27 +1366,9 @@ mod tests {
     /// thread with its own runtime to avoid "Cannot start a runtime from
     /// within a runtime" panic when `try_from` calls `block_on`.
     fn make_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                let url = crate::common::test_helpers::resolve_test_database_url().expect(
-                    "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
-                );
-                rt.block_on(async {
-                    let cfg = dbnexus::DbConfig {
-                        url,
-                        ..Default::default()
-                    };
-                    DbPool::with_config(cfg).await
-                })
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
+        // 统一走共享 helper：每调用独立池（min=0 无预热、max=4），
+        // 避免预热连接绑定到构造临时 runtime 而失效（test_helpers 说明）。
+        crate::common::test_helpers::create_test_db_pool()
     }
 
     fn make_test_auth_state() -> AuthState {
@@ -1168,7 +1424,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_empty_urls_returns_bad_request() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1190,6 +1448,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1205,7 +1464,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_no_extraction_method_returns_bad_request() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1227,6 +1488,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1242,7 +1504,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_repo_error_returns_internal_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::failing_get());
@@ -1254,6 +1518,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1269,7 +1534,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_sync_wait_ms_exceeds_max_returns_bad_request() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1291,6 +1558,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1306,7 +1574,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_denied_returns_forbidden() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         // Enable geo restrictions and block "US"
@@ -1329,6 +1599,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1351,7 +1622,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_validation_error_returns_internal_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         // Enable geo restrictions so that validate_geographic_restriction
@@ -1372,6 +1645,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1387,7 +1661,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_success_returns_created() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1403,6 +1679,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1420,7 +1697,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_with_sync_wait_returns_accepted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1443,6 +1722,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1460,7 +1740,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_enqueue_failure_returns_internal_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::failing());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -1474,6 +1756,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1489,7 +1772,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_allowed_country_passes_geo_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Enable geo restrictions but the client's country is in allowed list
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1511,6 +1796,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1526,7 +1812,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_ip_whitelist_bypasses_country_check() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // IP in whitelist should be allowed regardless of country rules
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -1550,6 +1838,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1565,7 +1854,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_allowed_with_failing_log() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Allowed path where log_geo_restriction_action returns Err — covers
         // the error! branch on the Allowed arm (line 107).
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1581,6 +1872,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo.clone()),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1599,7 +1891,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_denied_with_failing_log() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Denied path where log_geo_restriction_action returns Err — covers
         // the error! branch on the Denied arm (line 122).
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1620,6 +1914,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo.clone()),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1637,7 +1932,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_sync_wait_with_query_failure() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // sync_wait_ms > 0 but query_tasks fails → wait_for_tasks_completion
         // returns Err — covers the error! branch on the wait arm (lines 192-193).
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1665,6 +1962,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1683,7 +1981,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_sync_wait_completes_returns_created() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // sync_wait_ms > 0 and wait_for_tasks_completion returns Ok quickly
         // (task is already Completed on first poll) → waited_time_ms <
         // sync_wait_ms → CREATED (not ACCEPTED). Covers the Ok arm where
@@ -1732,6 +2032,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1766,7 +2067,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_no_extraction_method_log_evaluated() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Covers error_response lines 60-61 (Either prompt, schema, or rules).
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1790,6 +2093,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1805,7 +2109,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_repo_error_log_evaluated() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Covers error! line 72 + error_response lines 74-75.
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1819,6 +2125,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1834,7 +2141,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_sync_wait_ms_exceeds_max_log_evaluated() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Covers error_response line 84 (sync_wait_ms must be <= MAX).
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1858,6 +2167,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1873,7 +2183,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_denied_log_evaluated() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Covers error_response line 126 (Access denied due to geographic
         // restrictions).
         ensure_debug_logger();
@@ -1897,6 +2209,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1912,7 +2225,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_geo_validation_error_log_evaluated() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Covers error! line 131 + error_response lines 133-134.
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
@@ -1933,6 +2248,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1948,7 +2264,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_sync_wait_log_evaluated() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Covers line 185 (BASE_POLL_INTERVAL_MS argument) + error! line 193
         // when wait_for_tasks_completion fails. Uses a failing query repo so
         // the wait path exercises the Err arm.
@@ -1974,6 +2292,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),
@@ -1989,7 +2308,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_enqueue_failure_log_evaluated() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Covers error_response line 213 (enqueue failure path).
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::failing());
@@ -2005,6 +2326,7 @@ mod tests {
             Extension(queue),
             Extension(make_test_settings()),
             Extension(task_repo),
+            Extension(make_rate_limiting_service()),
             Extension(geo_repo),
             Extension(team_service),
             Extension(make_test_auth_state()),

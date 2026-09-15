@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 认证共享类型（R-auth-engine-003 / Stage 3 重构）。
+//! 认证共享类型。
 //!
 //! ## 职责
 //!
@@ -13,18 +13,18 @@
 //! ## AuthState DTO 化（决策 1 + 决策 2）
 //!
 //! `AuthState` 仅保留 4 个字段：`pool` / `team_id` / `api_key_id` / `scope`。
-//! - `api_key_cache` 字段删除：原 `ApiKeyCache` 在 Stage 3 重写后仅缓存 `team_id`，
+//! - `api_key_cache` 字段删除：原 `ApiKeyCache` 在重写后仅缓存 `team_id`，
 //!   改由 `auth_middleware::TEAM_ID_CACHE`（独立 LRU）承担，不再挂在 AuthState 上。
 //! - `auth_rate_limiter` 字段删除：决策 2 要求仅依赖 garrison firewall，本地
-//!   `AuthRateLimiter` 在 Stage 4 删除。
+//!   `AuthRateLimiter` 在删除。
 //! - `trusted_proxies` 字段删除：CWE-307 IP 限速改由 garrison firewall 承担，
 //!   crawlrs 侧不再需要 trusted proxy 配置做 client IP 提取。
 //!
 //! ## Spec
 //!
-//! - R-auth-engine-003 / T015：DTO 化（移除 `auth_scope_service`/`api_key_cache`/
+//! - DTO 化（移除 `auth_scope_service`/`api_key_cache`/
 //!   `auth_rate_limiter`/`trusted_proxies` 字段）
-//! - R-auth-engine-003 / T016：`AuthError::from_garrison` 错误映射
+//! - `AuthError::from_garrison` 错误映射
 
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
 use dbnexus::DbPool;
@@ -33,7 +33,7 @@ use uuid::Uuid;
 
 /// 认证错误类型。
 ///
-/// # garrison 错误映射（R-auth-engine-003 / T016）
+/// # garrison 错误映射
 ///
 /// `auth` feature 启用时，`AuthError::from_garrison(GarrisonError)` 复用
 /// `GarrisonError::response_parts()` 获取 `(status, error_code, message)`，
@@ -63,7 +63,7 @@ pub enum AuthError {
     NilTeamId,
     #[error("API key has expired")]
     ExpiredKey,
-    /// garrison 返回的 `login_id` 无法解析为 `Uuid`（design.md §5 约定 login_id = api_key_id 的 Uuid 字符串）。
+    /// garrison 返回的 `login_id` 无法解析为 `Uuid`（约定 login_id = api_key_id 的 Uuid 字符串）。
     #[error("Invalid login_id from garrison: {0}")]
     InvalidLoginId(String),
     /// `api_key_id` 反查 crawlrs `api_keys` 表未命中（key 已被 garrison 吊销但 crawlrs 仍保留映射）。
@@ -91,7 +91,7 @@ pub enum AuthError {
 
 #[cfg(feature = "auth")]
 impl AuthError {
-    /// garrison 错误 → crawlrs `AuthError` 转换（R-auth-engine-003 / T016 方案 A）。
+    /// garrison 错误 → crawlrs `AuthError` 转换（方案 A）。
     ///
     /// 复用 `GarrisonError::response_parts()` 获取 `(status, error_code, message)`，
     /// 按 HTTP 状态码映射到对应 `AuthError` 变体。`message` 字段保留 garrison
@@ -112,7 +112,17 @@ impl AuthError {
     /// | 其他 | — | `InternalError`（fail-safe，归为内部错误） |
     pub fn from_garrison(err: garrison::error::GarrisonError) -> Self {
         let (status, error_code, message, _ex_code) = err.response_parts();
-        // MEDIUM-2 修复：4xx 降级为 warn（攻击者刷接口常见响应），5xx 保留 error（真正的内部错误）
+        // IP 暴力破解封禁在 crawlrs API 面对外语义为
+        // 429 Too Many Requests（RFC 6585），与 garrison 上游的 403 契约解耦——
+        // 403 表达"身份已认证但无权限"，限速封禁是另一类语义。
+        if matches!(err, garrison::error::GarrisonError::FirewallBlocked(_)) {
+            log::warn!(
+                "garrison auth rejected: status=429 (upstream 403 FirewallBlocked), error_code={}",
+                error_code
+            );
+            return AuthError::RateLimited;
+        }
+        // 4xx 降级为 warn（攻击者刷接口常见响应），5xx 保留 error（真正的内部错误）
         if status >= 500 {
             log::error!(
                 "garrison internal error: status={}, error_code={}, message={}",
@@ -144,7 +154,7 @@ impl AuthError {
 }
 
 impl axum::response::IntoResponse for AuthError {
-    /// 将 `AuthError` 转换为 HTTP 响应（R-auth-engine-003 / T016）。
+    /// 将 `AuthError` 转换为 HTTP 响应。
     ///
     /// # 状态码映射
     ///
@@ -156,7 +166,7 @@ impl axum::response::IntoResponse for AuthError {
     /// | `InvalidLoginId` / `KeyNotFound` / `InvalidParam` | 400 Bad Request |
     /// | `DatabaseError` / `InternalError` / `NetworkError` / `NotImplemented` | 500 Internal Server Error |
     ///
-    /// # 安全（CWE-209 信息泄露防护，MEDIUM-2 修复）
+    /// # 安全（CWE-209 信息泄露防护）
     ///
     /// 不向客户端透传 garrison `error_code` / `error_message` / 内部 Uuid / DbErr 等敏感信息，
     /// 避免攻击者推断后端架构（"使用 garrison"、"DB 层错误"等）。仅返回状态码对应的通用消息。
@@ -184,11 +194,11 @@ impl axum::response::IntoResponse for AuthError {
     }
 }
 
-/// 注入到请求 extensions 的认证状态（DTO，R-auth-engine-003 / T015）。
+/// 注入到请求 extensions 的认证状态（DTO）。
 ///
 /// # 字段
 ///
-/// 仅保留 4 个字段（Stage 3 DTO 化决策）：
+/// 仅保留 4 个字段（DTO 化决策）：
 /// - `pool`：crawlrs 数据库连接池（下游 handler 可能需要）
 /// - `team_id`：API Key 所属团队
 /// - `api_key_id`：API Key ID（审计日志、特性开关）
@@ -224,7 +234,7 @@ impl AuthState {
 
 impl std::fmt::Debug for AuthState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // LOW-3 修复：显式占位 pool 字段（避免维护者不知道还有 pool 字段）。
+        // 显式占位 pool 字段（避免维护者不知道还有 pool 字段）。
         // 不输出 pool 内部细节（避免泄露连接串）。
         f.debug_struct("AuthState")
             .field("team_id", &self.team_id)
@@ -243,7 +253,9 @@ mod tests {
     /// AuthState::new 应正确填充所有字段。
     #[test]
     fn test_auth_state_new_populates_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = crate::common::test_helpers::create_test_db_pool();
         let team_id = Uuid::new_v4();
         let api_key_id = Uuid::new_v4();
@@ -259,7 +271,9 @@ mod tests {
     /// AuthState 应可 Clone（请求 extensions 注入需要）。
     #[test]
     fn test_auth_state_is_clone() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = crate::common::test_helpers::create_test_db_pool();
         let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
         let cloned = state.clone();
@@ -268,10 +282,12 @@ mod tests {
     }
 
     /// AuthState Debug 输出不应包含 pool 内部细节（避免泄露连接串）。
-    /// LOW-3 修复后：pool 字段显式占位为 "<DbPool>"，但不应包含连接串/数据库 URL 等内部细节。
+    /// pool 字段显式占位为 "<DbPool>"，但不应包含连接串/数据库 URL 等内部细节。
     #[test]
     fn test_auth_state_debug_does_not_leak_pool_internals() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = crate::common::test_helpers::create_test_db_pool();
         let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
         let debug = format!("{:?}", state);
@@ -286,7 +302,9 @@ mod tests {
     /// AuthError::InvalidKey 应转换为 401。
     #[test]
     fn test_auth_error_invalid_key_is_unauthorized() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         use axum::http::StatusCode;
         let response = AuthError::InvalidKey.into_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -295,7 +313,9 @@ mod tests {
     /// AuthError::Forbidden 应转换为 403。
     #[test]
     fn test_auth_error_forbidden_is_forbidden() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         use axum::http::StatusCode;
         let response = AuthError::Forbidden("NOT_PERMISSION".to_string()).into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -304,7 +324,9 @@ mod tests {
     /// AuthError::RateLimited 应转换为 429。
     #[test]
     fn test_auth_error_rate_limited_is_too_many_requests() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         use axum::http::StatusCode;
         let response = AuthError::RateLimited.into_response();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -313,7 +335,9 @@ mod tests {
     /// AuthError::InvalidLoginId 应转换为 400。
     #[test]
     fn test_auth_error_invalid_login_id_is_bad_request() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         use axum::http::StatusCode;
         let response = AuthError::InvalidLoginId("not-a-uuid".to_string()).into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -322,7 +346,9 @@ mod tests {
     /// AuthError::InternalError 应转换为 500。
     #[test]
     fn test_auth_error_internal_error_is_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         use axum::http::StatusCode;
         let response = AuthError::InternalError("DAO_ERROR".to_string()).into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);

@@ -45,15 +45,15 @@ pub struct EngineComponents {
 /// # Arguments
 ///
 /// * `http_client` - Shared HTTP client
-/// * `proxy_provider` - 代理提供者（design.md §12，T054/T056/R-identity-003 + H2 修复）。
+/// * `proxy_provider` - 代理提供者。
 ///   `None` 时 ReqwestEngine 不使用代理；`Some` 时按 `proxy_strategy` 调度策略取代理。
 ///   `Arc<dyn ProxyProvider>` 可被多 worker 共享，并依赖抽象 trait 而非具体 `ProxyPool`。
-/// * `proxy_strategy` - 代理调度策略（H1 修复：RoundRobin / Sticky）。
+/// * `proxy_strategy` - 代理调度策略（RoundRobin / Sticky）。
 ///   `proxy_provider` 为 `None` 时此参数被忽略。
 /// * `proxy_url` - FlareSolverr 引擎使用的单代理 URL（FlareSolverr 服务自身访问代理）。
-///   `None` 表示未配置代理。注意：FlareSolverr 暂未接入 ProxyProvider（T056 范围外）。
+///   `None` 表示未配置代理。注意：FlareSolverr 暂未接入 ProxyProvider（范围外）。
 /// * `engine_config` - Engine-specific configuration settings
-/// * `engine_timeouts` - 引擎超时配置（T061：包含 `default_timeout_seconds` + 三个 MRT 字段
+/// * `engine_timeouts` - 引擎超时配置（包含 `default_timeout_seconds` + 三个 MRT 字段
 ///   `fetch_seconds` / `tls_seconds` / `cdp_seconds`）。从此注入超时与 MRT，避免硬编码。
 ///
 /// # Returns
@@ -68,7 +68,7 @@ pub fn init_engines(
     engine_config: &EngineSettings,
     engine_timeouts: &EngineTimeoutSettings,
 ) -> Vec<Arc<dyn ScraperEngine>> {
-    // T061：从 EngineTimeoutSettings 派生超时与各引擎 MRT，避免硬编码
+    // 从 EngineTimeoutSettings 派生超时与各引擎 MRT，避免硬编码
     let timeout_seconds = engine_timeouts.default_timeout_seconds;
     // FlareSolverr 引擎使用专属超时（从 engines.flaresolverr.timeout_seconds 配置注入）
     let flaresolverr_timeout = engine_config.flaresolverr.timeout_seconds;
@@ -76,11 +76,11 @@ pub fn init_engines(
     let tls_mrt = std::time::Duration::from_secs(engine_timeouts.tls_seconds);
     let cdp_mrt = std::time::Duration::from_secs(engine_timeouts.cdp_seconds);
 
-    // T021：WreqEngine 需要代理提供者的克隆（下方 match 会 move 掉 proxy_provider）
+    // WreqEngine 需要代理提供者的克隆（下方 match 会 move 掉 proxy_provider）
     #[cfg(feature = "engine-tls-fingerprint")]
     let wreq_proxy_provider = proxy_provider.clone();
 
-    // T056/R-identity-003 + H1/H2 修复 + T060/T061：ReqwestEngine 接入 ProxyProvider + 策略 + MRT
+    // ReqwestEngine 接入 ProxyProvider + 策略 + MRT
     // - provider 为 Some 时 with_provider_strategy_timeout_and_mrt 注入
     // - provider 为 None 时 new_with_timeout_and_mrt（无代理）
     #[allow(unused_mut)]
@@ -101,11 +101,11 @@ pub fn init_engines(
         ))],
     };
 
-    // T060/T061：PlaywrightEngine 注入 cdp_seconds 作为 MRT
+    // PlaywrightEngine 注入 cdp_seconds 作为 MRT
     #[cfg(feature = "engine-playwright")]
     engines.push(Arc::new(PlaywrightEngine::with_mrt(cdp_mrt)));
 
-    // T060/T061：FlareSolverrEngine 按模式注入对应 MRT
+    // FlareSolverrEngine 按模式注入对应 MRT
     // - Tls 模式 → tls_seconds
     // - Cdp / Full 模式 → cdp_seconds
     #[cfg(feature = "engine-flaresolverr")]
@@ -152,7 +152,7 @@ pub fn init_engines(
         )));
     }
 
-    // T017-T023 / Phase 1 D4：WreqEngine 接入 ProxyProvider + 策略 + MRT
+    // - WreqEngine 接入 ProxyProvider + 策略 + MRT
     // - enabled 经 [engines.tls_fingerprint].enabled 显式开启（默认 false）
     // - timeout_seconds 注入自 tls_fingerprint.timeout_seconds（默认 15）
     // - MRT 注入 tls_seconds（与 FlareSolverr Tls 模式同源）
@@ -185,7 +185,7 @@ pub fn init_engines(
         }
     }
 
-    // Phase 3：MllmEngine 注册（engine-mllm feature 门控 + engines.mllm.enabled 开启）
+    // MllmEngine 注册（engine-mllm feature 门控 + engines.mllm.enabled 开启）
     #[cfg(feature = "engine-mllm")]
     if engine_config.mllm.enabled {
         log::info!(
@@ -218,12 +218,12 @@ pub fn init_engines(
 /// # Arguments
 ///
 /// * `http_client` - Shared HTTP client
-/// * `proxy_provider` - 代理提供者（H2 修复：`Arc<dyn ProxyProvider>`）。
+/// * `proxy_provider` - 代理提供者（`Arc<dyn ProxyProvider>`）。
 ///   `None` 时不使用代理。
-/// * `proxy_strategy` - 代理调度策略（H1 修复：RoundRobin / Sticky）。
+/// * `proxy_strategy` - 代理调度策略（RoundRobin / Sticky）。
 /// * `proxy_url` - FlareSolverr 单代理 URL（`None` 表示未配置）
 /// * `engine_config` - Engine-specific configuration
-/// * `engine_timeouts` - 引擎超时配置（T061：包含 `default_timeout_seconds` + 三个 MRT 字段）。
+/// * `engine_timeouts` - 引擎超时配置（包含 `default_timeout_seconds` + 三个 MRT 字段）。
 ///   从此注入超时与 MRT，避免硬编码。
 ///
 /// # Returns
@@ -273,7 +273,7 @@ mod tests {
         ))
     }
 
-    /// T061：构造默认 EngineTimeoutSettings（30s/30s/30s + MRT 5s/15s/30s）
+    /// 构造默认 EngineTimeoutSettings（30s/30s/30s + MRT 5s/15s/30s）
     fn make_engine_timeouts() -> EngineTimeoutSettings {
         EngineTimeoutSettings {
             default_timeout_seconds: 30,
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_init_engines_with_sticky_strategy() {
-        // H1 修复验证：Sticky 策略可正常构造 ReqwestEngine
+        // Sticky 策略可正常构造 ReqwestEngine
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
         let engines = init_engines(
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn test_init_engines_tls_fingerprint_disabled_by_default() {
-        // T021：tls_fingerprint.enabled 默认 false → 不注册 WreqEngine
+        // tls_fingerprint.enabled 默认 false → 不注册 WreqEngine
         let http_client = make_http_client();
         let engine_config = EngineSettings::default();
         let engines = init_engines(
@@ -400,7 +400,7 @@ mod tests {
     #[cfg(feature = "engine-tls-fingerprint")]
     #[test]
     fn test_init_engines_registers_wreq_when_enabled() {
-        // T021：tls_fingerprint.enabled=true → 注册 WreqEngine（含代理提供者 + Sticky 策略）
+        // tls_fingerprint.enabled=true → 注册 WreqEngine（含代理提供者 + Sticky 策略）
         let http_client = make_http_client();
         let mut engine_config = EngineSettings::default();
         engine_config.tls_fingerprint.enabled = true;

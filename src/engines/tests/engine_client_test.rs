@@ -400,6 +400,7 @@ fn test_internal_response_to_public() {
             h
         },
         response_time_ms: 42,
+        final_url: None,
     };
 
     let public = internal.to_public("https://example.com/page");
@@ -710,7 +711,7 @@ fn test_engine_error_is_retryable_all_variants() {
     assert!(!EngineError::Other("err".to_string()).is_retryable());
 }
 
-// === retry_reason() tests (T012, R-antibot-003) ===
+// === retry_reason() tests ===
 
 #[test]
 fn test_retry_reason_antibot_detected_maps_to_antibot() {
@@ -779,7 +780,7 @@ fn test_convert_error_antibot_detected_passthrough() {
     }
 }
 
-// === T027: EngineError::FeatureToggle tests (R-identity-002) ===
+// === EngineError::FeatureToggle tests ===
 
 #[test]
 fn test_feature_toggle_is_retryable() {
@@ -809,7 +810,7 @@ fn test_convert_error_feature_toggle_passthrough() {
     }
 }
 
-/// R-identity-002: FeatureToggle 与其他 reason 区分
+/// FeatureToggle 与其他 reason 区分
 #[test]
 fn test_feature_toggle_distinct_from_other_reasons() {
     let ft_err = EngineError::FeatureToggle("test".to_string());
@@ -832,6 +833,7 @@ fn test_to_public_basic_fields() {
         content_type: "text/html".to_string(),
         headers: std::collections::HashMap::new(),
         response_time_ms: 150,
+        final_url: None,
     };
     let public = internal.to_public("https://example.com");
     assert_eq!(public.status_code, 200);
@@ -854,6 +856,7 @@ fn test_to_public_with_screenshot_and_headers() {
         content_type: "application/json".to_string(),
         headers,
         response_time_ms: 500,
+        final_url: None,
     };
     let public = internal.to_public("https://test.com/page");
     assert_eq!(public.status_code, 404);
@@ -874,6 +877,7 @@ fn test_to_public_empty_content() {
         content_type: String::new(),
         headers: std::collections::HashMap::new(),
         response_time_ms: 0,
+        final_url: None,
     };
     let public = internal.to_public("");
     assert_eq!(public.status_code, 204);
@@ -923,6 +927,7 @@ impl MockEngineRouter {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 100,
+                final_url: None,
             }),
             engines: vec!["mock-engine".to_string()],
         }
@@ -1067,6 +1072,7 @@ fn test_engine_client_with_engines() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 50,
+                final_url: None,
             })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1243,6 +1249,7 @@ fn test_scraper_engine_default_supports_tls_fingerprint_returns_false() {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 1,
+                final_url: None,
             })
         }
         fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1287,6 +1294,7 @@ impl ScraperEngine for HealthyMockEngine {
             content_type: "text/html".to_string(),
             headers: HashMap::new(),
             response_time_ms: 1,
+            final_url: None,
         })
     }
     fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
@@ -1404,7 +1412,7 @@ async fn test_engine_client_health_check_returns_unavailable() {
     }
 }
 
-// === T056 MEDIUM-2: session_id 校验测试 ===
+// === session_id 校验测试 ===
 
 #[test]
 fn test_validate_session_id_accepts_normal_string() {
@@ -1449,7 +1457,7 @@ fn test_validate_session_id_rejects_control_chars() {
     assert!(!validate_session_id("session\n123"));
     assert!(!validate_session_id("session\t123"));
     assert!(!validate_session_id("session\r123"));
-    assert!(!validate_session_id("session\0123"));
+    assert!(!validate_session_id("session\x00123"));
     assert!(!validate_session_id("session\u{007F}123"));
 }
 
@@ -1502,8 +1510,10 @@ fn test_session_id_builder_rejects_control_chars() {
 #[test]
 fn test_to_internal_validates_session_id() {
     // to_internal 应二次校验 session_id，拒绝非法值
-    let mut options = ScrapeOptions::default();
-    options.session_id = Some("bad\nsession".to_string());
+    let options = ScrapeOptions {
+        session_id: Some("bad\nsession".to_string()),
+        ..ScrapeOptions::default()
+    };
     let request = ScrapeRequest::new("https://example.com").with_options(options);
     let internal = request.to_internal();
     assert!(
@@ -1514,8 +1524,10 @@ fn test_to_internal_validates_session_id() {
 
 #[test]
 fn test_to_internal_preserves_valid_session_id() {
-    let mut options = ScrapeOptions::default();
-    options.session_id = Some("valid-session".to_string());
+    let options = ScrapeOptions {
+        session_id: Some("valid-session".to_string()),
+        ..ScrapeOptions::default()
+    };
     let request = ScrapeRequest::new("https://example.com").with_options(options);
     let internal = request.to_internal();
     assert_eq!(

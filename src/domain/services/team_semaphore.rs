@@ -17,7 +17,7 @@ use crate::utils::adaptive_concurrency::{AIMDController, AdaptiveSemaphore};
 ///
 /// # 构造方式
 ///
-/// - [`AdaptiveParams::new`]：带不变式校验的构造函数（推荐，架构审查 M-3）
+/// - [`AdaptiveParams::new`]：带不变式校验的构造函数（推荐）
 /// - 结构体字面量 + `Default::default()`：仅在测试代码中使用，生产代码应走 `new`
 ///
 /// # 不变式
@@ -39,11 +39,11 @@ pub struct AdaptiveParams {
 }
 
 impl AdaptiveParams {
-    /// 创建 `AdaptiveParams`，应用不变式校验（架构审查 M-3）
+    /// 创建 `AdaptiveParams`，应用不变式校验
     ///
     /// # Panics
     ///
-    /// 参数不变式违反时 panic（fail-fast，规则 12）：
+    /// 参数不变式违反时 panic（fail-fast）：
     /// - `min_limit >= 1`
     /// - `max_limit >= min_limit`
     /// - `increase_threshold >= 1`
@@ -91,12 +91,12 @@ impl Default for AdaptiveParams {
 /// 每队信号量条目（存储于 DashMap）
 ///
 /// - `Fixed`：固定 `Semaphore`（默认行为，`adaptive_enabled=false`）
-/// - `Adaptive`：`AdaptiveSemaphore` + `AIMDController`（T037/R-runtime-003）
+/// - `Adaptive`：`AdaptiveSemaphore` + `AIMDController`
 #[derive(Debug)]
 enum TeamEntry {
     /// 固定并发模式
     Fixed(Arc<Semaphore>),
-    /// AIMD 自适应并发模式（T037/R-runtime-003）
+    /// AIMD 自适应并发模式
     Adaptive {
         adaptive: Arc<AdaptiveSemaphore>,
         controller: Arc<AIMDController>,
@@ -183,12 +183,12 @@ impl TeamHandle {
 ///
 /// 为每个团队提供一个独立的并发信号量，以限制其并发请求数。
 ///
-/// T037/R-runtime-003：支持两种模式
-/// - **Fixed**（默认）：每队固定 `default_permits` 个许可，行为等同 Stage 1 之前
+/// 支持两种模式
+/// - **Fixed**（默认）：每队固定 `default_permits` 个许可，行为等同之前
 /// - **Adaptive**：每队由 `AdaptiveSemaphore` + `AIMDController` 承载，
 ///   `record_success`/`record_failure` 调整动态 target，开启后增强固定并发为动态带宽利用
 ///
-/// 安全审查 H-01 修复：`max_teams` 限制最大团队数，防止无界增长 DoS。
+/// `max_teams` 限制最大团队数，防止无界增长 DoS。
 /// 超过上限时驱逐空闲团队（available_permits == full），仍持有 permit 的团队不会被驱逐。
 #[derive(Clone, Debug)]
 pub struct TeamSemaphore {
@@ -198,11 +198,11 @@ pub struct TeamSemaphore {
     default_permits: usize,
     /// 信号量模式参数
     mode: SemaphoreMode,
-    /// 最大团队数限制（防止无界增长 DoS，安全审查 H-01）
+    /// 最大团队数限制（防止无界增长 DoS）
     max_teams: usize,
 }
 
-/// 默认最大团队数（安全审查 H-01）
+/// 默认最大团队数
 pub const DEFAULT_MAX_TEAMS: usize = 10000;
 
 /// 信号量模式
@@ -210,7 +210,7 @@ pub const DEFAULT_MAX_TEAMS: usize = 10000;
 enum SemaphoreMode {
     /// 固定并发
     Fixed,
-    /// AIMD 自适应并发（T037/R-runtime-003）
+    /// AIMD 自适应并发
     Adaptive(AdaptiveParams),
 }
 
@@ -242,7 +242,7 @@ impl TeamSemaphore {
         }
     }
 
-    /// T037/R-runtime-003：创建一个 AIMD 自适应并发模式的 TeamSemaphore
+    /// 创建一个 AIMD 自适应并发模式的 TeamSemaphore
     ///
     /// 每队信号量由 `AdaptiveSemaphore` 承载，配套 `AIMDController` 记录成功/失败。
     /// `scrape_worker` 成功/失败后调用 `record_success`/`record_failure` 回填 controller，
@@ -264,7 +264,7 @@ impl TeamSemaphore {
         }
     }
 
-    /// 安全审查 H-01：设置最大团队数限制
+    /// 设置最大团队数限制
     ///
     /// 超过限制时，新建团队会触发驱逐最久空闲的团队（available_permits == full）。
     /// 仍持有 permit 的团队不会被驱逐。
@@ -286,7 +286,7 @@ impl TeamSemaphore {
         self.max_teams
     }
 
-    /// 安全审查 H-01：驱逐空闲团队为新团队腾出位置
+    /// 驱逐空闲团队为新团队腾出位置
     ///
     /// 在 `get_or_create` 插入新团队**之前**调用。
     /// 若当前团队数已达 `max_teams`，扫描并驱逐一个空闲团队
@@ -296,7 +296,7 @@ impl TeamSemaphore {
     /// 设计要点：必须在新条目插入前调用，否则新创建的团队本身也是空闲的，
     /// 可能被自身驱逐逻辑选中。
     ///
-    /// # 性能权衡（性能审查 M-2）
+    /// # 性能权衡
     ///
     /// 线性扫描 `DashMap`，最坏 O(n)（n = max_teams，默认 10000）。
     /// 仅在 `semaphores.len() >= max_teams` 时触发，即团队数达上限时。
@@ -390,7 +390,7 @@ impl TeamSemaphore {
         handle.try_acquire_owned()
     }
 
-    /// T037/R-runtime-003：记录某团队一次抓取成功
+    /// 记录某团队一次抓取成功
     ///
     /// - **Fixed 模式**：无操作（返回当前 available_permits，仅用于日志一致性）
     /// - **Adaptive 模式**：回填 `AIMDController::record_success`，若达到阈值则 +1，
@@ -408,7 +408,7 @@ impl TeamSemaphore {
         handle.record_success()
     }
 
-    /// T037/R-runtime-003：记录某团队一次抓取失败
+    /// 记录某团队一次抓取失败
     ///
     /// - **Fixed 模式**：无操作（返回当前 available_permits，仅用于日志一致性）
     /// - **Adaptive 模式**：回填 `AIMDController::record_failure`，target 减半 clamp min，
@@ -478,7 +478,7 @@ impl TeamSemaphore {
     fn get_or_create(&self, team_id: Uuid) -> TeamHandle {
         use dashmap::mapref::entry::Entry;
 
-        // 安全审查 H-01：先检查是否已存在（fast path，避免不必要的 evict 调用）
+        // 先检查是否已存在（fast path，避免不必要的 evict 调用）
         //
         // 注意：不能在 `Entry::Vacant(v)` 中调用 `evict_one_for_new`，
         // 因为 `v` 持有 shard 写锁，调用 `self.semaphores.iter()` 会死锁。
@@ -562,7 +562,7 @@ mod tests {
         assert_eq!(sem.mode(), "Fixed");
     }
 
-    /// 安全审查 H-01：max_teams 限制生效，空闲团队会被驱逐
+    /// max_teams 限制生效，空闲团队会被驱逐
     #[test]
     fn test_with_max_teams_evicts_idle_teams() {
         let sem = TeamSemaphore::new(2).with_max_teams(2);
@@ -581,14 +581,14 @@ mod tests {
         assert_eq!(sem.team_count(), 2);
     }
 
-    /// 安全审查 H-01：max_teams 默认值为 DEFAULT_MAX_TEAMS
+    /// max_teams 默认值为 DEFAULT_MAX_TEAMS
     #[test]
     fn test_default_max_teams() {
         let sem = TeamSemaphore::new(10);
         assert_eq!(sem.max_teams(), DEFAULT_MAX_TEAMS);
     }
 
-    /// 安全审查 H-01：仍持有 permit 的团队不会被驱逐
+    /// 仍持有 permit 的团队不会被驱逐
     #[test]
     fn test_with_max_teams_keeps_busy_teams() {
         let sem = TeamSemaphore::new(1).with_max_teams(2);
@@ -760,7 +760,7 @@ mod tests {
         assert!(Arc::ptr_eq(&sem.semaphores, &cloned.semaphores));
     }
 
-    // R-teams-005 / T016：单租户退化模式下的全局并发上限测试
+    // 单租户退化模式下的全局并发上限测试
 
     #[tokio::test]
     async fn test_single_tenant_degraded_global_concurrency_limit() {
@@ -798,7 +798,7 @@ mod tests {
         drop(p2);
     }
 
-    /// R-teams-005 / T016：单租户模式下信号量仅有一个 team_id 条目
+    /// 单租户模式下信号量仅有一个 team_id 条目
     #[tokio::test]
     async fn test_single_tenant_degraded_uses_only_default_team_id_entry() {
         use crate::common::constants::default_identity::DEFAULT_TEAM_ID;
@@ -819,7 +819,7 @@ mod tests {
         );
     }
 
-    // ========== T037/R-runtime-003：自适应模式测试 ==========
+    // ========== 自适应模式测试 ==========
 
     /// with_adaptive 创建 Adaptive 模式实例
     #[test]
@@ -996,7 +996,7 @@ mod tests {
 
     /// Fixed 模式下 record_success/record_failure 为无操作（返回 available_permits）
     ///
-    /// design.md：adaptive_enabled=false 时行为等同 Stage 1 之前，无 AIMD 调整
+    /// adaptive_enabled=false 时行为等同之前，无 AIMD 调整
     #[tokio::test]
     async fn test_fixed_mode_record_success_failure_are_noops() {
         let sem = TeamSemaphore::new(5);

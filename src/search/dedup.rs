@@ -299,7 +299,7 @@ impl ResultDeduplicator {
                 self.seen_titles.insert(normalized_title.clone());
 
                 // 仅在 Smart 策略下记录 fingerprint（其他策略从不读取 seen_fingerprints）
-                // 避免在 UrlOnly/TitleOnly/UrlAndTitle 策略下的死写入（diting-Arch HIGH 修复）
+                // 避免在 UrlOnly/TitleOnly/UrlAndTitle 策略下的死写入（修复）
                 if matches!(self.config.strategy, DeduplicationStrategy::Smart)
                     && self.config.fingerprint_config.enabled
                 {

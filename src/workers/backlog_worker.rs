@@ -29,6 +29,25 @@ pub struct BacklogWorker {
     cleanup_cycle_counter: AtomicU64,
 }
 
+/// `process_single_backlog` 的分类结果。
+///
+/// 取代原先的 `bool`：`Ok(false)` 曾把"过期/并发拒绝/意外排队/重试耗尽"全部
+/// 混为一谈，process_backlog 无法分类计数（R-data-integrity-008）。
+enum BacklogOutcome {
+    /// 成功重新激活任务（或任务已处终态，积压项随之标记完成）
+    Reactivated,
+    /// 积压项已过期，标记为 Expired
+    Expired,
+    /// 重试次数耗尽，标记为 Failed
+    RetryExhausted,
+    /// 团队并发未释放，积压项保持 Pending 等待下一周期
+    Denied,
+    /// 并发检查返回意外的 Queued
+    Queued,
+    /// 积压项非 Pending（已被他方处理），跳过
+    Skipped,
+}
+
 impl BacklogWorker {
     pub fn new(
         tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
@@ -65,9 +84,15 @@ impl BacklogWorker {
 
         info!("发现 {} 个待处理的积压任务", pending_backlogs.len());
 
-        let mut processed_count = 0;
-        let mut failed_count = 0;
+        // 分类计数（R-data-integrity-008）：Ok(false) 曾把 expired/denied/queued/
+        // 重试耗尽全部混为"过期"，现按 BacklogOutcome 独立计数并分类输出。
+        let mut reactivated_count = 0;
         let mut expired_count = 0;
+        let mut retry_exhausted_count = 0;
+        let mut denied_count = 0;
+        let mut queued_count = 0;
+        let mut skipped_count = 0;
+        let mut failed_count = 0;
 
         // 2. 按团队分组处理任务
         let mut backlogs_by_team: std::collections::HashMap<uuid::Uuid, Vec<_>> =
@@ -85,11 +110,12 @@ impl BacklogWorker {
 
             for backlog in team_backlogs {
                 match self.process_single_backlog(backlog).await {
-                    Ok(true) => processed_count += 1,
-                    Ok(false) => {
-                        // 任务已过期
-                        expired_count += 1;
-                    }
+                    Ok(BacklogOutcome::Reactivated) => reactivated_count += 1,
+                    Ok(BacklogOutcome::Expired) => expired_count += 1,
+                    Ok(BacklogOutcome::RetryExhausted) => retry_exhausted_count += 1,
+                    Ok(BacklogOutcome::Denied) => denied_count += 1,
+                    Ok(BacklogOutcome::Queued) => queued_count += 1,
+                    Ok(BacklogOutcome::Skipped) => skipped_count += 1,
                     Err(e) => {
                         error!("处理积压任务失败: {}", e);
                         failed_count += 1;
@@ -99,8 +125,14 @@ impl BacklogWorker {
         }
 
         info!(
-            "积压任务处理完成: 成功={}, 失败={}, 过期={}",
-            processed_count, failed_count, expired_count
+            "积压任务处理完成: 成功={}, 过期={}, 重试耗尽={}, 并发拒绝={}, 意外排队={}, 跳过={}, 错误={}",
+            reactivated_count,
+            expired_count,
+            retry_exhausted_count,
+            denied_count,
+            queued_count,
+            skipped_count,
+            failed_count
         );
 
         Ok(())
@@ -110,7 +142,7 @@ impl BacklogWorker {
     async fn process_single_backlog(
         &self,
         backlog: crate::domain::repositories::tasks_backlog_repository::TasksBacklog,
-    ) -> Result<bool, WorkerError> {
+    ) -> Result<BacklogOutcome, WorkerError> {
         // 1. 检查任务是否已过期
         if backlog.is_expired() {
             info!("积压任务 {} 已过期，标记为过期状态", backlog.id);
@@ -125,7 +157,7 @@ impl BacklogWorker {
                 .await
                 .repo_err()?;
 
-            return Ok(false);
+            return Ok(BacklogOutcome::Expired);
         }
 
         // 2. 检查是否超过重试次数
@@ -142,7 +174,7 @@ impl BacklogWorker {
                 .await
                 .repo_err()?;
 
-            return Ok(false);
+            return Ok(BacklogOutcome::RetryExhausted);
         }
 
         // 3. 检查团队的并发限制
@@ -157,16 +189,30 @@ impl BacklogWorker {
                     backlog.team_id, backlog.id
                 );
 
-                // 4. 重新激活任务
-                match self.reactivate_task(backlog.clone()).await {
+                // 4. 前置状态迁移：Pending → Processing（域状态机守卫，仅 Pending 可迁移）。
+                //    这是修复"成功路径 mark_completed 恒败"的关键——mark_completed 要求
+                //    积压项处于 Processing。迁移失败说明该项已非 Pending（被他方处理），
+                //    跳过该条并继续（R-data-integrity-008）。
+                let mut processing_backlog = backlog.clone();
+                if let Err(e) = processing_backlog.mark_processing() {
+                    warn!(
+                        "积压任务 {} 无法迁移到 Processing（当前状态 {}）: {}，跳过",
+                        backlog.id, backlog.status, e
+                    );
+                    return Ok(BacklogOutcome::Skipped);
+                }
+
+                // 5. 重新激活任务（reactivate_task 内 mark_completed 现从 Processing 迁移，不再恒败）
+                match self.reactivate_task(processing_backlog).await {
                     Ok(_) => {
                         info!("积压任务 {} 重新激活成功", backlog.id);
-                        Ok(true)
+                        Ok(BacklogOutcome::Reactivated)
                     }
                     Err(e) => {
                         error!("重新激活任务失败: {}", e);
 
-                        // 增加重试次数
+                        // 失败重试：在原始 Pending 快照上累加重试次数并持久化，
+                        // 保持 Pending 以便下一周期重新拉取（不残留 Processing 状态）。
                         let mut retry_backlog = backlog.clone();
                         retry_backlog.increment_retry_count();
 
@@ -186,14 +232,14 @@ impl BacklogWorker {
                     "团队 {} 并发限制未释放: {}，积压任务 {} 继续保持积压状态",
                     backlog.team_id, reason, backlog.id
                 );
-                Ok(false)
+                Ok(BacklogOutcome::Denied)
             }
             Ok(crate::domain::services::rate_limiting_service::ConcurrencyResult::Queued {
                 ..
             }) => {
                 // 这种情况不应该发生，因为我们正在处理积压任务
                 warn!("积压任务 {} 被重新排队，这是意外的行为", backlog.id);
-                Ok(false)
+                Ok(BacklogOutcome::Queued)
             }
             Err(e) => {
                 error!("检查团队并发限制失败: {}", e);
@@ -379,6 +425,7 @@ mod tests {
             database: DatabaseSettings::default(),
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
+            retention: RetentionSettings::default(),
             concurrency: ConcurrencySettings {
                 default_team_limit,
                 task_lock_duration_seconds: 300,
@@ -557,16 +604,24 @@ mod tests {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -614,6 +669,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 
@@ -756,6 +820,16 @@ mod tests {
 
         async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
             Ok(100)
+        }
+
+        async fn refund_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
         }
     }
 
@@ -1012,17 +1086,16 @@ mod tests {
             default_settings(),
         );
         let result = worker.process().await;
-        // process() returns Completed because errors in process_single_backlog are caught
         assert_eq!(result, ProcessResult::Completed);
-        // mark_completed fails because backlog is Pending (not Processing),
-        // so reactivate_task returns Err, which triggers retry_count increment
+        // T021 修复：前置 mark_processing 迁移后 mark_completed 成功，Pending 积压项
+        // 走完激活路径终态为 Completed（不再退化为 Pending + retry_count 递增）。
         let updated = updated_repo.updated();
         assert_eq!(updated.len(), 1);
         assert_eq!(
             updated[0].status,
-            crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Pending
+            crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Completed
         );
-        assert_eq!(updated[0].retry_count, 1);
+        assert_eq!(updated[0].retry_count, 0);
     }
 
     // ========== process() with concurrency allowed - task queued reactivates ==========
@@ -1043,17 +1116,16 @@ mod tests {
             default_settings(),
         );
         let result = worker.process().await;
-        // process() returns Completed because errors in process_single_backlog are caught
         assert_eq!(result, ProcessResult::Completed);
-        // mark_completed fails because backlog is Pending (not Processing),
-        // so reactivate_task returns Err, which triggers retry_count increment
+        // T021 修复：前置 mark_processing 迁移后 mark_completed 成功，Pending 积压项
+        // 走完激活路径终态为 Completed（不再退化为 Pending + retry_count 递增）。
         let updated = updated_repo.updated();
         assert_eq!(updated.len(), 1);
         assert_eq!(
             updated[0].status,
-            crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Pending
+            crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Completed
         );
-        assert_eq!(updated[0].retry_count, 1);
+        assert_eq!(updated[0].retry_count, 0);
     }
 
     // ========== process() with multiple teams ==========
@@ -1235,8 +1307,9 @@ mod tests {
     async fn test_process_success_reactivates_queued_task() {
         let team_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
-        // Backlog in Processing status so mark_completed succeeds
-        let backlog = make_processing_backlog(team_id, task_id);
+        // T021: seed a Pending backlog (as production get_pending_tasks returns);
+        // the worker now transitions Pending → Processing → Completed internally.
+        let backlog = make_backlog(team_id, task_id);
         let task = make_task(task_id, TaskStatus::Queued);
         let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
         let updated_repo = repo.clone();
@@ -1269,8 +1342,9 @@ mod tests {
     async fn test_process_task_not_queued_marks_backlog_completed() {
         let team_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
-        // Backlog in Processing status so mark_completed succeeds
-        let backlog = make_processing_backlog(team_id, task_id);
+        // T021: seed a Pending backlog (as production get_pending_tasks returns);
+        // the worker now transitions Pending → Processing → Completed internally.
+        let backlog = make_backlog(team_id, task_id);
         // Task is already Completed (not Queued)
         let task = make_task(task_id, TaskStatus::Completed);
         let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
@@ -1290,6 +1364,32 @@ mod tests {
             updated[0].status,
             crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus::Completed
         );
+    }
+
+    // ========== T021: non-Pending backlog is skipped (mark_processing guard) ==========
+
+    #[tokio::test]
+    async fn test_process_already_processing_backlog_is_skipped() {
+        let team_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        // Backlog already in Processing: the Pending → Processing guard fails, so the
+        // worker skips it (warn) without any repository update — it was already handled
+        // by another worker/cycle.
+        let backlog = make_processing_backlog(team_id, task_id);
+        let task = make_task(task_id, TaskStatus::Queued);
+        let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
+        let updated_repo = repo.clone();
+        let worker = make_worker(
+            repo,
+            Arc::new(MockTaskRepo::new().with_task(task)),
+            Arc::new(MockRateLimitingService::new_allowed()),
+            default_settings(),
+        );
+        let result = worker.process().await;
+        assert_eq!(result, ProcessResult::Completed);
+        // Skipped: no backlog update persisted
+        let updated = updated_repo.updated();
+        assert_eq!(updated.len(), 0, "skipped backlog must not be updated");
     }
 
     // ========== process() with concurrency check error ==========

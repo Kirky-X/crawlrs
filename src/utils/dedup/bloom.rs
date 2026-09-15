@@ -4,7 +4,6 @@
 // See LICENSE file in the project root for full license information.
 
 //! mmap-backed bloom filter with hugepage support for URL deduplication
-//! （design.md §9，T051/R-frontier-001）
 //!
 //! 直移自 spider `spider/src/utils/bloom.rs`，保留 mmap + MAP_HUGETLB 大页优化
 //! 与 enhanced double hashing。**仅作为 L1 快速负向缓存**——

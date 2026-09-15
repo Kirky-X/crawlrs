@@ -57,11 +57,12 @@ impl WebhookWorker {
 
     /// 处理待处理的webhook事件
     pub async fn process_pending_webhooks(&self) -> Result<()> {
+        // 原子认领（置 processing），多实例部署下同一事件只被本进程投递
         let pending_events = self
             .repo
-            .find_pending(100)
+            .claim_pending(100)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to find pending events: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to claim pending events: {}", e))?;
 
         if !pending_events.is_empty() {
             info!("Processing {} pending webhook events", pending_events.len());
@@ -85,11 +86,15 @@ impl WebhookWorker {
 
         // 尝试发送webhook
         match self.webhook_service.send_webhook(&event).await {
-            Ok(_) => {
-                info!("Successfully delivered webhook {}", event.id);
+            Ok(status) => {
+                info!(
+                    "Successfully delivered webhook {} (status {})",
+                    event.id, status
+                );
                 event.status = WebhookStatus::Delivered;
                 event.delivered_at = Some(Utc::now());
-                event.response_status = Some(200);
+                // 记录真实响应状态码，替代硬编码 200
+                event.response_status = Some(status as i32);
                 self.repo
                     .update(&event)
                     .await
@@ -260,6 +265,10 @@ mod tests {
             Ok(self.pending_events.lock().unwrap().drain(..).collect())
         }
 
+        async fn claim_pending(&self, limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError> {
+            self.find_pending(limit).await
+        }
+
         async fn find_by_team_id_paginated(
             &self,
             _team_id: Uuid,
@@ -307,10 +316,10 @@ mod tests {
 
     #[async_trait]
     impl WebhookService for MockWebhookService {
-        async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
+        async fn send_webhook(&self, _event: &WebhookEvent) -> Result<u16> {
             self.send_count.fetch_add(1, Ordering::SeqCst);
             if self.send_success {
-                Ok(())
+                Ok(200)
             } else {
                 Err(anyhow!("Failed to send webhook: connection refused"))
             }
@@ -330,7 +339,7 @@ mod tests {
 
     #[async_trait]
     impl WebhookService for MockWebhookService500 {
-        async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
+        async fn send_webhook(&self, _event: &WebhookEvent) -> Result<u16> {
             Err(anyhow!(
                 "Request failed with status 500: internal server error"
             ))
@@ -452,7 +461,7 @@ mod tests {
         let result = worker.process_pending_webhooks().await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("Failed to find pending events"));
+        assert!(err.contains("Failed to claim pending events"));
     }
 
     // ========== process() (WorkerProcess trait) ==========
@@ -523,7 +532,7 @@ mod tests {
         struct NonRetryableService;
         #[async_trait]
         impl WebhookService for NonRetryableService {
-            async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
+            async fn send_webhook(&self, _event: &WebhookEvent) -> Result<u16> {
                 Err(anyhow!("status 400: bad request"))
             }
             async fn trigger_completion(&self, _task: &Task) -> Result<()> {
@@ -566,7 +575,7 @@ mod tests {
         struct Service400;
         #[async_trait]
         impl WebhookService for Service400 {
-            async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
+            async fn send_webhook(&self, _event: &WebhookEvent) -> Result<u16> {
                 Err(anyhow!("failed with status 400: bad request"))
             }
             async fn trigger_completion(&self, _task: &Task) -> Result<()> {
@@ -590,7 +599,7 @@ mod tests {
         struct Service404;
         #[async_trait]
         impl WebhookService for Service404 {
-            async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
+            async fn send_webhook(&self, _event: &WebhookEvent) -> Result<u16> {
                 Err(anyhow!("error: status 404 not found"))
             }
             async fn trigger_completion(&self, _task: &Task) -> Result<()> {
@@ -622,12 +631,12 @@ mod tests {
         }
         #[async_trait]
         impl WebhookService for ToggleService {
-            async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
+            async fn send_webhook(&self, _event: &WebhookEvent) -> Result<u16> {
                 let n = self.count.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
                     Err(anyhow!("timeout connecting to server"))
                 } else {
-                    Ok(())
+                    Ok(200)
                 }
             }
             async fn trigger_completion(&self, _task: &Task) -> Result<()> {

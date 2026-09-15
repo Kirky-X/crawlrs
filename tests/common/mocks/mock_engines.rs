@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! T043: 统一 mock 引擎实现
+//! 统一 mock 引擎实现
 
 #![allow(dead_code)]
 
@@ -43,6 +43,7 @@ impl MockScraperEngine {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 0,
+                final_url: None,
             }),
             error: None,
             mrt: Duration::from_secs(30),

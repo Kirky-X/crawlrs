@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! T034: 引擎选择逻辑 — 从 `EngineRouter` 拆分的 partial impl block
+//! 引擎选择逻辑 — 从 `EngineRouter` 拆分的 partial impl block
 //!
 //! 包含引擎候选收集、特征过滤、综合评分计算与策略排序。
 
@@ -61,7 +61,7 @@ impl EngineRouter {
             candidates.push((support_score, engine_name.to_string(), Arc::clone(engine)));
         }
 
-        // PERF-04/MEDIUM-2：一次性收集 DashMap 为 HashMap，避免循环内多次 Ref 借用，
+        // PERF-04 一次性收集 DashMap 为 HashMap，避免循环内多次 Ref 借用，
         // 同时供 Second pass（calculate_engine_score）和 sort_candidates_by_strategy 复用，
         // DashMap 全局只遍历一次。
         let stats: std::collections::HashMap<String, EngineStats> = self
@@ -74,7 +74,7 @@ impl EngineRouter {
         let mut scored_candidates = Vec::new();
 
         for (support_score, engine_name, engine) in candidates {
-            // 性能审查 M-1 修复：循环内不 clone EngineStats，直接借用 stats HashMap
+            // 循环内不 clone EngineStats，直接借用 stats HashMap
             // （原 .cloned().unwrap_or_default() 每次循环都分配 EngineStats）
             let engine_stat = stats.get(&engine_name);
             let default_stat;

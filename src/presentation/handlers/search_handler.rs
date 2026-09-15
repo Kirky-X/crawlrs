@@ -38,7 +38,7 @@ pub async fn search(
     let api_key_id = auth_state.api_key_id;
 
     // 1. 检查限流
-    // 性能 LOW-1：直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
+    // 性能直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
     // 消除 handler 中的中间变量分配。
     if let Err(response) =
         check_rate_limit(rate_limiting_service.as_ref(), api_key_id, "/v1/search").await
@@ -183,7 +183,9 @@ mod tests {
 
     #[test]
     fn test_validation_error_maps_to_bad_request() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::ValidationError("invalid query".to_string());
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -192,7 +194,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_maps_to_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::Repository(RepositoryError::Database(anyhow::anyhow!(
             "db connection failed"
         )));
@@ -203,7 +207,9 @@ mod tests {
 
     #[test]
     fn test_repository_not_found_maps_to_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::Repository(RepositoryError::NotFound);
         let (status, _msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -211,7 +217,9 @@ mod tests {
 
     #[test]
     fn test_credits_repository_error_maps_to_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::CreditsRepository(CreditsRepositoryError::DatabaseError(
             "credits db error".to_string(),
         ));
@@ -222,7 +230,9 @@ mod tests {
 
     #[test]
     fn test_credits_not_found_maps_to_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = uuid::Uuid::new_v4();
         let err =
             SearchServiceError::CreditsRepository(CreditsRepositoryError::CreditsNotFound(team_id));
@@ -232,7 +242,9 @@ mod tests {
 
     #[test]
     fn test_insufficient_credits_maps_to_payment_required() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::InsufficientCredits {
             available: 5,
             required: 10,
@@ -246,7 +258,9 @@ mod tests {
 
     #[test]
     fn test_insufficient_credits_zero_available() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::InsufficientCredits {
             available: 0,
             required: 1,
@@ -258,7 +272,9 @@ mod tests {
 
     #[test]
     fn test_search_engine_error_maps_to_internal_server_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::SearchEngine("rate limited by Google".to_string());
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -269,7 +285,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_minimal() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"rust web scraping"}"#;
         let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.query, "rust web scraping");
@@ -285,7 +303,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_full() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "query": "rust async",
             "engine": "google",
@@ -321,7 +341,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_deny_unknown_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"test","unknown_field":42}"#;
         let result: Result<SearchRequestDto, _> = serde_json::from_str(json);
         assert!(result.is_err(), "unknown fields should be rejected");
@@ -329,7 +351,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_with_sources_alias() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"test","sources":["google","bing","baidu"]}"#;
         let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.sources.as_ref().unwrap().len(), 3);
@@ -337,7 +361,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_with_crawl_results_false() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"test","crawl_results":false}"#;
         let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.crawl_results, Some(false));
@@ -345,7 +371,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_with_crawl_config_minimal() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"test","crawl_config":{"max_depth":1}}"#;
         let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
         let config = dto.crawl_config.unwrap();
@@ -358,7 +386,9 @@ mod tests {
 
     #[test]
     fn test_search_response_dto_construction() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = SearchResponseDto {
             query: "test query".to_string(),
             results: vec![],
@@ -375,7 +405,9 @@ mod tests {
 
     #[test]
     fn test_search_response_dto_with_results() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = SearchResponseDto {
             query: "rust".to_string(),
             results: vec![
@@ -406,7 +438,9 @@ mod tests {
 
     #[test]
     fn test_search_result_dto_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = SearchResultDto {
             title: "Test".to_string(),
             url: "https://example.com".to_string(),
@@ -423,7 +457,9 @@ mod tests {
 
     #[test]
     fn test_search_result_dto_clone() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = SearchResultDto {
             title: "Test".to_string(),
             url: "https://example.com".to_string(),
@@ -439,7 +475,9 @@ mod tests {
 
     #[test]
     fn test_search_result_dto_debug() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let result = SearchResultDto {
             title: "Debug Test".to_string(),
             url: "https://debug.com".to_string(),
@@ -454,7 +492,9 @@ mod tests {
 
     #[test]
     fn test_search_result_dto_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"title":"Test","url":"https://example.com","description":"desc","engine":"google"}"#;
         let result: SearchResultDto = serde_json::from_str(json).unwrap();
         assert_eq!(result.title, "Test");
@@ -465,7 +505,9 @@ mod tests {
 
     #[test]
     fn test_search_result_dto_deserialization_without_optional_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"title":"Test","url":"https://example.com"}"#;
         let result: SearchResultDto = serde_json::from_str(json).unwrap();
         assert_eq!(result.title, "Test");
@@ -477,7 +519,9 @@ mod tests {
 
     #[test]
     fn test_search_query_from_dto_no_crawl_config() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = SearchRequestDto {
             query: "test".to_string(),
             engine: Some("google".to_string()),
@@ -518,7 +562,9 @@ mod tests {
 
     #[test]
     fn test_search_query_from_dto_with_crawl_config_defaults() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = SearchRequestDto {
             query: "test".to_string(),
             engine: None,
@@ -572,7 +618,9 @@ mod tests {
 
     #[test]
     fn test_search_query_from_dto_with_crawl_config_explicit_values() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = SearchRequestDto {
             query: "test".to_string(),
             engine: None,
@@ -633,7 +681,9 @@ mod tests {
 
     #[test]
     fn test_validation_error_empty_message() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::ValidationError(String::new());
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -642,7 +692,9 @@ mod tests {
 
     #[test]
     fn test_insufficient_credits_large_numbers() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::InsufficientCredits {
             available: 999999,
             required: 1000000,
@@ -655,7 +707,9 @@ mod tests {
 
     #[test]
     fn test_insufficient_credits_negative_available() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::InsufficientCredits {
             available: -5,
             required: 10,
@@ -667,7 +721,9 @@ mod tests {
 
     #[test]
     fn test_search_engine_error_empty_string() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::SearchEngine(String::new());
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -676,7 +732,9 @@ mod tests {
 
     #[test]
     fn test_repository_error_not_found_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::Repository(RepositoryError::NotFound);
         let (status, _msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -684,7 +742,9 @@ mod tests {
 
     #[test]
     fn test_credits_repository_insufficient_credits_variant() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = uuid::Uuid::new_v4();
         let err =
             SearchServiceError::CreditsRepository(CreditsRepositoryError::InsufficientCredits {
@@ -700,7 +760,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_ms_default_when_none() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = SearchRequestDto {
             query: "test".to_string(),
             engine: None,
@@ -720,7 +782,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_ms_custom_when_some() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = SearchRequestDto {
             query: "test".to_string(),
             engine: None,
@@ -740,7 +804,9 @@ mod tests {
 
     #[test]
     fn test_sync_wait_ms_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = SearchRequestDto {
             query: "test".to_string(),
             engine: None,
@@ -762,7 +828,9 @@ mod tests {
 
     #[test]
     fn test_search_response_dto_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"test","results":[],"crawl_id":null,"credits_used":0}"#.to_string();
         let dto: SearchResponseDto = serde_json::from_str(&json).unwrap();
         assert_eq!(dto.query, "test");
@@ -773,7 +841,9 @@ mod tests {
 
     #[test]
     fn test_search_response_dto_with_crawl_id() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let crawl_id = uuid::Uuid::new_v4();
         let json = format!(
             r#"{{"query":"test","results":[],"crawl_id":"{}","credits_used":3}}"#,
@@ -786,7 +856,9 @@ mod tests {
 
     #[test]
     fn test_search_response_dto_with_results_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "query": "rust",
             "results": [
@@ -807,7 +879,9 @@ mod tests {
 
     #[test]
     fn test_search_response_dto_serialization_roundtrip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let original = SearchResponseDto {
             query: "roundtrip test".to_string(),
             results: vec![SearchResultDto {
@@ -831,7 +905,9 @@ mod tests {
 
     #[test]
     fn test_search_service_error_validation_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::ValidationError("bad query".to_string());
         let display = format!("{}", err);
         assert!(display.contains("bad query"));
@@ -839,7 +915,9 @@ mod tests {
 
     #[test]
     fn test_search_service_error_insufficient_credits_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::InsufficientCredits {
             available: 5,
             required: 10,
@@ -851,7 +929,9 @@ mod tests {
 
     #[test]
     fn test_search_service_error_search_engine_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::SearchEngine("engine timeout".to_string());
         let display = format!("{}", err);
         assert!(display.contains("engine timeout"));
@@ -861,7 +941,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_empty_query() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":""}"#;
         let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.query, "");
@@ -869,7 +951,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_long_query() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let long_query = "a".repeat(1000);
         let json = serde_json::json!({ "query": long_query }).to_string();
         let dto: SearchRequestDto = serde_json::from_str(&json).unwrap();
@@ -880,7 +964,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_with_unicode_query() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"中文搜索 日本語 한국어"}"#;
         let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.query.contains("中文"));
@@ -889,7 +975,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_with_special_chars_query() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"test \"quotes\" & <html>"}"#;
         let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
         assert!(dto.query.contains("quotes"));
@@ -900,7 +988,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_with_limit_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"test","limit":0}"#;
         let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.limit, Some(0));
@@ -908,7 +998,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_with_large_limit() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"test","limit":4294967295}"#;
         let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.limit, Some(u32::MAX));
@@ -918,7 +1010,9 @@ mod tests {
 
     #[test]
     fn test_search_query_all_none() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_query = SearchQuery {
             query: "minimal".to_string(),
             limit: None,
@@ -938,7 +1032,9 @@ mod tests {
 
     #[test]
     fn test_search_query_from_dto_with_crawl_config_extraction_rules() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = SearchRequestDto {
             query: "test".to_string(),
             engine: None,
@@ -995,7 +1091,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_with_multiple_sources() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "query": "test",
             "sources": ["google", "bing", "baidu", "sogou"]
@@ -1008,7 +1106,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_crawl_results_false_no_crawl_config() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"query":"test","crawl_results":false}"#;
         let dto: SearchRequestDto = serde_json::from_str(json).unwrap();
         assert_eq!(dto.crawl_results, Some(false));
@@ -1019,7 +1119,9 @@ mod tests {
 
     #[test]
     fn test_validation_error_with_special_characters() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = SearchServiceError::ValidationError("error with <>&\"".to_string());
         let (status, msg) = <(StatusCode, String)>::from(err);
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -1029,7 +1131,9 @@ mod tests {
 
     #[test]
     fn test_search_engine_error_with_url() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err =
             SearchServiceError::SearchEngine("failed to fetch https://google.com".to_string());
         let (status, msg) = <(StatusCode, String)>::from(err);
@@ -1041,7 +1145,9 @@ mod tests {
 
     #[test]
     fn test_search_response_dto_empty_results() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = SearchResponseDto {
             query: "empty".to_string(),
             results: vec![],
@@ -1057,7 +1163,9 @@ mod tests {
 
     #[test]
     fn test_search_request_dto_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let dto = SearchRequestDto {
             query: "serialize test".to_string(),
             engine: Some("google".to_string()),
@@ -1100,27 +1208,9 @@ mod tests {
 
     /// Construct a lazy `DbPool` that does not connect to any database.
     fn make_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                let url = crate::common::test_helpers::resolve_test_database_url().expect(
-                    "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
-                );
-                rt.block_on(async {
-                    let cfg = dbnexus::DbConfig {
-                        url,
-                        ..Default::default()
-                    };
-                    DbPool::with_config(cfg).await
-                })
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
+        // 统一走共享 helper：每调用独立池（min=0 无预热、max=4），
+        // 避免预热连接绑定到构造临时 runtime 而失效（test_helpers 说明）。
+        crate::common::test_helpers::create_test_db_pool()
     }
 
     /// Build an `AuthState` suitable for handler unit tests.
@@ -1292,16 +1382,24 @@ mod tests {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -1354,6 +1452,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 
@@ -1481,6 +1588,16 @@ mod tests {
         async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
             Ok(0)
         }
+
+        async fn refund_quota(
+            &self,
+            _team_id: Uuid,
+            _amount: i64,
+            _description: String,
+            _reference_id: Option<Uuid>,
+        ) -> Result<(), RateLimitingError> {
+            Ok(())
+        }
     }
 
     impl RateLimitingService for MockRateLimitingService {}
@@ -1489,7 +1606,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_success_no_crawl_id() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> =
             Arc::new(MockSearchService::new_success(make_search_response(None)));
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
@@ -1512,7 +1631,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_success_sync_wait_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
             make_search_response(Some(Uuid::new_v4())),
         ));
@@ -1537,7 +1658,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_success_crawl_id_empty_tasks() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let crawl_id = Uuid::new_v4();
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
             make_search_response(Some(crawl_id)),
@@ -1563,7 +1686,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_success_crawl_id_with_completed_tasks() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let crawl_id = Uuid::new_v4();
         let task = make_test_task(team_id, TaskStatus::Completed);
@@ -1596,7 +1721,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_success_find_by_crawl_id_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let crawl_id = Uuid::new_v4();
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
             make_search_response(Some(crawl_id)),
@@ -1629,7 +1756,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_success_wait_for_tasks_completion_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let crawl_id = Uuid::new_v4();
         let task = make_test_task(team_id, TaskStatus::Queued);
@@ -1668,7 +1797,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_success_default_sync_wait_ms() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> =
             Arc::new(MockSearchService::new_success(make_search_response(None)));
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
@@ -1694,7 +1825,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_rate_limited_denied() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_unused());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
         let rate_limit: Arc<dyn RateLimitingService> =
@@ -1716,7 +1849,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_rate_limited_retry_after() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_unused());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
         let rate_limit: Arc<dyn RateLimitingService> =
@@ -1740,7 +1875,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_validation_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::ValidationError("invalid query".to_string()),
         ));
@@ -1764,7 +1901,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_insufficient_credits() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::InsufficientCredits {
                 available: 0,
@@ -1791,7 +1930,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_search_engine_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::SearchEngine("engine timeout".to_string()),
         ));
@@ -1815,7 +1956,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_repository_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::Repository(RepositoryError::Database(anyhow::anyhow!(
                 "db connection failed"
@@ -1841,7 +1984,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_credits_repository_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::CreditsRepository(CreditsRepositoryError::DatabaseError(
                 "credits db error".to_string(),
@@ -1867,7 +2012,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_repository_not_found_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::Repository(RepositoryError::NotFound),
         ));
@@ -1891,7 +2038,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_handler_credits_not_found_error() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::CreditsRepository(CreditsRepositoryError::CreditsNotFound(team_id)),

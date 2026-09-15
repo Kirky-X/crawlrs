@@ -55,6 +55,8 @@ fn build_inklog_config(settings: &LoggingSettings) -> InklogConfig {
         database_sink: None,
         performance: Default::default(),
         http_server: None,
+        // Per-target 日志级别由 RUST_LOG 承担，此处保持空表（默认值）
+        target_levels: Default::default(),
     }
 }
 

@@ -387,6 +387,7 @@ mod tests {
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
                 response_time_ms: 5,
+                final_url: None,
             })
         }
 
@@ -1041,6 +1042,7 @@ mod tests {
                         content_type: "text/html".to_string(),
                         headers: HashMap::new(),
                         response_time_ms: 5,
+                        final_url: None,
                     })
                 }
             }

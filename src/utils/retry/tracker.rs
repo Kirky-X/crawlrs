@@ -3,12 +3,12 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 重试原因分类与计数器（design.md §4 — crawler-capability-absorption Stage 1/2）
+//! 重试原因分类与计数器（2）
 //!
 //! `RetryReason` 将 `EngineError` 归类为三类重试策略语义，供 `EngineRouter` /
 //! `scrape_worker` 决策如何重试（同引擎 vs 换引擎 vs 切身份）。
 //!
-//! `RetryTracker`（T025 补齐）为各 reason 维护独立计数与上限：
+//! `RetryTracker`（补齐）为各 reason 维护独立计数与上限：
 //! - `Transient` 上限较高（瞬时故障通常可同引擎恢复）
 //! - `FeatureToggle` 上限中等（特性切换需换引擎）
 //! - `AntiBot` 上限较低（反爬命中后切身份空间有限，避免无谓重试）
@@ -16,11 +16,11 @@
 /// 重试原因分类 — 驱动重试策略选择。
 ///
 /// - [`RetryReason::Transient`]：瞬时故障（网络抖动、超时、浏览器崩溃），
-///   可同引擎重试（design.md §4：RequestFailed/Timeout/BrowserError）。
+///   可同引擎重试（RequestFailed/Timeout/BrowserError）。
 /// - [`RetryReason::FeatureToggle`]：引擎特性切换（如 Chrome 降级到 HTTP），
-///   需换引擎重试（T027 补 `EngineError::FeatureToggle` 变体后启用）。
+///   需换引擎重试（补 `EngineError::FeatureToggle` 变体后启用）。
 /// - [`RetryReason::AntiBot`]：反爬虫检测命中，需切换身份（UA/代理/stealth）
-///   + 强制浏览器引擎重试（design.md §1.6/1.7）。
+///   + 强制浏览器引擎重试（1.7）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RetryReason {
     /// 瞬时故障 — 同引擎可重试
@@ -31,7 +31,7 @@ pub enum RetryReason {
     AntiBot,
 }
 
-/// 重试计数器 — 各 reason 独立计数与上限（design.md §4，T025）
+/// 重试计数器 — 各 reason 独立计数与上限
 ///
 /// 默认上限（[`RetryTracker::new_default`]）：
 /// - `max_total = 5`：总重试次数硬上限
@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(set.len(), 2);
     }
 
-    // === RetryTracker tests (T025, R-identity-002) ===
+    // === RetryTracker tests ===
 
     #[test]
     fn tracker_default_initial_counts_zero() {
@@ -201,7 +201,7 @@ mod tests {
         assert!(t.should_retry(RetryReason::AntiBot));
     }
 
-    /// R-identity-002: AntiBot 达上限后仅 AntiBot 停止，Transient 仍可重试
+    /// AntiBot 达上限后仅 AntiBot 停止，Transient 仍可重试
     #[test]
     fn tracker_antibot_cap_stops_only_antibot() {
         let mut t = RetryTracker::new_default();
@@ -226,7 +226,7 @@ mod tests {
         );
     }
 
-    /// R-identity-002: FeatureToggle 达上限后仅 FeatureToggle 停止
+    /// FeatureToggle 达上限后仅 FeatureToggle 停止
     #[test]
     fn tracker_feature_toggle_cap_stops_only_ft() {
         let mut t = RetryTracker::new_default();
@@ -242,7 +242,7 @@ mod tests {
         assert!(t.should_retry(RetryReason::AntiBot), "antibot still ok");
     }
 
-    /// R-identity-002: max_total 是硬上限，达上限后所有 reason 都停止
+    /// max_total 是硬上限，达上限后所有 reason 都停止
     #[test]
     fn tracker_max_total_blocks_all() {
         let mut t = RetryTracker::new_default();

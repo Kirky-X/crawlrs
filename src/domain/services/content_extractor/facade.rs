@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 正文提取 Facade（design.md §11，T048/R-content-002）
+//! 正文提取 Facade
 //!
 //! [`ContentExtractionFacade`] 持有 `Vec<Box<dyn ContentExtractor>>`，按优先级
 //! Trafilatura → DomSmoothie → CssRule 依次调用。首个 `confidence >= 0.7` 的成功结果
@@ -11,7 +11,7 @@
 //!
 //! LLM 回退：将首选 extractor 的低置信度结果送 LLM 结构化提取，输出 confidence=0.8。
 //!
-//! 特性兼容（R-content-003）：
+//! 特性兼容
 //! - `trafilatura` on → Trafilatura 优先
 //! - `dom-smoothie` on → DomSmoothie 次选
 //! - 三特性均关闭 → 退化为 CssRule 兜底（编译通过，功能可用）
@@ -25,7 +25,7 @@ use crate::domain::services::llm::LLMServiceTrait;
 
 use super::traits::{ContentExtractor, ExtractError, ExtractedContent};
 
-/// LLM 回退后内容 confidence（design.md 约定）
+/// LLM 回退后内容 confidence（约定）
 const LLM_FALLBACK_CONFIDENCE: f32 = 0.8;
 
 /// LLM 输入文本最大长度（防止 token 滥用 DoS，约 32K 字符 ~8K tokens）
@@ -120,7 +120,7 @@ impl ContentExtractionFacade {
     /// 返回 `ExtractedContent` confidence=0.8（高可信度）。
     /// LLM 不可用 / 调用失败 / 返回值不合法时返回 `None`，调用方保留首选 extractor 结果。
     ///
-    /// ## 安全（规则 12 + 安全审查 HIGH-1）
+    /// ## 安全
     ///
     /// - **Prompt 注入防御**：用 `<scraped_content_begin>...</scraped_content_end>`
     ///   边界标记包裹外部不可信文本，前置系统指令声明边界内为数据非指令
@@ -128,7 +128,7 @@ impl ContentExtractionFacade {
     async fn try_llm_fallback(&self, original: &ExtractedContent) -> Option<ExtractedContent> {
         let llm = self.llm_service.as_ref()?;
 
-        // 安全审查 HIGH-2：original.text 已是 extractor 输出的纯文本，禁止再调用 HTML 清理解析
+        // original.text 已是 extractor 输出的纯文本，禁止再调用 HTML 清理解析
         // （原实现错误调用 ExtractionService::get_clean_text，对纯文本做 HTML 解析属于语义错误）
         let clean_text = original.text.trim();
         if clean_text.is_empty() {
@@ -136,9 +136,9 @@ impl ContentExtractionFacade {
             return None;
         }
 
-        // 安全审查 HIGH-1：按字符截断超长输入（防 token 滥用 DoS）
+        // 按字符截断超长输入（防 token 滥用 DoS）
         // 原实现按字节切片 `&clean_text[..LLM_INPUT_MAX_LEN]` 在 UTF-8 多字节字符中间会 panic
-        // 性能审查 M-3：用 Cow<'_, str> 避免无截断场景的 to_string clone
+        // 用 Cow<'_, str> 避免无截断场景的 to_string clone
         let truncated: Cow<'_, str> = if clean_text.len() > LLM_INPUT_MAX_LEN {
             log::warn!(
                 "content_extraction: LLM input truncated (len={}, max={})",
@@ -157,7 +157,7 @@ impl ContentExtractionFacade {
             Cow::Borrowed(clean_text)
         };
 
-        // 安全审查 HIGH-1：用边界标记包裹不可信文本（防 prompt 注入）
+        // 用边界标记包裹不可信文本（防 prompt 注入）
         // 显式告知 LLM 边界内为数据非指令，边界外才是真实指令
         let safe_input = format!(
             "You are a content extraction assistant. Extract main content from the text delimited by {begin} and {end}. \
@@ -432,6 +432,11 @@ mod tests {
     #[test]
     fn extractors_priority_order_trafilatura_before_dom_smoothie_before_css_rule() {
         let facade = ContentExtractionFacade::new(None);
+        // extractors 未启用（content-only 等组合）时 names 无消费方，静默未用告警
+        #[cfg_attr(
+            not(any(feature = "trafilatura", feature = "dom-smoothie")),
+            allow(unused_variables)
+        )]
         let names: Vec<&'static str> = facade.extractors.iter().map(|e| e.name()).collect();
 
         #[cfg(feature = "trafilatura")]

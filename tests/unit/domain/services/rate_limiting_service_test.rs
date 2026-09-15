@@ -13,7 +13,7 @@
 //! Per AGENTS.md: no mock library — tests use real trait impls with
 //! test-specific behavior and `Arc<AtomicBool>`/`Arc<Mutex<>>` for state.
 //!
-//! R-rl-001 / T017：limiteron_service 模块由 `rate-limit` feature 门控；
+//! limiteron_service 模块由 `rate-limit` feature 门控；
 //! rate-limit-off 时整个测试文件不编译（limiteron_service 不存在）。
 
 #![cfg(all(test, feature = "rate-limit"))]
@@ -101,16 +101,24 @@ impl TaskRepository for MockTaskRepository {
         Ok(None)
     }
 
-    async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_completed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
 
-    async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_failed(
+        &self,
+        _id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
 
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-        Ok(())
+    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        Ok(1)
     }
 
     async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -155,6 +163,15 @@ impl TaskRepository for MockTaskRepository {
         _force: bool,
     ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
         Ok((vec![], vec![]))
+    }
+
+    async fn renew_lock(
+        &self,
+        _task_id: Uuid,
+        _worker_id: Uuid,
+        _extend_seconds: i64,
+    ) -> Result<bool, RepositoryError> {
+        Ok(true)
     }
 }
 

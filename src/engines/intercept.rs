@@ -3,19 +3,19 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 请求拦截控制器（design.md §6，R-jsrender-003）
+//! 请求拦截控制器
 //!
 //! 基于 CDP `Fetch.enable` + `Fetch.continueRequest` / `Fetch.failRequest` 实现
 //! 浏览器请求拦截：
 //! - [`InterceptController::block_ads`]：域名黑名单广告/追踪域名拦截（≥20 条）
 //! - [`InterceptController::block_media`]：可选媒体资源拦截（image / media / font）
 //!
-//! # DIP 重构（H-3）
+//! # DIP 重构
 //!
 //! 旧实现直接依赖 CDP `chromiumoxide::cdp::browser_protocol::network::ResourceType`，
 //! 导致业务策略与底层 CDP 实现耦合，无法独立测试或复用至非 CDP 引擎。
 //!
-//! H-3 重构引入领域枚举 [`ResourceKind`]：
+//! 引入领域枚举 [`ResourceKind`]：
 //! - [`InterceptController`] 接受 `Option<ResourceKind>`，不依赖任何 CDP 类型
 //! - CDP 适配器 `From<ResourceType> for ResourceKind` 在调用方边界
 //!   （`playwright.rs`）完成转换，保证领域层纯净
@@ -37,7 +37,7 @@
 use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// 领域层资源类型（H-3 重构：与 CDP `ResourceType` 解耦）
+/// 领域层资源类型（与 CDP `ResourceType` 解耦）
 ///
 /// 纯领域枚举，描述资源语义。所有拦截策略基于此枚举判断，
 /// 不依赖任何具体浏览器/CDP 实现细节。
@@ -89,7 +89,7 @@ impl From<ResourceType> for ResourceKind {
     }
 }
 
-/// 广告/追踪域名黑名单（R-jsrender-003）
+/// 广告/追踪域名黑名单
 ///
 /// 覆盖主流广告网络、追踪 SDK、用户分析平台。
 /// 命中任一子串即视为广告/追踪请求并 abort。
@@ -146,12 +146,12 @@ pub const AD_DOMAIN_BLACKLIST: &[&str] = &[
 
 /// 媒体资源种类集合（当 `block_media = true` 时拦截）
 ///
-/// H-3 重构后基于领域枚举 [`ResourceKind`]，与 CDP 解耦。
+/// 后基于领域枚举 [`ResourceKind`]，与 CDP 解耦。
 /// 拦截策略：Image / Media / Font。
 pub const MEDIA_RESOURCE_KINDS: &[ResourceKind] =
     &[ResourceKind::Image, ResourceKind::Media, ResourceKind::Font];
 
-/// 请求拦截控制器（design.md §6，R-jsrender-003）
+/// 请求拦截控制器
 ///
 /// # 字段
 ///
@@ -201,7 +201,7 @@ impl InterceptController {
         Self::new(false, false)
     }
 
-    /// 判断 URL 是否应被拦截（R-jsrender-003）
+    /// 判断 URL 是否应被拦截
     ///
     /// 综合判断：
     /// 1. 如果 `block_ads` 且 URL 命中黑名单 → true
@@ -211,7 +211,7 @@ impl InterceptController {
     /// # 参数
     ///
     /// - `url`：请求 URL（完整 URL 或 path）
-    /// - `kind`：领域资源种类（H-3 重构：原 CDP `&ResourceType`，现 `ResourceKind`）
+    /// - `kind`：领域资源种类（原 CDP `&ResourceType`，现 `ResourceKind`）
     ///   可为 None，则跳过媒体判断
     #[must_use]
     pub fn should_block(&self, url: &str, kind: Option<ResourceKind>) -> bool {
@@ -238,7 +238,7 @@ impl InterceptController {
 
     /// 判断资源种类是否属于媒体（image/media/font）
     ///
-    /// H-3 重构：入参由 `Option<&ResourceType>` 改为 `Option<ResourceKind>`，
+    /// 入参由 `Option<&ResourceType>` 改为 `Option<ResourceKind>`，
     /// 与 CDP 实现解耦。
     #[must_use]
     pub fn should_block_media(&self, kind: Option<ResourceKind>) -> bool {
@@ -658,7 +658,7 @@ mod tests {
         assert!(ctrl.should_block("https://example.com/product.png", Some(ResourceKind::Image)));
     }
 
-    // === H-3: From<ResourceType> for ResourceKind 适配器测试 ===
+    // === From<ResourceType> for ResourceKind 适配器测试 ===
 
     #[test]
     fn from_resource_type_maps_known_variants() {

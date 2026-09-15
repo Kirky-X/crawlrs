@@ -209,7 +209,7 @@ impl HtmlParser {
 
     /// Escape HTML entities to prevent XSS
     ///
-    /// 委托到 `shared_utils::escape_html_text`（架构 MEDIUM 4：统一 XSS 防护原语）
+    /// 委托到 `shared_utils::escape_html_text`（架构统一 XSS 防护原语）
     pub fn escape_html(text: &str) -> String {
         escape_html_text(text)
     }
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_clean_url_protocol_relative_not_prefixed() {
-        // 测试协议相对 URL (//) 不被添加 google 前缀
+        // 测试协议相对 URL 不被添加 google 前缀
         let url = "//example.com/path";
         assert_eq!(HtmlParser::clean_url(url), "//example.com/path");
     }
@@ -353,7 +353,7 @@ mod tests {
         assert!(escaped.contains("&lt;"), "should contain &lt;");
         assert!(escaped.contains("&gt;"), "should contain &gt;");
         assert!(escaped.contains("&amp;"), "should contain &amp;");
-        // 确保原始的 "& " (后跟空格的裸 & ) 不存在
+        // 确保原始的 "& " (后跟空格的裸 &) 不存在
         assert!(
             !escaped.contains("& "),
             "should not contain raw & followed by space"

@@ -417,7 +417,7 @@ async fn test_task_status_transitions() {
     repo.create(&task).await.expect("Failed to create task");
 
     // Test mark_completed
-    repo.mark_completed(task.id)
+    repo.mark_completed(task.id, None)
         .await
         .expect("Failed to mark task as completed");
     let completed_task = repo
@@ -437,7 +437,7 @@ async fn test_task_status_transitions() {
         .await
         .expect("Failed to create failed task");
 
-    repo.mark_failed(failed_task_id)
+    repo.mark_failed(failed_task_id, None)
         .await
         .expect("Failed to mark task as failed");
     let found_failed_task = repo
@@ -465,6 +465,171 @@ async fn test_task_status_transitions() {
         .expect("Failed to query task")
         .expect("Task not found");
     assert_eq!(found_cancelled_task.status, TaskStatus::Cancelled);
+}
+
+/// 条件回队（R-data-integrity-001）：
+/// lock_token 匹配时置回 queued 并清空认领；不匹配时返回 Ok(false) 且不动任务。
+#[tokio::test]
+async fn test_requeue_task_respects_lock_token_guard() {
+    let app = create_test_app().await;
+    let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
+    let team_id = app.team_id;
+
+    let make_task = |id: Uuid, status: TaskStatus, token: Option<Uuid>| Task {
+        id,
+        task_type: TaskType::Scrape,
+        status,
+        priority: 0,
+        team_id,
+        api_key_id: app.api_key_id,
+        url: format!("https://example.com/requeue-{}", id),
+        payload: serde_json::json!({}),
+        retry_count: 0,
+        attempt_count: 0,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: Utc::now(),
+        started_at: Some(Utc::now()),
+        completed_at: None,
+        crawl_id: None,
+        updated_at: Utc::now(),
+        lock_token: token,
+        lock_expires_at: token.map(|_| Utc::now() + chrono::Duration::minutes(5)),
+    };
+
+    // 场景 1：锁不匹配 → Ok(false)，任务保持原状
+    let mine = Uuid::new_v4();
+    let other = Uuid::new_v4();
+    let t1_id = Uuid::new_v4();
+    repo.create(&make_task(t1_id, TaskStatus::Active, Some(other)))
+        .await
+        .expect("Failed to create task");
+    let requeued = repo
+        .requeue_task(t1_id, Some(mine), None)
+        .await
+        .expect("requeue_task should not error");
+    assert!(!requeued, "lock_token mismatch must not requeue");
+    let untouched = repo
+        .find_by_id(t1_id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
+    assert_eq!(untouched.status, TaskStatus::Active);
+    assert_eq!(untouched.lock_token, Some(other));
+
+    // 场景 2：锁匹配 → Ok(true)，任务回到 queued 并清空认领
+    let requeued = repo
+        .requeue_task(t1_id, Some(other), None)
+        .await
+        .expect("requeue_task should not error");
+    assert!(requeued, "matching lock_token must requeue");
+    let requeued_task = repo
+        .find_by_id(t1_id)
+        .await
+        .expect("Failed to query task")
+        .expect("Task not found");
+    assert_eq!(requeued_task.status, TaskStatus::Queued);
+    assert_eq!(requeued_task.lock_token, None);
+    assert!(requeued_task.lock_expires_at.is_none());
+    assert!(requeued_task.started_at.is_none());
+}
+
+/// 毒丸熔断（R-data-integrity-003）：
+/// attempt_count 已达 max_retries 的僵尸任务不再被恢复重跑；
+/// 未达上限的僵尸任务恢复时 attempt_count 原子自增。
+#[tokio::test]
+async fn test_acquire_next_zombie_recovery_respects_max_retries() {
+    let app = create_test_app().await;
+    let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
+    let team_id = app.team_id;
+    let worker = Uuid::new_v4();
+
+    let make_zombie = |id: Uuid, attempt_count: i32| Task {
+        id,
+        task_type: TaskType::Scrape,
+        status: TaskStatus::Active,
+        priority: 0,
+        team_id,
+        api_key_id: app.api_key_id,
+        url: format!("https://example.com/zombie-{}", id),
+        payload: serde_json::json!({}),
+        retry_count: attempt_count,
+        attempt_count,
+        max_retries: 3,
+        scheduled_at: None,
+        expires_at: None,
+        created_at: Utc::now(),
+        started_at: Some(Utc::now() - chrono::Duration::hours(2)),
+        completed_at: None,
+        crawl_id: None,
+        updated_at: Utc::now(),
+        lock_token: Some(Uuid::new_v4()),
+        // 锁已过期（僵尸任务）
+        lock_expires_at: Some(Utc::now() - chrono::Duration::minutes(5)),
+    };
+
+    // 场景 1：attempt_count=3 >= max_retries=3 → 不恢复
+    let poison_id = Uuid::new_v4();
+    repo.create(&make_zombie(poison_id, 3))
+        .await
+        .expect("Failed to create poison task");
+
+    let acquired = repo
+        .acquire_next(worker)
+        .await
+        .expect("acquire_next should not error");
+    assert!(
+        acquired.is_none() || acquired.as_ref().unwrap().id != poison_id,
+        "poison task (attempt_count >= max_retries) must not be recovered"
+    );
+    let poison_after = repo
+        .find_by_id(poison_id)
+        .await
+        .expect("query failed")
+        .expect("task missing");
+    assert_ne!(
+        poison_after.status,
+        TaskStatus::Queued,
+        "poison task must not be requeued"
+    );
+    if poison_after.status == TaskStatus::Active {
+        assert_ne!(
+            poison_after.lock_token,
+            Some(worker),
+            "poison task must not be claimed by recovery"
+        );
+    }
+
+    // 场景 2：attempt_count=1 < max_retries=3 → 恢复且 attempt_count 自增到 2。
+    // 测试库共享，先循环取走其他用例遗留的 queued 任务，直到取到目标僵尸任务。
+    let recoverable_id = Uuid::new_v4();
+    repo.create(&make_zombie(recoverable_id, 1))
+        .await
+        .expect("Failed to create recoverable task");
+
+    let mut recovered: Option<Task> = None;
+    for _ in 0..100 {
+        let acquired = repo
+            .acquire_next(worker)
+            .await
+            .expect("acquire_next should not error");
+        match acquired {
+            Some(t) if t.id == recoverable_id => {
+                recovered = Some(t);
+                break;
+            }
+            Some(_) => continue,
+            None => panic!("recoverable zombie task should be acquired before exhaustion"),
+        }
+    }
+    let recovered = recovered.expect("recoverable zombie task should be acquired");
+    assert_eq!(recovered.status, TaskStatus::Active);
+    assert_eq!(
+        recovered.attempt_count, 2,
+        "zombie recovery must increment attempt_count"
+    );
+    assert_eq!(recovered.lock_token, Some(worker));
 }
 
 /// 测试URL存在性检查
@@ -1260,7 +1425,7 @@ async fn test_find_existing_urls_performance() {
 
 /// 验证 acquire_next 的 SET 子句与 Task::start() + Task::acquire_lock() 保持一致。
 ///
-/// 这是 HIGH-1 的回归 guard：如果 SQL 的 SET 子句与 domain 方法产生分歧，
+/// 这是的回归 guard：如果 SQL 的 SET 子句与 domain 方法产生分歧，
 /// 此测试会失败。详见 task_model.rs 的 MIRROR 注释和 task_repo_impl.rs 的 doc comment。
 ///
 /// 无论 acquire_next 拿到哪个 task，都应该满足这些字段不变量。

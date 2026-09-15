@@ -29,17 +29,48 @@ use std::time::{Duration, Instant};
 
 /// PlaywrightEngine 默认 MRT（30 秒，对应 `EngineTimeoutSettings::cdp_seconds`）。
 ///
-/// design.md §14 / T060：CDP/浏览器引擎涉及完整浏览器启动 + JS 渲染，
+/// CDP/浏览器引擎涉及完整浏览器启动 + JS 渲染，
 /// 30 秒覆盖绝大多数页面（含 network idle 等待）。生产环境应通过
 /// [`PlaywrightEngine::with_mrt`] 从 `Settings.timeouts.engines.cdp_seconds` 注入。
 const DEFAULT_PLAYWRIGHT_MRT_SECONDS: u64 = 30;
 
-/// `WaitFor::wait` 的超时上限（T069，R-jsrender-004）
+/// `WaitFor::wait` 的超时上限
 ///
 /// `Selector` / `DomStable` 模式轮询直到满足条件，需要一个上限防止无限阻塞。
 /// 取 `min(request.timeout, WAIT_TIMEOUT_CAP)` 确保不会用尽整个请求超时预算，
 /// 为后续操作（screenshot 等）留出时间。`NetworkIdle` 模式只 sleep 500ms，不受此限制。
 const WAIT_TIMEOUT_CAP: Duration = Duration::from_secs(10);
+
+/// CDP Fetch 拦截事件处理 task 的守卫。
+///
+/// 持有 `tokio::spawn` 返回的 [`tokio::task::JoinHandle`]，在守卫 drop 时 abort 该 task。
+/// scrape 的成功返回、`?` 早退、以及 `tokio::time::timeout` 超时取消（整个
+/// future 被 drop）三种退出路径都会触发守卫 drop，从而终止拦截 task，
+/// 防止其残留在归还到 TabPool 的复用页面上继续对下一请求发出
+/// Continue/FailRequest（R-engines-002）。
+struct InterceptGuard(Option<tokio::task::JoinHandle<()>>);
+
+impl InterceptGuard {
+    fn new() -> Self {
+        Self(None)
+    }
+
+    fn set(&mut self, handle: tokio::task::JoinHandle<()>) {
+        // 若已有旧 handle（理论上不会），先 abort 再替换
+        if let Some(old) = self.0.take() {
+            old.abort();
+        }
+        self.0 = Some(handle);
+    }
+}
+
+impl Drop for InterceptGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
 
 /// Playwright context for browser operations
 ///
@@ -94,7 +125,7 @@ pub struct PlaywrightBrowserManagerComponent {
     browser: Arc<Mutex<Option<Arc<Browser>>>>,
     /// 浏览器下载管理器
     download_manager: Arc<BrowserDownloadManager>,
-    /// T026 修复：CDP handler 任务的 JoinHandle，cleanup 时 abort + await 防止任务泄漏
+    /// CDP handler 任务的 JoinHandle，cleanup 时 abort + await 防止任务泄漏
     handler_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
@@ -125,7 +156,7 @@ impl BrowserManagerTrait for PlaywrightBrowserManagerComponent {
     }
 
     async fn cleanup(&self) {
-        // T026 修复：先 abort CDP handler 任务，再关闭浏览器
+        // 先 abort CDP handler 任务，再关闭浏览器
         // 取出 handle 后立即释放锁，避免 MutexGuard 跨越 await
         let handler_to_abort = {
             let mut handler_guard = self
@@ -229,7 +260,9 @@ impl PlaywrightBrowserManagerComponent {
         let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
             log::info!("Connecting to remote Chrome instance at: {}", url);
             Browser::connect(url).await.map_err(|e| {
-                EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
+                // Chrome 连接失败是可重试的基础设施错误（浏览器池可能在重启），
+                // 分类为 BrowserError 允许 fallback，而非不可重试的 Other
+                EngineError::BrowserError(format!("Failed to connect to remote Chrome: {}", e))
             })?
         } else {
             // 尝试自动下载浏览器（如果需要）
@@ -248,13 +281,12 @@ impl PlaywrightBrowserManagerComponent {
             builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
 
             if let Some(ref proxy) = proxy_url {
-                // 安全审查 H-1：严格校验 proxy URL 防止命令行参数注入
+                // 严格校验 proxy URL 防止命令行参数注入
                 //
                 // 原漏洞：`format!("--proxy-server={}", proxy)` 若 proxy 含空格或特殊字符，
                 // Chrome 可能解析为多个 argv（如 "http://x --enable-bad-flag" 被拆为
                 // `--proxy-server=http://x` + `--enable-bad-flag`）。
                 //
-                // 修复：
                 // 1. `validate_proxy_url` 严格校验 URL 格式 + scheme 白名单 + 无空白字符
                 // 2. `arg("--proxy-server").arg(validated)` 分离传递 flag 与值，
                 //    从根本上消除单字符串拼接导致的 argv 拆分风险
@@ -279,7 +311,7 @@ impl PlaywrightBrowserManagerComponent {
         };
 
         // 启动处理器任务
-        // T026 修复：存储 JoinHandle 到 manager，cleanup 时 abort + await
+        // 存储 JoinHandle 到 manager，cleanup 时 abort + await
         let handler_task = tokio::spawn(async move {
             while let Some(h) = handler.next().await {
                 if let Err(e) = h {
@@ -362,9 +394,9 @@ pub async fn check_browser_health(browser: &Browser) -> bool {
 pub struct PlaywrightEngine {
     /// 浏览器池（可选，用于实例复用）
     pool: Option<BrowserPool>,
-    /// UA 池（R-identity-001）：每次请求从池中选取一致的 UA + viewport
+    /// UA 池每次请求从池中选取一致的 UA + viewport
     ua_pool: UaPool,
-    /// 单引擎最大响应时间（MRT，design.md §14 / T060）。
+    /// 单引擎最大响应时间（MRT）。
     ///
     /// router 顺序 fallback 路径用 `min(remaining, mrt)` 包裹单引擎调用，
     /// 超 MRT 即切下一引擎。注入自 `Settings.timeouts.engines.cdp_seconds`（默认 30 秒）。
@@ -377,7 +409,7 @@ impl PlaywrightEngine {
         Self::with_mrt(Duration::from_secs(DEFAULT_PLAYWRIGHT_MRT_SECONDS))
     }
 
-    /// 创建带 MRT 配置的 Playwright 引擎（T060/T061）。
+    /// 创建带 MRT 配置的 Playwright 引擎。
     ///
     /// 生产环境应从 `settings.timeouts.engines.cdp_seconds` 注入 `mrt`。
     #[must_use]
@@ -394,7 +426,7 @@ impl PlaywrightEngine {
         Self::with_pool_and_mrt(pool, Duration::from_secs(DEFAULT_PLAYWRIGHT_MRT_SECONDS))
     }
 
-    /// 创建带有自定义浏览器池 + MRT 配置的 Playwright 引擎（T060/T061）。
+    /// 创建带有自定义浏览器池 + MRT 配置的 Playwright 引擎。
     ///
     /// 生产环境应从 `settings.timeouts.engines.cdp_seconds` 注入 `mrt`。
     #[must_use]
@@ -406,13 +438,13 @@ impl PlaywrightEngine {
         }
     }
 
-    /// 获取 UA 池引用（用于测试验证 R-identity-001）
+    /// 获取 UA 池引用（用于测试验证）
     #[must_use]
     pub fn ua_pool(&self) -> &UaPool {
         &self.ua_pool
     }
 
-    /// 获取引擎级 MRT（用于测试验证 T060）。
+    /// 获取引擎级 MRT（用于测试验证）。
     ///
     /// 返回构造时注入的 `mrt`（默认 30 秒，对应 `cdp_seconds`）。
     #[must_use]
@@ -486,7 +518,7 @@ impl ScraperEngine for PlaywrightEngine {
 
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
-            // T068 / R-jsrender-004：从池中获取 Browser + Page
+            // 从池中获取 Browser + Page
             // Page 优先从 TabPool 复用（LIFO），池空时调用 browser.new_page
             let pooled_page = pool.acquire_page().await?;
             // Page 是 Arc-based，clone 廉价；pooled_page 持有原始 Page 用于归还
@@ -497,7 +529,7 @@ impl ScraperEngine for PlaywrightEngine {
             // Browser 也在 pooled_page drop 时归还到 BrowserPool。
             // 错误路径下 Page 可能不可用，TabPool::release 会 drop 它（关闭 tab）。
 
-            // R-identity-001: 从 UaPool 取一致的 UA + viewport profile
+            // 从 UaPool 取一致的 UA + viewport profile
             // 替换原固定移动 UA 分支；mobile 和 desktop 都从池中取 profile
             let profile = self.ua_pool.pick(request.mobile);
 
@@ -506,7 +538,7 @@ impl ScraperEngine for PlaywrightEngine {
                 .await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
-            // Set viewport to match UA platform（R-identity-001: viewport 与 UA 一致）
+            // Set viewport to match UA platform（viewport 与 UA 一致）
             // 用 CDP Emulation.setDeviceMetricsOverride 设置视口尺寸 + mobile 标志
             let viewport_params = SetDeviceMetricsOverrideParams::new(
                 profile.viewport.0 as i64,
@@ -527,7 +559,7 @@ impl ScraperEngine for PlaywrightEngine {
                 log::warn!("Custom headers are currently partially supported in PlaywrightEngine due to API constraints");
             }
 
-            // T032 / R-jsrender-002：导航前注入 stealth 脚本（best-effort）
+            // 导航前注入 stealth 脚本（best-effort）
             // 覆盖 navigator.webdriver 等反爬指纹属性，必须在页面脚本执行前生效
             let stealth_injector = crate::engines::js_inject::JsInjector::stealth();
             if let Err(e) = stealth_injector
@@ -537,7 +569,12 @@ impl ScraperEngine for PlaywrightEngine {
                 log::warn!("Stealth injection failed (best-effort, continue): {}", e);
             }
 
-            // T033 / R-jsrender-003：请求拦截（广告/追踪域名 + 媒体资源）
+            // 拦截事件处理 task 的守卫：声明在 if 块外的 async 作用域，覆盖整个
+            // 导航→返回生命周期。无论 scrape 以成功返回、`?` 早退、还是 timeout
+            // 取消（整个 future 被 drop）退出，守卫 drop 时都会 abort 拦截 task。
+            let mut intercept_guard = InterceptGuard::new();
+
+            // 请求拦截（广告/追踪域名 + 媒体资源）
             // 仅当 block_ads 或 block_media 任一启用时激活 CDP Fetch domain 拦截。
             // 启用后所有请求被暂停，必须由事件处理 task 及时 continue/fail，
             // 否则请求会挂起直至超时。task 在 page 关闭后事件流结束自动退出。
@@ -576,9 +613,9 @@ impl ScraperEngine for PlaywrightEngine {
                 // 命中黑名单/媒体 → FailRequest(BlockedByClient) + 计数
                 // 否则 → ContinueRequest（放行）
                 //
-                // H-3 重构：CDP `ResourceType` 在边界处通过 `ResourceKind::from` 转换为领域
+                // CDP `ResourceType` 在边界处通过 `ResourceKind::from` 转换为领域
                 // `ResourceKind`，避免 InterceptController 依赖具体 CDP 实现。
-                tokio::spawn(async move {
+                let intercept_handle = tokio::spawn(async move {
                     while let Some(event) = events.next().await {
                         let url = event.request.url.clone();
                         let kind = ResourceKind::from(event.resource_type.clone());
@@ -599,6 +636,9 @@ impl ScraperEngine for PlaywrightEngine {
                         }
                     }
                 });
+                // 保存 JoinHandle 到守卫：scrape 退出（成功/错误/超时）时 abort，
+                // 防止拦截 task 残留在归还池的复用页面上（R-engines-002）。
+                intercept_guard.set(intercept_handle);
             }
 
             // Navigate and wait for load
@@ -606,8 +646,8 @@ impl ScraperEngine for PlaywrightEngine {
             page.goto(&request.url).await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
-            // T032 / R-jsrender-002：页面加载后注入 cleanup 脚本（best-effort）
-            // 顺序：consent_popups → overlay_elements → flatten_shadow_dom（design.md §6）
+            // 页面加载后注入 cleanup 脚本（best-effort）
+            // 顺序：consent_popups → overlay_elements → flatten_shadow_dom
             let cleanup_injector = crate::engines::js_inject::JsInjector::cleanup();
             if let Err(e) = cleanup_injector
                 .apply(&page, crate::engines::js_inject::InjectPhase::AfterLoad)
@@ -685,7 +725,7 @@ impl ScraperEngine for PlaywrightEngine {
                 }
             }
 
-            // T069 / R-jsrender-004：页面加载后等待策略（替代原 sync_wait_ms 固定 sleep）
+            // 页面加载后等待策略（替代原 sync_wait_ms 固定 sleep）
             //
             // `request.wait_for` 由调用方通过 `ScrapeOptions.wait_for` 设置；
             // `None` 时使用 `WaitFor::NetworkIdle`（与原默认等待语义一致，sleep 500ms）。
@@ -697,7 +737,7 @@ impl ScraperEngine for PlaywrightEngine {
             wait_strategy.wait(&page, wait_timeout).await?;
 
             // Get final URL after navigation (handles redirects)
-            let _final_url: String = page
+            let final_url: String = page
                 .url()
                 .await
                 .ok()
@@ -783,7 +823,7 @@ impl ScraperEngine for PlaywrightEngine {
                 screenshot = Some(BASE64.encode(screenshot_bytes));
             }
 
-            // T068：不调用 page.close()，让 pooled_page drop 时归还 Page 到 TabPool
+            // 不调用 page.close()，让 pooled_page drop 时归还 Page 到 TabPool
             // （TabPool::release 会导航到 about:blank 清理状态后压栈复用）
             // Browser 也在 pooled_page drop 时归还到 BrowserPool
             drop(pooled_page);
@@ -795,6 +835,8 @@ impl ScraperEngine for PlaywrightEngine {
                 content_type: "text/html".to_string(),
                 headers: response_headers,
                 response_time_ms: start.elapsed().as_millis() as u64,
+                // 传递页面导航后的最终 URL（不再丢弃），修复 final_url 全链路失效
+                final_url: Some(final_url),
             })
         })
             .await
@@ -835,7 +877,7 @@ impl ScraperEngine for PlaywrightEngine {
         false
     }
 
-    /// T060：覆写 MRT，返回构造时注入的 `mrt`（默认 30 秒）。
+    /// 覆写 MRT，返回构造时注入的 `mrt`（默认 30 秒）。
     ///
     /// router 顺序 fallback 路径用 `min(remaining, self.mrt)` 包裹单引擎调用，
     /// 超 MRT 即切下一引擎（瀑布式）。
@@ -931,7 +973,7 @@ mod tests {
         assert_eq!(engine.support_score(&request_basic), 10);
     }
 
-    // === T022 / R-identity-001: UaPool 集成测试 ===
+    // === UaPool 集成测试 ===
 
     #[test]
     fn test_playwright_engine_has_non_empty_ua_pool() {
@@ -965,7 +1007,7 @@ mod tests {
 
     #[test]
     fn test_playwright_engine_pick_ua_returns_varied_profiles() {
-        // R-identity-001: 多次选取应返回不同 UA（随机性）
+        // 多次选取应返回不同 UA（随机性）
         let engine = PlaywrightEngine::new();
         let pool = engine.ua_pool();
         let mut uas = std::collections::HashSet::new();
@@ -981,7 +1023,7 @@ mod tests {
 
     #[test]
     fn test_playwright_engine_viewport_matches_platform() {
-        // R-identity-001: viewport 与 UA platform 必须一致
+        // viewport 与 UA platform 必须一致
         // - iOS platform → viewport 宽度 ∈ [375, 1366]（iPhone/iPad 范围）
         // - Android platform → viewport 宽度 ∈ [360, 1280]
         // - Windows/macOS/Linux → viewport 宽度 >= 1024
@@ -1022,7 +1064,7 @@ mod tests {
 
     #[test]
     fn test_playwright_engine_ua_not_fixed_mobile_string() {
-        // R-identity-001: 引擎的 mobile UA pool 应包含多个 UA
+        // 引擎的 mobile UA pool 应包含多个 UA
         // 不应全部等于原固定 mobile UA 字符串
         let engine = PlaywrightEngine::new();
         let pool = engine.ua_pool();
@@ -1061,7 +1103,7 @@ mod tests {
 
     #[test]
     fn test_playwright_engine_pick_seeded_stable() {
-        // R-identity-001: 同 seed 必须稳定返回同一 profile
+        // 同 seed 必须稳定返回同一 profile
         let engine = PlaywrightEngine::new();
         let pool = engine.ua_pool();
         let p1 = pool.pick_seeded(42, true);

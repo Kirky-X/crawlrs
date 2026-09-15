@@ -10,10 +10,11 @@ use crate::engines::engine_client::{
 };
 use crate::engines::provider::{ProxyCategory, ProxyProvider};
 use crate::engines::validators;
+use crate::utils::http_client::{read_body_limited, BodyReadError};
 use crate::utils::proxy::redact_proxy_url;
 use crate::utils::ua_pool::UaPool;
 use async_trait::async_trait;
-use log::error;
+use log::{error, warn};
 use lru::LruCache;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::num::NonZeroUsize;
@@ -28,16 +29,22 @@ const DEFAULT_PROXY_STRATEGY: ProxyStrategy = ProxyStrategy::RoundRobin;
 
 /// ReqwestEngine 默认 MRT（5 秒，对应 `EngineTimeoutSettings::fetch_seconds`）。
 ///
-/// design.md §14 / T060：HTTP fetch 引擎比浏览器引擎快，5 秒已足够覆盖正常请求；
+/// HTTP fetch 引擎比浏览器引擎快，5 秒已足够覆盖正常请求；
 /// 超时即切下一引擎（瀑布式）。生产环境应通过 [`ReqwestEngine::new_with_mrt`] 等
 /// 构造函数从 `Settings.timeouts.engines.fetch_seconds` 注入，避免硬编码。
 const DEFAULT_REQWEST_MRT_SECONDS: u64 = 5;
+
+/// 响应体大小上限（10MB，R-engines-005）。
+///
+/// 超过此大小的响应被拒绝，防止超大/恶意页面导致 OOM。依据：绝大多数正常网页
+/// 正文 < 5MB，10MB 留足富余（含内联资源的大型页面）同时阻断异常超大响应。
+const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 /// 抓取引擎
 ///
 /// 基于reqwest实现的基本HTTP抓取引擎
 ///
-/// 代理来源（T056/R-identity-003 + H1/H2/H3 修复）：
+/// 代理来源：
 /// - **请求级代理**（`request.proxy`）：覆盖池，调用方指定特定代理
 /// - **代理提供者**（`proxy_provider`）：按 `ProxyStrategy` 决定调度策略
 ///   - `RoundRobin`：`ProxyProvider::next(ProxyCategory::Html)`
@@ -46,23 +53,23 @@ const DEFAULT_REQWEST_MRT_SECONDS: u64 = 5;
 pub struct ReqwestEngine {
     /// HTTP 客户端（通过依赖注入，支持连接复用）
     http_client: Arc<reqwest::Client>,
-    /// 代理提供者（H2 修复：依赖抽象 `ProxyProvider` trait，而非具体 `ProxyPool`）
+    /// 代理提供者（依赖抽象 `ProxyProvider` trait，而非具体 `ProxyPool`）
     ///
     /// `None` 时不使用代理；`Some` 时按 `proxy_strategy` 调度策略取代理。
     proxy_provider: Option<Arc<dyn ProxyProvider>>,
-    /// 代理调度策略（H1 修复：用于在 `next` / `sticky` 之间路由）
+    /// 代理调度策略（用于在 `next` / `sticky` 之间路由）
     proxy_strategy: ProxyStrategy,
     /// 引擎级请求超时（秒），用于 build_custom_client 构造临时 client（proxy/skip_tls 路径）
-    /// 注入自 Settings.timeouts.engines.default_timeout_seconds（架构 MEDIUM：避免硬编码 30 秒）
+    /// 注入自 Settings.timeouts.engines.default_timeout_seconds（MEDIUM：避免硬编码 30 秒）
     timeout_seconds: u64,
-    /// 单引擎最大响应时间（MRT，design.md §14 / T060）。
+    /// 单引擎最大响应时间（MRT）。
     ///
     /// router 顺序 fallback 路径用 `min(remaining, mrt)` 包裹单引擎调用，
     /// 超 MRT 即切下一引擎。注入自 `Settings.timeouts.engines.fetch_seconds`（默认 5 秒）。
     mrt: Duration,
-    /// UA 池（R-identity-001）：每次请求从池中选取一致的 UA + Accept-Language + sec-ch-ua
+    /// UA 池每次请求从池中选取一致的 UA + Accept-Language + sec-ch-ua
     ua_pool: UaPool,
-    /// 代理 client 缓存（性能审查 HIGH-1 修复）
+    /// 代理 client 缓存
     ///
     /// 按 `proxy_url` 缓存已构建的 `reqwest::Client`，避免每次请求都重建 client
     /// 导致连接池丢失。`reqwest::Client::clone()` 内部 Arc 共享，克隆开销极低。
@@ -91,7 +98,7 @@ impl ReqwestEngine {
     /// 创建带超时配置的 ReqwestEngine 实例（无代理提供者）
     ///
     /// 生产环境调用点应从 `settings.timeouts.engines.default_timeout_seconds` 注入超时，
-    /// 避免硬编码 30 秒（架构 MEDIUM 2）。
+    /// 避免硬编码 30 秒（架构）。
     pub fn new_with_timeout(http_client: Arc<reqwest::Client>, timeout_seconds: u64) -> Self {
         Self::new_with_timeout_and_mrt(
             http_client,
@@ -100,7 +107,7 @@ impl ReqwestEngine {
         )
     }
 
-    /// 创建带超时 + MRT 配置的 ReqwestEngine 实例（无代理提供者，T060/T061）。
+    /// 创建带超时 + MRT 配置的 ReqwestEngine 实例（无代理提供者）。
     ///
     /// 生产环境应从：
     /// - `settings.timeouts.engines.default_timeout_seconds` 注入 `timeout_seconds`
@@ -124,7 +131,7 @@ impl ReqwestEngine {
         }
     }
 
-    /// 创建带代理提供者配置的 ReqwestEngine 实例（H2 修复：依赖 `ProxyProvider` trait）
+    /// 创建带代理提供者配置的 ReqwestEngine 实例（依赖 `ProxyProvider` trait）
     ///
     /// 默认使用 `ProxyStrategy::RoundRobin`。如需 sticky，请使用 [`Self::with_provider_and_strategy`]。
     /// 使用 DEFAULT_TIMEOUT_SECONDS（30 秒）作为引擎级超时。
@@ -141,13 +148,13 @@ impl ReqwestEngine {
         )
     }
 
-    /// 创建带代理提供者 + 策略 + 超时配置的 ReqwestEngine 实例（H1/H2 修复）
+    /// 创建带代理提供者 + 策略 + 超时配置的 ReqwestEngine 实例
     ///
     /// 生产环境调用点应从：
     /// - `settings.proxy.strategy` 注入 `proxy_strategy`
     /// - `settings.timeouts.engines.default_timeout_seconds` 注入超时
     ///
-    /// 避免硬编码（架构 MEDIUM 2）。
+    /// 避免硬编码（架构）。
     #[must_use]
     pub fn with_provider_strategy_and_timeout(
         http_client: Arc<reqwest::Client>,
@@ -164,7 +171,7 @@ impl ReqwestEngine {
         )
     }
 
-    /// 创建带代理提供者 + 策略 + 超时 + MRT 配置的 ReqwestEngine 实例（T060/T061）。
+    /// 创建带代理提供者 + 策略 + 超时 + MRT 配置的 ReqwestEngine 实例。
     ///
     /// 生产环境调用点应从：
     /// - `settings.proxy.strategy` 注入 `proxy_strategy`
@@ -191,7 +198,7 @@ impl ReqwestEngine {
         }
     }
 
-    /// 获取 UA 池引用（用于测试验证 R-identity-001）
+    /// 获取 UA 池引用（用于测试验证）
     #[must_use]
     pub fn ua_pool(&self) -> &UaPool {
         &self.ua_pool
@@ -209,7 +216,7 @@ impl ReqwestEngine {
         self.proxy_strategy
     }
 
-    /// 获取引擎级 MRT（用于测试验证 T060）。
+    /// 获取引擎级 MRT（用于测试验证）。
     ///
     /// 返回构造时注入的 `mrt`（默认 5 秒，对应 `fetch_seconds`）。
     #[must_use]
@@ -219,7 +226,7 @@ impl ReqwestEngine {
 
     /// 构建自定义 reqwest::Client（统一处理 proxy + skip_tls）
     ///
-    /// 与 init_http_client 保持一致：强制 IPv4 + dns_resolver（架构 HIGH：代理分支缺 dns_resolver）。
+    /// 与 init_http_client 保持一致：强制 IPv4 + dns_resolver（HIGH：代理分支缺 dns_resolver）。
     /// - `proxy_url`: 可选代理 URL（None 或空字符串表示不使用代理）
     /// - `skip_tls`: true 时启用 `danger_accept_invalid_certs(true)`（仅开发环境，生产环境由
     ///   `ScrapeOptions::builder().skip_tls_verification(true)` 在 APP_ENVIRONMENT=production 时拒绝）
@@ -230,9 +237,9 @@ impl ReqwestEngine {
     ///
     /// `(reqwest::Client, bool)` —— 第二个 bool 是 `is_fallback`：
     /// - `false`：client 构建成功
-    /// - `true`：构建失败，已回退到 `fallback`（M4 修复：失败显性化，规则12）
+    /// - `true`：构建失败，已回退到 `fallback`（失败显性化）
     ///
-    /// M4 修复：失败时日志从 `warn` 升级为 `error`，并返回 `is_fallback=true` 标志
+    /// 失败时日志从 `warn` 升级为 `error`，并返回 `is_fallback=true` 标志
     /// 让调用方感知失败（不藏默认值背后）。
     fn build_custom_client(
         proxy_url: Option<&str>,
@@ -246,7 +253,10 @@ impl ReqwestEngine {
             .timeout(Duration::from_secs(timeout_seconds))
             .cookie_store(true)
             .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
-            .dns_resolver(crate::infrastructure::dns::create_ipv4_only_resolver());
+            .dns_resolver(crate::infrastructure::dns::create_ipv4_only_resolver())
+            .redirect(crate::utils::http_client::create_ssrf_safe_redirect_policy(
+                5,
+            ));
 
         if skip_tls {
             builder = builder.danger_accept_invalid_certs(true);
@@ -260,7 +270,7 @@ impl ReqwestEngine {
                     Ok(proxy) => match builder.proxy(proxy).build() {
                         Ok(client) => {
                             // 安全：代理 URL 可能含 user:pass@host 凭据，日志输出必须脱敏
-                            // （CWE-532 防护，T056 安全审查 CRITICAL-1 修复）
+                            // CWE-532 防护
                             log::debug!(
                                 "Using HTTP proxy: {} (skip_tls={}, timeout={}s)",
                                 redact_proxy_url(url),
@@ -270,7 +280,7 @@ impl ReqwestEngine {
                             (client, false)
                         }
                         Err(e) => {
-                            // M4 修复：warn → error（规则12：失败必须显性化）
+                            // warn → error（失败必须显性化）
                             // 安全：url 脱敏后输出（CWE-532 防护）
                             error!(
                             "Failed to build proxy client (url={}, skip_tls={}, timeout={}s): {}, \
@@ -281,7 +291,7 @@ impl ReqwestEngine {
                         }
                     },
                     Err(e) => {
-                        // M4 修复：warn → error
+                        // warn → error
                         // 安全：url 脱敏后输出（CWE-532 防护）
                         error!(
                         "Failed to configure HTTP proxy (url={}): {}, falling back to injected http_client",
@@ -302,7 +312,7 @@ impl ReqwestEngine {
                     (client, false)
                 }
                 Err(e) => {
-                    // M4 修复：warn → error
+                    // warn → error
                     error!(
                         "Failed to build client (skip_tls={}, timeout={}s): {}, \
                          falling back to injected http_client",
@@ -314,9 +324,9 @@ impl ReqwestEngine {
         }
     }
 
-    /// 获取 HTTP 客户端句柄（H3 修复：返回 `ClientHandle`，封装代理 URL 状态回填）
+    /// 获取 HTTP 客户端句柄（返回 `ClientHandle`，封装代理 URL 状态回填）
     ///
-    /// 代理优先级（design.md §12，T056 + H1/H2/H3 修复）：
+    /// 代理优先级：
     /// 1. **请求级代理**（`request.proxy`）：覆盖提供者
     /// 2. **代理提供者**（`proxy_provider`）：按 `proxy_strategy` 调度
     ///    - `RoundRobin` → `ProxyProvider::next(ProxyCategory::Html)`
@@ -327,8 +337,8 @@ impl ReqwestEngine {
     /// `skip_tls_verification=true` 时必须构建临时 client（无法覆盖已有 client 的 TLS 设置），
     /// 并输出 warn 日志（安全审计需要 — TLS 验证被显式跳过）。
     ///
-    /// L2 修复：用 early return 拍平原 3 层嵌套（provider → match → if let）。
-    /// M4 修复：`build_custom_client` 返回 `(client, is_fallback)` 元组，传递给 `ClientHandle::new`。
+    /// 用 early return 拍平原 3 层嵌套（provider → match → if let）。
+    /// `build_custom_client` 返回 `(client, is_fallback)` 元组，传递给 `ClientHandle::new`。
     fn get_client(
         &self,
         proxy: &Option<String>,
@@ -370,7 +380,7 @@ impl ReqwestEngine {
         }
 
         // 从代理提供者按策略调度（H1：按 ProxyStrategy 路由 next / sticky）
-        // L2 修复：用 early return 拍平嵌套，避免 provider → match → if let 三层
+        // 用 early return 拍平嵌套，避免 provider → match → if let 三层
         let Some(provider) = &self.proxy_provider else {
             // 无代理提供者 → 直接使用注入的 http_client
             return ClientHandle::new(self.http_client.as_ref().clone(), None, false);
@@ -400,7 +410,7 @@ impl ReqwestEngine {
             return ClientHandle::new(self.http_client.as_ref().clone(), None, false);
         };
 
-        // 性能审查 HIGH-1 修复：proxy_provider 路径缓存 reqwest::Client
+        // proxy_provider 路径缓存 reqwest::Client
         //
         // 原实现每次请求都 build_custom_client，导致：
         // - 每次请求都新建 reqwest::Client（含 cookie store + dns resolver + TLS context）
@@ -476,7 +486,7 @@ impl ScraperEngine for ReqwestEngine {
             return Err(EngineError::Other("SSRF: no resolved IPs".to_string()));
         }
         let need_tls_bypass = request.skip_tls_verification;
-        let handle = self.get_client(
+        let mut handle = self.get_client(
             &request.proxy,
             request.skip_tls_verification,
             request.session_id.as_deref(),
@@ -491,13 +501,25 @@ impl ScraperEngine for ReqwestEngine {
                 .cookie_store(true)
                 .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
                 .dns_resolver(crate::infrastructure::dns::create_ipv4_only_resolver())
-                .resolve_to_addrs(&host, &resolve_addrs);
+                .resolve_to_addrs(&host, &resolve_addrs)
+                .redirect(crate::utils::http_client::create_ssrf_safe_redirect_policy(
+                    5,
+                ));
             if need_tls_bypass {
                 b = b.danger_accept_invalid_certs(true);
             }
-            if let Some(p) = &handle.used_proxy_url {
-                if let Ok(px) = reqwest::Proxy::http(p) {
-                    b = b.proxy(px);
+            if let Some(proxy_url) = handle.used_proxy_url.take() {
+                match reqwest::Proxy::http(&proxy_url) {
+                    Ok(px) => b = b.proxy(px),
+                    Err(e) => {
+                        // 静默裸连（CWE-436）会让请求绕过代理出口且
+                        // used_proxy_url 仍谎报走代理——这里显式清除并告警
+                        error!(
+                            "Failed to parse proxy URL for SSRF resolve client; \
+                             request will NOT use the proxy: {}; proxy_url={}",
+                            e, proxy_url
+                        );
+                    }
                 }
             }
             b.build().map_err(|e| {
@@ -510,11 +532,21 @@ impl ScraperEngine for ReqwestEngine {
                     let mut b = reqwest::Client::builder()
                         .timeout(Duration::from_secs(self.timeout_seconds))
                         .cookie_store(true)
+                        .redirect(crate::utils::http_client::create_ssrf_safe_redirect_policy(
+                            5,
+                        ))
                         .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
                         .danger_accept_invalid_certs(true);
-                    if let Some(p) = &handle.used_proxy_url {
-                        if let Ok(px) = reqwest::Proxy::http(p) {
-                            b = b.proxy(px);
+                    if let Some(proxy_url) = handle.used_proxy_url.take() {
+                        match reqwest::Proxy::http(&proxy_url) {
+                            Ok(px) => b = b.proxy(px),
+                            Err(e) => {
+                                error!(
+                                    "Failed to parse proxy URL for temp TLS-bypass client; \
+                                     request will NOT use the proxy: {}; proxy_url={}",
+                                    e, proxy_url
+                                );
+                            }
                         }
                     }
                     Some(b.build().map_err(|e| {
@@ -538,7 +570,7 @@ impl ScraperEngine for ReqwestEngine {
             }
         }
 
-        // R-identity-001: 从 UaPool 取一致的 UA + Accept-Language + sec-ch-ua profile
+        // 从 UaPool 取一致的 UA + Accept-Language + sec-ch-ua profile
         // 替换原固定 DEFAULT_USER_AGENT / 固定移动 UA 分支；
         // DEFAULT_USER_AGENT 仍保留在 http_client.rs 作为 client 级默认（UaPool 不可用时的回退）
         let profile = self.ua_pool.pick(request.mobile);
@@ -640,10 +672,23 @@ impl ScraperEngine for ReqwestEngine {
             }
         }
 
-        let content = response
-            .text()
+        // 响应体大小上限（R-engines-005）：content_length 预检 + bytes_stream 累积读取，
+        // 超限返回 EngineError 并 warn!，替代无界 `.text()`（防止超大响应 OOM）。
+        let content = read_body_limited(response, MAX_RESPONSE_BODY_BYTES)
             .await
-            .map_err(|e| EngineError::RequestFailed(e.to_string()))?;
+            .map_err(|e| match e {
+                BodyReadError::LimitExceeded { max_bytes } => {
+                    warn!(
+                        "Response body from {} exceeds {} byte limit, rejecting",
+                        request.url, max_bytes
+                    );
+                    EngineError::RequestFailed(format!(
+                        "response body exceeds {} byte limit",
+                        max_bytes
+                    ))
+                }
+                BodyReadError::Network(e) => EngineError::RequestFailed(e.to_string()),
+            })?;
 
         // 同步等待
         if request.sync_wait_ms > 0 {
@@ -657,6 +702,7 @@ impl ScraperEngine for ReqwestEngine {
             content_type,
             headers: response_headers,
             response_time_ms: start.elapsed().as_millis() as u64,
+            final_url: None,
         })
     }
 
@@ -673,7 +719,7 @@ impl ScraperEngine for ReqwestEngine {
         if request.needs_js || request.needs_screenshot {
             return 10; // Low priority for unsupported features
         }
-        // Phase 1 / D4：needs_tls_fingerprint 请求应由专用 TLS 指纹引擎（WreqEngine）处理，
+        // needs_tls_fingerprint 请求应由专用 TLS 指纹引擎（WreqEngine）处理，
         // reqwest（rustls 后端）无法伪装 JA4 指纹，返回 10（低分），让 router 优先选 WreqEngine。
         if request.needs_tls_fingerprint {
             return 10;
@@ -690,7 +736,7 @@ impl ScraperEngine for ReqwestEngine {
         "reqwest"
     }
 
-    /// T060：覆写 MRT，返回构造时注入的 `mrt`（默认 5 秒）。
+    /// 覆写 MRT，返回构造时注入的 `mrt`（默认 5 秒）。
     ///
     /// router 顺序 fallback 路径用 `min(remaining, self.mrt)` 包裹单引擎调用，
     /// 超 MRT 即切下一引擎（瀑布式）。
@@ -995,7 +1041,7 @@ mod tests {
         assert_eq!(engine.support_score(&request), 100);
     }
 
-    // === support_score: needs_tls_fingerprint (Phase 1 / D4, T013-T014) ===
+    // === support_score: needs_tls_fingerprint (D4 -) ===
 
     #[test]
     fn test_support_score_needs_tls_fingerprint_returns_low() {
@@ -1217,7 +1263,7 @@ mod tests {
             "no proxy + no provider → used_proxy_url must be None"
         );
         assert!(!handle.has_proxy());
-        // M4 修复：无代理路径非 fallback
+        // 无代理路径非 fallback
         assert!(!handle.is_fallback(), "no proxy path must not be fallback");
     }
 
@@ -1238,7 +1284,7 @@ mod tests {
             "request-level proxy must be returned as used_proxy_url"
         );
         assert!(handle.has_proxy());
-        // M4 修复：有效代理路径非 fallback
+        // 有效代理路径非 fallback
         assert!(
             !handle.is_fallback(),
             "valid proxy path must not be fallback"
@@ -1255,7 +1301,7 @@ mod tests {
         let handle = engine.get_client(&Some("://invalid".to_string()), false, None);
         // "://invalid" trim 后非空 → 视为请求级代理，used_proxy_url = Some("://invalid")
         assert_eq!(handle.used_proxy_url(), Some("://invalid"));
-        // M4 修复：无效代理 → build_custom_client 失败 → is_fallback=true
+        // 无效代理 → build_custom_client 失败 → is_fallback=true
         assert!(
             handle.is_fallback(),
             "invalid proxy must set is_fallback=true (M4: 失败显性化)"
@@ -1520,7 +1566,7 @@ mod tests {
         assert_eq!(handle.used_proxy_url(), Some("http://proxy:8080"));
     }
 
-    // === timeout 注入测试（架构 MEDIUM 2） ===
+    // === timeout 注入测试（架构） ===
 
     #[test]
     fn test_new_with_timeout_sets_timeout_seconds() {
@@ -1583,7 +1629,7 @@ mod tests {
         let _ = engine.get_client(&Some("http://proxy:8080".to_string()), true, None);
     }
 
-    // === T021 / R-identity-001: UaPool 集成测试 ===
+    // === UaPool 集成测试 ===
 
     #[test]
     fn test_reqwest_engine_has_non_empty_ua_pool() {
@@ -1602,7 +1648,7 @@ mod tests {
 
     #[test]
     fn test_reqwest_engine_pick_ua_returns_varied_profiles() {
-        // R-identity-001: 多次选取应返回不同 UA（随机性，避免固定 UA 被反爬识别）
+        // 多次选取应返回不同 UA（随机性，避免固定 UA 被反爬识别）
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         let pool = engine.ua_pool();
@@ -1636,7 +1682,7 @@ mod tests {
 
     #[test]
     fn test_reqwest_engine_pick_seeded_is_stable() {
-        // R-identity-001: 同 seed 必须稳定返回同一 profile（重试时轮换 UA 的基础）
+        // 同 seed 必须稳定返回同一 profile（重试时轮换 UA 的基础）
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);
         let pool = engine.ua_pool();
@@ -1653,7 +1699,7 @@ mod tests {
 
     #[test]
     fn test_reqwest_engine_ua_profile_header_consistency() {
-        // R-identity-001: profile 的 UA / Accept-Language / sec-ch-ua 必须一致绑定
+        // profile 的 UA / Accept-Language / sec-ch-ua 必须一致绑定
         // - Chromium-based UA → sec-ch-ua 非空
         // - Firefox/Safari UA → sec-ch-ua 为空
         // - Accept-Language 永远非空
@@ -1688,7 +1734,7 @@ mod tests {
 
     #[test]
     fn test_reqwest_engine_ua_not_default_user_agent() {
-        // R-identity-001: 引擎的 UA pool 应包含多个 UA，不全部等于 DEFAULT_USER_AGENT
+        // 引擎的 UA pool 应包含多个 UA，不全部等于 DEFAULT_USER_AGENT
         // （验证确实替换了固定 UA）
         let client = create_test_client();
         let engine = ReqwestEngine::new(client);

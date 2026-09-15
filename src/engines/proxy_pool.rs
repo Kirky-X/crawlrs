@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 代理轮换池（design.md §12，T054/R-identity-003）
+//! 代理轮换池
 //!
 //! 提供代理轮换池：RoundRobin + 粘性会话 + 健康检查冷却。
 //! 支持 `ProxyCategory` 路由（HTML/Media 走不同子池）。
@@ -30,7 +30,7 @@ use dashmap::DashMap;
 use crate::engines::provider::{ProxyCategory, ProxyProvider};
 use crate::utils::proxy::redact_proxy_url;
 
-/// 粘性会话绑定表最大容量（T056 安全审查 LOW-1 修复）
+/// 粘性会话绑定表最大容量
 ///
 /// 防止恶意或异常数量的 session_id 耗尽内存。session_id 本身已有长度上限
 /// （[`crate::engines::engine_client::MAX_SESSION_ID_LEN`] = 128 字节），
@@ -47,7 +47,6 @@ const MAX_STICKY_BINDINGS: usize = 10_000;
 ///
 /// 注意：不派生 `#[derive(Debug)]`，手动实现 Debug 对 `url` 脱敏，
 /// 防止 `format!("{:?}", entry)` 泄露 `user:pass@host` 凭据（CWE-532 防护，
-/// T056 安全审查 MEDIUM-1 修复）。
 pub struct ProxyEntry {
     /// 代理 URL（含 userinfo，仅内部使用；日志输出必须脱敏）
     pub url: String,
@@ -132,7 +131,7 @@ pub struct ProxyPool {
     sticky_ttl: Duration,
     /// 失败默认冷却时长
     default_cooldown: Duration,
-    /// 粘性会话绑定表最大容量（T056 安全审查 LOW-1 修复）
+    /// 粘性会话绑定表最大容量
     ///
     /// 超限时清理过期绑定；仍超限则拒绝新绑定（降级：返回代理 URL 但不绑定）。
     /// 默认 [`MAX_STICKY_BINDINGS`]，可通过 [`Self::with_sticky_max_capacity`] 调整。
@@ -156,7 +155,7 @@ impl ProxyPool {
     /// sticky 表容量上限默认为 [`MAX_STICKY_BINDINGS`]，可通过
     /// [`with_sticky_max_capacity`](Self::with_sticky_max_capacity) 调整。
     ///
-    /// 性能审查 MEDIUM-2 修复：sticky 表预分配容量，避免高并发下大量 session_id
+    /// sticky 表预分配容量，避免高并发下大量 session_id
     /// 触发 DashMap 反复 rehash（默认 [`MAX_STICKY_BINDINGS`] = 10_000）。
     #[must_use]
     pub fn new(entries: Vec<ProxyEntry>, sticky_ttl: Duration, default_cooldown: Duration) -> Self {
@@ -174,7 +173,7 @@ impl ProxyPool {
         }
     }
 
-    /// 设置 sticky 表最大容量（T056 安全审查 LOW-1 修复）
+    /// 设置 sticky 表最大容量
     ///
     /// 用于需要调整默认 [`MAX_STICKY_BINDINGS`] 上限的场景。
     /// 返回 `self` 以支持链式调用。
@@ -209,14 +208,14 @@ impl ProxyPool {
     /// 默认从 `Html` 子池选（sticky 主要用于 HTML 反爬场景）。
     /// 空池或全部冷却时返回 `None`。
     ///
-    /// # 并发安全（T056 安全审查 LOW-2 修复）
+    /// # 并发安全
     ///
     /// 使用 DashMap `entry` API 原子地 check-and-update，避免 TOCTOU 竞态：
     /// 多线程同时发现绑定过期时，只有一个线程执行重选并更新绑定，
     /// 其余线程在 `entry` 锁内重新检查到新绑定后复用，保证同一 session_id
     /// 在同一时刻返回同一代理。
     ///
-    /// # 容量限制（T056 安全审查 LOW-1 修复）
+    /// # 容量限制
     ///
     /// sticky 表上限 [`MAX_STICKY_BINDINGS`]。超限时先清理过期绑定；
     /// 清理后仍超限则返回代理 URL 但不绑定（降级，不拒绝服务）。
@@ -232,7 +231,7 @@ impl ProxyPool {
             drop(binding);
         }
 
-        // LOW-1 修复：容量限制 — 超限时清理过期绑定
+        // 容量限制 — 超限时清理过期绑定
         // SEC-007: 节流 — 仅当距上次清理 > 60s 时执行（避免高并发下频繁 retain）
         if self.sticky.len() >= self.sticky_max_capacity {
             let now = now_ms();
@@ -248,7 +247,7 @@ impl ProxyPool {
         // 这是一个软限制：检查后到 entry() 之间可能有其他线程插入，偶尔超出几个条目可接受
         let at_capacity = self.sticky.len() >= self.sticky_max_capacity;
 
-        // 2. LOW-2 修复：使用 entry API 原子 check-and-update
+        // 2. 使用 entry API 原子 check-and-update
         //    rr_pick() 在 entry 锁内调用，确保同一 session 只有一个线程
         //    执行 rr_pick + insert，彻底消除 TOCTOU 竞态。
         //    修复前：rr_pick 在锁外，多线程各自选不同 idx 后互相覆盖。
@@ -271,7 +270,7 @@ impl ProxyPool {
             }
             Entry::Vacant(vac) => {
                 let idx = self.rr_pick(ProxyCategory::Html)?;
-                // LOW-1 修复：超容量时不绑定（降级：返回代理 URL，仅失去粘性语义）
+                // 超容量时不绑定（降级：返回代理 URL，仅失去粘性语义）
                 if !at_capacity {
                     vac.insert(StickyBinding {
                         entry_idx: idx,
@@ -335,7 +334,7 @@ impl ProxyPool {
     ///
     /// 过滤 `category` + 未冷却，按 `rr` 计数器取候选列表中下一个。
     ///
-    /// 性能审查 MEDIUM-1 修复：避免每次调用都分配 `Vec<usize>`。
+    /// 避免每次调用都分配 `Vec<usize>`。
     /// 原实现用 `filter().map().collect()` 收集候选索引到 Vec，
     /// 在高频调用（每次请求都走 `next` / `sticky` 重选）下产生大量短命分配。
     /// 修复后用 `count()` + `nth()` 替代 `collect()`，零堆分配：
@@ -365,7 +364,7 @@ impl ProxyPool {
             .map(|(i, _)| i)
     }
 
-    /// 清理过期的粘性会话绑定（T056 安全审查 LOW-1 修复）
+    /// 清理过期的粘性会话绑定
     ///
     /// 移除所有 `expires_at <= now` 的绑定。在 sticky 表达到
     /// [`MAX_STICKY_BINDINGS`] 上限时调用，防止内存耗尽。
@@ -383,7 +382,7 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// `ProxyPool` 自动实现 `ProxyProvider`（MEDIUM-1 修复：impl block 从 provider.rs 移至此处）
+/// `ProxyPool` 自动实现 `ProxyProvider`（impl block 从 provider.rs 移至此处）
 ///
 /// 方法签名与 `ProxyPool` 的固有方法一一对应，零成本桥接。
 /// 显式实现覆盖 trait 的默认空实现（`mark_failure` / `mark_success`）。
@@ -511,7 +510,7 @@ mod tests {
     fn sticky_returns_same_url_within_ttl() {
         let pool = make_pool(vec!["http://a:8080", "http://b:8080"]);
         let url1 = pool.sticky("session-1").unwrap();
-        // L5 修复：多次调用都应返回同一代理（粘性），不只是两次
+        // 多次调用都应返回同一代理（粘性），不只是两次
         let url2 = pool.sticky("session-1").unwrap();
         let url3 = pool.sticky("session-1").unwrap();
         let url4 = pool.sticky("session-1").unwrap();
@@ -547,12 +546,12 @@ mod tests {
         // TTL 已过期，重选应该返回有效 URL（不 panic，不 None）
         thread::sleep(Duration::from_millis(5));
         let url2 = pool.sticky("session-1").unwrap();
-        // L5 修复：验证重选后的 URL 在池中
+        // 验证重选后的 URL 在池中
         assert!(
             url2 == "http://a:8080" || url2 == "http://b:8080",
             "reselected url should be one of the pool entries"
         );
-        // L5 修复：验证绑定已刷新——后续调用应返回 url2（新 TTL 内稳定）
+        // 验证绑定已刷新——后续调用应返回 url2（新 TTL 内稳定）
         let url3 = pool.sticky("session-1").unwrap();
         assert_eq!(
             url2, url3,
@@ -571,12 +570,12 @@ mod tests {
             url1, url2,
             "sticky should reselect when binding is in cooldown"
         );
-        // L5 修复：验证重选的代理未在冷却中（即与 mark_failure 的代理不同）
+        // 验证重选的代理未在冷却中（即与 mark_failure 的代理不同）
         assert!(
             url2 == "http://a:8080" || url2 == "http://b:8080",
             "reselected url must be a valid pool entry"
         );
-        // L5 修复：验证新绑定稳定——后续调用仍返回 url2
+        // 验证新绑定稳定——后续调用仍返回 url2
         let url3 = pool.sticky("session-1").unwrap();
         assert_eq!(
             url2, url3,
@@ -669,12 +668,12 @@ mod tests {
     }
 
     // =========================================================================
-    // 并发测试（L4 修复：验证 ProxyPool 在多线程并发下不 panic / 不 data race）
+    // 并发测试（验证 ProxyPool 在多线程并发下不 panic / 不 data race）
     // =========================================================================
 
     #[test]
     fn concurrent_next_does_not_panic_and_returns_valid_urls() {
-        // L4 修复：多线程并发调用 next() 验证线程安全
+        // 多线程并发调用 next() 验证线程安全
         // ProxyPool 内部用 Atomic* + DashMap，&self 可并发调用
         let pool = std::sync::Arc::new(make_pool(vec![
             "http://a:8080",
@@ -724,7 +723,7 @@ mod tests {
 
     #[test]
     fn concurrent_mark_failure_and_next_does_not_data_race() {
-        // L4 修复：多线程并发调用 mark_failure + next 验证无 data race
+        // 多线程并发调用 mark_failure + next 验证无 data race
         // 场景：一些线程标记失败（让代理进入冷却），另一些线程取代理
         // 预期：不 panic，所有返回的 URL 都在池中
         let pool = std::sync::Arc::new(make_pool(vec![
@@ -775,7 +774,7 @@ mod tests {
 
     #[test]
     fn concurrent_sticky_same_session_returns_consistent_url() {
-        // T056 LOW-2 修复验证：多线程同 session_id 并发调用 sticky 必须返回同一 URL
+        // 多线程同 session_id 并发调用 sticky 必须返回同一 URL
         // 修复前：sticky 存在 TOCTOU 竞态，多线程同时发现绑定过期时可能各自重选
         //         并覆盖彼此的绑定，导致同 session_id 返回不同 URL。
         // 修复后：使用 DashMap entry API 原子 check-and-update，第一个线程插入绑定后，
@@ -814,7 +813,7 @@ mod tests {
             }
             all_urls.extend(urls);
         }
-        // LOW-2 修复核心断言：所有调用必须返回同一 URL（无 TOCTOU 竞态）
+        // 核心断言：所有调用必须返回同一 URL（无 TOCTOU 竞态）
         let first_url = &all_urls[0];
         for url in &all_urls {
             assert_eq!(
@@ -825,12 +824,12 @@ mod tests {
     }
 
     // =========================================================================
-    // T056 LOW-1: sticky 表容量限制
+    // sticky 表容量限制
     // =========================================================================
 
     #[test]
     fn sticky_capacity_limit_evicts_expired_entries() {
-        // LOW-1 修复：sticky 表超容量时清理过期绑定
+        // sticky 表超容量时清理过期绑定
         let pool = std::sync::Arc::new(
             make_pool(vec!["http://a:8080", "http://b:8080"]).with_sticky_max_capacity(3),
         );
@@ -867,7 +866,7 @@ mod tests {
 
     #[test]
     fn sticky_capacity_limit_degrades_gracefully_when_all_valid() {
-        // LOW-1 修复：超容量且所有绑定都有效（未过期）时，降级返回代理 URL 但不绑定
+        // 超容量且所有绑定都有效（未过期）时，降级返回代理 URL 但不绑定
         let pool = std::sync::Arc::new(
             make_pool(vec!["http://a:8080", "http://b:8080"]).with_sticky_max_capacity(2),
         );
@@ -903,7 +902,7 @@ mod tests {
 
     #[test]
     fn sticky_capacity_limit_still_returns_valid_binding_for_existing_session() {
-        // LOW-1 修复：超容量时，已有有效绑定的 session 仍应正常命中（不受容量限制影响）
+        // 超容量时，已有有效绑定的 session 仍应正常命中（不受容量限制影响）
         let pool = std::sync::Arc::new(
             make_pool(vec!["http://a:8080", "http://b:8080"]).with_sticky_max_capacity(1),
         );
@@ -931,12 +930,12 @@ mod tests {
     }
 
     // =========================================================================
-    // T056 LOW-2: sticky TOCTOU 竞态修复（entry API 原子 check-and-update）
+    // sticky TOCTOU 竞态修复（entry API 原子 check-and-update）
     // =========================================================================
 
     #[test]
     fn concurrent_sticky_touctou_race_all_threads_get_same_url() {
-        // LOW-2 修复核心测试：多线程并发 sticky 同一 session_id，
+        // 核心测试：多线程并发 sticky 同一 session_id，
         // 所有线程必须返回同一 URL（entry API 保证原子性）。
         //
         // 场景：TTL 极短（1ms），所有线程几乎同时发现绑定过期，
@@ -977,7 +976,7 @@ mod tests {
             results.push(handle.join().expect("thread should not panic"));
         }
 
-        // LOW-2 核心断言：所有线程必须返回同一 URL
+        // 核心断言：所有线程必须返回同一 URL
         let first = &results[0];
         for (i, url) in results.iter().enumerate() {
             assert_eq!(
@@ -1001,7 +1000,7 @@ mod tests {
 
     #[test]
     fn concurrent_sticky_different_sessions_independent_bindings() {
-        // LOW-2 修复：不同 session_id 的并发 sticky 应各自独立绑定，互不干扰
+        // 不同 session_id 的并发 sticky 应各自独立绑定，互不干扰
         let pool = std::sync::Arc::new(make_pool(vec![
             "http://a:8080",
             "http://b:8080",

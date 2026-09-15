@@ -5,7 +5,7 @@
 
 //! Noop Webhook 服务实现（webhook feature 关闭时使用）
 //!
-//! R-wh-002 / T024-T025：当 `webhook` feature 关闭时，`init_services`
+//! - 当 `webhook` feature 关闭时，`init_services`
 //! 装配此 `NoopWebhookService` 替代 `WebhookServiceImpl`，所有方法返回 `Ok(())`，
 //! 保证 handler 内 `trigger_completion`/`trigger_failure` 调用经 trait 走 Noop 放行。
 //!
@@ -24,7 +24,7 @@ use crate::domain::services::webhook_service::WebhookService;
 
 /// Noop Webhook 服务
 ///
-/// R-wh-002 / T025：webhook feature 关闭时的 webhook 服务实现。
+/// webhook feature 关闭时的 webhook 服务实现。
 /// 所有方法返回 `Ok(())`，保证业务逻辑在无 webhook 投递时正常运转。
 #[derive(Debug, Clone, Default)]
 pub struct NoopWebhookService;
@@ -38,9 +38,9 @@ impl NoopWebhookService {
 
 #[async_trait]
 impl WebhookService for NoopWebhookService {
-    /// 发送 webhook 事件 → 空操作成功（不发送）
-    async fn send_webhook(&self, _event: &WebhookEvent) -> Result<()> {
-        Ok(())
+    /// 发送 webhook 事件 → 空操作成功（不发送），返回 200 占位状态码
+    async fn send_webhook(&self, _event: &WebhookEvent) -> Result<u16> {
+        Ok(200)
     }
 
     /// 触发任务完成 webhook → 空操作成功（不触发通知）
@@ -61,7 +61,7 @@ mod tests {
     use crate::domain::models::Task;
     use uuid::Uuid;
 
-    // R-wh-002 / T024：以下测试钉住 Noop 放行契约。
+    // 以下测试钉住 Noop 放行契约。
 
     #[tokio::test]
     async fn test_noop_trigger_completion_returns_ok() {

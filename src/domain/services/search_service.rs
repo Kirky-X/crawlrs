@@ -459,16 +459,24 @@ mod tests {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -515,6 +523,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 
@@ -1477,8 +1494,8 @@ mod tests {
             .await
             .unwrap());
         // State-transition stubs are no-ops returning Ok
-        task_repo.mark_completed(task_id).await.unwrap();
-        task_repo.mark_failed(task_id).await.unwrap();
+        task_repo.mark_completed(task_id, None).await.unwrap();
+        task_repo.mark_failed(task_id, None).await.unwrap();
         task_repo.mark_cancelled(task_id).await.unwrap();
         // Maintenance stubs return zero counts
         assert_eq!(task_repo.expire_tasks().await.unwrap(), 0);
@@ -1629,6 +1646,7 @@ mod tests {
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),
             concurrency: ConcurrencySettings::default(),
+            retention: RetentionSettings::default(),
             webhook: WebhookSettings::default(),
             bing_search: BingSearchSettings::default(),
             search: SearchSettings::default(),

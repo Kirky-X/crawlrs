@@ -1,6 +1,6 @@
 # SDK Examples
 
-SDK 开发示例，演示如何使用 sdforge 0.4 定义 API 端点和自定义中间件。
+SDK 开发示例，演示如何使用 sdforge 0.5 定义 API 端点和自定义中间件。
 
 ## 包含的示例
 

@@ -84,6 +84,12 @@ critical_timeout_seconds = 30
 #       AIMDController::record_*，动态 target 推入 AdaptiveSemaphore::set_target
 adaptive_enabled = false
 
+# Data Retention Configuration
+# expiration-worker 每小时运行一次，清理超过保留期的数据
+[retention]
+# scrape_results 表保留天数；0 = 禁用清理（永不删除，旧行为）
+scrape_results_days = 30
+
 # Search Configuration
 # Smart engine concurrently queries Baidu+Bing+Sogou with RRF fusion
 [search]

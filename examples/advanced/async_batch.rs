@@ -28,7 +28,7 @@ async fn main() {
     let client = EngineClient::new();
 
     // 1. 准备批量目标 URL
-    let urls = vec![
+    let urls = [
         "https://example.com",
         "https://example.org",
         "https://example.net",

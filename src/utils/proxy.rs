@@ -6,12 +6,12 @@
 //! 代理 URL 工具：校验 + 脱敏
 //!
 //! 设计目的：
-//! - **校验**：防止命令行参数注入（安全审查 H-1，playwright `--proxy-server` 拼接漏洞）。
+//! - **校验**：防止命令行参数注入（playwright `--proxy-server` 拼接漏洞）。
 //!   严格校验 proxy URL 必须是合法 URL 且 scheme 在白名单内（http/https/socks5/socks4），
 //!   避免 `format!("--proxy-server={}", proxy)` 被 Chrome 解析为多个 argv。
 //! - **脱敏**：日志中输出代理 URL 时屏蔽 `user:pass@` 凭证，避免凭证泄露。
 //!
-//! 复用：原 `flare_solverr.rs::redact_proxy_url` 移植至此共享（规则7 先读再写）。
+//! 复用：原 `flare_solverr.rs::redact_proxy_url` 移植至此共享（先读再写）。
 
 use url::Url;
 

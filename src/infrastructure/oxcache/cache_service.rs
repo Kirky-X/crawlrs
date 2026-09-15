@@ -96,7 +96,7 @@ impl CacheService for OxcacheService {
                 .get(&key)
                 .await
                 .map_err(|e| anyhow::anyhow!("oxcache get error: {e}"))?;
-            // Phase 4a: Prometheus 缓存命中指标 (T064)
+            // Prometheus 缓存命中指标
             #[allow(unused_variables)]
             let result_label = if value.is_some() { "hit" } else { "miss" };
             counter!(

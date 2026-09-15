@@ -5,7 +5,7 @@
 
 //! Noop 限流服务实现（rate-limit feature 关闭时使用）
 //!
-//! R-rl-002 / T018-T019：当 `rate-limit` feature 关闭时，`init_rate_limiting_service`
+//! - 当 `rate-limit` feature 关闭时，`init_rate_limiting_service`
 //! 装配此 `NoopRateLimitingService` 替代 `LimiteronService`，所有方法返回放行/成功，
 //! 保证 handler 内 `check_rate_limit`/`check_and_deduct_quota` 调用经 trait 走 Noop 放行。
 //!
@@ -29,7 +29,7 @@ use crate::domain::services::rate_limiting_service::{
 
 /// Noop 限流服务
 ///
-/// R-rl-002 / T019：rate-limit feature 关闭时的限流服务实现。
+/// rate-limit feature 关闭时的限流服务实现。
 /// 所有方法返回放行/成功，保证业务逻辑在无限流后端时正常运转。
 #[derive(Debug, Clone, Default)]
 pub struct NoopRateLimitingService;
@@ -122,7 +122,7 @@ impl ConcurrencyControlService for NoopRateLimitingService {
 impl BacklogService for NoopRateLimitingService {
     /// 处理积压任务 → 返回 0（幂等空转，不处理积压）
     ///
-    /// R-rl-004 / T022：rate-limit 关闭时不门控 backlog_worker，
+    /// rate-limit 关闭时不门控 backlog_worker，
     /// backlog 处理走 Noop 返回 0，保证幂等空转不产生副作用。
     async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
         Ok(0)
@@ -143,6 +143,17 @@ impl QuotaService for NoopRateLimitingService {
         Ok(())
     }
 
+    /// 退还配额积分 → 始终成功（Noop 模式无配额账本）
+    async fn refund_quota(
+        &self,
+        _team_id: Uuid,
+        _amount: i64,
+        _description: String,
+        _reference_id: Option<Uuid>,
+    ) -> Result<(), RateLimitingError> {
+        Ok(())
+    }
+
     /// 获取团队配额余额 → 返回 i64::MAX（无限配额）
     async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
         Ok(i64::MAX)
@@ -151,7 +162,7 @@ impl QuotaService for NoopRateLimitingService {
 
 /// 自动实现组合 trait `RateLimitingService`
 ///
-/// R-rl-002 / T019：`RateLimitingService` 是 `RateLimitService` +
+/// `RateLimitingService` 是 `RateLimitService` +
 /// `ConcurrencyControlService` + `BacklogService` + `QuotaService` 的组合 trait，
 /// 上述四个 trait 已全部实现，组合 trait 自动满足。
 #[async_trait]
@@ -164,7 +175,7 @@ mod tests {
     use crate::domain::services::rate_limiting_service::RateLimitResult;
     use uuid::Uuid;
 
-    // R-rl-002 / T018：以下测试钉住 Noop 放行契约。
+    // 以下测试钉住 Noop 放行契约。
 
     #[tokio::test]
     async fn test_noop_check_rate_limit_returns_allowed() {
@@ -210,7 +221,7 @@ mod tests {
         );
     }
 
-    /// R-rl-004 / T022：rate-limit 关闭时 backlog 幂等空转契约
+    /// rate-limit 关闭时 backlog 幂等空转契约
     ///
     /// `process_backlog_tasks` 返回 `Ok(0)`，表示：
     /// - 不处理任何积压任务（幂等空转）
@@ -232,7 +243,7 @@ mod tests {
         );
     }
 
-    /// R-rl-004 / T022：多次调用 process_backlog_tasks 保持幂等
+    /// 多次调用 process_backlog_tasks 保持幂等
     ///
     /// 验证连续调用 `process_backlog_tasks` 始终返回 `Ok(0)`，
     /// 不会因状态累积而产生副作用。

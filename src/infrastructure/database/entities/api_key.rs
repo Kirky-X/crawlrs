@@ -15,12 +15,12 @@ pub struct Model {
     #[sea_orm(unique)]
     /// garrison `key_id`（公开标识，可安全记录到日志）。
     ///
-    /// R-key-lifecycle-001 / T027-3：签发路径写入 garrison `key_id`（非明文 secret）。
+    /// 签发路径写入 garrison `key_id`（非明文 secret）。
     /// 旧版 crawlrs 此字段存明文 key 前缀，已弃用此用法。
     pub key: String,
     /// Hash of the API key for secure storage (SHA-256 hex encoded)
     ///
-    /// # 弃用说明（R-key-lifecycle-003 / T028）
+    /// # 弃用说明
     ///
     /// garrison 自管哈希存储（`garrison:apikey:<ns>:<key>` on oxcache + postgres），
     /// crawlrs 不再需要 `key_hash`。新签发的 API Key 此字段设为 `None`。

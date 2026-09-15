@@ -3,13 +3,13 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 抓取缓存工具集（架构审查 HIGH-2 SRP 拆分，T059/R-cache-002）
+//! 抓取缓存工具集
 //!
 //! 本模块从 `scrape_worker` 抽离缓存相关纯函数，符合单一职责原则：
-//! - [`generate_scrape_cache_key`]：cache key 生成（HIGH-1 改进：纳入 ScrapeOptions 影响字段）
+//! - [`generate_scrape_cache_key`]：cache key 生成（纳入 ScrapeOptions 影响字段）
 //! - [`redact_url_for_log`]：URL 日志脱敏（防 query/fragment 凭据泄露）
 //! - [`filter_sensitive_headers`]：敏感响应头过滤（CWE-200）
-//! - [`SanitizedScrapeResponse`]：borrowed 序列化结构体（性能 HIGH-1，避免完整克隆）
+//! - [`SanitizedScrapeResponse`]：borrowed 序列化结构体（性能，避免完整克隆）
 //!
 //! `scrape_worker` 的 `try_read_scrape_cache` / `try_write_scrape_cache` 通过
 //! 这些工具完成 cache key 计算与安全过滤，调用方在 `process_scrape_task`
@@ -24,10 +24,10 @@ use crate::common::CacheContext;
 use crate::engines::engine_client::{ScrapeOptions, ScrapeResponse};
 
 // =============================================================================
-// cache key 生成（HIGH-1 改进）
+// cache key 生成
 // =============================================================================
 
-/// 生成抓取结果缓存 key（T059/R-cache-002，HIGH-1 改进）
+/// 生成抓取结果缓存 key
 ///
 /// # 格式
 ///
@@ -38,7 +38,7 @@ use crate::engines::engine_client::{ScrapeOptions, ScrapeResponse};
 /// 其中 `fingerprint` 由 [`options_fingerprint`] 计算，纳入影响响应内容的
 /// `ScrapeOptions` 字段，避免同 URL 不同 options 的缓存串扰。
 ///
-/// # HIGH-1 改进：纳入 ScrapeOptions 影响字段
+/// # 纳入 ScrapeOptions 影响字段
 ///
 /// 原实现仅 `scrape:{method}:{url}`，存在以下串扰风险：
 ///
@@ -55,7 +55,7 @@ use crate::engines::engine_client::{ScrapeOptions, ScrapeResponse};
 ///
 /// `options_fingerprint` 用 [`std::collections::hash_map::DefaultHasher`]
 /// （内部 SipHash-1-3）计算 64-bit 哈希，再以 hex 编码（16 字符）附加到 key。
-/// 选 DefaultHasher 而非 fnv/cityhash：标准库零新依赖（规则25），短输入性能足够。
+/// 选 DefaultHasher 而非 fnv/cityhash：标准库零新依赖，短输入性能足够。
 ///
 /// # 算法稳定性说明
 ///
@@ -74,7 +74,7 @@ pub fn generate_scrape_cache_key(ctx: &CacheContext, options: &ScrapeOptions) ->
     format!("scrape:{:?}:{}?fp={}", ctx.method, ctx.url, fp)
 }
 
-/// 计算 `ScrapeOptions` 中影响响应内容的字段的指纹（HIGH-1）
+/// 计算 `ScrapeOptions` 中影响响应内容的字段的指纹
 ///
 /// 纳入字段：`headers` / `needs_js` / `session_id`。
 /// 用 [`std::collections::hash_map::DefaultHasher`]（SipHash-1-3）计算 64-bit 哈希，
@@ -82,7 +82,7 @@ pub fn generate_scrape_cache_key(ctx: &CacheContext, options: &ScrapeOptions) ->
 ///
 /// # 为何选 DefaultHasher
 ///
-/// - 标准库零依赖（规则25）
+/// - 标准库零依赖
 /// - SipHash-1-3 抗碰撞足够：cache key 冲突=缓存串扰，非安全敏感场景
 /// - Rust 当前版本稳定，跨版本变更最坏情况是缓存全部失效（降级，非错误）
 ///
@@ -99,7 +99,7 @@ fn options_fingerprint(options: &ScrapeOptions) -> String {
     let mut sorted_headers: Vec<(&String, &String)> = options.headers.iter().collect();
     sorted_headers.sort_by(|a, b| a.0.cmp(b.0));
     for (k, v) in sorted_headers {
-        // T022 修复：使用长度前缀编码替代 NUL 分隔符，防止含 \0 的 key/value 碰撞
+        // 使用长度前缀编码替代 NUL 分隔符，防止含 \0 的 key/value 碰撞
         hasher.write_usize(k.len());
         hasher.write(k.as_bytes());
         hasher.write_usize(v.len());
@@ -125,13 +125,13 @@ fn options_fingerprint(options: &ScrapeOptions) -> String {
 }
 
 // =============================================================================
-// URL 日志脱敏（T062 安全审查 MEDIUM-2）
+// URL 日志脱敏
 // =============================================================================
 
 /// URL 日志最大长度（防日志膨胀）
 const MAX_URL_LOG_LEN: usize = 200;
 
-/// 脱敏 URL 用于日志输出（T062 安全审查 MEDIUM-2 修复）
+/// 脱敏 URL 用于日志输出
 ///
 /// URL query 参数可能携带 `token` / `api_key` / `session_id` 等敏感信息，
 /// warn 级别日志会持久化到磁盘。此函数移除 query 和 fragment，仅保留
@@ -145,7 +145,7 @@ pub fn redact_url_for_log(url: &str) -> String {
         Ok(mut parsed) => {
             parsed.set_query(None);
             parsed.set_fragment(None);
-            // T021 修复：剥离 userinfo（用户名/密码），防止凭据泄露到日志
+            // 剥离 userinfo（用户名/密码），防止凭据泄露到日志
             if parsed.username() != "" {
                 let _ = parsed.set_username("");
             }
@@ -166,10 +166,10 @@ pub fn redact_url_for_log(url: &str) -> String {
 }
 
 // =============================================================================
-// 敏感响应头过滤（T062 安全审查 LOW-2）
+// 敏感响应头过滤
 // =============================================================================
 
-/// 敏感响应头集合（T062 安全审查 LOW-2 修复）
+/// 敏感响应头集合
 ///
 /// 这些响应头可能携带凭证或会话信息，序列化到缓存后可能被其他用户读取
 /// （CWE-200：信息暴露给未授权角色）。缓存前必须过滤。
@@ -186,12 +186,12 @@ const SENSITIVE_RESPONSE_HEADERS: &[&str] = &[
     "x-session-id",
 ];
 
-/// 过滤敏感响应头（T062 安全审查 LOW-2 修复）
+/// 过滤敏感响应头
 ///
 /// 原地移除 `SENSITIVE_RESPONSE_HEADERS` 中列出的头。
 /// 用于 [`SanitizedScrapeResponse`] 序列化前清理响应头，防止凭证泄露到缓存。
 ///
-/// 性能审查 MEDIUM-1 / LOW-2：用 `retain` 原地修改 +
+/// 用 `retain` 原地修改 +
 /// `eq_ignore_ascii_case` 零分配比较，避免双重 HashMap 分配。
 pub fn filter_sensitive_headers(headers: &mut HashMap<String, String>) {
     headers.retain(|k, _| {
@@ -202,10 +202,10 @@ pub fn filter_sensitive_headers(headers: &mut HashMap<String, String>) {
 }
 
 // =============================================================================
-// 性能 HIGH-1：borrowed 序列化结构体，避免完整克隆 ScrapeResponse
+// 性能 borrowed 序列化结构体，避免完整克隆 ScrapeResponse
 // =============================================================================
 
-/// 过滤后用于序列化的借用结构体（性能 HIGH-1）
+/// 过滤后用于序列化的借用结构体（性能）
 ///
 /// 原 `try_write_scrape_cache` 实现：
 /// 1. `let mut sanitized = response.clone();` —— 完整克隆 ScrapeResponse
@@ -261,7 +261,7 @@ impl<'a> SanitizedScrapeResponse<'a> {
     }
 }
 
-/// 自定义 Serialize：序列化时跳过敏感响应头（性能 HIGH-1）
+/// 自定义 Serialize：序列化时跳过敏感响应头（性能）
 ///
 /// 用 `serialize_map` 逐项写入，对每个 key 用 `eq_ignore_ascii_case`
 /// 判断是否在 [`SENSITIVE_RESPONSE_HEADERS`] 黑名单中。
@@ -336,7 +336,7 @@ mod tests {
         assert_ne!(key1, key2);
     }
 
-    // ===== HIGH-1: options 影响字段串扰防护 =====
+    // ===== options 影响字段串扰防护 =====
 
     #[test]
     fn test_cache_key_differs_by_headers() {
@@ -368,11 +368,15 @@ mod tests {
         // 场景：浏览器渲染后 DOM 与原始 HTML 不能共享缓存
         let ctx = make_ctx("https://example.com", HttpMethod::Get);
 
-        let mut opts_js = ScrapeOptions::default();
-        opts_js.needs_js = true;
+        let opts_js = ScrapeOptions {
+            needs_js: true,
+            ..ScrapeOptions::default()
+        };
 
-        let mut opts_no_js = ScrapeOptions::default();
-        opts_no_js.needs_js = false;
+        let opts_no_js = ScrapeOptions {
+            needs_js: false,
+            ..ScrapeOptions::default()
+        };
 
         let key_js = generate_scrape_cache_key(&ctx, &opts_js);
         let key_no_js = generate_scrape_cache_key(&ctx, &opts_no_js);
@@ -388,11 +392,15 @@ mod tests {
         // 场景：不同粘性会话走不同代理，IP 风控结果不同，不能共享缓存
         let ctx = make_ctx("https://example.com", HttpMethod::Get);
 
-        let mut opts_s1 = ScrapeOptions::default();
-        opts_s1.session_id = Some("session-abc".to_string());
+        let opts_s1 = ScrapeOptions {
+            session_id: Some("session-abc".to_string()),
+            ..ScrapeOptions::default()
+        };
 
-        let mut opts_s2 = ScrapeOptions::default();
-        opts_s2.session_id = Some("session-xyz".to_string());
+        let opts_s2 = ScrapeOptions {
+            session_id: Some("session-xyz".to_string()),
+            ..ScrapeOptions::default()
+        };
 
         let key_s1 = generate_scrape_cache_key(&ctx, &opts_s1);
         let key_s2 = generate_scrape_cache_key(&ctx, &opts_s2);
@@ -500,7 +508,7 @@ mod tests {
         assert!(headers.is_empty());
     }
 
-    // ============ SanitizedScrapeResponse（性能 HIGH-1） ============
+    // ============ SanitizedScrapeResponse（性能） ============
 
     #[test]
     fn test_sanitized_serialize_skips_sensitive_headers() {
@@ -568,7 +576,7 @@ mod tests {
 
     #[test]
     fn test_sanitized_serialize_does_not_modify_original() {
-        // 借用序列化不应修改原 response.headers（性能 HIGH-1 核心保证）
+        // 借用序列化不应修改原 response.headers（性能核心保证）
         let mut headers = HashMap::new();
         headers.insert("Set-Cookie".to_string(), "secret".to_string());
 

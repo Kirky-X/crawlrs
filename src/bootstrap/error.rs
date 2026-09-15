@@ -6,12 +6,12 @@
 //! Bootstrap 阶段错误类型。
 //!
 //! 为 `bootstrap` 模块中可能失败的操作提供类型化错误（替代 `anyhow::Error` 的字符串上下文），
-//! 使调用方可 `match` 判断原因而非字符串匹配（规则8 惯例优先于新颖）。
+//! 使调用方可 `match` 判断原因而非字符串匹配（惯例优先于新颖）。
 //!
 //! ## Spec
 //!
-//! - R-auth-engine-002：garrison 初始化失败的类型化变体（`GarrisonConfig` / `GarrisonDao` / `GarrisonManager`）。
-//!   Stage 3 重构：原 `Auth(String)` 兜底变体已删除（规则5 简洁优先 + 用户规则"禁止向后兼容"），
+//! - garrison 初始化失败的类型化变体（`GarrisonConfig` / `GarrisonDao` / `GarrisonManager`）。
+//!   重构：原 `Auth(String)` 兜底变体已删除（简洁优先 + 用户规则"禁止向后兼容"），
 //!   三类故障层级已完整覆盖所有 garrison 初始化失败场景。
 //!
 //! ## Feature 门控

@@ -166,7 +166,7 @@ mod tests {
         assert!(validate_url("http://[::1]").await.is_err());
         assert!(validate_url("http://[0:0:0:0:0:0:0:1]").await.is_err());
         assert!(validate_url("http://[::ffff:127.0.0.1]").await.is_err());
-        // IPv4-compatible IPv6 (::x.x.x.x, RFC 4291 deprecated) - bypass vector
+        // IPv4-compatible IPv6 (x.x.x.x, RFC 4291 deprecated) - bypass vector
         assert!(validate_url("http://[::127.0.0.1]").await.is_err());
         assert!(validate_url("http://[::169.254.169.254]").await.is_err());
         assert!(validate_url("http://[::10.0.0.1]").await.is_err());

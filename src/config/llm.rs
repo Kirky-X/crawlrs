@@ -189,7 +189,7 @@ mod tests {
             debug.contains("LLMSettings"),
             "Debug should contain struct name"
         );
-        // T002: api_key must be redacted in Debug output
+        // api_key must be redacted in Debug output
         assert!(debug.contains("[REDACTED]"), "Debug should redact api_key");
         assert!(
             !debug.contains("debug-key"),

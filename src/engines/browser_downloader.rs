@@ -178,8 +178,8 @@ impl BrowserDownloadManager {
         // 如果自动下载失败，返回错误提示
         let err_msg = String::from(
             "未找到 Chrome/Chromium 浏览器。请安装以下任一浏览器后重试：\n\
-             - Google Chrome (https://www.google.com/chrome/)\n\
-             - Chromium (https://www.chromium.org/getting-involved/download-chromium/)\n\
+             - Google Chrome (https: // www.google.com/chrome)\n\
+             - Chromium (https: // www.chromium.org/getting-involved/download-chromium)\n\
              或确保浏览器在系统 PATH 中。",
         );
         let mut status = self.status.write().await;

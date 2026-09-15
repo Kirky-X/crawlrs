@@ -75,9 +75,9 @@ impl CreateScrapeUseCase {
     fn map_dto_to_request(&self, dto: ScrapeRequestDto) -> Result<ScrapeRequest, DomainError> {
         let options = dto.options.unwrap_or_default();
 
-        // T058/R-cache-002：bypass_cache 优先级处理
+        // bypass_cache 优先级处理
         //
-        // 架构审查 HIGH-3 修复：抽取为 `ScrapeOptionsDto::effective_cache_mode()`
+        // 抽取为 `ScrapeOptionsDto::effective_cache_mode()`
         // 消除 `create_scrape.rs` + `scrape_worker.rs` 中的重复桥接逻辑（DRY）。
         //
         // 必须在任何部分 move 之前调用（Rust E0382）：后续 `options.screenshot_options.map`
@@ -216,7 +216,7 @@ fn map_engine_error(engine_error: crate::engines::engine_client::EngineError) ->
             DomainError::EngineError("Engine request expired".to_string())
         }
         crate::engines::engine_client::EngineError::Other(msg) => DomainError::EngineError(msg),
-        // 引擎级 MRT 超时（架构审查 MEDIUM-2）：映射到 TimeoutError，
+        // 引擎级 MRT 超时：映射到 TimeoutError，
         // 错误信息携带 engine 名字 + mrt 时长，便于调用方定位瀑布式 fallback 失败点
         crate::engines::engine_client::EngineError::EngineMrtExceeded { engine, mrt } => {
             DomainError::TimeoutError(format!(
@@ -346,7 +346,7 @@ mod tests {
         );
     }
 
-    // ===== T058/R-cache-002: cache_mode / bypass_cache 桥接测试 =====
+    // ===== cache_mode / bypass_cache 桥接测试 =====
 
     #[test]
     fn test_map_dto_to_request_cache_mode_none_defaults_to_none() {
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn test_map_dto_to_request_bypass_cache_none_ignored() {
         // bypass_cache=None（未设置）→ 忽略，按 cache_mode 走
-        // 架构审查 CRITICAL-1 修复：WriteOnly 已删除，统一用 Bypass
+        // WriteOnly 已删除，统一用 Bypass
         let use_case = CreateScrapeUseCase::new(make_engine_client());
         let dto = ScrapeRequestDto {
             url: "https://example.com".to_string(),

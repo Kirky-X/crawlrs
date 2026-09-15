@@ -81,7 +81,12 @@ impl BingSearchEngine {
             None => return url.to_string(),
         };
 
-        let encoded = &u_param.1[2..]; // Remove 'a1' prefix
+        // 剥离 'a1' 前缀（strip_prefix 语义：长度不足或前缀不符时不切片，
+        // 外部 HTML 构造的多字节/短值不会 panic，交由后续 base64 解码失败兜底）
+        let encoded: &str = match u_param.1.strip_prefix("a1") {
+            Some(rest) if !rest.is_empty() => rest,
+            _ => return url.to_string(),
+        };
 
         // Add padding if needed
         let padding = "=".repeat((4 - encoded.len() % 4) % 4);
@@ -170,25 +175,12 @@ impl SearchEngine for BingSearchEngine {
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
-        if std::env::var("BING_TEST_RESULTS").unwrap_or_default() == "true" {
-            return Ok(Response {
-                items: vec![
-                    ResponseItem {
-                        title: format!("Bing Test Result 1 for {}", request.query),
-                        url: "https://bing.com/1".to_string(),
-                        description: "Test description 1".to_string(),
-                        engine: SearchEngineType::Bing,
-                    },
-                    ResponseItem {
-                        title: format!("Bing Test Result 2 for {}", request.query),
-                        url: "https://bing.com/2".to_string(),
-                        description: "Test description 2".to_string(),
-                        engine: SearchEngineType::Bing,
-                    },
-                ],
-                total_results: Some(2),
-                engine: SearchEngineType::Bing,
-            });
+        // 测试固定结果仅存在于测试构建（CWE-489：生产路径不得被环境变量旁路）
+        #[cfg(test)]
+        {
+            if let Some(resp) = bing_test_results_override(&request.query) {
+                return Ok(resp);
+            }
         }
 
         if request.query.trim().is_empty() {
@@ -258,6 +250,35 @@ impl SearchEngine for BingSearchEngine {
             engine: SearchEngineType::Bing,
         })
     }
+}
+
+/// 仅测试构建可用的固定结果旁路：`BING_TEST_RESULTS=true` 时返回确定性结果。
+///
+/// 生产构建中该函数与 `search()` 内的调用点一并被 `#[cfg(test)]` 剔除，
+/// 环境变量无法影响线上搜索行为（CWE-489）。
+#[cfg(test)]
+fn bing_test_results_override(query: &str) -> Option<Response<ResponseItem>> {
+    if std::env::var("BING_TEST_RESULTS").unwrap_or_default() != "true" {
+        return None;
+    }
+    Some(Response {
+        items: vec![
+            ResponseItem {
+                title: format!("Bing Test Result 1 for {}", query),
+                url: "https://bing.com/1".to_string(),
+                description: "Test description 1".to_string(),
+                engine: SearchEngineType::Bing,
+            },
+            ResponseItem {
+                title: format!("Bing Test Result 2 for {}", query),
+                url: "https://bing.com/2".to_string(),
+                description: "Test description 2".to_string(),
+                engine: SearchEngineType::Bing,
+            },
+        ],
+        total_results: Some(2),
+        engine: SearchEngineType::Bing,
+    })
 }
 
 #[cfg(test)]
@@ -375,7 +396,7 @@ mod tests {
     #[test]
     fn test_build_bing_url_page1() {
         // 测试第一页 URL 构建，只包含 q 和 pq。
-        // base_url 为 cn.bing.com（见 build_bing_url 注释）。
+        // base_url 为 cn.bing.com（build_bing_url 注释）。
         let engine = create_engine();
         let url = engine.build_bing_url("rust language", 1);
 

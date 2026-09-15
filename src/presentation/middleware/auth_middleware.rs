@@ -5,9 +5,9 @@
 
 //! Unified authentication middleware with scope support.
 //!
-//! ## Stage 3 重构（R-auth-engine-003 / 决策 1-4）
+//! ## 重构（决策 1-4）
 //!
-//! 本模块在 Stage 3 完成 DTO 化与 garrison 桥接：
+//! 本模块在完成 DTO 化与 garrison 桥接：
 //! - `AuthState` / `AuthError` 抽出到 [`super::auth_types`]（决策 3：解决循环依赖）
 //! - 删除 `ApiKeyCache` / `AuthRateLimiter` / `validate_api_key_from_db` 等死代码（决策 1）
 //! - 限速仅依赖 garrison firewall（决策 2），crawlrs 侧不再做暴力破解防护
@@ -102,7 +102,7 @@ pub fn reset_team_id_cache() {
     TEAM_ID_CACHE.write().clear();
 }
 
-/// 按 `api_key_id` 反查 crawlrs `api_keys` 表获取 `team_id`（R-auth-engine-003 / T017）。
+/// 按 `api_key_id` 反查 crawlrs `api_keys` 表获取 `team_id`。
 ///
 /// ## 缓存策略（决策 4）
 ///
@@ -126,7 +126,6 @@ pub fn reset_team_id_cache() {
 /// - `Err(AuthError::InternalError)`：dbnexus `DbError`（连接池/会话获取失败）
 /// - `Err(AuthError::DatabaseError)`：sea-orm 查询失败（`DbErr`）
 //
-// feature-gate-optional-modules T010/T011 修复（design.md §4）：
 // teams feature 关闭时，`auth_middleware_inner` 直接使用 DEFAULT_TEAM_ID，
 // 此函数不被调用。用 `cfg_attr(not(feature = "teams"), allow(dead_code))`
 // 显式声明 teams-off 时 unused 是预期行为（Rust 条件编译 unused 的标准处理）。
@@ -136,7 +135,7 @@ async fn fetch_team_id_by_api_key_id(
     pool: &Arc<DbPool>,
     api_key_id: Uuid,
 ) -> Result<Option<Uuid>, AuthError> {
-    // 1. 查缓存。性能审查 HIGH-1 修复：`LruCache::get` 需 `&mut self` 更新 LRU 访问顺序，
+    // 1. 查缓存。 `LruCache::get` 需 `&mut self` 更新 LRU 访问顺序，
     // 故必须用 write 锁（非读锁）。debug! 已移到锁外，避免锁内 I/O。
     // 长期优化建议：换用 `moka::Cache`（concurrent LRU，无锁读路径）。
     let cached_hit = {
@@ -171,7 +170,7 @@ async fn fetch_team_id_by_api_key_id(
         .map_err(|e| AuthError::InternalError(format!("db conn: {}", e)))?;
     let result = api_key::Entity::find_by_id(api_key_id).one(conn).await?;
 
-    // 3. 填充缓存（仅当找到映射时）。LOW-1 修复：debug! 移到锁外。
+    // 3. 填充缓存（仅当找到映射时）。 debug! 移到锁外。
     if let Some(ref model) = result {
         let team_id = model.team_id;
         {
@@ -192,7 +191,7 @@ async fn fetch_team_id_by_api_key_id(
 /// ## 安全（CWE-532）
 ///
 /// 将裸 token 转为 hash 后注入 extensions，避免下游日志/审计泄露明文 token。
-/// `sha256:` 前缀与 crawlrs 旧 `ApiKeyCache` 的 key 格式保持一致（规则8 惯例优先）。
+/// `sha256:` 前缀与 crawlrs 旧 `ApiKeyCache` 的 key 格式保持一致（惯例优先）。
 #[cfg(feature = "auth")]
 fn hash_token(token: &str) -> String {
     let digest = Sha256::digest(token.as_bytes());
@@ -214,19 +213,19 @@ fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash:
     req.extensions_mut().insert(token_hash.to_string());
 }
 
-/// Unified authentication middleware (garrison RBAC path, R-auth-engine-003 / T017).
+/// Unified authentication middleware (garrison RBAC path).
 ///
 /// ## 职责
 ///
 /// 1. 提取 Bearer token（`extract_bearer`，来自 `auth_bridge`）
 /// 2. 在 `with_current_token` 作用域内调用 garrison `GarrisonUtil::check_api_key` 校验
 ///    API Key（含 CWE-916 哈希、CWE-307 IP 限速），并提取 `login_id` / `perms`
-/// 3. 解析 `login_id` → `api_key_id` (Uuid)（design.md §5 约定）
+/// 3. 解析 `login_id` → `api_key_id` (Uuid)（约定）
 /// 4. 反查 crawlrs `api_keys` 表获取 `team_id`（garrison 不持有此映射，带 LRU 缓存）
 /// 5. 桥接为 `AuthState`（`bridge_to_auth_state`，来自 `auth_bridge`）
 /// 6. 复用 `inject_auth_state` 注入 extensions（token_hash 用 SHA-256 hash，CWE-532）
 ///
-/// ## 失败映射（规则12 显性化）
+/// ## 失败映射（显性化）
 ///
 /// | 失败点 | 映射 | HTTP 状态码 |
 /// |--------|------|-------------|
@@ -244,6 +243,26 @@ fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash:
 /// - garrison `check_api_key` 负责 CWE-916 哈希校验和 CWE-307 IP 限速
 /// - token 不记录到日志（CWE-532）；注入 extensions 的是 SHA-256 hash
 /// - `login_id` 解析失败不静默回退 `Uuid::nil()`（避免越权）
+///
+/// 将客户端 IP 注入 garrison task-local（`garrison::stp::with_current_ip`）。
+///
+/// garrison firewall-bruteforce 的 IP 级失败计数读取 `garrison::stp::current_ip()`，
+/// 按 garrison 契约该值由 Web 框架中间件注入；缺失时 fail-open（IP 限速不启用）。
+/// 本层从 `ConnectInfo<SocketAddr>` 扩展提取 IP（main.rs 以
+/// `into_make_service_with_connect_info` 启动，故生产环境恒存在），须挂载于
+/// 认证中间件**外侧**，保证 `auth_middleware_inner` 运行时 task-local 已就位。
+#[cfg(feature = "auth")]
+pub async fn garrison_ip_context_middleware(req: axum::extract::Request, next: Next) -> Response {
+    let ip = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip().to_string());
+    match ip {
+        Some(ip) => garrison::stp::with_current_ip(ip, next.run(req)).await,
+        None => next.run(req).await,
+    }
+}
+
 #[cfg(feature = "auth")]
 pub async fn auth_middleware_inner(
     State(pool): State<Arc<DbPool>>,
@@ -255,7 +274,7 @@ pub async fn auth_middleware_inner(
     let path = req.uri().path().to_string();
     debug!("AuthMiddleware (garrison) processing path: {}", path);
 
-    // 1. 公开端点跳过认证（LOW-4 修复：规范化尾部斜杠后比较，/health/ 也匹配）
+    // 1. 公开端点跳过认证（规范化尾部斜杠后比较，/health/ 也匹配）
     let normalized_path = path.trim_end_matches('/');
     if PUBLIC_ENDPOINTS.contains(&normalized_path) {
         debug!("Public endpoint {}, skipping auth", path);
@@ -277,7 +296,7 @@ pub async fn auth_middleware_inner(
     // 后续 `get_login_id()` → `session.get_token_session(token)` 因没有 session 而
     // 返回 `None` → auth_middleware 误报 `NotLogin("login_id missing")` → 401。
     //
-    // 修复（规则5 简洁 + 规则12 显性化）：跳过 stp 会话层的中间间接查询，
+    // 跳过 stp 会话层的中间间接查询，
     // 直接 `handler.verify_with_namespace(raw, "crawlrs")` 一步拿到
     // `ApiKeyInfo { login_id, scopes, expire_at, ... }`，避免 O(3) DAO roundtrip
     // 且消除 session/notfound 误报。
@@ -285,7 +304,7 @@ pub async fn auth_middleware_inner(
     // CWE-307 保护（firewall-bruteforce）保留：在 verify 前后显式调用。
     //
     // DAO 来源优先级：优先 `get_garrison_dao()`（bootstrap 注入的全局共享 DAO），
-    // 与 GarrisonManager::init 传入的 dao 是同一 Arc 实例（见 services.rs
+    // 与 GarrisonManager::init 传入的 dao 是同一 Arc 实例（services.rs
     // init_garrison_auth: `set_garrison_dao(Arc::clone(&dao))`；`GarrisonManager::init(dao,...)`）。
     let (login_id, perms) = {
         use garrison::protocol::apikey::ApiKeyHandler;
@@ -338,6 +357,19 @@ pub async fn auth_middleware_inner(
                             ip, rec_err
                         );
                     }
+                    // 达到 max_attempts 的本次请求即返回 429（而非等下一次请求的
+                    // 预检才发现被封禁）：record_failure 在计数越过阈值时落封禁
+                    // 记录，这里立即复查一次，命中则拒绝当前请求。
+                    match strategy.is_blocked(&fw_ctx).await {
+                        Ok(true) => {
+                            let e = garrison::error::GarrisonError::FirewallBlocked(format!(
+                                "auth-middleware-ip-blocked::{}",
+                                ip
+                            ));
+                            return AuthError::from_garrison(e).into_response();
+                        }
+                        Ok(false) | Err(_) => { /* 未达阈值或瞬时故障：维持 401 */ }
+                    }
                 }
                 return AuthError::from_garrison(e).into_response();
             }
@@ -353,7 +385,6 @@ pub async fn auth_middleware_inner(
 
     // 5. 反查 crawlrs DB 获取 team_id（带 LRU 缓存，决策 4）
     //
-    // feature-gate-optional-modules T010/T011 修复（design.md §4）：
     // teams feature 关闭时（单租户模式），强制使用 DEFAULT_TEAM_ID，不查 DB。
     // teams-on 时保持原逻辑从 DB 反查。
     #[cfg(feature = "teams")]
@@ -418,7 +449,7 @@ pub async fn scope_middleware(req: Request<Body>, next: Next) -> Result<Response
             .ok_or(StatusCode::UNAUTHORIZED)?;
 
         if !auth_state.scope.has_permission(required) {
-            // LOW-5 修复：scope denied 是预期事件（合法的授权拒绝），非攻击信号。
+            // scope denied 是预期事件（合法的授权拒绝），非攻击信号。
             // api_key_id 是 UUID（非敏感），但生产 log level 设为 warn 会产生噪音，改为 info。
             // 详细拒绝事件已通过 audit_service.log_deny() 入审计。
             log::info!(
@@ -429,7 +460,7 @@ pub async fn scope_middleware(req: Request<Body>, next: Next) -> Result<Response
                 path
             );
 
-            // Log scope denial to audit service（HIGH-1 修复：失败必须显性化，规则12）
+            // Log scope denial to audit service（失败必须显性化）
             if let Some(audit_service) = req.extensions().get::<Arc<dyn AuditServiceTrait>>() {
                 let api_key_scope: ApiKeyScope = required.into();
                 let reason = format!("Missing required scope: {:?}", required);
@@ -443,7 +474,7 @@ pub async fn scope_middleware(req: Request<Body>, next: Next) -> Result<Response
                     )
                     .await
                 {
-                    // 审计失败不阻塞拒绝流程，但必须显性记录（规则12 显性化）
+                    // 审计失败不阻塞拒绝流程，但必须显性记录（显性化）
                     log::error!(
                         "audit log_deny failed for scope.denied event: api_key_id={} team_id={} err={}",
                         auth_state.api_key_id,
@@ -651,7 +682,7 @@ mod tests {
     // ===== default_identity_middleware tests (feature-gate: `auth` off) =====
     //
     // 这些测试仅在 `--no-default-features`（关闭 `auth` feature）下编译运行，
-    // 验证 `default_identity_middleware` 的契约（R-auth-002）。
+    // 验证 `default_identity_middleware` 的契约。
     #[cfg(not(feature = "auth"))]
     mod default_identity_tests {
         use super::*;

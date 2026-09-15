@@ -122,7 +122,11 @@ impl TaskRepository for MockTaskRepository {
         }
     }
 
-    async fn mark_completed(&self, id: Uuid) -> Result<(), RepositoryError> {
+    async fn mark_completed(
+        &self,
+        id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock database error"
@@ -133,13 +137,17 @@ impl TaskRepository for MockTaskRepository {
         if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
             task.status = TaskStatus::Completed;
             task.completed_at = Some(Utc::now());
-            Ok(())
+            Ok(1)
         } else {
             Err(RepositoryError::NotFound)
         }
     }
 
-    async fn mark_failed(&self, id: Uuid) -> Result<(), RepositoryError> {
+    async fn mark_failed(
+        &self,
+        id: Uuid,
+        _lock_token: Option<Uuid>,
+    ) -> Result<u64, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock database error"
@@ -149,13 +157,13 @@ impl TaskRepository for MockTaskRepository {
         let mut tasks = self.tasks.lock().unwrap();
         if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
             task.status = TaskStatus::Failed;
-            Ok(())
+            Ok(1)
         } else {
             Err(RepositoryError::NotFound)
         }
     }
 
-    async fn mark_cancelled(&self, id: Uuid) -> Result<(), RepositoryError> {
+    async fn mark_cancelled(&self, id: Uuid) -> Result<u64, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock database error"
@@ -165,7 +173,7 @@ impl TaskRepository for MockTaskRepository {
         let mut tasks = self.tasks.lock().unwrap();
         if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
             task.status = TaskStatus::Cancelled;
-            Ok(())
+            Ok(1)
         } else {
             Err(RepositoryError::NotFound)
         }
@@ -213,6 +221,15 @@ impl TaskRepository for MockTaskRepository {
         _urls: &[String],
     ) -> Result<HashSet<String>, RepositoryError> {
         Ok(HashSet::new())
+    }
+
+    async fn renew_lock(
+        &self,
+        _task_id: Uuid,
+        _worker_id: Uuid,
+        _extend_seconds: i64,
+    ) -> Result<bool, RepositoryError> {
+        Ok(true)
     }
 }
 

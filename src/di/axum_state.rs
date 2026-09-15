@@ -22,20 +22,20 @@ use crate::di::modules::{
 };
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
-// R-teams-004 / T014：teams-off 时不导入 teams 相关类型
+// teams-off 时不导入 teams 相关类型
 #[cfg(feature = "teams")]
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::repositories::tasks_backlog_repository::TasksBacklogRepository;
-// R-wh-003 / T027：webhook feature 关闭时不导入 webhook 相关 repository 类型
+// webhook feature 关闭时不导入 webhook 相关 repository 类型
 // （字段不编译，accessor 也不编译）
 #[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_event_repository::WebhookEventRepository;
 #[cfg(feature = "webhook")]
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::audit_service::AuditServiceTrait;
-// T049/R-content-002：ContentExtractionFacade 用于正文提取（多 extractor 优先级路由 + LLM 回退）
+// ContentExtractionFacade 用于正文提取（多 extractor 优先级路由 + LLM 回退）
 use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
 #[cfg(feature = "teams")]
@@ -52,10 +52,10 @@ use crate::engines::router::EngineRouter;
 use crate::i18n::I18nBundle;
 use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClient;
-// T059/R-cache-002：高级缓存服务（scrape_worker 读写抓取结果缓存）
+// 高级缓存服务（scrape_worker 读写抓取结果缓存）
 use crate::infrastructure::events::{BroadcastEventBus, EventBus};
 use crate::infrastructure::oxcache::CacheService;
-// T035/R-runtime-002：请求合并器（同 URL 并发只允许首个执行实际抓取）
+// 请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
 use crate::utils::robots::RobotsCheckerTrait;
 use dbnexus::DbPool;
@@ -79,13 +79,13 @@ pub struct CrawlRsState {
     pub result_repo: Arc<dyn ScrapeResultRepository>,
     /// Webhook repository
     ///
-    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook feature 关闭时不编译此字段。
     /// webhook-off 模式下，无 webhook 管理功能，不需要 `WebhookRepository`。
     #[cfg(feature = "webhook")]
     pub webhook_repo: Arc<dyn WebhookRepository>,
     /// Webhook event repository
     ///
-    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook feature 关闭时不编译此字段。
     /// webhook-off 模式下，无 webhook 事件持久化，不需要 `WebhookEventRepository`。
     #[cfg(feature = "webhook")]
     pub webhook_event_repo: Arc<dyn WebhookEventRepository>,
@@ -97,7 +97,7 @@ pub struct CrawlRsState {
     pub rate_limiting_service: Arc<dyn RateLimitingService>,
     /// Team service
     ///
-    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams feature 关闭时不编译此字段。
     /// teams-off 模式下，handler 不再需要 `TeamService`（无地理限制、无团队管理）。
     /// 引用此字段的代码（routes.rs 的 `Extension(team_service)` 装配、handler 签名）
     /// 必须通过 `#[cfg(feature = "teams")]` 门控。
@@ -105,7 +105,7 @@ pub struct CrawlRsState {
     pub team_service: Arc<TeamService>,
     /// Webhook service
     ///
-    /// R-wh-003 / T027：webhook feature 关闭时此字段保留，但装配 `NoopWebhookService`。
+    /// webhook feature 关闭时此字段保留，但装配 `NoopWebhookService`。
     /// `WebhookService` trait 需始终编译（业务逻辑通过 trait 调用 trigger_completion / trigger_failure），
     /// 故此字段不门控；`ServicesComponents` 与 `init_services` 中的装配按 cfg 选择具体实现。
     pub webhook_service: Arc<dyn WebhookService>,
@@ -115,7 +115,7 @@ pub struct CrawlRsState {
     pub team_semaphore: Arc<TeamSemaphore>,
     /// Request coalescer for deduplicating concurrent fetches of the same URL.
     ///
-    /// T035/R-runtime-002：同 URL 并发请求只允许首个执行实际抓取，
+    /// 同 URL 并发请求只允许首个执行实际抓取，
     /// 其余 worker 等待广播后从 `result_repo` 读取结果，避免重复网络往返。
     /// 由 `ServicesComponents` 在 `init_services` 中创建为共享单例。
     pub request_coalescer: Arc<RequestCoalescer>,
@@ -133,12 +133,12 @@ pub struct CrawlRsState {
     pub llm_service: Arc<dyn LLMServiceTrait>,
     /// Extraction service for data extraction
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
-    /// Content extraction facade（T049/R-content-002）
+    /// Content extraction facade
     ///
     /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLMService，按 Trafilatura→DomSmoothie→CssRule
     /// 优先级路由，`confidence < 0.7` 时触发 LLM 回退。由 `scrape_worker` 提取路径使用。
     pub content_extractor: Arc<ContentExtractionFacade>,
-    /// 高级缓存服务（T059/R-cache-002）
+    /// 高级缓存服务
     ///
     /// 由 `InfrastructureModule` 从 `InfrastructureComponents.cache_service` 注入，
     /// 用于 `scrape_worker` 读写抓取结果缓存。所有 worker 共享同一实例。
@@ -147,7 +147,7 @@ pub struct CrawlRsState {
     pub audit_service: Arc<dyn AuditServiceTrait>,
     /// Webhook worker
     ///
-    /// R-wh-003 / T027：webhook feature 关闭时不编译此字段。
+    /// webhook feature 关闭时不编译此字段。
     /// webhook-off 模式下，不启动 webhook_worker，不需要此字段。
     #[cfg(feature = "webhook")]
     pub webhook_worker: Arc<crate::workers::webhook_worker::WebhookWorker>,
@@ -157,13 +157,13 @@ pub struct CrawlRsState {
     pub expiration_worker: Arc<crate::workers::expiration_worker::ExpirationWorker>,
     /// Geo location service
     ///
-    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams feature 关闭时不编译此字段。
     /// teams-off 模式下，无地理限制相关业务，不需要 `GeoLocationService`。
     #[cfg(feature = "teams")]
     pub geo_location_service: Arc<dyn GeoLocationService>,
     /// Geo restriction repository
     ///
-    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams feature 关闭时不编译此字段。
     /// teams-off 模式下，无地理限制数据访问，不需要 `GeoRestrictionRepository`。
     #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
@@ -280,19 +280,19 @@ pub trait CrawlRsStateExt {
     fn result_repo(&self) -> Arc<dyn ScrapeResultRepository>;
     /// Get webhook repository
     ///
-    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
+    /// webhook feature 关闭时不编译此 accessor。
     #[cfg(feature = "webhook")]
     fn webhook_repo(&self) -> Arc<dyn WebhookRepository>;
     /// Get webhook event repository
     ///
-    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
+    /// webhook feature 关闭时不编译此 accessor。
     #[cfg(feature = "webhook")]
     fn webhook_event_repo(&self) -> Arc<dyn WebhookEventRepository>;
     /// Get rate limiting service
     fn rate_limiting_service(&self) -> Arc<dyn RateLimitingService>;
     /// Get team service
     ///
-    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    /// teams feature 关闭时不编译此 accessor。
     #[cfg(feature = "teams")]
     fn team_service(&self) -> Arc<TeamService>;
     /// Get webhook service
@@ -311,7 +311,7 @@ pub trait CrawlRsStateExt {
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait>;
     /// Get cache service
     ///
-    /// T059/R-cache-002：供 `WorkerManagerDeps` 注入 `scrape_worker`。
+    /// 供 `WorkerManagerDeps` 注入 `scrape_worker`。
     fn cache_service(&self) -> Arc<dyn CacheService>;
     /// Get database pool (dbnexus DbPool)
     fn db_pool(&self) -> Arc<DbPool>;
@@ -325,19 +325,19 @@ pub trait CrawlRsStateExt {
     fn team_semaphore(&self) -> Arc<TeamSemaphore>;
     /// Get request coalescer
     ///
-    /// T035/R-runtime-002：供 worker 共享同一 `RequestCoalescer` 实例。
+    /// 供 worker 共享同一 `RequestCoalescer` 实例。
     fn request_coalescer(&self) -> Arc<RequestCoalescer>;
     /// Get audit service
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait>;
     /// Get extraction service
     fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait>;
-    /// Get content extraction facade（T049/R-content-002）
+    /// Get content extraction facade
     ///
     /// 供 `scrape_worker` 提取路径使用，按优先级路由多 extractor + LLM 回退。
     fn content_extractor(&self) -> Arc<ContentExtractionFacade>;
     /// Get webhook worker
     ///
-    /// R-wh-003 / T027：webhook feature 关闭时不编译此 accessor。
+    /// webhook feature 关闭时不编译此 accessor。
     #[cfg(feature = "webhook")]
     fn webhook_worker(&self) -> Arc<crate::workers::webhook_worker::WebhookWorker>;
     /// Get backlog worker
@@ -346,12 +346,12 @@ pub trait CrawlRsStateExt {
     fn expiration_worker(&self) -> Arc<crate::workers::expiration_worker::ExpirationWorker>;
     /// Get geo location service
     ///
-    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    /// teams feature 关闭时不编译此 accessor。
     #[cfg(feature = "teams")]
     fn geo_location_service(&self) -> Arc<dyn GeoLocationService>;
     /// Get geo restriction repository
     ///
-    /// R-teams-004 / T014：teams feature 关闭时不编译此 accessor。
+    /// teams feature 关闭时不编译此 accessor。
     #[cfg(feature = "teams")]
     fn geo_restriction_repo(&self) -> Arc<dyn GeoRestrictionRepository>;
     /// Get i18n translation bundle
@@ -714,14 +714,14 @@ mod tests {
         let rate_limiting: Arc<dyn RateLimitingService> = state.rate_limiting_service();
         assert!(Arc::strong_count(&rate_limiting) >= 2);
 
-        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        // teams feature 关闭时 accessor 不编译
         #[cfg(feature = "teams")]
         {
             let team_service: Arc<TeamService> = state.team_service();
             assert!(Arc::strong_count(&team_service) >= 2);
         }
 
-        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        // webhook feature 关闭时 accessor 不编译
         #[cfg(feature = "webhook")]
         {
             let webhook_repo: Arc<dyn WebhookRepository> = state.webhook_repo();
@@ -773,11 +773,11 @@ mod tests {
         let extraction_service: Arc<dyn ExtractionServiceTrait> = state.extraction_service();
         assert!(Arc::strong_count(&extraction_service) >= 2);
 
-        // T049/R-content-002：content_extractor accessor
+        // content_extractor accessor
         let content_extractor = state.content_extractor();
         assert!(Arc::strong_count(&content_extractor) >= 2);
 
-        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        // webhook feature 关闭时 accessor 不编译
         #[cfg(feature = "webhook")]
         {
             let webhook_worker = state.webhook_worker();
@@ -790,7 +790,7 @@ mod tests {
         let expiration_worker = state.expiration_worker();
         assert!(Arc::strong_count(&expiration_worker) >= 2);
 
-        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        // teams feature 关闭时 accessor 不编译
         #[cfg(feature = "teams")]
         {
             let geo_location: Arc<dyn GeoLocationService> = state.geo_location_service();
@@ -940,14 +940,14 @@ mod tests {
         let rate_limiting_service = state_arc.rate_limiting_service();
         assert!(Arc::strong_count(&rate_limiting_service) >= 2);
 
-        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        // teams feature 关闭时 accessor 不编译
         #[cfg(feature = "teams")]
         {
             let team_service = state_arc.team_service();
             assert!(Arc::strong_count(&team_service) >= 2);
         }
 
-        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        // webhook feature 关闭时 accessor 不编译
         #[cfg(feature = "webhook")]
         {
             let webhook_repo = state_arc.webhook_repo();
@@ -999,11 +999,11 @@ mod tests {
         let extraction_service = state_arc.extraction_service();
         assert!(Arc::strong_count(&extraction_service) >= 2);
 
-        // T049/R-content-002：content_extractor Arc delegation
+        // content_extractor Arc delegation
         let content_extractor = state_arc.content_extractor();
         assert!(Arc::strong_count(&content_extractor) >= 2);
 
-        // R-wh-003 / T027：webhook feature 关闭时 accessor 不编译
+        // webhook feature 关闭时 accessor 不编译
         #[cfg(feature = "webhook")]
         {
             let webhook_worker = state_arc.webhook_worker();
@@ -1016,7 +1016,7 @@ mod tests {
         let expiration_worker = state_arc.expiration_worker();
         assert!(Arc::strong_count(&expiration_worker) >= 2);
 
-        // R-teams-004 / T014：teams feature 关闭时 accessor 不编译
+        // teams feature 关闭时 accessor 不编译
         #[cfg(feature = "teams")]
         {
             let geo_location = state_arc.geo_location_service();

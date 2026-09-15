@@ -28,8 +28,8 @@ use crate::engines::engine_client::ScrapeResponse;
 use crate::utils::dedup::{DedupResult, Deduplicator};
 use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::crawl::{
-    FilterContext, Frontier, PathDepthScorer, ScoringContext, UrlFilter, UrlPatternFilter,
-    UrlScorer,
+    DomainFilter, FilterContext, Frontier, PathDepthScorer, ScoringContext, UrlFilter,
+    UrlPatternFilter, UrlScorer,
 };
 use crate::workers::errors::ScrapeWorkerError;
 
@@ -130,7 +130,7 @@ pub async fn extract_and_queue_links(
         return Ok(());
     }
 
-    // 性能审查 H-3 修复：循环外构造一次 UrlPatternFilter
+    // 循环外构造一次 UrlPatternFilter
     let empty_include_short_circuit =
         matches!(&config.include_patterns, Some(patterns) if patterns.is_empty());
     let pattern_filter = if empty_include_short_circuit {
@@ -142,6 +142,24 @@ pub async fn extract_and_queue_links(
         ))
     };
     let filter_ctx = FilterContext::default();
+
+    // 消费团队 domain_blacklist（由 crawl_link_processor 写入
+    // 任务 payload），黑名单优先级高于 include/exclude patterns——命中即丢弃
+    let domain_blacklist: Vec<String> = task
+        .payload
+        .get("domain_blacklist")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let blacklist_filter = if domain_blacklist.is_empty() {
+        None
+    } else {
+        info!(
+            "Crawl task {} enforcing domain blacklist with {} entries",
+            task.id,
+            domain_blacklist.len()
+        );
+        Some(DomainFilter::denylist(domain_blacklist))
+    };
 
     let unique_links = {
         let document = Html::parse_document(&response.content);
@@ -163,6 +181,13 @@ pub async fn extract_and_queue_links(
                         continue;
                     }
 
+                    // 黑名单过滤：绝对拒绝，不受 include patterns 影响
+                    if let Some(bf) = &blacklist_filter {
+                        if !bf.accept(&url_str, &filter_ctx) {
+                            continue;
+                        }
+                    }
+
                     if let Some(filter) = &pattern_filter {
                         if !filter.accept(&url_str, &filter_ctx) {
                             continue;
@@ -180,7 +205,7 @@ pub async fn extract_and_queue_links(
 
     info!("Found {} unique links on {}", unique_links.len(), task.url);
 
-    // T053/R-frontier-001：URL 分层去重
+    // URL 分层去重
     let mut to_enqueue: Vec<String> = Vec::with_capacity(unique_links.len());
     let mut db_check: Vec<String> = Vec::with_capacity(unique_links.len());
 
@@ -205,7 +230,7 @@ pub async fn extract_and_queue_links(
         }
     }
 
-    // T066/R-frontier-003：Frontier 评分排序
+    // Frontier 评分排序
     let mut new_urls: Vec<String> = Vec::with_capacity(unique_links.len());
     new_urls.extend(std::mem::take(&mut to_enqueue));
 
@@ -256,7 +281,7 @@ pub async fn extract_and_queue_links(
 
         for url in &new_urls {
             let base_score = scorer.score(url, &scoring_ctx);
-            // T082 / R-frontier-006：KG 结构空洞提升因子
+            // KG 结构空洞提升因子
             // kg_priority_boost > 1.0 表示 URL 可能填补结构空洞，应获得更高优先级
             let score = (base_score as f64 * scoring_ctx.kg_priority_boost).clamp(0.0, 1.0) as f32;
             match crate::workers::crawl::ScoredUrl::new(url.clone(), score) {
@@ -546,14 +571,22 @@ mod tests {
         async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
             Ok(false)
@@ -592,6 +625,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 
@@ -960,14 +1002,22 @@ mod tests {
         async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
             Ok(false)
@@ -1011,6 +1061,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 

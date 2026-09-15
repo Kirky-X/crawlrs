@@ -17,7 +17,7 @@ use std::sync::Arc;
 /// `start_api_service()` 和 `start_worker_service()` 共享的 worker spawn 逻辑
 /// 统一由此函数管理，避免重复代码。
 ///
-/// T024 修复：返回所有 worker 的 `JoinHandle`，调用方应在关闭时 await
+/// 返回所有 worker 的 `JoinHandle`，调用方应在关闭时 await
 /// 并记录 panic。
 pub async fn spawn_common_workers(
     app_state: &CrawlRsState,
@@ -25,7 +25,7 @@ pub async fn spawn_common_workers(
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
-    // R-wh-003 / T029：webhook worker 仅在 webhook feature 启用时启动
+    // webhook worker 仅在 webhook feature 启用时启动
     #[cfg(feature = "webhook")]
     {
         let webhook_worker = AbstractWorker::new(

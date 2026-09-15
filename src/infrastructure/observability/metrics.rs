@@ -215,8 +215,8 @@ impl Default for SystemMonitor {
 
 /// Mutable system monitor for background updates
 ///
-/// T019（R-runtime-001）：pub 以便 `init_metrics` 与 `MemoryScheduler` 共享同一实例。
-/// 通过 `shared_system_monitor()` 获取全局单例，避免重复采集（design.md §5：复用）。
+/// pub 以便 `init_metrics` 与 `MemoryScheduler` 共享同一实例。
+/// 通过 `shared_system_monitor()` 获取全局单例，避免重复采集（复用）。
 pub struct MutableSystemMonitor {
     system: Arc<Mutex<System>>,
 }
@@ -235,7 +235,7 @@ impl MutableSystemMonitor {
         }
     }
 
-    /// 刷新系统指标（T019：改为 `&self`，内部 Arc<Mutex> 保证线程安全）
+    /// 刷新系统指标（改为 `&self`，内部 Arc<Mutex> 保证线程安全）
     pub fn refresh(&self) {
         let mut sys = match self.system.lock() {
             Ok(guard) => guard,
@@ -276,7 +276,7 @@ impl MutableSystemMonitor {
     }
 }
 
-/// T019：为 MutableSystemMonitor 实现 SystemMonitorTrait
+/// 为 MutableSystemMonitor 实现 SystemMonitorTrait
 ///
 /// 供 `MemoryScheduler` 以 `Arc<dyn SystemMonitorTrait>` 注入。
 impl SystemMonitorTrait for MutableSystemMonitor {
@@ -292,11 +292,11 @@ impl SystemMonitorTrait for MutableSystemMonitor {
     }
 }
 
-/// T019：全局共享系统监控单例
+/// 全局共享系统监控单例
 ///
 /// `init_metrics()` 首次调用时初始化并启动后台刷新任务；
 /// `WorkerManager` 后续调用获取同一 `Arc` 实例供 `MemoryScheduler` 读取，
-/// 避免重复 sysinfo 采集（design.md §5：复用现有 SystemMonitorTrait）。
+/// 避免重复 sysinfo 采集（复用现有 SystemMonitorTrait）。
 static SHARED_MONITOR: OnceLock<Arc<MutableSystemMonitor>> = OnceLock::new();
 
 /// 获取全局共享 `MutableSystemMonitor` 单例
@@ -324,7 +324,7 @@ pub fn shared_system_monitor() -> Arc<MutableSystemMonitor> {
 ///
 /// 配置并注册应用所需的各类监控指标
 ///
-/// T019：通过 `shared_system_monitor()` 获取全局单例，避免重复采集。
+/// 通过 `shared_system_monitor()` 获取全局单例，避免重复采集。
 /// 后台刷新任务由 `shared_system_monitor()` 首次调用时启动，此处仅负责
 /// Prometheus 注册与指标导出。
 pub fn init_metrics() {
@@ -337,7 +337,7 @@ pub fn init_metrics() {
         return;
     }
 
-    // T019：复用全局共享 monitor（首次调用会启动后台刷新任务）
+    // 复用全局共享 monitor（首次调用会启动后台刷新任务）
     let monitor = shared_system_monitor();
 
     // Start background task to update system metrics（Prometheus 导出）
@@ -394,7 +394,7 @@ pub fn init_metrics() {
         "Current status of circuit breaker (0=Closed, 0.5=HalfOpen, 1=Open)"
     );
 
-    // Phase 4a: 增强指标 (T061-T065)
+    // 增强指标
     describe_gauge!(
         "crawlrs_queue_depth",
         "Current number of items in the task queue"

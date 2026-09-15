@@ -9,7 +9,7 @@ use tokio::time::error::Elapsed;
 
 /// 搜索错误类型
 ///
-/// 架构 MEDIUM 3：将原来的 `Engine(String)` catch-all 拆分为结构化变体，
+/// 架构将原来的 `Engine(String)` catch-all 拆分为结构化变体，
 /// 使错误分类可被程序化匹配（如熔断器只对 `RateLimited`/`Captcha` 触发降级，
 /// 重试逻辑只对 `EngineClient`/`BadHttpStatus(5xx)` 触发重试）。
 #[derive(Debug, Error)]

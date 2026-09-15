@@ -253,7 +253,9 @@ mod tests {
 
     #[test]
     fn test_is_valid_ipv4_address() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(is_valid_ip_or_cidr("192.168.1.1"));
         assert!(is_valid_ip_or_cidr("10.0.0.1"));
         assert!(is_valid_ip_or_cidr("0.0.0.0"));
@@ -262,7 +264,9 @@ mod tests {
 
     #[test]
     fn test_is_valid_ipv6_address() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(is_valid_ip_or_cidr("::1"));
         assert!(is_valid_ip_or_cidr("2001:db8::1"));
         assert!(is_valid_ip_or_cidr("fe80::1"));
@@ -270,7 +274,9 @@ mod tests {
 
     #[test]
     fn test_is_valid_ipv4_cidr() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(is_valid_ip_or_cidr("192.168.1.0/24"));
         assert!(is_valid_ip_or_cidr("10.0.0.0/8"));
         assert!(is_valid_ip_or_cidr("172.16.0.0/12"));
@@ -280,7 +286,9 @@ mod tests {
 
     #[test]
     fn test_is_valid_ipv6_cidr() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(is_valid_ip_or_cidr("2001:db8::/32"));
         assert!(is_valid_ip_or_cidr("fe80::/10"));
         assert!(is_valid_ip_or_cidr("::1/128"));
@@ -289,7 +297,9 @@ mod tests {
 
     #[test]
     fn test_invalid_ip_address() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!is_valid_ip_or_cidr("999.999.999.999"));
         assert!(!is_valid_ip_or_cidr("not-an-ip"));
         assert!(!is_valid_ip_or_cidr(""));
@@ -298,7 +308,9 @@ mod tests {
 
     #[test]
     fn test_invalid_cidr_prefix() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!is_valid_ip_or_cidr("192.168.1.0/33"));
         assert!(!is_valid_ip_or_cidr("192.168.1.0/abc"));
         assert!(!is_valid_ip_or_cidr("192.168.1.0/"));
@@ -307,7 +319,9 @@ mod tests {
 
     #[test]
     fn test_invalid_cidr_ip_part() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!is_valid_ip_or_cidr("999.1.1.1/24"));
         assert!(!is_valid_ip_or_cidr("not-ip/24"));
     }
@@ -316,7 +330,9 @@ mod tests {
 
     #[test]
     fn test_team_info_response_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let response = TeamInfoResponse {
             id: team_id,
@@ -340,7 +356,9 @@ mod tests {
 
     #[test]
     fn test_team_info_response_negative_balance() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = TeamInfoResponse {
             id: Uuid::new_v4(),
             name: "Debtor Team".to_string(),
@@ -359,7 +377,9 @@ mod tests {
 
     #[test]
     fn test_team_usage_response_serialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let response = TeamUsageResponse {
             team_id,
@@ -384,7 +404,9 @@ mod tests {
 
     #[test]
     fn test_team_usage_response_zero_values() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = TeamUsageResponse {
             team_id: Uuid::new_v4(),
             period: "7d".to_string(),
@@ -402,7 +424,9 @@ mod tests {
 
     #[test]
     fn test_team_info_response_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = format!(
             r#"{{"id":"{}","name":"Test","credits_balance":100,"total_tasks":10,"completed_tasks":8,"failed_tasks":2,"created_at":"2025-01-01T00:00:00Z"}}"#,
             Uuid::new_v4()
@@ -416,28 +440,36 @@ mod tests {
 
     #[test]
     fn test_is_valid_loopback_ipv4() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(is_valid_ip_or_cidr("127.0.0.1"));
         assert!(is_valid_ip_or_cidr("127.0.0.1/8"));
     }
 
     #[test]
     fn test_is_valid_link_local_ipv4() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(is_valid_ip_or_cidr("169.254.0.1"));
         assert!(is_valid_ip_or_cidr("169.254.0.0/16"));
     }
 
     #[test]
     fn test_is_valid_ipv6_loopback() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(is_valid_ip_or_cidr("::1"));
         assert!(is_valid_ip_or_cidr("::1/128"));
     }
 
     #[test]
     fn test_is_valid_ipv6_full_form() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(is_valid_ip_or_cidr(
             "2001:0db8:0000:0000:0000:0000:0000:0001"
         ));
@@ -445,68 +477,90 @@ mod tests {
 
     #[test]
     fn test_invalid_cidr_missing_prefix() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!is_valid_ip_or_cidr("192.168.1.0/"));
     }
 
     #[test]
     fn test_invalid_cidr_non_numeric_prefix() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!is_valid_ip_or_cidr("192.168.1.0/abc"));
     }
 
     #[test]
     fn test_invalid_ipv4_cidr_negative_prefix() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // u8 parse won't accept negative sign, so this should fail
         assert!(!is_valid_ip_or_cidr("192.168.1.0/-1"));
     }
 
     #[test]
     fn test_invalid_ipv6_cidr_prefix_too_large() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!is_valid_ip_or_cidr("::1/130"));
     }
 
     #[test]
     fn test_invalid_empty_string() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!is_valid_ip_or_cidr(""));
     }
 
     #[test]
     fn test_invalid_just_slash() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!is_valid_ip_or_cidr("/"));
     }
 
     #[test]
     fn test_invalid_multiple_slashes() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!is_valid_ip_or_cidr("192.168.1.0/24/extra"));
     }
 
     #[test]
     fn test_valid_ipv4_cidr_prefix_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(is_valid_ip_or_cidr("10.0.0.0/0"));
     }
 
     #[test]
     fn test_valid_ipv6_cidr_prefix_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(is_valid_ip_or_cidr("::/0"));
     }
 
     #[test]
     fn test_invalid_ipv4_with_extra_octets() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert!(!is_valid_ip_or_cidr("192.168.1.1.1"));
     }
 
     #[test]
     fn test_invalid_ipv4_with_leading_zero() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Leading zeros may or may not be accepted depending on parser
         // Just verify it doesn't crash
         let _ = is_valid_ip_or_cidr("192.168.001.001");
@@ -516,7 +570,9 @@ mod tests {
 
     #[test]
     fn test_country_code_validation_two_letter_passes() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Handler: if country.len() != 2 { return error }
         let countries = vec!["US".to_string(), "CN".to_string(), "JP".to_string()];
         for country in &countries {
@@ -526,28 +582,36 @@ mod tests {
 
     #[test]
     fn test_country_code_validation_one_letter_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let country = "U".to_string();
         assert_ne!(country.len(), 2, "one-letter code should fail");
     }
 
     #[test]
     fn test_country_code_validation_three_letter_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let country = "USA".to_string();
         assert_ne!(country.len(), 2, "three-letter code should fail");
     }
 
     #[test]
     fn test_country_code_validation_empty_fails() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let country = "".to_string();
         assert_ne!(country.len(), 2, "empty code should fail");
     }
 
     #[test]
     fn test_country_code_validation_lowercase_two_letters() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // Handler only checks length, not case
         let country = "us".to_string();
         assert_eq!(
@@ -561,7 +625,9 @@ mod tests {
 
     #[test]
     fn test_team_geo_restrictions_response_with_data() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let response = TeamGeoRestrictionsResponse {
             team_id,
@@ -583,7 +649,9 @@ mod tests {
 
     #[test]
     fn test_team_geo_restrictions_response_disabled() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = TeamGeoRestrictionsResponse {
             team_id: Uuid::new_v4(),
             enable_geo_restrictions: false,
@@ -605,7 +673,9 @@ mod tests {
 
     #[test]
     fn test_update_geo_restrictions_request_minimal() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"enable_geo_restrictions": false}"#;
         let req: UpdateTeamGeoRestrictionsRequest = serde_json::from_str(json).unwrap();
         assert!(!req.enable_geo_restrictions);
@@ -617,7 +687,9 @@ mod tests {
 
     #[test]
     fn test_update_geo_restrictions_request_full() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{
             "enable_geo_restrictions": true,
             "allowed_countries": ["US", "CA"],
@@ -635,7 +707,9 @@ mod tests {
 
     #[test]
     fn test_update_geo_restrictions_request_deny_unknown_fields() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = r#"{"enable_geo_restrictions": true, "unknown": 1}"#;
         let result: Result<UpdateTeamGeoRestrictionsRequest, _> = serde_json::from_str(json);
         assert!(result.is_err());
@@ -643,7 +717,9 @@ mod tests {
 
     #[test]
     fn test_update_geo_restrictions_request_validation_empty_allowed_countries() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         // The #[validate(length(min = 1))] on allowed_countries means
         // an empty vec should fail validation
         let req = UpdateTeamGeoRestrictionsRequest {
@@ -658,7 +734,9 @@ mod tests {
 
     #[test]
     fn test_update_geo_restrictions_request_validation_empty_blocked_countries() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let req = UpdateTeamGeoRestrictionsRequest {
             enable_geo_restrictions: true,
             allowed_countries: None,
@@ -671,7 +749,9 @@ mod tests {
 
     #[test]
     fn test_update_geo_restrictions_request_validation_with_countries() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let req = UpdateTeamGeoRestrictionsRequest {
             enable_geo_restrictions: true,
             allowed_countries: Some(vec!["US".to_string()]),
@@ -686,7 +766,9 @@ mod tests {
 
     #[test]
     fn test_team_info_response_clone() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = TeamInfoResponse {
             id: Uuid::new_v4(),
             name: "Clone Test".to_string(),
@@ -705,7 +787,9 @@ mod tests {
 
     #[test]
     fn test_team_info_response_debug() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = TeamInfoResponse {
             id: Uuid::new_v4(),
             name: "Debug Test".to_string(),
@@ -724,7 +808,9 @@ mod tests {
 
     #[test]
     fn test_team_usage_response_clone() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = TeamUsageResponse {
             team_id: Uuid::new_v4(),
             period: "30d".to_string(),
@@ -742,7 +828,9 @@ mod tests {
 
     #[test]
     fn test_team_usage_response_debug() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = TeamUsageResponse {
             team_id: Uuid::new_v4(),
             period: "7d".to_string(),
@@ -759,7 +847,9 @@ mod tests {
 
     #[test]
     fn test_team_usage_response_deserialization() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let json = format!(
             r#"{{"team_id":"{}","period":"30d","total_requests":50,"successful_requests":45,"failed_requests":5,"credits_used":250,"avg_response_time_ms":99.9}}"#,
             Uuid::new_v4()
@@ -774,7 +864,9 @@ mod tests {
 
     #[test]
     fn test_team_info_response_max_balance() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = TeamInfoResponse {
             id: Uuid::new_v4(),
             name: "Rich Team".to_string(),
@@ -791,7 +883,9 @@ mod tests {
 
     #[test]
     fn test_team_info_response_min_balance() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let response = TeamInfoResponse {
             id: Uuid::new_v4(),
             name: "Debt Team".to_string(),
@@ -810,7 +904,9 @@ mod tests {
 
     #[test]
     fn test_ip_whitelist_validation_all_valid() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let whitelist = vec![
             "192.168.1.1".to_string(),
             "10.0.0.0/8".to_string(),
@@ -824,7 +920,9 @@ mod tests {
 
     #[test]
     fn test_ip_whitelist_validation_with_invalid_entry() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let whitelist = [
             "192.168.1.1".to_string(),
             "invalid-ip".to_string(),
@@ -836,7 +934,9 @@ mod tests {
 
     #[test]
     fn test_ip_whitelist_validation_all_invalid() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let whitelist = ["not-an-ip".to_string(), "999.999.999.999".to_string()];
         let all_invalid = whitelist.iter().all(|ip| !is_valid_ip_or_cidr(ip));
         assert!(all_invalid, "All entries should be invalid");
@@ -846,7 +946,9 @@ mod tests {
 
     #[test]
     fn test_team_geo_restrictions_disabled() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let restrictions = TeamGeoRestrictions {
             enable_geo_restrictions: false,
             allowed_countries: None,
@@ -859,7 +961,9 @@ mod tests {
 
     #[test]
     fn test_team_geo_restrictions_enabled_with_data() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let restrictions = TeamGeoRestrictions {
             enable_geo_restrictions: true,
             allowed_countries: Some(vec!["US".to_string()]),
@@ -895,27 +999,9 @@ mod tests {
 
     /// Construct a lazy `DbPool` that does not connect to any database.
     fn make_test_db_pool() -> Arc<DbPool> {
-        std::thread::scope(|s| {
-            let handle = s.spawn(|| {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for DbPool construction");
-                let _guard = rt.enter();
-                let url = crate::common::test_helpers::resolve_test_database_url().expect(
-                    "No test database available: set TEST_DATABASE_URL or ensure Docker is running",
-                );
-                rt.block_on(async {
-                    let cfg = dbnexus::DbConfig {
-                        url,
-                        ..Default::default()
-                    };
-                    DbPool::with_config(cfg).await
-                })
-                .expect("failed to create DbPool for test")
-            });
-            Arc::new(handle.join().expect("DbPool construction thread panicked"))
-        })
+        // 统一走共享 helper：每调用独立池（min=0 无预热、max=4），
+        // 避免预热连接绑定到构造临时 runtime 而失效（test_helpers 说明）。
+        crate::common::test_helpers::create_test_db_pool()
     }
 
     /// Build an `AuthState` suitable for handler unit tests.
@@ -1039,16 +1125,24 @@ mod tests {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -1099,6 +1193,15 @@ mod tests {
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
         }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
     }
 
     // ========== MockScrapeResultRepository ==========
@@ -1143,6 +1246,10 @@ mod tests {
                 return Err(anyhow::anyhow!("get_team_avg_response_time failed"));
             }
             Ok(self.avg_response_time)
+        }
+
+        async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+            Ok(0)
         }
     }
 
@@ -1234,7 +1341,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_info_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let credits_repo: Arc<dyn CreditsRepository> =
             Arc::new(MockCreditsRepository::with_balance(500));
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
@@ -1253,7 +1362,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_info_credits_failure() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let credits_repo: Arc<dyn CreditsRepository> = Arc::new(MockCreditsRepository::failing());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
@@ -1272,7 +1383,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_info_task_repo_failure() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let credits_repo: Arc<dyn CreditsRepository> =
             Arc::new(MockCreditsRepository::with_balance(100));
         let task_repo: Arc<dyn TaskRepository> =
@@ -1295,7 +1408,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_info_with_tasks() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let team_id = Uuid::new_v4();
         let task = Task::new(
             Uuid::new_v4(),
@@ -1326,7 +1441,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_usage_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let credits_repo: Arc<dyn CreditsRepository> =
             Arc::new(MockCreditsRepository::with_balance(500));
         let scrape_result_repo: Arc<dyn ScrapeResultRepository> =
@@ -1346,7 +1463,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_usage_credits_failure() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let credits_repo: Arc<dyn CreditsRepository> = Arc::new(MockCreditsRepository::failing());
         let scrape_result_repo: Arc<dyn ScrapeResultRepository> =
             Arc::new(MockScrapeResultRepository::with_avg_response_time(100.0));
@@ -1366,7 +1485,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_usage_scrape_result_failure() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let credits_repo: Arc<dyn CreditsRepository> =
             Arc::new(MockCreditsRepository::with_balance(100));
         let scrape_result_repo: Arc<dyn ScrapeResultRepository> =
@@ -1387,7 +1508,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_usage_negative_balance() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let credits_repo: Arc<dyn CreditsRepository> =
             Arc::new(MockCreditsRepository::with_balance(-500));
         let scrape_result_repo: Arc<dyn ScrapeResultRepository> =
@@ -1409,7 +1532,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_geo_restrictions_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let restrictions = TeamGeoRestrictions {
             enable_geo_restrictions: true,
             allowed_countries: Some(vec!["US".to_string()]),
@@ -1434,7 +1559,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_geo_restrictions_empty() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
 
@@ -1450,7 +1577,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_geo_restrictions_failure() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_get_result(Err(
                 GeoRestrictionRepositoryError::Database("db error".to_string()),
@@ -1469,7 +1598,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_team_geo_restrictions_team_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_get_result(Err(
                 GeoRestrictionRepositoryError::TeamNotFound(Uuid::new_v4()),
@@ -1490,7 +1621,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_success() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
 
@@ -1507,7 +1640,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_minimal_request() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
         let request = UpdateTeamGeoRestrictionsRequest {
@@ -1531,7 +1666,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_invalid_allowed_country() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
         let request = UpdateTeamGeoRestrictionsRequest {
@@ -1555,7 +1692,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_invalid_blocked_country() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
         let request = UpdateTeamGeoRestrictionsRequest {
@@ -1579,7 +1718,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_invalid_ip() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
         let request = UpdateTeamGeoRestrictionsRequest {
@@ -1603,7 +1744,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_invalid_cidr() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
         let request = UpdateTeamGeoRestrictionsRequest {
@@ -1627,7 +1770,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_repo_failure() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_update_result(Err(
                 GeoRestrictionRepositoryError::Database("update failed".to_string()),
@@ -1647,7 +1792,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_repo_team_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_update_result(Err(
                 GeoRestrictionRepositoryError::TeamNotFound(Uuid::new_v4()),
@@ -1667,7 +1814,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_valid_ipv6() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
         let request = UpdateTeamGeoRestrictionsRequest {
@@ -1691,14 +1840,16 @@ mod tests {
 
     // ========== Test logger for covering log::error! format args ==========
 
-    use axum::body::to_bytes;
     use crate::test_utils::ensure_debug_logger;
+    use axum::body::to_bytes;
 
     // ========== Error response body verification tests ==========
 
     #[tokio::test]
     async fn test_get_team_geo_restrictions_failure_body_verified() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         ensure_debug_logger();
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_get_result(Err(
@@ -1728,7 +1879,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_repo_failure_body_verified() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         ensure_debug_logger();
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_update_result(Err(
@@ -1759,7 +1912,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_invalid_allowed_body_verified() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         ensure_debug_logger();
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
@@ -1794,7 +1949,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_invalid_blocked_body_verified() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         ensure_debug_logger();
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();
@@ -1829,7 +1986,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_invalid_ip_body_verified() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         ensure_debug_logger();
         let repo: Arc<MockGeoRestrictionRepository> = Arc::new(MockGeoRestrictionRepository::new());
         let auth = make_test_auth_state();

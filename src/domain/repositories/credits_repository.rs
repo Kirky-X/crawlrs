@@ -34,6 +34,23 @@ pub trait CreditsRepository: Send + Sync {
         reference_id: Option<Uuid>,
     ) -> Result<(), CreditsRepositoryError>;
 
+    /// Whether a deduction of `transaction_type` has already been recorded for
+    /// `task_id` (stored as the transaction's `reference_id`).
+    ///
+    /// Makes post-completion billing idempotent: a stale worker that lost the
+    /// completion guard but re-runs the deduction path must not charge the same
+    /// task twice (R-data-integrity-005). The default returns `Ok(false)` so
+    /// implementors that do not track per-task transactions preserve the
+    /// always-deduct behavior; the production repository overrides it with a
+    /// real query against `credits_transactions`.
+    async fn has_deduction_for_task(
+        &self,
+        _task_id: Uuid,
+        _transaction_type: CreditsTransactionType,
+    ) -> Result<bool, CreditsRepositoryError> {
+        Ok(false)
+    }
+
     /// Add credits to a team's balance
     async fn add_credits(
         &self,

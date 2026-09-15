@@ -211,7 +211,9 @@ mod tests {
 
     #[test]
     fn test_new_creates_repository_instance() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let pool = create_test_db_pool();
         let repo = AuditLogRepositoryImpl::new(pool);
         let _clone = repo.clone();
@@ -221,7 +223,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_inserts_record() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let entry = sample_audit_log_entry();
         let result = repo.create(&entry).await;
@@ -241,7 +245,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_api_key_id_returns_empty_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_api_key_id(Uuid::new_v4(), 10, 0).await;
         assert!(
@@ -257,7 +263,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_by_team_id_returns_empty_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_by_team_id(Uuid::new_v4(), 10, 0).await;
         assert!(result.is_ok(), "find_by_team_id failed: {:?}", result.err());
@@ -269,7 +277,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_denied_for_key_returns_empty_for_unknown() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         let result = repo.find_denied_for_key(Uuid::new_v4(), 5).await;
         assert!(
@@ -285,7 +295,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_old_logs_returns_zero_for_no_matching_records() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
         // retention_days=30 means cutoff is 30 days ago; newly created records
         // (in create test above) should not be deleted.
@@ -303,7 +315,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_database_error_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = AuditRepositoryError::DatabaseError(
             sea_orm::DbErr::RecordNotFound("audit log missing".to_string()).into(),
         );
@@ -314,7 +328,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_not_found_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let err = AuditRepositoryError::NotFound;
         assert_eq!(format!("{}", err), "Audit log not found");
     }
@@ -323,7 +339,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_from_dberr_record_not_found() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::RecordNotFound("not found".to_string());
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
@@ -334,7 +352,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_from_dberr_query_runtime() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err =
             sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
         let repo_err: AuditRepositoryError = db_err.into();
@@ -346,7 +366,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_from_dberr_connection_acquire() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
@@ -357,7 +379,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_from_dberr_record_not_inserted() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = sea_orm::DbErr::RecordNotInserted;
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
@@ -370,7 +394,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_from_dbnexus_db_error_connection() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let inner = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
         let db_err = dbnexus::DbError::Connection(inner);
         let repo_err: AuditRepositoryError = db_err.into();
@@ -390,7 +416,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_from_dbnexus_db_error_config() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = dbnexus::DbError::Config("invalid url".to_string());
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
@@ -412,7 +440,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_from_dbnexus_db_error_permission() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = dbnexus::DbError::Permission("forbidden".to_string());
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
@@ -434,7 +464,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_from_dbnexus_db_error_transaction() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = dbnexus::DbError::Transaction("deadlock".to_string());
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
@@ -456,7 +488,9 @@ mod tests {
 
     #[test]
     fn test_audit_repository_error_from_dbnexus_db_error_migration() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let db_err = dbnexus::DbError::Migration("schema mismatch".to_string());
         let repo_err: AuditRepositoryError = db_err.into();
         match repo_err {
@@ -480,13 +514,17 @@ mod tests {
 
     #[test]
     fn test_audit_decision_allow_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(format!("{}", AuditDecision::Allow), "ALLOW");
     }
 
     #[test]
     fn test_audit_decision_deny_display() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         assert_eq!(format!("{}", AuditDecision::Deny), "DENY");
     }
 
@@ -494,7 +532,9 @@ mod tests {
 
     #[test]
     fn test_audit_log_entry_construction_does_not_panic() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let entry = sample_audit_log_entry();
         assert_eq!(entry.decision, AuditDecision::Allow);
         assert_eq!(entry.requested_action, "crawl.create");
@@ -504,7 +544,9 @@ mod tests {
 
     #[test]
     fn test_audit_log_entry_with_deny_decision() {
-        if crate::common::test_helpers::skip_if_no_test_db() { return; }
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
         let mut entry = sample_audit_log_entry();
         entry.decision = AuditDecision::Deny;
         entry.denial_reason = Some("insufficient scope".to_string());

@@ -5,7 +5,7 @@
 
 //! CrawlrsAuditListener — 桥接 garrison 事件到 crawlrs [`AuditServiceTrait`]。
 //!
-//! ## 设计背景（R-audit-firewall-001 / T024）
+//! ## 设计背景
 //!
 //! garrison 内建 `AuditLogListener` 被 `#[cfg(feature = "db-sqlite")]` 门控，
 //! 与 crawlrs PostgreSQL 后端不兼容。按用户决策（方案 A：自写 listener 桥接），
@@ -33,7 +33,7 @@
 //! 避免 DB 异常时 task 雪崩 OOM。Semaphore 满时 drop 事件 + warn。
 //! [`wait_audit_tasks`] 供 shutdown 时优雅等待 inflight task 完成。
 //!
-//! ## 失败契约（规则12 显性化）
+//! ## 失败契约（显性化）
 //!
 //! 审计日志是 best-effort persistence，存在以下失败场景：
 //! - **audit_service 未注入**：bootstrap 完成前的事件被 drop + warn
@@ -58,21 +58,21 @@
 //!   - `User-Agent`：`MAX_USER_AGENT_LEN`（256 字符）
 //!   - `denial_reason`：`MAX_DENIAL_REASON_LEN`（256 字符）
 //!   - `login_id`：`MAX_LOGIN_ID_LEN`（128 字符）
-//!   - `permission`：`MAX_PERMISSION_LEN`（128 字符，安全审查 M-1 修复）
-//!   - `role`：`MAX_ROLE_LEN`（128 字符，安全审查 M-2 修复）
-//!   - `device`：`MAX_DEVICE_LEN`（256 字符，安全审查 M-3 修复）
-//!   - `user_id`：`MAX_USER_ID_LEN`（128 字符，安全审查 M-4 修复）
-//!   - `provider`：`MAX_PROVIDER_LEN`（64 字符，安全审查 L-1 修复）
+//!   - `permission`：`MAX_PERMISSION_LEN`（128 字符）
+//!   - `role`：`MAX_ROLE_LEN`（128 字符）
+//!   - `device`：`MAX_DEVICE_LEN`（256 字符）
+//!   - `user_id`：`MAX_USER_ID_LEN`（128 字符）
+//!   - `provider`：`MAX_PROVIDER_LEN`（64 字符）
 //!   - `request_ip_raw`：`MAX_RAW_IP_LEN`（64 字符，IP 解析失败时记录原始字符串）
 //! - **审计完整性（CWE-778）**：
 //!   - login_id 始终写入 metadata（即使 api_key_id 解析失败，原始 login_id 仍保留）
-//!   - IP 解析失败时记录原始字符串到 `metadata.request_ip_raw`（安全审查 L-2 修复），
+//!   - IP 解析失败时记录原始字符串到 `metadata.request_ip_raw`，
 //!     避免恶意 X-Forwarded-For 构造非 IP 字符串绕过 IP 记录
 //!   - 多租户审计通过 `metadata.garrison_tenant_id` 记录原始 i64 tenant_id
 //!
 //! ## Spec
 //!
-//! - R-audit-firewall-001：注册 garrison `listener` 审计监听器，订阅
+//! - 注册 garrison `listener` 审计监听器，订阅
 //!   Login/Logout/PermissionCheck/Kickout 事件，经 crawlrs `AuditServiceTrait` 输出
 
 use crate::domain::auth::{AuditDecision, AuditLogEntry};
@@ -119,37 +119,37 @@ const MAX_DENIAL_REASON_LEN: usize = 256;
 /// login_id metadata 字段最大长度（截断防 DoS）。
 const MAX_LOGIN_ID_LEN: usize = 128;
 
-/// permission metadata 字段最大长度（截断防 DoS，安全审查 M-1 修复）。
+/// permission metadata 字段最大长度（截断防 DoS）。
 ///
 /// permission 标识符如 `crawlrs:admin`/`crawlrs:read` 通常 < 32 字符，
 /// 128 字符上限足够，超长截断避免 audit_logs 表膨胀。
 const MAX_PERMISSION_LEN: usize = 128;
 
-/// role metadata 字段最大长度（截断防 DoS，安全审查 M-2 修复）。
+/// role metadata 字段最大长度（截断防 DoS）。
 ///
 /// role 标识符如 `admin`/`user`/`team_lead` 通常 < 32 字符，
 /// 128 字符上限足够，超长截断避免 audit_logs 表膨胀。
 const MAX_ROLE_LEN: usize = 128;
 
-/// device metadata 字段最大长度（截断防 DoS，安全审查 M-3 修复）。
+/// device metadata 字段最大长度（截断防 DoS）。
 ///
 /// device 标识符可能由客户端提供（设备指纹/User-Agent 摘要），
 /// 256 字符上限与 User-Agent 一致，超长截断避免 audit_logs 表膨胀。
 const MAX_DEVICE_LEN: usize = 256;
 
-/// user_id metadata 字段最大长度（截断防 DoS，安全审查 M-4 修复）。
+/// user_id metadata 字段最大长度（截断防 DoS）。
 ///
 /// 社交登录 provider 返回的 user_id 通常为数字 ID 或短字符串，
 /// 128 字符上限足够，超长截断避免 audit_logs 表膨胀。
 const MAX_USER_ID_LEN: usize = 128;
 
-/// provider metadata 字段最大长度（截断防 DoS，安全审查 L-1 修复）。
+/// provider metadata 字段最大长度（截断防 DoS）。
 ///
 /// social provider 标识符如 `github`/`google`/`microsoft` 通常 < 16 字符，
 /// 64 字符上限足够，超长截断避免 audit_logs 表膨胀。
 const MAX_PROVIDER_LEN: usize = 64;
 
-/// 原始 IP 字符串 metadata 字段最大长度（IP 解析失败时记录，安全审查 L-2 修复）。
+/// 原始 IP 字符串 metadata 字段最大长度（IP 解析失败时记录）。
 ///
 /// IPv6 最长 45 字符（`ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255`），
 /// 留余量到 64 字符，恶意构造超长值时截断。
@@ -186,7 +186,7 @@ static AUDIT_TASKS: LazyLock<StdMutex<JoinSet<()>>> =
 /// 涉及 `set_audit_service`/`reset_audit_service_for_test` 的测试通过此锁串行化。
 /// `#[tokio::test]` 默认并行执行，全局 `RwLock` 会污染——串行化是必要折衷。
 ///
-/// T034 修复：从 `std::sync::Mutex` 改为 `tokio::sync::Mutex`（经 `OnceLock` 延迟初始化）。
+/// 从 `std::sync::Mutex` 改为 `tokio::sync::Mutex`（经 `OnceLock` 延迟初始化）。
 /// 原因：`std::sync::MutexGuard` 跨 await 持有会阻塞 runtime 线程，导致并行测试死锁。
 /// `tokio::sync::MutexGuard` 是 async-aware，安全跨 await 持有。
 /// 与 `garrison_dao::TEST_MUTEX` 同一模式（OnceLock + tokio::sync::Mutex）。
@@ -212,7 +212,6 @@ static TEST_MUTEX: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
 ///
 /// # Spec
 ///
-/// - R-audit-firewall-001
 pub fn set_audit_service(
     service: Arc<dyn AuditServiceTrait>,
 ) -> Result<(), Arc<dyn AuditServiceTrait>> {
@@ -229,16 +228,17 @@ pub fn set_audit_service(
 /// 单测在 setup/teardown 中调用以避免测试间全局态污染。
 /// 生产代码禁止调用——会导致 audit_service 丢失，事件被静默 drop。
 ///
-/// T034 修复：暴露为 `pub(crate)` 以供 `test_helpers::reset_garrison_global_state_for_test`
+/// 暴露为 `pub(crate)` 以供 `test_helpers::reset_garrison_global_state_for_test`
 /// 统一调用——所有调用 `init_services` 的测试都需 reset AUDIT_SERVICE 全局态。
-#[cfg(test)]
+/// `test-mocks` 门控：集成测试二进制（tests/integration）经此特性获得重置能力。
+#[cfg(any(test, feature = "test-mocks"))]
 pub(crate) fn reset_audit_service_for_test() {
     *AUDIT_SERVICE.write() = None;
 }
 
 /// 测试专用：获取 [`TEST_MUTEX`] 的引用（用于跨模块串行化）。
 ///
-/// T034 修复：与 `garrison_dao::test_mutex` 同一模式，供 `test_helpers`
+/// 与 `garrison_dao::test_mutex` 同一模式，供 `test_helpers`
 /// 统一获取锁，避免调用 `init_services` 的测试间全局态竞态。
 #[cfg(test)]
 pub(crate) fn test_mutex() -> &'static Mutex<()> {
@@ -268,7 +268,7 @@ fn get_audit_service() -> Option<Arc<dyn AuditServiceTrait>> {
 /// - `join_all().await` 等待所有 inflight task 完成
 /// - 超时后返回未完成的 task 被 abort（JoinSet drop 时自动 abort）
 ///
-/// # Race Condition 说明（架构审查 M3）
+/// # Race Condition 说明
 ///
 /// `std::mem::take` 取出 JoinSet 后到 `join_all` 完成期间，若仍有 `on_event`
 /// 调用（理论不应有，但实际可能因 shutdown 期间 garrison 还在广播事件）：
@@ -290,7 +290,7 @@ fn get_audit_service() -> Option<Arc<dyn AuditServiceTrait>> {
 ///
 /// # Spec
 ///
-/// - R-audit-firewall-001：shutdown 时优雅等待 inflight audit task
+/// - shutdown 时优雅等待 inflight audit task
 pub async fn wait_audit_tasks(timeout: Duration) {
     let join_set = std::mem::take(&mut *AUDIT_TASKS.lock().expect("AUDIT_TASKS poisoned"));
     let _ = tokio::time::timeout(timeout, join_set.join_all()).await;
@@ -349,7 +349,6 @@ impl GarrisonListener for CrawlrsAuditListener {
     ///
     /// `AUDIT_SEMAPHORE`（容量 `AUDIT_INFLIGHT_LIMIT`=64）限制并发 INSERT 数。
     /// 超过上限时 drop 事件 + warn，避免 DB 异常时 task 无限堆积导致 OOM
-    /// （性能审查 HIGH-1 修复）。
     ///
     /// # 失败契约
     ///
@@ -358,7 +357,7 @@ impl GarrisonListener for CrawlrsAuditListener {
     ///
     /// # Spec
     ///
-    /// - R-audit-firewall-001：订阅 Login/Logout/PermissionCheck/Kickout 事件
+    /// - 订阅 Login/Logout/PermissionCheck/Kickout 事件
     ///   （实际订阅所有 [`GarrisonEvent`] 变体，spec 列举的为关键子集）
     async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
         let entry = match event_to_audit_entry(event) {
@@ -457,7 +456,7 @@ impl GarrisonListener for CrawlrsAuditListener {
 /// # api_key_id 解析与 login_id 保留
 ///
 /// `login_id` 字段尝试解析为 [`uuid::Uuid`] 填入 `api_key_id`，失败时 `api_key_id=None`。
-/// **无论解析是否成功，原始 `login_id` 字符串都写入 `metadata.login_id`**（HIGH-1 修复），
+/// **无论解析是否成功，原始 `login_id` 字符串都写入 `metadata.login_id`**，
 /// 确保非 UUID 主体（如 `"user-123"`、邮箱）的认证事件可追溯（CWE-778）。
 /// garrison 签发 API Key 时以 crawlrs api_key uuid 作 login_id，故正常路径可解析。
 ///
@@ -604,7 +603,7 @@ fn event_to_audit_entry(event: &GarrisonEvent) -> GarrisonResult<AuditLogEntry> 
             return Ok(entry.build());
         }
         GarrisonEvent::TempCredentialConsumed { key, value, .. } => {
-            // MEDIUM-1 (CWE-532): 凭据 value 不落审计，仅记长度（防下游未消费时重放）
+            // (CWE-532): 凭据 value 不落审计，仅记长度（防下游未消费时重放）
             let value_len = value.len();
             let entry = build_entry(
                 "auth.temp_credential_consumed",
@@ -759,10 +758,10 @@ fn event_to_audit_entry(event: &GarrisonEvent) -> GarrisonResult<AuditLogEntry> 
 /// # 字段填充策略
 ///
 /// - **api_key_id**：`login_id` 尝试解析为 [`uuid::Uuid`]，成功填入，失败 None
-/// - **metadata.login_id**：原始 `login_id` 字符串（截断到 `MAX_LOGIN_ID_LEN`，HIGH-1 修复）
+/// - **metadata.login_id**：原始 `login_id` 字符串（截断到 `MAX_LOGIN_ID_LEN`）
 ///   - 无论 `api_key_id` 是否解析成功，都写入 `metadata.login_id` 保留主体标识
 ///   - 非 UUID 主体（如 `"user-123"`、邮箱）的认证事件可追溯（CWE-778）
-/// - **metadata.garrison_tenant_id**：从 garrison task-local tenant context 读取（HIGH-2 修复）
+/// - **metadata.garrison_tenant_id**：从 garrison task-local tenant context 读取
 ///   - garrison `tenant_id` 是 `i64`，crawlrs `team_id` 是 `Uuid`，不强行转换避免语义错位
 ///   - 仅记录原始 `i64` 值供多租户审计追溯
 /// - **User-Agent**：截断到 `MAX_USER_AGENT_LEN`（256 字符，CWE-400 防 DoS）
@@ -778,14 +777,14 @@ fn build_entry(
     let mut builder =
         AuditLogBuilder::new(action.to_string(), decision).maybe_with_api_key_id(api_key_id);
 
-    // HIGH-1 修复：无论 api_key_id 是否解析成功，原始 login_id 都写入 metadata
+    // 无论 api_key_id 是否解析成功，原始 login_id 都写入 metadata
     // 非 UUID 主体（社交登录、LoginFailure 等）的认证事件可追溯（CWE-778）
     if let Some(raw) = login_id {
         let truncated = truncate_string(raw, MAX_LOGIN_ID_LEN);
         builder = builder.with_metadata("login_id", serde_json::Value::String(truncated));
     }
 
-    // HIGH-2 修复：从 garrison task-local 读取 tenant_id，记录到 metadata 供多租户追溯
+    // 从 garrison task-local 读取 tenant_id，记录到 metadata 供多租户追溯
     // 用 strict 版本（无上下文返回 None），不 fail-closed——审计日志不应因缺 tenant context 而失败
     if let Some(tenant_id) = current_tenant_id_strict() {
         builder = builder.with_metadata(
@@ -806,7 +805,7 @@ fn build_entry(
                     builder = builder.with_ip_address(ip);
                 }
                 Err(_) => {
-                    // L-2 修复（CWE-778）：IP 解析失败时记录原始字符串到 metadata，
+                    // （CWE-778）：IP 解析失败时记录原始字符串到 metadata，
                     // 供安全分析追溯（如恶意 X-Forwarded-For 构造非 IP 字符串）
                     // 截断到 MAX_RAW_IP_LEN 防止 audit_logs 表膨胀
                     let truncated = truncate_string(ip_str, MAX_RAW_IP_LEN);
@@ -816,7 +815,7 @@ fn build_entry(
             }
         }
         if let Some(ua) = &ctx.user_agent {
-            // MEDIUM-2 修复：截断 User-Agent 防 DoS（CWE-400）
+            // 截断 User-Agent 防 DoS（CWE-400）
             let truncated = truncate_string(ua, MAX_USER_AGENT_LEN);
             builder = builder.with_user_agent(truncated);
         }
@@ -829,7 +828,7 @@ fn build_entry(
 ///
 /// 超长字符串追加 `…` 表示被截断（仅当实际截断时）。
 ///
-/// # 性能（性能审查 MEDIUM-1/LOW-1 修复）
+/// # 性能
 ///
 /// 单次遍历：用 `char_indices().nth(max_chars)` 同时判断长度并定位字节边界，
 /// 避免 `chars().count()` + `char_indices().nth()` 双遍历。用 `String::with_capacity`
@@ -922,20 +921,20 @@ fn extract_request_context(event: &GarrisonEvent) -> Option<&RequestContext> {
 /// token 脱敏：取前 8 字符 + "…"（CWE-532，对齐 garrison `mask_audit_token`）。
 ///
 /// 短 token（< [`MASK_TOKEN_MIN_LEN`] 字符）直接脱敏为 `***…`，避免完整原文
-/// 落入 audit_logs metadata（安全审查 MEDIUM-1 修复）。
+/// 落入 audit_logs metadata。
 ///
 /// live session token 不得原样落审计——攻击者获得 audit_logs 只读权限
 /// （SQL 注入副产品/备份泄漏/replica）即可在 exp 内重放冒充会话。
 ///
-/// # 性能（性能审查 HIGH-1/HIGH-2/L-5 修复）
+/// # 性能
 ///
 /// 单次遍历 + 提前 break：
 /// - 用 `char_indices` 提供的 `char` 直接计算 `len_utf8`，避免重新切片+重新创建
-///   chars 迭代器（HIGH-1）
-/// - 字符数达到 `MASK_TOKEN_MIN_LEN` 后立即 break，避免遍历剩余字符（HIGH-2）
+///   chars 迭代器
+/// - 字符数达到 `MASK_TOKEN_MIN_LEN` 后立即 break，避免遍历剩余字符
 /// - `prefix_byte_end` 必然在 `char_count == MASK_TOKEN_PREFIX_LEN` 时被设置
 ///   （因 `MASK_TOKEN_PREFIX_LEN=8 < MASK_TOKEN_MIN_LEN=16`），故删除死代码
-///   fallback 分支（安全 L-5 / 架构 L1）
+///   fallback 分支（安全架构 L1）
 fn mask_token(token: &str) -> String {
     let mut char_count = 0usize;
     let mut prefix_byte_end = 0usize;
@@ -996,7 +995,7 @@ mod tests {
     /// 的测试必须串行——guard 在 setup 阶段持有，await 前 drop（spawn task 持有 Arc clone，
     /// 全局态改变不影响已 spawn 的 task）。
     ///
-    /// T034 修复：改为 async，使用 `tokio::sync::Mutex` 避免跨 await 持有 `std::sync::MutexGuard`
+    /// 改为 async，使用 `tokio::sync::Mutex` 避免跨 await 持有 `std::sync::MutexGuard`
     /// 阻塞 runtime 线程。调用方需 `.await`。
     async fn test_lock() -> tokio::sync::MutexGuard<'static, ()> {
         test_mutex().lock().await
@@ -1075,7 +1074,7 @@ mod tests {
         assert_eq!(entry.requested_action, "auth.login");
         assert_eq!(entry.decision, AuditDecision::Deny);
         assert_eq!(entry.denial_reason.as_deref(), Some("invalid_credentials"));
-        // login_id "user-123" 无法解析为 Uuid，api_key_id 应为 None（M-2 语义）
+        // login_id "user-123" 无法解析为 Uuid，api_key_id 应为 None（语义）
         assert!(entry.api_key_id.is_none());
     }
 
@@ -1348,7 +1347,7 @@ mod tests {
     }
 
     // ============================================================
-    // metadata 字段截断测试（安全审查 M-1~M-4/L-1 修复验证）
+    // metadata 字段截断测试
     // ============================================================
 
     #[test]
@@ -1448,7 +1447,7 @@ mod tests {
     }
 
     // ============================================================
-    // IP 解析失败记录原始字符串测试（安全审查 L-2 修复验证）
+    // IP 解析失败记录原始字符串测试
     // ============================================================
 
     #[test]
@@ -1532,7 +1531,7 @@ mod tests {
     }
 
     // ============================================================
-    // truncate_string UTF-8 边界测试（性能审查 MEDIUM-1 修复验证）
+    // truncate_string UTF-8 边界测试
     // ============================================================
 
     #[test]

@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Deduplicator 实现（design.md §9，T053/R-frontier-001）
+//! Deduplicator 实现
 //!
 //! UrlNormalizer + UrlInterner 组合的统一去重接口。
 //! 详见 [`crate::utils::dedup`] 模块文档。
@@ -16,7 +16,7 @@ use crate::utils::url_normalizer::UrlNormalizer;
 /// 内部状态可变（Bloom insert 需 `&mut self`），
 /// 多线程共享需外层 `Mutex/RwLock`。
 ///
-/// ## TOCTOU 注意（安全审查）
+/// ## TOCTOU 注意
 ///
 /// `check` 后 `insert` 之间有 race window：两个 worker 同时 check 同一 URL
 /// 都得到 `DefinitelyNew`，会都入队。调用方应使用 [`Deduplicator::check_and_insert`]
@@ -60,7 +60,7 @@ impl Deduplicator {
     ///
     /// # 错误
     ///
-    /// URL 归一化失败返回 [`DedupError::Normalize`]（规则 12：不吞错）。
+    /// URL 归一化失败返回 [`DedupError::Normalize`]（不吞错）。
     pub fn check(&self, url: &str) -> Result<DedupResult, DedupError> {
         // 1. 归一化
         let normalized = self.normalizer.normalize(url)?;
@@ -315,7 +315,7 @@ mod tests {
         let mut d = Deduplicator::new();
         d.insert("HTTPS://Example.COM/Path");
         // 即使插入未归一化串，check 仍能正确识别变体为 MaybeExisting
-        // 因为 permutations 生成 HTTPS://Example.COM/Path 不在变体中（变体是 https://）
+        // 因为 permutations 生成 HTTPS://Example.COM/Path 不在变体中（变体是 https）
         // 但 check 会先 normalize 输入 → 然后生成 permutations → 检查 bloom
         // bloom 中只有 "HTTPS://Example.COM/Path"，permutations 输出 "https://..."
         // 由于大小写不同，Bloom 可能不命中 → DefinitelyNew（错误的，因为已存在）

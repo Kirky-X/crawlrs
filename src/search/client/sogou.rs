@@ -87,7 +87,7 @@ impl SogouSearchEngine {
         let data_url_selector =
             safe_parse_selector("[data-url]").expect("Failed to parse Sogou data-url selector");
         // 摘要选择器（按优先级回退）：text-layout > ft > 裸 p
-        // 保持原 smart 端 parse_sogou_results 行为（R-sec-007 等价）。
+        // 保持原 smart 端 parse_sogou_results 行为（等价）。
         let snippet_selector = safe_parse_selector("div.text-layout p, div.ft p, p")
             .expect("Failed to parse Sogou snippet selector");
 
@@ -172,26 +172,12 @@ impl SearchEngine for SogouSearchEngine {
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
-        if std::env::var("SOGOU_TEST_RESULTS").unwrap_or_default() == "true" {
-            let escaped_query = html_escape::encode_text(&request.query);
-            return Ok(Response {
-                items: vec![
-                    ResponseItem {
-                        title: format!("Test Result 1 for {}", escaped_query),
-                        url: "https://sogou.com/1".to_string(),
-                        description: "Test description 1".to_string(),
-                        engine: SearchEngineType::Sogou,
-                    },
-                    ResponseItem {
-                        title: format!("Test Result 2 for {}", escaped_query),
-                        url: "https://sogou.com/2".to_string(),
-                        description: "Test description 2".to_string(),
-                        engine: SearchEngineType::Sogou,
-                    },
-                ],
-                total_results: Some(2),
-                engine: SearchEngineType::Sogou,
-            });
+        // 测试固定结果仅存在于测试构建（CWE-489：生产路径不得被环境变量旁路）
+        #[cfg(test)]
+        {
+            if let Some(resp) = sogou_test_results_override(&request.query) {
+                return Ok(resp);
+            }
         }
 
         let base_url = "https://www.sogou.com/web";
@@ -271,6 +257,36 @@ impl SearchEngine for SogouSearchEngine {
             engine: SearchEngineType::Sogou,
         })
     }
+}
+
+/// 仅测试构建可用的固定结果旁路：`SOGOU_TEST_RESULTS=true` 时返回确定性结果。
+///
+/// 生产构建中该函数与 `search()` 内的调用点一并被 `#[cfg(test)]` 剔除，
+/// 环境变量无法影响线上搜索行为（CWE-489）。
+#[cfg(test)]
+fn sogou_test_results_override(query: &str) -> Option<Response<ResponseItem>> {
+    if std::env::var("SOGOU_TEST_RESULTS").unwrap_or_default() != "true" {
+        return None;
+    }
+    let escaped_query = html_escape::encode_text(query);
+    Some(Response {
+        items: vec![
+            ResponseItem {
+                title: format!("Test Result 1 for {}", escaped_query),
+                url: "https://sogou.com/1".to_string(),
+                description: "Test description 1".to_string(),
+                engine: SearchEngineType::Sogou,
+            },
+            ResponseItem {
+                title: format!("Test Result 2 for {}", escaped_query),
+                url: "https://sogou.com/2".to_string(),
+                description: "Test description 2".to_string(),
+                engine: SearchEngineType::Sogou,
+            },
+        ],
+        total_results: Some(2),
+        engine: SearchEngineType::Sogou,
+    })
 }
 
 #[cfg(test)]
@@ -464,7 +480,7 @@ mod tests {
 
     #[test]
     fn test_parse_search_results_mixed_redirect_and_direct_urls() {
-        // 混合场景：同一页面既有中转链接（/link?url=）又有直接 URL，
+        // 混合场景：同一页面既有中转链接（link?url=）又有直接 URL，
         // 中转链接走 data-url 提取，直接 URL 走 resolve_url。
         let engine = make_engine();
         let html = r#"

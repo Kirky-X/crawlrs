@@ -152,26 +152,12 @@ impl SearchEngine for BaiduSearchEngine {
     }
 
     async fn search(&self, request: &SearchRequest) -> Result<Response<ResponseItem>, SearchError> {
-        if std::env::var("BAIDU_TEST_RESULTS").unwrap_or_default() == "true" {
-            let escaped_query = html_escape::encode_text(&request.query);
-            return Ok(Response {
-                items: vec![
-                    ResponseItem {
-                        title: format!("Baidu Test Result 1 for {}", escaped_query),
-                        url: "https://baidu.com/1".to_string(),
-                        description: "Test description 1".to_string(),
-                        engine: SearchEngineType::Baidu,
-                    },
-                    ResponseItem {
-                        title: format!("Baidu Test Result 2 for {}", escaped_query),
-                        url: "https://baidu.com/2".to_string(),
-                        description: "Test description 2".to_string(),
-                        engine: SearchEngineType::Baidu,
-                    },
-                ],
-                total_results: Some(2),
-                engine: SearchEngineType::Baidu,
-            });
+        // 测试固定结果仅存在于测试构建（CWE-489：生产路径不得被环境变量旁路）
+        #[cfg(test)]
+        {
+            if let Some(resp) = baidu_test_results_override(&request.query) {
+                return Ok(resp);
+            }
         }
 
         let (url, params) = self.build_baidu_url(&request.query, 1, BaiduSearchCategory::General);
@@ -264,6 +250,36 @@ impl SearchEngine for BaiduSearchEngine {
             engine: SearchEngineType::Baidu,
         })
     }
+}
+
+/// 仅测试构建可用的固定结果旁路：`BAIDU_TEST_RESULTS=true` 时返回确定性结果。
+///
+/// 生产构建中该函数与 `search()` 内的调用点一并被 `#[cfg(test)]` 剔除，
+/// 环境变量无法影响线上搜索行为（CWE-489）。
+#[cfg(test)]
+fn baidu_test_results_override(query: &str) -> Option<Response<ResponseItem>> {
+    if std::env::var("BAIDU_TEST_RESULTS").unwrap_or_default() != "true" {
+        return None;
+    }
+    let escaped_query = html_escape::encode_text(query);
+    Some(Response {
+        items: vec![
+            ResponseItem {
+                title: format!("Baidu Test Result 1 for {}", escaped_query),
+                url: "https://baidu.com/1".to_string(),
+                description: "Test description 1".to_string(),
+                engine: SearchEngineType::Baidu,
+            },
+            ResponseItem {
+                title: format!("Baidu Test Result 2 for {}", escaped_query),
+                url: "https://baidu.com/2".to_string(),
+                description: "Test description 2".to_string(),
+                engine: SearchEngineType::Baidu,
+            },
+        ],
+        total_results: Some(2),
+        engine: SearchEngineType::Baidu,
+    })
 }
 
 #[cfg(test)]

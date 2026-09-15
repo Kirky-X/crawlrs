@@ -121,7 +121,9 @@ impl TaskQueue for PostgresTaskQueue {
     /// * `Ok(())` - 成功
     /// * `Err(QueueError)` - 失败
     async fn complete(&self, task_id: Uuid) -> Result<(), QueueError> {
-        self.repository.mark_completed(task_id).await?;
+        // 无锁身份（None）：队列级 complete 仅允许终结未被认领的任务；
+        // 持锁 worker 应直接走 repository.mark_completed(带 worker 身份守卫)
+        self.repository.mark_completed(task_id, None).await?;
         Ok(())
     }
 
@@ -136,7 +138,8 @@ impl TaskQueue for PostgresTaskQueue {
     /// * `Ok(())` - 成功
     /// * `Err(QueueError)` - 失败
     async fn fail(&self, task_id: Uuid) -> Result<(), QueueError> {
-        self.repository.mark_failed(task_id).await?;
+        // 无锁身份（None）：语义同 complete
+        self.repository.mark_failed(task_id, None).await?;
         Ok(())
     }
 
@@ -291,31 +294,39 @@ mod tests {
             Ok(self.next_task.lock().take())
         }
 
-        async fn mark_completed(&self, task_id: Uuid) -> Result<(), RepositoryError> {
+        async fn mark_completed(
+            &self,
+            task_id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
             self.complete_calls.fetch_add(1, Ordering::SeqCst);
             *self.last_task_id.lock() = Some(task_id);
             if self.should_fail {
                 return Err(db_error());
             }
-            Ok(())
+            Ok(1)
         }
 
-        async fn mark_failed(&self, task_id: Uuid) -> Result<(), RepositoryError> {
+        async fn mark_failed(
+            &self,
+            task_id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
             self.fail_calls.fetch_add(1, Ordering::SeqCst);
             *self.last_task_id.lock() = Some(task_id);
             if self.should_fail {
                 return Err(db_error());
             }
-            Ok(())
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, task_id: Uuid) -> Result<(), RepositoryError> {
+        async fn mark_cancelled(&self, task_id: Uuid) -> Result<u64, RepositoryError> {
             self.cancel_calls.fetch_add(1, Ordering::SeqCst);
             *self.last_task_id.lock() = Some(task_id);
             if self.should_fail {
                 return Err(db_error());
             }
-            Ok(())
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -368,6 +379,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             unreachable!("MockTaskRepository::batch_cancel not invoked by PostgresTaskQueue tests")
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 

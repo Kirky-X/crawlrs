@@ -7,7 +7,7 @@
 ![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8899-green)
 ![License](https://img.shields.io/badge/license-Apache%202.0-orange)
 
-**Version:** 0.2.0 | **Base URL:** `http://localhost:8899` | **Updated:** 2025-07-21
+**Version:** 0.2.0 | **Base URL:** `http://localhost:8899` | **Updated:** 2026-09-15
 
 </div>
 
@@ -50,7 +50,7 @@ All protected endpoints require authentication using an API key in the `Authoriz
 Authorization: Bearer YOUR_API_KEY
 ```
 
-> **0.2.0 起（`garrison-auth-migration`）：** Bearer token 由 **garrison v0.8.1** 校验，格式为 `garrison_key_id.garrison_secret`（明文 key 仅在签发时返回一次）。旧的 SHA-256 `api_key_hash` 已作废，需经 garrison 重新领取。
+> **0.2.0 起（`garrison-auth-migration`）：** Bearer token 由 **garrison v0.9.0-rc.1** 校验，格式为 `garrison_key_id.garrison_secret`（明文 key 仅在签发时返回一次）。旧的 SHA-256 `api_key_hash` 已作废，需经 garrison 重新领取。
 
 ### Garrison 认证
 
@@ -1404,7 +1404,7 @@ func Scrape(url string) error {
 - 统一测试 Mock（tests/common/mocks/）
 
 ### v0.2.0 (2025-07-21)
-- **`garrison-auth-migration：** 认证引擎由 garrison v0.8.1 接管，Bearer token 格式改为 `garrison_key_id.garrison_secret`
+- **`garrison-auth-migration：** 认证引擎由 garrison v0.9.0-rc.1 接管，Bearer token 格式改为 `garrison_key_id.garrison_secret`
 - 新增 `POST /v1/admin/api-keys` 端点：管理员为指定 team 签发 garrison API Key
 - 新增 [Garrison 认证](#garrison-认证) 与 [迁移指南](#迁移指南020-garrison-auth-migration) 章节
 - 401/429 触发逻辑由 garrison `firewall-bruteforce` 接管（5 次/60 秒/300 秒锁定）

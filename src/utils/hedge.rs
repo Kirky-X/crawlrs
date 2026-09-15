@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! Hedge 请求副本控制器（design.md §17，T070/R-runtime-004）
+//! Hedge 请求副本控制器
 //!
 //! 移植 spider `hedge.rs`：基于 EMA（指数移动平均）+ 方差估算 P84 延迟阈值，
 //! 超阈值时建议发送副本请求降尾延迟。
@@ -14,7 +14,7 @@
 //!   （指数加权移动方差，递推式）
 //! - P84 阈值：`P84 = EMA + σ_multiplier · sqrt(Var)`（标准正态分布 P84 ≈ μ+σ）
 //!
-//! # 并发模型选型（架构审查 C-1/H-1 修复）
+//! # 并发模型选型
 //!
 //! 选用 `parking_lot::Mutex<HedgeState>` 而非 `AtomicU64` 双 CAS：
 //! - **正确性优先**：variance 递推式依赖 `(ema_old, var_old, ema_new)` 三元组，
@@ -26,13 +26,13 @@
 //! - **与 AIMDController 风格差异说明**：AIMD 用 `AtomicUsize` 是因 AIMD 的
 //!   `current_limit` / `consecutive_successes` 是独立变量（自校正容忍丢失更新）；
 //!   hedge 的 ema/var 是耦合递推，必须跨变量一致性。两模块风格差异是设计驱动，
-//!   非随意打破惯例（规则 4 暴露冲突，规则 8 惯例优先但正确性优先）。
+//!   非随意打破惯例（暴露冲突惯例优先但正确性优先）。
 //!
-//! 接入路径（T070）：`EngineRouter::route_race_mode` 在 race 胜出后调用
+//! 接入路径 `EngineRouter::route_race_mode` 在 race 胜出后调用
 //! `record_latency(response_time)`，未来顺序路径可调用 `should_hedge(elapsed)`
 //! 决策是否发起副本。
 //!
-//! # 样本来源限制（架构审查 M-2）
+//! # 样本来源限制
 //!
 //! 当前 `record_latency` 仅在 race 胜出后调用，记录的是 `min(各引擎延迟)` 分布。
 //! **不可直接用于顺序路径 P84 估算**（顺序路径是单引擎全延迟，分布完全不同，
@@ -87,7 +87,7 @@ impl HedgeController {
     ///
     /// # Panics
     ///
-    /// 参数不变式违反时 panic（fail-fast，规则 12 显性化失败）：
+    /// 参数不变式违反时 panic（fail-fast 显性化失败）：
     /// - `0.0 < ema_alpha <= 1.0`：EMA 系数必须开区间下侧
     /// - `min_samples >= 1`：否则永不启用 hedge
     /// - `sigma_multiplier > 0.0`：否则阈值恒等于 EMA
@@ -132,7 +132,7 @@ impl HedgeController {
     /// # 并发安全
     ///
     /// 使用 `parking_lot::Mutex` 保证三元组 `(ema, var, count)` 原子更新，
-    /// 无丢失更新（架构审查 H-1 修复）。
+    /// 无丢失更新。
     pub(crate) fn record_latency(&self, latency: Duration) {
         let x_ms = latency.as_secs_f64() * 1000.0;
         let alpha = self.ema_alpha;
@@ -232,7 +232,7 @@ impl HedgeController {
     /// # 为何 `#[allow(dead_code)]`
     ///
     /// 当前仅在测试中调用，但保留 `pub(crate)` 接口为未来冷启动/配置热重载
-    /// 场景预留（架构审查 M-1：接口隔离，不暴露为 `pub`）。
+    /// 场景预留（接口隔离，不暴露为 `pub`）。
     #[allow(dead_code)]
     pub(crate) fn reset(&self) {
         let mut state = self.state.lock();
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn with_defaults_matches_constants() {
         let c = HedgeController::with_defaults();
-        // 不可变参数无 getter（架构审查 M-4：删除投机性 getter），
+        // 不可变参数无 getter（删除投机性 getter），
         // 通过行为验证：min_samples=10 时阈值在样本数 9/10 之间切换
         for _ in 0..9 {
             c.record_latency(Duration::from_millis(100));
@@ -653,15 +653,15 @@ mod tests {
         );
     }
 
-    // ========== 零延迟样本（边界 L-2） ==========
+    // ========== 零延迟样本（边界） ==========
 
     #[test]
     fn record_zero_latency_is_valid_sample() {
-        // 修复 L-2：放宽 ema_ms < 0.0 检查，允许 0 延迟样本
+        // 修复放宽 ema_ms < 0.0 检查，允许 0 延迟样本
         let c = HedgeController::with_defaults();
         c.record_latency(Duration::ZERO);
         assert_eq!(c.sample_count(), 1);
-        // ema_latency 应返回 Some(0ms) 而非 None（L-2 修复）
+        // ema_latency 应返回 Some(0ms) 而非 None
         assert_eq!(c.ema_latency(), Some(Duration::ZERO));
     }
 }

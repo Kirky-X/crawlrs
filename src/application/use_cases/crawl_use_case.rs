@@ -16,14 +16,14 @@ use crate::{
         },
     },
 };
-// R-teams-004 / T014：teams feature 关闭时不导入 teams 相关类型
+// teams feature 关闭时不导入 teams 相关类型
 // （CrawlUseCase.geo_restriction_repo 字段、create_crawl 地理限制块均门控）
 #[cfg(feature = "teams")]
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
 use chrono::Utc;
-// R-teams-004 / T014: error! 仅在 teams-on 地理限制块中使用，teams-off 时不导入
+// error! 仅在 teams-on 地理限制块中使用，teams-off 时不导入
 #[cfg(feature = "teams")]
 use log::error;
 use std::sync::Arc;
@@ -65,13 +65,13 @@ pub struct CrawlUseCase {
     scrape_result_repo: Arc<dyn ScrapeResultRepository>,
     /// 地理限制仓库
     ///
-    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams feature 关闭时不编译此字段。
     /// teams-off 模式下，CrawlUseCase 不执行地理限制检查。
     #[cfg(feature = "teams")]
     geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
     /// 团队服务
     ///
-    /// R-teams-004 / T014：teams feature 关闭时不编译此字段。
+    /// teams feature 关闭时不编译此字段。
     /// teams-off 模式下，CrawlUseCase 不调用 TeamService.validate_geographic_restriction。
     #[cfg(feature = "teams")]
     team_service: Arc<TeamService>,
@@ -196,7 +196,7 @@ impl CrawlUseCase {
 
         // 2. 检查地理限制
         //
-        // R-teams-004 / T014：teams feature 关闭时跳过整个地理限制块。
+        // teams feature 关闭时跳过整个地理限制块。
         // teams-off 模式下，CrawlUseCase 不持有 geo_restriction_repo / team_service，
         // 单租户降级，无地理限制概念，直接进入任务创建流程。
         //
@@ -261,13 +261,39 @@ impl CrawlUseCase {
             }
             r
         };
-        // R-teams-004 / T014：teams-off 时 restrictions 用默认值占位
+        // teams-off 时 restrictions 用默认值占位
         // （payload.domain_blacklist 字段类型保持一致，避免 cfg 分裂 payload 构造）
         #[cfg(not(feature = "teams"))]
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         // 避免 unused variable warning（client_ip 在 teams-off 时不被使用）
         #[cfg(not(feature = "teams"))]
         let _ = client_ip;
+
+        // 种子 URL 必须过团队 domain_blacklist（与链接提取侧过滤对齐，
+        // 阻止直接 crawl 黑名单域名的种子入口）
+        #[cfg(feature = "teams")]
+        {
+            match self
+                .team_service
+                .validate_domain_blacklist(&dto.url, &restrictions)
+            {
+                Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {}
+                Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
+                    error!(
+                        "Crawl seed URL {} denied by domain blacklist: {}",
+                        dto.url, reason
+                    );
+                    return Err(CrawlUseCaseError::ValidationError(reason));
+                }
+                Err(e) => {
+                    error!("Domain blacklist validation error: {}", e);
+                    return Err(CrawlUseCaseError::Anyhow(anyhow::anyhow!(
+                        "Domain blacklist validation failed: {}",
+                        e
+                    )));
+                }
+            }
+        }
 
         // 3. 生成新的爬取任务 ID
         let crawl_id = Uuid::new_v4();
@@ -384,7 +410,7 @@ mod tests {
     use super::*;
     use crate::domain::models::{ScrapeResult, Task, TaskType};
     use serde_json::json;
-    // R-teams-004 / T014：teams feature 关闭时不导入 teams 相关类型
+    // teams feature 关闭时不导入 teams 相关类型
     // （teams-only 测试已门控，mock 类型也门控）
     #[cfg(feature = "teams")]
     use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError;
@@ -392,7 +418,7 @@ mod tests {
     use crate::domain::services::geo_location::{GeoLocation, GeoLocationService};
     #[cfg(feature = "teams")]
     use crate::domain::services::team_service::TeamGeoRestrictions;
-    // R-wh-003 / T027：webhook feature 关闭时不导入 WebhookRepository
+    // webhook feature 关闭时不导入 WebhookRepository
     #[cfg(feature = "webhook")]
     use crate::domain::repositories::webhook_repository::WebhookRepository;
     use async_trait::async_trait;
@@ -619,16 +645,24 @@ mod tests {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -686,11 +720,20 @@ mod tests {
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
         }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
+        }
     }
 
     // ============ MockWebhookRepository ============
     //
-    // R-wh-003 / T027：webhook feature 关闭时不编译此 mock
+    // webhook feature 关闭时不编译此 mock
     // （WebhookRepository trait 已门控，mock 也同步门控）
 
     #[cfg(feature = "webhook")]
@@ -771,11 +814,15 @@ mod tests {
         async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
             Ok(0.0)
         }
+
+        async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+            Ok(0)
+        }
     }
 
     // ============ MockGeoRestrictionRepository ============
     //
-    // R-teams-004 / T014：teams feature 关闭时不编译此 mock
+    // teams feature 关闭时不编译此 mock
     // （GeoRestrictionRepository trait 已门控，mock 也同步门控）
 
     #[cfg(feature = "teams")]
@@ -859,7 +906,7 @@ mod tests {
 
     // ============ MockGeoLocationService ============
     //
-    // R-teams-004 / T014：teams feature 关闭时不编译此 mock
+    // teams feature 关闭时不编译此 mock
     // （GeoLocationService trait 仅 teams-on 时使用）
 
     #[cfg(feature = "teams")]
@@ -953,8 +1000,8 @@ mod tests {
 
     /// Build a CrawlUseCase with configurable mocks.
     ///
-    /// R-teams-004 / T014：teams-off 时不接收 geo_repo / geo_loc_service 参数。
-    /// R-wh-003 / T027：webhook-off 时不构造 MockWebhookRepository。
+    /// teams-off 时不接收 geo_repo / geo_loc_service 参数。
+    /// webhook-off 时不构造 MockWebhookRepository。
     fn build_use_case(
         crawl_repo: Arc<MockCrawlRepository>,
         task_repo: Arc<MockTaskRepository>,
@@ -962,7 +1009,7 @@ mod tests {
         #[cfg(feature = "teams")] geo_repo: Arc<MockGeoRestrictionRepository>,
         #[cfg(feature = "teams")] geo_loc_service: Arc<MockGeoLocationService>,
     ) -> CrawlUseCase {
-        // R-teams-004 / T014：teams-on 时构造 team_service 并传入 CrawlUseCase
+        // teams-on 时构造 team_service 并传入 CrawlUseCase
         #[cfg(feature = "teams")]
         let team_service = Arc::new(TeamService::new(
             geo_loc_service,
@@ -1772,8 +1819,8 @@ mod tests {
         // acquire_next returns None
         assert!(repo.acquire_next(Uuid::new_v4()).await.unwrap().is_none());
         // State-transition stubs are no-ops
-        repo.mark_completed(task.id).await.unwrap();
-        repo.mark_failed(task.id).await.unwrap();
+        repo.mark_completed(task.id, None).await.unwrap();
+        repo.mark_failed(task.id, None).await.unwrap();
         repo.mark_cancelled(task.id).await.unwrap();
         // exists_by_url returns false
         assert!(!repo.exists_by_url("https://a.com").await.unwrap());

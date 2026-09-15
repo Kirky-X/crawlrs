@@ -5,7 +5,7 @@
 ![Version](https://img.shields.io/badge/version-0.2.0-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 
-**Version:** 0.2.0 | **Last Updated:** 2025-07-21
+**Version:** 0.2.0 | **Last Updated:** 2026-09-15
 
 </div>
 
@@ -117,7 +117,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ## Authentication
 
-> **0.2.0 起（`garrison-auth-migration`）：** 认证引擎由 **garrison v0.8.1** 接管。Bearer token 格式为 `garrison_key_id.garrison_secret`，由 garrison 签发与校验，crawlrs 不再自管 `key_hash`。
+> **0.2.0 起（`garrison-auth-migration`）：** 认证引擎由 **garrison v0.9.0-rc.1** 接管。Bearer token 格式为 `garrison_key_id.garrison_secret`，由 garrison 签发与校验，crawlrs 不再自管 `key_hash`。
 
 ### Garrison 认证简介
 

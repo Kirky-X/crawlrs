@@ -6,8 +6,8 @@
 //! Mapper module - converts between domain models and database entities
 //!
 //! This module provides bidirectional conversion between:
-//! - Pure domain models (in domain/models/)
-//! - Database entities (in infrastructure/database/entities/)
+//! - Pure domain models (in domain/models)
+//! - Database entities (in infrastructure/database/entities)
 
 pub mod crawl_mapper;
 pub mod credits_mapper;

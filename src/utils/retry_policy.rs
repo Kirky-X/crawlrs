@@ -74,7 +74,7 @@ impl RetryPolicy {
         }
     }
 
-    /// 计算下次重试的退避时间（T024：基于 backon ExponentialBuilder）
+    /// 计算下次重试的退避时间（基于 backon ExponentialBuilder）
     ///
     /// - `attempt=0` 退化为 `initial_backoff`（保护边界）
     /// - 启用 jitter 时调用 [`backoff::backoff_delay`]（backon 指数退避 + jitter）
@@ -96,7 +96,7 @@ impl RetryPolicy {
         let spider_attempt = attempt - 1;
 
         if self.enable_jitter {
-            // full-jitter：[0, cap] 均匀采样（R-identity-002）
+            // full-jitter：[0, cap] 均匀采样
             crate::utils::backoff::backoff_delay(spider_attempt, base_ms, max_ms)
         } else {
             // 禁用 jitter：deterministic cap（指数 + max cap）
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_calculate_backoff_with_jitter() {
-        // T024：backon 使用 multiplicative jitter（非 full-jitter），
+        // backon 使用 multiplicative jitter（非 full-jitter），
         // 结果可超过原始指数值，但严格 cap 在 max_backoff（由 backoff_delay 保证）。
         let mut policy = RetryPolicy::standard();
         policy.enable_jitter = true;
@@ -190,7 +190,7 @@ mod tests {
         }
     }
 
-    /// T024 额外测试：full-jitter 高 attempt 均值更大（指数退避特性）
+    /// 额外测试：full-jitter 高 attempt 均值更大（指数退避特性）
     #[test]
     fn test_calculate_backoff_full_jitter_higher_attempt_higher_mean() {
         let mut policy = RetryPolicy::standard();
@@ -206,7 +206,7 @@ mod tests {
         );
     }
 
-    /// T024 额外测试：attempt=0 边界保护
+    /// 额外测试：attempt=0 边界保护
     #[test]
     fn test_calculate_backoff_attempt_zero_returns_initial() {
         let mut policy = RetryPolicy::standard();

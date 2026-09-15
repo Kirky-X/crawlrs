@@ -5,7 +5,7 @@
 
 //! Fallback 搜索引擎真实 API 验证
 //!
-//! 验证 Exa、Parallel、Tavily 三个 fallback 搜索引擎在真实网络环境下
+//! 验证 Exa、Tavily 两个 fallback 搜索引擎在真实网络环境下
 //! 能够正常返回搜索结果。
 //!
 //! 运行方式：
@@ -14,7 +14,6 @@
 //! ```
 
 use crawlrs::search::client::exa::{ExaConfig, ExaSearchEngine};
-use crawlrs::search::client::parallel::{ParallelConfig, ParallelSearchEngine};
 use crawlrs::search::client::tavily::{TavilyConfig, TavilySearchEngine};
 use crawlrs::search::engine_trait::{SearchEngine, SearchRequest};
 use reqwest::Client;
@@ -37,34 +36,6 @@ async fn test_exa() -> bool {
     let engine = ExaSearchEngine::new(client, config);
 
     let request = SearchRequest::new("Rust programming language").with_limit(3);
-    match engine.search(&request).await {
-        Ok(response) => {
-            println!("  ✓ 搜索成功！返回 {} 条结果", response.items.len());
-            for (i, item) in response.items.iter().enumerate().take(3) {
-                println!("  [{}] {}", i + 1, item.title);
-                println!("      URL: {}", item.url);
-                let desc = &item.description[..item.description.len().min(100)];
-                println!("      描述: {}...", desc);
-            }
-            !response.items.is_empty()
-        }
-        Err(e) => {
-            println!("  ✗ 搜索失败: {:?}", e);
-            false
-        }
-    }
-}
-
-async fn test_parallel() -> bool {
-    println!("\n═══════════════════════════════════════════");
-    println!("  测试 Parallel 搜索引擎（MCP JSON-RPC 2.0）");
-    println!("═══════════════════════════════════════════");
-
-    let client = create_http_client();
-    let config = ParallelConfig::default();
-    let engine = ParallelSearchEngine::new(client, config);
-
-    let request = SearchRequest::new("What is Rust programming language").with_limit(3);
     match engine.search(&request).await {
         Ok(response) => {
             println!("  ✓ 搜索成功！返回 {} 条结果", response.items.len());
@@ -118,7 +89,6 @@ async fn main() {
     println!("╚═══════════════════════════════════════════╝\n");
 
     let exa_ok = test_exa().await;
-    let parallel_ok = test_parallel().await;
     let tavily_ok = test_tavily().await;
 
     println!("\n╔═══════════════════════════════════════════╗");
@@ -129,16 +99,12 @@ async fn main() {
         if exa_ok { "✓ PASS" } else { "✗ FAIL" }
     );
     println!(
-        "║  Parallel: {}                        ║",
-        if parallel_ok { "✓ PASS" } else { "✗ FAIL" }
-    );
-    println!(
         "║  Tavily:   {}                        ║",
         if tavily_ok { "✓ PASS" } else { "✗ FAIL" }
     );
     println!("╚═══════════════════════════════════════════╝");
 
-    if !exa_ok || !parallel_ok || !tavily_ok {
+    if !exa_ok || !tavily_ok {
         std::process::exit(1);
     }
 }

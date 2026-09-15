@@ -265,6 +265,18 @@ pub trait QuotaService: Send + Sync {
         reference_id: Option<Uuid>,
     ) -> Result<(), RateLimitingError>;
 
+    /// 退还配额积分（入队失败等场景的补偿）
+    ///
+    /// 以 `Refund` 交易类型将已扣积分加回团队余额；补偿失败仅记录错误，
+    /// 不应阻断原始错误路径的返回。
+    async fn refund_quota(
+        &self,
+        team_id: Uuid,
+        amount: i64,
+        description: String,
+        reference_id: Option<Uuid>,
+    ) -> Result<(), RateLimitingError>;
+
     /// 获取团队配额余额
     async fn get_quota_balance(&self, team_id: Uuid) -> Result<i64, RateLimitingError>;
 }

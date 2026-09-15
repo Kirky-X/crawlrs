@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0
 // See LICENSE file in the project root for full license information.
 
-//! 请求客户端句柄（H3 修复：tuple 泄漏状态 + M3/M4 修复）
+//! 请求客户端句柄（tuple 泄漏状态）
 //!
 //! `ReqwestEngine::get_client` 之前返回 `(reqwest::Client, Option<String>)`，
 //! 调用方需同时持有两者才能正确回填 `mark_failure` / `mark_success`，违反 SRP。
@@ -12,14 +12,14 @@
 //! 提供 `report_failure` / `report_success` 方法，
 //! 调用方只需传入 `&dyn ProxyProvider` 即可完成状态回填。
 //!
-//! ## M3 修复（字段可见性）
+//! ## 字段可见性
 //!
 //! `used_proxy_url` 改为 `pub(crate)`，外部模块通过只读访问器 `used_proxy_url()`
 //! 获取，避免外部代码直接修改字段状态。
 //!
-//! ## M4 修复（失败显性化）
+//! ## 失败显性化
 //!
-//! `build_custom_client` 失败时返回 fallback client 但只用 warn 日志，违反规则12。
+//! `build_custom_client` 失败时返回 fallback client 但只用 warn 日志，违反“失败必须显性化”原则。
 //! 现在通过 `is_fallback` 标志让调用方感知 client 构建失败：
 //! - `true`：client 构建失败，已回退到注入的 http_client
 //! - `false`：client 构建成功
@@ -38,15 +38,15 @@ pub struct ClientHandle {
     /// - `Some(url)`：本次请求使用了代理（请求级代理或池代理命中）
     /// - `None`：未使用代理（直接用注入的 http_client）
     ///
-    /// M3 修复：改为 `pub(crate)`，外部模块通过 [`Self::used_proxy_url`] 访问器读取。
+    /// 改为 `pub(crate)`，外部模块通过 [`Self::used_proxy_url`] 访问器读取。
     pub(crate) used_proxy_url: Option<String>,
-    /// 是否为 fallback 客户端（M4 修复：失败显性化）
+    /// 是否为 fallback 客户端（失败显性化）
     ///
     /// - `true`：`build_custom_client` 构建失败，已回退到注入的 http_client
     /// - `false`：client 构建成功（含正常无代理路径）
     ///
     /// 调用方可通过 [`Self::is_fallback`] 检查此标志，感知 client 构建失败
-    /// （规则12：失败必须显性化，不藏默认值背后）。
+    /// （失败必须显性化，不藏默认值背后）。
     is_fallback: bool,
 }
 
@@ -57,9 +57,9 @@ impl ClientHandle {
     ///
     /// - `client`: reqwest 客户端（成功构建或 fallback 的 http_client）
     /// - `used_proxy_url`: 实际使用的代理 URL（即使 fallback 也可保留，用于 report_failure）
-    /// - `is_fallback`: 是否为 fallback 路径（M4 修复：失败显性化）
+    /// - `is_fallback`: 是否为 fallback 路径（失败显性化）
     ///
-    /// `is_fallback=true` 时调用方应感知 client 构建失败（规则12）。
+    /// `is_fallback=true` 时调用方应感知 client 构建失败。
     /// `used_proxy_url` 在 fallback 路径仍可保留，因为 report_failure 会标记无效代理
     /// 为失败，防止后续重复选择（即使本次请求实际未走代理）。
     #[inline]
@@ -100,7 +100,7 @@ impl ClientHandle {
         self.used_proxy_url.is_some()
     }
 
-    /// 获取实际使用的代理 URL（M3 修复：只读访问器）
+    /// 获取实际使用的代理 URL（只读访问器）
     ///
     /// - `Some(url)`：本次请求使用了代理
     /// - `None`：未使用代理
@@ -110,10 +110,10 @@ impl ClientHandle {
         self.used_proxy_url.as_deref()
     }
 
-    /// 是否为 fallback 客户端（M4 修复：失败显性化）
+    /// 是否为 fallback 客户端（失败显性化）
     ///
     /// `true` 表示 `build_custom_client` 构建失败，已回退到注入的 http_client。
-    /// 调用方应通过此标志感知 client 构建失败（规则12）。
+    /// 调用方应通过此标志感知 client 构建失败。
     #[must_use]
     #[inline]
     pub fn is_fallback(&self) -> bool {

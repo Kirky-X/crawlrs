@@ -258,7 +258,7 @@ fn tc_sync_wait_ms_above_max_is_invalid() {
 }
 
 // =============================================================================
-// ExtractRequestDto serde alias tests (unify-extraction-api)
+// ExtractRequestDto serde alias tests
 // =============================================================================
 
 #[test]

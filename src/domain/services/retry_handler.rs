@@ -63,10 +63,20 @@ impl RetryHandler {
     pub async fn handle_failure(&self, task: &mut Task) -> HandleFailureResult {
         let new_attempt_count = (task.attempt_count + 1) as u32;
 
-        if !self.retry_policy.should_retry(new_attempt_count) {
+        // 统一重试上限：策略上限与任务自身 max_retries 取小者，
+        // 避免任务声明的 max_retries（默认 3）被策略硬编码 5 架空
+        let effective_max_retries = self
+            .retry_policy
+            .max_retries
+            .min(task.max_retries.max(1) as u32);
+
+        if new_attempt_count > effective_max_retries {
             warn!(
-                "Task {} exceeded max retries ({}), marking as failed",
-                task.id, task.max_retries
+                "Task {} exceeded max retries (effective={}, policy={}, task declared={}), marking as failed",
+                task.id,
+                effective_max_retries,
+                self.retry_policy.max_retries,
+                task.max_retries
             );
 
             task.attempt_count = new_attempt_count as i32;
@@ -74,10 +84,17 @@ impl RetryHandler {
             task.status = TaskStatus::Failed;
             task.completed_at = Some(Utc::now());
 
-            if let Err(e) = self.repository.update(task).await {
-                return HandleFailureResult::Error(e.into());
+            // 守卫式写入：锁被抢占/任务已被他方迁移时放弃终结
+            let rows = match self.repository.update_task_guarded(task).await {
+                Ok(rows) => rows,
+                Err(e) => return HandleFailureResult::Error(e.into()),
+            };
+            if rows == 0 {
+                warn!(
+                    "Task {} terminal-fail not written (guard failed: migrated by another worker)",
+                    task.id
+                );
             }
-
             return HandleFailureResult::Failed;
         }
 
@@ -92,8 +109,17 @@ impl RetryHandler {
         task.started_at = None;
         task.completed_at = None;
 
-        if let Err(e) = self.repository.update(task).await {
-            return HandleFailureResult::Error(e.into());
+        // 守卫式写入：锁被抢占时任务不会重回队列（避免陈旧 worker 覆盖并发迁移）
+        let rows = match self.repository.update_task_guarded(task).await {
+            Ok(rows) => rows,
+            Err(e) => return HandleFailureResult::Error(e.into()),
+        };
+        if rows == 0 {
+            warn!(
+                "Task {} retry requeue not written (guard failed: migrated by another worker)",
+                task.id
+            );
+            return HandleFailureResult::Failed;
         }
 
         info!(
@@ -169,20 +195,38 @@ mod tests {
             Ok(task.clone())
         }
 
+        async fn update_task_guarded(&self, task: &Task) -> Result<u64, RepositoryError> {
+            if *self.fail_update.lock().expect("lock fail_update") {
+                return Err(RepositoryError::Database(anyhow::anyhow!(
+                    "mock update failure"
+                )));
+            }
+            *self.last_updated.lock().expect("lock last_updated") = Some(task.clone());
+            Ok(1)
+        }
+
         async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
-        async fn mark_completed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_completed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_failed(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_failed(
+            &self,
+            _id: Uuid,
+            _lock_token: Option<Uuid>,
+        ) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<(), RepositoryError> {
-            Ok(())
+        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+            Ok(1)
         }
 
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -229,6 +273,15 @@ mod tests {
             _force: bool,
         ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
             Ok((vec![], vec![]))
+        }
+
+        async fn renew_lock(
+            &self,
+            _task_id: Uuid,
+            _worker_id: Uuid,
+            _extend_seconds: i64,
+        ) -> Result<bool, RepositoryError> {
+            Ok(true)
         }
     }
 
@@ -392,17 +445,34 @@ mod tests {
         let repo: Arc<dyn TaskRepository> = mock.clone();
         let handler = RetryHandler::new(repo, RetryPolicy::default());
 
-        // Default policy: max_retries=5
-        // attempt_count=4 -> new_attempt_count=5, should_retry(5) = 5 < 5 = false -> fail
-        let mut task = make_task(4, 5);
+        // 统一重试上限：effective = min(policy.max_retries=5, task.max_retries=3) = 3
+        // attempt_count=3 -> new_attempt_count=4 > 3 -> fail（任务声明的上限生效）
+        let mut task = make_task(3, 3);
         let result = handler.handle_failure(&mut task).await;
 
         assert!(
             matches!(result, HandleFailureResult::Failed),
-            "should fail when attempt_count reaches max_retries"
+            "should fail when attempt_count exceeds task.max_retries"
         );
         assert_eq!(task.status, TaskStatus::Failed);
-        assert_eq!(task.attempt_count, 5);
+        assert_eq!(task.attempt_count, 4);
+    }
+
+    #[tokio::test]
+    async fn test_handle_failure_policy_cap_cannot_exceed_task_max_retries() {
+        // 任务声明 max_retries=2 时，即使策略允许 5 次，也在第 3 次尝试前终止
+        let mock = Arc::new(MockTaskRepository::new());
+        let repo: Arc<dyn TaskRepository> = mock.clone();
+        let handler = RetryHandler::new(repo, RetryPolicy::default());
+
+        let mut task = make_task(2, 2);
+        let result = handler.handle_failure(&mut task).await;
+
+        assert!(
+            matches!(result, HandleFailureResult::Failed),
+            "task.max_retries=2 must cap retries below policy max_retries=5"
+        );
+        assert_eq!(task.status, TaskStatus::Failed);
     }
 
     // ========== handle_failure - error path ==========
@@ -531,8 +601,8 @@ mod tests {
             .is_empty());
 
         // State-transition stubs are no-ops returning Ok
-        mock.mark_completed(task.id).await.unwrap();
-        mock.mark_failed(task.id).await.unwrap();
+        mock.mark_completed(task.id, None).await.unwrap();
+        mock.mark_failed(task.id, None).await.unwrap();
         mock.mark_cancelled(task.id).await.unwrap();
 
         // Maintenance stubs return zero counts

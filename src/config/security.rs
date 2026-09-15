@@ -63,7 +63,7 @@ pub fn validate_security(settings: &Settings) -> Result<(), validator::Validatio
         }
     }
 
-    // JWT secret 校验（auth-on 时强制，MEDIUM-3 修复：早期失败反馈）
+    // JWT secret 校验（auth-on 时强制早期失败反馈）
     //
     // 仅在 `auth` feature 启用时检查——auth-off 走 default_identity_middleware，
     // 不读取 jwt_secret。空 / 弱密钥（< 32 字节）会被 `build_garrison_config` 二次拒绝，
@@ -97,7 +97,7 @@ mod tests {
     use crate::common::test_support::ENV_MUTEX;
     use crate::config::settings::Settings;
 
-    // MEDIUM-3 修复后 validate_security 在 auth-on 时校验 jwt_secret，
+    // validate_security 在 auth-on 时校验 jwt_secret，
     // 测试用强密钥（32+ 字节）确保 validate_security 通过
     fn build_test_settings() -> Settings {
         let mut settings = Settings::default();
