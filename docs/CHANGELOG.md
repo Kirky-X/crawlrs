@@ -1,9 +1,14 @@
-# Changelog
+# 📋 Crawlrs 更新日志
 
-All notable changes to this project will be documented in this file.
+本文件记录 crawlrs 的全部重要变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/spec/v2.0.0.html)。
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## 📋 目录
+
+- [Unreleased](#unreleased)
+- [0.2.0 - 2026-07-29](#020---2026-07-29)
+- [0.1.0 - 2026-07-22](#010---2026-07-22)
+
+---
 
 ## [Unreleased]
 

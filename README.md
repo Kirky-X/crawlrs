@@ -1,744 +1,429 @@
 <div align="center">
 
-<img src="docs/image/logo.png" alt="Logo" width="200">
-
-### 🚀 使用 Rust 构建的企业级网页数据采集平台
-
-**高性能 • 可扩展 • 类型安全**
+<img src="docs/image/logo.png" alt="Crawlrs Logo" width="200">
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=build)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/releases) [![License](https://img.shields.io/github/license/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE) ![Rust](https://img.shields.io/badge/rust-1.95%2B-orange)
 
-**[English](README_EN.md)** | **中文**
+**中文** | [English](README_EN.md)
+
+**使用 Rust 构建的企业级网页数据采集平台**
+
+[✨ 功能特性](#-功能特性) • [🚀 快速开始](#-快速开始) • [📚 文档](#-文档) • [💻 示例](#-示例) • [🤝 参与贡献](#-参与贡献)
 
 </div>
 
-## 📖 目录
+---
 
-- [概述](#概述)
-- [性能基准](#性能基准)
-- [核心特性](#核心特性)
-- [安装](#安装)
-- [快速开始](#快速开始)
-- [配置](#配置)
-- [API 文档](#api-文档)
-- [架构](#架构)
-- [部署](#部署)
-- [测试](#测试)
-- [贡献](#贡献)
-- [许可证](#许可证)
-- [支持](#支持)
+## 📋 目录
+
+- [✨ 功能特性](#-功能特性)
+- [🚀 快速开始](#-快速开始)
+- [🎨 特性标志](#-特性标志)
+- [📚 文档](#-文档)
+- [💻 示例](#-示例)
+- [🚢 部署](#-部署)
+- [🏗️ 架构](#️-架构)
+- [🧪 测试](#-测试)
+- [📊 性能](#-性能)
+- [🔒 安全](#-安全)
+- [🗺️ 开发路线图](#️-开发路线图)
+- [🤝 参与贡献](#-参与贡献)
+- [📋 更新日志](#-更新日志)
+- [📄 许可证](#-许可证)
+- [🙏 致谢](#-致谢)
+- [📞 联系与支持](#-联系与支持)
+- [⭐ Star 历史](#-star-历史)
 
 ---
 
-## 📝 概述 <span id="概述"></span>
+## ✨ 功能特性
 
-**crawlrs** 是一个面向开发者的高性能企业级网页数据采集平台，提供全面的数据采集能力：
+<table style="width:100%; border-collapse: collapse">
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>统一搜索</b><br><span style="color:#64748B">Google、Bing、百度、搜狗多引擎聚合，自动去重、结果统一格式、支持 A/B 测试</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🎯 <b>单页抓取</b><br><span style="color:#64748B">静态 HTML 与 JS 渲染页面统一抓取，支持截图、表单交互、自定义请求头与同步等待</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🕷️ <b>深度爬取</b><br><span style="color:#64748B">URL 过滤链 + 复合评分器 + 优先级队列 + 自适应停止条件，robots.txt 合规</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">📊 <b>数据提取</b><br><span style="color:#64748B">CSS 规则、正文提取器（Trafilatura / DomSmoothie）、LLM 与 RAG 增强多种提取模式</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🚂 <b>五引擎智能路由</b><br><span style="color:#64748B">Reqwest / Playwright / FlareSolverr / Wreq（TLS 指纹）/ MLLM（视觉 LLM 导航），SmartHybrid、竞速与顺序降级三种路由策略</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🛡️ <b>反爬对抗</b><br><span style="color:#64748B">三层反爬检测、SPA 空壳探测升级、UA 池一致性伪装、智能重试、代理轮换、请求合并</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🏢 <b>企业平台能力</b><br><span style="color:#64748B">多租户隔离、garrison 认证（RBAC + JWT + 防暴力破解）、limiteron 限流熔断、Webhook 事件通知</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">📈 <b>可观测性</b><br><span style="color:#64748B">Prometheus 指标导出（队列深度、引擎成功率、缓存命中等）、inklog 结构化日志、审计日志</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🧠 <b>智能增强</b><br><span style="color:#64748B">RAG 增强提取、知识图谱覆盖感知爬取、DRL 自适应策略（ONNX 推理 + 启发式退化）</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧩 <b>特性门控裁剪</b><br><span style="color:#64748B">20+ Cargo features 按需组合，<code>agent-lib</code> 提供嵌入式最小库面，全部业务能力可关闭并注入 Noop 实现</span></td>
+</tr>
+</table>
 
-| 能力 | 描述 |
-|------------|-------------|
-| 🔍 **搜索** | 统一的 Google、Bing、百度和搜狗搜索 |
-| 🎯 **抓取** | 从单个网页提取数据 |
-| 🕷️ **爬取** | 自动发现并爬取多个页面 |
-| 📊 **提取** | 从 HTML 解析和结构化数据 |
-| 🗺️ **映射** | 可视化和组织爬取的数据 |
-
-采用 Rust 构建，crawlrs 提供卓越的性能：
-
-| 指标 | 提升幅度 |
-|--------|-------------|
-| **吞吐量** | 相比 Node.js 提升 3-5 倍 |
-| **P99 延迟** | 降低 50% |
-| **内存使用** | 降低 75% |
-| **CPU 使用** | 降低 59% |
-
----
-
-## 📊 性能基准 <span id="性能基准"></span>
-
-与 Node.js 实现相比：
-
-| 指标 | Node.js 版本 | Rust 版本 (crawlrs) | 提升 |
-|--------|----------------|----------------------|------|
-| 吞吐量 | 1,200 请求/秒 | 4,500 请求/秒 | **3.75x** |
-| P99 延迟 | 450ms | 180ms | **60%** |
-| 内存使用 | 512 MB | 128 MB | **75%** |
-| CPU 使用 | 85% | 35% | **59%** |
+> 反爬对抗、智能增强等引擎级增强模块的设计与代码位置详见 [🏗️ 架构文档 · 爬取能力增强模块](docs/ARCHITECTURE.md)。
 
 ---
 
-## ✨ 核心特性 <span id="核心特性"></span>
+## 🚀 快速开始
 
-### 🚀 高性能
+### 📦 安装
 
-| 特性 | 优势 |
-|---------|---------|
-| 3-5 倍吞吐量提升 | 更快的数据采集 |
-| 50% 的 P99 延迟降低 | 实时响应时间 |
-| 零成本抽象 | Rust 的安全性保证无额外开销 |
-| 内存效率 | 相比 Node.js 降低 75% 的内存使用 |
-
-### 🔍 多引擎支持
-
-| 引擎 | 用例 | 性能 | 成本 |
-|--------|----------|------------|-------|
-| **Reqwest** | 静态 HTML、API 响应 | ⚡ 最快 | 💰 最低 |
-| **chromiumoxide** | JavaScript 密集的 SPA、交互 | 🐢 较慢 | 💳 较高 |
-| **FlareSolverr** | 反爬虫保护网站（Full/Cdp/Tls 三种模式） | 🚀 可变 | 💎 可变 |
-| **WreqEngine** | TLS 指纹伪装（JA3/JA4 真实浏览器指纹） | ⚡ 快 | 💰 低 |
-| **MllmEngine** | 视觉 LLM 自主导航（截图→决策→执行） | 🐢 较慢 | 💳 较高 |
-
-### ⚡ 引擎性能优化（0.2.0）
-
-| 特性 | 描述 | 任务 |
-|------|------|------|
-| **反爬虫检测** | Aho-Corasick + 20+ WAF 指纹三层分类器，检测驱动路由自动改派浏览器引擎 | T009-T013 |
-| **HTTP→Chrome 升级** | JsUpgradeProbe 强/弱信号评分，SPA 空壳自动改派 Playwright | T014-T015 |
-| **内存感知调度** | sysinfo 状态机 + 动态并发 + 优先级队列 + 临界超时保护 | T016-T019 |
-| **UA 池** | 20+ 真实 profile，UA↔Header↔Viewport 一致性绑定，重试时 seed 轮换 | T020-T022 |
-| **智能重试** | RetryTracker 按类型独立上限 + Full-jitter 退避 + RetryDirective 身份轮换 | T023-T028 |
-| **JS 注入** | BeforeLoad/AfterLoad 两阶段 + stealth/cleanup 脚本 + 广告/媒体拦截 | T029-T033 |
-| **请求合并** | DashMap 单飞 + broadcast 通知，同 URL 并发仅 1 次实际 fetch | T034-T035 |
-| **AIMD 自适应并发** | AtomicUsize 无锁 + AdaptiveSemaphore，连续失败减半/成功递增 | T036-T038 |
-| **Markdown 转换** | htmd 集成，ScrapeResponse 增 `markdown` 字段 | T039-T042 |
-| **正文提取** | ContentExtractor trait + Trafilatura/DomSmoothie/CssRule + Facade + LLM 回退 | T043-T049 |
-| **URL 归一化与去重** | UrlNormalizer + Bloom⊕Interner 分层去重，降 DB 查询量 | T050-T053 |
-| **代理轮换** | RoundRobin 池 + 粘性会话 + 按类别路由 + 健康检查 | T054-T056 |
-| **高级缓存模式** | 5 模式（Enabled/Disabled/ReadOnly/WriteOnly/Bypass）+ CacheContext 门控 | T057-T059 |
-| **Waterfall/MRT 超时** | per-engine MRT + 瀑布式切换，超 MRT 即切下一引擎 | T060-T062 |
-| **深度爬取** | UrlFilter+FilterChain / UrlScorer+CompositeScorer / Frontier 优先级队列 / 自适应停止 | T063-T067 |
-| **TabPool** | Chrome CDP Tab 池复用（DashMap + AtomicUsize LIFO 栈），消除 tab 创建开销 | T068 |
-| **WaitFor 策略** | 条件式等待（NetworkIdle/Selector/DomStable）替代固定 sleep | T069 |
-| **Hedge 控制器** | EMA + 方差估算 P84 延迟阈值，race 模式胜出延迟记录 | T070 |
-| **TLS 指纹引擎** | WreqEngine BoringSSL 真实 JA3/JA4 指纹伪装，Chrome/Firefox/Safari/Edge 模拟 | T012-T024 |
-| **MLLM 导航引擎** | 视觉 LLM agentic loop 自主导航（截图→决策→CDP 执行） | T045-T060 |
-| **RAG 增强提取** | DOM 语义分块 + 向量嵌入 + 余弦相似度检索 + LLM 精确提取 | T072-T076 |
-| **知识图谱覆盖感知** | KG 累积 + Chao1 覆盖率估计 + 结构空洞检测 + KgBoostScorer | T077-T082 |
-| **DRL 自适应策略** | ONNX 推理 + 启发式退化，动态调整并发/URL 优先级/引擎选择 | T083-T087 |
-| **可观测性增强** | 5 个 Prometheus 指标（queue_depth/engine_success/engine_duration/cache_hit/webhook_delivery） | T061-T065 |
-
-> **详细架构:** [ARCHITECTURE.md → 引擎性能优化](docs/ARCHITECTURE.md#hedge-请求副本控制器)
-
-### 🔎 统一搜索
-
-| 能力 | 描述 |
-|------------|-------------|
-| 多引擎支持 | Google、Bing、百度、搜狗 |
-| A/B 测试 | 跨引擎比较结果 |
-| 自动去重 | 删除重复结果 |
-| 结果聚合 | 统一的输出格式 |
-
-### 📊 企业级功能
-
-| 特性 | 描述 |
-|---------|-------------|
-| **速率限制** | 每团队并发和 RPM 控制（基于 limiteron，支持分布式限流与熔断） |
-| **缓存** | 基于 oxcache 的多层缓存（L1 内存 moka 后端），支持 search/dns/regex 分类型 TTL |
-| **指标与监控** | Prometheus 兼容的导出 |
-| **Webhooks** | 事件驱动的任务完成通知 |
-| **API Key 认证** | garrison v0.9.0-rc.1 接管认证：RBAC + JWT + firewall-bruteforce + audit-log，作用域访问控制和团队隔离 |
-| **审计日志** | 完整的请求跟踪 |
-| **代理支持** | 统一出站代理配置 |
-| **LLM 抽取** | 基于 genai 的 LLM 内容抽取 |
-
-### 🏗️ 架构
-
-| 层次 | 技术 | 用途 |
-|--------|------------|---------|
-| 表现层 | Axum | HTTP 处理器、中间件 |
-| 应用层 | Use Cases | 业务逻辑编排 |
-| 领域层 | Traits | 核心实体和服务 |
-| 基础设施层 | Postgres | 外部集成 |
-
----
-
-## 📦 安装 <span id="安装"></span>
-
-### 前置要求
-
-| 要求 | 最低版本 | 推荐版本 |
-|-------------|------------------|---------------|
-| Rust | 1.95+ | 最新稳定版 |
-| PostgreSQL | 16+ | 最新稳定版 |
-| Docker | 20+ | 最新版 |
-
-### 从源码构建
+| 前置要求 | 最低版本 | 说明 |
+|---------|---------|------|
+| Rust | 1.97（`Cargo.toml` 的 `rust-version`） | 最新稳定版即可 |
+| PostgreSQL | 16+ | 默认数据库后端（`db-postgres`） |
+| Docker | 20+ | 集成测试（testcontainers）与容器化部署 |
 
 ```bash
-# 克隆仓库
-git clone https://github.com/YOUR_ORG/crawlrs.git
+git clone https://github.com/Kirky-X/crawlrs.git
 cd crawlrs
 
-# 使用 standard 预设安装（核心栈 + engine-playwright + metrics）
+# 默认特性构建（platform 全套业务能力 + db-postgres）
+cargo build --release
+
+# 生产推荐：默认 + Playwright 引擎 + 指标 + 内容处理
 cargo build --release --features standard
 
-# 安装所有特性（standard + engine-flaresolverr）
+# 全部功能（standard + FlareSolverr + 正文提取 + LLM）
 cargo build --release --features full
-
-# 使用自定义特性安装
-cargo build --release --features "engine-playwright,metrics"
 ```
 
-### 特性标志
-
-> **注意：** `default = ["platform", "db-postgres"]`，其中 `platform` 展开为 `teams, auth, rate-limit, webhook, metrics, content` — 默认启用全部业务能力 + 指标 + 内容处理特性。使用预设（`standard` / `full`）或显式列出所需特性可叠加引擎与基础设施特性。
-
-> **核心栈为非可选。** 核心依赖（oxcache 0.5 / dbnexus 0.6 / confers 0.6 / sdforge 0.5 / inklog 0.3 / trait-kit 0.5 + scraper / chardetng / encoding_rs / robotstxt）与 HTTP 抓取栈始终编译，不再以 feature 形式暴露。
-
-| 特性 | 描述 | 默认 |
-|---------|-------------|----------|
-| `teams` | 多租户隔离（团队、地理限制、配额隔离）；隐含 `auth` | ✅ 是 |
-| `auth` | API Key 认证中间件；关闭时走 `default_identity_middleware` 注入固定身份 | ✅ 是 |
-| `rate-limit` | 基于 limiteron 的速率限制与熔断；关闭时注入 `NoopRateLimitingService` 放行 | ✅ 是 |
-| `webhook` | Webhook 投递与管理；关闭时注入 `NoopWebhookService` 并移除 `/v1/webhooks` 路由 | ✅ 是 |
-| `engine-playwright` | 基于 chromiumoxide 的浏览器自动化 | ❌ 否 |
-| `engine-flaresolverr` | FlareSolverr 反爬虫保护（FlareSolverrMode 枚举区分 Full/Cdp/Tls 三模式） | ❌ 否 |
-| `engine-tls-fingerprint` | TLS 指纹伪装引擎（WreqEngine + BoringSSL JA3/JA4） | ❌ 否 |
-| `engine-mllm` | MLLM 自主导航引擎（视觉 LLM agentic loop，隐含 `engine-playwright` + `llm`） | ❌ 否 |
-| `content` | 内容处理管道（反爬虫检测 + HTML→Markdown 转换） | ❌ 否 |
-| `trafilatura` | 正文提取主路径（rs-trafilatura） | ❌ 否 |
-| `dom-smoothie` | 正文提取回退路径（dom_smoothie） | ❌ 否 |
-| `extractors` | 正文提取全启用（trafilatura + dom_smoothie） | ❌ 否 |
-| `metrics` | Prometheus 指标导出 | ❌ 否 |
-| `llm` | 基于 genai 的 LLM 抽取 | ❌ 否 |
-| `test-mocks` | 测试专用 mock 模块（integration test 需显式启用） | ❌ 否 |
-
-> **说明：** `openapi` 不是 Cargo feature——它是 `sdforge_macros` 的 `#[forge]` 宏生成的 cfg 标记，用于 OpenAPI 规范输出。用户无需显式启用；sdforge 总是编译，openapi 自动生效。
-
-### 预设与编译体积
-
-本项目通过 Cargo 特性控制可选功能。核心栈（oxcache 0.5 / dbnexus 0.6 / confers 0.6 / sdforge 0.5 / inklog 0.3 / trait-kit 0.5 + scraper / chardetng / encoding_rs / robotstxt + HTTP 抓取栈）始终编译，不再以 feature 形式暴露。业务能力特性（`teams` / `auth` / `rate-limit` / `webhook`）+ 指标（`metrics`）+ 内容处理（`content`）默认启用，可通过 `--no-default-features` 关闭以构建单租户/无认证部署。
-
-| 预设 | 特性组合 | 二进制大小 | 适用场景 |
-|-----|---------|-----------|---------|
-| default | `platform (= teams, auth, rate-limit, webhook, metrics, content), db-postgres` | ~30MB | 单租户/多租户全功能（业务能力 + 指标 + 内容处理默认开） |
-| standard | `default + engine-playwright, metrics, content` | ~40MB | 生产推荐（JS 渲染 + 内容处理 + 指标） |
-| full | `standard + engine-flaresolverr + extractors + llm` | ~55MB | 所有功能 |
-| no-default | `--no-default-features` | ~22MB | 单租户/无认证部署（业务能力全关，Noop 实现） |
-
-> **注意：** `default` 包含 `platform` 元特性（业务能力 + 指标 + 内容处理），因此预设表已包含这些能力。如需关闭业务能力，使用 `--no-default-features` 显式列出所需特性（如 `--no-default-features --features rate-limit`）。
-
-### 自定义组合
+### 💡 最小示例
 
 ```bash
-# 自定义组合：核心栈始终编译，仅需指定可选特性
-cargo build --release --features "engine-playwright,metrics,llm"
-
-# 仅核心栈（关闭所有业务能力 + 引擎，单租户/无认证部署）
-cargo build --release --no-default-features
-
-# 单租户 + 限流（关闭认证与 Webhook）
-cargo build --release --no-default-features --features rate-limit
-
-# 多租户 + 认证（关闭限流与 Webhook）
-cargo build --release --no-default-features --features teams
-```
-
-### 特性参考
-
-| 特性 | 描述 | 影响 |
-|------|------|------|
-| `teams` | 多租户隔离（团队、地理限制、配额隔离） | 隐含 `auth`；关闭时降级为单租户，使用 `DEFAULT_TEAM_ID` |
-| `auth` | API Key 认证中间件 | 关闭时走 `default_identity_middleware` 注入固定 `AuthState` |
-| `rate-limit` | 基于 limiteron 的速率限制与熔断 | 引入 `limiteron` 依赖；关闭时注入 `NoopRateLimitingService` 全放行 |
-| `webhook` | Webhook 投递与管理 | 关闭时注入 `NoopWebhookService` 并移除 `/v1/webhooks` 路由 |
-| `engine-playwright` | chromiumoxide JS 渲染引擎 | +8MB |
-| `engine-flaresolverr` | FlareSolverr 引擎（通过 FlareSolverrMode 枚举区分 Full/Cdp/Tls 三种模式） | - |
-| `engine-tls-fingerprint` | TLS 指纹伪装引擎（WreqEngine + BoringSSL） | +8MB |
-| `engine-mllm` | MLLM 自主导航引擎（视觉 LLM agentic loop） | - |
-| `content` | 内容处理管道（反爬检测 + Markdown 转换） | - |
-| `trafilatura` | 正文提取主路径 | - |
-| `dom-smoothie` | 正文提取回退路径 | - |
-| `extractors` | 正文提取全启用 | - |
-| `metrics` | 指标监控 | - |
-| `llm` | genai LLM 抽取 | - |
-| `test-mocks` | 测试 mock 模块（`#[cfg(any(test, feature = "test-mocks"))]`） | - |
-
-### Feature 矩阵（业务能力）
-
-> **R-flags-005：** 业务能力特性（`teams` / `auth` / `rate-limit` / `webhook`）默认启用，可通过 `--no-default-features` 关闭以构建单租户/无认证/无限流/无 Webhook 的轻量部署。每个特性关闭时都有对应的 Noop 实现注入，保证业务逻辑无感知。
-
-#### 业务能力特性矩阵
-
-| 特性 | 默认 | 依赖关系 | 关闭时行为 | 关联常量/Noop 实现 |
-|------|------|----------|------------|---------------------|
-| `teams` | ✅ 启用 | 隐含 `auth` | 降级为单租户，所有请求归属 `DEFAULT_TEAM_ID`（`Uuid::from_u128(1)`） | `DEFAULT_TEAM_ID` |
-| `auth` | ✅ 启用 | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.9.0-rc.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce + audit-log。关闭时走 `default_identity_middleware` 注入固定 `AuthState`（`DEFAULT_API_KEY_ID` + `full_access` scope） | `DEFAULT_API_KEY_ID`（`Uuid::from_u128(2)`）、`default_identity_middleware`、`auth_bridge::map_perms_to_scope` |
-| `rate-limit` | ✅ 启用 | `dep:limiteron` | 注入 `NoopRateLimitingService`，`check_rate_limit` 返回 `Allowed`、`check_and_deduct_quota` 返回 `Ok(())`、`get_quota_balance` 返回 `Ok(i64::MAX)` | `NoopRateLimitingService` |
-| `webhook` | ✅ 启用 | 无 | 注入 `NoopWebhookService`，`trigger_completion` / `trigger_failure` 返回 `Ok(())`；移除 `/v1/webhooks` 路由与 `webhook_worker` | `NoopWebhookService` |
-
-#### 条件端点
-
-| 端点 | 启用条件 | 关闭时行为 |
-|------|----------|------------|
-| `/v1/teams/me`、`/v1/teams/me/usage`、`/v1/teams/geo-restrictions`（GET/PUT） | `teams` | 路由不注册（404） |
-| `/v1/extract`（带地理限制泛型） | `teams` | 降级为无地理限制的 `extract` 签名 |
-| `/v1/webhooks`（POST/GET） | `webhook` | 路由不注册（404） |
-
-#### Feature 组合验证矩阵（CI 覆盖）
-
-CI 的 `feature-matrix` job 覆盖以下 7 种组合，确保门控完整、无未门控引用：
-
-| 组合 | 命令 | 验证目标 |
-|------|------|----------|
-| no-default | `cargo check --no-default-features --lib` | 全部门控就位，无业务能力 + 无引擎 |
-| teams-only | `cargo check --no-default-features --features teams --lib` | 多租户（隐含 `auth`）单独编译 |
-| auth-only | `cargo check --no-default-features --features auth --lib` | 仅认证（单租户 + 认证） |
-| rate-limit-only | `cargo check --no-default-features --features rate-limit --lib` | 仅限流（单租户 + 限流） |
-| webhook-only | `cargo check --no-default-features --features webhook --lib` | 仅 Webhook（单租户 + Webhook） |
-| default | `cargo check --features default --lib` | 全业务能力默认组合 |
-| full | `cargo check --features full --lib` | 全功能（业务能力 + 引擎 + 指标） |
-
----
-
-## 🚀 快速开始 <span id="快速开始"></span>
-
-5 分钟内启动并运行！
-
-### 1️⃣ 配置
-
-创建配置文件 `config/default.toml`：
-
-```toml
-# config/default.toml
+# 1. 准备配置（完整模板见 config/default.toml，环境变量见 .env.example）
+cat > config/default.toml <<'EOF'
 [database]
 url = "postgresql://user:password@localhost/crawlrs"
-max_connections = 20
 
 [server]
 host = "0.0.0.0"
 port = 8899
 
-[cors]
-allowed_origins = "*"
-
-[rate_limiting]
-enabled = true
-default_rpm = 60
-default_limit = 60
-burst_size = 20
-
-[cache]
-enabled = true
-
-[cache.memory]
-capacity = 10000
-ttl_seconds = 300
-
-[cache.types.search]
-ttl_seconds = 300
-max_size = 10000
-
-[cache.types.dns]
-ttl_seconds = 3600
-max_size = 1000
-
-[cache.types.regex]
-ttl_seconds = 86400
-max_size = 5000
-
 [search]
 default_engine = "baidu"
-[search.engines]
-google_enabled = true
-bing_enabled = true
-baidu_enabled = true
-sogou_enabled = true
-```
+EOF
 
-### 2️⃣ 数据库设置
-
-```bash
-# 使用内置 CLI 运行迁移
+# 2. 初始化数据库
 cargo run --bin crawlrs -- migrate
 
-# 或使用 SQLx CLI
-sqlx database create
-sqlx migrate run
-```
-
-### 3️⃣ 运行服务器
-
-```bash
-# 开发模式
+# 3. 启动服务（API 模式；worker 模式：cargo run --bin crawlrs worker）
 cargo run --bin crawlrs
 
-# 生产模式
-./target/release/crawlrs
-```
-
-### 4️⃣ 验证安装
-
-```bash
-# 健康检查
+# 4. 验证安装
 curl http://localhost:8899/health
-
-# 预期响应：
 # {"status":"healthy","version":"0.2.0"}
 ```
 
----
-
-## ⚙️ 配置 <span id="配置"></span>
-
-crawlrs 使用 confers 管理配置，支持 TOML 文件和 `CRAWLRS__` 前缀的环境变量（`__` 用于嵌套层级）。默认配置文件：`config/default.toml`。
-
-### 环境变量
-
-| 环境变量 | 描述 | 默认值 | 必需 |
-|-------------|----------|--------|------|
-| `CRAWLRS__DATABASE__URL` | PostgreSQL 连接字符串 | - | 是 |
-| `CRAWLRS__SERVER__HOST` | 服务器绑定地址 | 0.0.0.0 | 否 |
-| `CRAWLRS__SERVER__PORT` | 服务器端口 | 8899 | 否 |
-| `CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT` | 每团队默认并发限制 | 10 | 否 |
-| `CRAWLRS__CACHE__MEMORY__CAPACITY` | 内存缓存容量 | 10000 | 否 |
-| `CRAWLRS__CACHE__MEMORY__TTL_SECONDS` | 内存缓存 TTL | 300 | 否 |
-| `CRAWLRS__WEBHOOK__TIMEOUT_SECONDS` | Webhook 调用超时 | 10 | 否 |
-| `CRAWLRS__WORKERS__COUNT` | Worker 数量（"auto" 或数字） | auto | 否 |
-| `CRAWLRS__PROXY__URL` | 出站代理 URL | - | 否 |
-| `CRAWLRS__LLM__API_KEY` | LLM 服务 API 密钥 | - | 否 |
-| `CRAWLRS__ENGINES__FLARESOLVERR__URL` | FlareSolverr 服务 URL | http://localhost:8191/v1 | 否 |
-| `CRAWLRS__LOG_LEVEL` | 日志级别 | info | 否 |
-| `CRAWLRS__DATABASE__PASSWORD` | 数据库密码（Docker 模式） | - | 否 |
-
-### 配置参考
-
-| 配置段 | 描述 | 关键字段 |
-|--------|------|---------|
-| `[server]` | 服务器绑定 | `host`, `port`, `enable_port_detection` |
-| `[cors]` | CORS 跨域 | `allowed_origins`（逗号分隔，`*` 通配） |
-| `[database]` | 数据库连接 | `url`, `max_connections`, `min_connections`, `connect_timeout` |
-| `[rate_limiting]` | 速率限制 | `enabled`, `default_rpm`, `default_limit`, `burst_size` |
-| `[cache]` | 缓存控制 | `enabled`, `[cache.memory]` (capacity/ttl), `[cache.types.*]` (search/dns/regex) |
-| `[concurrency]` | 并发控制 | `default_team_limit`, `task_lock_duration_seconds` |
-| `[search]` | 搜索配置 | `default_engine`, `ab_test_enabled`, `timeout_seconds` |
-| `[webhook]` | Webhook | `timeout_seconds`, `max_retries`, `secret`, `batch_size` |
-| `[proxy]` | 出站代理 | `urls`, `strategy`, `enabled`, `sticky_ttl_seconds`, `cooldown_seconds` |
-| `[llm]` | LLM 抽取 | `api_key`, `model`, `api_base_url` |
-| `[workers]` | Worker 池 | `count`（`"auto"` 或数字） |
-| `[engines.flaresolverr]` | FlareSolverr | `enabled`, `url`, `timeout_seconds` |
-| `[timeouts.engines]` | 引擎超时 + MRT | `default_timeout_seconds`, `playwright_timeout_seconds`, `flaresolverr_timeout_seconds`, `fetch_seconds`（HTTP MRT）, `tls_seconds`（TLS MRT）, `cdp_seconds`（CDP MRT） |
-| `[logging]` | 日志输出 | `[logging.console]`, `[logging.file]` (path/max_file_size/file_count) |
-| `[trusted_proxies]` | 可信代理 | `enabled`, `proxies`（CIDR 列表） |
-
----
-
-## 📚 API 文档 <span id="api-文档"></span>
-
-> **完整 API 参考:** [API_REFERENCE.md](docs/API_REFERENCE.md) | **用户指南:** [USER_GUIDE.md](docs/USER_GUIDE.md)
-
-### 🔑 认证
-
-所有受保护的端点都需要在 `Authorization` 头中提供 API 密钥：
+调用抓取接口（认证与全部端点详见 [📘 API 参考](docs/API_REFERENCE.md)）：
 
 ```bash
-# 格式
-Authorization: Bearer YOUR_API_KEY
-
-# 示例 curl
-curl -H "Authorization: Bearer garrison_key_id.garrison_secret" \
-  http://localhost:8899/v1/scrape
-```
-
-> **0.2.0 起（`garrison-auth-migration`）：** 认证引擎由 **garrison v0.9.0-rc.1** 接管。Bearer token 格式为 `garrison_key_id.garrison_secret`，由 garrison 签发与校验。crawlrs 不再自管 `key_hash`，旧的 `CRAWLRS__AUTH__KEYS` / `[auth] keys` 配置项已弃用。
-
-**Garrison 提供的认证能力：**
-
-| 能力 | 说明 |
-|------|------|
-| **JWT 签发** | garrison 用 `CRAWLRS__AUTH__JWT_SECRET`（HS256，≥32 字节，弱密钥拒绝启动）签发 API Key 内嵌的 JWT |
-| **RBAC** | 预置 3 权限（`crawlrs:read/write/admin`）+ 3 角色（`admin/user/read_only`），`tenant_id=0` 所有 team 共享 |
-| **firewall-bruteforce** | 5 次失败/60 秒窗口/300 秒锁定；401/429 由 garrison 直接触发 |
-| **audit-log** | 认证事件落库到 crawlrs `audit_logs` + garrison 自管 schema |
-
-**签发新 API Key（管理员）：**
-
-```bash
-curl -X POST http://localhost:8899/v1/admin/api-keys \
-  -H "Authorization: Bearer garrison_admin_key_id.garrison_admin_secret" \
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer <garrison_key_id>.<garrison_secret>" \
   -H "Content-Type: application/json" \
-  -d '{
-    "team_id": "770e8400-e29b-41d4-a716-446655440000",
-    "scopes": ["read", "write"],
-    "expires_in_secs": 2592000
-  }'
+  -d '{"url": "https://example.com"}'
 ```
 
-> **⚠️ 安全提示:** 永远不要将 API 密钥提交到版本控制系统。明文 key 仅在签发响应中返回一次，请立即写入 secrets manager。
+### 🧭 核心概念
 
-### 迁移到 0.2.0：Garrison 认证
-
-**影响范围：**
-
-- 现有 API Key（基于旧表 `api_keys.key_hash` SHA-256）**全部作废**，需经 garrison 重新领取
-- `scopes` 表只读（`deprecated_at` 标记），原有 scope 映射不再生效
-- 必填 `CRAWLRS__AUTH__JWT_SECRET`（HS256 ≥32 字节，弱密钥拒绝启动）
-
-**迁移已完成：**
-
-- 旧 API Key 已作废，客户端须使用 `Authorization: Bearer <garrison_key_id>.<garrison_secret>` 格式
-- 新 team 通过 `POST /v1/admin/api-keys` 签发 API Key，无需运维工具介入
-- 开发/测试环境可通过 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量自动签发 admin key
-
-**客户端迁移：**
-
-- 调用方式不变，仍是 `Authorization: Bearer <key>`
-- 仅需将 `<key>` 替换为新的 `garrison_key_id.garrison_secret`
-- 401/429 响应语义不变，但 429 触发逻辑由 garrison `firewall-bruteforce` 接管
-
-详细架构说明参见 [ARCHITECTURE.md → Garrison 认证引擎](docs/ARCHITECTURE.md#garrison-认证引擎)。
-
-### 📡 公开端点
-
-| 端点 | 方法 | 描述 |
-|----------|--------|-------------|
-| `/health` | GET | 健康检查（liveness probe） |
-| `/metrics` | GET | Prometheus 指标 |
-| `/v1/version` | GET | 版本号 |
-
-### 📡 核心受保护端点
-
-| 端点 | 方法 | 描述 |
-|----------|--------|-------------|
-| `/v1/scrape` | POST | 创建抓取任务 |
-| `/v1/scrape/{id}` | GET | 获取任务详情 |
-| `/v1/scrape/{id}/_cancel` | POST | 取消抓取任务 |
-| `/v1/crawl` | POST | 创建爬取任务 |
-| `/v1/crawl/{id}` | GET | 获取爬取状态 |
-| `/v1/crawl/{id}` | DELETE | 取消爬取任务 |
-| `/v1/crawl/{id}/_cancel` | POST | 取消爬取任务 |
-| `/v1/crawl/{id}/results` | GET | 获取爬取结果 |
-| `/v1/search` | POST | 使用指定引擎搜索 |
-| `/v1/extract` | POST | 从 HTML 提取数据 |
-| `/v1/webhooks` | POST | 创建 webhook |
-| `/v1/webhooks` | GET | 列出 webhook |
-| `/v1/teams/me` | GET | 获取当前团队信息 |
-| `/v1/teams/me/usage` | GET | 获取团队使用量 |
-| `/v1/teams/geo-restrictions` | GET | 获取团队地理限制 |
-| `/v1/teams/geo-restrictions` | PUT | 更新团队地理限制 |
-| `/v1/tasks/_query` | POST | 复杂查询任务 |
-| `/v1/tasks/_cancel` | POST | 批量取消任务 |
-| `/v1/audit/logs` | GET | 获取审计日志 |
-| `/v1/audit/denied` | GET | 获取被拒绝的请求 |
-| `/v1/admin/api-keys` | POST | 签发 garrison API Key（0.2.0 新增，需 `crawlrs:admin` 权限） |
-
-### 📡 SDK 端点
-
-| 端点 | 方法 | 描述 |
-|----------|--------|-------------|
-| `/api/v1/sdk/search` | POST | SDK 搜索 |
-| `/api/v1/sdk/tasks` | POST | SDK 创建任务 |
-| `/api/v1/sdk/scrape` | POST | SDK 创建抓取 |
-| `/api/v1/sdk/crawl` | POST | SDK 创建爬取 |
+- **引擎与路由**：`EngineClient` 是抓取操作唯一公开入口，内部 `EngineRouter` 持有 `Vec<Arc<dyn ScraperEngine>>`，按 `SmartHybrid`（默认）/ `RaceMode` / `SequentialFallback` 策略选择引擎。
+- **双运行模式**：同一二进制两种形态——`crawlrs` 启动 API 服务，`crawlrs worker` 以 Worker 模式消费任务队列。
+- **DDD 四层**：`presentation → application → domain → infrastructure`，DI 由 trait-kit 的 `AppModule` 装配。
+- **配置管理**：基于 confers，TOML 文件 + `CRAWLRS__` 前缀环境变量（`__` 分隔嵌套，如 `CRAWLRS__DATABASE__URL`）。
+- **特性门控**：业务能力（teams/auth/rate-limit/webhook）关闭时自动注入 Noop 实现，单租户/无认证部署零业务逻辑改动。
 
 ---
 
-## 🏗️ 架构 <span id="架构"></span>
+## 🎨 特性标志
 
-crawlrs 遵循领域驱动设计（DDD）原则，采用清晰的四层架构：
+### 📦 功能预设
 
-```mermaid
-flowchart TB
-    subgraph Presentation [表现层 - Axum]
-        A[HTTP 处理器]
-        B[中间件]
-        C[路由]
-    end
+| 预设 | 构建命令 | 包含内容 | 适用场景 |
+|------|----------|----------|----------|
+| 默认 | `cargo build --release` | `platform`（teams + auth + rate-limit + webhook + metrics + content）+ `db-postgres` | 开箱即用的完整平台 |
+| `standard` | `cargo build --release --features standard` | 默认 + `engine-playwright` | 生产推荐（JS 渲染 + 指标 + 内容处理） |
+| `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | 全部功能 |
+| `no-default` | `cargo build --release --no-default-features` | 纯核心抓取栈 | 单租户/无认证部署、嵌入集成 |
+| `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | agent/嵌入式最小库面 |
 
-    subgraph Application [应用层]
-        D[Use Cases]
-        E[DTOs]
-        F[请求验证]
-    end
+### 📋 功能矩阵
 
-    subgraph Domain [领域层]
-        G[Models]
-        H[Services]
-        I[Repository 接口]
-    end
+下表对应 `Cargo.toml` 的 `[features]` 定义，`default = ["platform", "db-postgres"]`；核心抓取栈（oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt）始终编译。
 
-    subgraph Infrastructure [基础设施层]
-        J[Database]
-        K[Cache]
-        L[Storage]
-        M[External APIs]
-    end
+| 特性 | 说明 | 默认 |
+|------|------|------|
+| `teams` | 多租户隔离（隐含 `auth`）；关闭时归属 `DEFAULT_TEAM_ID` 单租户 | ✅ |
+| `auth` | garrison v0.9 认证（RBAC + JWT + 防暴力破解）；关闭时注入固定身份 | ✅ |
+| `rate-limit` | limiteron 限流熔断；关闭时注入 `NoopRateLimitingService` | ✅ |
+| `webhook` | Webhook 投递；关闭时移除 `/v1/webhooks` 路由并注入 Noop | ✅ |
+| `metrics` | Prometheus 指标导出（含 sysinfo 内存感知） | ✅（platform） |
+| `content` | 反爬检测（aho-corasick）+ HTML→Markdown（htmd） | ✅（platform） |
+| `db-postgres` / `db-sqlite` / `db-mysql` | 数据库驱动三选一（dbnexus 编译期互斥强制） | ✅ postgres |
+| `engine-playwright` | chromiumoxide 浏览器自动化引擎 | ❌ |
+| `engine-flaresolverr` | FlareSolverr 反爬引擎（Full/Cdp/Tls 三模式） | ❌ |
+| `engine-tls-fingerprint` | WreqEngine TLS 指纹伪装（BoringSSL JA3/JA4） | ❌ |
+| `engine-mllm` | MLLM 视觉 LLM 自主导航引擎（隐含 `engine-playwright` + `llm`） | ❌ |
+| `trafilatura` / `dom-smoothie` / `extractors` | 正文提取主路径 / 性能回退 / 全启用 | ❌ |
+| `llm` | genai LLM 抽取 | ❌ |
+| `test-mocks` | 测试专用 mock 门控（集成测试需显式启用） | ❌ |
 
-    Presentation --> Application --> Domain --> Infrastructure
-```
-
-> **详细架构:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
-
-### 引擎架构
-
-- **EngineClient**: 唯一的公开入口点，封装所有抓取操作的统一 API
-- **EngineRouter**: 引擎调度核心，使用 `Vec<Arc<dyn ScraperEngine>>` 存储引擎实例，通过配置策略选择最佳引擎
-- **路由策略**: 默认使用 `SmartHybrid` 策略（智能混合），可选 `RaceMode`（并发竞速）/ `SequentialFallback`（顺序降级）
-
-### 技术栈
-
-| 组件 | 技术 | 版本 |
-|-----------|------------|---------|
-| Web 框架 | Axum | 0.8 |
-| 异步运行时 | Tokio | 1.53 |
-| 数据库 ORM | Sea-ORM 2.0.1（通过 dbnexus 0.6.0-rc.2） | - |
-| 数据库 | PostgreSQL | 16+ |
-| 缓存 | oxcache (moka) | 0.5.0-rc.2 |
-| HTTP 客户端 | Reqwest | 0.13 |
-| 浏览器自动化 | chromiumoxide | 0.9 |
-| 结构化日志 | inklog | 0.3.0-rc.2 |
-| API SDK | sdforge | 0.5.0-rc.2 |
-| 速率限制 | limiteron | 0.3.0-rc.2 |
-| 配置管理 | confers | 0.6.0-rc.2 |
-| DI 框架 | trait-kit | 0.5.0-rc.2 |
-| HTML 解析 | scraper | 0.27 |
+> 特性组合的编译矩阵（22 组合）与验证方式见 [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md)；特性门控的实现模式见 [🏗️ 架构文档 · Feature Gate Architecture](docs/ARCHITECTURE.md)。
 
 ---
 
-## 🚢 部署 <span id="部署"></span>
+## 📚 文档
 
-### Docker 部署
+| 文档 | 说明 |
+|------|------|
+| [📖 用户指南](docs/USER_GUIDE.md) | 认证、抓取、爬取、搜索、提取、Webhook、团队等全部功能的完整教程 |
+| [📘 API 参考](docs/API_REFERENCE.md) | 全部 REST 端点、请求/响应格式、错误码与 SDK |
+| [🏗️ 架构文档](docs/ARCHITECTURE.md) | DDD 分层、引擎路由、增强模块、安全模型与部署拓扑 |
+| [⚡ 性能指南](docs/PERFORMANCE.md) | 基准套件、性能观测与调优建议 |
+| [🔒 安全文档](docs/SECURITY.md) | 安全设计、供应链门禁、漏洞报告流程与生产加固清单 |
+| [❓ FAQ](docs/FAQ.md) | 常见问题解答 |
+| [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md) | 测试套件穷举、特性组合矩阵与运行手册 |
+| [🤝 贡献指南](docs/CONTRIBUTING.md) | 环境搭建、开发工作流与提交规范 |
+| [📋 更新日志](docs/CHANGELOG.md) | 每个版本的变更记录 |
+| [📦 Releases](https://github.com/Kirky-X/crawlrs/releases) | 版本发布页面 |
+
+---
+
+## 💻 示例
+
+全部 65 个可运行示例位于 [`examples/`](examples/) 独立 workspace，按功能域分为 search、scrape、crawl、extract、auth、teams、webhooks、cache、config、database、proxy、rate-limiting、sdk、tasks、browser、advanced 等类别（每个示例是 `[[bin]]` 目标，如 `basic_scrape`）。分类清单与说明见 [examples/README.md](examples/README.md) 与 [examples/QUICKSTART.md](examples/QUICKSTART.md)。
 
 ```bash
-# 构建 Docker 镜像
-docker build -t crawlrs:latest .
-
-# 使用 Docker 运行
-docker run -d \
-  -p 8899:8899 \
-  -e CRAWLRS__DATABASE__URL="postgresql://user:pass@db:5432/crawlrs" \
-  crawlrs:latest
-
-# 使用 Docker Compose 运行
-docker-compose up -d
+cd examples
+cargo run --bin basic_scrape          # 基础抓取
+cargo run --bin api_key_auth          # garrison API Key 认证
+cargo run --bin async_batch           # 异步批量抓取
+cargo build                           # 编译全部示例
 ```
-
-### 生产环境检查清单
-
-- [ ] 设置强密码 API 密钥和密钥
-- [ ] 配置适当的数据库连接池
-- [ ] 为生产环境配置 oxcache 缓存（search/dns/regex 分类型 TTL）
-- [ ] 根据容量设置适当的速率限制（`default_limit` / `burst_size`）
-- [ ] 配置 CORS 为具体来源（非 `*` 通配符）
-- [ ] 配置指标导出到 Prometheus
-- [ ] 启用分布式追踪（inklog HTTP sink）
-- [ ] 设置日志聚合（ELK、CloudWatch 等）
-- [ ] 配置任务通知的 Webhook 端点
-- [ ] 审查和调整并发设置（`concurrency.default_team_limit`）
-- [ ] 配置可信代理（`trusted_proxies`）防止 IP 伪造
-- [ ] 启用 SSL/TLS 终止
-- [ ] 配置健康检查端点
-- [ ] 设置备份和灾难恢复
 
 ---
 
-## 🧪 测试 <span id="测试"></span>
+## 🚢 部署
 
 ```bash
-# 运行单元测试
-cargo test --features default --lib --verbose
+# 构建镜像（主 Dockerfile 位于 docker/ 目录）
+docker build -t crawlrs:latest -f docker/Dockerfile .
 
-# 运行集成测试（需要 Docker：PostgreSQL + Redis via testcontainers）
-cargo test --test integration_tests --features full
+# Docker Compose 一键启动（crawlrs + PostgreSQL 16 + FlareSolverr + Chrome + Prometheus）
+docker compose -f docker/docker-compose.yml up -d
+```
 
-# 运行 SDK API 测试
-cargo test --features test-mocks --test sdk_api_test
+服务默认监听 `8899`（`CRAWLRS__SERVER__PORT` 可调）；单实例与 Kubernetes 多实例拓扑、Worker 池与外部依赖关系详见 [🏗️ 架构文档 · 部署架构](docs/ARCHITECTURE.md)，生产环境安全加固清单见 [🔒 安全文档 · 生产部署加固](docs/SECURITY.md)。
 
-# 运行完整主测试入口
-cargo test --features standard,test-mocks --test main
+---
 
-# 运行覆盖率测试
-cargo tarpaulin --out Html
+## 🏗️ 架构
 
-# 运行基准测试
-cargo bench
+crawlrs 遵循领域驱动设计（DDD），采用 `presentation → application → domain → infrastructure` 四层架构：Axum 处理 HTTP 与中间件，Use Case 编排业务逻辑，领域层以 `ScraperEngine` 等 trait 定义能力契约，基础设施层经 dbnexus（Sea-ORM）对接 PostgreSQL、经 oxcache 提供多层缓存。抓取数据通路为：请求经 SSRF 前置校验 → `EngineRouter` 按策略选路（反爬检测可动态改派浏览器引擎）→ Worker 池执行 → 结果落库并触发 Webhook。
 
-# 运行 clippy（linter）
-cargo clippy --features default -- -D warnings
+分层职责、引擎路由细节、全部增强模块、队列/缓存/限流设计与部署拓扑详见 [🏗️ 架构文档](docs/ARCHITECTURE.md)。
 
-# 完整 clippy 检查（全部特性）
-cargo clippy --features full -- -D warnings
+---
 
-# 格式化代码
+## 🧪 测试
+
+### 🎯 测试策略
+
+测试体系覆盖七层：`src/` 内联单元测试、`tests/unit/` 按模块组织的单元测试、`tests/main.rs` 表驱动机（mock 注入）、SDK API 测试（`sdk_api_test`）、真实 PostgreSQL 集成测试（`integration_tests`，含 garrison 认证端到端）、Python API/性能测试与 E2E 质量保障套件（`tests/e2e/e2e-suite.sh`：22 组特性编译矩阵 → 静态检查 → 单元/集成测试 → 基准 → 报告）。各层场景穷举与文件映射见 [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md)。
+
+### ▶️ 运行命令（与 CI 一致）
+
+```bash
+# 单元测试（CI test job：standard / full 各跑一轮；需 PostgreSQL 16，本地由 testcontainers 自动拉起）
+cargo test --features "standard" --lib
+cargo test --features "full" --lib
+
+# 集成 + 全部测试目标（CI integration-test job）
+cargo test --features "full,test-mocks" --tests --no-fail-fast
+
+# Lint 与格式门禁
 cargo fmt --all -- --check
+cargo clippy --features "standard" -- -D warnings
+cargo clippy --features "full" -- -D warnings
 
-# 依赖安全检查
+# 覆盖率门禁：行覆盖率不低于 80%（CI coverage job，结果上传 Codecov）
+cargo llvm-cov --features "full" --fail-under-lines 80
+
+# 供应链检查（advisories / licenses / bans / sources）
 cargo deny check
 
-# Pre-commit 完整检查
+# 基准测试（Criterion，9 组）
+cargo bench
+
+# E2E 质量保障套件（特性矩阵 + 静态 + 测试 + 集成 + 基准 + 报告）
+./tests/e2e/e2e-suite.sh
+
+# Python API / 性能测试（本地）
+./scripts/run-tests.sh local
+
+# 提交前完整检查（fmt → clippy → check → build → 私钥扫描）
 scripts/pre-commit-check.sh all
 ```
 
----
+### 📊 测试规模
 
-## 🤝 贡献 <span id="贡献"></span>
-
-欢迎贡献！请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解指南。
-
-### 开发工作流程
-
-1. Fork 仓库
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'feat: 添加惊人功能'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 开启 Pull Request
-
-### 代码风格
-
-- 遵循 Rust 命名约定
-- 为公共 API 添加文档注释
-- 为新功能编写测试
-- 保持函数聚焦且简短
+截至 0.2.0：`src/` 内联测试约 5700+ 个（372 个源文件），`tests/` 目录约 950 个（含 71 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 5 个套件；覆盖率门禁为行覆盖率不低于 80%，由 CI 执行。逐项统计见 [🧪 测试场景矩阵 · 测试规模](docs/TEST_SCENARIOS.md)。
 
 ---
 
-## 📄 许可证 <span id="许可证"></span>
+## 📊 性能
 
-本项目在 Apache License 2.0 下获得许可 - 详见 [LICENSE](LICENSE) 文件。
-
-```
-Copyright 2025 Kirky.X
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
+性能工程内建于架构：AIMD 自适应并发、内存感知调度、TabPool 复用、请求合并（singleflight）、WaitFor 条件等待与 Hedge 副本控制器；可复现的基准为 `benches/benchmark.rs` 的 9 组 Criterion 基准（任务创建/状态迁移、JSON 序列化、URL 解析与校验、SSRF 检测、RegexCache、引擎路由等），E2E 套件 Stage 5 以 `e2e-baseline` 做回归对比。旧版宣传的 Node.js 对比数字未附测量口径，待复测后更新。基准说明与调优建议见 [⚡ 性能指南](docs/PERFORMANCE.md)。
 
 ---
 
-## 💬 支持 <span id="支持"></span>
+## 🔒 安全
 
-| 资源 | 链接 |
-|----------|------|
-| 📖 文档 | [docs/](docs/) |
-| 📚 API 参考 | [API_REFERENCE.md](docs/API_REFERENCE.md) |
-| 👤 用户指南 | [USER_GUIDE.md](docs/USER_GUIDE.md) |
-| 🏗️ 架构 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| 🐛 问题追踪 | [GitHub Issues](https://github.com/YOUR_ORG/crawlrs/issues) |
-| 📧 邮箱 | [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com) |
+### 🛡️ 安全设计
+
+安全设计覆盖请求全链路：SSRF 在 handler 前置与引擎路由双重校验；认证由 garrison 接管（HS256 JWT、RBAC、IP 级防暴力破解、审计落库）；Webhook 经 Standard Webhooks 签名验证（subtle 恒时比较）；JWT secret 以 zeroize 防内存残留；安全响应头与可信代理中间件默认加固。逐项机制详见 [🔒 安全文档](docs/SECURITY.md) 与 [🏗️ 架构文档 · 安全模型](docs/ARCHITECTURE.md)。
+
+### ⛓️ 供应链与门禁
+
+CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）、CodeQL 静态分析、clippy `-D warnings` 与 RSA 代码路径前提校验；本地 pre-commit 脚本含私钥扫描。完整门禁清单见 [🔒 安全文档 · 供应链与门禁](docs/SECURITY.md)。
+
+### 🚨 报告安全漏洞
+
+请勿通过公开 issue 报告安全漏洞，请发送邮件至 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)。完整漏洞处理流程见 [SECURITY.md](docs/SECURITY.md)。
+
+---
+
+## 🗺️ 开发路线图
+
+<table style="width:100%; border-collapse: collapse">
+<tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
+<tr><td align="center">✅</td><td>核心平台（0.1.0）</td><td>搜索/抓取/爬取/提取/映射五大能力 API、DDD 四层、多租户与限流、Webhook 通知</td></tr>
+<tr><td align="center">✅</td><td>平台加固与智能引擎（0.2.0）</td><td>garrison 认证、反爬检测、TLS 指纹与 MLLM 引擎、RAG/KG/DRL 智能增强、Prometheus 可观测性、E2E 质量套件</td></tr>
+<tr><td align="center">🚧</td><td>数据库多驱动</td><td><code>db-sqlite</code> / <code>db-mysql</code> 已实现编译级覆盖，运行时 schema 供给待补（当前 <code>migrations/*.sql</code> 为 PG 专用 DDL）</td></tr>
+<tr><td align="center">📋</td><td>架构演进</td><td>事件驱动内部总线、WebSocket 实时任务状态、Redis 共享缓存层（多实例部署）</td></tr>
+<tr><td align="center">📋</td><td>性能看护</td><td>Criterion 基线（e2e-baseline）回归对比常态化、性能口径复测</td></tr>
+</table>
+
+---
+
+## 🤝 参与贡献
+
+完整的贡献流程、开发环境与代码规范见 [🤝 贡献指南](docs/CONTRIBUTING.md)。
+
+### 🛠️ 开发环境
+
+工具链要求见 `Cargo.toml` 的 `rust-version`（1.97），构建 sdforge 需要 protoc；提交前运行 `scripts/pre-commit-check.sh all`（fmt → clippy → check → build → 私钥扫描），提交信息遵循 Conventional Commits（`type(scope): subject`）。开发工作流（TDD）、分支与测试要求见 [🤝 贡献指南 · 开发工作流](docs/CONTRIBUTING.md)。
+
+### 💖 贡献方式
+
+<table style="width:100%; border-collapse: collapse">
+<tr>
+<td width="33%" align="center" style="padding: 16px">
+
+### 🐛 报告 Bug
+
+发现问题？<br>
+<a href="https://github.com/Kirky-X/crawlrs/issues/new">创建 Issue</a>
+
+</td>
+<td width="33%" align="center" style="padding: 16px">
+
+### 💡 功能建议
+
+有好想法？<br>
+<a href="https://github.com/Kirky-X/crawlrs/issues/new">发起讨论</a>
+
+</td>
+<td width="33%" align="center" style="padding: 16px">
+
+### 🔧 提交 PR
+
+想贡献代码？<br>
+<a href="https://github.com/Kirky-X/crawlrs/pulls">Fork 并提交 PR</a>
+
+</td>
+</tr>
+</table>
+
+<img src="https://contrib.rocks/image?repo=Kirky-X/crawlrs" alt="Contributors">
+
+---
+
+## 📋 更新日志
+
+完整版本历史见 [📋 更新日志](docs/CHANGELOG.md)（遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 格式，语义化版本）。
+
+| 版本 | 日期 | 要点 |
+|------|------|------|
+| Unreleased | - | TLS 指纹引擎（WreqEngine）、MLLM 视觉导航引擎、RAG 增强提取、知识图谱覆盖感知、DRL 自适应策略、5 个新 Prometheus 指标 |
+| 0.2.0 | 2026-07-29 | garrison RBAC 认证集成、bootstrap admin key、`DELETE /v1/crawl/{id}`、暴力破解防护加固 |
+| 0.1.0 | 2026-07-22 | 首个公开版本：五大能力 API、DDD 四层架构、多租户与限流、统一搜索 |
+
+---
+
+## 📄 许可证
+
+本项目采用 [Apache License 2.0](LICENSE) 许可证。Copyright © 2025 Kirky.X。
 
 ---
 
 ## 🙏 致谢
 
-- 使用 [Rust](https://www.rust-lang.org/) 构建
-- Web 框架由 [Axum](https://github.com/tokio-rs/axum) 驱动
-- 数据库 ORM 来自 [Sea-ORM](https://www.sea-ql.org/)
-- 灵感来源于对高性能网页爬取解决方案的需求
+### 🌟 核心依赖
+
+crawlrs 站在以下优秀开源项目的肩膀上：
+
+| 依赖 | 用途 |
+|------|------|
+| [tokio](https://crates.io/crates/tokio) | 异步运行时 |
+| [axum](https://crates.io/crates/axum) | Web 框架 |
+| [reqwest](https://crates.io/crates/reqwest) | HTTP 客户端 |
+| [chromiumoxide](https://crates.io/crates/chromiumoxide) | Chrome CDP 浏览器自动化 |
+| [wreq](https://crates.io/crates/wreq) | BoringSSL TLS 指纹伪装 |
+| [scraper](https://crates.io/crates/scraper) | HTML 解析 |
+| [genai](https://crates.io/crates/genai) | 多模型 LLM 接入 |
+| [htmd](https://crates.io/crates/htmd) | HTML→Markdown 转换 |
+| [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | 正文提取 |
+| [criterion](https://crates.io/crates/criterion) | 基准测试 |
+| [testcontainers](https://crates.io/crates/testcontainers) | 集成测试基础设施 |
+
+同作者自研基座组件：dbnexus（数据库抽象）、confers（配置管理）、garrison（认证框架）、limiteron（限流熔断）、oxcache（缓存）、inklog（结构化日志）、sdforge（SDK 生成）、trait-kit（依赖注入）。
+
+### 💝 特别感谢
+
+感谢 Rust 社区与所有[贡献者](https://github.com/Kirky-X/crawlrs/graphs/contributors)。
 
 ---
 
-<div align="center">
+## 📞 联系与支持
 
-**使用 ❤️ 在 Rust 中构建**
+<table style="width:100%; max-width: 600px">
+<tr>
+<td align="center" width="33%">
+<a href="https://github.com/Kirky-X/crawlrs/issues"><b style="color:#991B1B">Issues</b></a><br>
+<span style="color:#64748B">报告问题和 Bug</span>
+</td>
+<td align="center" width="33%">
+<a href="mailto:Kirky-X@outlook.com"><b style="color:#1E40AF">邮箱</b></a><br>
+<span style="color:#64748B">Kirky-X@outlook.com</span>
+</td>
+<td align="center" width="33%">
+<a href="https://github.com/Kirky-X/crawlrs"><b style="color:#1E293B">GitHub</b></a><br>
+<span style="color:#64748B">查看源代码</span>
+</td>
+</tr>
+</table>
 
-[⬆ 返回顶部](#概述)
+---
 
-</div>
+## ⭐ Star 历史
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Kirky-X/crawlrs&type=Date)](https://star-history.com/#Kirky-X/crawlrs&Date)
+
+如果这个项目对您有帮助，请考虑给它一个 ⭐️！
+
+**由 Kirky.X 构建**
+
+---
+
+<sub>© 2025 Kirky.X. 保留所有权利。</sub>

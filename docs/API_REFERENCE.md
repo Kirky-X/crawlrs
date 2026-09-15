@@ -1,5 +1,5 @@
 
-# 📡 Complete REST API Documentation
+# 📘 Crawlrs API Reference
 
 <div align="center">
 
@@ -13,16 +13,16 @@
 
 ---
 
-## 📖 Table of Contents
+## 📋 目录
 
-- [Authentication](#authentication)
-- [Common Response Format](#common-response-format)
-- [Errors](#errors)
-- [Public Endpoints](#public-endpoints)
+- [🔐 Authentication](#-authentication)
+- [📄 Common Response Format](#-common-response-format)
+- [⚠️ Errors](#️-errors)
+- [🌐 Public Endpoints](#-public-endpoints)
   - [Health Check](#health-check)
   - [Get Version](#get-version)
   - [Get Metrics](#get-metrics)
-- [Protected Endpoints](#protected-endpoints)
+- [🔒 Protected Endpoints](#-protected-endpoints)
   - [Scrape API](#scrape-api)
   - [Crawl API](#crawl-api)
   - [Search API](#search-api)
@@ -32,17 +32,17 @@
   - [Webhook API](#webhook-api)
   - [Audit API](#audit-api)
   - [Admin API](#admin-api)
-- [Rate Limiting](#rate-limiting)
-- [Webhooks](#webhooks)
-- [SDK API](#sdk-api)
-- [SDK Examples](#sdk-examples)
-- [Best Practices](#best-practices)
-- [Changelog](#changelog)
-- [Support](#support)
+- [⏱️ Rate Limiting](#️-rate-limiting)
+- [🪝 Webhooks](#-webhooks)
+- [🧩 SDK API](#-sdk-api)
+- [💻 SDK Examples](#-sdk-examples)
+- [✅ Best Practices](#-best-practices)
+- [📋 Changelog](#-changelog)
+- [📞 Support](#-support)
 
 ---
 
-## Authentication
+## 🔐 Authentication
 
 All protected endpoints require authentication using an API key in the `Authorization` header:
 
@@ -130,7 +130,7 @@ cargo build --release --features default
 
 ---
 
-## Common Response Format
+## 📄 Common Response Format
 
 All API responses follow this unified structure:
 
@@ -207,7 +207,7 @@ All API responses follow this unified structure:
 
 ---
 
-## Errors
+## ⚠️ Errors
 
 ### HTTP Status Codes
 
@@ -245,7 +245,7 @@ All API responses follow this unified structure:
 
 ---
 
-## Public Endpoints
+## 🌐 Public Endpoints
 
 ### Health Check
 
@@ -302,7 +302,7 @@ crawlrs_webhook_delivery_total{result="success",status_code="200"} 3456
 
 ---
 
-## Protected Endpoints
+## 🔒 Protected Endpoints
 
 ### Scrape API
 
@@ -1118,7 +1118,7 @@ Expires: 0
 
 ---
 
-## Rate Limiting
+## ⏱️ Rate Limiting
 
 > **Conditional Behavior (R-rl-003):** Rate limiting is only active when the `rate-limit` feature is enabled (default). When disabled, `NoopRateLimitingService` is injected: `check_rate_limit` returns `Allowed`, `check_and_deduct_quota` returns `Ok(())`, `get_quota_balance` returns `Ok(i64::MAX)`. All requests are allowed without limit, and quota deductions are no-ops. The `X-RateLimit-*` headers are not populated.
 
@@ -1140,7 +1140,7 @@ X-RateLimit-Reset: 1705315200
 
 ---
 
-## Webhooks
+## 🪝 Webhooks
 
 Webhooks allow you to receive notifications about task events.
 
@@ -1175,7 +1175,7 @@ Verify the signature by computing HMAC SHA256 of the payload using your secret.
 
 ---
 
-## SDK API
+## 🧩 SDK API
 
 SDK endpoints provide simplified interfaces for common operations, wrapping the underlying REST API.
 
@@ -1290,7 +1290,7 @@ SDK endpoints provide simplified interfaces for common operations, wrapping the 
 
 ---
 
-## SDK Examples
+## 💻 SDK Examples
 
 ### JavaScript/Node.js
 
@@ -1364,7 +1364,7 @@ func Scrape(url string) error {
 
 ---
 
-## Best Practices
+## ✅ Best Practices
 
 1. **Use Sync Mode Sparingly** - Only use `sync_wait_ms` when you need immediate results
 2. **Implement Retry Logic** - Handle rate limits with exponential backoff
@@ -1379,7 +1379,7 @@ func Scrape(url string) error {
 
 ---
 
-## Changelog
+## 📋 Changelog
 
 ### v0.3.0 (Unreleased — platform-evolution)
 
@@ -1427,9 +1427,9 @@ func Scrape(url string) error {
 
 ---
 
-## Support
+## 📞 Support
 
 For questions or issues:
 - 📖 [Documentation](/)
-- 🐛 [Issue Tracker](https://github.com/your-org/crawlrs/issues)
+- 🐛 [Issue Tracker](https://github.com/Kirky-X/crawlrs/issues)
 - 📧 Email: Kirky-X@outlook.com

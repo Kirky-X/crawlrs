@@ -198,7 +198,7 @@ let result = client.scrape("https://example.com").await?;
 
 ## 相关资源
 
-- [项目首页](https://github.com/your-org/crawlrs)
+- [项目首页](https://github.com/Kirky-X/crawlrs)
 - [完整文档](../docs/)
 - [API参考](../docs/API_REFERENCE.md)
 - [用户指南](../docs/USER_GUIDE.md)
@@ -207,7 +207,7 @@ let result = client.scrape("https://example.com").await?;
 ## 获得帮助
 
 - 📧 邮箱：Kirky-X@outlook.com
-- 🐛 问题报告：[GitHub Issues](https://github.com/your-org/crawlrs/issues)
+- 🐛 问题报告：[GitHub Issues](https://github.com/Kirky-X/crawlrs/issues)
 - 💬 社区：[Discord](https://discord.gg/your-server)
 
 ---

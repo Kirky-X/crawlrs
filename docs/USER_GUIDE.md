@@ -1,4 +1,4 @@
-# 👤 Comprehensive User Documentation
+# 📖 Crawlrs User Guide
 <div align="center">
 
 ![Guide](https://img.shields.io/badge/type-user%20guide-blue)
@@ -11,27 +11,28 @@
 
 ---
 
-## 📖 Table of Contents
+## 📋 目录
 
-- [Introduction](#introduction)
-- [Getting Started](#getting-started)
-- [Authentication](#authentication)
-- [Single-Tenant / No-Auth Deployment](#single-tenant--no-auth-deployment)
-- [Scraping](#scraping)
-- [Crawling](#crawling)
-- [Searching](#searching)
-- [Data Extraction](#data-extraction)
-- [Webhooks](#webhooks)
-- [Tasks](#tasks)
-- [Teams & Usage](#teams--usage)
-- [Error Handling](#error-handling)
-- [Best Practices](#best-practices)
-- [Troubleshooting](#troubleshooting)
-- [FAQ](#faq)
+- [👋 Introduction](#-introduction)
+- [🚀 Getting Started](#-getting-started)
+- [🔐 Authentication](#-authentication)
+- [🏠 Single-Tenant / No-Auth Deployment](#-single-tenant--no-auth-deployment)
+- [🎯 Scraping](#-scraping)
+- [🕷️ Crawling](#️-crawling)
+- [🔍 Searching](#-searching)
+- [📊 Data Extraction](#-data-extraction)
+- [🪝 Webhooks](#-webhooks)
+- [📋 Tasks](#-tasks)
+- [👥 Teams & Usage](#-teams--usage)
+- [⚠️ Error Handling](#️-error-handling)
+- [✅ Best Practices](#-best-practices)
+- [🔧 Troubleshooting](#-troubleshooting)
+- [❓ FAQ](#-faq)
+- [📞 Support](#-support)
 
 ---
 
-## Introduction
+## 👋 Introduction
 
 Welcome to **crawlrs**, a high-performance self-hosted web scraping platform built with Rust. This guide covers all available API endpoints and features.
 
@@ -69,14 +70,14 @@ Welcome to **crawlrs**, a high-performance self-hosted web scraping platform bui
 
 ---
 
-## Getting Started
+## 🚀 Getting Started
 
 ### 1. Installation
 
 crawlrs is a single Rust binary. Build and run:
 
 ```bash
-git clone https://github.com/your-org/crawlrs.git
+git clone https://github.com/Kirky-X/crawlrs.git
 cd crawlrs
 cargo build --release
 
@@ -91,7 +92,7 @@ The server starts on `http://localhost:8899` by default. Configure via `config/d
 
 ### 2. Configure Authentication
 
-Set your API key in the server config. See [Authentication](#authentication) for details.
+Set your API key in the server config. See [Authentication](#-authentication) for details.
 
 ### 3. Your First Request
 
@@ -115,7 +116,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ---
 
-## Authentication
+## 🔐 Authentication
 
 > **0.2.0 起（`garrison-auth-migration`）：** 认证引擎由 **garrison v0.9.0-rc.1** 接管。Bearer token 格式为 `garrison_key_id.garrison_secret`，由 garrison 签发与校验，crawlrs 不再自管 `key_hash`。
 
@@ -244,7 +245,7 @@ curl -X GET http://localhost:8899/v1/teams/me/usage \
 
 ---
 
-## Single-Tenant / No-Auth Deployment
+## 🏠 Single-Tenant / No-Auth Deployment
 
 > **R-flags-005:** crawlrs supports a lightweight deployment mode with business capability features disabled. This is ideal for single-tenant self-hosted scenarios that do not require multi-tenant isolation, API Key authentication, rate limiting, or Webhook notifications.
 
@@ -387,7 +388,7 @@ If you are migrating from a multi-tenant deployment:
 
 ---
 
-## Scraping
+## 🎯 Scraping
 
 ### Basic Scraping
 
@@ -640,7 +641,7 @@ curl -X POST http://localhost:8899/v1/scrape/550e8400-e29b-41d4-a716-44665544000
 
 ---
 
-## Crawling
+## 🕷️ Crawling
 
 ### Basic Crawling
 
@@ -785,7 +786,7 @@ curl -X DELETE http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-4466554400
 
 ---
 
-## Searching
+## 🔍 Searching
 
 ### Basic Search
 
@@ -891,7 +892,7 @@ curl -X POST http://localhost:8899/v1/search \
 
 ---
 
-## Data Extraction
+## 📊 Data Extraction
 
 ### Extract from HTML
 
@@ -964,7 +965,7 @@ curl -X POST http://localhost:8899/v1/extract \
 
 ---
 
-## Webhooks
+## 🪝 Webhooks
 
 ### Create Webhook
 
@@ -1093,7 +1094,7 @@ app.listen(3000, () => {
 
 ---
 
-## Tasks
+## 📋 Tasks
 
 ### Query Tasks
 
@@ -1126,7 +1127,7 @@ curl -X POST http://localhost:8899/v1/tasks/_cancel \
 
 ---
 
-## Teams & Usage
+## 👥 Teams & Usage
 
 ### Get Team Info
 
@@ -1172,7 +1173,7 @@ curl http://localhost:8899/v1/teams/me/usage \
 
 ---
 
-## Error Handling
+## ⚠️ Error Handling
 
 ### Common Errors
 
@@ -1323,7 +1324,7 @@ class CircuitBreaker {
 
 ---
 
-## Best Practices
+## ✅ Best Practices
 
 ### 1. Use Async Mode for Long-Running Tasks
 
@@ -1489,7 +1490,7 @@ const response = await axios.post('http://localhost:8899/v1/scrape', data, {
 
 ---
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
 ### Issues & Solutions
 
@@ -1562,7 +1563,7 @@ const response = await axios.post('http://localhost:8899/v1/scrape', data, {
 
 ---
 
-## FAQ
+## ❓ FAQ
 
 ### General Questions
 
@@ -1572,7 +1573,7 @@ A: **Scrape** extracts content from a single page. **Crawl** automatically disco
 
 **Q: How do I install and run crawlrs?**
 
-A: crawlrs is a single Rust binary. Clone the repo, run `cargo build --release`, then execute `./target/release/crawlrs`. See the [Getting Started](#getting-started) section for details. The server starts on `http://localhost:8899` by default.
+A: crawlrs is a single Rust binary. Clone the repo, run `cargo build --release`, then execute `./target/release/crawlrs`. See the [Getting Started](#-getting-started) section for details. The server starts on `http://localhost:8899` by default.
 
 **Q: Can I scrape any website?**
 
@@ -1653,14 +1654,14 @@ concurrent = 10
 
 ---
 
-## Support
+## 📞 Support
 
 ### Getting Help
 
 - 📖 [Documentation](/)
 - 📚 [API Reference](API_REFERENCE.md)
 - 🏗️ [Architecture](ARCHITECTURE.md)
-- 🐛 [Issue Tracker](https://github.com/your-org/crawlrs/issues)
+- 🐛 [Issue Tracker](https://github.com/Kirky-X/crawlrs/issues)
 - 📧 Email: Kirky-X@outlook.com
 
 ### Reporting Bugs

@@ -1,4 +1,4 @@
-# System Design & Technical Architecture
+# 🏗️ Crawlrs Architecture
 
 <div align="center">
 
@@ -12,27 +12,29 @@
 
 ---
 
-## Table of Contents
+## 📋 目录
 
-- [Overview](#overview)
-- [Architectural Principles](#architectural-principles)
-- [System Architecture](#system-architecture)
-- [Layer Architecture](#layer-architecture)
-- [Core Components](#core-components)
+- [🧭 Overview](#-overview)
+- [📐 Architectural Principles](#-architectural-principles)
+- [🖥️ System Architecture](#️-system-architecture)
+- [🧱 Layer Architecture](#-layer-architecture)
+- [🧩 Core Components](#-core-components)
   - [Feature Gate Architecture](#feature-gate-architecture)
-- [Data Flow](#data-flow)
-- [Crawling Engines](#crawling-engines)
-- [Queue System](#queue-system)
-- [Caching Strategy](#caching-strategy)
-- [Rate Limiting](#rate-limiting)
-- [Security Model](#security-model)
-- [Deployment Architecture](#deployment-architecture)
-- [Scalability Considerations](#scalability-considerations)
-- [Future Enhancements](#future-enhancements)
+- [🔄 Data Flow](#-data-flow)
+- [🕷️ Crawling Engines](#️-crawling-engines)
+- [🚀 Crawl Capability Enhancement Modules](#-crawl-capability-enhancement-modules)
+- [📬 Queue System](#-queue-system)
+- [💾 Caching Strategy](#-caching-strategy)
+- [⏱️ Rate Limiting](#️-rate-limiting)
+- [🔒 Security Model](#-security-model)
+- [🚢 Deployment Architecture](#-deployment-architecture)
+- [📈 Scalability Considerations](#-scalability-considerations)
+- [🔮 Future Enhancements](#-future-enhancements)
+- [📚 Documentation](#-documentation)
 
 ---
 
-## Overview
+## 🧭 Overview
 
 crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, layered architecture. The system is designed for high performance, scalability, and maintainability.
 
@@ -64,7 +66,7 @@ crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, l
 
 ---
 
-## Architectural Principles
+## 📐 Architectural Principles
 
 ### 1. Separation of Concerns
 
@@ -111,7 +113,7 @@ System is open for extension, closed for modification:
 
 ---
 
-## System Architecture
+## 🖥️ System Architecture
 
 ```mermaid
 flowchart TD
@@ -197,7 +199,7 @@ flowchart TD
 
 ---
 
-## Layer Architecture
+## 🧱 Layer Architecture
 
 ### Presentation Layer
 
@@ -607,7 +609,7 @@ oxcache features activated: memory, serialization, macros, batch-write, metrics,
 
 ---
 
-## Core Components
+## 🧩 Core Components
 
 ### Dependency Injection (trait-kit 0.5.0-rc.2)
 
@@ -784,7 +786,7 @@ When a feature is off, the corresponding endpoints return **404** (not 401/403) 
 
 ---
 
-## Data Flow
+## 🔄 Data Flow
 
 ### Scrape Request Flow
 
@@ -829,7 +831,7 @@ flowchart TD
 
 ---
 
-## Crawling Engines
+## 🕷️ Crawling Engines
 
 ### Engine Architecture
 
@@ -1088,7 +1090,7 @@ All three modes share the same FlareSolverr API client implementation, differing
 
 ---
 
-## Crawl Capability Enhancement Modules
+## 🚀 Crawl Capability Enhancement Modules
 
 > 以下模块由 `crawler-capability-absorption` 变更引入（0.2.0）。
 
@@ -1263,7 +1265,7 @@ flowchart LR
 
 ---
 
-## Queue System
+## 📬 Queue System
 
 ### Architecture
 
@@ -1323,7 +1325,7 @@ Worker lifecycle:
 
 ---
 
-## Caching Strategy
+## 💾 Caching Strategy
 
 ### Architecture
 
@@ -1389,7 +1391,7 @@ pub trait CacheService: Send + Sync {
 
 ---
 
-## Rate Limiting
+## ⏱️ Rate Limiting
 
 **Technology:** limiteron 0.3.0-rc.2 (PostgreSQL-backed)
 
@@ -1467,7 +1469,7 @@ Configured with rules for:
 
 ---
 
-## Security Model
+## 🔒 Security Model
 
 ### Authentication
 
@@ -1599,7 +1601,7 @@ pub enum SsrfValidationResult {
 
 ---
 
-## Deployment Architecture
+## 🚢 Deployment Architecture
 
 ### Single Instance
 
@@ -1668,7 +1670,7 @@ flowchart TB
 
 ---
 
-## Scalability Considerations
+## 📈 Scalability Considerations
 
 ### Horizontal Scaling
 
@@ -1703,7 +1705,7 @@ flowchart TD
 
 ---
 
-## Future Enhancements
+## 🔮 Future Enhancements
 
 ### Planned Architecture Improvements
 
@@ -1721,7 +1723,7 @@ flowchart TD
 
 ---
 
-## Documentation
+## 📚 Documentation
 
 - [API Reference](API_REFERENCE.md)
 - [User Guide](USER_GUIDE.md)

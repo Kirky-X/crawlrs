@@ -1,728 +1,430 @@
 <div align="center">
 
-<img src="docs/image/logo.png" alt="Logo" width="200">
-
-### 🚀 Enterprise-grade Web Scraping Platform built with Rust
-
-**High-Performance • Scalable • Type-Safe**
+<img src="docs/image/logo.png" alt="Crawlrs Logo" width="200">
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=build)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/releases) [![License](https://img.shields.io/github/license/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE) ![Rust](https://img.shields.io/badge/rust-1.95%2B-orange)
 
-**English** | **[中文](README.md)**
+[**中文**](README.md) | **English**
+
+**Enterprise-grade web scraping platform built with Rust**
+
+[✨ Features](#-features) • [🚀 Quick Start](#-quick-start) • [📚 Documentation](#-documentation) • [💻 Examples](#-examples) • [🤝 Contributing](#-contributing)
 
 </div>
 
-## 📖 Table of Contents
+---
 
-- [Overview](#overview)
-- [Performance Benchmarks](#performance-benchmarks)
-- [Key Features](#key-features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [API Documentation](#api-documentation)
-- [Architecture](#architecture)
-- [Deployment](#deployment)
-- [Testing](#testing)
-- [Contributing](#contributing)
-- [License](#license)
-- [Support](#support)
+## 📋 Table of Contents
+
+- [✨ Features](#-features)
+- [🚀 Quick Start](#-quick-start)
+- [🎨 Feature Flags](#-feature-flags)
+- [📚 Documentation](#-documentation)
+- [💻 Examples](#-examples)
+- [🚢 Deployment](#-deployment)
+- [🏗️ Architecture](#️-architecture)
+- [🧪 Testing](#-testing)
+- [📊 Performance](#-performance)
+- [🔒 Security](#-security)
+- [🗺️ Roadmap](#️-roadmap)
+- [🤝 Contributing](#-contributing)
+- [📋 Changelog](#-changelog)
+- [📄 License](#-license)
+- [🙏 Acknowledgments](#-acknowledgments)
+- [📞 Contact & Support](#-contact--support)
+- [⭐ Star History](#-star-history)
 
 ---
 
-## 📝 Overview <span id="overview"></span>
+## ✨ Features
 
-**crawlrs** is a high-performance, enterprise-grade web data collection platform for developers:
+<table style="width:100%; border-collapse: collapse">
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>Unified Search</b><br><span style="color:#64748B">Aggregated results from Google, Bing, Baidu and Sogou with automatic deduplication, a unified output format and A/B testing support</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🎯 <b>Single-Page Scraping</b><br><span style="color:#64748B">Uniform scraping of static HTML and JS-rendered pages, with screenshots, form interactions, custom headers and sync-wait</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🕷️ <b>Deep Crawling</b><br><span style="color:#64748B">URL filter chains + composite scorers + priority queues + adaptive stop conditions, with robots.txt compliance</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">📊 <b>Data Extraction</b><br><span style="color:#64748B">Multiple extraction modes: CSS rules, content extractors (Trafilatura / DomSmoothie), LLM and RAG-augmented extraction</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🚂 <b>Five-Engine Smart Routing</b><br><span style="color:#64748B">Reqwest / Playwright / FlareSolverr / Wreq (TLS fingerprint) / MLLM (vision-LLM navigation), with SmartHybrid, race and sequential-fallback routing strategies</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🛡️ <b>Anti-Bot Countermeasures</b><br><span style="color:#64748B">Three-tier anti-bot detection, SPA shell probe &amp; upgrade, consistent UA pool masking, smart retry, proxy rotation, request coalescing</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🏢 <b>Enterprise Platform</b><br><span style="color:#64748B">Multi-tenant isolation, garrison authentication (RBAC + JWT + brute-force protection), limiteron rate limiting &amp; circuit breaking, webhook event notifications</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">📈 <b>Observability</b><br><span style="color:#64748B">Prometheus metrics export (queue depth, engine success rate, cache hits, etc.), inklog structured logging, audit logs</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🧠 <b>Intelligent Enhancements</b><br><span style="color:#64748B">RAG-augmented extraction, knowledge-graph coverage-aware crawling, DRL adaptive policy (ONNX inference with heuristic fallback)</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧩 <b>Feature Gating</b><br><span style="color:#64748B">20+ Cargo features combinable on demand; <code>agent-lib</code> provides a minimal embedded library surface; every business capability can be switched off with Noop implementations injected</span></td>
+</tr>
+</table>
 
-| Capability | Description |
-|------------|-------------|
-| 🔍 **Search** | Unified Google, Bing, Baidu, and Sogou search |
-| 🎯 **Scrape** | Extract data from single web pages |
-| 🕷️ **Crawl** | Automatically discover and crawl multiple pages |
-| 📊 **Extract** | Parse and structure data from HTML |
-| 🗺️ **Map** | Visualize and organize crawled data |
-
-Built with Rust, crawlrs delivers exceptional performance:
-
-| Metric | Improvement |
-|--------|-------------|
-| **Throughput** | 3-5x higher than Node.js |
-| **P99 Latency** | 50% reduction |
-| **Memory Usage** | 75% lower consumption |
-| **CPU Usage** | 59% lower utilization |
-
----
-
-## 📊 Performance Benchmarks <span id="performance-benchmarks"></span>
-
-Compared to Node.js implementations:
-
-| Metric | Node.js | Rust (crawlrs) | Improvement |
-|--------|----------|----------------|-------------|
-| Throughput | 1,200 req/s | 4,500 req/s | **3.75x** |
-| P99 Latency | 450ms | 180ms | **60%** |
-| Memory Usage | 512 MB | 128 MB | **75%** |
-| CPU Usage | 85% | 35% | **59%** |
+> For engine-level enhancement modules (anti-bot, intelligent enhancements, etc.), see their design and code locations in the [🏗️ Architecture Document · Crawl Capability Enhancement Modules](docs/ARCHITECTURE.md).
 
 ---
 
-## ✨ Key Features <span id="key-features"></span>
+## 🚀 Quick Start
 
-### 🚀 High Performance
+### 📦 Installation
 
-| Feature | Benefit |
-|---------|---------|
-| 3-5x throughput improvement | Faster data collection |
-| 50% reduction in P99 latency | Real-time response times |
-| Zero-cost abstractions | Rust's safety guarantees without overhead |
-| Memory efficiency | 75% lower memory usage than Node.js |
-
-### 🔍 Multi-Engine Support
-
-| Engine | Use Case | Performance | Cost |
-|--------|----------|------------|-------|
-| **Reqwest** | Static HTML, API responses | ⚡ Fastest | 💰 Lowest |
-| **chromiumoxide** | JavaScript-heavy SPAs, interactions | 🐢 Slower | 💳 Higher |
-| **FlareSolverr** | Anti-bot protected sites (Full/Cdp/Tls modes) | 🚀 Variable | 💎 Variable |
-| **WreqEngine** | TLS fingerprint spoofing (JA3/JA4 real browser fingerprints) | ⚡ Fast | 💰 Low |
-| **MllmEngine** | Vision LLM autonomous navigation (screenshot→decision→execution) | 🐢 Slower | 💳 Higher |
-
-### 🔎 Unified Search
-
-| Capability | Description |
-|------------|-------------|
-| Multi-engine support | Google, Bing, Baidu, Sogou |
-| A/B testing | Compare results across engines |
-| Auto deduplication | Remove duplicate results |
-| Result aggregation | Unified output format |
-
-### ⚡ Crawl Capability Enhancements (0.2.0)
-
-| Feature | Description |
-|---------|-------------|
-| **Anti-bot Detection** | Aho-Corasick + 20+ WAF fingerprint 3-tier classifier, detection-driven route auto-dispatches to browser engine |
-| **HTTP→Chrome Upgrade** | JsUpgradeProbe strong/weak signal scoring, SPA shell auto-dispatches to Playwright |
-| **Memory-aware Scheduling** | sysinfo state machine + dynamic concurrency + priority queue + critical timeout protection |
-| **UA Pool** | 20+ real profiles, UA↔Header↔Viewport consistency binding, seed rotation on retry |
-| **Smart Retry** | RetryTracker per-reason independent limits + Full-jitter backoff + RetryDirective identity rotation |
-| **JS Injection** | BeforeLoad/AfterLoad 2-phase + stealth/cleanup scripts + ad/media interception |
-| **Request Coalescing** | DashMap single-flight + broadcast notification, same URL concurrent only 1 actual fetch |
-| **AIMD Adaptive Concurrency** | AtomicUsize lock-free + AdaptiveSemaphore, halve on failure / increment on success |
-| **Markdown Conversion** | htmd integration, ScrapeResponse adds `markdown` field |
-| **Content Extraction** | ContentExtractor trait + Trafilatura/DomSmoothie/CssRule + Facade + LLM fallback |
-| **URL Normalization & Dedup** | UrlNormalizer + Bloom⊕Interner layered dedup, reduces DB query volume |
-| **Proxy Rotation** | RoundRobin pool + sticky sessions + category routing + health check |
-| **Advanced Cache Modes** | 5 modes (Enabled/Disabled/ReadOnly/WriteOnly/Bypass) + CacheContext gating |
-| **Waterfall/MRT Timeout** | per-engine MRT + waterfall fallback, switch engine on MRT exceed |
-| **Deep Crawling** | UrlFilter+FilterChain / UrlScorer+CompositeScorer / Frontier priority queue / Adaptive stop |
-| **TabPool** | Chrome CDP tab pool reuse (DashMap + AtomicUsize LIFO stack) |
-| **WaitFor Strategy** | Conditional wait (NetworkIdle/Selector/DomStable) replacing fixed sleep |
-| **Hedge Controller** | EMA + variance estimation P84 latency threshold, race mode latency recording |
-
-### 📊 Enterprise Features
-
-| Feature | Description |
-|---------|-------------|
-| **Rate Limiting** | Per-team concurrency and RPM controls (limiteron-based, distributed rate limiting with circuit breaker) |
-| **Caching** | oxcache multi-layer caching (L1 moka memory backend) with per-type TTL (search/dns/regex) |
-| **Metrics & Monitoring** | Prometheus-compatible export |
-| **Webhooks** | Event-driven task completion notifications |
-| **API Key Authentication** | garrison v0.9.0-rc.1 takes over authentication: RBAC + JWT + firewall-bruteforce + audit-log, scoped access control and team isolation |
-| **Audit Logging** | Complete request tracking |
-| **Proxy Support** | Unified outbound proxy configuration |
-| **LLM Extraction** | genai-based LLM content extraction |
-
-### 🏗️ Architecture
-
-| Layer | Technology | Purpose |
-|--------|------------|---------|
-| Presentation | Axum | HTTP handlers, middleware |
-| Application | Use Cases | Business logic orchestration |
-| Domain | Traits | Core entities and services |
-| Infrastructure | Postgres | External integrations |
-
----
-
-## 📦 Installation <span id="installation"></span>
-
-### Prerequisites
-
-| Requirement | Minimum Version | Recommended |
-|-------------|------------------|---------------|
-| Rust | 1.95+ | Latest stable |
-| PostgreSQL | 16+ | Latest stable |
-| Docker | 20+ | Latest |
-
-### Build from Source
+| Prerequisite | Minimum | Notes |
+|---------|---------|------|
+| Rust | 1.97 (`rust-version` in `Cargo.toml`) | Latest stable is fine |
+| PostgreSQL | 16+ | Default database backend (`db-postgres`) |
+| Docker | 20+ | Integration tests (testcontainers) and containerized deployment |
 
 ```bash
-# Clone repository
-git clone https://github.com/YOUR_ORG/crawlrs.git
+git clone https://github.com/Kirky-X/crawlrs.git
 cd crawlrs
 
-# Install with the `standard` preset (core stack + engine-playwright + metrics)
+# Default-features build (full platform business capabilities + db-postgres)
+cargo build --release
+
+# Recommended for production: default + Playwright engine + metrics + content processing
 cargo build --release --features standard
 
-# Install with all features (standard + engine-flaresolverr)
+# Everything (standard + FlareSolverr + content extraction + LLM)
 cargo build --release --features full
-
-# Install with custom features
-cargo build --release --features "engine-playwright,metrics"
 ```
 
-### Feature Flags
-
-> **Note:** `default = ["platform", "db-postgres"]`, where `platform` expands to `teams, auth, rate-limit, webhook, metrics, content` — all business capability + metrics + content processing features are enabled by default. Use presets (`standard` / `full`) or list features explicitly to add engine and infrastructure features.
-
-> **Core stack is non-optional.** Core dependencies (oxcache 0.5 / dbnexus 0.6 / confers 0.6 / sdforge 0.5 / inklog 0.3 / trait-kit 0.5 + scraper / chardetng / encoding_rs / robotstxt) and the HTTP fetching stack are always compiled; they are no longer exposed as features.
-
-| Feature | Description | Default |
-|---------|-------------|----------|
-| `teams` | Multi-tenant isolation (teams, geo-restrictions, quota isolation); implies `auth` | ✅ Yes |
-| `auth` | API Key auth middleware; when disabled, `default_identity_middleware` injects a fixed identity | ✅ Yes |
-| `rate-limit` | limiteron-based rate limiting and circuit breaking; when disabled, `NoopRateLimitingService` allows all | ✅ Yes |
-| `webhook` | Webhook delivery and management; when disabled, `NoopWebhookService` is injected and `/v1/webhooks` route removed | ✅ Yes |
-| `engine-playwright` | chromiumoxide-based browser automation | ❌ No |
-| `engine-flaresolverr` | FlareSolverr anti-bot protection (FlareSolverrMode enum distinguishes Full/Cdp/Tls modes) | ❌ No |
-| `content` | Content processing pipeline (anti-bot detection + HTML→Markdown conversion) | ❌ No |
-| `trafilatura` | Content extraction main path (rs-trafilatura) | ❌ No |
-| `dom-smoothie` | Content extraction fallback path (dom_smoothie) | ❌ No |
-| `extractors` | Content extraction full (trafilatura + dom_smoothie) | ❌ No |
-| `metrics` | Prometheus metrics export | ❌ No |
-| `llm` | genai-based LLM extraction | ❌ No |
-| `test-mocks` | Test-only mock modules (requires explicit enable for integration tests) | ❌ No |
-
-> **Note:** `openapi` is not a Cargo feature — it is a cfg marker generated by `sdforge_macros`'s `#[forge]` macro for OpenAPI spec emission. Users do not need to enable it; sdforge always compiles and openapi auto-activates.
-
-### Presets & Binary Size
-
-The core stack (oxcache 0.5 / dbnexus 0.6 / confers 0.6 / sdforge 0.5 / inklog 0.3 / trait-kit 0.5 + scraper / chardetng / encoding_rs / robotstxt + HTTP fetching stack) is always compiled and no longer exposed as features. Business capability features (`teams` / `auth` / `rate-limit` / `webhook`) + metrics (`metrics`) + content processing (`content`) are enabled by default; use `--no-default-features` to build single-tenant/no-auth deployments.
-
-| Preset | Feature Set | Binary Size | Use Case |
-|-----|---------|-----------|---------|
-| default | `platform (= teams, auth, rate-limit, webhook, metrics, content), db-postgres` | ~30MB | Single/multi-tenant full features (business capabilities + metrics + content on by default) |
-| standard | `default + engine-playwright` | ~40MB | Production recommended (JS rendering + content processing + metrics) |
-| full | `standard + engine-flaresolverr + extractors + llm` | ~55MB | All features |
-| no-default | `--no-default-features` | ~22MB | Single-tenant/no-auth deployment (all business capabilities off, Noop implementations) |
-
-> **Note:** `default` includes the `platform` meta-feature (business capabilities + metrics + content), so the preset table already includes them. To disable business capabilities, use `--no-default-features` and list required features explicitly (e.g. `--no-default-features --features rate-limit`).
-
-### Custom Combinations
+### 💡 Minimal Example
 
 ```bash
-# Custom combination: core stack always compiled, only specify optional features
-cargo build --release --features "engine-playwright,metrics,llm"
-
-# Core stack only (disable all business capabilities + engines, single-tenant/no-auth deployment)
-cargo build --release --no-default-features
-
-# Single-tenant + rate limiting (disable auth and Webhook)
-cargo build --release --no-default-features --features rate-limit
-
-# Multi-tenant + auth (disable rate limiting and Webhook)
-cargo build --release --no-default-features --features teams
-```
-
-### Feature Reference
-
-| Feature | Description | Impact |
-|------|------|------|
-| `teams` | Multi-tenant isolation (teams, geo-restrictions, quota isolation) | Implies `auth`; when disabled, degrades to single-tenant using `DEFAULT_TEAM_ID` |
-| `auth` | API Key auth middleware | When disabled, uses `default_identity_middleware` to inject fixed `AuthState` |
-| `rate-limit` | limiteron-based rate limiting and circuit breaking | Pulls in `limiteron` dependency; when disabled, injects `NoopRateLimitingService` allowing all |
-| `webhook` | Webhook delivery and management | When disabled, injects `NoopWebhookService` and removes `/v1/webhooks` route |
-| `engine-playwright` | chromiumoxide JS rendering engine | +8MB |
-| `engine-flaresolverr` | FlareSolverr engine (FlareSolverrMode enum for Full/Cdp/Tls modes) | - |
-| `metrics` | Metrics monitoring | - |
-| `llm` | genai LLM extraction | - |
-| `test-mocks` | Test mock modules (`#[cfg(any(test, feature = "test-mocks"))]`) | - |
-
-### Feature Matrix (Business Capabilities)
-
-> **R-flags-005:** Business capability features (`teams` / `auth` / `rate-limit` / `webhook`) are enabled by default. Use `--no-default-features` to disable them for lightweight single-tenant/no-auth/no-rate-limit/no-Webhook deployments. Each feature has a corresponding Noop implementation injected when disabled, ensuring business logic is unaware of the change.
-
-#### Business Capability Feature Matrix
-
-| Feature | Default | Dependencies | Behavior when disabled | Related Constants/Noop Implementations |
-|------|------|----------|------------|---------------------|
-| `teams` | ✅ Enabled | Implies `auth` | Degrades to single-tenant; all requests attributed to `DEFAULT_TEAM_ID` (`Uuid::from_u128(1)`) | `DEFAULT_TEAM_ID` |
-| `auth` | ✅ Enabled | `dep:garrison, dep:inventory` | **As of 0.2.0 garrison v0.9.0-rc.1 takes over authentication**: `auth_middleware_inner` calls `GarrisonUtil::check_api_key` + `bridge_to_auth_state` to inject `AuthState`; provides RBAC + JWT + firewall-bruteforce + audit-log. When disabled, uses `default_identity_middleware` to inject fixed `AuthState` (`DEFAULT_API_KEY_ID` + `full_access` scope) | `DEFAULT_API_KEY_ID` (`Uuid::from_u128(2)`), `default_identity_middleware`, `auth_bridge::map_perms_to_scope` |
-| `rate-limit` | ✅ Enabled | `dep:limiteron` | Injects `NoopRateLimitingService`: `check_rate_limit` returns `Allowed`, `check_and_deduct_quota` returns `Ok(())`, `get_quota_balance` returns `Ok(i64::MAX)` | `NoopRateLimitingService` |
-| `webhook` | ✅ Enabled | None | Injects `NoopWebhookService`: `trigger_completion` / `trigger_failure` return `Ok(())`; removes `/v1/webhooks` route and `webhook_worker` | `NoopWebhookService` |
-
-#### Conditional Endpoints
-
-| Endpoint | Required Feature | Behavior when disabled |
-|------|----------|------------|
-| `/v1/teams/me`, `/v1/teams/me/usage`, `/v1/teams/geo-restrictions` (GET/PUT) | `teams` | Route not registered (404) |
-| `/v1/extract` (with geo-restriction generic) | `teams` | Degrades to `extract` signature without geo-restrictions |
-| `/v1/webhooks` (POST/GET) | `webhook` | Route not registered (404) |
-
-#### Feature Combination Verification Matrix (CI Coverage)
-
-The CI `feature-matrix` job covers the following 7 combinations, ensuring complete gating and no ungated references:
-
-| Combination | Command | Verification Target |
-|------|------|----------|
-| no-default | `cargo check --no-default-features --lib` | All gating in place; no business capabilities + no engines |
-| teams-only | `cargo check --no-default-features --features teams --lib` | Multi-tenant (implies `auth`) compiles standalone |
-| auth-only | `cargo check --no-default-features --features auth --lib` | Auth only (single-tenant + auth) |
-| rate-limit-only | `cargo check --no-default-features --features rate-limit --lib` | Rate limiting only (single-tenant + rate limiting) |
-| webhook-only | `cargo check --no-default-features --features webhook --lib` | Webhook only (single-tenant + Webhook) |
-| default | `cargo check --features default --lib` | Full business capability default combination |
-| full | `cargo check --features full --lib` | Full features (business capabilities + engines + metrics) |
-
----
-
-## 🚀 Quick Start <span id="quick-start"></span>
-
-Get up and running in under 5 minutes!
-
-### 1️⃣ Configuration
-
-Create a configuration file `config/default.toml`:
-
-```toml
-# config/default.toml
+# 1. Prepare configuration (full template in config/default.toml, env vars in .env.example)
+cat > config/default.toml <<'EOF'
 [database]
 url = "postgresql://user:password@localhost/crawlrs"
-max_connections = 20
 
 [server]
 host = "0.0.0.0"
 port = 8899
 
-[cors]
-allowed_origins = "*"
-
-[rate_limiting]
-enabled = true
-default_rpm = 60
-default_limit = 60
-burst_size = 20
-
-[cache]
-enabled = true
-
-[cache.memory]
-capacity = 10000
-ttl_seconds = 300
-
-[cache.types.search]
-ttl_seconds = 300
-max_size = 10000
-
-[cache.types.dns]
-ttl_seconds = 3600
-max_size = 1000
-
-[cache.types.regex]
-ttl_seconds = 86400
-max_size = 5000
-
 [search]
 default_engine = "baidu"
-[search.engines]
-google_enabled = true
-bing_enabled = true
-baidu_enabled = true
-sogou_enabled = true
-```
+EOF
 
-### 2️⃣ Database Setup
-
-```bash
-# Run migrations using built-in CLI
+# 2. Initialize the database
 cargo run --bin crawlrs -- migrate
 
-# Or with SQLx CLI
-sqlx database create
-sqlx migrate run
-```
-
-### 3️⃣ Run Server
-
-```bash
-# Development mode
+# 3. Start the server (API mode; worker mode: cargo run --bin crawlrs worker)
 cargo run --bin crawlrs
 
-# Production mode
-./target/release/crawlrs
-```
-
-### 4️⃣ Verify Installation
-
-```bash
-# Health check
+# 4. Verify the installation
 curl http://localhost:8899/health
-
-# Expected response:
 # {"status":"healthy","version":"0.2.0"}
 ```
 
----
-
-## ⚙️ Configuration <span id="configuration"></span>
-
-crawlrs uses confers for configuration management, supporting TOML files and `CRAWLRS__`-prefixed environment variables (`__` for nesting). Default config file: `config/default.toml`.
-
-### Environment Variables
-
-| Variable | Description | Default | Required |
-|-------------|----------|--------|------|
-| `CRAWLRS__DATABASE__URL` | PostgreSQL connection string | - | Yes |
-| `CRAWLRS__SERVER__HOST` | Server bind address | 0.0.0.0 | No |
-| `CRAWLRS__SERVER__PORT` | Server port | 8899 | No |
-| `CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT` | Default per-team concurrency limit | 10 | No |
-| `CRAWLRS__CACHE__MEMORY__CAPACITY` | Memory cache capacity | 10000 | No |
-| `CRAWLRS__CACHE__MEMORY__TTL_SECONDS` | Memory cache TTL | 300 | No |
-| `CRAWLRS__WEBHOOK__TIMEOUT_SECONDS` | Webhook call timeout | 10 | No |
-| `CRAWLRS__WORKERS__COUNT` | Worker count ("auto" or number) | auto | No |
-| `CRAWLRS__PROXY__URL` | Outbound proxy URL | - | No |
-| `CRAWLRS__LLM__API_KEY` | LLM service API key | - | No |
-| `CRAWLRS__ENGINES__FLARESOLVERR__URL` | FlareSolverr service URL | http://localhost:8191/v1 | No |
-| `CRAWLRS__LOG_LEVEL` | Log level | info | No |
-| `CRAWLRS__DATABASE__PASSWORD` | Database password (Docker mode) | - | No |
-
-### Configuration Reference
-
-| Section | Description | Key Fields |
-|--------|------|---------|
-| `[server]` | Server bind | `host`, `port`, `enable_port_detection` |
-| `[cors]` | CORS cross-origin | `allowed_origins` (comma-separated, `*` wildcard) |
-| `[database]` | Database connection | `url`, `max_connections`, `min_connections`, `connect_timeout` |
-| `[rate_limiting]` | Rate limiting | `enabled`, `default_rpm`, `default_limit`, `burst_size` |
-| `[cache]` | Cache control | `enabled`, `[cache.memory]` (capacity/ttl), `[cache.types.*]` (search/dns/regex) |
-| `[concurrency]` | Concurrency control | `default_team_limit`, `task_lock_duration_seconds` |
-| `[search]` | Search config | `default_engine`, `ab_test_enabled`, `timeout_seconds` |
-| `[webhook]` | Webhook | `timeout_seconds`, `max_retries`, `secret`, `batch_size` |
-| `[proxy]` | Outbound proxy | `urls`, `strategy`, `enabled`, `sticky_ttl_seconds`, `cooldown_seconds` |
-| `[llm]` | LLM extraction | `api_key`, `model`, `api_base_url` |
-| `[workers]` | Worker pool | `count` (`"auto"` or number) |
-| `[engines.flaresolverr]` | FlareSolverr | `enabled`, `url`, `timeout_seconds` |
-| `[timeouts.engines]` | Engine timeouts + MRT | `default_timeout_seconds`, `playwright_timeout_seconds`, `flaresolverr_timeout_seconds`, `fetch_seconds` (HTTP MRT), `tls_seconds` (TLS MRT), `cdp_seconds` (CDP MRT) |
-| `[logging]` | Log output | `[logging.console]`, `[logging.file]` (path/max_file_size/file_count) |
-| `[trusted_proxies]` | Trusted proxies | `enabled`, `proxies` (CIDR list) |
-
----
-
-## 📚 API Documentation <span id="api-documentation"></span>
-
-> **Complete API Reference:** [API_REFERENCE.md](docs/API_REFERENCE.md) | **User Guide:** [USER_GUIDE.md](docs/USER_GUIDE.md)
-
-### 🔑 Authentication
-
-All protected endpoints require an API key in the `Authorization` header:
+Calling the scrape endpoint (authentication and all endpoints: see the [📘 API Reference](docs/API_REFERENCE.md)):
 
 ```bash
-# Format
-Authorization: Bearer YOUR_API_KEY
-
-# Example curl
-curl -H "Authorization: Bearer garrison_key_id.garrison_secret" \
-  http://localhost:8899/v1/scrape
-```
-
-> **As of 0.2.0 (`garrison-auth-migration`):** Authentication is now handled by **garrison v0.9.0-rc.1**. The Bearer token format is `garrison_key_id.garrison_secret`, issued and verified by garrison. crawlrs no longer manages `key_hash` itself; the legacy `CRAWLRS__AUTH__KEYS` / `[auth] keys` config options are deprecated.
-
-**Authentication capabilities provided by garrison:**
-
-| Capability | Description |
-|------------|-------------|
-| **JWT Issuance** | garrison embeds a JWT (HS256, ≥32-byte key, weak keys rejected at startup) into each API Key, signed via `CRAWLRS__AUTH__JWT_SECRET` |
-| **RBAC** | Pre-provisioned 3 permissions (`crawlrs:read/write/admin`) + 3 roles (`admin/user/read_only`), `tenant_id=0` shared across all teams |
-| **firewall-bruteforce** | 5 failures / 60s window / 300s lockout; 401/429 directly triggered by garrison |
-| **audit-log** | Auth events written to crawlrs `audit_logs` table + garrison's own schema |
-
-**Issuing a new API Key (admin):**
-
-```bash
-curl -X POST http://localhost:8899/v1/admin/api-keys \
-  -H "Authorization: Bearer garrison_admin_key_id.garrison_admin_secret" \
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer <garrison_key_id>.<garrison_secret>" \
   -H "Content-Type: application/json" \
-  -d '{
-    "team_id": "770e8400-e29b-41d4-a716-446655440000",
-    "scopes": ["read", "write"],
-    "expires_in_secs": 2592000
-  }'
+  -d '{"url": "https://example.com"}'
 ```
 
-> **⚠️ Security Tip:** Never commit API keys to version control. The plaintext key is returned only once in the issuance response — store it in a secrets manager immediately.
+### 🧭 Core Concepts
 
-### Migrating to 0.2.0: Garrison Authentication
-
-**Impact:**
-
-- Existing API keys (based on the legacy `api_keys.key_hash` SHA-256 table) are **all invalidated** and must be re-issued via garrison
-- The `scopes` table is now read-only (`deprecated_at` marker); legacy scope mappings no longer take effect
-- `CRAWLRS__AUTH__JWT_SECRET` is now required (HS256 ≥32 bytes; weak keys are rejected at startup)
-
-**Migration complete:**
-
-- Legacy API keys are invalidated; clients must use `Authorization: Bearer <garrison_key_id>.<garrison_secret>` format
-- New teams obtain API keys via `POST /v1/admin/api-keys` — no ops tooling required
-- Dev/test environments can auto-provision an admin key via the `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` environment variable
-
-**Client-side migration:**
-
-- The calling convention is unchanged: `Authorization: Bearer <key>`
-- Just replace `<key>` with the new `garrison_key_id.garrison_secret`
-- 401/429 response semantics are unchanged, but 429 triggering is now handled by garrison `firewall-bruteforce`
-
-See [ARCHITECTURE.md → Garrison Authentication Engine](docs/ARCHITECTURE.md#garrison-认证引擎) for full architecture details.
-
-### 📡 Public Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check (liveness probe) |
-| `/metrics` | GET | Prometheus metrics |
-| `/v1/version` | GET | Version number |
-
-### 📡 Core Protected Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/v1/scrape` | POST | Create a scrape task |
-| `/v1/scrape/{id}` | GET | Get task details |
-| `/v1/scrape/{id}/_cancel` | POST | Cancel scrape task |
-| `/v1/crawl` | POST | Create a crawl task |
-| `/v1/crawl/{id}` | GET | Get crawl status |
-| `/v1/crawl/{id}` | DELETE | Cancel crawl task |
-| `/v1/crawl/{id}/_cancel` | POST | Cancel crawl task |
-| `/v1/crawl/{id}/results` | GET | Get crawl results |
-| `/v1/search` | POST | Search with specified engine |
-| `/v1/extract` | POST | Extract data from HTML |
-| `/v1/webhooks` | POST | Create webhook |
-| `/v1/webhooks` | GET | List webhooks |
-| `/v1/teams/me` | GET | Get current team info |
-| `/v1/teams/me/usage` | GET | Get team usage |
-| `/v1/teams/geo-restrictions` | GET | Get team geo restrictions |
-| `/v1/teams/geo-restrictions` | PUT | Update team geo restrictions |
-| `/v1/tasks/_query` | POST | Complex query tasks |
-| `/v1/tasks/_cancel` | POST | Batch cancel tasks |
-| `/v1/audit/logs` | GET | Get audit logs |
-| `/v1/audit/denied` | GET | Get denied requests |
-| `/v1/admin/api-keys` | POST | Issue garrison API Key (new in 0.2.0, requires `crawlrs:admin` permission) |
-
-### 📡 SDK Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/sdk/search` | POST | SDK search |
-| `/api/v1/sdk/tasks` | POST | SDK create task |
-| `/api/v1/sdk/scrape` | POST | SDK create scrape |
-| `/api/v1/sdk/crawl` | POST | SDK create crawl |
+- **Engines & routing**: `EngineClient` is the single public entry point for scraping; internally `EngineRouter` holds `Vec<Arc<dyn ScraperEngine>>` and picks an engine via the `SmartHybrid` (default) / `RaceMode` / `SequentialFallback` strategies.
+- **Dual run modes**: one binary, two personalities — `crawlrs` starts the API server, `crawlrs worker` consumes the task queue in worker mode.
+- **DDD four layers**: `presentation → application → domain → infrastructure`, wired by trait-kit's `AppModule` for DI.
+- **Configuration**: powered by confers — TOML files plus `CRAWLRS__`-prefixed environment variables (`__` separates nesting, e.g. `CRAWLRS__DATABASE__URL`).
+- **Feature gating**: when business capabilities (teams/auth/rate-limit/webhook) are off, Noop implementations are injected automatically — single-tenant/unauthenticated deployments need zero business-logic changes.
 
 ---
 
-## 🏗️ Architecture <span id="architecture"></span>
+## 🎨 Feature Flags
 
-crawlrs follows Domain-Driven Design (DDD) principles with a clean four-layer architecture:
+### 📦 Presets
 
-```mermaid
-flowchart TB
-    subgraph Presentation [Presentation Layer - Axum]
-        A[HTTP Handlers]
-        B[Middleware]
-        C[Routes]
-    end
+| Preset | Build command | Contents | Use case |
+|------|----------|----------|----------|
+| Default | `cargo build --release` | `platform` (teams + auth + rate-limit + webhook + metrics + content) + `db-postgres` | Full platform out of the box |
+| `standard` | `cargo build --release --features standard` | Default + `engine-playwright` | Recommended for production (JS rendering + metrics + content processing) |
+| `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | Everything |
+| `no-default` | `cargo build --release --no-default-features` | Pure core scraping stack | Single-tenant/unauthenticated deployments, embedding |
+| `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | Minimal agent/embedded library surface |
 
-    subgraph Application [Application Layer]
-        D[Use Cases]
-        E[DTOs]
-        F[Request Validation]
-    end
+### 📋 Feature Matrix
 
-    subgraph Domain [Domain Layer]
-        G[Models]
-        H[Services]
-        I[Repository Interfaces]
-    end
+The table below mirrors the `[features]` section of `Cargo.toml`, with `default = ["platform", "db-postgres"]`; the core scraping stack (oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt) is always compiled.
 
-    subgraph Infrastructure [Infrastructure Layer]
-        J[Database]
-        K[Cache]
-        L[Storage]
-        M[External APIs]
-    end
+| Feature | Description | Default |
+|------|------|------|
+| `teams` | Multi-tenant isolation (implies `auth`); when off, all requests belong to the single-tenant `DEFAULT_TEAM_ID` | ✅ |
+| `auth` | garrison v0.9 authentication (RBAC + JWT + brute-force protection); when off, a fixed identity is injected | ✅ |
+| `rate-limit` | limiteron rate limiting & circuit breaking; when off, `NoopRateLimitingService` is injected | ✅ |
+| `webhook` | Webhook delivery; when off, `/v1/webhooks` routes are removed and a Noop is injected | ✅ |
+| `metrics` | Prometheus metrics export (incl. sysinfo memory awareness) | ✅ (platform) |
+| `content` | Anti-bot detection (aho-corasick) + HTML→Markdown (htmd) | ✅ (platform) |
+| `db-postgres` / `db-sqlite` / `db-mysql` | Database driver, pick exactly one (compile-time exclusivity enforced by dbnexus) | ✅ postgres |
+| `engine-playwright` | chromiumoxide browser automation engine | ❌ |
+| `engine-flaresolverr` | FlareSolverr anti-bot engine (Full/Cdp/Tls modes) | ❌ |
+| `engine-tls-fingerprint` | WreqEngine TLS fingerprint masking (BoringSSL JA3/JA4) | ❌ |
+| `engine-mllm` | MLLM vision-LLM autonomous navigation engine (implies `engine-playwright` + `llm`) | ❌ |
+| `trafilatura` / `dom-smoothie` / `extractors` | Content extraction main path / performance fallback / all enabled | ❌ |
+| `llm` | genai LLM extraction | ❌ |
+| `test-mocks` | Test-only mock gating (integration tests must enable explicitly) | ❌ |
 
-    Presentation --> Application --> Domain --> Infrastructure
-```
-
-> **Detailed Architecture:** [ARCHITECTURE.md](docs/ARCHITECTURE.md)
-
-### Engine Architecture
-
-- **EngineClient**: The only public entry point, wrapping all scrape operations in a unified API
-- **EngineRouter**: Engine dispatch core, using `Vec<Arc<dyn ScraperEngine>>` to store engine instances, selecting the best engine via configurable strategy
-- **Routing Strategies**: Default `SmartHybrid` (intelligent hybrid), optional `RaceMode` (concurrent racing) / `SequentialFallback` (sequential fallback)
-
-### Technology Stack
-
-| Component | Technology | Version |
-|-----------|------------|---------|
-| Web Framework | Axum | 0.8 |
-| Async Runtime | Tokio | 1.53 |
-| Database ORM | Sea-ORM 2.0.1 (via dbnexus 0.6.0-rc.2) | - |
-| Database | PostgreSQL | 16+ |
-| Cache | oxcache (moka) | 0.5.0-rc.2 |
-| HTTP Client | Reqwest | 0.13 |
-| Browser Automation | chromiumoxide | 0.9 |
-| Structured Logging | inklog | 0.3.0-rc.2 |
-| API SDK | sdforge | 0.5.0-rc.2 |
-| Rate Limiting | limiteron | 0.3.0-rc.2 |
-| Configuration | confers | 0.6.0-rc.2 |
-| DI Framework | trait-kit | 0.5.0-rc.2 |
-| HTML Parser | scraper | 0.27 |
+> For the feature-combination compile matrix (22 combinations) and how it is verified, see the [🧪 Test Scenario Matrix](docs/TEST_SCENARIOS.md); for the gating implementation pattern, see [🏗️ Architecture Document · Feature Gate Architecture](docs/ARCHITECTURE.md).
 
 ---
 
-## 🚢 Deployment <span id="deployment"></span>
+## 📚 Documentation
 
-### Docker Deployment
+| Document | Description |
+|------|------|
+| [📖 User Guide](docs/USER_GUIDE.md) | Complete tutorial covering auth, scraping, crawling, search, extraction, webhooks, teams and more |
+| [📘 API Reference](docs/API_REFERENCE.md) | All REST endpoints, request/response formats, error codes and the SDK |
+| [🏗️ Architecture](docs/ARCHITECTURE.md) | DDD layers, engine routing, enhancement modules, security model and deployment topologies |
+| [⚡ Performance Guide](docs/PERFORMANCE.md) | Benchmark suite, performance instrumentation and tuning advice |
+| [🔒 Security](docs/SECURITY.md) | Security design, supply-chain gates, vulnerability reporting and production hardening checklist |
+| [❓ FAQ](docs/FAQ.md) | Frequently asked questions |
+| [🧪 Test Scenario Matrix](docs/TEST_SCENARIOS.md) | Exhaustive test suite inventory, feature-combination matrix and runbook |
+| [🤝 Contributing](docs/CONTRIBUTING.md) | Environment setup, development workflow and commit conventions |
+| [📋 Changelog](docs/CHANGELOG.md) | Release-by-release change log |
+| [📦 Releases](https://github.com/Kirky-X/crawlrs/releases) | Release page |
+
+---
+
+## 💻 Examples
+
+All 65 runnable examples live in the standalone [`examples/`](examples/) workspace, grouped by domain: search, scrape, crawl, extract, auth, teams, webhooks, cache, config, database, proxy, rate-limiting, sdk, tasks, browser, advanced, etc. (each example is a `[[bin]]` target such as `basic_scrape`). For the categorized list see [examples/README.md](examples/README.md) and [examples/QUICKSTART.md](examples/QUICKSTART.md).
 
 ```bash
-# Build Docker image
-docker build -t crawlrs:latest .
-
-# Run with Docker
-docker run -d \
-  -p 8899:8899 \
-  -e CRAWLRS__DATABASE__URL="postgresql://user:pass@db:5432/crawlrs" \
-  crawlrs:latest
-
-# Run with Docker Compose
-docker-compose up -d
+cd examples
+cargo run --bin basic_scrape          # Basic scraping
+cargo run --bin api_key_auth          # garrison API Key authentication
+cargo run --bin async_batch           # Async batch scraping
+cargo build                           # Build all examples
 ```
-
-### Production Checklist
-
-- [ ] Set strong API keys and secrets
-- [ ] Configure proper database connection pooling
-- [ ] Configure oxcache caching for production (per-type TTL for search/dns/regex)
-- [ ] Set appropriate rate limits (`default_limit` / `burst_size`)
-- [ ] Configure CORS to specific origins (not `*` wildcard)
-- [ ] Configure metrics export to Prometheus
-- [ ] Enable distributed tracing (inklog HTTP sink)
-- [ ] Set up log aggregation (ELK, CloudWatch, etc.)
-- [ ] Configure webhook endpoints for task notifications
-- [ ] Review and tune concurrency settings (`concurrency.default_team_limit`)
-- [ ] Configure trusted proxies (`trusted_proxies`) to prevent IP spoofing
-- [ ] Enable SSL/TLS termination
-- [ ] Configure health check endpoints
-- [ ] Set up backup and disaster recovery
 
 ---
 
-## 🧪 Testing <span id="testing"></span>
+## 🚢 Deployment
 
 ```bash
-# Run unit tests
-cargo test --features default --lib --verbose
+# Build the image (primary Dockerfile lives in docker/)
+docker build -t crawlrs:latest -f docker/Dockerfile .
 
-# Run integration tests (requires Docker: PostgreSQL + Redis via testcontainers)
-cargo test --test integration_tests --features full
+# One-command startup with Docker Compose (crawlrs + PostgreSQL 16 + FlareSolverr + Chrome + Prometheus)
+docker compose -f docker/docker-compose.yml up -d
+```
 
-# Run SDK API tests
-cargo test --features test-mocks --test sdk_api_test
+The server listens on `8899` by default (configurable via `CRAWLRS__SERVER__PORT`); for single-instance and Kubernetes multi-instance topologies, the worker pool and external dependencies see the [🏗️ Architecture Document · Deployment Architecture](docs/ARCHITECTURE.md), and for the production hardening checklist see [🔒 Security Document · Production Hardening](docs/SECURITY.md).
 
-# Run full main test entry
-cargo test --features standard,test-mocks --test main
+---
 
-# Run coverage tests
-cargo tarpaulin --out Html
+## 🏗️ Architecture
 
-# Run benchmarks
-cargo bench
+crawlrs follows Domain-Driven Design with a four-layer architecture — `presentation → application → domain → infrastructure`: Axum handles HTTP and middleware, use cases orchestrate business logic, the domain layer defines capability contracts via traits such as `ScraperEngine`, and the infrastructure layer reaches PostgreSQL through dbnexus (Sea-ORM) and multi-level caching through oxcache. The scraping data path is: request passes pre-check SSRF validation → `EngineRouter` selects an engine by strategy (anti-bot detection can dynamically re-dispatch to a browser engine) → worker pool executes → results are persisted and webhooks fire.
 
-# Run clippy (linter)
-cargo clippy --features default -- -D warnings
+For layer responsibilities, engine routing details, all enhancement modules, queue/cache/rate-limit design and deployment topologies, see the [🏗️ Architecture Document](docs/ARCHITECTURE.md).
 
-# Full clippy check (all features)
-cargo clippy --features full -- -D warnings
+---
 
-# Format code
+## 🧪 Testing
+
+### 🎯 Test Strategy
+
+The test system spans seven layers: inline unit tests in `src/`, module-organized unit tests in `tests/unit/`, the table-driven harness (`tests/main.rs`, mock injection), SDK API tests (`sdk_api_test`), real-PostgreSQL integration tests (`integration_tests`, incl. garrison auth end-to-end), Python API/performance tests, and the E2E quality suite (`tests/e2e/e2e-suite.sh`: 22-combination feature compile matrix → static checks → unit/integration tests → benchmarks → report). For the exhaustive scenario inventory and file mapping, see the [🧪 Test Scenario Matrix](docs/TEST_SCENARIOS.md).
+
+### ▶️ Commands (identical to CI)
+
+```bash
+# Unit tests (CI test job: one round each for standard / full; needs PostgreSQL 16,
+# auto-provisioned locally via testcontainers)
+cargo test --features "standard" --lib
+cargo test --features "full" --lib
+
+# Integration + all test targets (CI integration-test job)
+cargo test --features "full,test-mocks" --tests --no-fail-fast
+
+# Lint and format gates
 cargo fmt --all -- --check
+cargo clippy --features "standard" -- -D warnings
+cargo clippy --features "full" -- -D warnings
 
-# Dependency security check
+# Coverage gate: line coverage no lower than 80% (CI coverage job, uploaded to Codecov)
+cargo llvm-cov --features "full" --fail-under-lines 80
+
+# Supply-chain check (advisories / licenses / bans / sources)
 cargo deny check
 
-# Pre-commit full check
+# Benchmarks (Criterion, 9 groups)
+cargo bench
+
+# E2E quality suite (feature matrix + static + tests + integration + bench + report)
+./tests/e2e/e2e-suite.sh
+
+# Python API / performance tests (local)
+./scripts/run-tests.sh local
+
+# Full pre-commit check (fmt → clippy → check → build → secret scan)
 scripts/pre-commit-check.sh all
 ```
 
----
+### 📊 Test Scale
 
-## 🤝 Contributing <span id="contributing"></span>
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Development Workflow
-
-1. Fork repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Code Style
-
-- Follow Rust naming conventions
-- Add doc comments to public APIs
-- Write tests for new features
-- Keep functions focused and small
+As of 0.2.0: roughly 5,700+ inline tests in `src/` (372 source files), about 950 in `tests/` (incl. 71 unit-test files and the real-PostgreSQL integration suite), 9 Criterion benchmark groups and 5 Python suites; the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Test Scale](docs/TEST_SCENARIOS.md).
 
 ---
 
-## 📄 License <span id="license"></span>
+## 📊 Performance
 
-This project is licensed under Apache License 2.0 - see [LICENSE](LICENSE) file for details.
-
-```
-Copyright 2025 Kirky.X
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
+Performance engineering is built into the architecture: AIMD adaptive concurrency, memory-aware scheduling, TabPool reuse, request coalescing (singleflight), WaitFor conditional waiting and the hedge request-duplication controller. The reproducible benchmarks are the 9 Criterion groups in `benches/benchmark.rs` (task creation/status transitions, JSON serialization, URL parsing & validation, SSRF detection, RegexCache, engine routing, etc.), and E2E suite Stage 5 compares against `e2e-baseline` for regression detection. The legacy Node.js comparison figures were published without a measurement methodology and remain to be re-measured. For benchmark details and tuning advice see the [⚡ Performance Guide](docs/PERFORMANCE.md).
 
 ---
 
-## 💬 Support <span id="support"></span>
+## 🔒 Security
 
-| Resource | Link |
-|----------|------|
-| 📖 Documentation | [docs/](docs/) |
-| 📚 API Reference | [API_REFERENCE.md](docs/API_REFERENCE.md) |
-| 👤 User Guide | [USER_GUIDE.md](docs/USER_GUIDE.md) |
-| 🏗️ Architecture | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| 🐛 Issue Tracker | [GitHub Issues](https://github.com/YOUR_ORG/crawlrs/issues) |
-| 📧 Email | [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com) |
+### 🛡️ Security Design
+
+Security covers the entire request path: SSRF is validated twice — pre-check in the handler and again in the engine router; authentication is delegated to garrison (HS256 JWT, RBAC, IP-level brute-force protection, persisted audit); webhooks are verified with Standard Webhooks signatures (subtle constant-time comparison); the JWT secret is zeroized to prevent memory residue; security response headers and trusted-proxy middleware are hardened by default. For each mechanism see the [🔒 Security Document](docs/SECURITY.md) and the [🏗️ Architecture Document · Security Model](docs/ARCHITECTURE.md).
+
+### ⛓️ Supply Chain & Gates
+
+CI consistently runs `cargo deny check` (advisories / licenses / bans / sources), CodeQL static analysis, clippy `-D warnings` and the RSA-code-path premise check; the local pre-commit script includes a private-key scan. For the full gate list see [🔒 Security Document · Supply Chain & Gates](docs/SECURITY.md).
+
+### 🚨 Reporting a Vulnerability
+
+Please do not report security vulnerabilities through public issues — email [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com) instead. For the full handling process see [SECURITY.md](docs/SECURITY.md).
+
+---
+
+## 🗺️ Roadmap
+
+<table style="width:100%; border-collapse: collapse">
+<tr><th style="text-align:center">Status</th><th style="text-align:left">Area</th><th style="text-align:left">Items</th></tr>
+<tr><td align="center">✅</td><td>Core platform (0.1.0)</td><td>Five-capability APIs (search/scrape/crawl/extract/map), DDD four layers, multi-tenancy & rate limiting, webhook notifications</td></tr>
+<tr><td align="center">✅</td><td>Platform hardening & smart engines (0.2.0)</td><td>garrison authentication, anti-bot detection, TLS-fingerprint & MLLM engines, RAG/KG/DRL intelligent enhancements, Prometheus observability, E2E quality suite</td></tr>
+<tr><td align="center">🚧</td><td>Multi-driver databases</td><td><code>db-sqlite</code> / <code>db-mysql</code> covered at compile level; runtime schema provisioning pending (current <code>migrations/*.sql</code> is PG-only DDL)</td></tr>
+<tr><td align="center">📋</td><td>Architecture evolution</td><td>Event-driven internal bus, WebSocket real-time task status, Redis shared cache layer (multi-instance deployments)</td></tr>
+<tr><td align="center">📋</td><td>Performance stewardship</td><td>Routine Criterion baseline (e2e-baseline) regression comparisons, re-measurement of performance figures</td></tr>
+</table>
+
+---
+
+## 🤝 Contributing
+
+For the full contribution process, development environment and code conventions, see the [🤝 Contributing Guide](docs/CONTRIBUTING.md).
+
+### 🛠️ Development Environment
+
+See `rust-version` in `Cargo.toml` (1.97) for the toolchain requirement; protoc is needed to build sdforge. Before committing run `scripts/pre-commit-check.sh all` (fmt → clippy → check → build → secret scan) and follow Conventional Commits (`type(scope): subject`). For the TDD workflow, branching and testing requirements see [🤝 Contributing Guide · Development Workflow](docs/CONTRIBUTING.md).
+
+### 💖 Ways to Contribute
+
+<table style="width:100%; border-collapse: collapse">
+<tr>
+<td width="33%" align="center" style="padding: 16px">
+
+### 🐛 Report a Bug
+
+Found an issue?<br>
+<a href="https://github.com/Kirky-X/crawlrs/issues/new">Open an Issue</a>
+
+</td>
+<td width="33%" align="center" style="padding: 16px">
+
+### 💡 Suggest a Feature
+
+Have an idea?<br>
+<a href="https://github.com/Kirky-X/crawlrs/issues/new">Start a Discussion</a>
+
+</td>
+<td width="33%" align="center" style="padding: 16px">
+
+### 🔧 Submit a PR
+
+Want to contribute code?<br>
+<a href="https://github.com/Kirky-X/crawlrs/pulls">Fork &amp; open a PR</a>
+
+</td>
+</tr>
+</table>
+
+<img src="https://contrib.rocks/image?repo=Kirky-X/crawlrs" alt="Contributors">
+
+---
+
+## 📋 Changelog
+
+For the full version history see the [📋 Changelog](docs/CHANGELOG.md) (following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), semantic versioning).
+
+| Version | Date | Highlights |
+|------|------|------|
+| Unreleased | - | TLS fingerprint engine (WreqEngine), MLLM vision-navigation engine, RAG-augmented extraction, knowledge-graph coverage awareness, DRL adaptive policy, 5 new Prometheus metrics |
+| 0.2.0 | 2026-07-29 | garrison RBAC authentication integration, bootstrap admin key, `DELETE /v1/crawl/{id}`, brute-force protection hardening |
+| 0.1.0 | 2026-07-22 | First public release: five-capability APIs, DDD four-layer architecture, multi-tenancy & rate limiting, unified search |
+
+---
+
+## 📄 License
+
+This project is licensed under the [Apache License 2.0](LICENSE). Copyright © 2025 Kirky.X.
 
 ---
 
 ## 🙏 Acknowledgments
 
-- Built with [Rust](https://www.rust-lang.org/)
-- Web framework powered by [Axum](https://github.com/tokio-rs/axum)
-- Database ORM by [Sea-ORM](https://www.sea-ql.org/)
-- Inspired by the need for high-performance web scraping solutions
+### 🌟 Core Dependencies
+
+crawlrs stands on the shoulders of these excellent open-source projects:
+
+| Dependency | Purpose |
+|------|------|
+| [tokio](https://crates.io/crates/tokio) | Async runtime |
+| [axum](https://crates.io/crates/axum) | Web framework |
+| [reqwest](https://crates.io/crates/reqwest) | HTTP client |
+| [chromiumoxide](https://crates.io/crates/chromiumoxide) | Chrome CDP browser automation |
+| [wreq](https://crates.io/crates/wreq) | BoringSSL TLS fingerprint masking |
+| [scraper](https://crates.io/crates/scraper) | HTML parsing |
+| [genai](https://crates.io/crates/genai) | Multi-model LLM access |
+| [htmd](https://crates.io/crates/htmd) | HTML→Markdown conversion |
+| [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | Content extraction |
+| [criterion](https://crates.io/crates/criterion) | Benchmarking |
+| [testcontainers](https://crates.io/crates/testcontainers) | Integration test infrastructure |
+
+Same-author in-house foundation components: dbnexus (database abstraction), confers (configuration management), garrison (authentication framework), limiteron (rate limiting & circuit breaking), oxcache (caching), inklog (structured logging), sdforge (SDK generation), trait-kit (dependency injection).
+
+### 💝 Special Thanks
+
+Thanks to the Rust community and all [contributors](https://github.com/Kirky-X/crawlrs/graphs/contributors).
 
 ---
 
-<div align="center">
+## 📞 Contact & Support
 
-**Built with ❤️ in Rust**
+<table style="width:100%; max-width: 600px">
+<tr>
+<td align="center" width="33%">
+<a href="https://github.com/Kirky-X/crawlrs/issues"><b style="color:#991B1B">Issues</b></a><br>
+<span style="color:#64748B">Report problems and bugs</span>
+</td>
+<td align="center" width="33%">
+<a href="mailto:Kirky-X@outlook.com"><b style="color:#1E40AF">Email</b></a><br>
+<span style="color:#64748B">Kirky-X@outlook.com</span>
+</td>
+<td align="center" width="33%">
+<a href="https://github.com/Kirky-X/crawlrs"><b style="color:#1E293B">GitHub</b></a><br>
+<span style="color:#64748B">Browse the source</span>
+</td>
+</tr>
+</table>
 
-[⬆ Back to Top](#overview)
+---
 
-</div>
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Kirky-X/crawlrs&type=Date)](https://star-history.com/#Kirky-X/crawlrs&Date)
+
+If this project helps you, please consider giving it a ⭐️!
+
+**Built by Kirky.X**
+
+---
+
+<sub>© 2025 Kirky.X. All rights reserved.</sub>
