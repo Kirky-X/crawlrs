@@ -235,6 +235,7 @@ mod tests {
         let config = CrawlConfigDto {
             max_depth: 3,
             max_concurrency: None,
+            max_pages: None,
             include_patterns: None,
             exclude_patterns: None,
             headers: None,
@@ -257,6 +258,7 @@ mod tests {
         let config = CrawlConfigDto {
             max_depth: 3,
             max_concurrency: None,
+            max_pages: None,
             include_patterns: None,
             exclude_patterns: None,
             headers: Some(json!({"X-Custom": "value"})),
