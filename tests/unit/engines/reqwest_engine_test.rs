@@ -17,7 +17,8 @@ mod tests {
         routing::get,
         Router,
     };
-    use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
+    use crawlrs::engines::engine_client::ScraperEngine;
+    use crawlrs::engines::types::ScrapeRequest;
     use std::collections::HashMap;
     use std::time::Duration;
     use tokio::net::TcpListener;

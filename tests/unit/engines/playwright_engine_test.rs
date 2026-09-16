@@ -12,7 +12,8 @@ use crawlrs::common::constants::testing::API_REQUEST_TIMEOUT;
 #[cfg(test)]
 mod tests {
     use crawlrs::engines::client::playwright::PlaywrightEngine;
-    use crawlrs::engines::traits::{ScrapeRequest, ScraperEngine};
+    use crawlrs::engines::engine_client::ScraperEngine;
+    use crawlrs::engines::types::ScrapeRequest;
     use std::collections::HashMap;
     use std::time::Duration;
 
