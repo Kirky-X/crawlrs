@@ -38,9 +38,11 @@ use crate::workers::errors::ScrapeWorkerError;
 /// # Arguments
 /// * `task` - 目标任务
 /// * `robots_checker` - robots.txt 检查器
-pub async fn check_robots_txt(task: &Task, robots_checker: &dyn RobotsCheckerTrait) -> bool {
-    let user_agent = "crawlrs-bot";
-
+pub async fn check_robots_txt(
+    task: &Task,
+    robots_checker: &dyn RobotsCheckerTrait,
+    user_agent: &str,
+) -> bool {
     if !robots_checker
         .is_allowed(&task.url, user_agent)
         .await
@@ -502,14 +504,14 @@ mod tests {
     async fn test_check_robots_txt_allowed_returns_true() {
         let task = make_task("https://example.com");
         let checker = MockRobotsChecker { allowed: true };
-        assert!(check_robots_txt(&task, &checker).await);
+        assert!(check_robots_txt(&task, &checker, "crawlrs-bot/1.0").await);
     }
 
     #[tokio::test]
     async fn test_check_robots_txt_denied_returns_false() {
         let task = make_task("https://example.com");
         let checker = MockRobotsChecker { allowed: false };
-        assert!(!check_robots_txt(&task, &checker).await);
+        assert!(!check_robots_txt(&task, &checker, "crawlrs-bot/1.0").await);
     }
 
     // ---- update_crawl_completion_status ----

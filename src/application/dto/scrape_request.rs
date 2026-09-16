@@ -155,6 +155,12 @@ pub struct ScrapeOptionsDto {
     ///
     /// 需要 `markdown` 特性 + `formats` 含 `"markdown"` 生效。
     pub only_main_content: Option<bool>,
+    /// 是否遵从目标站点 robots.txt
+    ///
+    /// 缺省回退全局 `robots.scrape_respect_robots`（默认 false）。
+    /// 命中 Disallow 时任务置 Failed（error 可观测）；robots.txt 获取失败
+    /// fail-open 放行（与 crawl 路径一致）。单页抓取不执行 Crawl-delay。
+    pub respect_robots: Option<bool>,
 }
 
 impl ScrapeOptionsDto {
@@ -196,4 +202,27 @@ pub struct ScreenshotOptionsDto {
     pub selector: Option<String>,
     pub quality: Option<u8>,
     pub format: Option<String>,
+}
+#[cfg(test)]
+mod respect_robots_tests {
+    use super::*;
+
+    /// respect_robots 缺省为 None（回退全局默认）；显式传值正确反序列化。
+    #[test]
+    fn respect_robots_field_serde() {
+        let without: ScrapeRequestDto =
+            serde_json::from_str(r#"{"url":"https://text.npr.org"}"#).expect("parse minimal");
+        let with_none = without.options.as_ref().and_then(|o| o.respect_robots);
+        assert_eq!(with_none, None, "未传 options 时 respect_robots 应为 None");
+
+        let with: ScrapeRequestDto = serde_json::from_str(
+            r#"{"url":"https://text.npr.org","options":{"respect_robots":true}}"#,
+        )
+        .expect("parse with respect_robots");
+        assert_eq!(
+            with.options.as_ref().unwrap().respect_robots,
+            Some(true),
+            "respect_robots=true 应正确反序列化"
+        );
+    }
 }

@@ -422,6 +422,7 @@ mod tests {
         use crate::config::settings::*;
         let settings = Settings {
             server: ServerSettings::default(),
+            robots: RobotsSettings::default(),
             database: DatabaseSettings::default(),
             cors: CorsSettings::default(),
             rate_limiting: RateLimitingSettings::default(),

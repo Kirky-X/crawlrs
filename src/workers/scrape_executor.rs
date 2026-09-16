@@ -20,6 +20,7 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::engines::engine_client::ScrapeResponse;
 use crate::infrastructure::oxcache::CacheService;
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
+use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::cache_utils::{redact_url_for_log, SanitizedScrapeResponse};
 
 /// 处理文本编码转换
@@ -151,6 +152,39 @@ pub async fn save_result(
     Ok(())
 }
 
+/// robots.txt 门控（单页抓取路径）：请求级选项 → 全局默认回退 → fail-open。
+///
+/// 返回 `Ok(true)` 表示放行（未启用遵从、robots 未禁止、或 robots 获取失败
+/// fail-open）；`Ok(false)` 表示命中 Disallow，调用方应将任务置 Failed。
+///
+/// - 启用判定：请求级 `respect_override`（`options.respect_robots`）优先，
+///   缺省回退全局 `robots.scrape_respect_robots`。
+/// - 单页抓取不执行 Crawl-delay（非爬虫逐链接语义）。
+/// - robots.txt 获取/解析失败时 fail-open 放行并 `warn!`（与 crawl 路径
+///   `check_robots_txt` 的 `unwrap_or(true)` 一致）。
+pub async fn check_scrape_robots_allowed(
+    task: &Task,
+    respect_override: Option<bool>,
+    default_respect: bool,
+    user_agent: &str,
+    robots_checker: &dyn RobotsCheckerTrait,
+) -> Result<bool> {
+    let respect = respect_override.unwrap_or(default_respect);
+    if !respect {
+        return Ok(true);
+    }
+    match robots_checker.is_allowed(&task.url, user_agent).await {
+        Ok(allowed) => Ok(allowed),
+        Err(e) => {
+            warn!(
+                "robots.txt fetch failed for task {} (fail-open): {}",
+                task.id, e
+            );
+            Ok(true)
+        }
+    }
+}
+
 /// 读抓取结果缓存
 ///
 /// 返回 `Ok(None)` 表示缓存未命中；`Ok(Some)` 表示命中；`Err` 表示缓存故障。
@@ -254,6 +288,109 @@ mod tests {
             lock_expires_at: None,
             expires_at: None,
         }
+    }
+
+    // ========== check_scrape_robots_allowed ==========
+
+    struct FakeRobotsChecker {
+        allowed: bool,
+        err: Option<String>,
+        last_ua: std::sync::Mutex<Option<String>>,
+    }
+
+    impl FakeRobotsChecker {
+        fn new(allowed: bool) -> Self {
+            Self {
+                allowed,
+                err: None,
+                last_ua: std::sync::Mutex::new(None),
+            }
+        }
+        fn erroring(message: &str) -> Self {
+            Self {
+                allowed: false,
+                err: Some(message.to_string()),
+                last_ua: std::sync::Mutex::new(None),
+            }
+        }
+        fn last_ua(&self) -> Option<String> {
+            self.last_ua.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RobotsCheckerTrait for FakeRobotsChecker {
+        async fn is_allowed(&self, _url_str: &str, user_agent: &str) -> Result<bool> {
+            *self.last_ua.lock().unwrap() = Some(user_agent.to_string());
+            match &self.err {
+                Some(m) => Err(anyhow::anyhow!("robots fetch failed: {}", m)),
+                None => Ok(self.allowed),
+            }
+        }
+
+        async fn get_crawl_delay(
+            &self,
+            _url_str: &str,
+            _user_agent: &str,
+        ) -> Result<Option<std::time::Duration>> {
+            Ok(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn robots_disabled_by_default_allows_even_disallowed() {
+        // 全局默认 false 且无请求级覆盖：不查 robots，直接放行
+        let task = make_task("https://blocked.example.com/x");
+        let checker = FakeRobotsChecker::new(false);
+        let ok = check_scrape_robots_allowed(&task, None, false, "ua/1", &checker).await;
+        assert!(ok.unwrap());
+        assert_eq!(checker.last_ua(), None, "未启用时不应查询 robots");
+    }
+
+    #[tokio::test]
+    async fn robots_global_default_on_blocks_disallowed() {
+        let task = make_task("https://blocked.example.com/x");
+        let checker = FakeRobotsChecker::new(false);
+        let ok = check_scrape_robots_allowed(&task, None, true, "ua/1", &checker).await;
+        assert!(!ok.unwrap(), "Disallow 站点应被拦下");
+        assert_eq!(
+            checker.last_ua().as_deref(),
+            Some("ua/1"),
+            "匹配 UA 来自配置"
+        );
+    }
+
+    #[tokio::test]
+    async fn robots_request_true_overrides_global_off() {
+        let task = make_task("https://blocked.example.com/x");
+        let checker = FakeRobotsChecker::new(false);
+        let ok = check_scrape_robots_allowed(&task, Some(true), false, "ua/1", &checker).await;
+        assert!(!ok.unwrap(), "请求级 true 在全局关闭时仍生效");
+    }
+
+    #[tokio::test]
+    async fn robots_request_false_overrides_global_on() {
+        let task = make_task("https://blocked.example.com/x");
+        let checker = FakeRobotsChecker::new(false);
+        let ok = check_scrape_robots_allowed(&task, Some(false), true, "ua/1", &checker).await;
+        assert!(ok.unwrap(), "请求级 false 在全局开启时仍放行");
+    }
+
+    #[tokio::test]
+    async fn robots_checker_error_fails_open() {
+        let task = make_task("https://any.example.com/x");
+        let checker = FakeRobotsChecker::erroring("dns down");
+        let ok = check_scrape_robots_allowed(&task, None, true, "ua/1", &checker).await;
+        assert!(ok.unwrap(), "robots 获取失败 fail-open 放行");
+    }
+
+    #[tokio::test]
+    async fn robots_allowed_site_passes() {
+        let task = make_task("https://news.example.com/");
+        let checker = FakeRobotsChecker::new(true);
+        let ok = check_scrape_robots_allowed(&task, None, true, "ua/1", &checker).await;
+        assert!(ok.unwrap());
+        assert_eq!(checker.last_ua().as_deref(), Some("ua/1"));
     }
 
     fn make_response(content: &str) -> ScrapeResponse {

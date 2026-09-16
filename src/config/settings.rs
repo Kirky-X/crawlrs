@@ -85,6 +85,10 @@ pub struct Settings {
     /// 引擎配置
     pub engines: EngineSettings,
 
+    /// robots.txt 遵从配置
+    #[validate(nested)]
+    pub robots: RobotsSettings,
+
     /// 日志配置
     pub logging: LoggingSettings,
 
@@ -111,6 +115,28 @@ pub struct Settings {
 // =============================================================================
 // CORS 配置
 // =============================================================================
+
+/// robots.txt 遵从配置
+///
+/// 控制 robots.txt 的识别与应用：
+/// - `user_agent`：robots.txt 匹配与抓取使用的 User-Agent（crawl 与
+///   `/v1/scrape` 的 robots 检查共用）
+/// - `scrape_respect_robots`：`/v1/scrape` 单页抓取是否**默认**遵从
+///   robots.txt。默认 `false`（单页抓取定位为直接取页接口，向后兼容）；
+///   请求级 `options.respect_robots` 可覆盖此全局默认。
+///   robots.txt 自身获取失败时 fail-open（放行，与 crawl 路径一致）。
+#[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ROBOTS__")]
+pub struct RobotsSettings {
+    /// robots.txt 匹配与抓取使用的 User-Agent
+    #[config(default = "crawlrs-bot/1.0".to_string())]
+    #[validate(length(min = 1, max = 128))]
+    pub user_agent: String,
+
+    /// `/v1/scrape` 是否默认遵从 robots.txt（请求级 respect_robots 可覆盖）
+    #[config(default = false)]
+    pub scrape_respect_robots: bool,
+}
 
 /// CORS 配置设置
 ///
@@ -751,6 +777,7 @@ mod tests {
             llm: LLMSettings::default(),
             proxy: ProxySettings::default(),
             engines: EngineSettings::default(),
+            robots: RobotsSettings::default(),
             logging: LoggingSettings::default(),
             workers: WorkerSettings::default(),
             timeouts: TimeoutSettings::default(),
@@ -765,6 +792,8 @@ mod tests {
         assert!(settings.trusted_proxies.enabled);
         assert_eq!(settings.i18n.default_locale, "en-US");
         assert_eq!(settings.i18n.supported_locales.len(), 2);
+        assert_eq!(settings.robots.user_agent, "crawlrs-bot/1.0");
+        assert!(!settings.robots.scrape_respect_robots);
     }
 
     /// AuthSettings Debug 输出对 jwt_secret 脱敏（CWE-532 防护）。

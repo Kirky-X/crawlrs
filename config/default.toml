@@ -365,6 +365,14 @@ jwt_secret = ""
 
 # Internationalization (i18n) Configuration
 # 国际化配置，基于 Mozilla Fluent 系统
+[robots]
+# robots.txt 遵从配置
+# robots.txt 匹配与抓取使用的 User-Agent
+user_agent = "crawlrs-bot/1.0"
+# /v1/scrape 单页抓取是否默认遵从 robots.txt（请求级 options.respect_robots 可覆盖；
+# robots.txt 获取失败时 fail-open 放行）
+scrape_respect_robots = false
+
 [i18n]
 # 默认 locale（BCP 47 格式）
 default_locale = "en-US"

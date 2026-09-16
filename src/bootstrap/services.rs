@@ -762,6 +762,7 @@ pub async fn init_services(
     // Initialize robots checker (使用依赖注入的 HTTP_CLIENT + CacheService)
     let robots_checker = Arc::new(RobotsChecker::new(
         http_client.clone(),
+        settings.robots.user_agent.clone(),
         Some(infrastructure.cache_service.clone()),
         None,
     ));

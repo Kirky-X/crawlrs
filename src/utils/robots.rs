@@ -96,6 +96,9 @@ pub struct RobotsChecker {
     /// HTTP客户端 (Arc 包装，支持依赖注入)
     engine_client: Arc<EngineClient>,
 
+    /// robots.txt 匹配与抓取使用的 User-Agent（可配置，见 RobotsSettings）
+    user_agent: String,
+
     /// 内存缓存
     memory_cache: Arc<Mutex<HashMap<String, CachedRobots>>>,
 
@@ -138,12 +141,14 @@ impl RobotsChecker {
     /// 返回新的Robots检查器实例
     pub fn new(
         http_client: Arc<reqwest::Client>,
+        user_agent: String,
         cache_service: Option<Arc<dyn CacheService>>,
         cache_stats: Option<Arc<CacheStats>>,
     ) -> Self {
         let engine_client = Self::create_engine_client(http_client);
         Self {
             engine_client,
+            user_agent,
             memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
             cache_service,
             retry_policy: RetryPolicy {
@@ -154,6 +159,11 @@ impl RobotsChecker {
             },
             cache_stats: cache_stats.unwrap_or_else(|| Arc::new(CacheStats::default())),
         }
+    }
+
+    /// robots.txt 匹配与抓取使用的 User-Agent（来自 `robots.user_agent` 配置）
+    pub fn user_agent(&self) -> &str {
+        &self.user_agent
     }
 
     /// 获取Robots.txt内容（带缓存）
@@ -212,7 +222,7 @@ impl RobotsChecker {
         while attempt < self.retry_policy.max_retries {
             attempt += 1;
             let mut headers = HashMap::new();
-            headers.insert("User-Agent".to_string(), "crawlrs-bot/1.0".to_string());
+            headers.insert("User-Agent".to_string(), self.user_agent.clone());
 
             let request = ScrapeRequest::new(&robots_url).with_options(
                 ScrapeOptions::builder()
@@ -535,7 +545,7 @@ mod tests {
 
     fn make_checker() -> RobotsChecker {
         let http_client = Arc::new(reqwest::Client::new());
-        RobotsChecker::new(http_client, None, None)
+        RobotsChecker::new(http_client, "crawlrs-bot/1.0".to_string(), None, None)
     }
 
     #[test]
@@ -553,7 +563,12 @@ mod tests {
         stats.record_hit();
         stats.record_miss();
 
-        let checker = RobotsChecker::new(http_client, None, Some(stats));
+        let checker = RobotsChecker::new(
+            http_client,
+            "crawlrs-bot/1.0".to_string(),
+            None,
+            Some(stats),
+        );
         let (hits, misses) = checker.get_cache_stats();
         assert_eq!(hits, 1, "should use the provided cache stats");
         assert_eq!(misses, 1);
@@ -912,7 +927,12 @@ Crawl-delay: 8
     async fn test_is_allowed_cache_hit_increments_stats() {
         let http_client = Arc::new(reqwest::Client::new());
         let stats = Arc::new(CacheStats::default());
-        let checker = RobotsChecker::new(http_client, None, Some(stats.clone()));
+        let checker = RobotsChecker::new(
+            http_client,
+            "crawlrs-bot/1.0".to_string(),
+            None,
+            Some(stats.clone()),
+        );
 
         populate_robots_cache(
             &checker,
@@ -939,7 +959,12 @@ Crawl-delay: 8
     async fn test_get_crawl_delay_cache_hit_increments_stats() {
         let http_client = Arc::new(reqwest::Client::new());
         let stats = Arc::new(CacheStats::default());
-        let checker = RobotsChecker::new(http_client, None, Some(stats.clone()));
+        let checker = RobotsChecker::new(
+            http_client,
+            "crawlrs-bot/1.0".to_string(),
+            None,
+            Some(stats.clone()),
+        );
 
         populate_robots_cache(
             &checker,
@@ -1159,6 +1184,7 @@ Crawl-delay: 8
         let engine_client = Arc::new(EngineClient::with_router(router));
         RobotsChecker {
             engine_client,
+            user_agent: "crawlrs-bot/1.0".to_string(),
             memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
             cache_service: None,
             retry_policy: RetryPolicy {
@@ -1185,6 +1211,7 @@ Crawl-delay: 8
         ));
         let checker = RobotsChecker {
             engine_client: Arc::new(EngineClient::new()),
+            user_agent: "crawlrs-bot/1.0".to_string(),
             memory_cache: Arc::new(Mutex::new(HashMap::new())),
             cache_service: Some(mock_cache as Arc<dyn CacheService>),
             retry_policy: RetryPolicy::default(),
@@ -1223,6 +1250,7 @@ Crawl-delay: 8
         ));
         let checker = RobotsChecker {
             engine_client: Arc::new(EngineClient::new()),
+            user_agent: "crawlrs-bot/1.0".to_string(),
             memory_cache: Arc::new(Mutex::new(HashMap::new())),
             cache_service: Some(mock_cache as Arc<dyn CacheService>),
             retry_policy: RetryPolicy::default(),
@@ -1392,6 +1420,7 @@ Crawl-delay: 8
         let mock_cache = Arc::new(MockCacheService::new());
         let checker = RobotsChecker {
             engine_client: Arc::new(EngineClient::with_router(router)),
+            user_agent: "crawlrs-bot/1.0".to_string(),
             memory_cache: Arc::new(Mutex::new(HashMap::new())),
             cache_service: Some(mock_cache.clone() as Arc<dyn CacheService>),
             retry_policy: RetryPolicy {

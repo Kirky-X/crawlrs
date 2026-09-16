@@ -40,7 +40,14 @@ impl ScrapeWorker {
         };
 
         // 2. Robots.txt Check
-        if !check_robots_txt_fn(&task, self.robots_checker.as_ref()).await {
+        // robots UA 来自 robots.user_agent 配置（匹配与抓取共用）
+        if !check_robots_txt_fn(
+            &task,
+            self.robots_checker.as_ref(),
+            self.settings.robots.user_agent.as_str(),
+        )
+        .await
+        {
             self.repository
                 .mark_failed(task.id, Some(self.worker_id))
                 .await?;

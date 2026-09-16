@@ -109,6 +109,9 @@ pub async fn fetch(url: &str, opts: &FetchOptions) -> Result<FetchedContent, Age
     let validator = SsrfValidator::new();
     let mut current = parsed;
     let mut redirects: u8 = 0;
+    // 初始值仅为类型占位：loop 首轮必然在下方重新赋值（或经 `?` 提前返回），
+    // 初始化器不会被读取——clippy unused_assignments 属预期。
+    #[allow(unused_assignments)]
     let mut final_peer_addr: Option<String> = None;
 
     loop {

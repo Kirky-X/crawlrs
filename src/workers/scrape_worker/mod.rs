@@ -472,6 +472,35 @@ impl ScrapeWorker {
             }
         }
 
+        // robots.txt 遵从（可选，默认关闭）：请求级 options.respect_robots 覆盖
+        // 全局 robots.scrape_respect_robots。robots 获取失败 fail-open（与 crawl
+        // 路径一致）；命中 Disallow 时任务置 Failed（原因记入日志，含 task_id）。
+        // 单页抓取不执行 Crawl-delay（非爬虫逐链接语义）。
+        let respect_override = scrape_request_dto
+            .as_ref()
+            .and_then(|dto| dto.options.as_ref())
+            .and_then(|o| o.respect_robots);
+        let robots_allowed = crate::workers::scrape_executor::check_scrape_robots_allowed(
+            &task,
+            respect_override,
+            self.settings.robots.scrape_respect_robots,
+            self.settings.robots.user_agent.as_str(),
+            self.robots_checker.as_ref(),
+        )
+        .await?;
+        if !robots_allowed {
+            warn!(
+                "robots_disallowed: task {} marked failed, url={}, ua={}",
+                task.id,
+                crate::workers::cache_utils::redact_url_for_log(&task.url),
+                self.settings.robots.user_agent
+            );
+            self.repository
+                .mark_failed(task.id, Some(self.worker_id))
+                .await?;
+            return Ok(());
+        }
+
         // 请求合并——同 URL 并发只允许首个执行实际抓取
         //
         // 调用 CoalesceCoordinator（独立组件），返回 `Some(guard)` 表示获得执行权，
@@ -1342,7 +1371,12 @@ impl ScrapeWorker {
     }
 
     async fn check_robots_txt(&self, task: &Task) -> bool {
-        check_robots_txt_fn(task, self.robots_checker.as_ref()).await
+        check_robots_txt_fn(
+            task,
+            self.robots_checker.as_ref(),
+            self.settings.robots.user_agent.as_str(),
+        )
+        .await
     }
 
     fn build_crawl_request(&self, task: &Task, config: &CrawlConfigDto) -> ScrapeRequest {
