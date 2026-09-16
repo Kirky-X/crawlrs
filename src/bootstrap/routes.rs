@@ -11,6 +11,8 @@ use crate::di::{CrawlRsState, CrawlRsStateExt};
 #[cfg(feature = "teams")]
 use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository;
 #[cfg(feature = "teams")]
+use crate::domain::services::team_service::TeamService;
+#[cfg(feature = "teams")]
 use crate::infrastructure::database::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 // webhook feature 关闭时不导入 WebhookRepoImpl
 use crate::common::constants::server_config::CORS_MAX_AGE_SECS;
@@ -269,14 +271,33 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     // teams 相关 Extension 层在 teams-off 时不装配
     //
     // teams-on：附加 geo_restriction_repo / team_service / geo_location_service / geo_restriction_repo_impl
-    //   四个 Extension 层（供 teams-on 版本的 extract_handler / team_handler / crawl_handler 等使用）
+    //   四个 Extension 层（供 teams-on 的 extract_handler / team_handler / crawl_handler 等使用）
     // teams-off：跳过这四个 Extension 层（对应 handler 不接收这些参数，trait object 缺失不会触发 panic）
     #[cfg(feature = "teams")]
     let app = app
-        .layer(Extension(geo_restriction_repo))
+        .layer(Extension(geo_restriction_repo.clone()))
         .layer(Extension(geo_location_service.clone()))
-        .layer(Extension(team_service))
-        .layer(Extension(geo_restriction_repo_impl));
+        .layer(Extension(team_service.clone()))
+        .layer(Extension(geo_restriction_repo_impl))
+        // create_scrape 以 `Extension<Option<...>>` 形态提取（兼容 teams-off 降级）。
+        // axum 对 `Extension<Option<T>>` 按精确类型 `Option<T>` 查找扩展表——裸
+        // `Arc<T>` 层不满足匹配，缺失即 500 Missing request extension。故必须
+        // 额外注入 Option 包装形态（与上方裸 Arc 层并存，供不同 handler 消费）。
+        .layer(Extension(
+            Some(geo_restriction_repo) as Option<Arc<dyn GeoRestrictionRepository>>
+        ))
+        .layer(Extension(Some(team_service) as Option<Arc<TeamService>>));
+    // teams-off：create_scrape 仍以 `Extension<Option<...>>` 提取（其 teams-off
+    // 降级路径依赖 None 语义跳过地理限制检查），显式注入 None 形态，
+    // 避免请求 500 Missing request extension。
+    #[cfg(not(feature = "teams"))]
+    let app = app
+        .layer(Extension(
+            None::<Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>>,
+        ))
+        .layer(Extension(
+            None::<Arc<crate::domain::services::team_service::TeamService>>,
+        ));
 
     // webhook 相关 Extension 层在 webhook-off 时不装配
     //
