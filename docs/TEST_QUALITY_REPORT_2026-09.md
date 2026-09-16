@@ -65,7 +65,7 @@
 | 5 | trait-kit | `ReloadSubscriber` 别名在 `reload` 特性关闭时 dead_code；`e2e_async.rs` 测试模块未随 `decorator` 特性门控 | 别名与定义随使用处同门控 | 低 |
 | 6 | sdforge | `config/app.rs` 顶部 `use ValidateConfig` 未使用（impl 用全限定路径，测试另有局部导入） | 删除该导入 | 低 |
 | 7 | 环境适配 | Docker Desktop WSL 集成未随宿主自启导致套件首跑失败 | 编排脚本保持既有 fail-fast 语义；本次运行前手动拉起 Docker Desktop | 低 |
-| 8 | **安全（CWE-798/540）** | `tests/e2e/test_scenarios.py` 在库内**硬编码历史 garrison API key**（`api_test.sh` 注释中"历史泄漏密钥"的源头） | 改为 `CRAWLRS_TEST_API_KEY` 环境变量注入，未设置即 SKIP；库内引用已清零。**该 key 须在服务端吊销轮换**（对所有曾拉取过本仓库的环境而言均已泄漏） | 高（凭证泄漏） |
+| 8 | **安全（CWE-798/540）** | `tests/e2e/test_scenarios.py` 在库内**硬编码历史 garrison API key**（`api_test.sh` 注释中"历史泄漏密钥"的源头） | 改为 `CRAWLRS_TEST_API_KEY` 环境变量注入，未设置即 SKIP；库内引用已清零。**失效实证（2026-09-16）**：garrison DAO 为进程内 oxcache 存储，该 key 仅存在于早已销毁的服务进程内存中——活体服务复验：携带泄漏 key 访问 `/v1/teams/me` 与 `/v1/admin/api-keys` 均 401（INVALID_TOKEN），持久层 `api_keys` 映射 0 行，结构上不可能对任何现存/未来实例生效，无需额外吊销动作 | 高（凭证泄漏，已实证失效） |
 | 9 | **crawlrs 致命缺陷** | `ShutdownCoordinator::wait_for_completion` 用 `select! { notified, sleep(graceful_period) }` 实现——无信号时最迟 30s 也返回 → **`crawlrs worker` 启动 30 秒后必然静默退出**（守护进程语义根本性错误；活体 E2E 任务滞留 queued 直查定位） | `wait_for_completion` 改为仅等 `notify`（无限等待）；宽限期预算仅作用于触发后的 drain 流程；更新回归测试（`test_wait_for_completion_waits_indefinitely_without_trigger`） | 高（worker 模式不可用） |
 | 10 | crawlrs 行为澄清（非缺陷） | `include_patterns` 作用于抽取发现的**外链**（`crawl_link_extractor::UrlPatternFilter`），种子 URL 无条件抓取，可能出现在结果中 | 语义 E2E 按此契约断言（种子豁免 + 非种子外链全部命中模式）——若 API 层期望"结果 ⊆ pattern"，需后续在设计层面明确 | 低（语义澄清） |
 | 11 | crawlrs 测试 | `rate_limiting_service_test.rs` 直调 `LimiteronService::new` 未跟进第 5 参 `StorageHandle`（b76d330c 吸收批次遗留，`*+test-mocks` 矩阵组合编译失败） | 两处直调补 `StorageHandle::Memory`（与 src 内测试助手同口径） | 中（矩阵 2 组合红） |
@@ -125,4 +125,6 @@ python3 tests/e2e/api_semantics_test.py \
 - [x] `test-results/api-semantics-matrix.md` 0 FAIL（47/47）
 - [x] `test-results/api-audit.jsonl` 抽查：脱敏、状态转换、数据过滤场景符合预期
   （人工审查入口：`test-results/api-interaction-digest.md`）
-- [ ] 依赖 crate（base/*、garrison）修复以各自仓库工作区提交（本仓库外，改动清单见 §3 #4/#5/#6）
+- [x] 依赖 crate 修复已提交：trait-kit `563bf11`、limiteron `0241aa1`（sdforge 的导入修复已随其 HEAD 生效，无需单独提交）
+- [x] 并行会话在途的 R-key 注记清理已收编提交（19 文件纯注释变更，`8414dd1c`，该状态已受终版套件验证）
+- [x] `test_results.txt` 冒烟产物已入 .gitignore（`17ec4763`）
