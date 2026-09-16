@@ -125,22 +125,23 @@ impl ShutdownCoordinator {
         self.graceful_period
     }
 
-    /// 等待活跃任务完成。
+    /// 等待关闭触发。
     ///
     /// - 若 `trigger()` 已触发（信号到达），立即返回 `true`（已收到完成通知）。
-    /// - 若在 `graceful_period` 内未触发，返回 `false`（超时，应强制退出）。
+    /// - 否则**无限等待**直至触发——本方法供守护进程主循环使用
+    ///   （`WorkerManager::wait_for_shutdown` → `crawlrs worker` 常驻），
+    ///   绝不能引入超时返回，否则 worker 会在宽限期后静默退出（历史缺陷：
+    ///   select! 的 `sleep(graceful_period)` 分支导致 worker 启动 30s 后自杀）。
     ///
-    /// 用于替代裸 `tokio::signal::ctrl_c().await`：信号监听任务一旦触发，
-    /// 本方法即刻返回；否则最迟在宽限期后返回。
+    /// 宽限期预算（`graceful_period` / 分阶段停机全局超时）只作用于
+    /// **触发之后**的 drain 流程（`run_phased_shutdown`），与本等待无关。
     pub async fn wait_for_completion(&self) -> bool {
         // 若已在关闭中，直接返回（信号可能先于本调用到达）。
         if self.is_shutting_down() {
             return true;
         }
-        tokio::select! {
-            _ = self.notify.notified() => true,
-            _ = tokio::time::sleep(self.graceful_period) => false,
-        }
+        self.notify.notified().await;
+        true
     }
 }
 
@@ -272,21 +273,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wait_for_completion_times_out_after_graceful_period() {
-        // 无 trigger：wait_for_completion 应在宽限期后超时返回 false。
-        let coordinator = Arc::new(ShutdownCoordinator::new(Duration::from_millis(50)));
-        let start = std::time::Instant::now();
-        let result = coordinator.wait_for_completion().await;
-        let elapsed = start.elapsed();
-        assert!(!result, "timeout should return false");
-        assert!(
-            elapsed >= Duration::from_millis(40),
-            "timeout should wait at least ~graceful_period, got {:?}",
-            elapsed
-        );
-    }
-
-    #[tokio::test]
     async fn test_wait_for_completion_unblocks_on_trigger() {
         // 后台任务触发 trigger，wait_for_completion 应提前返回 true（而非等满宽限期）。
         let coordinator = Arc::new(ShutdownCoordinator::new(Duration::from_secs(30)));
@@ -304,6 +290,27 @@ mod tests {
             "should unblock promptly on trigger, got {:?}",
             elapsed
         );
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_completion_waits_indefinitely_without_trigger() {
+        // 回归测试（worker 30s 自杀缺陷）：无 trigger 时 wait_for_completion
+        // 必须持续等待而非在宽限期后超时返回——守护进程主循环依赖该语义。
+        // 验证方式：graceful_period=50ms 的协调器，等待 120ms 后仍未返回
+        //（select! 中 sleep 先完成即证明 wait 不会自行超时）。
+        let coordinator = Arc::new(ShutdownCoordinator::new(Duration::from_millis(50)));
+        let wait_task = tokio::spawn({
+            let coordinator = coordinator.clone();
+            async move { coordinator.wait_for_completion().await }
+        });
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert!(
+            !wait_task.is_finished(),
+            "wait_for_completion must not return without trigger \
+             (worker daemon would die after graceful_period)"
+        );
+        coordinator.trigger();
+        assert!(wait_task.await.unwrap(), "should return true after trigger");
     }
 
     // ========== 分阶段停机 hook（trait-kit shutdown 吸收） ==========
