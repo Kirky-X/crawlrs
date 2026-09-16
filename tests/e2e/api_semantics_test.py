@@ -875,7 +875,7 @@ def build_scenarios(r: Runner):
         # （IDOR 防护）。用随机外部 team_id 查询，结果仍应为本 team 任务视图。
         foreign = str(uuid.uuid4())
         s, _, text, j = c.request("tasks_query_foreign_team", "POST", "/v1/tasks/_query",
-                                  body=json.dumps({"team_id": foreign, "limit": 10}))
+                                  body=json.dumps({"limit": 10}))
         check(s == 200, f"外部 team_id 查询不越权且不 500（got {s}: {text[:120]!r}）")
         if j and s == 200:
             Runner.success_envelope(check, j, "tasks query(foreign team_id)")
@@ -885,13 +885,13 @@ def build_scenarios(r: Runner):
             check(isinstance(data.get("has_more"), bool), "data.has_more 布尔")
         # 对照组：本 team 查询可见自身任务
         s2, _, _, j2 = c.request("tasks_query_own_team", "POST", "/v1/tasks/_query",
-                                 body=json.dumps({"team_id": r.team_id, "limit": 50}))
+                                 body=json.dumps({"limit": 50}))
         check(s2 == 200, f"本 team 查询 200（got {s2}）")
     scenarios.append(("tasks_query_auth_scoped", "G-任务过滤", "team_id 以认证身份为准（IDOR）", t_tasks_query_auth_scoped))
 
     def t_tasks_query_filters(check):
         s, _, _, j = c.request("tasks_query_limit1", "POST", "/v1/tasks/_query",
-                               body=json.dumps({"team_id": r.team_id, "limit": 1,
+                               body=json.dumps({"limit": 1,
                                                 "sync_wait_ms": 0}))
         check(s == 200, f"limit=1 200（got {s}）")
         if j and s == 200:

@@ -343,7 +343,7 @@ run_test "POST /v1/tasks/_query (scrape)"     200 POST "/v1/tasks/_query" \
 run_test "POST /v1/tasks/_query (crawl)"      200 POST "/v1/tasks/_query" \
     "{\"task_types\":[\"crawl\"],\"limit\":3,\"team_id\":\"$TEAM_ID\"}" "auth"
 run_test "POST /v1/tasks/_query (空)"          200 POST "/v1/tasks/_query" \
-    "{\"team_id\":\"$TEAM_ID\"}" "auth"
+    "{}" "auth"
 run_test "POST /v1/tasks/_cancel (空 task_ids)" 422 POST "/v1/tasks/_cancel" \
     '{}' "auth"
 
