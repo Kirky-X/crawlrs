@@ -14,6 +14,12 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// 串行化所有依赖共享 tasks 表全局队列语义的测试（acquire_next / reset_stuck /
+/// requeue 等）。这些用例彼此会扫走/重置对方的目标行，并行执行产生竞态
+/// （历史 flake：reset_stuck_tasks 把 zombie recovery 用例的目标行抢先重置，
+/// attempt_count 未自增导致断言失败）。
+static TASK_QUEUE_DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// 测试并发任务获取和超时
 ///
 /// 验证在多个工作程序并发获取任务时，只有一个能成功，
@@ -22,6 +28,7 @@ use uuid::Uuid;
 /// 对应文档章节：3.3.3
 #[tokio::test]
 async fn test_concurrent_task_acquisition_and_timeout() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app_no_worker().await;
     let repo = Arc::new(TaskRepositoryImpl::new(
         app.db_pool.clone(),
@@ -247,6 +254,7 @@ async fn test_repository_crud_operations() {
 // 对应文档章节：3.3.2
 #[tokio::test]
 async fn test_repository_acquire_next_task() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
@@ -471,6 +479,7 @@ async fn test_task_status_transitions() {
 /// lock_token 匹配时置回 queued 并清空认领；不匹配时返回 Ok(false) 且不动任务。
 #[tokio::test]
 async fn test_requeue_task_respects_lock_token_guard() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
@@ -540,6 +549,7 @@ async fn test_requeue_task_respects_lock_token_guard() {
 /// 未达上限的僵尸任务恢复时 attempt_count 原子自增。
 #[tokio::test]
 async fn test_acquire_next_zombie_recovery_respects_max_retries() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
@@ -713,6 +723,7 @@ async fn test_exists_by_url() {
 /// 对应文档章节：3.3.6
 #[tokio::test]
 async fn test_reset_stuck_tasks() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
@@ -947,6 +958,7 @@ async fn test_cancel_tasks_by_crawl_id() {
 /// 对应文档章节：3.3.8
 #[tokio::test]
 async fn test_expire_tasks() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
@@ -1431,6 +1443,7 @@ async fn test_find_existing_urls_performance() {
 /// 无论 acquire_next 拿到哪个 task，都应该满足这些字段不变量。
 #[tokio::test]
 async fn test_acquire_next_set_clause_mirrors_domain_methods() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app_no_worker().await;
     let lock_duration = chrono::Duration::seconds(30);
     let repo = Arc::new(TaskRepositoryImpl::new(app.db_pool.clone(), lock_duration));
@@ -1520,6 +1533,7 @@ async fn test_acquire_next_set_clause_mirrors_domain_methods() {
 /// 不会出现 active-expired 抢占 queued 的情况（避免饥饿）。
 #[tokio::test]
 async fn test_acquire_next_prefers_queued_over_active_expired() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app_no_worker().await;
     let repo = Arc::new(TaskRepositoryImpl::new(
         app.db_pool.clone(),
@@ -1607,6 +1621,7 @@ async fn test_acquire_next_prefers_queued_over_active_expired() {
 /// 这验证了 Step 2 的 WHERE 条件 `lock_expires_at < NOW()` 正确排除未过期锁。
 #[tokio::test]
 async fn test_acquire_next_skips_active_unexpired() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app_no_worker().await;
     let repo = Arc::new(TaskRepositoryImpl::new(
         app.db_pool.clone(),
@@ -1688,6 +1703,7 @@ async fn test_acquire_next_skips_active_unexpired() {
 /// 确保 NULL lock_expires_at 的 active 任务不会被错误地当作可恢复任务。
 #[tokio::test]
 async fn test_acquire_next_skips_active_with_null_lock_expires_at() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app_no_worker().await;
     let repo = Arc::new(TaskRepositoryImpl::new(
         app.db_pool.clone(),
@@ -1755,6 +1771,7 @@ async fn test_acquire_next_skips_active_with_null_lock_expires_at() {
 /// task 仍处于 active 状态但锁已过期，应该被新 worker 接管。
 #[tokio::test]
 async fn test_acquire_next_recovers_active_expired_task() {
+    let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
     let app = create_test_app_no_worker().await;
     let repo = Arc::new(TaskRepositoryImpl::new(
         app.db_pool.clone(),

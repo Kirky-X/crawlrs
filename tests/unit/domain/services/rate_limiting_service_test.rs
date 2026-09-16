@@ -42,7 +42,9 @@ use crawlrs::domain::services::rate_limiting_service::{
     BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult, QuotaService,
     RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError, RateLimitingService,
 };
-use crawlrs::infrastructure::services::limiteron_service::{LimiteronService, RateLimitingConfig};
+use crawlrs::infrastructure::services::limiteron_service::{
+    LimiteronService, RateLimitingConfig, StorageHandle,
+};
 
 // === Mock Task Repository ===
 
@@ -457,6 +459,7 @@ async fn make_service(
         backlog_repo as Arc<dyn TasksBacklogRepository>,
         credits_repo as Arc<dyn CreditsRepository>,
         config,
+        StorageHandle::Memory,
     )
     .await
     .expect("Failed to create LimiteronService")
@@ -516,6 +519,7 @@ async fn test_new_with_default_config_succeeds() {
         backlog_repo as Arc<dyn TasksBacklogRepository>,
         credits_repo as Arc<dyn CreditsRepository>,
         config,
+        StorageHandle::Memory,
     )
     .await;
 
