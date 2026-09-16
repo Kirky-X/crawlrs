@@ -219,7 +219,7 @@ run_test_timeout "Crawl text.npr.org (depth=1)"      "201|202" POST "/v1/crawl" 
 run_test_timeout "Crawl baidu.com (depth=2)"        "201|202" POST "/v1/crawl" 30 \
     '{"url":"https://www.baidu.com","name":"test-crawl-baidu","config":{"max_depth":2,"max_concurrency":2}}' "auth"
 run_test_timeout "Crawl with include_patterns"       "201|202" POST "/v1/crawl" 30 \
-    '{"url":"https://text.npr.org","name":"test-crawl-filter","config":{"max_depth":1,"include_patterns":["^https://example\\.com/.*"]}}' "auth"
+    '{"url":"https://text.npr.org","name":"test-crawl-filter","config":{"max_depth":1,"include_patterns":["^https://text\\.npr\\.org/.*"]}}' "auth"
 run_test_timeout "Crawl with exclude_patterns"       "201|202" POST "/v1/crawl" 30 \
     '{"url":"https://text.npr.org","name":"test-crawl-exclude","config":{"max_depth":1,"exclude_patterns":[".*\\.pdf$"]}}' "auth"
 run_test_timeout "Crawl with crawl_delay_ms"        "201|202" POST "/v1/crawl" 30 \

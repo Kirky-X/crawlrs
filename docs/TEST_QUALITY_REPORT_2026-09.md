@@ -52,7 +52,8 @@
 - **H 并发**：并发提交全部受理 + 任务 id 唯一性
 
 > **真实站点约束（2026-09-16 起）**：E2E/集成/语义测试全部使用真实新闻网站
-> （主站 `text.npr.org`，故障转移 `news.ycombinator.com`、`lite.cnn.com`），
+> （主站 `text.npr.org`，故障转移 `news.ycombinator.com`、`lite.cnn.com`；
+> include_patterns 过滤种子 `en.wikinews.org`，站点独占分配规避跨 crawl 去重），
 > 禁止 `example.com`（仅允许单元测试使用）；抓取结果断言含真实站点内容标记
 > （npr.org/ycombinator/cnn.com），防占位页冒充。
 
@@ -75,6 +76,7 @@
 | 10 | crawlrs 行为澄清（非缺陷） | `include_patterns` 作用于抽取发现的**外链**（`crawl_link_extractor::UrlPatternFilter`），种子 URL 无条件抓取，可能出现在结果中 | 语义 E2E 按此契约断言（种子豁免 + 非种子外链全部命中模式）——若 API 层期望"结果 ⊆ pattern"，需后续在设计层面明确 | 低（语义澄清） |
 | 11 | crawlrs 测试 | `rate_limiting_service_test.rs` 直调 `LimiteronService::new` 未跟进第 5 参 `StorageHandle`（b76d330c 吸收批次遗留，`*+test-mocks` 矩阵组合编译失败） | 两处直调补 `StorageHandle::Memory`（与 src 内测试助手同口径） | 中（矩阵 2 组合红） |
 | 12 | crawlrs 工程规范 | `src/engines/client/reqwest.rs` 存在既有 fmt 违规（注释缩进，吸收批次遗留） | `cargo fmt` 修复并验证 | 低 |
+| 15 | **crawlrs 爬取缺陷** | `handle_crawl_success` 在外链入队**之前**评估自适应停止条件：种子页完成时 total=1/pending=0 恒成立 → `NoPendingLinks` 必然触发 → **任何 crawl 都止步于第一页，depth>1 与 include/exclude 过滤永远不可达**（活体实证：worker 日志 `adaptive stop: no pending links (pages=1, pending=0)`，结果集仅含种子） | 重排为「先入队外链、后评估停止条件」；NoPendingLinks 仅在深度耗尽且全部完成后触发；MaxPagesReached 语义不变。活体验证：wikinews 种子（145 外链）子页全部入队并抓取成功 | 高（爬取核心功能不可用） |
 | 14 | crawlrs 生产健壮性 | `wait_audit_tasks` 用 `join_all()`——遇被取消的 audit task 直接 panic（"task was cancelled"）。跨 runtime 场景（并行测试）真实触发；shutdown 等待方被连带炸掉 | 改为逐个 `join_next()`：cancelled 视为完成，task panic 记录日志不传播（监听器 best-effort 契约） | 中（shutdown 路径） |
 | 13 | 套件稳定性 | 共享测试库的全局队列语义测试（acquire_next/reset_stuck 系列）与真实池用例在高并行 + 宿主高负载下存在竞态/瞬态抖动（含 WSL2 Docker 端口转发 `ConnectionClosed`，既有已定性环境问题） | ① 11 个队列语义测试以共享 `tokio::sync::Mutex` 串行化；② lib/mock-main 跑加"失败重试一次"护栏（确定性失败重试仍红，不掩盖真问题） | 中（套件信噪比） |
 

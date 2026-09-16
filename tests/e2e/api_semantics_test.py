@@ -67,8 +67,15 @@ NEWS_SITES = [
     ("https://lite.cnn.com", "cnn.com"),              # CNN lite 新闻
 ]
 NEWS_PRIMARY = NEWS_SITES[0][0]
-# include_patterns 用同域外链匹配（text.npr.org 文章链接形如 /12345678）
-NEWS_INCLUDE_PATTERN = r"^https://text\.npr\.org/.*"
+# include_patterns 过滤种子：en.wikinews.org（维基新闻，外链丰富的真实新闻站，
+# 主页含大量同域 /wiki/ 绝对链接），种子豁免容忍尾斜杠
+NEWS_FILTER_SEED = "https://en.wikinews.org"
+NEWS_INCLUDE_PATTERN = r"^https://en\.wikinews\.org/.*"
+# 站点独占分配：同一轮套件内全局 URL 去重（Bloom）跨 crawl 生效——两个 crawl
+# 若用同一站点，后跑者的子链接会被整体去重（结果仅剩种子）。故 include 过滤
+# 用 wikinews（外链丰富且 robots 无 crawl-delay），与 smoke/lifecycle
+# （text.npr.org）互不相交。HN 不可用：robots.txt 要求 crawl-delay 30s/链接，
+# 74 个子链接会把爬取通道阻塞半小时。
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+")
 RFC3339_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
@@ -602,26 +609,42 @@ def build_scenarios(r: Runner):
 
     def t_crawl_include_patterns(check):
         s, _, j = _create_crawl("crawl_include_create",
-                                {"url": NEWS_PRIMARY, "name": "e2e-sem-filter",
-                                 "config": {"max_depth": 2,
+                                {"url": NEWS_FILTER_SEED, "name": "e2e-sem-filter",
+                                 "config": {"max_depth": 1,
                                             "include_patterns": [NEWS_INCLUDE_PATTERN]}})
         check(s in (200, 201, 202), f"创建 2xx（got {s}）")
         crawl_id = ((j or {}).get("data") or {}).get("id")
         if not crawl_id:
             check(False, "未获得 crawl_id")
             return
-        seen, final = _poll_crawl(crawl_id)
-        if not final:
-            check(False, f"120s 内终态（{seen}）")
-            return
-        s2, _, _, j2 = c.request("crawl_include_results", "GET",
-                                 f"/v1/crawl/{crawl_id}/results", timeout=30)
-        check(s2 == 200, f"results 200（got {s2}）")
+        # 数据过滤验证面向结果集本身：种子页（145 个同域外链）全部抓完需数分钟，
+        # 而 crawl 行在全部完成前状态恒为 queued——因此轮询结果集直到出现
+        # 非种子 URL（首个子页完成后即满足，通常 <30s），不等待整场终态。
+        seed = NEWS_FILTER_SEED
+        pattern = re.compile(NEWS_INCLUDE_PATTERN)
+        deadline = time.monotonic() + 300
+        urls, seen = [], []
+        while time.monotonic() < deadline:
+            s2, _, _, j2 = c.request("crawl_include_results", "GET",
+                                     f"/v1/crawl/{crawl_id}/results", timeout=30)
+            if s2 == 200 and j2:
+                results = (j2 or {}).get("data") or []
+                urls = [it.get("url") for it in results if isinstance(it, dict)]
+                non_seed = [u for u in urls
+                            if u and u.rstrip("/") != seed.rstrip("/")]
+                if non_seed:
+                    break
+            s3, _, _, j3 = c.request("crawl_include_status", "GET",
+                                     f"/v1/crawl/{crawl_id}", timeout=30)
+            if s3 == 200 and j3:
+                st = ((j3 or {}).get("data") or {}).get("status")
+                if st and st not in seen:
+                    seen.append(st)
+                if st in TERMINAL_STATUSES:
+                    break
+            time.sleep(3)
+
         if j2 and s2 == 200:
-            results = (j2 or {}).get("data") or []
-            pattern = re.compile(NEWS_INCLUDE_PATTERN)
-            seed = NEWS_PRIMARY
-            urls = [it.get("url") for it in results if isinstance(it, dict)]
             # 契约：include_patterns 作用于抽取发现的外链（crawl_link_extractor
             # 的 UrlPatternFilter）；种子 URL 无条件抓取（标准爬虫语义），豁免匹配。
             violation = [u for u in urls
@@ -629,11 +652,19 @@ def build_scenarios(r: Runner):
                          and not pattern.match(str(u))]
             check(not violation,
                   f"非种子结果 URL 全部命中 include_patterns（违规: {violation[:3]}）")
-            check(any(u and u.rstrip("/") == seed.rstrip("/") for u in urls) or len(urls) == 0,
+            check(any(u and u.rstrip("/") == seed.rstrip("/") for u in urls),
                   f"种子 URL 在结果中（got {urls[:3]}）")
+            non_seed = [u for u in urls if u and u.rstrip("/") != seed.rstrip("/")]
+            check(len(non_seed) >= 1,
+                  f"外链丰富的种子应产生非种子结果（结果总数={len(urls)}，"
+                  f"状态观测: {seen}，样本: {urls[:3]}）")
             r.auditor.log_event("data_filter", "crawl_include_patterns",
                                 {"crawl_id": crawl_id, "result_urls": urls[:20],
-                                 "pattern": NEWS_INCLUDE_PATTERN})
+                                 "pattern": NEWS_INCLUDE_PATTERN,
+                                 "status_observed": seen})
+        # 数据过滤已验证，取消爬取避免空耗（容忍 204/404——可能已全部完成）
+        c.request("crawl_include_cleanup", "DELETE", f"/v1/crawl/{crawl_id}",
+                  timeout=30)
     scenarios.append(("crawl_include_patterns", "D-Crawl", "include_patterns 数据过滤", t_crawl_include_patterns))
 
     def t_crawl_cancel(check):
@@ -882,6 +913,58 @@ def build_scenarios(r: Runner):
         check(s == 422, f"空请求 422（got {s}）")
         Runner.error_envelope(check, j, s, "tasks cancel empty")
     scenarios.append(("tasks_cancel_empty_422", "G-任务过滤", "批量取消空请求 422", t_tasks_cancel_empty))
+
+    # ═══ I. 文本提取（去 HTML 标签）═══
+    def t_markdown_extraction(check):
+        # formats=["markdown"] → worker 经 HTML→Markdown 转换生成去标签正文，
+        # 结果经 save_result 落入 result.meta_data.markdown
+        s0, _, _, j0 = c.request("extract_md_create", "POST", "/v1/scrape",
+                                 body=json.dumps({"url": NEWS_PRIMARY,
+                                                  "formats": ["markdown"],
+                                                  "exclude_tags": ["style", "script"],
+                                                  "metadata": {"e2e": "text-extraction"}}),
+                                 timeout=60)
+        check(s0 in (200, 201, 202), f"创建 2xx（got {s0}）")
+        task_id = ((j0 or {}).get("data") or {}).get("id")
+        if not task_id:
+            check(False, "未获得 task_id")
+            return
+        final = None
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            s, _, _, j = c.request("extract_md_poll", "GET", f"/v1/scrape/{task_id}",
+                                   timeout=30)
+            if s == 200 and j:
+                st = ((j.get("data") or {}).get("status"))
+                if st in TERMINAL_STATUSES:
+                    final = j.get("data")
+                    break
+            time.sleep(1.5)
+        check(final is not None, "90s 内到达终态")
+        if not final:
+            return
+        check(final.get("status") in ("completed", "success"),
+              f"提取用例需 completed（got {final.get('status')}: "
+              f"{str(final.get('error'))[:120]}）")
+        if final.get("status") not in ("completed", "success"):
+            return
+        md = (((final.get("result") or {}).get("meta_data") or {}).get("markdown")) or ""
+        check(bool(md) and len(md) >= 100, f"meta_data.markdown 非空（len={len(md)}）")
+        if not md:
+            return
+        low = md.lower()
+        for tag in ("<html", "<div", "<p>", "</p>", "<a href"):
+            check(tag not in low, f"提取结果不含 HTML 标签 {tag!r}")
+        check("npr.org" in low, "提取文本含真实站点标记 npr.org")
+        # 提取结果可视：打印摘录（进入 liveapi 日志）+ 全文样本入审计日志
+        print("\n    ── 去标签提取结果（meta_data.markdown 前 600 字符）──")
+        for line in md[:600].splitlines()[:12]:
+            print(f"    │ {line}")
+        r.auditor.log_event("text_extraction", "markdown_extraction",
+                            {"task_id": task_id, "markdown_len": len(md),
+                             "excerpt": md[:800]})
+    scenarios.append(("markdown_text_extraction", "I-文本提取",
+                      "formats=markdown 去标签提取+真实内容", t_markdown_extraction))
 
     # ═══ H. 并发 ═══
     def t_concurrent_scrapes(check):
