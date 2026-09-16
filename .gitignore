@@ -169,6 +169,7 @@ docker/data/*
 
 # Docker test results
 docker/test-results/
+/test_results.txt
 
 # E2E suite results（scripts/e2e-suite.sh 输出）
 test-results/
