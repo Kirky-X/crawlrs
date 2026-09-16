@@ -149,13 +149,37 @@ impl ScrapeWorker {
             );
         }
 
+        // 先提取并入队子链接，再评估自适应停止条件。
+        //
+        // 顺序是正确性约束：`NoPendingLinks` 的语义是"已无待处理链接"。
+        // 若在外链入队之前评估，种子页完成时 total=1/pending=0 恒成立，
+        // 任何 crawl 都会在第一页后提前终止——depth > 1 与 include/exclude
+        // 过滤永远不可达（缺陷实证：worker 日志 "adaptive stop: no pending
+        // links (pages=1, pending=0)"，结果集仅含种子页）。
+        // 重排后 pending 统计包含刚入队的子链接，NoPendingLinks 仅在
+        // 深度耗尽（depth >= max_depth 不再入队）且全部完成后才触发；
+        // MaxPagesReached 语义不变（入队后仍可按页数上限提前终止）。
+        if depth < config.max_depth {
+            extract_and_queue_links_fn(
+                task,
+                &processed_response,
+                crawl_id,
+                depth,
+                config,
+                self.repository.as_ref(),
+                self.crawl_repository.as_ref(),
+                &self.deduplicator,
+            )
+            .await?;
+        }
+
         // 自适应停止条件检查
         //
-        // 每完成一个爬取步骤后，评估是否应提前终止整个 crawl：
+        // 每完成一个爬取步骤（并入队子链接）后，评估是否应提前终止整个 crawl：
         // - `MaxPagesReached`: completed_tasks >= max_pages（可配置上限）
         // - `NoPendingLinks`: total_tasks 已全部完成（无待处理链接）
         //
-        // 命中时直接标记 crawl 为 Completed，跳过后续链接提取。
+        // 命中时直接标记 crawl 为 Completed。
         // 注：完整 `AdaptiveStrategy::evaluate`（BM25/覆盖率/饱和度）
         // 需 CrawlConfigDto 扩展 keywords 字段后接入（当前 DTO 无 keywords）。
         if let Ok(Some(crawl_state)) = self.crawl_repository.find_by_id(crawl_id).await {
@@ -192,37 +216,12 @@ impl ScrapeWorker {
                     );
                 }
             } else {
-                // 未触发停止条件，继续正常流程
-                if depth < config.max_depth {
-                    extract_and_queue_links_fn(
-                        task,
-                        &processed_response,
-                        crawl_id,
-                        depth,
-                        config,
-                        self.repository.as_ref(),
-                        self.crawl_repository.as_ref(),
-                        &self.deduplicator,
-                    )
-                    .await?;
-                }
+                // 未触发停止条件：由 update_crawl_completion_status 按总量判定
+                // 是否全部完成（子任务入队后 total 已增长，不会误标 Completed）
                 update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
             }
         } else {
-            // crawl 查询失败，回退到原流程（继续提取链接 + 更新状态）
-            if depth < config.max_depth {
-                extract_and_queue_links_fn(
-                    task,
-                    &processed_response,
-                    crawl_id,
-                    depth,
-                    config,
-                    self.repository.as_ref(),
-                    self.crawl_repository.as_ref(),
-                    &self.deduplicator,
-                )
-                .await?;
-            }
+            // crawl 查询失败，回退到原流程（仅更新完成状态）
             update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
         }
 
