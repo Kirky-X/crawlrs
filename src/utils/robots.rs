@@ -105,6 +105,9 @@ pub struct RobotsChecker {
     /// 缓存服务（可选，用于持久化缓存）
     cache_service: Option<Arc<dyn CacheService>>,
 
+    /// robots.txt 缓存 TTL
+    cache_ttl: Duration,
+
     /// 重试策略
     retry_policy: RetryPolicy,
 
@@ -141,20 +144,21 @@ impl RobotsChecker {
     /// 返回新的Robots检查器实例
     pub fn new(
         http_client: Arc<reqwest::Client>,
-        user_agent: String,
+        settings: &crate::config::settings::RobotsSettings,
         cache_service: Option<Arc<dyn CacheService>>,
         cache_stats: Option<Arc<CacheStats>>,
     ) -> Self {
         let engine_client = Self::create_engine_client(http_client);
         Self {
             engine_client,
-            user_agent,
+            user_agent: settings.user_agent.clone(),
             memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
             cache_service,
+            cache_ttl: Duration::from_secs(settings.cache_ttl_secs),
             retry_policy: RetryPolicy {
-                max_retries: 5,
-                initial_backoff: Duration::from_secs(2),
-                max_backoff: Duration::from_secs(10),
+                max_retries: settings.fetch_max_retries,
+                initial_backoff: Duration::from_secs(settings.fetch_initial_backoff_secs),
+                max_backoff: Duration::from_secs(settings.fetch_max_backoff_secs),
                 ..Default::default()
             },
             cache_stats: cache_stats.unwrap_or_else(|| Arc::new(CacheStats::default())),
@@ -203,7 +207,7 @@ impl RobotsChecker {
                     robots_url.clone(),
                     CachedRobots {
                         content: content.clone(),
-                        expires_at: Instant::now() + Duration::from_secs(3600),
+                        expires_at: Instant::now() + self.cache_ttl,
                     },
                 );
                 self.cache_stats.record_hit();
@@ -276,7 +280,7 @@ impl RobotsChecker {
                 robots_url.clone(),
                 CachedRobots {
                     content: content.clone(),
-                    expires_at: Instant::now() + Duration::from_secs(3600), // Cache for 1 hour
+                    expires_at: Instant::now() + self.cache_ttl, // Cache for 1 hour
                 },
             );
         }
@@ -334,11 +338,6 @@ impl RobotsChecker {
         }
 
         delay.map(Duration::from_secs_f64)
-    }
-
-    /// 旧的公开方法，为了兼容性保留
-    pub async fn is_allowed(&self, url_str: &str, user_agent: &str) -> Result<bool> {
-        RobotsCheckerTrait::is_allowed(self, url_str, user_agent).await
     }
 
     /// 获取缓存统计信息
@@ -545,7 +544,12 @@ mod tests {
 
     fn make_checker() -> RobotsChecker {
         let http_client = Arc::new(reqwest::Client::new());
-        RobotsChecker::new(http_client, "crawlrs-bot/1.0".to_string(), None, None)
+        RobotsChecker::new(
+            http_client,
+            &crate::config::settings::RobotsSettings::default(),
+            None,
+            None,
+        )
     }
 
     #[test]
@@ -565,7 +569,7 @@ mod tests {
 
         let checker = RobotsChecker::new(
             http_client,
-            "crawlrs-bot/1.0".to_string(),
+            &crate::config::settings::RobotsSettings::default(),
             None,
             Some(stats),
         );
@@ -794,7 +798,7 @@ Crawl-delay: 8
             robots_url.to_string(),
             CachedRobots {
                 content: content.to_string(),
-                expires_at: Instant::now() + Duration::from_secs(3600),
+                expires_at: Instant::now() + checker.cache_ttl,
             },
         );
     }
@@ -929,7 +933,7 @@ Crawl-delay: 8
         let stats = Arc::new(CacheStats::default());
         let checker = RobotsChecker::new(
             http_client,
-            "crawlrs-bot/1.0".to_string(),
+            &crate::config::settings::RobotsSettings::default(),
             None,
             Some(stats.clone()),
         );
@@ -961,7 +965,7 @@ Crawl-delay: 8
         let stats = Arc::new(CacheStats::default());
         let checker = RobotsChecker::new(
             http_client,
-            "crawlrs-bot/1.0".to_string(),
+            &crate::config::settings::RobotsSettings::default(),
             None,
             Some(stats.clone()),
         );
@@ -1187,6 +1191,8 @@ Crawl-delay: 8
             user_agent: "crawlrs-bot/1.0".to_string(),
             memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
             cache_service: None,
+
+            cache_ttl: Duration::from_secs(3600),
             retry_policy: RetryPolicy {
                 max_retries: 3,
                 initial_backoff: Duration::from_millis(1),
@@ -1214,6 +1220,8 @@ Crawl-delay: 8
             user_agent: "crawlrs-bot/1.0".to_string(),
             memory_cache: Arc::new(Mutex::new(HashMap::new())),
             cache_service: Some(mock_cache as Arc<dyn CacheService>),
+
+            cache_ttl: Duration::from_secs(3600),
             retry_policy: RetryPolicy::default(),
             cache_stats: Arc::new(CacheStats::default()),
         };
@@ -1253,6 +1261,8 @@ Crawl-delay: 8
             user_agent: "crawlrs-bot/1.0".to_string(),
             memory_cache: Arc::new(Mutex::new(HashMap::new())),
             cache_service: Some(mock_cache as Arc<dyn CacheService>),
+
+            cache_ttl: Duration::from_secs(3600),
             retry_policy: RetryPolicy::default(),
             cache_stats: Arc::new(CacheStats::default()),
         };
@@ -1423,6 +1433,7 @@ Crawl-delay: 8
             user_agent: "crawlrs-bot/1.0".to_string(),
             memory_cache: Arc::new(Mutex::new(HashMap::new())),
             cache_service: Some(mock_cache.clone() as Arc<dyn CacheService>),
+            cache_ttl: Duration::from_secs(3600),
             retry_policy: RetryPolicy {
                 max_retries: 3,
                 initial_backoff: Duration::from_millis(1),

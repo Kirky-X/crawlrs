@@ -1706,6 +1706,7 @@ async fn test_mock_build_crawl_request_with_headers() {
         strategy: None,
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: None,
         headers: Some(json!({
             "Accept": "text/html",
@@ -1744,6 +1745,7 @@ async fn test_mock_build_crawl_request_non_string_headers_filtered() {
         strategy: None,
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: None,
         headers: Some(json!({
             "X-Number": 42,
@@ -1784,6 +1786,7 @@ async fn test_mock_build_crawl_request_with_proxy() {
         strategy: None,
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: Some("http://proxy:3128".to_string()),
         headers: None,
         extraction_rules: None,
@@ -1812,6 +1815,7 @@ async fn test_mock_build_crawl_request_empty_headers_map() {
         strategy: None,
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: None,
         headers: Some(json!({})),
         extraction_rules: None,
@@ -3439,6 +3443,7 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
         &settings.engines,
         // 注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
         &settings.timeouts.engines,
+        settings.engines.max_response_body_bytes as usize,
     );
     let services = init_services(
         &infra,
@@ -3491,6 +3496,7 @@ fn make_crawl_config(
         strategy: None,
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: None,
         headers: None,
         extraction_rules: None,
@@ -3616,6 +3622,7 @@ async fn tc_scrape_worker_builder_builds_full_worker() {
         &settings.engines,
         // 注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
         &settings.timeouts.engines,
+        settings.engines.max_response_body_bytes as usize,
     );
     let services = init_services(
         &infra,
@@ -3885,6 +3892,7 @@ async fn test_mock_handle_crawl_success_with_extraction_rules() {
         strategy: None,
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: None,
         headers: None,
         extraction_rules: Some(rules),
@@ -4020,6 +4028,7 @@ async fn test_mock_extract_and_queue_links_dfs_strategy() {
         strategy: Some("dfs".to_string()),
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: None,
         headers: None,
         extraction_rules: None,
@@ -4095,6 +4104,7 @@ async fn test_mock_build_crawl_request_with_extraction_rules() {
         strategy: None,
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: None,
         headers: None,
         extraction_rules: Some(rules),
@@ -4226,6 +4236,7 @@ async fn test_mock_handle_crawl_failure_with_proxy() {
         strategy: None,
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: Some("http://proxy:3128".to_string()),
         headers: None,
         extraction_rules: None,
@@ -6505,6 +6516,7 @@ async fn test_extract_data_with_rules_failure_returns_none_and_logs() {
         strategy: None,
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: None,
         headers: None,
         extraction_rules: Some(rules),
@@ -6961,6 +6973,7 @@ fn build_crawl_config(
         strategy: None,
         crawl_delay_ms: None,
         max_concurrency: None,
+        max_pages: None,
         proxy: None,
         headers: None,
         extraction_rules: None,

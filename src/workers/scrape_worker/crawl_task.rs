@@ -194,8 +194,8 @@ impl ScrapeWorker {
             let total = crawl_state.total_tasks() as usize;
             let pending = total.saturating_sub(pages_crawled + crawl_state.failed_tasks() as usize);
 
-            // 可配置上限：后续从 CrawlConfigDto.max_pages 读取，当前用 1000 兜底
-            let max_pages = 1000usize;
+            // 页数上限来自 crawl config（缺省 1000）
+            let max_pages = config.max_pages.unwrap_or(1000) as usize;
             let stop_condition = StopCondition::new().with_max_pages(max_pages);
             let stats = CrawlStats::new()
                 .with_pages(pages_crawled)

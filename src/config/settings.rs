@@ -136,6 +136,22 @@ pub struct RobotsSettings {
     /// `/v1/scrape` 是否默认遵从 robots.txt（请求级 respect_robots 可覆盖）
     #[config(default = false)]
     pub scrape_respect_robots: bool,
+
+    /// robots.txt 缓存 TTL（秒）
+    #[config(default = 3600)]
+    pub cache_ttl_secs: u64,
+
+    /// robots.txt 获取失败重试次数
+    #[config(default = 5)]
+    pub fetch_max_retries: u32,
+
+    /// 重试初始退避（秒）
+    #[config(default = 2)]
+    pub fetch_initial_backoff_secs: u64,
+
+    /// 重试最大退避（秒）
+    #[config(default = 10)]
+    pub fetch_max_backoff_secs: u64,
 }
 
 /// CORS 配置设置
@@ -748,11 +764,9 @@ pub fn validate_i18n(settings: &I18nSettings) -> Result<(), validator::Validatio
 }
 
 // =============================================================================
-// 自定义验证函数（已拆分到子模块，re-export 保持向后兼容）
+// 自定义验证函数已拆分到子模块：`config::security::validate_security`、
+// `config::validation::validate_values`。
 // =============================================================================
-
-pub use super::security::validate_security;
-pub use super::validation::validate_values;
 
 // =============================================================================
 // Tests

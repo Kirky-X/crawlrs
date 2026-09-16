@@ -67,6 +67,7 @@ pub fn init_engines(
     proxy_url: Option<&str>,
     engine_config: &EngineSettings,
     engine_timeouts: &EngineTimeoutSettings,
+    max_response_body_bytes: usize,
 ) -> Vec<Arc<dyn ScraperEngine>> {
     // 从 EngineTimeoutSettings 派生超时与各引擎 MRT，避免硬编码
     let timeout_seconds = engine_timeouts.default_timeout_seconds;
@@ -92,13 +93,17 @@ pub fn init_engines(
                 proxy_strategy,
                 timeout_seconds,
                 fetch_mrt,
-            ),
+            )
+            .with_max_response_body_bytes(max_response_body_bytes),
         )],
-        None => vec![Arc::new(ReqwestEngine::new_with_timeout_and_mrt(
-            http_client.clone(),
-            timeout_seconds,
-            fetch_mrt,
-        ))],
+        None => vec![Arc::new(
+            ReqwestEngine::new_with_timeout_and_mrt(
+                http_client.clone(),
+                timeout_seconds,
+                fetch_mrt,
+            )
+            .with_max_response_body_bytes(max_response_body_bytes),
+        )],
     };
 
     // PlaywrightEngine 注入 cdp_seconds 作为 MRT
@@ -236,14 +241,16 @@ pub fn init_engine_components(
     proxy_url: Option<String>,
     _engine_config: &EngineSettings,
     engine_timeouts: &EngineTimeoutSettings,
+    max_response_body_bytes: usize,
 ) -> EngineComponents {
     let engines = init_engines(
-        http_client,
+        http_client.clone(),
         proxy_provider,
         proxy_strategy,
         proxy_url.as_deref(),
         _engine_config,
         engine_timeouts,
+        max_response_body_bytes,
     );
     let router = Arc::new(EngineRouter::new(engines.clone()));
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
@@ -298,6 +305,7 @@ mod tests {
             Some("http://localhost:10808"),
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         assert!(
             !engines.is_empty(),
@@ -316,6 +324,7 @@ mod tests {
             Some("http://localhost:10808"),
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         let engine_names: Vec<&str> = engines.iter().map(|e| e.name()).collect();
         assert!(
@@ -339,6 +348,7 @@ mod tests {
             Some("http://localhost:10808"),
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         assert!(
             !engines.is_empty(),
@@ -358,6 +368,7 @@ mod tests {
             None,
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         assert!(!engines.is_empty());
     }
@@ -374,6 +385,7 @@ mod tests {
             None,
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         assert!(!engines.is_empty());
     }
@@ -390,6 +402,7 @@ mod tests {
             None,
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         assert!(
             !engines.iter().any(|e| e.name() == "wreq"),
@@ -412,6 +425,7 @@ mod tests {
             None,
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         assert!(
             engines.iter().any(|e| e.name() == "wreq"),
@@ -432,6 +446,7 @@ mod tests {
             Some("http://localhost:10808".to_string()),
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         assert!(
             !components.engines.is_empty(),
@@ -453,6 +468,7 @@ mod tests {
             Some("http://localhost:10808".to_string()),
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         assert!(
             !components.engines.is_empty(),
@@ -471,6 +487,7 @@ mod tests {
             Some("http://localhost:10808".to_string()),
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         // The router should have registered engines matching the engines vec
         let registered = components.router.registered_engines();
@@ -491,6 +508,7 @@ mod tests {
             Some("http://localhost:10808".to_string()),
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         // EngineClient should report at least 1 engine
         assert!(
@@ -510,6 +528,7 @@ mod tests {
             Some("http://localhost:10808".to_string()),
             &engine_config,
             &make_engine_timeouts(),
+            engine_config.max_response_body_bytes as usize,
         );
         // EngineComponents derives Clone; verify clone produces equivalent field counts
         let cloned = components.clone();

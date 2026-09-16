@@ -147,6 +147,10 @@ pub struct MllmEngineSettings {
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__ENGINES__")]
 pub struct EngineSettings {
+    /// 响应体大小上限（字节）：超出中断抓取，防止超大/恶意页面 OOM
+    #[config(default = 10485760)]
+    pub max_response_body_bytes: u64,
+
     /// FlareSolverr 引擎配置
     pub flaresolverr: FlareSolverrSettings,
 

@@ -114,6 +114,7 @@ mod tests {
                 strategy: None,
                 crawl_delay_ms: None,
                 max_concurrency: None,
+                max_pages: None,
                 proxy: None,
                 headers: None,
                 extraction_rules: None,

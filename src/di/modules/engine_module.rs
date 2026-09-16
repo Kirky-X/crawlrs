@@ -72,13 +72,14 @@ impl AsyncAutoBuilder for EngineModule {
                 None
             };
             let engines = crate::bootstrap::engines::init_engine_components(
-                http_client,
+                http_client.clone(),
                 proxy_provider,
                 settings.proxy.strategy,
                 proxy_url,
                 &settings.engines,
                 // 注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
                 &settings.timeouts.engines,
+                settings.engines.max_response_body_bytes as usize,
             );
             Ok(engines)
         })

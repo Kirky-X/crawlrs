@@ -64,6 +64,9 @@ pub struct CrawlConfigDto {
     pub crawl_delay_ms: Option<u64>,
     #[validate(range(max = 50, message = "max_concurrency must be at most 50"))]
     pub max_concurrency: Option<u32>,
+    /// 最大抓取页数上限（超出提前终止；缺省 1000）
+    #[validate(range(max = 100000, message = "max_pages must be at most 100000"))]
+    pub max_pages: Option<u32>,
     pub proxy: Option<String>,
     pub headers: Option<serde_json::Value>,
     pub extraction_rules: Option<

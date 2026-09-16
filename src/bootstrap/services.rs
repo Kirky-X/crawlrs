@@ -609,11 +609,9 @@ pub async fn init_garrison_auth(
             id: ActiveValue::Set(api_key_id),
             team_id: ActiveValue::Set(team_id),
             key: ActiveValue::Set(garrison_key_id),
-            key_hash: ActiveValue::Set(None),
             created_at: ActiveValue::Set(now),
             updated_at: ActiveValue::Set(None),
         };
-        #[allow(deprecated)]
         ApiKeyEntity::insert(api_key_active)
             .exec(conn)
             .await
@@ -762,7 +760,7 @@ pub async fn init_services(
     // Initialize robots checker (使用依赖注入的 HTTP_CLIENT + CacheService)
     let robots_checker = Arc::new(RobotsChecker::new(
         http_client.clone(),
-        settings.robots.user_agent.clone(),
+        &settings.robots,
         Some(infrastructure.cache_service.clone()),
         None,
     ));
@@ -1306,6 +1304,7 @@ mod tests {
             None,
             &settings.engines,
             &settings.timeouts.engines,
+            settings.engines.max_response_body_bytes as usize,
         );
         let engine_router = Arc::new(EngineRouter::new(engines.clone()));
         let engine_client = Arc::new(EngineClient::with_router(engine_router.clone()));

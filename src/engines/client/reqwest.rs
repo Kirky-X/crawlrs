@@ -34,14 +34,12 @@ const DEFAULT_PROXY_STRATEGY: ProxyStrategy = ProxyStrategy::RoundRobin;
 /// 构造函数从 `Settings.timeouts.engines.fetch_seconds` 注入，避免硬编码。
 const DEFAULT_REQWEST_MRT_SECONDS: u64 = 5;
 
-/// 响应体大小上限（10MB，）。
+/// 响应体大小上限缺省值（10MB，对应 `EngineSettings::max_response_body_bytes`）。
 ///
 /// 超过此大小的响应被拒绝，防止超大/恶意页面导致 OOM。依据：绝大多数正常网页
 /// 正文 < 5MB，10MB 留足富余（含内联资源的大型页面）同时阻断异常超大响应。
-const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
+const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
 
-/// 抓取引擎
-///
 /// 基于reqwest实现的基本HTTP抓取引擎
 ///
 /// 代理来源：
@@ -51,6 +49,8 @@ const MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
 ///   - `Sticky`：`ProxyProvider::sticky(session_id)`（`request.session_id` 必填，否则 fallback 到 next）
 /// - 两者皆无 → 直接使用注入的 `http_client`（无代理）
 pub struct ReqwestEngine {
+    /// 响应体大小上限（字节），超出中断读取
+    max_response_body_bytes: usize,
     /// HTTP 客户端（通过依赖注入，支持连接复用）
     http_client: Arc<reqwest::Client>,
     /// 代理提供者（依赖抽象 `ProxyProvider` trait，而非具体 `ProxyPool`）
@@ -119,6 +119,7 @@ impl ReqwestEngine {
         mrt: Duration,
     ) -> Self {
         Self {
+            max_response_body_bytes: DEFAULT_MAX_RESPONSE_BODY_BYTES,
             http_client,
             proxy_provider: None,
             proxy_strategy: DEFAULT_PROXY_STRATEGY,
@@ -186,6 +187,7 @@ impl ReqwestEngine {
         mrt: Duration,
     ) -> Self {
         Self {
+            max_response_body_bytes: DEFAULT_MAX_RESPONSE_BODY_BYTES,
             http_client,
             proxy_provider: Some(proxy_provider),
             proxy_strategy,
@@ -196,6 +198,13 @@ impl ReqwestEngine {
                 NonZeroUsize::new(64).unwrap(),
             )),
         }
+    }
+
+    /// 注入响应体大小上限（来自 `EngineSettings::max_response_body_bytes`）
+    #[must_use]
+    pub fn with_max_response_body_bytes(mut self, bytes: usize) -> Self {
+        self.max_response_body_bytes = bytes;
+        self
     }
 
     /// 获取 UA 池引用（用于测试验证）
@@ -674,7 +683,7 @@ impl ScraperEngine for ReqwestEngine {
 
         // 响应体大小上限：content_length 预检 + bytes_stream 累积读取，
         // 超限返回 EngineError 并 warn!，替代无界 `.text()`（防止超大响应 OOM）。
-        let content = read_body_limited(response, MAX_RESPONSE_BODY_BYTES)
+        let content = read_body_limited(response, self.max_response_body_bytes)
             .await
             .map_err(|e| match e {
                 BodyReadError::LimitExceeded { max_bytes } => {
