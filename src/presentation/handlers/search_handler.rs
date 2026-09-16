@@ -142,6 +142,7 @@ pub async fn search(
                         url: r.url,
                         description: r.description,
                         engine: Some(r.engine),
+                        score: r.score,
                     })
                     .collect(),
                 crawl_id: response.crawl_id,
@@ -423,12 +424,14 @@ mod tests {
                     url: "https://rust-lang.org".to_string(),
                     description: Some("Official site".to_string()),
                     engine: Some("google".to_string()),
+                    score: None,
                 },
                 SearchResultDto {
                     title: "Learn Rust".to_string(),
                     url: "https://doc.rust-lang.org".to_string(),
                     description: None,
                     engine: Some("bing".to_string()),
+                    score: None,
                 },
             ],
             crawl_id: Some(uuid::Uuid::new_v4()),
@@ -453,6 +456,7 @@ mod tests {
             url: "https://example.com".to_string(),
             description: Some("A test result".to_string()),
             engine: Some("google".to_string()),
+            score: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -472,6 +476,7 @@ mod tests {
             url: "https://example.com".to_string(),
             description: None,
             engine: None,
+            score: None,
         };
         let cloned = result.clone();
         assert_eq!(result.title, cloned.title);
@@ -490,6 +495,7 @@ mod tests {
             url: "https://debug.com".to_string(),
             description: Some("debugging".to_string()),
             engine: Some("baidu".to_string()),
+            score: None,
         };
         let debug = format!("{:?}", result);
         assert!(debug.contains("SearchResultDto"));
@@ -898,6 +904,7 @@ mod tests {
                 url: "https://example.com".to_string(),
                 description: Some("Desc".to_string()),
                 engine: Some("google".to_string()),
+                score: None,
             }],
             crawl_id: Some(uuid::Uuid::new_v4()),
             credits_used: 7,
@@ -1242,6 +1249,7 @@ mod tests {
                 url: "https://example.com".to_string(),
                 description: Some("Test description".to_string()),
                 engine: "google".to_string(),
+                score: None,
             }],
             crawl_id,
             credits_used: 1,

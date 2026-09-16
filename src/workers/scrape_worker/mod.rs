@@ -837,8 +837,10 @@ impl ScrapeWorker {
         html: &str,
         schema: &Value,
     ) -> Result<(Value, crate::domain::services::llm::TokenUsage)> {
+        // 走 rag-auto 入口：rag 未注入时与 extract_with_schema 完全等价；
+        // 注入后按 schema 派生检索 query，用相关分块压缩 LLM 输入（fail-open）
         self.extraction_service
-            .extract_with_schema(html, schema)
+            .extract_with_rag_auto(html, None, schema)
             .await
     }
 

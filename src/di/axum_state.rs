@@ -41,7 +41,9 @@ use crate::domain::services::extraction_service::ExtractionServiceTrait;
 #[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::llm::LLMServiceTrait;
+use crate::domain::services::rag_strategy::EmbeddingProvider;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
+use crate::domain::services::rerank::RerankProvider;
 use crate::domain::services::search_service::SearchServiceTrait;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 #[cfg(feature = "teams")]
@@ -133,6 +135,11 @@ pub struct CrawlRsState {
     pub llm_service: Arc<dyn LLMServiceTrait>,
     /// Extraction service for data extraction
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
+    /// RAG 嵌入 provider（rag.enabled = false 或未配置时为 None，供后续
+    /// 嵌入类端点/服务消费）
+    pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    /// RAG 重排 provider（同上）
+    pub rerank_provider: Option<Arc<dyn RerankProvider>>,
     /// Content extraction facade
     ///
     /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLMService，按 Trafilatura→DomSmoothie→CssRule
@@ -248,6 +255,8 @@ impl CrawlRsState {
             search_service: services.search_service.clone(),
             llm_service: services.llm_service.clone(),
             extraction_service: services.extraction_service.clone(),
+            embedding_provider: services.embedding_provider.clone(),
+            rerank_provider: services.rerank_provider.clone(),
             content_extractor: services.content_extractor.clone(),
             cache_service: infra.cache_service.clone(),
             audit_service: services.audit_service.clone(),
@@ -331,6 +340,8 @@ pub trait CrawlRsStateExt {
     fn audit_service(&self) -> Arc<dyn AuditServiceTrait>;
     /// Get extraction service
     fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait>;
+    fn embedding_provider(&self) -> Option<Arc<dyn EmbeddingProvider>>;
+    fn rerank_provider(&self) -> Option<Arc<dyn RerankProvider>>;
     /// Get content extraction facade
     ///
     /// 供 `scrape_worker` 提取路径使用，按优先级路由多 extractor + LLM 回退。
@@ -458,6 +469,14 @@ impl CrawlRsStateExt for CrawlRsState {
 
     fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait> {
         self.extraction_service.clone()
+    }
+
+    fn embedding_provider(&self) -> Option<Arc<dyn EmbeddingProvider>> {
+        self.embedding_provider.clone()
+    }
+
+    fn rerank_provider(&self) -> Option<Arc<dyn RerankProvider>> {
+        self.rerank_provider.clone()
     }
 
     fn content_extractor(&self) -> Arc<ContentExtractionFacade> {
@@ -594,6 +613,14 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
 
     fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait> {
         self.as_ref().extraction_service()
+    }
+
+    fn embedding_provider(&self) -> Option<Arc<dyn EmbeddingProvider>> {
+        self.as_ref().embedding_provider.clone()
+    }
+
+    fn rerank_provider(&self) -> Option<Arc<dyn RerankProvider>> {
+        self.as_ref().rerank_provider.clone()
     }
 
     fn content_extractor(&self) -> Arc<ContentExtractionFacade> {

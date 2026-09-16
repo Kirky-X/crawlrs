@@ -439,6 +439,7 @@ mod tests {
             bing_search: BingSearchSettings::default(),
             search: SearchSettings::default(),
             llm: LLMSettings::default(),
+            rag: RagSettings::default(),
             proxy: ProxySettings::default(),
             engines: EngineSettings::default(),
             logging: LoggingSettings::default(),

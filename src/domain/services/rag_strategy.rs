@@ -603,6 +603,45 @@ impl RagExtractionStrategy {
     }
 }
 
+/// RAG 运行时配置（DI 共享单例）
+///
+/// [`RagExtractionStrategy`] 持有可变的 [`VectorStore`]（`index_document` 需要
+/// `&mut self`），不适合作跨请求共享；本结构体只持有不可变的构建参数，
+/// 由 [`RagExtractionRuntime::create_strategy`] 按请求创建独立的策略实例。
+/// 嵌入 provider 是共享的 `Arc`，不随策略实例复制开销。
+pub struct RagExtractionRuntime {
+    chunker_config: ChunkerConfig,
+    embedding_provider: Arc<dyn EmbeddingProvider>,
+    top_k: usize,
+}
+
+impl RagExtractionRuntime {
+    pub fn new(
+        chunker_config: ChunkerConfig,
+        embedding_provider: Arc<dyn EmbeddingProvider>,
+        top_k: usize,
+    ) -> Self {
+        Self {
+            chunker_config,
+            embedding_provider,
+            top_k,
+        }
+    }
+
+    /// 创建绑定到单次抽取的策略实例
+    pub fn create_strategy(&self) -> RagExtractionStrategy {
+        RagExtractionStrategy::new(
+            self.chunker_config.clone(),
+            self.embedding_provider.clone(),
+            self.top_k,
+        )
+    }
+
+    pub fn embedding_provider(&self) -> &Arc<dyn EmbeddingProvider> {
+        &self.embedding_provider
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

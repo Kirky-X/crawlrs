@@ -56,6 +56,9 @@ pub struct SearchResult {
     pub url: String,
     pub description: Option<String>,
     pub engine: String,
+    /// 语义重排相关性得分（0..1）。仅当 rerank 生效时有值；
+    /// 未评分条目（重排截断尾部 / 未启用 / fail-open）为 `None`。
+    pub score: Option<f64>,
 }
 
 /// Search response (领域层返回对象)
@@ -100,6 +103,7 @@ impl From<anyhow::Error> for SearchServiceError {
     }
 }
 
+use crate::domain::services::rerank::SearchReranker;
 use crate::search::client::SearchClientTrait;
 
 /// Search service trait for trait object support.
@@ -121,6 +125,7 @@ pub struct SearchService {
     credits_repo: Arc<dyn CreditsRepository>,
     search_client: Arc<dyn SearchClientTrait>,
     max_results: u32,
+    reranker: Arc<SearchReranker>,
 }
 
 impl SearchService {
@@ -130,6 +135,7 @@ impl SearchService {
         credits_repo: Arc<dyn CreditsRepository>,
         settings: Arc<Settings>,
         search_client: Arc<dyn SearchClientTrait>,
+        reranker: Arc<SearchReranker>,
     ) -> Self {
         Self {
             crawl_repo,
@@ -137,6 +143,7 @@ impl SearchService {
             credits_repo,
             search_client,
             max_results: settings.search.max_results,
+            reranker,
         }
     }
 
@@ -285,8 +292,14 @@ impl SearchService {
                 url: item.url,
                 description: Some(item.description),
                 engine: item.engine.name().to_string(),
+                score: None,
             })
             .collect();
+
+        // 语义重排（精准推荐）：RRF/启发式融合之后补 query-doc 相关性。
+        // reranker 未启用时直通；provider 故障时 fail-open 保留原序。
+        // 输入已 take(limit)，重排只改变顺序不改变数量。
+        let filtered_results = self.reranker.rerank_results(query, filtered_results).await;
 
         Ok(filtered_results)
     }
@@ -775,6 +788,7 @@ mod tests {
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::new()),
             max_results: 50,
+            reranker: Arc::new(SearchReranker::new(None, 25)),
         }
     }
 
@@ -805,6 +819,7 @@ mod tests {
             credits_repo: credits,
             search_client,
             max_results: 50,
+            reranker: Arc::new(SearchReranker::new(None, 25)),
         };
         (service, crawl_repo, task_repo)
     }
@@ -817,7 +832,103 @@ mod tests {
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::failing()),
             max_results: 50,
+            reranker: Arc::new(SearchReranker::new(None, 25)),
         }
+    }
+
+    /// 固定打分重排 mock："boost-" 前缀文档相关性最高，验证 perform_search 全链路
+    struct PrefixScoreReranker {
+        fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::domain::services::rerank::RerankProvider for PrefixScoreReranker {
+        async fn rerank(
+            &self,
+            _query: &str,
+            documents: &[String],
+            _top_k: Option<usize>,
+        ) -> Result<
+            Vec<crate::domain::services::rerank::RerankScore>,
+            crate::domain::services::rerank::RerankError,
+        > {
+            if self.fail {
+                return Err(crate::domain::services::rerank::RerankError::Provider(
+                    "down".to_string(),
+                ));
+            }
+            Ok(documents
+                .iter()
+                .enumerate()
+                .map(|(index, doc)| {
+                    let score = if doc.starts_with("boost") { 0.99 } else { 0.01 };
+                    crate::domain::services::rerank::RerankScore { index, score }
+                })
+                .collect())
+        }
+
+        fn name(&self) -> &str {
+            "prefix-mock"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_perform_search_applies_rerank_and_scores() {
+        let items = vec![
+            make_response_item("plain one", "https://example.com/1", SearchEngineType::Bing),
+            make_response_item("boost me", "https://example.com/2", SearchEngineType::Bing),
+        ];
+        let service = SearchService {
+            crawl_repo: Arc::new(MockCrawlRepo::new()),
+            task_repo: Arc::new(MockTaskRepo::new()),
+            credits_repo: Arc::new(MockCreditsRepo::with_balance(100)),
+            search_client: Arc::new(MockSearchClient::new_with_items(items)),
+            max_results: 50,
+            reranker: Arc::new(SearchReranker::new(
+                Some(Arc::new(PrefixScoreReranker { fail: false })),
+                25,
+            )),
+        };
+
+        let results = service
+            .perform_search("anything", 10, None, None, None)
+            .await
+            .expect("perform_search");
+
+        // "boost me"（0.99）被重排到第一位，且带 score
+        assert_eq!(results[0].title, "boost me");
+        assert!((results[0].score.unwrap() - 0.99).abs() < 1e-6);
+        assert_eq!(results[1].title, "plain one");
+        assert!((results[1].score.unwrap() - 0.01).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn test_perform_search_rerank_failure_fails_open() {
+        let items = vec![
+            make_response_item("Result 1", "https://example.com/1", SearchEngineType::Bing),
+            make_response_item("Result 2", "https://example.com/2", SearchEngineType::Bing),
+        ];
+        let service = SearchService {
+            crawl_repo: Arc::new(MockCrawlRepo::new()),
+            task_repo: Arc::new(MockTaskRepo::new()),
+            credits_repo: Arc::new(MockCreditsRepo::with_balance(100)),
+            search_client: Arc::new(MockSearchClient::new_with_items(items)),
+            max_results: 50,
+            reranker: Arc::new(SearchReranker::new(
+                Some(Arc::new(PrefixScoreReranker { fail: true })),
+                25,
+            )),
+        };
+
+        let results = service
+            .perform_search("anything", 10, None, None, None)
+            .await
+            .expect("perform_search");
+
+        // fail-open：原序保留，无 score
+        assert_eq!(results[0].title, "Result 1");
+        assert_eq!(results[1].title, "Result 2");
+        assert!(results.iter().all(|r| r.score.is_none()));
     }
 
     // ========== SearchQuery tests ==========
@@ -926,6 +1037,7 @@ mod tests {
                 "A language empowering everyone to build reliable software.".to_string(),
             ),
             engine: "Google".to_string(),
+            score: None,
         };
         assert_eq!(result.title, "Rust Programming");
         assert_eq!(result.url, "https://www.rust-lang.org");
@@ -940,6 +1052,7 @@ mod tests {
             url: "https://example.com".to_string(),
             description: None,
             engine: "Bing".to_string(),
+            score: None,
         };
         assert!(result.description.is_none());
     }
@@ -955,6 +1068,7 @@ mod tests {
                 url: "https://example.com".to_string(),
                 description: None,
                 engine: "Google".to_string(),
+                score: None,
             }],
             crawl_id: Some(Uuid::new_v4()),
             credits_used: 1,
@@ -1375,6 +1489,7 @@ mod tests {
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::new()),
             max_results: 50,
+            reranker: Arc::new(SearchReranker::new(None, 25)),
         };
         let query = SearchQuery {
             crawl_results: Some(true),
@@ -1397,6 +1512,7 @@ mod tests {
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::new()),
             max_results: 50,
+            reranker: Arc::new(SearchReranker::new(None, 25)),
         };
         let query = SearchQuery {
             crawl_results: Some(true),
@@ -1652,6 +1768,7 @@ mod tests {
             bing_search: BingSearchSettings::default(),
             search: SearchSettings::default(),
             llm: LLMSettings::default(),
+            rag: RagSettings::default(),
             proxy: ProxySettings::default(),
             engines: EngineSettings::default(),
             logging: LoggingSettings::default(),
@@ -1673,6 +1790,7 @@ mod tests {
             Arc::new(MockCreditsRepo::with_balance(10)),
             Arc::new(settings),
             Arc::new(MockSearchClient::new()),
+            Arc::new(SearchReranker::new(None, 25)),
         );
         // Verify the service is usable by performing a search that exercises
         // the injected mocks (empty query → ValidationError before touching repos)

@@ -41,4 +41,8 @@ pub struct SearchResultDto {
     pub url: String,
     pub description: Option<String>,
     pub engine: Option<String>,
+    /// 语义重排相关性得分（0..1）。仅当 `[rag]` 重排生效时有值，
+    /// 序列化时省略 None（对既有消费者零破坏）。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub score: Option<f64>,
 }

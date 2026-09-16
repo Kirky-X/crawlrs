@@ -184,6 +184,37 @@ api_key = ""
 model = "qwen3:1.7b"
 api_base_url = "http://localhost:11434/v1"
 
+# RAG 能力配置（嵌入 + 重排）——最小引入：默认全关，provider 依赖可选 feature
+# 嵌入 provider："" 禁用 | "local"（vecboost，需 --features rag-local）| "remote"（rig，需 --features rag-remote）
+# 重排 provider："" 禁用 | "local"（vecboost，需 --features rag-local）| "http"（通用 /rerank REST，无 feature 要求）
+[rag]
+enabled = false
+embedding_provider = ""
+rerank_provider = ""
+# --- local（vecboost Candle CPU；嵌入与重排共用一个 bi-encoder 模型）---
+# 模型目录须含 config.json / tokenizer.json / model.safetensors；
+# 路径不得含 ".." / "~"（vecboost 路径遍历防护会直接拒绝）；
+# 路径不存在时按 HF repo id 在线拉取。模型下载（在 vecboost 仓库内）：
+#   cargo run -p vecboost-examples --bin download_model -- --small
+local_model_path = "models/BAAI-bge-small-en-v1.5"
+local_model_name = "BAAI/bge-small-en-v1.5"
+local_dimensions = 384
+local_cache_size = 256
+# --- remote（rig，OpenAI 兼容）---
+remote_embed_model = "text-embedding-3-small"
+remote_dimensions = 1536                 # text-embedding-3-small 维度；显式声明可让 rig 跳过探测
+remote_api_base = ""                     # 留空用 rig 默认官方端点；Ollama 填 http://localhost:11434/v1
+# remote_api_key 经 CRAWLRS__RAG__REMOTE_API_KEY 环境变量注入，勿写入本文件
+# --- http（通用 rerank：cohere 格式兼容 Cohere v2/Jina/多数自建；tei 格式对应 text-embeddings-inference）---
+rerank_endpoint = ""                     # 如 https://api.jina.ai/v1/rerank
+rerank_model = ""                        # cohere 格式必填（如 jina-reranker-v2-base-multilingual）；tei 不需要
+rerank_format = "cohere"
+# rerank_api_key 经 CRAWLRS__RAG__RERANK_API_KEY 环境变量注入
+rerank_timeout_seconds = 10
+# --- 行为 ---
+search_rerank_top_n = 25                 # 搜索重排送入 provider 的最大文档数
+rag_top_k = 5                            # RAG 抽取检索 top-K 分块
+
 # Engine Support Score Configuration
 # Scores are used by engine router to select the best engine for a request
 # Range: 0-100 (higher = more preferred)

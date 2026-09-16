@@ -39,11 +39,12 @@ async fn main() {
         strategy: Some("breadth-first".to_string()), // 爬取策略
         crawl_delay_ms: Some(1000),                  // 爬取延迟（毫秒）
         max_concurrency: Some(5),                    // 最大并发数
-        proxy: None,                                 // 代理设置
-        headers: None,                               // 自定义请求头
-        extraction_rules: None,                      // 提取规则
-        extraction_prompt: None,                     // LLM 提取提示词
-        extraction_schema: None,                     // JSON Schema 结构化提取
+        max_pages: None,
+        proxy: None,             // 代理设置
+        headers: None,           // 自定义请求头
+        extraction_rules: None,  // 提取规则
+        extraction_prompt: None, // LLM 提取提示词
+        extraction_schema: None, // JSON Schema 结构化提取
     };
 
     info!("📋 爬取配置:");

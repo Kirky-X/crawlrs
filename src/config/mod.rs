@@ -12,6 +12,7 @@ pub mod app;
 pub mod engines;
 pub mod llm;
 pub mod logging;
+pub mod rag;
 pub mod runtime;
 pub mod search;
 pub mod security;
@@ -33,6 +34,8 @@ pub use search::BingSearchSettings;
 pub use search::SearchSettings;
 
 pub use llm::LLMSettings;
+
+pub use rag::RagSettings;
 
 pub use runtime::RuntimeConfig;
 pub use settings::{

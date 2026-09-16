@@ -62,6 +62,7 @@ impl SearchServiceTrait for MockSearchService {
                 url: "https://example.com".to_string(),
                 description: Some("Mock desc".to_string()),
                 engine: "mock".to_string(),
+                score: None,
             }],
             crawl_id: None,
             credits_used: 1,

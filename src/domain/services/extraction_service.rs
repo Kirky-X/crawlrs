@@ -5,7 +5,7 @@
 use crate::domain::services::extraction_utils::ExtractableRule;
 use crate::domain::services::llm::LLMServiceTrait;
 pub use crate::domain::services::llm::TokenUsage;
-use crate::domain::services::rag_strategy::RagExtractionStrategy;
+use crate::domain::services::rag_strategy::{RagExtractionRuntime, RagExtractionStrategy};
 use anyhow::Result;
 use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -79,6 +79,21 @@ pub trait ExtractionServiceTrait: Send + Sync {
         schema: &Value,
         rag_strategy: &RagExtractionStrategy,
     ) -> Result<(Value, TokenUsage)>;
+
+    /// RAG 自动增强的 schema 抽取（rag 能力未注入时与 `extract_with_schema` 等价）
+    ///
+    /// - `query` 为检索语义参考；为 `None`/空白时从 schema 的 description 与
+    ///   属性名派生。rag runtime 未注入时忽略 query，直接走全页 schema 抽取。
+    /// - 默认实现为纯 schema 抽取，测试 mock 无需重复实现。
+    async fn extract_with_rag_auto(
+        &self,
+        html_content: &str,
+        query: Option<&str>,
+        schema: &Value,
+    ) -> Result<(Value, TokenUsage)> {
+        let _ = query;
+        self.extract_with_schema(html_content, schema).await
+    }
 }
 
 /// 提取服务
@@ -86,6 +101,7 @@ pub trait ExtractionServiceTrait: Send + Sync {
 /// 负责从 HTML 内容中提取结构化数据
 pub struct ExtractionService {
     llm_service: Arc<dyn LLMServiceTrait>,
+    rag_runtime: Option<Arc<RagExtractionRuntime>>,
 }
 
 #[async_trait::async_trait]
@@ -153,13 +169,99 @@ impl ExtractionServiceTrait for ExtractionService {
             .extract_data(&enhanced_text, schema, "json")
             .await
     }
+
+    async fn extract_with_rag_auto(
+        &self,
+        html_content: &str,
+        query: Option<&str>,
+        schema: &Value,
+    ) -> Result<(Value, TokenUsage)> {
+        // rag 未注入或无检索语义时，与 extract_with_schema 完全等价
+        let Some(runtime) = self.rag_runtime.as_ref() else {
+            return self.extract_with_schema(html_content, schema).await;
+        };
+        let query = match query.map(str::trim).filter(|q| !q.is_empty()) {
+            Some(q) => q.to_string(),
+            None => schema_query(schema),
+        };
+        if query.is_empty() {
+            log::info!("RAG extraction skipped: no query semantics available from schema");
+            return self.extract_with_schema(html_content, schema).await;
+        }
+
+        let mut strategy = runtime.create_strategy();
+        if let Err(err) = strategy
+            .index_document(html_content, &format!("doc-{}", uuid::Uuid::new_v4()))
+            .await
+        {
+            log::warn!("RAG indexing failed, falling back to full-page extraction: {err:#}");
+            return self.extract_with_schema(html_content, schema).await;
+        }
+
+        match self
+            .extract_with_rag(html_content, &query, schema, &strategy)
+            .await
+        {
+            Ok(output) => Ok(output),
+            Err(err) => {
+                log::warn!("RAG extraction failed, falling back to full-page extraction: {err:#}");
+                self.extract_with_schema(html_content, schema).await
+            }
+        }
+    }
 }
 
 impl ExtractionService {
     pub fn new(llm_service: Arc<dyn LLMServiceTrait>) -> Self {
-        Self { llm_service }
+        Self {
+            llm_service,
+            rag_runtime: None,
+        }
     }
 
+    /// 注入 RAG 运行时（嵌入 provider 就绪时由 DI 调用；未调用则 RAG 路径不生效）
+    pub fn with_rag(mut self, runtime: Arc<RagExtractionRuntime>) -> Self {
+        self.rag_runtime = Some(runtime);
+        self
+    }
+}
+
+/// 从 JSON schema 派生检索 query：收集 description 与（嵌套一层的）属性名
+///
+/// 检索语义只需要主题词级别，不做完整 schema 序列化——过长的 schema 文本
+/// 会稀释嵌入向量的主题性。
+fn schema_query(schema: &Value) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(desc) = schema.get("description").and_then(Value::as_str) {
+        if !desc.trim().is_empty() {
+            parts.push(desc.trim().to_string());
+        }
+    }
+
+    // 顶层 properties（或 array items 的 properties），收集键名与其 description
+    let mut props = schema.get("properties").and_then(Value::as_object);
+    if props.is_none() {
+        props = schema
+            .get("items")
+            .and_then(|items| items.get("properties"))
+            .and_then(Value::as_object);
+    }
+    if let Some(props) = props {
+        for (key, val) in props {
+            match val.get("description").and_then(Value::as_str) {
+                Some(desc) if !desc.trim().is_empty() => {
+                    parts.push(format!("{}: {}", key, desc.trim()));
+                }
+                _ => parts.push(key.clone()),
+            }
+        }
+    }
+
+    parts.join(", ")
+}
+
+impl ExtractionService {
     /// 使用CSS选择器提取数据（内部静态实现）
     fn extract_with_selectors_internal(
         html_content: &str,
@@ -1242,6 +1344,183 @@ mod tests {
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(msg.contains("schema extraction failed"));
+    }
+
+    // ========== extract_with_rag_auto ==========
+
+    use crate::domain::services::rag_strategy::{ChunkerConfig, EmbeddingProvider};
+
+    /// 测试用小尺寸分块配置：短 section 各自成块，检索才能区分主题
+    fn small_chunker_config() -> ChunkerConfig {
+        ChunkerConfig {
+            target_chunk_size: 50,
+            min_chunk_size: 10,
+            max_chunk_size: 120,
+            ..ChunkerConfig::default()
+        }
+    }
+
+    /// 确定性嵌入 mock：含 "needle" 的文本与查询 "needle" 同向，其余正交
+    struct KeywordEmbeddingProvider;
+
+    #[async_trait]
+    impl EmbeddingProvider for KeywordEmbeddingProvider {
+        async fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
+            Ok(texts
+                .iter()
+                .map(|text| {
+                    if text.contains("needle") {
+                        vec![1.0, 0.0]
+                    } else {
+                        vec![0.0, 1.0]
+                    }
+                })
+                .collect())
+        }
+
+        fn dimensions(&self) -> usize {
+            2
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rag_auto_without_runtime_equals_schema_path() {
+        let html = r#"<html><body><p>Plain content</p></body></html>"#;
+        let schema = json!({"type": "object"});
+
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let (service, mock_arc) = make_service_with_mock(mock);
+        let _ = service
+            .extract_with_rag_auto(html, Some("any query"), &schema)
+            .await
+            .expect("should succeed");
+
+        let last_text = mock_arc.last_text().expect("should be called");
+        // 无 rag runtime：走全页清洗路径，没有检索上下文包装
+        assert!(last_text.contains("Plain content"));
+        assert!(!last_text.contains("<retrieved_context>"));
+    }
+
+    #[tokio::test]
+    async fn test_rag_auto_with_runtime_and_query_wraps_context() {
+        // needle 段需超过 target_chunk_size（50 token ≈ 200 字符）才会独立 flush 成块
+        let needle_text = "The needle is hidden in this very section. ".repeat(10);
+        let filler_text = "Gardening tips about roses and tulips all day long. ".repeat(10);
+        let html = format!(
+            "<html><body><section>{needle_text}</section><section>{filler_text}</section></body></html>"
+        );
+        let schema = json!({"type": "object", "properties": {"found": {"type": "string"}}});
+
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let mock_arc = Arc::new(mock);
+        let count = mock_arc.call_count.clone();
+        let service =
+            ExtractionService::new(mock_arc.clone()).with_rag(Arc::new(RagExtractionRuntime::new(
+                small_chunker_config(),
+                Arc::new(KeywordEmbeddingProvider),
+                1,
+            )));
+
+        let _ = service
+            .extract_with_rag_auto(&html, Some("needle"), &schema)
+            .await
+            .expect("should succeed");
+
+        let last_text = mock_arc.last_text().expect("should be called");
+        assert!(
+            last_text.contains("<retrieved_context>"),
+            "rag path must wrap retrieved chunks, got: {last_text}"
+        );
+        assert!(last_text.contains("needle is hidden"));
+        assert!(
+            !last_text.contains("Gardening tips"),
+            "irrelevant chunk must not be retrieved, got: {last_text}"
+        );
+        let _ = count;
+    }
+
+    #[tokio::test]
+    async fn test_rag_auto_derives_query_from_schema() {
+        let needle_text = "The needle price is 42 dollars in this section. ".repeat(10);
+        let filler_text = "Unrelated sports commentary follows here. ".repeat(10);
+        let html = format!(
+            "<html><body><section>{needle_text}</section><section>{filler_text}</section></body></html>"
+        );
+        // 无显式 query：从 schema description/属性名派生
+        let schema = json!({
+            "type": "object",
+            "description": "needle",
+            "properties": {"price": {"type": "number"}}
+        });
+
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let mock_arc = Arc::new(mock);
+        let service =
+            ExtractionService::new(mock_arc.clone()).with_rag(Arc::new(RagExtractionRuntime::new(
+                small_chunker_config(),
+                Arc::new(KeywordEmbeddingProvider),
+                1,
+            )));
+
+        let _ = service
+            .extract_with_rag_auto(&html, None, &schema)
+            .await
+            .expect("should succeed");
+
+        let last_text = mock_arc.last_text().expect("should be called");
+        assert!(last_text.contains("<retrieved_context>"));
+        assert!(last_text.contains("needle price is 42"));
+        assert!(!last_text.contains("sports commentary"));
+    }
+
+    #[tokio::test]
+    async fn test_rag_auto_without_query_semantics_falls_back_to_full_page() {
+        let html = r#"<html><body><p>Simple page</p></body></html>"#;
+        // schema 无 description/properties → 派生 query 为空 → 全页路径
+        let schema = json!({"type": "object"});
+
+        let mock = MockLLMService::new_success(json!({}), TokenUsage::default());
+        let mock_arc = Arc::new(mock);
+        let service =
+            ExtractionService::new(mock_arc.clone()).with_rag(Arc::new(RagExtractionRuntime::new(
+                small_chunker_config(),
+                Arc::new(KeywordEmbeddingProvider),
+                1,
+            )));
+
+        let _ = service
+            .extract_with_rag_auto(html, None, &schema)
+            .await
+            .expect("should succeed");
+
+        let last_text = mock_arc.last_text().expect("should be called");
+        assert!(last_text.contains("Simple page"));
+        assert!(!last_text.contains("<retrieved_context>"));
+    }
+
+    #[test]
+    fn test_schema_query_collects_descriptions_and_keys() {
+        let schema = json!({
+            "type": "object",
+            "description": "product info",
+            "properties": {
+                "price": {"type": "number", "description": "unit price"},
+                "name": {"type": "string"}
+            }
+        });
+        let query = schema_query(&schema);
+        assert!(query.contains("product info"));
+        assert!(query.contains("price: unit price"));
+        assert!(query.contains("name"));
+    }
+
+    #[test]
+    fn test_schema_query_supports_array_items() {
+        let schema = json!({
+            "type": "array",
+            "items": {"properties": {"title": {"type": "string"}}}
+        });
+        assert!(schema_query(&schema).contains("title"));
     }
 
     // ========== get_clean_text ==========

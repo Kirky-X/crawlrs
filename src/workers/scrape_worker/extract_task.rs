@@ -145,7 +145,9 @@ impl ScrapeWorker {
     ) -> Result<()> {
         let (extracted_data, usage) = self
             .extraction_service
-            .extract_with_schema(&response.content, schema)
+            // rag-auto 入口：rag 未注入时等价 extract_with_schema，注入后按
+            // schema 派生检索 query 压缩 LLM 输入（fail-open 回退全页）
+            .extract_with_rag_auto(&response.content, None, schema)
             .await?;
 
         self.deduct_token_credits(

@@ -62,6 +62,8 @@ pub mod noop_webhook_service;
 pub mod rag_strategy;
 pub mod rate_limiting_service;
 pub mod relevance_scorer;
+/// 语义重排（rerank）：RerankProvider 抽象 + 搜索结果精准重排编排
+pub mod rerank;
 pub mod retry_handler;
 pub mod search_service;
 pub mod team_semaphore;

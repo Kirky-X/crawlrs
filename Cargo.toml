@@ -66,6 +66,14 @@ full = ["standard", "engine-flaresolverr", "extractors", "llm"]
 
 llm = ["dep:genai"]
 
+# --- RAG 能力特性（嵌入 + 重排，最小引入：不入 default / full） ---
+# rag-local: vecboost 进程内本地推理（Candle CPU；嵌入与重排共用一个 bi-encoder 模型）
+# rag-remote: rig-core 远端嵌入（OpenAI 兼容端点，显式 api_key + base_url）
+# 远端重排走通用 HTTP rerank 适配（仅 reqwest，无需 feature，见 infrastructure/services/http_rerank_provider.rs）
+rag-local = ["dep:vecboost"]
+rag-remote = ["dep:rig-core"]
+rag = ["rag-local", "rag-remote"]
+
 # --- 引擎特性 ---
 engine-playwright = ["dep:chromiumoxide", "dep:chromiumoxide_fetcher"]
 engine-flaresolverr = []
@@ -278,6 +286,17 @@ bytes = "1.12"
 genai = { version = "0.6", optional = true }
 toml = "1.1"
 
+# RAG 能力依赖 — gated by rag-local / rag-remote features（不入 default/full，最小引入）
+# vecboost（自研一等仓库，../vecboost）：进程内本地嵌入/重排推理。
+# default-features = false 剥离 axum/db/auth 服务面；其 inklog sqlite/kit 已在
+# vecboost 侧改为 log-kit/log-sqlite 透传（否则与 db-postgres 触发 dbnexus
+# 嵌入式/服务端互斥 compile_error）。Candle CPU 引擎零额外 feature。
+vecboost = { version = "0.2.1", path = "../vecboost", optional = true, default-features = false }
+# rig-core：远端嵌入统一客户端（OpenAI 兼容 Client::builder().api_key().base_url()）。
+# 仅用嵌入方向；rig 原生 rerank 只支持 Voyage，远端重排改走自有通用 HTTP 适配。
+# reqwest 0.13 + rustls 与 crawlrs 对齐，feature 联合无重复 TLS 栈。
+rig-core = { version = "0.42", optional = true, default-features = false, features = ["reqwest", "rustls"] }
+
 # Dependency Injection
 trait-kit = { version = "0.5.0-rc.5", path = "../base/trait-kit", features = ["async", "confers", "shutdown"] }
 # feature 裁剪（hygiene）：macros/batch/bloom 在 crawlrs 源码中零使用（已 grep 验证），
@@ -430,7 +449,7 @@ trait-kit = { path = "../base/trait-kit" }
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("platform", "agent-lib", "engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability", "db-postgres", "db-sqlite", "db-mysql"))'
+    'cfg(feature, values("platform", "agent-lib", "engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability", "db-postgres", "db-sqlite", "db-mysql", "rag", "rag-local", "rag-remote"))'
 ]
 
 

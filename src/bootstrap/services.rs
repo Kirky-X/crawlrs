@@ -36,13 +36,24 @@ use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::llm::{LLMService, LLMServiceTrait};
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 // rate-limit feature 关闭时不导入 LimiteronService 相关配置类型
+use crate::domain::services::rag_strategy::{
+    ChunkerConfig, EmbeddingProvider, RagExtractionRuntime,
+};
 #[cfg(feature = "rate-limit")]
 use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy,
 };
+use crate::domain::services::rerank::{RerankProvider, SearchReranker};
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
+// RAG provider 实现：local/remote 由 rag-local / rag-remote feature 门控，
+// http（通用 REST 重排）无条件可用
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
+use crate::infrastructure::services::http_rerank_provider::{HttpRerankProvider, RerankFormat};
+#[cfg(feature = "rag-remote")]
+use crate::infrastructure::services::rig_embedding_provider::RigEmbeddingProvider;
+#[cfg(feature = "rag-local")]
+use crate::infrastructure::services::vecboost_provider::VecboostProvider;
 // webhook feature 关闭时不导入 WebhookServiceImpl
 // （NoopWebhookService 在 webhook-off 时替代，trait 始终导入）
 use crate::domain::services::webhook_service::WebhookService;
@@ -126,6 +137,10 @@ pub struct ServicesComponents {
     pub llm_service: Arc<dyn LLMServiceTrait>,
     /// Extraction service.
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
+    /// RAG 嵌入 provider（`rag.enabled = false` 或未配置时为 None）
+    pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    /// RAG 重排 provider（`rag.enabled = false` 或未配置时为 None）
+    pub rerank_provider: Option<Arc<dyn RerankProvider>>,
     /// Content extraction facade
     ///
     /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLMService，按 Trafilatura→DomSmoothie→CssRule
@@ -349,6 +364,7 @@ pub fn init_search_service(
     repositories: &Repositories,
     settings: &Settings,
     search_client: Arc<dyn SearchClientTrait>,
+    reranker: Arc<SearchReranker>,
 ) -> Arc<dyn SearchServiceTrait> {
     // Create SearchService with concrete repository types
     let service = SearchService::new(
@@ -357,8 +373,77 @@ pub fn init_search_service(
         repositories.credits_repo.clone(),
         Arc::new(settings.clone()),
         search_client,
+        reranker,
     );
     Arc::new(service)
+}
+
+/// RAG 能力组件（嵌入 + 重排 provider；`rag.enabled = false` 时全 None，零开销）
+pub struct RagComponents {
+    /// 嵌入 provider：`local`（vecboost）或 `remote`（rig）
+    pub embedding: Option<Arc<dyn EmbeddingProvider>>,
+    /// 重排 provider：`local`（vecboost）或 `http`（通用 REST）
+    pub rerank: Option<Arc<dyn RerankProvider>>,
+}
+
+/// 初始化 RAG 能力组件。
+///
+/// 校验语义（fail-fast）由 [`RagSettings::validate_providers`] 承担：配置了
+/// 未编译的 feature（local 无 `rag-local` / remote 无 `rag-remote`）或非法
+/// provider 值时返回带重建指引的错误。vecboost 模型加载（秒级）发生在此处，
+/// 即启动期一次性成本。
+pub async fn init_rag_components(settings: &Settings) -> Result<RagComponents, String> {
+    if !settings.rag.enabled {
+        return Ok(RagComponents {
+            embedding: None,
+            rerank: None,
+        });
+    }
+    settings.rag.validate_providers()?;
+    let rag = &settings.rag;
+
+    let embedding: Option<Arc<dyn EmbeddingProvider>> = match rag.embedding_provider.as_str() {
+        "" => None,
+        #[cfg(feature = "rag-local")]
+        "local" => {
+            Some(Arc::new(VecboostProvider::new(rag).await.map_err(|e| {
+                format!("vecboost embedding provider init failed: {e}")
+            })?))
+        }
+        #[cfg(feature = "rag-remote")]
+        "remote" => {
+            Some(Arc::new(RigEmbeddingProvider::new(rag).map_err(|e| {
+                format!("rig embedding provider init failed: {e}")
+            })?))
+        }
+        // validate_providers 已拒绝非法值与未编译 feature 的组合，此处不可达
+        _ => None,
+    };
+
+    let rerank: Option<Arc<dyn RerankProvider>> = match rag.rerank_provider.as_str() {
+        "" => None,
+        #[cfg(feature = "rag-local")]
+        "local" => {
+            Some(Arc::new(VecboostProvider::new(rag).await.map_err(|e| {
+                format!("vecboost rerank provider init failed: {e}")
+            })?))
+        }
+        "http" => Some(Arc::new(
+            HttpRerankProvider::new(
+                &rag.rerank_endpoint,
+                Some(&rag.rerank_model),
+                RerankFormat::parse(&rag.rerank_format)
+                    .map_err(|e| format!("rag rerank_format invalid: {e}"))?,
+                rag.rerank_api_key(),
+                rag.rerank_timeout_seconds,
+            )
+            .map_err(|e| format!("http rerank provider init failed: {e}"))?,
+        )),
+        // validate_providers 已拒绝非法值与未编译 feature 的组合，此处不可达
+        _ => None,
+    };
+
+    Ok(RagComponents { embedding, rerank })
 }
 
 /// 初始化 garrison 认证鉴权服务。
@@ -785,8 +870,26 @@ pub async fn init_services(
         crate::search::client::SearchClient::new(engine_client.clone()),
     );
 
+    // RAG 能力组件（默认全关：rag.enabled = false 时 provider 全 None，零开销）。
+    // 失败 = 运维显式启用但配置/环境不可用，按既有 fail-fast 惯例 panic。
+    let rag = match init_rag_components(settings).await {
+        Ok(components) => components,
+        Err(e) => panic!("RAG capability init failed (check [rag] config / features): {e}"),
+    };
+
+    // 语义重排器：provider 就绪时搜索结果做精准重排，否则直通
+    let search_reranker = Arc::new(SearchReranker::new(
+        rag.rerank.clone(),
+        settings.rag.search_rerank_top_n,
+    ));
+
     // Initialize search service
-    let search_service = init_search_service(repositories, settings, search_client.clone());
+    let search_service = init_search_service(
+        repositories,
+        settings,
+        search_client.clone(),
+        search_reranker,
+    );
 
     // 初始化 garrison 认证鉴权（auth-on 时 fail-fast）
     //
@@ -846,8 +949,18 @@ pub async fn init_services(
     // Initialize LLM service (使用依赖注入的 http_client)
     let llm_service = init_llm_service(settings, http_client.clone());
 
-    // Initialize extraction service
-    let extraction_service = Arc::new(ExtractionService::new(llm_service.clone()));
+    // Initialize extraction service（嵌入 provider 就绪时注入 RAG 运行时）
+    let extraction_service: Arc<dyn ExtractionServiceTrait> =
+        match &rag.embedding {
+            Some(provider) => Arc::new(ExtractionService::new(llm_service.clone()).with_rag(
+                Arc::new(RagExtractionRuntime::new(
+                    ChunkerConfig::default(),
+                    provider.clone(),
+                    settings.rag.rag_top_k,
+                )),
+            )),
+            None => Arc::new(ExtractionService::new(llm_service.clone())),
+        };
 
     // Initialize content extraction facade
     //
@@ -900,6 +1013,8 @@ pub async fn init_services(
         http_client,
         llm_service,
         extraction_service,
+        embedding_provider: rag.embedding.clone(),
+        rerank_provider: rag.rerank.clone(),
         content_extractor,
         #[cfg(feature = "webhook")]
         webhook_worker,
@@ -1261,7 +1376,12 @@ mod tests {
         let search_client: Arc<dyn SearchClientTrait> =
             Arc::new(crate::search::client::SearchClient::new(engine_client));
 
-        let service = init_search_service(&repos, &settings, search_client);
+        let service = init_search_service(
+            &repos,
+            &settings,
+            search_client,
+            Arc::new(SearchReranker::new(None, 25)),
+        );
         assert!(Arc::strong_count(&service) >= 1);
     }
 

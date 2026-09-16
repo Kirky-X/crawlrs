@@ -23,6 +23,7 @@ pub use super::engines::{
 };
 pub use super::llm::LLMSettings;
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
+pub use super::rag::RagSettings;
 pub use super::search::{
     BingSearchSettings, FallbackEngineConfig, SearchFallbackConfig, SearchSettings,
 };
@@ -78,6 +79,11 @@ pub struct Settings {
 
     /// LLM 配置
     pub llm: LLMSettings,
+
+    /// RAG 能力配置（嵌入 + 重排，默认全关）。
+    /// provider 组合校验走 [`RagSettings::validate_providers`]（启动期 fail-fast），
+    /// 不挂 validator 的 nested 约束。
+    pub rag: RagSettings,
 
     /// HTTP 代理配置
     pub proxy: ProxySettings,
@@ -789,6 +795,7 @@ mod tests {
             bing_search: BingSearchSettings::default(),
             search: SearchSettings::default(),
             llm: LLMSettings::default(),
+            rag: RagSettings::default(),
             proxy: ProxySettings::default(),
             engines: EngineSettings::default(),
             robots: RobotsSettings::default(),
