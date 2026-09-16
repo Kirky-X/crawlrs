@@ -20,7 +20,9 @@ use crate::{
         services::search_service::{SearchQuery, SearchServiceError, SearchServiceTrait},
     },
     presentation::handlers::check_ssrf_url,
-    presentation::handlers::response_builder::{error_response, success_response},
+    presentation::handlers::response_builder::{
+        error_response, json_rejection_response, success_response,
+    },
     presentation::handlers::task_handler::wait_for_tasks_completion,
     presentation::helpers::rate_limit_helper::check_rate_limit,
     presentation::middleware::auth_middleware::AuthState,
@@ -32,8 +34,13 @@ pub async fn search(
     Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
-    Json(payload): Json<SearchRequestDto>,
+    payload: Result<Json<SearchRequestDto>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
+    // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
+    let Json(payload) = match payload {
+        Ok(parsed) => parsed,
+        Err(ref rej) => return json_rejection_response(rej),
+    };
     let team_id = auth_state.team_id;
     let api_key_id = auth_state.api_key_id;
 
@@ -1621,7 +1628,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -1648,7 +1655,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(0))),
+            Ok(Json(make_search_request_dto(Some(0)))),
         )
         .await
         .into_response();
@@ -1676,7 +1683,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -1711,7 +1718,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -1742,7 +1749,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -1783,7 +1790,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -1813,7 +1820,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(None)),
+            Ok(Json(make_search_request_dto(None))),
         )
         .await
         .into_response();
@@ -1839,7 +1846,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -1863,7 +1870,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -1891,7 +1898,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -1920,7 +1927,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -1946,7 +1953,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -1974,7 +1981,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -2002,7 +2009,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -2028,7 +2035,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();
@@ -2055,7 +2062,7 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
-            Json(make_search_request_dto(Some(5000))),
+            Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
         .into_response();

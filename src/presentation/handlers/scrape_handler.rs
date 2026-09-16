@@ -1592,7 +1592,7 @@ mod tests {
             Extension(None::<Arc<dyn GeoRestrictionRepository>>),
             Extension(None::<Arc<TeamService>>),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1624,7 +1624,7 @@ mod tests {
             Extension(None::<Arc<dyn GeoRestrictionRepository>>),
             Extension(None::<Arc<TeamService>>),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1656,7 +1656,7 @@ mod tests {
             Extension(None::<Arc<dyn GeoRestrictionRepository>>),
             Extension(None::<Arc<TeamService>>),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1688,7 +1688,7 @@ mod tests {
             Extension(None::<Arc<dyn GeoRestrictionRepository>>),
             Extension(None::<Arc<TeamService>>),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1720,7 +1720,7 @@ mod tests {
             Extension(None::<Arc<dyn GeoRestrictionRepository>>),
             Extension(None::<Arc<TeamService>>),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1752,7 +1752,7 @@ mod tests {
             Extension(None::<Arc<dyn GeoRestrictionRepository>>),
             Extension(None::<Arc<TeamService>>),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1784,7 +1784,7 @@ mod tests {
             Extension(None::<Arc<dyn GeoRestrictionRepository>>),
             Extension(None::<Arc<TeamService>>),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1816,7 +1816,7 @@ mod tests {
             Extension(None::<Arc<dyn GeoRestrictionRepository>>),
             Extension(None::<Arc<TeamService>>),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1855,7 +1855,7 @@ mod tests {
             Extension(None::<Arc<dyn GeoRestrictionRepository>>),
             Extension(None::<Arc<TeamService>>),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();

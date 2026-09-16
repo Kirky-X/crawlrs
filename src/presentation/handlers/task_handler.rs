@@ -1295,7 +1295,7 @@ mod tests {
             Extension(auth),
             Extension(repo),
             Extension(scrape_repo),
-            Json(request),
+            Ok(Json(request)),
         )
         .await;
 
@@ -1327,7 +1327,7 @@ mod tests {
             Extension(auth),
             Extension(repo),
             Extension(scrape_repo),
-            Json(request),
+            Ok(Json(request)),
         )
         .await;
 
@@ -1366,7 +1366,7 @@ mod tests {
             Extension(auth),
             Extension(repo),
             Extension(scrape_repo),
-            Json(request),
+            Ok(Json(request)),
         )
         .await;
 
@@ -1402,7 +1402,7 @@ mod tests {
             Extension(auth),
             Extension(repo),
             Extension(scrape_repo),
-            Json(request),
+            Ok(Json(request)),
         )
         .await;
 
@@ -1426,7 +1426,7 @@ mod tests {
             Extension(auth),
             Extension(repo),
             Extension(scrape_repo),
-            Json(request),
+            Ok(Json(request)),
         )
         .await;
 
@@ -1452,7 +1452,7 @@ mod tests {
             Extension(auth),
             Extension(repo),
             Extension(scrape_repo),
-            Json(request),
+            Ok(Json(request)),
         )
         .await;
 
@@ -1482,7 +1482,7 @@ mod tests {
             Extension(auth),
             Extension(repo),
             Extension(scrape_repo),
-            Json(request),
+            Ok(Json(request)),
         )
         .await;
 
@@ -1521,7 +1521,7 @@ mod tests {
             Extension(auth),
             Extension(repo),
             Extension(scrape_repo),
-            Json(request),
+            Ok(Json(request)),
         )
         .await;
 
@@ -1560,7 +1560,7 @@ mod tests {
         };
 
         let result =
-            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Ok(Json(request)))
                 .await;
 
         assert!(result.is_ok(), "cancel_tasks should succeed");
@@ -1590,7 +1590,7 @@ mod tests {
         };
 
         let result =
-            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Ok(Json(request)))
                 .await;
 
         assert!(result.is_err(), "empty task_ids should fail");
@@ -1617,7 +1617,7 @@ mod tests {
         };
 
         let result =
-            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Ok(Json(request)))
                 .await;
 
         assert!(result.is_err(), "sync_wait_ms=30001 should fail validation");
@@ -1640,7 +1640,7 @@ mod tests {
         };
 
         let result =
-            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Ok(Json(request)))
                 .await;
 
         assert!(result.is_err(), "repo error should propagate");
@@ -1666,7 +1666,7 @@ mod tests {
         };
 
         let result =
-            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Ok(Json(request)))
                 .await;
 
         assert!(result.is_ok());
@@ -1701,7 +1701,7 @@ mod tests {
         };
 
         let result =
-            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Ok(Json(request)))
                 .await;
 
         assert!(result.is_ok(), "cancel with sync wait should succeed");
@@ -1944,7 +1944,7 @@ mod tests {
             Extension(auth),
             Extension(repo),
             Extension(scrape_repo),
-            Json(request),
+            Ok(Json(request)),
         )
         .await;
 
@@ -1976,7 +1976,7 @@ mod tests {
         };
 
         let result =
-            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Ok(Json(request)))
                 .await;
 
         assert!(result.is_ok(), "force=true should succeed");
@@ -2004,7 +2004,7 @@ mod tests {
         };
 
         let result =
-            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Json(request))
+            cancel_tasks::<MockTaskRepository>(Extension(auth), Extension(repo), Ok(Json(request)))
                 .await;
 
         assert!(result.is_ok(), "force=None should default to false");

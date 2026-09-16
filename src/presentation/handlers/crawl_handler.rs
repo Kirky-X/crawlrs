@@ -1731,7 +1731,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1759,7 +1759,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1791,7 +1791,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1823,7 +1823,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1852,7 +1852,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1881,7 +1881,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1910,7 +1910,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1938,7 +1938,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1966,7 +1966,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1995,7 +1995,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -2023,7 +2023,7 @@ mod tests {
             Extension(test_locale()),
             Extension(test_bundle()),
             ConnectInfo(make_socket_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();

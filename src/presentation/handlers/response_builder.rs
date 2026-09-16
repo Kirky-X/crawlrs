@@ -308,6 +308,58 @@ pub fn validation_error(message: impl Into<String>) -> Response {
     )
 }
 
+/// axum `Json` 提取失败的统一包封映射。
+///
+/// 提取器级别的拒绝（body 非法 JSON / 字段缺失 / Content-Type 不符）默认
+/// 返回 axum 纯文本响应，绕过 `ApiResponse` 包封——客户端若按包封契约解析
+/// 会静默失败。此助手把各类拒绝映射为与 handler 侧校验一致的包封响应，
+/// 状态码语义与 axum 默认对齐（语法错 400、数据错 422、类型不符 415）。
+pub fn json_rejection_response(rejection: &axum::extract::rejection::JsonRejection) -> Response {
+    use axum::extract::rejection::JsonRejection;
+
+    match rejection {
+        JsonRejection::JsonDataError(err) => error_response_with_code(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            error_codes::UNPROCESSABLE_ENTITY,
+            err.body_text(),
+        ),
+        JsonRejection::JsonSyntaxError(err) => error_response_with_code(
+            StatusCode::BAD_REQUEST,
+            error_codes::VALIDATION_ERROR,
+            err.body_text(),
+        ),
+        JsonRejection::MissingJsonContentType(err) => (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Json(ApiResponse::<()>::error(
+                error_codes::VALIDATION_ERROR,
+                err.body_text(),
+            )),
+        )
+            .into_response(),
+        _ => error_response_with_code(
+            StatusCode::BAD_REQUEST,
+            error_codes::VALIDATION_ERROR,
+            rejection.body_text(),
+        ),
+    }
+}
+
+/// `Json` 提取失败 → `CrawlRsError`（供返回 `Result<Json<_>, CrawlRsError>`
+/// 形态的 handler 使用），状态语义与 [`json_rejection_response`] 对齐：
+/// 结构错误（字段缺失/类型不符）422，语法错误 400。
+pub fn json_rejection_error(
+    rejection: axum::extract::rejection::JsonRejection,
+) -> crate::common::error::CrawlRsError {
+    use axum::extract::rejection::JsonRejection;
+
+    match rejection {
+        JsonRejection::JsonDataError(err) => {
+            crate::common::error::CrawlRsError::Unprocessable(err.body_text())
+        }
+        _ => crate::common::error::CrawlRsError::Validation(rejection.body_text()),
+    }
+}
+
 /// Not found response for resources
 #[inline]
 pub fn resource_not_found(resource: impl Into<String>) -> Response {

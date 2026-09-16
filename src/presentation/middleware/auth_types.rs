@@ -27,6 +27,7 @@
 //! - `AuthError::from_garrison` 错误映射
 
 use crate::domain::auth::{ApiKeyScope, ScopePermission};
+use crate::presentation::handlers::response_builder::ApiResponse;
 use dbnexus::DbPool;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -189,8 +190,36 @@ impl axum::response::IntoResponse for AuthError {
             | AuthError::NetworkError(_)
             | AuthError::NotImplemented(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
-        // 仅返回状态码对应的 canonical reason，不暴露内部细节（CWE-209 防护）
-        (status, status.canonical_reason().unwrap_or("Error")).into_response()
+        // 仅返回状态码对应的 canonical reason 与错误码，不暴露内部细节（CWE-209 防护）；
+        // 响应体走统一 `ApiResponse` 包封，客户端按包封契约解析不会静默失败
+        let error_code = match &self {
+            AuthError::InvalidKey | AuthError::ExpiredKey | AuthError::NilTeamId => {
+                crate::presentation::handlers::response_builder::error_codes::UNAUTHORIZED
+            }
+            AuthError::InactiveKey | AuthError::MissingScope(_) | AuthError::Forbidden(_) => {
+                crate::presentation::handlers::response_builder::error_codes::FORBIDDEN
+            }
+            AuthError::RateLimited => {
+                crate::presentation::handlers::response_builder::error_codes::RATE_LIMITED
+            }
+            AuthError::InvalidLoginId(_)
+            | AuthError::KeyNotFound(_)
+            | AuthError::InvalidParam(_) => {
+                crate::presentation::handlers::response_builder::error_codes::VALIDATION_ERROR
+            }
+            AuthError::DatabaseError(_)
+            | AuthError::InternalError(_)
+            | AuthError::NetworkError(_)
+            | AuthError::NotImplemented(_) => {
+                crate::presentation::handlers::response_builder::error_codes::INTERNAL_ERROR
+            }
+        };
+        let message = status.canonical_reason().unwrap_or("Error").to_string();
+        (
+            status,
+            axum::Json(ApiResponse::<()>::error(error_code, message)),
+        )
+            .into_response()
     }
 }
 

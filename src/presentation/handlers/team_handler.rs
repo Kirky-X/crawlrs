@@ -12,7 +12,7 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::team_service::TeamGeoRestrictions;
 use crate::presentation::handlers::response_builder::{
-    error_codes, error_response_with_code, ApiResponse,
+    error_codes, error_response_with_code, json_rejection_response, ApiResponse,
 };
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{extract::Extension, http::StatusCode, response::IntoResponse, Json};
@@ -142,11 +142,19 @@ where
 pub async fn update_team_geo_restrictions<GR>(
     Extension(geo_restriction_repo): Extension<Arc<GR>>,
     Extension(auth_state): Extension<AuthState>,
-    Json(request): Json<UpdateTeamGeoRestrictionsRequest>,
+    payload: Result<
+        Json<UpdateTeamGeoRestrictionsRequest>,
+        axum::extract::rejection::JsonRejection,
+    >,
 ) -> impl IntoResponse
 where
     GR: GeoRestrictionRepository + 'static,
 {
+    // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
+    let Json(request) = match payload {
+        Ok(parsed) => parsed,
+        Err(ref rej) => return json_rejection_response(rej),
+    };
     let team_id = auth_state.team_id;
     // 验证请求数据
     if let Some(ref countries) = request.allowed_countries {
@@ -1630,7 +1638,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(make_update_request()),
+            Ok(Json(make_update_request())),
         )
         .await
         .into_response();
@@ -1656,7 +1664,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(request),
+            Ok(Json(request)),
         )
         .await
         .into_response();
@@ -1682,7 +1690,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(request),
+            Ok(Json(request)),
         )
         .await
         .into_response();
@@ -1708,7 +1716,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(request),
+            Ok(Json(request)),
         )
         .await
         .into_response();
@@ -1734,7 +1742,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(request),
+            Ok(Json(request)),
         )
         .await
         .into_response();
@@ -1760,7 +1768,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(request),
+            Ok(Json(request)),
         )
         .await
         .into_response();
@@ -1782,7 +1790,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(make_update_request()),
+            Ok(Json(make_update_request())),
         )
         .await
         .into_response();
@@ -1804,7 +1812,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(make_update_request()),
+            Ok(Json(make_update_request())),
         )
         .await
         .into_response();
@@ -1830,7 +1838,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(request),
+            Ok(Json(request)),
         )
         .await
         .into_response();
@@ -1892,7 +1900,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(make_update_request()),
+            Ok(Json(make_update_request())),
         )
         .await
         .into_response();
@@ -1929,7 +1937,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(request),
+            Ok(Json(request)),
         )
         .await
         .into_response();
@@ -1966,7 +1974,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(request),
+            Ok(Json(request)),
         )
         .await
         .into_response();
@@ -2003,7 +2011,7 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
-            Json(request),
+            Ok(Json(request)),
         )
         .await
         .into_response();

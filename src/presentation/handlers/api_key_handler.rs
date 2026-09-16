@@ -28,7 +28,9 @@ use crate::domain::auth::ScopePermission;
 use crate::infrastructure::auth::get_garrison_dao;
 use crate::infrastructure::database::entities::api_key::{ActiveModel, Entity};
 use crate::infrastructure::database::entities::team::Entity as TeamEntity;
-use crate::presentation::handlers::response_builder::{error_response, ApiResponse};
+use crate::presentation::handlers::response_builder::{
+    error_response, json_rejection_response, ApiResponse,
+};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{
     extract::Extension,
@@ -108,8 +110,13 @@ pub struct CreateApiKeyResponse {
 /// 此 handler 在请求路径通过 `get_garrison_dao()` 读取（共享读锁，热路径无竞争）。
 pub async fn create_api_key(
     Extension(auth_state): Extension<AuthState>,
-    Json(req): Json<CreateApiKeyRequest>,
+    payload: Result<Json<CreateApiKeyRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
+    let Json(req) = match payload {
+        Ok(parsed) => parsed,
+        Err(ref rej) => return json_rejection_response(rej),
+    };
     // 1. 鉴权：仅 admin 可签发新 key（CWE-862 IDOR 防护，单一防御点）
     if !auth_state.scope.has_permission(ScopePermission::Admin) {
         return error_response(
@@ -750,7 +757,7 @@ mod tests {
             expires_in_secs: None,
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -774,7 +781,7 @@ mod tests {
             expires_in_secs: None,
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -793,7 +800,7 @@ mod tests {
             expires_in_secs: None,
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -812,7 +819,7 @@ mod tests {
             expires_in_secs: None,
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -831,7 +838,7 @@ mod tests {
             expires_in_secs: None,
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -850,7 +857,7 @@ mod tests {
             expires_in_secs: Some(0),
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -869,7 +876,7 @@ mod tests {
             expires_in_secs: Some(-100),
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -888,7 +895,7 @@ mod tests {
             expires_in_secs: Some(MAX_EXPIRES_IN_SECS + 1),
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -916,7 +923,7 @@ mod tests {
             expires_in_secs: None,
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -957,7 +964,7 @@ mod tests {
             expires_in_secs: Some(3600),
         };
 
-        let response = create_api_key(Extension(auth_state.clone()), Json(req))
+        let response = create_api_key(Extension(auth_state.clone()), Ok(Json(req)))
             .await
             .into_response();
 
@@ -1019,7 +1026,7 @@ mod tests {
             expires_in_secs: None, // 测试默认值
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -1051,7 +1058,7 @@ mod tests {
             expires_in_secs: Some(86400),
         };
 
-        let response = create_api_key(Extension(auth_state), Json(req))
+        let response = create_api_key(Extension(auth_state), Ok(Json(req)))
             .await
             .into_response();
 
@@ -1083,10 +1090,10 @@ mod tests {
             expires_in_secs: Some(3600),
         };
 
-        let resp1 = create_api_key(Extension(auth_state.clone()), Json(req.clone()))
+        let resp1 = create_api_key(Extension(auth_state.clone()), Ok(Json(req.clone())))
             .await
             .into_response();
-        let resp2 = create_api_key(Extension(auth_state.clone()), Json(req))
+        let resp2 = create_api_key(Extension(auth_state.clone()), Ok(Json(req)))
             .await
             .into_response();
 

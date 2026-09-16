@@ -14,7 +14,7 @@ use crate::application::dto::task_query_request::{
 };
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::presentation::errors::CrawlRsError;
-use crate::presentation::handlers::response_builder::ApiResponse;
+use crate::presentation::handlers::response_builder::{json_rejection_error, ApiResponse};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use anyhow;
 use axum::{extract::Extension, Json};
@@ -39,8 +39,14 @@ use super::task_queries::wait_for_tasks_completion;
 pub async fn cancel_tasks<T: TaskRepository>(
     Extension(auth_state): Extension<AuthState>,
     Extension(task_repo): Extension<Arc<T>>,
-    Json(request): Json<TaskCancelRequestDto>,
+    payload: Result<Json<TaskCancelRequestDto>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<ApiResponse<TaskCancelDataDto>>, CrawlRsError> {
+    // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
+    // 绕过 ApiResponse 契约（结构错误 422 / 语法错误 400）
+    let Json(request) = match payload {
+        Ok(parsed) => parsed,
+        Err(rej) => return Err(json_rejection_error(rej)),
+    };
     let team_id = auth_state.team_id;
 
     // 验证请求参数

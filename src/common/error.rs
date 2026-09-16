@@ -40,6 +40,13 @@ pub enum CrawlRsError {
     #[error("Validation error: {0}")]
     Validation(String),
 
+    /// 请求语义无法处理（422：字段缺失/类型不符等结构性校验失败）
+    ///
+    /// 与 `Validation`（400，值域校验失败）区分：JSON 反序列化成功与否、
+    /// 字段结构完整性等"结构正确性"问题按 RFC 9110 归入 422。
+    #[error("Unprocessable entity: {0}")]
+    Unprocessable(String),
+
     /// 资源未找到
     #[error("Not found: {0}")]
     NotFound(String),
@@ -98,6 +105,7 @@ impl CrawlRsError {
             CrawlRsError::Network(_) => StatusCode::BAD_GATEWAY,
             CrawlRsError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
             CrawlRsError::Validation(_) => StatusCode::BAD_REQUEST,
+            CrawlRsError::Unprocessable(_) => StatusCode::UNPROCESSABLE_ENTITY,
             CrawlRsError::NotFound(_) => StatusCode::NOT_FOUND,
             CrawlRsError::Authentication(_) => StatusCode::UNAUTHORIZED,
             CrawlRsError::PermissionDenied(_) => StatusCode::FORBIDDEN,
@@ -120,6 +128,7 @@ impl CrawlRsError {
             CrawlRsError::Network(_) => "EXTERNAL_SERVICE_ERROR",
             CrawlRsError::Config(_) => "CONFIGURATION_ERROR",
             CrawlRsError::Validation(_) => "VALIDATION_ERROR",
+            CrawlRsError::Unprocessable(_) => "UNPROCESSABLE_ENTITY",
             CrawlRsError::NotFound(_) => "NOT_FOUND",
             CrawlRsError::Authentication(_) => "AUTHENTICATION_ERROR",
             CrawlRsError::PermissionDenied(_) => "FORBIDDEN",
@@ -152,6 +161,7 @@ impl CrawlRsError {
             }
             CrawlRsError::Config(_) => "Configuration error. Please contact support.".to_string(),
             CrawlRsError::Validation(msg) => format!("Validation error: {}", msg),
+            CrawlRsError::Unprocessable(msg) => format!("Unprocessable entity: {}", msg),
             CrawlRsError::NotFound(msg) => format!("Resource not found: {}", msg),
             CrawlRsError::Authentication(msg) => format!("Authentication failed: {}", msg),
             CrawlRsError::PermissionDenied(msg) => format!("Permission denied: {}", msg),
@@ -185,6 +195,11 @@ impl CrawlRsError {
             CrawlRsError::Network(_) => bundle.translate(locale, "error-network"),
             CrawlRsError::Config(_) => bundle.translate(locale, "error-config"),
             CrawlRsError::Validation(msg) => bundle.translate_with_args(
+                locale,
+                "error-validation",
+                &[("message", FluentValue::from(msg.as_str()))],
+            ),
+            CrawlRsError::Unprocessable(msg) => bundle.translate_with_args(
                 locale,
                 "error-validation",
                 &[("message", FluentValue::from(msg.as_str()))],

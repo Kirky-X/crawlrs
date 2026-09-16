@@ -23,7 +23,9 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
-use crate::presentation::handlers::response_builder::{error_response, ApiResponse};
+use crate::presentation::handlers::response_builder::{
+    error_response, json_rejection_response, ApiResponse,
+};
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crate::presentation::handlers::{check_ssrf_urls_batch, sync_wait_status_code};
 use crate::presentation::middleware::auth_middleware::AuthState;
@@ -61,11 +63,16 @@ pub async fn extract<GR>(
     Extension(team_service): Extension<Arc<TeamService>>,
     Extension(auth_state): Extension<AuthState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Json(payload): Json<ExtractRequestDto>,
+    payload: Result<Json<ExtractRequestDto>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse
 where
     GR: GeoRestrictionRepository + 'static,
 {
+    // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
+    let Json(payload) = match payload {
+        Ok(parsed) => parsed,
+        Err(ref rej) => return json_rejection_response(rej),
+    };
     let team_id = auth_state.team_id;
     // Validate the request
     if payload.urls.is_empty() {
@@ -270,8 +277,13 @@ pub async fn extract(
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
     ConnectInfo(_addr): ConnectInfo<SocketAddr>,
-    Json(payload): Json<ExtractRequestDto>,
+    payload: Result<Json<ExtractRequestDto>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
+    // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
+    let Json(payload) = match payload {
+        Ok(parsed) => parsed,
+        Err(ref rej) => return json_rejection_response(rej),
+    };
     let team_id = auth_state.team_id;
     // Validate the request
     if payload.urls.is_empty() {
@@ -1453,7 +1465,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1493,7 +1505,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1523,7 +1535,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -1563,7 +1575,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1604,7 +1616,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -1650,7 +1662,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -1684,7 +1696,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1727,7 +1739,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -1761,7 +1773,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -1801,7 +1813,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -1843,7 +1855,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -1877,7 +1889,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -1919,7 +1931,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -1967,7 +1979,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -2037,7 +2049,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -2098,7 +2110,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -2130,7 +2142,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -2172,7 +2184,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -2214,7 +2226,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -2253,7 +2265,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();
@@ -2297,7 +2309,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(payload),
+            Ok(Json(payload)),
         )
         .await
         .into_response();
@@ -2331,7 +2343,7 @@ mod tests {
             Extension(team_service),
             Extension(make_test_auth_state()),
             ConnectInfo(make_addr()),
-            Json(make_valid_payload()),
+            Ok(Json(make_valid_payload())),
         )
         .await
         .into_response();

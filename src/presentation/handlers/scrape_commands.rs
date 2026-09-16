@@ -26,7 +26,7 @@ use crate::{
     i18n::{I18nBundle, Locale},
     presentation::extractors::AppDeps,
     presentation::handlers::response_builder::{
-        errors, errors_locale, success_response, ApiResponse,
+        errors, errors_locale, json_rejection_response, success_response, ApiResponse,
     },
     presentation::handlers::task_handler::handle_sync_wait_and_get_status,
     presentation::handlers::{check_ssrf_url, sync_wait_status_code},
@@ -59,8 +59,13 @@ pub async fn create_scrape(
     Extension(geo_restriction_repo): Extension<Option<Arc<dyn GeoRestrictionRepository>>>,
     Extension(team_service): Extension<Option<Arc<TeamService>>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Json(payload): Json<ScrapeRequestDto>,
+    payload: Result<Json<ScrapeRequestDto>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
+    // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
+    let Json(payload) = match payload {
+        Ok(parsed) => parsed,
+        Err(ref rej) => return json_rejection_response(rej),
+    };
     let team_id = auth_state.team_id;
 
     // 验证 sync_wait_ms 范围

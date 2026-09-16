@@ -22,7 +22,7 @@ use crate::common::constants::crawl_task::DEFAULT_TIMEOUT_MS;
 use crate::i18n::{I18nBundle, Locale};
 use crate::presentation::handlers::response_builder::errors;
 use crate::presentation::handlers::response_builder::{
-    error_response, errors_locale, success_response,
+    error_response, errors_locale, json_rejection_response, success_response,
 };
 use crate::presentation::handlers::task_handler::handle_sync_wait_and_get_status;
 use crate::presentation::handlers::task_handler::SyncWaitResult;
@@ -52,8 +52,13 @@ pub async fn create_crawl(
     Extension(locale): Extension<Locale>,
     Extension(bundle): Extension<Arc<I18nBundle>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Json(payload): Json<CrawlRequestDto>,
+    payload: Result<Json<CrawlRequestDto>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
+    // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
+    let Json(payload) = match payload {
+        Ok(parsed) => parsed,
+        Err(ref rej) => return json_rejection_response(rej),
+    };
     let team_id = auth_state.team_id;
     let sync_wait_ms = payload.sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
 

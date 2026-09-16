@@ -20,7 +20,7 @@ use crate::domain::repositories::task_repository::{TaskQueryParams, TaskReposito
 use crate::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use crate::presentation::errors::CrawlRsError;
 use crate::presentation::handlers::extract_task_ids;
-use crate::presentation::handlers::response_builder::ApiResponse;
+use crate::presentation::handlers::response_builder::{json_rejection_error, ApiResponse};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use anyhow;
 use axum::{extract::Extension, Json};
@@ -196,8 +196,13 @@ pub async fn query_tasks<T: TaskRepository>(
     Extension(auth_state): Extension<AuthState>,
     Extension(task_repo): Extension<Arc<T>>,
     Extension(scrape_result_repo): Extension<Arc<ScrapeResultRepositoryImpl>>,
-    Json(request): Json<TaskQueryRequestDto>,
+    payload: Result<Json<TaskQueryRequestDto>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<ApiResponse<TaskQueryDataDto>>, CrawlRsError> {
+    // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封（结构错误 422 / 语法错误 400）
+    let Json(request) = match payload {
+        Ok(parsed) => parsed,
+        Err(rej) => return Err(json_rejection_error(rej)),
+    };
     let team_id = auth_state.team_id;
     let start_time = Instant::now();
 
