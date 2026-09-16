@@ -904,7 +904,7 @@ fn test_verify_webhook_signature_correct_signature_succeeds_at_boundary() {
     ));
 }
 
-// ---- verify_webhook_signature_from_parts（架构） ----
+// ---- verify_webhook_signature_from_parts ----
 
 /// 合法签名 + 合法时间戳字符串 → Ok
 #[test]
@@ -1140,7 +1140,7 @@ impl WebhookService for MockWebhookService {
 struct ConfigurableWebhookEventRepository {
     events: std::sync::Mutex<Vec<WebhookEvent>>,
     update_count: AtomicU32,
-    /// 注入前 N 次 update 失败（T023：验证状态回写失败的重试与 Err 传播）。
+    /// 注入前 N 次 update 失败（验证状态回写失败的重试与 Err 传播）。
     /// 默认 0 = update 始终成功，既有测试不受影响。
     fail_update_times: AtomicU32,
 }
@@ -1181,7 +1181,7 @@ impl WebhookEventRepository for ConfigurableWebhookEventRepository {
 
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError> {
         self.update_count.fetch_add(1, Ordering::SeqCst);
-        // T023: 注入前 N 次 update 失败以验证状态回写重试与 Err 传播
+        // 注入前 N 次 update 失败以验证状态回写重试与 Err 传播
         if self.fail_update_times.load(Ordering::SeqCst) > 0 {
             self.fail_update_times.fetch_sub(1, Ordering::SeqCst);
             return Err(RepositoryError::Database(anyhow::anyhow!(
@@ -1408,7 +1408,7 @@ async fn test_trigger_webhook_send_failure_propagates() {
     );
 }
 
-// ---- T023: trigger_webhook 状态回写可靠性（R-data-integrity-010）----
+// ---- trigger_webhook 状态回写可靠性 ----
 
 #[tokio::test]
 async fn test_trigger_webhook_writeback_fails_once_then_retry_succeeds() {

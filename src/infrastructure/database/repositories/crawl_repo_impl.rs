@@ -112,7 +112,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        // 原子自增（R-data-integrity-006）：单条 UPDATE ... SET completed_tasks =
+        // 原子自增：单条 UPDATE ... SET completed_tasks =
         // completed_tasks + 1 WHERE id = ?，避免 find_by_id + 全行回写在并发下丢失更新。
         // crawl 不存在时 update_many 命中 0 行并返回 Ok（与原 if-let-Some 静默语义一致）。
         // updated_at 绑定 naive 值以匹配 crawls.updated_at 的 TIMESTAMP（非 TIMESTAMPTZ）列类型。
@@ -144,7 +144,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        // 原子自增（R-data-integrity-006）：见 increment_completed_tasks 注释。
+        // 原子自增：见 increment_completed_tasks 注释。
         crawl::Entity::update_many()
             .col_expr(
                 crawl::Column::FailedTasks,
@@ -204,7 +204,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
-        // 原子自增（R-data-integrity-006）：见 increment_completed_tasks 注释。
+        // 原子自增：见 increment_completed_tasks 注释。
         crawl::Entity::update_many()
             .col_expr(
                 crawl::Column::TotalTasks,

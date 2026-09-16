@@ -34,7 +34,7 @@ const DEFAULT_PROXY_STRATEGY: ProxyStrategy = ProxyStrategy::RoundRobin;
 /// 构造函数从 `Settings.timeouts.engines.fetch_seconds` 注入，避免硬编码。
 const DEFAULT_REQWEST_MRT_SECONDS: u64 = 5;
 
-/// 响应体大小上限（10MB，R-engines-005）。
+/// 响应体大小上限（10MB，）。
 ///
 /// 超过此大小的响应被拒绝，防止超大/恶意页面导致 OOM。依据：绝大多数正常网页
 /// 正文 < 5MB，10MB 留足富余（含内联资源的大型页面）同时阻断异常超大响应。
@@ -98,7 +98,7 @@ impl ReqwestEngine {
     /// 创建带超时配置的 ReqwestEngine 实例（无代理提供者）
     ///
     /// 生产环境调用点应从 `settings.timeouts.engines.default_timeout_seconds` 注入超时，
-    /// 避免硬编码 30 秒（架构）。
+    /// 避免硬编码 30 秒。
     pub fn new_with_timeout(http_client: Arc<reqwest::Client>, timeout_seconds: u64) -> Self {
         Self::new_with_timeout_and_mrt(
             http_client,
@@ -154,7 +154,7 @@ impl ReqwestEngine {
     /// - `settings.proxy.strategy` 注入 `proxy_strategy`
     /// - `settings.timeouts.engines.default_timeout_seconds` 注入超时
     ///
-    /// 避免硬编码（架构）。
+    /// 避免硬编码。
     #[must_use]
     pub fn with_provider_strategy_and_timeout(
         http_client: Arc<reqwest::Client>,
@@ -672,7 +672,7 @@ impl ScraperEngine for ReqwestEngine {
             }
         }
 
-        // 响应体大小上限（R-engines-005）：content_length 预检 + bytes_stream 累积读取，
+        // 响应体大小上限：content_length 预检 + bytes_stream 累积读取，
         // 超限返回 EngineError 并 warn!，替代无界 `.text()`（防止超大响应 OOM）。
         let content = read_body_limited(response, MAX_RESPONSE_BODY_BYTES)
             .await
@@ -1566,7 +1566,7 @@ mod tests {
         assert_eq!(handle.used_proxy_url(), Some("http://proxy:8080"));
     }
 
-    // === timeout 注入测试（架构） ===
+    // === timeout 注入测试 ===
 
     #[test]
     fn test_new_with_timeout_sets_timeout_seconds() {

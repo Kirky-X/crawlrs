@@ -249,7 +249,7 @@ impl std::fmt::Display for BodyReadError {
 
 impl std::error::Error for BodyReadError {}
 
-/// 从字节流累积读取，累计字节数一旦超过 `max_bytes` 立即中断（R-engines-005）。
+/// 从字节流累积读取，累计字节数一旦超过 `max_bytes` 立即中断。
 ///
 /// 抽为泛型以便用合成流单测累积分支（无需真实分块 HTTP 服务器）。
 /// `bytes_stream()` 等非 Unpin 流由调用方 `Box::pin` 后传入。
@@ -273,7 +273,7 @@ where
 
 /// 读取响应体，受 `max_bytes` 上限约束（防止超大响应导致 OOM）。
 ///
-/// 两步防护（R-engines-005）：
+/// 两步防护
 /// 1. **content_length 预检**：若响应声明的 `Content-Length` 已超限，读取前直接拒绝，
 ///    不消耗带宽/内存。
 /// 2. **bytes_stream 累积**：逐块读取并累加，一旦累计字节数将超过上限立即中断
@@ -1063,7 +1063,7 @@ mod tests {
         );
     }
 
-    // ========== read_body_limited 上限测试（R-engines-005） ==========
+    // ========== read_body_limited 上限测试 ==========
 
     #[tokio::test]
     async fn test_read_body_limited_within_limit() {

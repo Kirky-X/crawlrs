@@ -475,7 +475,7 @@ async fn test_task_status_transitions() {
     assert_eq!(found_cancelled_task.status, TaskStatus::Cancelled);
 }
 
-/// 条件回队（R-data-integrity-001）：
+/// 条件回队
 /// lock_token 匹配时置回 queued 并清空认领；不匹配时返回 Ok(false) 且不动任务。
 #[tokio::test]
 async fn test_requeue_task_respects_lock_token_guard() {
@@ -544,7 +544,7 @@ async fn test_requeue_task_respects_lock_token_guard() {
     assert!(requeued_task.started_at.is_none());
 }
 
-/// 毒丸熔断（R-data-integrity-003）：
+/// 毒丸熔断
 /// attempt_count 已达 max_retries 的僵尸任务不再被恢复重跑；
 /// 未达上限的僵尸任务恢复时 attempt_count 原子自增。
 #[tokio::test]

@@ -32,7 +32,7 @@ pub struct BacklogWorker {
 /// `process_single_backlog` 的分类结果。
 ///
 /// 取代原先的 `bool`：`Ok(false)` 曾把"过期/并发拒绝/意外排队/重试耗尽"全部
-/// 混为一谈，process_backlog 无法分类计数（R-data-integrity-008）。
+/// 混为一谈，process_backlog 无法分类计数。
 enum BacklogOutcome {
     /// 成功重新激活任务（或任务已处终态，积压项随之标记完成）
     Reactivated,
@@ -84,7 +84,7 @@ impl BacklogWorker {
 
         info!("发现 {} 个待处理的积压任务", pending_backlogs.len());
 
-        // 分类计数（R-data-integrity-008）：Ok(false) 曾把 expired/denied/queued/
+        // 分类计数：Ok(false) 曾把 expired/denied/queued/
         // 重试耗尽全部混为"过期"，现按 BacklogOutcome 独立计数并分类输出。
         let mut reactivated_count = 0;
         let mut expired_count = 0;
@@ -192,7 +192,7 @@ impl BacklogWorker {
                 // 4. 前置状态迁移：Pending → Processing（域状态机守卫，仅 Pending 可迁移）。
                 //    这是修复"成功路径 mark_completed 恒败"的关键——mark_completed 要求
                 //    积压项处于 Processing。迁移失败说明该项已非 Pending（被他方处理），
-                //    跳过该条并继续（R-data-integrity-008）。
+                //    跳过该条并继续。
                 let mut processing_backlog = backlog.clone();
                 if let Err(e) = processing_backlog.mark_processing() {
                     warn!(
@@ -1087,7 +1087,7 @@ mod tests {
         );
         let result = worker.process().await;
         assert_eq!(result, ProcessResult::Completed);
-        // T021 修复：前置 mark_processing 迁移后 mark_completed 成功，Pending 积压项
+        // 修复：前置 mark_processing 迁移后 mark_completed 成功，Pending 积压项
         // 走完激活路径终态为 Completed（不再退化为 Pending + retry_count 递增）。
         let updated = updated_repo.updated();
         assert_eq!(updated.len(), 1);
@@ -1117,7 +1117,7 @@ mod tests {
         );
         let result = worker.process().await;
         assert_eq!(result, ProcessResult::Completed);
-        // T021 修复：前置 mark_processing 迁移后 mark_completed 成功，Pending 积压项
+        // 修复：前置 mark_processing 迁移后 mark_completed 成功，Pending 积压项
         // 走完激活路径终态为 Completed（不再退化为 Pending + retry_count 递增）。
         let updated = updated_repo.updated();
         assert_eq!(updated.len(), 1);
@@ -1307,7 +1307,7 @@ mod tests {
     async fn test_process_success_reactivates_queued_task() {
         let team_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
-        // T021: seed a Pending backlog (as production get_pending_tasks returns);
+        // seed a Pending backlog (as production get_pending_tasks returns);
         // the worker now transitions Pending → Processing → Completed internally.
         let backlog = make_backlog(team_id, task_id);
         let task = make_task(task_id, TaskStatus::Queued);
@@ -1342,7 +1342,7 @@ mod tests {
     async fn test_process_task_not_queued_marks_backlog_completed() {
         let team_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
-        // T021: seed a Pending backlog (as production get_pending_tasks returns);
+        // seed a Pending backlog (as production get_pending_tasks returns);
         // the worker now transitions Pending → Processing → Completed internally.
         let backlog = make_backlog(team_id, task_id);
         // Task is already Completed (not Queued)
@@ -1366,7 +1366,7 @@ mod tests {
         );
     }
 
-    // ========== T021: non-Pending backlog is skipped (mark_processing guard) ==========
+    // ========== non-Pending backlog is skipped (mark_processing guard) ==========
 
     #[tokio::test]
     async fn test_process_already_processing_backlog_is_skipped() {

@@ -95,7 +95,7 @@ pub trait TaskRepository: Send + Sync {
 
     /// 守卫式生命周期更新：按内存快照写入状态/调度/计数/payload 等字段，
     /// 但仅当 DB 行仍处于活跃态（queued/active）且锁仍归属调用者快照中的
-    /// `lock_token` 时才生效（R-data-integrity-001）。
+    /// `lock_token` 时才生效。
     ///
     /// 与 [`TaskRepository::update`]（无守卫全行覆盖）不同，本方法保证不会
     /// 覆盖并发发生的取消/终结等状态迁移。
@@ -131,7 +131,7 @@ pub trait TaskRepository: Send + Sync {
         -> Result<HashSet<String>, RepositoryError>;
     /// 重置卡住的任务（长时间处于Active状态）
     async fn reset_stuck_tasks(&self, timeout: chrono::Duration) -> Result<u64, RepositoryError>;
-    /// 按本副本 worker 身份回滚在途任务（R-data-integrity-004）
+    /// 按本副本 worker 身份回滚在途任务
     ///
     /// 仅回滚 `lock_token` 属于 `worker_ids` 且活跃的任务，防止多副本部署下
     /// 一方停机把另一方正在执行的任务误回滚 queued。

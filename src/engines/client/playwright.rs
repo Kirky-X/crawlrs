@@ -47,7 +47,7 @@ const WAIT_TIMEOUT_CAP: Duration = Duration::from_secs(10);
 /// scrape 的成功返回、`?` 早退、以及 `tokio::time::timeout` 超时取消（整个
 /// future 被 drop）三种退出路径都会触发守卫 drop，从而终止拦截 task，
 /// 防止其残留在归还到 TabPool 的复用页面上继续对下一请求发出
-/// Continue/FailRequest（R-engines-002）。
+/// Continue/FailRequest。
 struct InterceptGuard(Option<tokio::task::JoinHandle<()>>);
 
 impl InterceptGuard {
@@ -637,7 +637,7 @@ impl ScraperEngine for PlaywrightEngine {
                     }
                 });
                 // 保存 JoinHandle 到守卫：scrape 退出（成功/错误/超时）时 abort，
-                // 防止拦截 task 残留在归还池的复用页面上（R-engines-002）。
+                // 防止拦截 task 残留在归还池的复用页面上。
                 intercept_guard.set(intercept_handle);
             }
 

@@ -440,7 +440,7 @@ impl ScrapeWorker {
                 (Some(dto), req)
             }
             Err(e) => {
-                // payload 反序列化失败即失败（R-data-integrity-009）：不再静默回退
+                // payload 反序列化失败即失败：不再静默回退
                 // 默认 ScrapeRequest 带残缺配置执行，改为标记任务 Failed 并终止。
                 // 仅输出 task_id 与错误摘要，绝不打印原始 payload（可能含敏感/超大内容）。
                 error!(
@@ -882,7 +882,7 @@ impl ScrapeWorker {
 
         // 解析 ScrapeRequest 以检查是否有提取规则
         // Token 扣费延后：先收集用量，仅在赢得 mark_completed 守卫后统一扣除，
-        // 防止丢守卫的陈旧 worker 与认领方对同一次任务双扣费（R-data-integrity-005）
+        // 防止丢守卫的陈旧 worker 与认领方对同一次任务双扣费
         let mut pending_token_usages: Vec<crate::domain::services::llm::TokenUsage> = Vec::new();
         let mut extracted_data = None;
         if let Some(req) = parsed_req.as_ref() {
@@ -1035,7 +1035,7 @@ impl ScrapeWorker {
         }
 
         if extra_credits > 0 {
-            // 幂等守卫（R-data-integrity-005）：丢失完成守卫的陈旧 worker 若重跑本
+            // 幂等守卫：丢失完成守卫的陈旧 worker 若重跑本
             // 扣费路径，不得对同一任务二次扣费。已存在同任务 Scrape 扣费流水则跳过。
             match self
                 .credits_repository
@@ -1099,7 +1099,7 @@ impl ScrapeWorker {
         description: &str,
     ) {
         if usage.total_tokens > 0 {
-            // 幂等守卫（R-data-integrity-005）：已存在同任务 Extract 扣费流水则跳过，
+            // 幂等守卫：已存在同任务 Extract 扣费流水则跳过，
             // 防止陈旧 worker 重跑扣费路径造成双扣费；in-memory 计数一并跳过避免虚高。
             match self
                 .credits_repository

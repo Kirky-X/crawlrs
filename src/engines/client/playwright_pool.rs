@@ -681,7 +681,7 @@ impl BrowserInstance {
                     .await
                 {
                     // 通道关闭（receiver 已随后台任务终止）：直接回收 in_use 槽位，
-                    // 防止信号量 permit 泄漏导致池容量永久收缩（R-engines-003）。
+                    // 防止信号量 permit 泄漏导致池容量永久收缩。
                     error!(
                         "Return channel closed during release of browser instance {}; reclaiming in_use slot directly",
                         msg.instance_id
@@ -908,7 +908,7 @@ impl BrowserPool {
             Err(e) => {
                 // acquire Page 失败，归还 Browser 到 return channel；通道满/关闭时
                 // 直接 await return_instance 移除 in_use 槽位，防止 permit 泄漏
-                // 导致池容量收缩（R-engines-003）。
+                // 导致池容量收缩。
                 let err_msg = e.to_string();
                 match self.state.clone_return_sender().try_send(ReturnMessage {
                     instance_id,
@@ -1143,7 +1143,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_try_reclaim_in_use_slot_absent_id_is_noop() {
-        // T026：归还通道满/关闭时 Drop 通过 try_reclaim_in_use_slot 同步移除
+        // 归还通道满/关闭时 Drop 通过 try_reclaim_in_use_slot 同步移除
         // in_use 槽位以回收 permit。无浏览器环境下无法在 in_use 放置真实
         // PooledBrowser（需 Chrome，与本文件其余测试一致），故验证回收的安全属性：
         // 对不存在的 instance_id 回收返回 false，且不误减 total_instances（防止过度

@@ -220,7 +220,7 @@ impl TaskRepository for TaskRepositoryImpl {
         // Reaches here only when step 1 returned no row, so queued tasks always
         // take priority over recovery (no starvation).
         //
-        // 毒丸熔断（R-data-integrity-003）：恢复即 attempt_count + 1，且仅恢复
+        // 毒丸熔断：恢复即 attempt_count + 1，且仅恢复
         // attempt_count < max_retries 的任务——每次僵尸恢复都消耗一次尝试额度，
         // 防止反复崩溃的任务被无限重跑。
         let stmt_stale = Statement::from_sql_and_values(
@@ -384,7 +384,7 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok(result.rows_affected)
     }
 
-    /// 条件回队（R-data-integrity-001）
+    /// 条件回队
     ///
     /// 仅当任务仍处于 queued/active 且锁仍归属调用者（或无锁）时置回 queued，
     /// 清空认领信息并应用重排时间；防止覆盖并发发生的取消/终结等状态迁移。
@@ -443,7 +443,7 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok(result.rows_affected > 0)
     }
 
-    /// 守卫式生命周期更新（R-data-integrity-001）
+    /// 守卫式生命周期更新
     ///
     /// 按内存快照写入生命周期字段，但仅当 DB 行仍为 queued/active 且
     /// lock_token 与快照一致时生效；防止覆盖并发发生的取消/终结。
@@ -668,7 +668,7 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok(result.rows_affected)
     }
 
-    /// 按本副本 worker 身份回滚（R-data-integrity-004）
+    /// 按本副本 worker 身份回滚
     ///
     /// 在 [`Self::reset_stuck_tasks`] 基础上增加 `lock_token ∈ worker_ids` 过滤，
     /// 停机时只回滚本进程 worker 认领的任务，不触碰其他副本在跑任务。
@@ -780,7 +780,7 @@ impl TaskRepository for TaskRepositoryImpl {
                     .add(task_entity::Column::StartedAt.lt(stale_threshold)),
             );
 
-        // 持锁守卫（R-data-integrity-007）：仅过期锁已释放（lock_expires_at IS NULL）
+        // 持锁守卫：仅过期锁已释放（lock_expires_at IS NULL）
         // 或锁租约已过期（lock_expires_at < now）的任务。仍在心跳续约（持有效锁）的
         // 长任务即使 started_at 早于 stale_threshold 也不会被误杀。
         let lock_lease_free = Condition::any()

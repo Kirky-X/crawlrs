@@ -19,7 +19,7 @@
 //!   - `Purged`（僵死条目被清理）/ recv `Closed`（leader 异常）/ 超时 →
 //!     不 mark_failed leader 任务，走等待方自身重排（超上限后才 mark_failed 自身）
 //!
-//! # 信号语义（R-engines-004）
+//! # 信号语义
 //!
 //! 原代码 `rx.recv().await` 无超时且不区分信号来源，leader panic / 死锁会导致等待方
 //! 永久挂起或误判完成。现等待方区分 leader 正常完成与异常消失：正常完成才按
@@ -112,7 +112,7 @@ impl CoalesceCoordinator {
                 // - 短于 RequestCoalescer::STALE_TIMEOUT（120s），超时后由 purge_stale
                 //   兜底清理 in-flight 条目并广播 Purged
                 //
-                // 信号语义（R-engines-004）：
+                // 信号语义
                 // - Completed → 按 leader task_id 查询落库结果
                 // - Purged → leader 僵死被清理，不视为完成，走自身重排
                 // - recv Closed / Lagged → leader 异常，不 mark_failed，走自身重排
@@ -127,7 +127,7 @@ impl CoalesceCoordinator {
                 {
                     Err(_) => {
                         // 超时：leader 未在窗口内完成，可能仍在跑或已 panic/死锁。
-                        // R-engines-004：超时路径不得无条件 purge 全表，也不 mark_failed
+                        // 超时路径不得无条件 purge 全表，也不 mark_failed
                         // leader 的任务；走等待方自身重排（超上限后才 mark_failed 自身）。
                         error!(
                             "Coalesce wait for task {} timed out after {}s (leader task {}); \
@@ -744,7 +744,7 @@ mod tests {
         let _cloned = coord.clone();
     }
 
-    /// R-engines-004：recv Closed（leader 异常消失）→ 等待方不进入 Failed，走自身重排
+    /// recv Closed（leader 异常消失）→ 等待方不进入 Failed，走自身重排
     #[tokio::test]
     async fn try_coalesce_closed_channel_reschedules_not_failed() {
         let worker_id = Uuid::new_v4();
@@ -799,7 +799,7 @@ mod tests {
         );
     }
 
-    /// R-engines-004：Purged 信号不触发结果查询/完成路径，走自身重排
+    /// Purged 信号不触发结果查询/完成路径，走自身重排
     #[tokio::test]
     async fn try_coalesce_purged_signal_skips_result_lookup() {
         let worker_id = Uuid::new_v4();
@@ -859,7 +859,7 @@ mod tests {
         );
     }
 
-    /// R-engines-004：Completed 后等待方按 leader task_id 查询结果（非自身 task_id）
+    /// Completed 后等待方按 leader task_id 查询结果（非自身 task_id）
     #[tokio::test]
     async fn try_coalesce_queries_result_by_leader_task_id() {
         let worker_id = Uuid::new_v4();

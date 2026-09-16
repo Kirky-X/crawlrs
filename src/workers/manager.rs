@@ -85,7 +85,7 @@ pub struct WorkerManager {
     shutdown_coordinator: Arc<ShutdownCoordinator>,
     /// 本进程已启动 worker 的认领身份（worker_id 即任务 lock_token）
     ///
-    /// 优雅停机回滚在途任务时据此限定回滚范围（R-data-integrity-004），
+    /// 优雅停机回滚在途任务时据此限定回滚范围，
     /// 防止多副本部署下误回滚其他副本正在执行的任务。
     worker_ids: parking_lot::Mutex<Vec<Uuid>>,
 }
@@ -264,7 +264,7 @@ impl WorkerManager {
     /// 本进程所有已启动 worker 的认领身份（worker_id == 任务 lock_token）。
     ///
     /// 供优雅停机回滚（`rollback_pending_tasks`）限定回滚范围：
-    /// 只回滚本进程认领的在途任务（R-data-integrity-004）。
+    /// 只回滚本进程认领的在途任务。
     pub fn worker_ids(&self) -> Vec<Uuid> {
         self.worker_ids.lock().clone()
     }

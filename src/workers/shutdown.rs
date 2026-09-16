@@ -198,7 +198,7 @@ pub async fn listen_unix_signals(coordinator: Arc<ShutdownCoordinator>) -> std::
 /// - 复用 `reset_stuck_tasks_for_workers(timeout=0)` 的批量 UPDATE（Active → Queued），
 ///   立即重置所有已锁定任务，无需 N+1 循环。
 ///
-/// 身份限定（R-data-integrity-004）：仅回滚 `worker_ids` 中本进程 worker
+/// 身份限定：仅回滚 `worker_ids` 中本进程 worker
 /// 认领的任务（lock_token == worker_id），多副本部署下不触碰其他副本在跑任务。
 ///
 /// 该操作是 best-effort：以 `graceful_period` 为超时上限，数据库不可达时

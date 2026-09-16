@@ -123,7 +123,7 @@ impl SearchEngine for TavilySearchEngine {
             ));
         }
 
-        // 响应体大小上限（R-engines-005）：content_length 预检 + bytes_stream 累积读取，
+        // 响应体大小上限：content_length 预检 + bytes_stream 累积读取，
         // 替代「先 `.text()` 全量读入再检查长度」的旧逻辑（防止超大响应先 OOM 再报错）。
         let body_text = read_body_limited(response, MAX_RESPONSE_SIZE)
             .await

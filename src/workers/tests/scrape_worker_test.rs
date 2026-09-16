@@ -1290,7 +1290,7 @@ impl WebhookService for MockWebhookService {
 struct MockCreditsRepo {
     deducted: Arc<std::sync::Mutex<Vec<(Uuid, i64)>>>,
     /// Records (reference_id/task_id, transaction_type) of every deduction so
-    /// `has_deduction_for_task` can enforce idempotency in tests (T018).
+    /// `has_deduction_for_task` can enforce idempotency in tests.
     deduction_keys: Arc<std::sync::Mutex<Vec<(Uuid, String)>>>,
 }
 
@@ -2331,7 +2331,7 @@ async fn test_mock_deduct_token_credits_with_tokens() {
         .await;
 }
 
-// --- T018: deduction idempotency (R-data-integrity-005) ---
+// --- deduction idempotency ---
 
 #[tokio::test]
 async fn test_deduct_feature_credits_is_idempotent_per_task() {
@@ -2502,7 +2502,7 @@ async fn test_mock_handle_scrape_success_with_extraction_rules() {
 }
 
 /// 丢守卫（mark_completed 返回 0）→ 返回 Ok(false)，不做扣费/投递
-/// （R-data-integrity-005：守卫归属即计费幂等）
+/// （守卫归属即计费幂等）
 #[tokio::test]
 async fn test_handle_scrape_success_returns_false_when_guard_lost() {
     struct GuardLostRepo;
@@ -2964,14 +2964,14 @@ async fn test_mock_process_scrape_task_engine_error() {
     let worker = build_mock_worker().await;
     // 有效 payload（含 url）→ 解析成功 → EngineClient::new() 无引擎 → scrape() 报错。
     // 错误路径内部处理（mark_failed 或 handle_failure），process_scrape_task 返回 Ok(())。
-    // 注：T022 后畸形 payload 会在解析阶段直接 mark_failed，不再进入引擎，
+    // 注：后畸形 payload 会在解析阶段直接 mark_failed，不再进入引擎，
     // 故此处用有效 payload 才能真正覆盖"引擎错误"路径。
     let task = make_task(json!({"url": "https://example.com"}));
     let result = worker.process_scrape_task(task).await;
     assert!(result.is_ok()); // Error is handled internally, returns Ok(())
 }
 
-// --- T022: malformed payload marks task Failed (R-data-integrity-009) ---
+// --- malformed payload marks task Failed ---
 
 #[tokio::test]
 async fn test_process_scrape_task_malformed_payload_marks_failed() {

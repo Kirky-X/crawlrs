@@ -30,7 +30,7 @@ use uuid::Uuid;
 /// 僵死条目超时（秒）
 pub const STALE_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// coalesce 广播信号：区分 leader 正常完成与 stale 清理（R-engines-004）
+/// coalesce 广播信号：区分 leader 正常完成与 stale 清理
 ///
 /// 等待方据此决定后续动作：
 /// - [`Completed`](Self::Completed)：leader guard Drop，抓取正常完成 → 按 leader task_id 查询结果
@@ -191,7 +191,7 @@ impl RequestCoalescer {
         let purged = stale_urls.len();
         for url in stale_urls {
             if let Some((_, entry)) = self.in_flight.remove(&url) {
-                // 广播 Purged：等待方不视为完成，走自身重排（R-engines-004）
+                // 广播 Purged：等待方不视为完成，走自身重排
                 let _ = entry.sender.send(CoalesceSignal::Purged);
             }
         }
@@ -469,7 +469,7 @@ mod tests {
         assert_eq!(signal, CoalesceSignal::Completed);
     }
 
-    /// purge_stale 广播 Purged 信号：等待方收到 Purged 而非 Completed（R-engines-004）
+    /// purge_stale 广播 Purged 信号：等待方收到 Purged 而非 Completed
     #[tokio::test]
     async fn purge_stale_broadcasts_purged_signal() {
         let coalescer = RequestCoalescer::new();

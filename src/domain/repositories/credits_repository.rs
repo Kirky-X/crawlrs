@@ -39,7 +39,7 @@ pub trait CreditsRepository: Send + Sync {
     ///
     /// Makes post-completion billing idempotent: a stale worker that lost the
     /// completion guard but re-runs the deduction path must not charge the same
-    /// task twice (R-data-integrity-005). The default returns `Ok(false)` so
+    /// task twice. The default returns `Ok(false)` so
     /// implementors that do not track per-task transactions preserve the
     /// always-deduct behavior; the production repository overrides it with a
     /// real query against `credits_transactions`.
