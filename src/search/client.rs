@@ -17,7 +17,6 @@ pub mod baidu;
 pub mod bing;
 pub mod exa;
 pub mod html_parser;
-pub mod http_client;
 pub mod shared_utils;
 pub mod sogou;
 pub mod tavily;

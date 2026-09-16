@@ -28,7 +28,7 @@ use crate::{
     presentation::handlers::response_builder::{
         errors, errors_locale, json_rejection_response, success_response, ApiResponse,
     },
-    presentation::handlers::task_handler::handle_sync_wait_and_get_status,
+    presentation::handlers::task_queries::handle_sync_wait_and_get_status,
     presentation::handlers::{check_ssrf_url, sync_wait_status_code},
     presentation::helpers::rate_limit_helper::check_rate_limit,
     presentation::middleware::auth_middleware::AuthState,
@@ -199,7 +199,7 @@ pub async fn create_scrape(
             )
             .await
             .unwrap_or({
-                crate::presentation::handlers::task_handler::SyncWaitResult {
+                crate::presentation::handlers::task_queries::SyncWaitResult {
                     waited_time_ms: 0,
                     is_timeout: false,
                 }

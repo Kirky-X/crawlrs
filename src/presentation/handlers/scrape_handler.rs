@@ -6,8 +6,8 @@
 //! Scrape handlers — re-export facade for `scrape_queries` + `scrape_commands`.
 
 // Re-export from sibling modules for backward compatibility
-pub use super::scrape_commands::{cancel_scrape, create_scrape};
-pub use super::scrape_queries::get_scrape_status;
+pub(crate) use super::scrape_commands::{cancel_scrape, create_scrape};
+pub(crate) use super::scrape_queries::get_scrape_status;
 
 #[cfg(test)]
 mod tests {

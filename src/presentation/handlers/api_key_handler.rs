@@ -354,12 +354,6 @@ fn map_scopes_to_garrison_perms(scopes: &[String]) -> Vec<String> {
 /// 返回 `Err(sea_orm::DbErr)` 由调用方映射为 500，记录到 `log::error!`。
 /// 常见失败场景：unique 冲突（极小概率，UUID 碰撞）/ DB 连接失败 / NOT NULL 约束。
 ///
-/// # 弃用字段访问
-///
-/// `key_hash` 字段已标注 `#[deprecated]`（garrison 自管哈希），但此处仍需
-/// 显式写入 `None`（保留列约束），故加 `#[allow(deprecated)]`。待全量重签
-/// 完成后随 `api_keys.key_hash` 列一并移除。
-#[allow(deprecated)]
 async fn insert_api_key_mapping(
     pool: &Arc<dbnexus::DbPool>,
     api_key_id: Uuid,
@@ -379,7 +373,6 @@ async fn insert_api_key_mapping(
         team_id: sea_orm::ActiveValue::Set(team_id),
         key: sea_orm::ActiveValue::Set(garrison_key_id),
         // key_hash 弃用（garrison 自管 sha256(secret_hash)）
-        key_hash: sea_orm::ActiveValue::Set(None),
         created_at: sea_orm::ActiveValue::Set(now),
         updated_at: sea_orm::ActiveValue::Set(None),
     };
@@ -998,7 +991,6 @@ mod tests {
             .expect("api_key mapping must exist in DB after create");
         assert_eq!(row.team_id, target_team_id);
         assert_eq!(row.key, data.api_key.split_once('.').unwrap().0);
-        assert!(row.key_hash.is_none(), "key_hash must be None (deprecated)");
 
         reset_garrison_dao_for_test();
     }

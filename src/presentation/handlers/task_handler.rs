@@ -8,15 +8,15 @@
 //! 路由和其他 handler 继续通过 `task_handler::query_tasks` 等路径访问，
 //! 无需修改调用方。
 
-// Re-export from sibling modules for backward compatibility
-pub use super::task_commands::cancel_tasks;
-pub use super::task_queries::{
-    handle_sync_wait_and_get_status, query_tasks, wait_for_tasks_completion, SyncWaitResult,
-    TaskQueryResponseMeta,
-};
+// 同模块组织用（crate 内路由/测试引用）；对外路径为 task_queries/task_commands
+pub(crate) use super::task_commands::cancel_tasks;
+pub(crate) use super::task_queries::{query_tasks, wait_for_tasks_completion};
 
 #[cfg(test)]
 mod tests {
+    use super::super::task_queries::{
+        handle_sync_wait_and_get_status, SyncWaitResult, TaskQueryResponseMeta,
+    };
     use super::*;
     // Access helpers from task_queries
     use super::super::task_queries::{
@@ -280,7 +280,6 @@ mod tests {
         }
         let request = TaskQueryRequestDto {
             task_ids: None,
-            team_id: Uuid::nil(),
             task_types: None,
             statuses: None,
             created_after: None,
@@ -305,7 +304,6 @@ mod tests {
         }
         let request = TaskQueryRequestDto {
             task_ids: None,
-            team_id: Uuid::nil(),
             task_types: None,
             statuses: None,
             created_after: None,
@@ -330,7 +328,6 @@ mod tests {
         }
         let request = TaskQueryRequestDto {
             task_ids: None,
-            team_id: Uuid::nil(),
             task_types: None,
             statuses: None,
             created_after: None,
@@ -1554,7 +1551,6 @@ mod tests {
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
             task_ids: vec![task_id],
-            team_id: auth.team_id,
             force: Some(false),
             sync_wait_ms: Some(0),
         };
@@ -1584,7 +1580,6 @@ mod tests {
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
             task_ids: vec![],
-            team_id: auth.team_id,
             force: Some(false),
             sync_wait_ms: Some(0),
         };
@@ -1611,7 +1606,6 @@ mod tests {
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
             task_ids: vec![Uuid::new_v4()],
-            team_id: auth.team_id,
             force: Some(false),
             sync_wait_ms: Some(30001),
         };
@@ -1634,7 +1628,6 @@ mod tests {
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
             task_ids: vec![Uuid::new_v4()],
-            team_id: auth.team_id,
             force: Some(false),
             sync_wait_ms: Some(0),
         };
@@ -1660,7 +1653,6 @@ mod tests {
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
             task_ids: vec![task_id1, task_id2],
-            team_id: auth.team_id,
             force: Some(false),
             sync_wait_ms: Some(0),
         };
@@ -1695,7 +1687,6 @@ mod tests {
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
             task_ids: vec![task_id],
-            team_id: auth.team_id,
             force: Some(false),
             sync_wait_ms: Some(100),
         };
@@ -1970,7 +1961,6 @@ mod tests {
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
             task_ids: vec![task_id],
-            team_id: auth.team_id,
             force: Some(true),
             sync_wait_ms: Some(0),
         };
@@ -1998,7 +1988,6 @@ mod tests {
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
             task_ids: vec![task_id],
-            team_id: auth.team_id,
             force: None,
             sync_wait_ms: Some(0),
         };

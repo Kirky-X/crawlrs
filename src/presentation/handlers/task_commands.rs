@@ -81,7 +81,7 @@ pub async fn cancel_tasks<T: TaskRepository>(
         wait_for_tasks_completion(
             task_repo.as_ref(),
             &cancelled_task_ids,
-            request.team_id,
+            team_id,
             sync_wait_ms,
             500, // 取消操作轮询间隔500ms
         )

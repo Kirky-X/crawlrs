@@ -25,7 +25,7 @@ use crawlrs::common::constants::crawl_task::{CRAWL_TASK_CREDITS_COST, DEFAULT_TI
 use crawlrs::domain::models::task_domain::TaskType;
 use crawlrs::domain::models::task_model::Task;
 use crawlrs::domain::repositories::task_repository::RepositoryError;
-use crawlrs::presentation::handlers::task_handler::SyncWaitResult;
+use crawlrs::presentation::handlers::task_queries::SyncWaitResult;
 use crawlrs::presentation::handlers::{extract_task_ids, tasks_to_id_map};
 use validator::Validate;
 
@@ -338,6 +338,7 @@ fn test_crawl_request_dto_validate_success() {
             strategy: None,
             crawl_delay_ms: None,
             max_concurrency: None,
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -363,6 +364,7 @@ fn test_crawl_request_dto_validate_empty_url_fails() {
             strategy: None,
             crawl_delay_ms: None,
             max_concurrency: None,
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -388,6 +390,7 @@ fn test_crawl_request_dto_validate_sync_wait_ms_exceeds_max_fails() {
             strategy: None,
             crawl_delay_ms: None,
             max_concurrency: None,
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -413,6 +416,7 @@ fn test_crawl_request_dto_validate_sync_wait_ms_zero_passes() {
             strategy: None,
             crawl_delay_ms: None,
             max_concurrency: None,
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -438,6 +442,7 @@ fn test_crawl_request_dto_serialization_roundtrip() {
             strategy: Some("bfs".to_string()),
             crawl_delay_ms: Some(500),
             max_concurrency: Some(5),
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -468,6 +473,7 @@ fn test_crawl_request_dto_validated_url_skipped_in_serialization() {
             strategy: None,
             crawl_delay_ms: None,
             max_concurrency: None,
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -682,6 +688,7 @@ fn test_crawl_config_dto_clone_preserves_fields() {
         strategy: Some("dfs".to_string()),
         crawl_delay_ms: Some(500),
         max_concurrency: Some(10),
+        max_pages: None,
         proxy: Some("http://proxy:8080".to_string()),
         headers: Some(serde_json::json!({"Accept": "text/html"})),
         extraction_rules: None,
@@ -707,6 +714,7 @@ fn test_crawl_config_dto_serialization_roundtrip() {
         strategy: Some("bfs".to_string()),
         crawl_delay_ms: None,
         max_concurrency: Some(20),
+        max_pages: None,
         proxy: None,
         headers: None,
         extraction_rules: None,

@@ -25,7 +25,7 @@ use crawlrs::domain::models::{Task, TaskStatus, TaskType};
 use crawlrs::domain::repositories::task_repository::{
     RepositoryError, TaskQueryParams, TaskRepository,
 };
-use crawlrs::presentation::handlers::task_handler::{
+use crawlrs::presentation::handlers::task_queries::{
     handle_sync_wait_and_get_status, wait_for_tasks_completion, SyncWaitResult,
     TaskQueryResponseMeta,
 };

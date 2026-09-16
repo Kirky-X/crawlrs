@@ -23,7 +23,7 @@ use crate::{
     presentation::handlers::response_builder::{
         error_response, json_rejection_response, success_response,
     },
-    presentation::handlers::task_handler::wait_for_tasks_completion,
+    presentation::handlers::task_queries::wait_for_tasks_completion,
     presentation::helpers::rate_limit_helper::check_rate_limit,
     presentation::middleware::auth_middleware::AuthState,
 };
@@ -586,6 +586,7 @@ mod tests {
                 strategy: None, // Should default to "bfs"
                 crawl_delay_ms: None,
                 max_concurrency: None, // Should default to 10
+                max_pages: None,
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
@@ -642,6 +643,7 @@ mod tests {
                 strategy: Some("dfs".to_string()),
                 crawl_delay_ms: Some(2000),
                 max_concurrency: Some(20),
+                max_pages: None,
                 proxy: Some("http://proxy:8080".to_string()),
                 headers: Some(serde_json::json!({"Accept": "text/html"})),
                 extraction_rules: None,
@@ -1056,6 +1058,7 @@ mod tests {
                 strategy: None,
                 crawl_delay_ms: None,
                 max_concurrency: None,
+                max_pages: None,
                 proxy: None,
                 headers: None,
                 extraction_rules: Some(std::collections::HashMap::new()),

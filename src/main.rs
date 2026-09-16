@@ -284,7 +284,6 @@ mod app {
                 id: Set(api_key_id),
                 team_id: Set(team_id),
                 key: Set(garrison_key_id),
-                key_hash: Set(None),
                 created_at: Set(now_ts.into()),
                 updated_at: Set(None),
             };

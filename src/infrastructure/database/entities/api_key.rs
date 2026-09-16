@@ -18,15 +18,6 @@ pub struct Model {
     /// 签发路径写入 garrison `key_id`（非明文 secret）。
     /// 旧版 crawlrs 此字段存明文 key 前缀，已弃用此用法。
     pub key: String,
-    /// Hash of the API key for secure storage (SHA-256 hex encoded)
-    ///
-    /// # 弃用说明
-    ///
-    /// garrison 自管哈希存储（`garrison:apikey:<ns>:<key>` on oxcache + postgres），
-    /// crawlrs 不再需要 `key_hash`。新签发的 API Key 此字段设为 `None`。
-    /// 保留列供历史数据只读核对，待全量重签完成后可移除。
-    #[deprecated(since = "0.2.0", note = "garrison 自管哈希；新 key 设为 None")]
-    pub key_hash: Option<String>,
     pub created_at: ChronoDateTimeWithTimeZone,
     pub updated_at: Option<ChronoDateTimeWithTimeZone>,
 }
@@ -52,7 +43,6 @@ impl Related<super::team::Entity> for Entity {
 impl ActiveModelBehavior for ActiveModel {}
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
     use sea_orm::ActiveValue;
@@ -62,7 +52,6 @@ mod tests {
             id: Uuid::new_v4(),
             team_id: Uuid::new_v4(),
             key: "ak_test_12345".to_string(),
-            key_hash: Some("sha256hash".to_string()),
             created_at: chrono::Utc::now().fixed_offset(),
             updated_at: None,
         }
@@ -76,14 +65,12 @@ mod tests {
             id,
             team_id,
             key: "ak_test_key".to_string(),
-            key_hash: Some("hash123".to_string()),
             created_at: chrono::Utc::now().fixed_offset(),
             updated_at: None,
         };
         assert_eq!(model.id, id);
         assert_eq!(model.team_id, team_id);
         assert_eq!(model.key, "ak_test_key");
-        assert_eq!(model.key_hash, Some("hash123".to_string()));
         assert!(model.updated_at.is_none());
     }
 
@@ -116,15 +103,6 @@ mod tests {
     }
 
     #[test]
-    fn test_model_with_none_key_hash() {
-        let model = Model {
-            key_hash: None,
-            ..make_model()
-        };
-        assert!(model.key_hash.is_none());
-    }
-
-    #[test]
     fn test_active_model_with_set_values() {
         let id = Uuid::new_v4();
         let team_id = Uuid::new_v4();
@@ -132,7 +110,6 @@ mod tests {
             id: ActiveValue::Set(id),
             team_id: ActiveValue::Set(team_id),
             key: ActiveValue::Set("ak_new".to_string()),
-            key_hash: ActiveValue::Set(None),
             created_at: ActiveValue::Set(chrono::Utc::now().fixed_offset()),
             updated_at: ActiveValue::Set(None),
         };

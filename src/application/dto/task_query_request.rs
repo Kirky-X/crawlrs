@@ -16,9 +16,6 @@ pub struct TaskQueryRequestDto {
     /// 任务ID列表（批量查询）
     pub task_ids: Option<Vec<Uuid>>,
 
-    /// 团队ID（必填）
-    pub team_id: Uuid,
-
     /// 任务类型过滤
     pub task_types: Option<Vec<TaskType>>,
 
@@ -53,7 +50,6 @@ impl Default for TaskQueryRequestDto {
     fn default() -> Self {
         Self {
             task_ids: None,
-            team_id: Uuid::nil(),
             task_types: None,
             statuses: None,
             created_after: None,
@@ -126,9 +122,6 @@ pub struct TaskCancelRequestDto {
     /// 任务ID列表（批量取消）
     pub task_ids: Vec<Uuid>,
 
-    /// 团队ID（必填）
-    pub team_id: Uuid,
-
     /// 是否强制取消（即使任务正在执行中）
     pub force: Option<bool>,
 
@@ -180,7 +173,6 @@ mod tests {
     #[test]
     fn test_task_query_request_default_values() {
         let dto = TaskQueryRequestDto::default();
-        assert_eq!(dto.team_id, Uuid::nil());
         assert!(dto.task_ids.is_none());
         assert!(dto.task_types.is_none());
         assert!(dto.statuses.is_none());
@@ -195,7 +187,6 @@ mod tests {
 
     #[test]
     fn test_task_query_request_serde_roundtrip_full() {
-        let team_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let crawl_id = Uuid::new_v4();
         let after = FixedOffset::east_opt(8 * 3600)
@@ -209,7 +200,6 @@ mod tests {
 
         let dto = TaskQueryRequestDto {
             task_ids: Some(vec![task_id]),
-            team_id,
             task_types: Some(vec![TaskType::Crawl]),
             statuses: Some(vec![TaskStatus::Queued]),
             created_after: Some(after),
@@ -225,7 +215,6 @@ mod tests {
         let back: TaskQueryRequestDto =
             serde_json::from_str(&json).expect("deserialize should succeed");
 
-        assert_eq!(back.team_id, team_id);
         assert_eq!(back.task_ids, Some(vec![task_id]));
         assert_eq!(back.task_types, Some(vec![TaskType::Crawl]));
         assert_eq!(back.statuses, Some(vec![TaskStatus::Queued]));
@@ -239,12 +228,9 @@ mod tests {
     }
 
     #[test]
-    fn test_task_query_request_serde_minimal_only_team_id() {
-        let team_id = Uuid::new_v4();
-        let json = format!("{{\"team_id\":\"{}\"}}", team_id);
+    fn test_task_query_request_serde_minimal() {
         let dto: TaskQueryRequestDto =
-            serde_json::from_str(&json).expect("deserialize minimal should succeed");
-        assert_eq!(dto.team_id, team_id);
+            serde_json::from_str("{}").expect("deserialize minimal should succeed");
         assert!(dto.task_ids.is_none());
         assert!(dto.limit.is_none());
     }
@@ -307,11 +293,9 @@ mod tests {
 
     #[test]
     fn test_task_cancel_request_serde_and_validation() {
-        let team_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let dto = TaskCancelRequestDto {
             task_ids: vec![task_id],
-            team_id,
             force: Some(true),
             sync_wait_ms: Some(5000),
         };
@@ -320,7 +304,6 @@ mod tests {
         let back: TaskCancelRequestDto =
             serde_json::from_str(&json).expect("deserialize should succeed");
         assert_eq!(back.task_ids, vec![task_id]);
-        assert_eq!(back.team_id, team_id);
         assert_eq!(back.force, Some(true));
         assert_eq!(back.sync_wait_ms, Some(5000));
 
@@ -331,7 +314,6 @@ mod tests {
     fn test_task_cancel_request_validation_sync_wait_ms_out_of_range() {
         let dto = TaskCancelRequestDto {
             task_ids: vec![Uuid::new_v4()],
-            team_id: Uuid::new_v4(),
             force: None,
             sync_wait_ms: Some(30001),
         };

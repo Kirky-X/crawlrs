@@ -143,10 +143,6 @@ pub struct RateLimitingSettings {
     #[config(default = 100)]
     pub default_rpm: u32,
 
-    /// 默认速率限制（别名，兼容旧代码）
-    #[config(default = 100)]
-    pub default_limit: u32,
-
     /// 突发请求数大小
     #[config(default = 20)]
     pub burst_size: u32,
@@ -346,13 +342,11 @@ mod tests {
         let settings = super::RateLimitingSettings {
             enabled: false,
             default_rpm: 200,
-            default_limit: 150,
             burst_size: 50,
             storage_backend: "memory".to_string(),
         };
         assert!(!settings.enabled);
         assert_eq!(settings.default_rpm, 200);
-        assert_eq!(settings.default_limit, 150);
         assert_eq!(settings.burst_size, 50);
         assert_eq!(settings.storage_backend, "memory");
     }

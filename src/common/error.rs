@@ -149,7 +149,7 @@ impl CrawlRsError {
     /// 此方法返回适合展示给最终用户的错误消息，不包含敏感的内部实现细节。
     /// 用于生产环境中的错误响应。
     ///
-    /// 注意：此方法始终返回英文消息（向后兼容）。要获取本地化消息，
+    /// 此方法始终返回英文消息（默认 locale 路径）。要获取本地化消息，
     /// 请使用 `user_message_locale()`。
     pub fn user_message(&self) -> String {
         match self {

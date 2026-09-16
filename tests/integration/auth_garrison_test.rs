@@ -185,13 +185,10 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
     // 改用 sea-orm ActiveModel 参数化插入，与 `src/presentation/handlers/api_key_handler.rs::insert_api_key_mapping` 一致。
     // `garrison_key_id` 来自 garrison 返回值的子串，虽当前不含特殊字符，
     // 但参数化是防御编程的硬性要求，杜绝未来 garrison 返回值变更引入注入风险。
-    #[allow(deprecated)]
     let api_key_active = ApiKeyActiveModel {
         id: ActiveValue::Set(api_key_id),
         team_id: ActiveValue::Set(team_id),
         key: ActiveValue::Set(garrison_key_id),
-        // garrison 自管哈希；新 key 此字段为 None（弃用标记，#[allow(deprecated)] 消除 warning）
-        key_hash: ActiveValue::Set(None),
         created_at: ActiveValue::Set(now),
         updated_at: ActiveValue::Set(None),
     };

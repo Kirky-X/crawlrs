@@ -6,8 +6,8 @@
 //! Crawl handlers — re-export facade for `crawl_queries` + `crawl_commands`.
 
 // Re-export from sibling modules for backward compatibility
-pub use super::crawl_commands::{cancel_crawl, create_crawl};
-pub use super::crawl_queries::{get_crawl, get_crawl_results};
+pub(crate) use super::crawl_commands::{cancel_crawl, create_crawl};
+pub(crate) use super::crawl_queries::{get_crawl, get_crawl_results};
 
 #[cfg(test)]
 mod tests {
@@ -18,7 +18,7 @@ mod tests {
     use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::repositories::task_repository::RepositoryError;
     use crate::i18n::{I18nBundle, Locale};
-    use crate::presentation::handlers::task_handler::SyncWaitResult;
+    use crate::presentation::handlers::task_queries::SyncWaitResult;
     use crate::presentation::middleware::auth_middleware::AuthState;
     use crate::presentation::state::CrawlHandlerState;
     use axum::{
@@ -211,6 +211,7 @@ mod tests {
             strategy: None,
             crawl_delay_ms: None,
             max_concurrency: None,
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -233,6 +234,7 @@ mod tests {
             strategy: None,
             crawl_delay_ms: None,
             max_concurrency: None,
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -255,6 +257,7 @@ mod tests {
             strategy: None,
             crawl_delay_ms: None,
             max_concurrency: None,
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -278,6 +281,7 @@ mod tests {
             strategy: Some("dfs".to_string()),
             crawl_delay_ms: Some(500),
             max_concurrency: Some(10),
+            max_pages: None,
             proxy: Some("http://proxy:8080".to_string()),
             headers: Some(serde_json::json!({"Accept": "text/html"})),
             extraction_rules: None,
@@ -306,6 +310,7 @@ mod tests {
             strategy: Some("bfs".to_string()),
             crawl_delay_ms: None,
             max_concurrency: Some(20),
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -332,6 +337,7 @@ mod tests {
             strategy: None,
             crawl_delay_ms: None,
             max_concurrency: None,
+            max_pages: None,
             proxy: None,
             headers: None,
             extraction_rules: None,
@@ -362,6 +368,7 @@ mod tests {
                 strategy: None,
                 crawl_delay_ms: None,
                 max_concurrency: None,
+                max_pages: None,
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
@@ -390,6 +397,7 @@ mod tests {
                 strategy: None,
                 crawl_delay_ms: None,
                 max_concurrency: None,
+                max_pages: None,
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
@@ -418,6 +426,7 @@ mod tests {
                 strategy: None,
                 crawl_delay_ms: None,
                 max_concurrency: None,
+                max_pages: None,
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
@@ -446,6 +455,7 @@ mod tests {
                 strategy: None,
                 crawl_delay_ms: None,
                 max_concurrency: None,
+                max_pages: None,
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
@@ -942,6 +952,7 @@ mod tests {
                 strategy: Some("bfs".to_string()),
                 crawl_delay_ms: Some(500),
                 max_concurrency: Some(5),
+                max_pages: None,
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
@@ -976,6 +987,7 @@ mod tests {
                 strategy: None,
                 crawl_delay_ms: None,
                 max_concurrency: None,
+                max_pages: None,
                 proxy: None,
                 headers: None,
                 extraction_rules: None,
@@ -1654,6 +1666,7 @@ mod tests {
                 strategy: None,
                 crawl_delay_ms: None,
                 max_concurrency,
+                max_pages: None,
                 proxy: None,
                 headers: None,
                 extraction_rules: None,

@@ -199,7 +199,7 @@ mod tests {
             };
         }
         // 验证 secret 满足生产安全要求（非空、非弱密钥、长度 >= 32）
-        crate::config::settings::validate_security(&settings)
+        crate::config::security::validate_security(&settings)
             .expect("test webhook secret must satisfy validate_security requirements");
         Arc::new(settings)
     }
