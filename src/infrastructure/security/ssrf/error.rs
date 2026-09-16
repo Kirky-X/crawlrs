@@ -131,6 +131,31 @@ pub enum SsrfError {
 }
 
 impl SsrfError {
+    /// Sanitized machine-readable category for this error.
+    ///
+    /// Unlike `Display`, this never embeds hostnames, IPs, or URLs,
+    /// so it is safe to surface in API responses, webhook event records,
+    /// and metrics labels without leaking internal network topology.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::UrlTooLong { .. } => "url_too_long",
+            Self::InvalidUrl { .. } => "invalid_url",
+            Self::InvalidScheme { .. } => "invalid_scheme",
+            Self::MissingHost { .. } => "missing_host",
+            Self::BlockedHostname { .. } => "blocked_hostname",
+            Self::DnsResolutionFailed { .. } => "dns_resolution_failed",
+            Self::NoIpResolved { .. } => "no_ip_resolved",
+            Self::DnsRebindingDetected { .. } => "dns_rebinding",
+            Self::PrivateIpAccess { .. } => "private_ip_access",
+            Self::RedirectToInternal { .. } => "redirect_to_internal",
+            Self::MaxRedirectsExceeded { .. } => "max_redirects_exceeded",
+            Self::ToctouAttack { .. } => "toctou_attack",
+            Self::DomainBlacklisted { .. } => "domain_blacklisted",
+            Self::PortNotAllowed { .. } => "port_not_allowed",
+            Self::ValidationFailed(_) => "validation_failed",
+        }
+    }
+
     /// Check if this error indicates a potential attack.
     ///
     /// Returns true for errors that suggest malicious intent.
@@ -188,6 +213,43 @@ mod tests {
             ip: "10.0.0.1".to_string(),
         };
         assert!(!error.is_attack());
+    }
+
+    #[test]
+    fn test_kind_is_sanitized() {
+        // kind() 只返回固定类别名，不得携带任何主机名/IP/URL 细节
+        let cases: Vec<(SsrfError, &'static str)> = vec![
+            (
+                SsrfError::PrivateIpAccess {
+                    ip: "10.0.0.1".to_string(),
+                },
+                "private_ip_access",
+            ),
+            (
+                SsrfError::DnsRebindingDetected {
+                    hostname: "internal.corp".to_string(),
+                    ips: vec!["10.0.0.1".to_string()],
+                },
+                "dns_rebinding",
+            ),
+            (
+                SsrfError::BlockedHostname {
+                    hostname: "localhost".to_string(),
+                },
+                "blocked_hostname",
+            ),
+            (SsrfError::PortNotAllowed { port: 5432 }, "port_not_allowed"),
+            (
+                SsrfError::ValidationFailed("http://10.0.0.1 bad".to_string()),
+                "validation_failed",
+            ),
+        ];
+        for (error, expected_kind) in cases {
+            assert_eq!(error.kind(), expected_kind);
+            assert!(!error.kind().contains("10.0.0.1"));
+            assert!(!error.kind().contains("localhost"));
+            assert!(!error.kind().contains("internal.corp"));
+        }
     }
 
     #[test]

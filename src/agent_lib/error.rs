@@ -8,7 +8,10 @@
 use thiserror::Error;
 
 /// `agent-lib` 模块的错误类型。
-#[derive(Debug, Error)]
+///
+/// `Clone + PartialEq`：所有字段均为 `String`/数值，可安全复制与比较，
+/// 便于测试断言与错误等值判断（无需一律 `matches!`）。
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum AgentLibError {
     /// URL 无效（解析失败或 scheme 不支持）
     #[error("invalid URL: {0}")]

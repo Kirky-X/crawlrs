@@ -135,7 +135,8 @@ pub async fn fetch(url: &str, opts: &FetchOptions) -> Result<FetchedContent, Age
             let validated = validator.validate(current.as_str()).await.map_err(|e| {
                 AgentLibError::SsrfDenied {
                     url: current.to_string(),
-                    reason: e.to_string(),
+                    // 脱敏：只保留错误类别，不回显解析出的内网 IP/主机名
+                    reason: e.kind().to_string(),
                 }
             })?;
             build_pinned_client(&validated, opts.timeout)?
@@ -148,10 +149,10 @@ pub async fn fetch(url: &str, opts: &FetchOptions) -> Result<FetchedContent, Age
             .await
             .map_err(|e| map_reqwest_error(current.as_str(), e))?;
 
-        // peer_addr 从 connection 元数据回填
-        if final_peer_addr.is_none() {
-            final_peer_addr = resp.remote_addr().map(|a| a.to_string());
-        }
+        // peer_addr 从 connection 元数据回填。
+        // 逐跳覆盖：重定向后保留最终响应的 peer 地址（与 final_url 语义一致），
+        // 而非首跳地址——首跳值会误导审计/日志中的对端记录。
+        final_peer_addr = resp.remote_addr().map(|a| a.to_string());
 
         // 重定向处理
         if opts.follow_redirects && resp.status().is_redirection() {
@@ -552,18 +553,17 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_egress_none_runs_crawlrs_ssrf_validation() {
-        // egress=None 时 crawlrs 独立执行 SSRF 校验（与平台 validate_url 行为一致），
-        // 私网/本地地址应被拒绝 → SsrfDenied
-        let server = wiremock::MockServer::start().await;
-        wiremock::Mock::given(wiremock::matchers::path("/page"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_raw(TEST_HTML, "text/html"))
-            .mount(&server)
-            .await;
-
-        let err = fetch(&format!("{}/page", server.uri()), &FetchOptions::default())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, AgentLibError::SsrfDenied { .. }));
+        // egress=None 时 crawlrs 独立执行 SSRF 校验（与平台 validate_url 行为一致）。
+        // 使用明确被拦截的私网/回环地址，不依赖 wiremock 回环行为——
+        // 校验必须在发起连接前拒绝，无需真实对端。
+        for url in ["http://10.0.0.1/secret", "http://127.0.0.1:9/page"] {
+            let err = fetch(url, &FetchOptions::default()).await.unwrap_err();
+            assert!(
+                matches!(err, AgentLibError::SsrfDenied { .. }),
+                "private/loopback target {} must yield SsrfDenied",
+                url
+            );
+        }
     }
 
     #[tokio::test]

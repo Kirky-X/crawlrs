@@ -1134,6 +1134,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_accumulate_limited_exact_boundary_is_allowed() {
+        // 边界契约：body 恰好等于 max_bytes 时放行（守卫语义为 `> max_bytes` 才拒绝，
+        // 即"至多 max_bytes"）。锁定该语义，防止将来误改为 `>=` 造成回归。
+        let chunks: Vec<Result<bytes::Bytes, reqwest::Error>> = vec![
+            Ok(bytes::Bytes::from_static(b"aaaa")),
+            Ok(bytes::Bytes::from_static(b"bbbb")),
+        ];
+        let out = accumulate_limited(futures::stream::iter(chunks), 8)
+            .await
+            .expect("body of exactly max_bytes must be allowed");
+        assert_eq!(out, b"aaaabbbb");
+    }
+
+    #[tokio::test]
     async fn test_accumulate_limited_exceeds_returns_error() {
         // 分块累积：总字节数超过上限时立即中断返回 LimitExceeded（而非 OOM）。
         // 覆盖 chunked 传输无 content_length 预检、仅靠累积守卫的场景。

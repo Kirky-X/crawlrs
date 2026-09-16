@@ -63,8 +63,11 @@ pub async fn search(
     query: &str,
     limit: usize,
 ) -> Result<Vec<SearchResult>, AgentLibError> {
-    let engine_client = build_engine_client();
-    let search_client = SearchClient::new(engine_client);
+    // 共享单例：EngineClient（含 reqwest 连接池）构造开销大，
+    // 每次调用重建会造成无谓分配；LazyLock 首次调用后全进程复用。
+    static ENGINE_CLIENT: std::sync::LazyLock<Arc<EngineClient>> =
+        std::sync::LazyLock::new(build_engine_client);
+    let search_client = SearchClient::new(ENGINE_CLIENT.clone());
     search_with_client(&search_client, provider, query, limit).await
 }
 
@@ -244,7 +247,9 @@ mod tests {
 
     #[tokio::test]
     async fn search_no_engine_for_provider_errors() {
-        // Sogou 引擎未注册，Baidu 请求应命中 NoEngineAvailable
+        // Sogou client 未注册 Baidu 引擎 → SearchClient 报引擎不可用，
+        // 经 search_with_client 映射为 AgentLibError::Search（非 UnsupportedProvider——
+        // 那是 provider 本身无引擎实现的路径，见 search_google_unsupported_provider）。
         let client = mock_client(SearchEngineType::Sogou);
         let err = search_with_client(&client, SearchProvider::Baidu, "rust", 2)
             .await

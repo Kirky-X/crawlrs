@@ -106,6 +106,15 @@ pub async fn create_scrape(
         }
     }
 
+    // 2.6 SSRF 防护 (CWE-918)：任务级回调 URL 与目标 URL 同等对待。
+    // webhook URL 会由 webhook 服务在任务完成后主动 POST，
+    // 若指向内网则形成以平台为跳板的 SSRF（投递侧另有 sender 级守卫兜底）。
+    if let Some(ref webhook_url) = payload.webhook {
+        if let Some(response) = check_ssrf_url(webhook_url, team_id, auth_state.api_key_id).await {
+            return response;
+        }
+    }
+
     // 2.7 地理限制检查（scrape 入口此前缺失，与 extract/crawl 对齐）
     if let (Some(geo_repo), Some(team_service)) =
         (geo_restriction_repo.as_ref(), team_service.as_ref())
