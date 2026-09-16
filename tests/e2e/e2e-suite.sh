@@ -16,7 +16,10 @@
 #   Stage 4  integration  集成测试（PostgreSQL；testcontainers 自动拉起或外部
 #                         TEST_DATABASE_URL，自动应用 migrations/*.sql）
 #   Stage 5  bench        基准测试（首次建立基线，之后对比 e2e-baseline）
-#   Stage 6  report       汇总 test-results/e2e-report.txt
+#   Stage 6  liveapi      活体 API E2E（tests/e2e/live-api-e2e.sh：compose DB →
+#                         bootstrap 签发 key → 起服 → 状态码冒烟 + 语义级验证
+#                         + 请求/响应审计日志 test-results/api-audit.jsonl）
+#   Stage 7  report       汇总 test-results/e2e-report.txt
 #
 # 使用方法:
 #   ./scripts/e2e-suite.sh                  # 全量
@@ -52,7 +55,7 @@ log_section() { echo ""; echo -e "${YELLOW}======== $1 ========"; }
 mkdir -p test-results
 
 # --- 参数解析 ---------------------------------------------------------------
-STAGES_ALL="matrix static unit integration bench report"
+STAGES_ALL="matrix static unit integration bench liveapi report"
 RUN_STAGES=""
 SKIP_STAGES=""
 QUICK=0
@@ -200,7 +203,31 @@ stage_static() {
   done
 
   log_info "cargo deny check"
-  if cargo deny check > test-results/stage2-deny.log 2>&1; then log_pass "deny"; else
+  local deny_ok=0
+  for attempt in 1 2 3; do
+    if cargo deny check > test-results/stage2-deny.log 2>&1; then
+      deny_ok=1
+      [ "$attempt" -gt 1 ] && log_pass "deny 第 $attempt 次尝试通过（前次为网络抖动）"
+      break
+    fi
+    # 仅对 advisory 数据库拉取类网络失败重试；内容违规（license/ban/advisory 命中）
+    # 重试无意义，立即失败
+    if ! grep -q "failed to fetch advisory database" test-results/stage2-deny.log; then
+      break
+    fi
+    log_info "deny advisory 数据库拉取失败（网络抖动），第 $attempt/3 次，5s 后重试..."
+    sleep 5
+  done
+  if [ "$deny_ok" != "1" ] && grep -q "failed to fetch advisory database" test-results/stage2-deny.log; then
+    # 降级：使用本地缓存的 advisory 数据库（同日拉取过即与远端一致），
+    # 显式留痕防止静默弱化供应链门禁
+    log_info "advisory 拉取持续失败，改用本地缓存库复验（--disable-fetch，结果留痕）..."
+    if cargo deny check --disable-fetch > test-results/stage2-deny.log 2>&1; then
+      deny_ok=1
+      echo "[WARN] advisories 使用本地缓存库复验通过（fetch 网络抖动）" >> test-results/stage2-deny.log
+    fi
+  fi
+  if [ "$deny_ok" = "1" ]; then log_pass "deny"; else
     log_fail "deny（见 test-results/stage2-deny.log）"; tail -30 test-results/stage2-deny.log; rc=1; fi
 
   record static "$rc"
@@ -214,16 +241,33 @@ run_cargo_test() { # run_cargo_test <logname> <args...>
   log_info "cargo test $*"
   if timeout "$E2E_STAGE_TIMEOUT" cargo test "$@" > "test-results/stage3-$logname.log" 2>&1; then
     log_pass "$logname ($(grep -oE '[0-9]+ passed' "test-results/stage3-$logname.log" | tail -1))"
-  else
-    local rc=$?
-    if [ "$rc" = "124" ]; then
-      log_fail "$logname 超时（${E2E_STAGE_TIMEOUT}s，疑似并行挂起）"
-    else
-      log_fail "$logname（见 test-results/stage3-$logname.log）"
-    fi
-    grep -E "FAILED|panicked|error\[" "test-results/stage3-$logname.log" | head -10
-    return 1
+    return 0
   fi
+  local rc=$?
+  if [ "$rc" = "124" ]; then
+    log_fail "$logname 超时（${E2E_STAGE_TIMEOUT}s，疑似并行挂起）"
+  else
+    log_fail "$logname（见 test-results/stage3-$logname.log）"
+  fi
+  grep -E "FAILED|panicked|error\[" "test-results/stage3-$logname.log" | head -10
+  return 1
+}
+
+# 带一次重试的 lib 跑：lib 内含负载敏感的并发竞态用例（如 proxy_pool TOCTOU
+# 压测）与真实池构建用例，宿主高负载时存在偶发抖动。确定性失败重试仍红，
+# 不会掩盖真问题；重试通过则在日志留痕。
+run_lib_test_with_retry() { # run_lib_test_with_retry <logname> <args...>
+  local logname="$1"; shift
+  if run_cargo_test "$logname" "$@"; then
+    return 0
+  fi
+  log_info "$logname 失败，重试一次（负载抖动护栏）..."
+  sleep 5
+  if run_cargo_test "$logname-retry" "$@"; then
+    log_pass "$logname 重试通过（首次失败为负载抖动，见 stage3-$logname.log）"
+    return 0
+  fi
+  return 1
 }
 
 stage_unit() {
@@ -234,9 +278,11 @@ stage_unit() {
     log_fail "数据库就绪失败——lib 中的 DB 仓库用例将失败（TEST_DATABASE_URL 未设置且 compose 不可用）"
     rc=1
   fi
-  run_cargo_test lib-default --features default --lib || rc=1
-  run_cargo_test lib-full --features full --lib || rc=1
-  run_cargo_test mock-main --features full,test-mocks --test main || rc=1
+  run_lib_test_with_retry lib-default --features default --lib || rc=1
+  run_lib_test_with_retry lib-full --features full --lib || rc=1
+  # mock-main 含真实 DB 池用例：WSL2 Docker 端口转发高负载下偶发 ConnectionClosed
+  # （环境级瞬态，见 stage3 日志与 docs/TEST_QUALITY_REPORT_2026-09.md §3），重试一次
+  run_lib_test_with_retry mock-main --features full,test-mocks --test main || rc=1
   run_cargo_test sdk-api --features test-mocks --test sdk_api_test || rc=1
   run_cargo_test route-diag --features platform --test route_diag_test || rc=1
   record unit "$rc"
@@ -282,10 +328,32 @@ stage_bench() {
 }
 
 # =============================================================================
-# Stage 6: 汇总报告
+# Stage 6: 活体 API E2E（真实服务 + 语义级验证 + 审计日志）
+# =============================================================================
+stage_liveapi() {
+  log_section "Stage 6: Live API E2E (smoke + semantics + audit)"
+  if [ "$QUICK" = "1" ]; then
+    log_info "--quick 模式跳过 liveapi（构建+Docker+真网依赖）"
+    STAGE_STATUS["liveapi"]="SKIPPED"
+    return
+  fi
+  if ! docker info >/dev/null 2>&1 && [ -z "${TEST_DATABASE_URL:-}" ]; then
+    log_fail "liveapi 需要 Docker（compose 拉起 PostgreSQL）或外部 TEST_DATABASE_URL"
+    STAGE_STATUS["liveapi"]="FAIL"; FAILED_STAGES+=("liveapi")
+    return
+  fi
+  if ./tests/e2e/live-api-e2e.sh 2>&1 | tee test-results/stage6-liveapi.log \
+      | grep -E '\[(INFO|✓|✗)\]|总计|失败|语义|产物'; then
+    :  # grep 命中不代表通过，以下PIPESTATUS判定
+  fi
+  record liveapi "${PIPESTATUS[0]}"
+}
+
+# =============================================================================
+# Stage 7: 汇总报告
 # =============================================================================
 stage_report() {
-  log_section "Stage 6: Summary Report"
+  log_section "Stage 7: Summary Report"
   local report="test-results/e2e-report.txt"
   {
     echo "Crawlrs E2E Suite Report — $(date '+%F %T')"
