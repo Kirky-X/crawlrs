@@ -33,7 +33,7 @@ def search_test_params():
 def crawl_test_params():
     """爬取测试参数"""
     return {
-        "url": "https://example.com",
+        "url": "https://text.npr.org",
         "options": {"timeout": 30000, "extract_text": True},
     }
 
@@ -42,7 +42,7 @@ def crawl_test_params():
 def scrape_test_params():
     """抓取测试参数"""
     return {
-        "url": "https://example.com",
+        "url": "https://text.npr.org",
         "options": {"wait_for": 1000, "timeout": 30},
     }
 
@@ -51,7 +51,7 @@ def scrape_test_params():
 def extract_test_params():
     """提取测试参数"""
     return {
-        "url": "https://example.com",
+        "url": "https://text.npr.org",
         "selectors": {"title": "h1", "paragraphs": "p"},
     }
 

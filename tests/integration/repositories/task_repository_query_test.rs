@@ -29,7 +29,7 @@ fn make_task(team_id: Uuid, api_key_id: Uuid, url: &str) -> Task {
         serde_json::json!({}),
     );
     // 使用唯一 URL 避免与其他测试冲突
-    task.url = format!("https://{}.example.com/query", Uuid::new_v4());
+    task.url = format!("https://{}.text.npr.org/query", Uuid::new_v4());
     task
 }
 
@@ -65,9 +65,9 @@ async fn tc_query_tasks_by_team_only_success() {
 
     // 创建 2 个任务
     let mut t1 = make_task(team_id, api_key_id, "");
-    t1.url = format!("{}1.example.com", cleanup_prefix);
+    t1.url = format!("{}1.text.npr.org", cleanup_prefix);
     let mut t2 = make_task(team_id, api_key_id, "");
-    t2.url = format!("{}2.example.com", cleanup_prefix);
+    t2.url = format!("{}2.text.npr.org", cleanup_prefix);
     repo.create(&t1).await.expect("create t1 failed");
     repo.create(&t2).await.expect("create t2 failed");
 
@@ -110,11 +110,11 @@ async fn tc_query_tasks_filter_by_status_success() {
     let cleanup_prefix = format!("https://query-status-{}.", Uuid::new_v4());
 
     let mut queued_task = make_task(team_id, api_key_id, "");
-    queued_task.url = format!("{}q.example.com", cleanup_prefix);
+    queued_task.url = format!("{}q.text.npr.org", cleanup_prefix);
     queued_task.status = TaskStatus::Queued;
 
     let mut active_task = make_task(team_id, api_key_id, "");
-    active_task.url = format!("{}a.example.com", cleanup_prefix);
+    active_task.url = format!("{}a.text.npr.org", cleanup_prefix);
     active_task.status = TaskStatus::Active;
 
     repo.create(&queued_task)
@@ -166,11 +166,11 @@ async fn tc_query_tasks_filter_by_task_type_success() {
     let cleanup_prefix = format!("https://query-type-{}.", Uuid::new_v4());
 
     let mut scrape_task = make_task(team_id, api_key_id, "");
-    scrape_task.url = format!("{}s.example.com", cleanup_prefix);
+    scrape_task.url = format!("{}s.text.npr.org", cleanup_prefix);
     scrape_task.task_type = TaskType::Scrape;
 
     let mut crawl_task = make_task(team_id, api_key_id, "");
-    crawl_task.url = format!("{}c.example.com", cleanup_prefix);
+    crawl_task.url = format!("{}c.text.npr.org", cleanup_prefix);
     crawl_task.task_type = TaskType::Crawl;
 
     repo.create(&scrape_task)
@@ -220,15 +220,15 @@ async fn tc_query_tasks_filter_by_crawl_id_success() {
     let crawl_id = Uuid::new_v4();
 
     let mut t1 = make_task(team_id, api_key_id, "");
-    t1.url = format!("{}1.example.com", cleanup_prefix);
+    t1.url = format!("{}1.text.npr.org", cleanup_prefix);
     t1.crawl_id = Some(crawl_id);
 
     let mut t2 = make_task(team_id, api_key_id, "");
-    t2.url = format!("{}2.example.com", cleanup_prefix);
+    t2.url = format!("{}2.text.npr.org", cleanup_prefix);
     t2.crawl_id = Some(crawl_id);
 
     let mut t3 = make_task(team_id, api_key_id, "");
-    t3.url = format!("{}3.example.com", cleanup_prefix);
+    t3.url = format!("{}3.text.npr.org", cleanup_prefix);
     t3.crawl_id = Some(Uuid::new_v4()); // 不同的 crawl_id
 
     repo.create(&t1).await.expect("create t1 failed");
@@ -277,7 +277,7 @@ async fn tc_query_tasks_pagination_limit_offset() {
     let mut ids = Vec::new();
     for i in 0..3 {
         let mut t = make_task(team_id, api_key_id, "");
-        t.url = format!("{}{}.example.com", cleanup_prefix, i);
+        t.url = format!("{}{}.text.npr.org", cleanup_prefix, i);
         repo.create(&t).await.expect("create task failed");
         ids.push(t.id);
         // 错开 created_at 以保证 order_by_desc(CreatedAt) 顺序稳定
@@ -375,20 +375,20 @@ async fn tc_query_tasks_combined_filters() {
 
     // 目标任务：Crawl + Queued + 指定 crawl_id
     let mut target = make_task(team_id, api_key_id, "");
-    target.url = format!("{}target.example.com", cleanup_prefix);
+    target.url = format!("{}target.text.npr.org", cleanup_prefix);
     target.task_type = TaskType::Crawl;
     target.status = TaskStatus::Queued;
     target.crawl_id = Some(crawl_id);
 
     // 干扰任务1：Scrape + Queued + 指定 crawl_id（类型不符）
     let mut noise1 = make_task(team_id, api_key_id, "");
-    noise1.url = format!("{}n1.example.com", cleanup_prefix);
+    noise1.url = format!("{}n1.text.npr.org", cleanup_prefix);
     noise1.task_type = TaskType::Scrape;
     noise1.crawl_id = Some(crawl_id);
 
     // 干扰任务2：Crawl + Active + 指定 crawl_id（状态不符）
     let mut noise2 = make_task(team_id, api_key_id, "");
-    noise2.url = format!("{}n2.example.com", cleanup_prefix);
+    noise2.url = format!("{}n2.text.npr.org", cleanup_prefix);
     noise2.task_type = TaskType::Crawl;
     noise2.status = TaskStatus::Active;
     noise2.crawl_id = Some(crawl_id);
@@ -452,9 +452,9 @@ async fn tc_batch_cancel_all_owned_success() {
     let cleanup_prefix = format!("https://batch-owned-{}.", Uuid::new_v4());
 
     let mut t1 = make_task(team_id, api_key_id, "");
-    t1.url = format!("{}1.example.com", cleanup_prefix);
+    t1.url = format!("{}1.text.npr.org", cleanup_prefix);
     let mut t2 = make_task(team_id, api_key_id, "");
-    t2.url = format!("{}2.example.com", cleanup_prefix);
+    t2.url = format!("{}2.text.npr.org", cleanup_prefix);
     repo.create(&t1).await.expect("create t1 failed");
     repo.create(&t2).await.expect("create t2 failed");
 
@@ -537,7 +537,7 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
 
     // 创建属于当前团队的任务
     let mut own_task = make_task(team_id, api_key_id, "");
-    own_task.url = format!("{}own.example.com", cleanup_prefix);
+    own_task.url = format!("{}own.text.npr.org", cleanup_prefix);
     repo.create(&own_task)
         .await
         .expect("create own_task failed");
@@ -567,7 +567,7 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
             .await;
     }
     let mut other_task = make_task(other_team_id, other_api_key_id, "");
-    other_task.url = format!("{}other.example.com", cleanup_prefix);
+    other_task.url = format!("{}other.text.npr.org", cleanup_prefix);
     repo.create(&other_task)
         .await
         .expect("create other_task failed");
@@ -646,9 +646,9 @@ async fn tc_batch_cancel_mixed_ids_partial_success() {
 
     // 创建 2 个属于当前团队的任务
     let mut owned1 = make_task(team_id, api_key_id, "");
-    owned1.url = format!("{}o1.example.com", cleanup_prefix);
+    owned1.url = format!("{}o1.text.npr.org", cleanup_prefix);
     let mut owned2 = make_task(team_id, api_key_id, "");
-    owned2.url = format!("{}o2.example.com", cleanup_prefix);
+    owned2.url = format!("{}o2.text.npr.org", cleanup_prefix);
     repo.create(&owned1).await.expect("create owned1 failed");
     repo.create(&owned2).await.expect("create owned2 failed");
 
@@ -686,7 +686,7 @@ async fn tc_batch_cancel_idempotent_second_call() {
     let cleanup_prefix = format!("https://batch-idem-{}.", Uuid::new_v4());
 
     let mut t = make_task(team_id, api_key_id, "");
-    t.url = format!("{}t.example.com", cleanup_prefix);
+    t.url = format!("{}t.text.npr.org", cleanup_prefix);
     repo.create(&t).await.expect("create t failed");
 
     // 第一次取消：成功

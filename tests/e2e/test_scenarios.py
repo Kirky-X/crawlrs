@@ -470,7 +470,7 @@ def test_error_handling():
         {
             "name": "未知字段",
             "payload": {
-                "url": "https://example.com",
+                "url": "https://text.npr.org",
                 "unknown_field": "value"
             },
             "expected_status": 422  # deny_unknown_fields

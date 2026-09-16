@@ -25,7 +25,7 @@ fn make_backlog(team_id: Uuid, task_id: Uuid, priority: i32) -> TasksBacklog {
         team_id,
         "scrape".to_string(),
         priority,
-        serde_json::json!({"url": "https://example.com"}),
+        serde_json::json!({"url": "https://text.npr.org"}),
         None,
     )
 }

@@ -51,6 +51,11 @@
   task_types 过滤精确、批量取消空请求 422
 - **H 并发**：并发提交全部受理 + 任务 id 唯一性
 
+> **真实站点约束（2026-09-16 起）**：E2E/集成/语义测试全部使用真实新闻网站
+> （主站 `text.npr.org`，故障转移 `news.ycombinator.com`、`lite.cnn.com`），
+> 禁止 `example.com`（仅允许单元测试使用）；抓取结果断言含真实站点内容标记
+> （npr.org/ycombinator/cnn.com），防占位页冒充。
+
 每次交互（请求/响应/断言）记录至 `test-results/api-audit.jsonl`（Authorization
 与已签发 key 全程掩码），供人工审查安全脱敏、状态转换与数据过滤细节。
 

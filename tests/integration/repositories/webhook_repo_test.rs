@@ -24,7 +24,7 @@ async fn test_create_and_find_by_id() {
     let team_id = app.team_id;
 
     let unique_prefix = Uuid::new_v4().to_string();
-    let url = format!("https://{}.example.com/webhook", unique_prefix);
+    let url = format!("https://{}.text.npr.org/webhook", unique_prefix);
     let webhook_id = Uuid::new_v4();
 
     let webhook = Webhook::new(webhook_id, team_id, url.clone());
@@ -77,12 +77,12 @@ async fn test_find_by_team_id_returns_multiple() {
     let webhook1 = Webhook::new(
         Uuid::new_v4(),
         team_id,
-        format!("https://{}-1.example.com/hook", unique_prefix),
+        format!("https://{}-1.text.npr.org/hook", unique_prefix),
     );
     let webhook2 = Webhook::new(
         Uuid::new_v4(),
         team_id,
-        format!("https://{}-2.example.com/hook", unique_prefix),
+        format!("https://{}-2.text.npr.org/hook", unique_prefix),
     );
 
     repo.create(&webhook1)
@@ -141,7 +141,7 @@ async fn tc_create_duplicate_id_returns_error() {
     let team_id = app.team_id;
 
     let unique_prefix = Uuid::new_v4().to_string();
-    let url = format!("https://{}.example.com/dup-hook", unique_prefix);
+    let url = format!("https://{}.text.npr.org/dup-hook", unique_prefix);
     let webhook_id = Uuid::new_v4();
 
     let webhook = Webhook::new(webhook_id, team_id, url);
@@ -179,7 +179,7 @@ async fn tc_find_by_team_id_returns_only_team_webhooks() {
     let webhook = Webhook::new(
         Uuid::new_v4(),
         team_id,
-        format!("https://{}.example.com/isolation", unique_prefix),
+        format!("https://{}.text.npr.org/isolation", unique_prefix),
     );
 
     repo.create(&webhook)

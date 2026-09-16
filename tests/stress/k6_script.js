@@ -25,7 +25,7 @@ export default function () {
 
     // 2. Create Scrape Task
     const payload = JSON.stringify({
-        url: `https://example.com/page-${Math.floor(Math.random() * 100000)}`,
+        url: `https://text.npr.org/page-${Math.floor(Math.random() * 100000)}`,
         formats: ["html", "text"],
     });
 

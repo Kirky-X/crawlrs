@@ -45,7 +45,7 @@ async fn test_save_and_find_by_task_id() {
     let app = create_test_app_no_worker().await;
     let repo = ScrapeResultRepositoryImpl::new(app.db_pool.clone());
     let task_id = Uuid::new_v4();
-    let unique_url = format!("https://{}.example.com/page", Uuid::new_v4());
+    let unique_url = format!("https://{}.text.npr.org/page", Uuid::new_v4());
 
     let result = make_scrape_result(task_id, &unique_url, 200, 150);
 
@@ -91,9 +91,9 @@ async fn test_find_by_task_ids_returns_multiple() {
     let task2_id = Uuid::new_v4();
     let task3_id = Uuid::new_v4();
 
-    let r1 = make_scrape_result(task1_id, "https://a.example.com", 200, 100);
-    let r2 = make_scrape_result(task2_id, "https://b.example.com", 404, 200);
-    let r3 = make_scrape_result(task3_id, "https://c.example.com", 500, 300);
+    let r1 = make_scrape_result(task1_id, "https://a.text.npr.org", 200, 100);
+    let r2 = make_scrape_result(task2_id, "https://b.text.npr.org", 404, 200);
+    let r3 = make_scrape_result(task3_id, "https://c.text.npr.org", 500, 300);
 
     repo.save(r1).await.expect("Failed to save r1");
     repo.save(r2).await.expect("Failed to save r2");
@@ -170,7 +170,7 @@ async fn test_save_with_screenshot() {
     let repo = ScrapeResultRepositoryImpl::new(app.db_pool.clone());
     let task_id = Uuid::new_v4();
 
-    let mut result = make_scrape_result(task_id, "https://screenshot.example.com", 200, 500);
+    let mut result = make_scrape_result(task_id, "https://screenshot.text.npr.org", 200, 500);
     result.screenshot = Some("base64encodedscreenshot".to_string());
 
     repo.save(result.clone())
@@ -212,7 +212,7 @@ async fn tc_find_by_task_ids_with_partial_match() {
 
     let existing_task_id = Uuid::new_v4();
     let missing_task_id = Uuid::new_v4();
-    let unique_url = format!("https://{}.example.com/partial", Uuid::new_v4());
+    let unique_url = format!("https://{}.text.npr.org/partial", Uuid::new_v4());
 
     let result = make_scrape_result(existing_task_id, &unique_url, 200, 120);
     repo.save(result).await.expect("Failed to save result");

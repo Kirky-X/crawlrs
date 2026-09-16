@@ -57,7 +57,7 @@ class TestServiceResilience:
 
     def test_timeout_handling(self, api_client):
         """测试超时处理"""
-        result = api_client.crawl(url="https://example.com", sync_wait_ms=100)
+        result = api_client.crawl(url="https://text.npr.org", sync_wait_ms=100)
 
         assert result.response.status_code in [200, 408, 500]
 
@@ -95,7 +95,7 @@ class TestDataIntegrity:
         """测试幂等操作"""
         task_ids = []
         for i in range(2):
-            result = api_client.crawl(url="https://example.com", sync_wait_ms=5000)
+            result = api_client.crawl(url="https://text.npr.org", sync_wait_ms=5000)
             if result.success:
                 task_id = result.response.body.get("data", {}).get("id")
                 if task_id:
@@ -106,7 +106,7 @@ class TestDataIntegrity:
 
     def test_data_persistence(self, api_client):
         """测试数据持久化"""
-        result = api_client.crawl(url="https://example.com", sync_wait_ms=10000)
+        result = api_client.crawl(url="https://text.npr.org", sync_wait_ms=10000)
         assert result.success
 
         crawl_id = result.response.body.get("data", {}).get("id")

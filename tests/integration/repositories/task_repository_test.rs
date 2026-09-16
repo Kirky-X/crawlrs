@@ -42,7 +42,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
     let unique_prefix = Uuid::new_v4().to_string();
 
     // Create a single task with a unique URL to avoid conflicts with leftover data
-    let unique_url = format!("https://{}.example.com/concurrent-test", unique_prefix);
+    let unique_url = format!("https://{}.text.npr.org/concurrent-test", unique_prefix);
     let task = Task {
         id: Uuid::new_v4(),
         task_type: TaskType::Scrape,
@@ -205,7 +205,7 @@ async fn test_repository_crud_operations() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: "https://example.com".to_string(),
+        url: "https://text.npr.org".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -271,7 +271,7 @@ async fn test_repository_acquire_next_task() {
         priority: 1,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://{}.example.com/1", unique_prefix),
+        url: format!("https://{}.text.npr.org/1", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -293,7 +293,7 @@ async fn test_repository_acquire_next_task() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://{}.example.com/2", unique_prefix),
+        url: format!("https://{}.text.npr.org/2", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -406,7 +406,7 @@ async fn test_task_status_transitions() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: "https://example.com/status".to_string(),
+        url: "https://text.npr.org/status".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -491,7 +491,7 @@ async fn test_requeue_task_respects_lock_token_guard() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://example.com/requeue-{}", id),
+        url: format!("https://text.npr.org/requeue-{}", id),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -562,7 +562,7 @@ async fn test_acquire_next_zombie_recovery_respects_max_retries() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://example.com/zombie-{}", id),
+        url: format!("https://text.npr.org/zombie-{}", id),
         payload: serde_json::json!({}),
         retry_count: attempt_count,
         attempt_count,
@@ -655,7 +655,7 @@ async fn test_exists_by_url() {
 
     // 使用唯一前缀避免数据冲突
     let unique_prefix = Uuid::new_v4().to_string();
-    let test_url = format!("https://{}.example.com/exists-test", unique_prefix);
+    let test_url = format!("https://{}.text.npr.org/exists-test", unique_prefix);
     let different_url = format!("https://{}.different-url.com", unique_prefix);
 
     // Initially, URL should not exist
@@ -744,7 +744,7 @@ async fn test_reset_stuck_tasks() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://{}.example.com/stuck", unique_prefix),
+        url: format!("https://{}.text.npr.org/stuck", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -768,7 +768,7 @@ async fn test_reset_stuck_tasks() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://{}.example.com/recent", unique_prefix),
+        url: format!("https://{}.text.npr.org/recent", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -864,7 +864,7 @@ async fn test_cancel_tasks_by_crawl_id() {
             priority: 0,
             team_id,
             api_key_id: app.api_key_id,
-            url: format!("https://example.com/crawl/{}", i),
+            url: format!("https://text.npr.org/crawl/{}", i),
             payload: serde_json::json!({}),
             retry_count: 0,
             attempt_count: 0,
@@ -890,7 +890,7 @@ async fn test_cancel_tasks_by_crawl_id() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: "https://example.com/different".to_string(),
+        url: "https://text.npr.org/different".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -975,7 +975,7 @@ async fn test_expire_tasks() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: "https://example.com/expired-queued".to_string(),
+        url: "https://text.npr.org/expired-queued".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -999,7 +999,7 @@ async fn test_expire_tasks() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: "https://example.com/expired-active".to_string(),
+        url: "https://text.npr.org/expired-active".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -1023,7 +1023,7 @@ async fn test_expire_tasks() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: "https://example.com/recent-queued".to_string(),
+        url: "https://text.npr.org/recent-queued".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -1047,7 +1047,7 @@ async fn test_expire_tasks() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: "https://example.com/recent-active".to_string(),
+        url: "https://text.npr.org/recent-active".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -1163,7 +1163,7 @@ async fn test_find_by_crawl_id() {
             priority: i,
             team_id,
             api_key_id: app.api_key_id,
-            url: format!("https://example.com/crawl/{}", i),
+            url: format!("https://text.npr.org/crawl/{}", i),
             payload: serde_json::json!({}),
             retry_count: 0,
             attempt_count: 0,
@@ -1189,7 +1189,7 @@ async fn test_find_by_crawl_id() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: "https://example.com/different".to_string(),
+        url: "https://text.npr.org/different".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -1247,7 +1247,7 @@ async fn test_find_existing_urls_batch() {
     // 创建 10 个任务
     let mut created_urls = Vec::new();
     for i in 0..10 {
-        let url = format!("https://{}.example.com/batch/{}", unique_prefix, i);
+        let url = format!("https://{}.text.npr.org/batch/{}", unique_prefix, i);
         let task = Task {
             id: Uuid::new_v4(),
             task_type: TaskType::Scrape,
@@ -1293,11 +1293,11 @@ async fn test_find_existing_urls_batch() {
     // 测试 2: 混合存在和不存在的 URL
     let mut mixed_urls = created_urls.clone();
     mixed_urls.push(format!(
-        "https://{}.example.com/nonexistent/1",
+        "https://{}.text.npr.org/nonexistent/1",
         unique_prefix
     ));
     mixed_urls.push(format!(
-        "https://{}.example.com/nonexistent/2",
+        "https://{}.text.npr.org/nonexistent/2",
         unique_prefix
     ));
 
@@ -1324,7 +1324,7 @@ async fn test_find_existing_urls_batch() {
 
     // 测试 4: 全部不存在的 URL
     let nonexistent_urls: Vec<String> = (0..5)
-        .map(|i| format!("https://{}.example.com/nonexistent/{}", unique_prefix, i))
+        .map(|i| format!("https://{}.text.npr.org/nonexistent/{}", unique_prefix, i))
         .collect();
 
     let existing_nonexistent = repo
@@ -1369,7 +1369,7 @@ async fn test_find_existing_urls_performance() {
     // 创建 50 个任务用于性能测试
     let mut created_urls = Vec::new();
     for i in 0..50 {
-        let url = format!("https://{}.example.com/perf/{}", unique_prefix, i);
+        let url = format!("https://{}.text.npr.org/perf/{}", unique_prefix, i);
         let task = Task {
             id: Uuid::new_v4(),
             task_type: TaskType::Scrape,
@@ -1459,7 +1459,7 @@ async fn test_acquire_next_set_clause_mirrors_domain_methods() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://{}.example.com/mirror-test", unique_prefix),
+        url: format!("https://{}.text.npr.org/mirror-test", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -1552,7 +1552,7 @@ async fn test_acquire_next_prefers_queued_over_active_expired() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://{}.example.com/stale", unique_prefix),
+        url: format!("https://{}.text.npr.org/stale", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -1581,7 +1581,7 @@ async fn test_acquire_next_prefers_queued_over_active_expired() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://{}.example.com/queued", unique_prefix),
+        url: format!("https://{}.text.npr.org/queued", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -1641,7 +1641,7 @@ async fn test_acquire_next_skips_active_unexpired() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://{}.example.com/active-unexpired", unique_prefix),
+        url: format!("https://{}.text.npr.org/active-unexpired", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -1722,7 +1722,7 @@ async fn test_acquire_next_skips_active_with_null_lock_expires_at() {
         priority: 0,
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://{}.example.com/active-null", unique_prefix),
+        url: format!("https://{}.text.npr.org/active-null", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,
@@ -1791,7 +1791,7 @@ async fn test_acquire_next_recovers_active_expired_task() {
         priority: -100, // highest priority (lower = higher) so it's picked first
         team_id,
         api_key_id: app.api_key_id,
-        url: format!("https://{}.example.com/recoverable", unique_prefix),
+        url: format!("https://{}.text.npr.org/recoverable", unique_prefix),
         payload: serde_json::json!({}),
         retry_count: 0,
         attempt_count: 0,

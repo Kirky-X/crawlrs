@@ -17,7 +17,7 @@
 //! 引擎（与既有 [`ReqwestEngine`] 相同）在执行 SSRF 保护后，把 URL host 改写为解析出的
 //! IP 直连（`set_host(resolved_first)`）。这会导致 TLS 连接的 SNI 变为裸 IP，证书名称
 //! 校验失败（服务器证书只覆盖域名 SAN）。这是**全库共享的既有缺陷**（ReqwestEngine 对
-//! example.com / tls.peet.ws 同样无法带证书校验直连），非本引擎特有，修复需改动共享 SSRF
+//! text.npr.org / tls.peet.ws 同样无法带证书校验直连），非本引擎特有，修复需改动共享 SSRF
 //! /TLS 逻辑，超出范围。
 //!
 //! 因此本测试如 ReqwestEngine 既有工作路径一样，使用 `skip_tls_verification=true`
@@ -131,7 +131,7 @@ async fn wreq_engine_emits_tls_ja4_fingerprint() {
 fn wreq_engine_scores_tls_requests_highest() {
     let engine = build_engine();
     let mut req = InternalScrapeRequest {
-        url: "https://example.com".to_string(),
+        url: "https://text.npr.org".to_string(),
         method: crawlrs::common::HttpMethod::Get,
         headers: HashMap::new(),
         timeout: Duration::from_secs(30),

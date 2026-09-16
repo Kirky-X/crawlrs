@@ -107,7 +107,7 @@ class TestExtractEndpoints:
     def test_extract_content(self, api_client):
         """测试内容提取 - 验证端点存在"""
         result = api_client.extract(
-            url="https://example.com",
+            url="https://text.npr.org",
             selectors={"title": "h1"},
             sync_wait_ms=5000,
         )

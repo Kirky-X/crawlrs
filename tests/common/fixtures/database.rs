@@ -78,9 +78,9 @@ impl DatabaseFixture {
         }
     }
 
-    /// 清理测试数据（删除以 https://example.com/ 开头的任务）
+    /// 清理测试数据（删除以 https://text.npr.org/ 开头的任务）
     pub async fn cleanup_test_data(&self) {
-        let cleanup_pattern = "https://example.com/%";
+        let cleanup_pattern = "https://text.npr.org/%";
 
         match self.db_backend {
             DbBackend::Postgres => {

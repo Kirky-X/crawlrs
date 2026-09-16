@@ -36,7 +36,7 @@ async fn test_create_and_find_by_id() {
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let unique_url = format!("https://{}.example.com/hook", Uuid::new_v4());
+    let unique_url = format!("https://{}.text.npr.org/hook", Uuid::new_v4());
     let event = make_event(team_id, &unique_url);
 
     let created = repo
@@ -82,7 +82,7 @@ async fn test_find_pending_returns_pending_events() {
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let unique_url = format!("https://{}.example.com/hook", Uuid::new_v4());
+    let unique_url = format!("https://{}.text.npr.org/hook", Uuid::new_v4());
     let event = make_event(team_id, &unique_url);
 
     repo.create(&event).await.expect("Failed to create event");
@@ -107,7 +107,7 @@ async fn test_update_event() {
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let unique_url = format!("https://{}.example.com/hook", Uuid::new_v4());
+    let unique_url = format!("https://{}.text.npr.org/hook", Uuid::new_v4());
     let mut event = make_event(team_id, &unique_url);
 
     repo.create(&event).await.expect("Failed to create event");
@@ -146,7 +146,7 @@ async fn test_find_by_team_id_paginated() {
 
     // 创建 3 个事件
     for i in 0..3 {
-        let url = format!("https://{}-{}.example.com/hook", unique_prefix, i);
+        let url = format!("https://{}-{}.text.npr.org/hook", unique_prefix, i);
         let event = make_event(team_id, &url);
         repo.create(&event).await.expect("Failed to create event");
     }
@@ -186,7 +186,7 @@ async fn test_count_by_team_id() {
         .await
         .expect("Failed to count before insert");
 
-    let unique_url = format!("https://{}.example.com/hook", Uuid::new_v4());
+    let unique_url = format!("https://{}.text.npr.org/hook", Uuid::new_v4());
     let event = make_event(team_id, &unique_url);
     repo.create(&event).await.expect("Failed to create event");
 
@@ -221,7 +221,7 @@ async fn test_create_with_different_event_types() {
 
     let mut event_ids = Vec::new();
     for (i, et) in event_types.iter().enumerate() {
-        let url = format!("https://{}-{}.example.com/hook", Uuid::new_v4(), i);
+        let url = format!("https://{}-{}.text.npr.org/hook", Uuid::new_v4(), i);
         let event = WebhookEvent::new(
             Uuid::new_v4(),
             team_id,
@@ -254,7 +254,7 @@ async fn test_find_pending_respects_limit() {
 
     // 创建 5 个 pending 事件
     for i in 0..5 {
-        let url = format!("https://{}-{}.example.com/hook", unique_prefix, i);
+        let url = format!("https://{}-{}.text.npr.org/hook", unique_prefix, i);
         let event = make_event(team_id, &url);
         repo.create(&event).await.expect("Failed to create event");
     }
@@ -281,7 +281,7 @@ async fn tc_find_pending_includes_failed_retry() {
     let app = create_test_app_no_worker().await;
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let unique_url = format!("https://{}.example.com/failed-retry", Uuid::new_v4());
+    let unique_url = format!("https://{}.text.npr.org/failed-retry", Uuid::new_v4());
 
     // 创建一个 pending 事件
     let mut event = make_event(team_id, &unique_url);

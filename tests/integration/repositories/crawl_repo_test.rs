@@ -31,8 +31,8 @@ async fn test_create_and_find_by_id() {
         crawl_id,
         team_id,
         format!("Test Crawl {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com/page", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org/page", unique_prefix),
         serde_json::json!({"depth": 3}),
     );
 
@@ -80,8 +80,8 @@ async fn test_update_crawl() {
         crawl_id,
         team_id,
         format!("Update Crawl {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
         serde_json::json!({}),
     );
 
@@ -114,8 +114,8 @@ async fn test_increment_total_tasks() {
         crawl_id,
         team_id,
         format!("Inc Total {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
         serde_json::json!({}),
     );
 
@@ -151,8 +151,8 @@ async fn test_increment_completed_tasks() {
         crawl_id,
         team_id,
         format!("Inc Completed {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
         serde_json::json!({}),
     );
 
@@ -185,8 +185,8 @@ async fn test_increment_failed_tasks() {
         crawl_id,
         team_id,
         format!("Inc Failed {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
         serde_json::json!({}),
     );
 
@@ -222,8 +222,8 @@ async fn test_update_status() {
         crawl_id,
         team_id,
         format!("Status Crawl {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
         serde_json::json!({}),
     );
 
@@ -272,8 +272,8 @@ async fn test_find_by_team_id_paginated() {
             Uuid::new_v4(),
             team_id,
             format!("Page Crawl {}-{}", unique_prefix, i),
-            format!("https://{}-{}.example.com", unique_prefix, i),
-            format!("https://{}-{}.example.com", unique_prefix, i),
+            format!("https://{}-{}.text.npr.org", unique_prefix, i),
+            format!("https://{}-{}.text.npr.org", unique_prefix, i),
             serde_json::json!({}),
         );
         repo.create(&crawl).await.expect("Failed to create crawl");
@@ -322,8 +322,8 @@ async fn test_count_by_team_id() {
         Uuid::new_v4(),
         team_id,
         format!("Count Crawl {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
         serde_json::json!({}),
     );
     repo.create(&crawl).await.expect("Failed to create crawl");
@@ -394,8 +394,8 @@ async fn tc_create_duplicate_id_returns_error() {
         crawl_id,
         team_id,
         format!("Dup Crawl {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
         serde_json::json!({}),
     );
 
@@ -457,8 +457,8 @@ async fn tc_update_status_to_failed_on_real_crawl() {
         crawl_id,
         team_id,
         format!("Failed Status {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
         serde_json::json!({}),
     );
     repo.create(&crawl).await.expect("Failed to create crawl");
@@ -496,8 +496,8 @@ async fn tc_update_status_to_cancelled_on_real_crawl() {
         crawl_id,
         team_id,
         format!("Cancelled Status {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
         serde_json::json!({}),
     );
     repo.create(&crawl).await.expect("Failed to create crawl");
@@ -536,8 +536,8 @@ async fn tc_update_status_to_queued_on_real_crawl() {
         crawl_id,
         team_id,
         format!("Queued Status {}", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
-        format!("https://{}.example.com", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
+        format!("https://{}.text.npr.org", unique_prefix),
         serde_json::json!({}),
     );
     repo.create(&crawl).await.expect("Failed to create crawl");

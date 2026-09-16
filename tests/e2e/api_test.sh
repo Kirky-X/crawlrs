@@ -150,7 +150,7 @@ run_test "GET /nonexistent (401 无认证)" 401 GET "/nonexistent"       "" "noa
 echo -e "\n${YELLOW}▶ 2. 认证/授权测试${NC}"
 run_test "无认证访问 /v1/teams/me (401)"    401 GET "/v1/teams/me"       "" "noauth"
 run_test "无效 Key 访问 /v1/teams/me (401)" 401 GET "/v1/teams/me"       "" "badkey"
-run_test "无认证访问 /v1/scrape (401)"      401 POST "/v1/scrape"        '{"url":"https://example.com"}' "noauth"
+run_test "无认证访问 /v1/scrape (401)"      401 POST "/v1/scrape"        '{"url":"https://text.npr.org"}' "noauth"
 run_test "有效认证访问 /v1/teams/me (200)"  200 GET "/v1/teams/me"       "" "auth"
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -159,8 +159,8 @@ run_test "有效认证访问 /v1/teams/me (200)"  200 GET "/v1/teams/me"       "
 echo -e "\n${YELLOW}▶ 3. Scrape 端点（真实网站）${NC}"
 
 # 3.1 基本抓取
-run_test_timeout "Scrape example.com"               201 POST "/v1/scrape" 30 \
-    '{"url":"https://example.com"}' "auth"
+run_test_timeout "Scrape text.npr.org"               201 POST "/v1/scrape" 30 \
+    '{"url":"https://text.npr.org"}' "auth"
 run_test_timeout "Scrape baidu.com"                  201 POST "/v1/scrape" 30 \
     '{"url":"https://www.baidu.com"}' "auth"
 run_test_timeout "Scrape github.com"                 201 POST "/v1/scrape" 30 \
@@ -168,23 +168,23 @@ run_test_timeout "Scrape github.com"                 201 POST "/v1/scrape" 30 \
 
 # 3.2 带参数抓取
 run_test_timeout "Scrape with formats (html)"        201 POST "/v1/scrape" 30 \
-    '{"url":"https://example.com","formats":["html"]}' "auth"
+    '{"url":"https://text.npr.org","formats":["html"]}' "auth"
 run_test_timeout "Scrape with formats (markdown)"    201 POST "/v1/scrape" 30 \
-    '{"url":"https://example.com","formats":["markdown"]}' "auth"
+    '{"url":"https://text.npr.org","formats":["markdown"]}' "auth"
 run_test_timeout "Scrape with include_tags"          201 POST "/v1/scrape" 30 \
-    '{"url":"https://example.com","include_tags":["h1","p"]}' "auth"
+    '{"url":"https://text.npr.org","include_tags":["h1","p"]}' "auth"
 run_test_timeout "Scrape with exclude_tags"          201 POST "/v1/scrape" 30 \
-    '{"url":"https://example.com","exclude_tags":["script","style"]}' "auth"
+    '{"url":"https://text.npr.org","exclude_tags":["script","style"]}' "auth"
 run_test_timeout "Scrape with extraction_rules"      201 POST "/v1/scrape" 30 \
-    '{"url":"https://example.com","extraction_rules":{"title":{"selector":"h1","attr":null,"is_array":false}}}' "auth"
+    '{"url":"https://text.npr.org","extraction_rules":{"title":{"selector":"h1","attr":null,"is_array":false}}}' "auth"
 run_test_timeout "Scrape with sync_wait_ms"          "201|202" POST "/v1/scrape" 30 \
-    '{"url":"https://example.com","sync_wait_ms":10000}' "auth"
+    '{"url":"https://text.npr.org","sync_wait_ms":10000}' "auth"
 run_test_timeout "Scrape with metadata"              201 POST "/v1/scrape" 30 \
-    '{"url":"https://example.com","metadata":{"source":"test"}}' "auth"
+    '{"url":"https://text.npr.org","metadata":{"source":"test"}}' "auth"
 
 # 3.3 JS 渲染抓取
 run_test_timeout "Scrape with js_rendering=true"     201 POST "/v1/scrape" 60 \
-    '{"url":"https://example.com","options":{"js_rendering":true,"timeout":30}}' "auth"
+    '{"url":"https://text.npr.org","options":{"js_rendering":true,"timeout":30}}' "auth"
 
 # 3.4 Scrape 状态查询（使用上面创建的 task）
 # 先查一下最近的任务
@@ -206,7 +206,7 @@ run_test "Scrape 无效 URL (422)"            400 POST "/v1/scrape"  '{"url":""}
 run_test "Scrape 非 HTTP URL (422)"         400 POST "/v1/scrape"  '{"url":"ftp://evil.com"}' "auth"
 run_test "Scrape 无效 JSON (422)"           400 POST "/v1/scrape"  'not-json' "auth"
 run_test "Scrape SSRF 内网 IP (403)"        400 POST "/v1/scrape"  '{"url":"http://127.0.0.1:65535"}' "auth"
-run_test "Scrape 未知字段 (422)"            422 POST "/v1/scrape"  '{"url":"https://example.com","unknown_field":true}' "auth"
+run_test "Scrape 未知字段 (422)"            422 POST "/v1/scrape"  '{"url":"https://text.npr.org","unknown_field":true}' "auth"
 run_test "Scrape 超长 URL (422)"            400 POST "/v1/scrape"  "{\"url\":\"https://$(python3 -c "print('a'*2100)").com\"}" "auth"
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -214,25 +214,25 @@ run_test "Scrape 超长 URL (422)"            400 POST "/v1/scrape"  "{\"url\":\
 # ════════════════════════════════════════════════════════════════════════════
 echo -e "\n${YELLOW}▶ 4. Crawl 端点（真实网站）${NC}"
 
-run_test_timeout "Crawl example.com (depth=1)"      "201|202" POST "/v1/crawl" 30 \
-    '{"url":"https://example.com","name":"test-crawl-1","config":{"max_depth":1}}' "auth"
+run_test_timeout "Crawl text.npr.org (depth=1)"      "201|202" POST "/v1/crawl" 30 \
+    '{"url":"https://text.npr.org","name":"test-crawl-1","config":{"max_depth":1}}' "auth"
 run_test_timeout "Crawl baidu.com (depth=2)"        "201|202" POST "/v1/crawl" 30 \
     '{"url":"https://www.baidu.com","name":"test-crawl-baidu","config":{"max_depth":2,"max_concurrency":2}}' "auth"
 run_test_timeout "Crawl with include_patterns"       "201|202" POST "/v1/crawl" 30 \
-    '{"url":"https://example.com","name":"test-crawl-filter","config":{"max_depth":1,"include_patterns":["^https://example\\.com/.*"]}}' "auth"
+    '{"url":"https://text.npr.org","name":"test-crawl-filter","config":{"max_depth":1,"include_patterns":["^https://example\\.com/.*"]}}' "auth"
 run_test_timeout "Crawl with exclude_patterns"       "201|202" POST "/v1/crawl" 30 \
-    '{"url":"https://example.com","name":"test-crawl-exclude","config":{"max_depth":1,"exclude_patterns":[".*\\.pdf$"]}}' "auth"
+    '{"url":"https://text.npr.org","name":"test-crawl-exclude","config":{"max_depth":1,"exclude_patterns":[".*\\.pdf$"]}}' "auth"
 run_test_timeout "Crawl with crawl_delay_ms"        "201|202" POST "/v1/crawl" 30 \
-    '{"url":"https://example.com","name":"test-crawl-delay","config":{"max_depth":1,"crawl_delay_ms":1000}}' "auth"
+    '{"url":"https://text.npr.org","name":"test-crawl-delay","config":{"max_depth":1,"crawl_delay_ms":1000}}' "auth"
 run_test_timeout "Crawl with headers"                "201|202" POST "/v1/crawl" 30 \
-    '{"url":"https://example.com","name":"test-crawl-headers","config":{"max_depth":1,"headers":{"X-Test":"crawlrs"}}}' "auth"
+    '{"url":"https://text.npr.org","name":"test-crawl-headers","config":{"max_depth":1,"headers":{"X-Test":"crawlrs"}}}' "auth"
 run_test_timeout "Crawl with sync_wait_ms"           "201|202" POST "/v1/crawl" 30 \
-    '{"url":"https://example.com","name":"test-crawl-sync","config":{"max_depth":1},"sync_wait_ms":5000}' "auth"
+    '{"url":"https://text.npr.org","name":"test-crawl-sync","config":{"max_depth":1},"sync_wait_ms":5000}' "auth"
 
 # Crawl 状态/结果查询 — 从创建响应中提取 crawl_id
 CRAWL_CREATE_RESP=$(curl -s -X POST "${BASE_URL}/v1/crawl" \
     -H "Content-Type: application/json" -H "$AUTH_HEADER" \
-    -d '{"url":"https://example.com","name":"status-test","config":{"max_depth":1}}' 2>/dev/null || echo '{}')
+    -d '{"url":"https://text.npr.org","name":"status-test","config":{"max_depth":1}}' 2>/dev/null || echo '{}')
 FIRST_CRAWL_ID=$(echo "$CRAWL_CREATE_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('data',{}).get('id',''))" 2>/dev/null || echo "")
 
 if [[ -n "$FIRST_CRAWL_ID" && "$FIRST_CRAWL_ID" != "" ]]; then
@@ -246,10 +246,10 @@ fi
 # Crawl 错误输入
 run_test "Crawl 空 body (422)"              400 POST "/v1/crawl"  "" "auth"
 run_test "Crawl 无效 URL (422)"             400 POST "/v1/crawl"  '{"url":"","config":{"max_depth":1}}' "auth"
-run_test "Crawl max_depth=0 (边界)"         "201|202" POST "/v1/crawl"  '{"url":"https://example.com","config":{"max_depth":0}}' "auth"
-run_test "Crawl max_depth=101 (超限 422)"     422 POST "/v1/crawl"  '{"url":"https://example.com","config":{"max_depth":101}}' "auth"
+run_test "Crawl max_depth=0 (边界)"         "201|202" POST "/v1/crawl"  '{"url":"https://text.npr.org","config":{"max_depth":0}}' "auth"
+run_test "Crawl max_depth=101 (超限 422)"     422 POST "/v1/crawl"  '{"url":"https://text.npr.org","config":{"max_depth":101}}' "auth"
 # max_concurrency=51 在当前实现中未被拒绝（验证上限 >51 或未设上限），实际返回 202
-run_test "Crawl max_concurrency=51 (接受)"  "201|202" POST "/v1/crawl"  '{"url":"https://example.com","config":{"max_depth":1,"max_concurrency":51}}' "auth"
+run_test "Crawl max_concurrency=51 (接受)"  "201|202" POST "/v1/crawl"  '{"url":"https://text.npr.org","config":{"max_depth":1,"max_concurrency":51}}' "auth"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 5. Search 端点
@@ -276,11 +276,11 @@ run_search_tolerant "Search 无效 engine (回落或报错)" '{"query":"test","e
 echo -e "\n${YELLOW}▶ 6. Extract 端点（真实网站）${NC}"
 
 run_test_timeout "Extract with rules"              "201|202" POST "/v1/extract" 60 \
-    '{"urls":["https://example.com"],"rules":{"title":{"selector":"h1","attr":null,"is_array":false}}}' "auth"
+    '{"urls":["https://text.npr.org"],"rules":{"title":{"selector":"h1","attr":null,"is_array":false}}}' "auth"
 run_test_timeout "Extract multi-URL"               "201|202" POST "/v1/extract" 60 \
-    '{"urls":["https://example.com","https://www.baidu.com"],"rules":{"heading":{"selector":"h1","attr":null,"is_array":false}}}' "auth"
+    '{"urls":["https://text.npr.org","https://www.baidu.com"],"rules":{"heading":{"selector":"h1","attr":null,"is_array":false}}}' "auth"
 run_test_timeout "Extract with sync_wait_ms"       "201|202" POST "/v1/extract" 60 \
-    '{"urls":["https://example.com"],"rules":{"title":{"selector":"h1","attr":null,"is_array":false}},"sync_wait_ms":15000}' "auth"
+    '{"urls":["https://text.npr.org"],"rules":{"title":{"selector":"h1","attr":null,"is_array":false}},"sync_wait_ms":15000}' "auth"
 
 # Extract 错误输入
 run_test "Extract 空 urls (422)"              400 POST "/v1/extract"  '{"urls":[]}' "auth"
@@ -356,11 +356,11 @@ echo -e "\n${YELLOW}▶ 12. SDK 端点${NC}"
 run_test_timeout "SDK /sdk/search (需 http feature)" 404 POST "/sdk/search" 30 \
     '{"query":"Rust","limit":3}' "auth"
 run_test_timeout "SDK /sdk/scrape (需 http feature)" 404 POST "/sdk/scrape" 30 \
-    '{"url":"https://example.com"}' "auth"
+    '{"url":"https://text.npr.org"}' "auth"
 run_test "SDK /sdk/tasks (需 http feature)"   404 POST "/sdk/tasks" \
-    '{"url":"https://example.com","task_type":"scrape"}' "auth"
+    '{"url":"https://text.npr.org","task_type":"scrape"}' "auth"
 run_test "SDK /sdk/crawl (需 http feature)"   404 POST "/sdk/crawl" \
-    '{"name":"sdk-test","url":"https://example.com","seed_url":"https://example.com"}' "auth"
+    '{"name":"sdk-test","url":"https://text.npr.org","seed_url":"https://text.npr.org"}' "auth"
 
 # SDK 错误输入
 run_test "SDK /sdk/search 空 query (404)"     404 POST "/sdk/search" '{"query":""}' "auth"
@@ -372,7 +372,7 @@ run_test "SDK /sdk/scrape 无效 URL (404)"     404 POST "/sdk/scrape" '{"url":"
 echo -e "\n${YELLOW}▶ 13. CORS 与安全头测试${NC}"
 
 TOTAL=$((TOTAL + 1))
-CORS_RESP=$(curl -s -D - -o /dev/null -H "Origin: https://example.com" "${BASE_URL}/health" 2>/dev/null)
+CORS_RESP=$(curl -s -D - -o /dev/null -H "Origin: https://text.npr.org" "${BASE_URL}/health" 2>/dev/null)
 if echo "$CORS_RESP" | grep -qi "access-control-allow-origin"; then
     PASS=$((PASS + 1))
     echo -e "  ${GREEN}✓${NC} CORS allow-origin header present"
@@ -399,12 +399,12 @@ echo -e "\n${YELLOW}▶ 14. 并发与边界测试${NC}"
 # 并发 scrape 请求
 for i in 1 2 3; do
     run_test_timeout "Concurrent scrape #$i"  201 POST "/v1/scrape" 30 \
-        "{\"url\":\"https://example.com\",\"metadata\":{\"batch\":\"concurrent-$i\"}}" "auth"
+        "{\"url\":\"https://text.npr.org\",\"metadata\":{\"batch\":\"concurrent-$i\"}}" "auth"
 done
 
 # sync_wait_ms 边界
-run_test "sync_wait_ms=0 (边界)"              201 POST "/v1/scrape" '{"url":"https://example.com","sync_wait_ms":0}' "auth"
-run_test "sync_wait_ms=30000 (上限)"          201 POST "/v1/scrape" '{"url":"https://example.com","sync_wait_ms":30000}' "auth"
+run_test "sync_wait_ms=0 (边界)"              201 POST "/v1/scrape" '{"url":"https://text.npr.org","sync_wait_ms":0}' "auth"
+run_test "sync_wait_ms=30000 (上限)"          201 POST "/v1/scrape" '{"url":"https://text.npr.org","sync_wait_ms":30000}' "auth"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 15. 取消任务测试
@@ -414,7 +414,7 @@ echo -e "\n${YELLOW}▶ 15. 取消任务测试${NC}"
 # 创建一个 crawl 然后取消
 CANCEL_RESP=$(curl -s -X POST "${BASE_URL}/v1/crawl" \
     -H "Content-Type: application/json" -H "$AUTH_HEADER" \
-    -d '{"url":"https://example.com","name":"cancel-test","config":{"max_depth":3}}' 2>/dev/null || echo '{}')
+    -d '{"url":"https://text.npr.org","name":"cancel-test","config":{"max_depth":3}}' 2>/dev/null || echo '{}')
 CANCEL_ID=$(echo "$CANCEL_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('data',{}).get('id','') or d.get('data',{}).get('task_id',''))" 2>/dev/null || echo "")
 
 if [[ -n "$CANCEL_ID" && "$CANCEL_ID" != "" ]]; then

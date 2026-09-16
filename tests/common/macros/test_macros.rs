@@ -69,9 +69,9 @@ macro_rules! assert_http_success {
 #[macro_export]
 macro_rules! test_url {
     () => {
-        format!("https://example.com/test-{}", uuid::Uuid::new_v4())
+        format!("https://text.npr.org/test-{}", uuid::Uuid::new_v4())
     };
     ($path:expr) => {
-        format!("https://example.com/{}", $path)
+        format!("https://text.npr.org/{}", $path)
     };
 }

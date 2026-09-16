@@ -58,6 +58,18 @@ SENSITIVE_HEADER_NAMES = {
     "proxy-authorization", "cookie",
 }
 
+# E2E/集成测试必须打真实站点（约束：example.com 仅允许单元测试使用）。
+# 选取无反爬、长期稳定的真实新闻站；主站失败时按序故障转移。
+# 每站点附内容标记：断言抓取到的正文确实来自该站（防代理页/错误页冒充）。
+NEWS_SITES = [
+    ("https://text.npr.org", "npr.org"),              # NPR 文字版新闻
+    ("https://news.ycombinator.com", "ycombinator"),  # Hacker News 科技新闻
+    ("https://lite.cnn.com", "cnn.com"),              # CNN lite 新闻
+]
+NEWS_PRIMARY = NEWS_SITES[0][0]
+# include_patterns 用同域外链匹配（text.npr.org 文章链接形如 /12345678）
+NEWS_INCLUDE_PATTERN = r"^https://text\.npr\.org/.*"
+
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+")
 RFC3339_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 GARRISON_KEY_RE = re.compile(r"^[^.]+\.[^.]+$")  # key_id.key_secret
@@ -374,7 +386,7 @@ def build_scenarios(r: Runner):
     # ═══ C. Scrape 语义 ═══
     def t_scrape_create(check):
         s, h, text, j = c.request("scrape_create", "POST", "/v1/scrape",
-                                  body=json.dumps({"url": "https://example.com"}), timeout=60)
+                                  body=json.dumps({"url": NEWS_PRIMARY}), timeout=60)
         check(s in (200, 201, 202), f"2xx（got {s}: {text[:160]!r}）")
         if s not in (200, 201, 202) or j is None:
             return
@@ -385,68 +397,81 @@ def build_scenarios(r: Runner):
             check(str(data.get("id")) and uuid.UUID(str(data.get("id"))), "data.id 为 UUID")
         except ValueError:
             check(False, "data.id 为 UUID")
-        check(data.get("url") == "https://example.com", f"url 回显请求值（got {data.get('url')!r}）")
+        check(data.get("url") == NEWS_PRIMARY, f"url 回显请求值（got {data.get('url')!r}）")
         check(isinstance(data.get("credits_used", 0), int) and data.get("credits_used", 0) >= 0,
               "credits_used 非负整数")
         return None
     scenarios.append(("scrape_create_semantics", "C-Scrape", "创建抓取：包封+回显+UUID", t_scrape_create))
 
     def t_scrape_status_transition(check):
-        s0, _, _, j0 = c.request("scrape_create_for_status", "POST", "/v1/scrape",
-                                 body=json.dumps({"url": "https://example.com",
-                                                  "metadata": {"e2e": "status-transition"}}),
-                                 timeout=60)
-        check(s0 in (200, 201, 202), f"创建 2xx（got {s0}）")
-        task_id = ((j0 or {}).get("data") or {}).get("id")
-        if not task_id:
-            check(False, "未获得 task_id，无法验证状态机")
-            return
-        deadline = time.monotonic() + 90
-        seen_statuses, final = [], None
-        while time.monotonic() < deadline:
-            s, _, text, j = c.request("scrape_status_poll", "GET", f"/v1/scrape/{task_id}",
-                                      timeout=30)
-            check(s == 200, f"状态查询 200（got {s}）")
-            if s != 200 or j is None:
+        # 真实新闻站点验证：主站失败按序故障转移；全部站点均未完成才判失败
+        last_errors = []
+        final, used_site = None, None
+        for site, _marker in NEWS_SITES:
+            s0, _, _, j0 = c.request("scrape_create_for_status", "POST", "/v1/scrape",
+                                     body=json.dumps({"url": site,
+                                                      "metadata": {"e2e": "status-transition"}}),
+                                     timeout=60)
+            check(s0 in (200, 201, 202), f"创建 2xx（got {s0}）")
+            task_id = ((j0 or {}).get("data") or {}).get("id")
+            if not task_id:
+                last_errors.append(f"{site}: 未获得 task_id")
+                continue
+            deadline = time.monotonic() + 90
+            seen_statuses, site_final = [], None
+            while time.monotonic() < deadline:
+                s, _, text, j = c.request("scrape_status_poll", "GET", f"/v1/scrape/{task_id}",
+                                          timeout=30)
+                check(s == 200, f"状态查询 200（got {s}）")
+                if s != 200 or j is None:
+                    return
+                Runner.success_envelope(check, j, "scrape status")
+                data = j.get("data") or {}
+                st = data.get("status")
+                check(st in TASK_STATUS_VOCAB, f"status ∈ 状态机词汇（got {st!r}）")
+                check(data.get("id") == task_id or str(data.get("id")) == str(task_id),
+                      "状态响应 id 与请求一致")
+                if st not in seen_statuses:
+                    seen_statuses.append(st)
+                if st in TERMINAL_STATUSES:
+                    site_final = data
+                    break
+                time.sleep(1.5)
+            if not site_final:
+                check(False, f"{site}: 90s 内未达终态（观测序列: {seen_statuses}）")
                 return
-            Runner.success_envelope(check, j, "scrape status")
-            data = j.get("data") or {}
-            st = data.get("status")
-            check(st in TASK_STATUS_VOCAB, f"status ∈ 状态机词汇（got {st!r}）")
-            check(data.get("id") == task_id or str(data.get("id")) == str(task_id),
-                  "状态响应 id 与请求一致")
-            if st not in seen_statuses:
-                seen_statuses.append(st)
-            if st in TERMINAL_STATUSES:
-                final = data
+            r.auditor.log_event("state_transition", "scrape_status_transition",
+                                {"task_id": task_id, "site": site, "observed": seen_statuses,
+                                 "final": site_final.get("status")})
+            if site_final.get("status") in ("completed", "success"):
+                final, used_site = site_final, site
                 break
-            time.sleep(1.5)
-        check(final is not None, f"90s 内到达终态（观测序列: {seen_statuses}）")
+            last_errors.append(f"{site}: 终态 {site_final.get('status')}，"
+                               f"error={str(site_final.get('error'))[:120]}")
+
+        check(final is not None,
+              f"至少一个真实新闻站点抓取完成（站点: {[s for s, _ in NEWS_SITES]}）；"
+              f"各站点结果: {last_errors}")
         if not final:
             return
-        r.auditor.log_event("state_transition", "scrape_status_transition",
-                            {"task_id": task_id, "observed": seen_statuses,
-                             "final": final.get("status")})
-        if final.get("status") in ("completed", "success"):
-            result = final.get("result") or {}
-            check(bool(result.get("content")), "completed 必含 result.content（防静默失败）")
-            check(result.get("status_code") == 200, f"上游 status_code=200（got {result.get('status_code')}）")
-            check(isinstance(result.get("response_time_ms"), int)
-                  and result["response_time_ms"] >= 0, "response_time_ms 非负")
-            check(bool(final.get("completed_at")), "completed_at 已填充")
-            headers = result.get("headers") or {}
-            leaked = [k for k in headers
-                      if str(k).lower() in SENSITIVE_HEADER_NAMES
-                      and str(headers[k]) != "[REDACTED]"]
-            check(not leaked, f"敏感响应头已脱敏为 [REDACTED]（泄漏: {leaked}）")
-        elif final.get("status") == "failed":
-            check(bool(final.get("error")), "failed 必含 error 说明（容错可观测）")
-            r.auditor.log_event("env_note", "scrape_status_transition",
-                                {"note": "终态为 failed —— 网络受限环境的容错路径，"
-                                         "error 可观测性已验证；completed 路径见其他用例"})
-        else:
-            check(False, f"终态异常: {final.get('status')!r}")
-    scenarios.append(("scrape_status_transition", "C-Scrape", "状态机推进至终态+结果完整性", t_scrape_status_transition))
+        result = final.get("result") or {}
+        content = str(result.get("content") or "")
+        check(bool(content), "completed 必含 result.content（防静默失败）")
+        check(len(content) >= 200, f"真实新闻页内容量合理（len={len(content)}）")
+        marker = dict(NEWS_SITES)[used_site]
+        check(marker in content.lower(),
+              f"正文含真实站点标记 {marker!r}（site={used_site}，证实非占位页）")
+        check(result.get("status_code") == 200, f"上游 status_code=200（got {result.get('status_code')}）")
+        check(isinstance(result.get("response_time_ms"), int)
+              and result["response_time_ms"] >= 0, "response_time_ms 非负")
+        check(bool(final.get("completed_at")), "completed_at 已填充")
+        headers = result.get("headers") or {}
+        leaked = [k for k in headers
+                  if str(k).lower() in SENSITIVE_HEADER_NAMES
+                  and str(headers[k]) != "[REDACTED]"]
+        check(not leaked, f"敏感响应头已脱敏为 [REDACTED]（泄漏: {leaked}）")
+    scenarios.append(("scrape_status_transition", "C-Scrape",
+                      "真实新闻站抓取至完成+状态机+内容标记", t_scrape_status_transition))
 
     def t_scrape_unknown_id(check):
         s, _, _, j = c.request("scrape_unknown", "GET",
@@ -457,7 +482,7 @@ def build_scenarios(r: Runner):
 
     def t_scrape_sync_wait(check):
         s, _, text, j = c.request("scrape_sync_wait", "POST", "/v1/scrape",
-                                  body=json.dumps({"url": "https://example.com",
+                                  body=json.dumps({"url": NEWS_PRIMARY,
                                                    "sync_wait_ms": 10000}), timeout=60)
         check(s in (200, 201, 202), f"sync 等待 2xx（got {s}: {text[:120]!r}）")
         if j:
@@ -481,7 +506,7 @@ def build_scenarios(r: Runner):
 
     def t_scrape_unknown_field(check):
         s, _, _, j = c.request("scrape_unknown_field", "POST", "/v1/scrape",
-                               body=json.dumps({"url": "https://example.com",
+                               body=json.dumps({"url": NEWS_PRIMARY,
                                                 "unknown_field": True}))
         check(s == 422, f"未知字段 422（got {s}）")
     scenarios.append(("scrape_unknown_field_422", "C-Scrape", "未知字段严格拒绝 422", t_scrape_unknown_field))
@@ -512,7 +537,7 @@ def build_scenarios(r: Runner):
 
     def t_crawl_create(check):
         s, text, j = _create_crawl("crawl_create",
-                                   {"url": "https://example.com", "name": "e2e-sem-crawl",
+                                   {"url": NEWS_PRIMARY, "name": "e2e-sem-crawl",
                                     "config": {"max_depth": 1}})
         check(s in (200, 201, 202), f"创建 2xx（got {s}: {text[:160]!r}）")
         if j:
@@ -541,7 +566,7 @@ def build_scenarios(r: Runner):
 
     def t_crawl_lifecycle(check):
         s, _, j = _create_crawl("crawl_lifecycle_create",
-                                {"url": "https://example.com", "name": "e2e-sem-lifecycle",
+                                {"url": NEWS_PRIMARY, "name": "e2e-sem-lifecycle",
                                  "config": {"max_depth": 1}})
         check(s in (200, 201, 202), f"创建 2xx（got {s}）")
         crawl_id = ((j or {}).get("data") or {}).get("id")
@@ -577,9 +602,9 @@ def build_scenarios(r: Runner):
 
     def t_crawl_include_patterns(check):
         s, _, j = _create_crawl("crawl_include_create",
-                                {"url": "https://example.com", "name": "e2e-sem-filter",
+                                {"url": NEWS_PRIMARY, "name": "e2e-sem-filter",
                                  "config": {"max_depth": 2,
-                                            "include_patterns": [r"^https://example\.com/.*"]}})
+                                            "include_patterns": [NEWS_INCLUDE_PATTERN]}})
         check(s in (200, 201, 202), f"创建 2xx（got {s}）")
         crawl_id = ((j or {}).get("data") or {}).get("id")
         if not crawl_id:
@@ -594,25 +619,26 @@ def build_scenarios(r: Runner):
         check(s2 == 200, f"results 200（got {s2}）")
         if j2 and s2 == 200:
             results = (j2 or {}).get("data") or []
-            pattern = re.compile(r"^https://example\.com/.*")
-            seed = "https://example.com"
+            pattern = re.compile(NEWS_INCLUDE_PATTERN)
+            seed = NEWS_PRIMARY
             urls = [it.get("url") for it in results if isinstance(it, dict)]
             # 契约：include_patterns 作用于抽取发现的外链（crawl_link_extractor
             # 的 UrlPatternFilter）；种子 URL 无条件抓取（标准爬虫语义），豁免匹配。
             violation = [u for u in urls
-                         if u and u != seed and not pattern.match(str(u))]
+                         if u and u.rstrip("/") != seed.rstrip("/")
+                         and not pattern.match(str(u))]
             check(not violation,
                   f"非种子结果 URL 全部命中 include_patterns（违规: {violation[:3]}）")
-            check(seed in urls or len(urls) == 0,
+            check(any(u and u.rstrip("/") == seed.rstrip("/") for u in urls) or len(urls) == 0,
                   f"种子 URL 在结果中（got {urls[:3]}）")
             r.auditor.log_event("data_filter", "crawl_include_patterns",
                                 {"crawl_id": crawl_id, "result_urls": urls[:20],
-                                 "pattern": "^https://example\\.com/.*"})
+                                 "pattern": NEWS_INCLUDE_PATTERN})
     scenarios.append(("crawl_include_patterns", "D-Crawl", "include_patterns 数据过滤", t_crawl_include_patterns))
 
     def t_crawl_cancel(check):
         s, _, j = _create_crawl("crawl_cancel_create",
-                                {"url": "https://example.com", "name": "e2e-sem-cancel",
+                                {"url": NEWS_PRIMARY, "name": "e2e-sem-cancel",
                                  "config": {"max_depth": 2}})
         check(s in (200, 201, 202), f"创建 2xx（got {s}）")
         crawl_id = ((j or {}).get("data") or {}).get("id")
@@ -650,7 +676,7 @@ def build_scenarios(r: Runner):
 
     def t_crawl_max_depth_over(check):
         s, _, _, j = c.request("crawl_depth_over", "POST", "/v1/crawl",
-                               body=json.dumps({"url": "https://example.com",
+                               body=json.dumps({"url": NEWS_PRIMARY,
                                                 "name": "e2e-sem-over",
                                                 "config": {"max_depth": 101}}))
         check(s == 422, f"max_depth>100 拒绝 422（got {s}）")
@@ -865,7 +891,7 @@ def build_scenarios(r: Runner):
         def worker(i):
             try:
                 s, _, text, j = c.request(f"concurrent_{i}", "POST", "/v1/scrape",
-                                          body=json.dumps({"url": "https://example.com",
+                                          body=json.dumps({"url": NEWS_PRIMARY,
                                                            "metadata": {"e2e": f"concurrent-{i}"}}),
                                           timeout=60)
                 with lock:
