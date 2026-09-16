@@ -292,8 +292,23 @@ fn get_audit_service() -> Option<Arc<dyn AuditServiceTrait>> {
 ///
 /// - shutdown 时优雅等待 inflight audit task
 pub async fn wait_audit_tasks(timeout: Duration) {
-    let join_set = std::mem::take(&mut *AUDIT_TASKS.lock().expect("AUDIT_TASKS poisoned"));
-    let _ = tokio::time::timeout(timeout, join_set.join_all()).await;
+    let mut join_set = std::mem::take(&mut *AUDIT_TASKS.lock().expect("AUDIT_TASKS poisoned"));
+    // 逐个 join 而非 `join_all()`：`join_all` 遇到被取消的 task 会直接 panic
+    // （"task was cancelled"）。取消场景真实存在——跨 tokio runtime 的测试
+    // 环境里，spawn 方 runtime 先行销毁会取消其 task；shutdown 路径的等待方
+    // 绝不应因此 panic。Cancelled 视为已完成；task 自身 panic 记录日志
+    // （监听器 best-effort 契约：审计失败不阻塞 shutdown 主流程）。
+    let _ = tokio::time::timeout(timeout, async {
+        while let Some(result) = join_set.join_next().await {
+            if let Err(e) = result {
+                if e.is_panic() {
+                    log::error!("audit task panicked during shutdown wait: {e}");
+                }
+                // is_cancelled()：spawn 方 runtime 已销毁，无需处理
+            }
+        }
+    })
+    .await;
     // join_set drop 时未完成的 task 被 abort
 }
 
