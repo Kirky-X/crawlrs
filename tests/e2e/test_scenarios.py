@@ -25,9 +25,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 基础配置
 BASE_URL = "http://localhost:8899"
-# E2E 测试用 admin API Key（通过 CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 环境变量或 bootstrap 流程生成）
-# Format: <garrison_key_id>.<garrison_key_secret>
-API_KEY = "a4f25379533c4cf8b46a4ae8311b8597.7aa3562119494b549e07a564290cf414"
+# E2E 测试用 admin API Key：仅从环境变量注入（CRAWLRS_TEST_API_KEY）。
+# 安全修复：此前此处在库内硬编码了历史 garrison key（已泄漏，须在服务端吊销轮换）；
+# 凭证一律不得入库（CWE-798 / CWE-540）。
+import os as _os
+
+API_KEY = _os.environ.get("CRAWLRS_TEST_API_KEY", "")
+if not API_KEY:
+    raise SystemExit(
+        "SKIP: 需要设置 CRAWLRS_TEST_API_KEY 环境变量后方可运行本脚本"
+    )
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
     "Content-Type": "application/json"
