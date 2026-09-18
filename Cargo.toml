@@ -32,7 +32,7 @@ default = ["platform", "db-postgres"]
 # 该 feature 只增加编译面无运行时收益。
 platform = [
     "teams", "auth", "rate-limit", "webhook", "metrics", "content",
-    "dep:dbnexus", "dep:dbnexus-macros", "dep:axum", "dep:sdforge",
+    "dep:dbnexus", "dep:axum", "dep:sdforge", "dep:sea-orm",
     "http",
 ]
 
@@ -132,7 +132,6 @@ tower-http = { version = "0.7", features = ["trace", "cors"] }
 serde.workspace = true
 serde_json.workspace = true
 confers.workspace = true
-figment.workspace = true
 
 # Error handling
 thiserror = "2.0"
@@ -152,14 +151,15 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 # 均为 wreq 自有 API，无需引入 GPL 的 wreq-util。构建需 cmake + C 编译器（BoringSSL）。
 wreq = { version = "6.0.0-rc.31", default-features = false, features = ["tokio-rt"], optional = true }
 url = "2.5"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 # Database
 # SAST jsonwebtoken 已单独声明（仅 hmac+sha2+rand 最小 feature，不开 rsa/p256/p384/ed25519-dalek）
+# dbnexus-macros 已移除（2026-09-19 审计）：src 零引用，宏经 dbnexus re-export。
 dbnexus = { workspace = true, optional = true }
-dbnexus-macros = { version = "0.6.0-rc.4", path = "../base/dbnexus/macros", default-features = false, features = [], optional = true }
 
-sea-orm = { workspace = true }
+# sea-orm optional 化（2026-09-19 审计）：由 platform 激活；agent-lib 等轻量面
+# 不再编译整个 sea-orm 栈。测试侧经 dev-dependencies 恒可用（见文件末尾）。
+sea-orm = { workspace = true, optional = true }
 
 # Caching and state management
 dashmap = "6.2"
@@ -206,9 +206,7 @@ dom_smoothie = { version = "0.18", default-features = false, optional = true }
 # Text processing and encoding
 chardetng = { version = "1.0" }
 encoding_rs = { version = "0.8" }
-deunicode = "1.6"
 lru = "0.18"
-strsim = "0.11"
 html-escape = "0.2"
 serde_urlencoded = "0.7"
 urlencoding = "2.1"
@@ -219,12 +217,11 @@ hmac = "0.13"
 sha2 = "0.11"
 hex = "0.4"
 bcrypt = "0.19"
-zeroize = "1.9"
 # Standard Webhooks — webhook 签名/验签标准化（T-webhook-001）
 standardwebhooks = { version = "1.0", default-features = false }
 # SAST jsonwebtoken v11 将 features 重组为加密后端选择
 # rustCrypto: 纯 Rust 加密后端（替代旧版独立的 hmac/sha2/rand features）
-jsonwebtoken = { version = "11.0", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 
 # Network utilities
 ipnetwork = "0.21"
@@ -244,30 +241,7 @@ limiteron = { version = "0.3.0-rc.4", path = "../base/limiteron", default-featur
 # Authentication & authorization framework — gated by `auth` feature
 # auth-on 改由 garrison 提供认证引擎
 # 版本与 dbnexus/oxcache/trait-kit/confers/inklog/sdforge/limiteron 同作者对齐（共享 rc.43 链）
-garrison = { version = "0.9.0-rc.1", path = "/home/kirky/projects/garrison", default-features = false, optional = true, features = [
-    "backend-embedded",
-    "web-axum",
-    # db-postgres 不在此写死：由 crawlrs db-* 特性组透传 garrison?/db-*
-    "cache-memory",
-    "protocol-apikey",
-    "protocol-jwt",
-    "core-advanced",
-    "authorize-api",
-    "listener",
-    "audit-log",
-    "audit-inklog",
-    "firewall",
-    "firewall-bruteforce",
-    "tenant-isolation",
-    "tracing-log",
-    # three-tier-cache：启用 garrison 内置 L1(oxcache 30s)+L2(DAO 300s)+L3(interface 回调) 三层缓存，
-    # 避免 get_permission_list/get_role_list 每次认证都触发 N+1+M 数据库查询（P-）。
-    "three-tier-cache",
-    # protocol-zeroize：JWT secret 使用 Zeroizing<String> 包装，Drop 时清零内存（CWE-316 防护）。
-    "protocol-zeroize",
-    # db-retry：garrison DAO 认证查询启用 dbnexus/retry 幂等重试（仅幂等 SQL，瞬态故障自愈）
-    "db-retry",
-] }
+garrison = { version = "0.9.0-rc.1", path = "../garrison", default-features = false, features = ["backend-embedded", "web-axum", "cache-memory", "protocol-apikey", "protocol-jwt", "core-advanced", "authorize-api", "listener", "audit-log", "audit-inklog", "firewall", "firewall-bruteforce", "tenant-isolation", "tracing-log", "three-tier-cache", "protocol-zeroize", "db-retry"], optional = true }
 
 # Concurrency and synchronization
 parking_lot = "0.12"
@@ -282,7 +256,7 @@ regex.workspace = true
 # hashbrown 0.17 的 ahash 通过 default-hasher 特性提供
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "equivalent", "inline-more"] }
 
-bytes = "1.12"
+bytes = "1"
 genai = { version = "0.6", optional = true }
 toml = "1.1"
 
@@ -306,8 +280,6 @@ ahash = "0.8"
 
 # Internationalization (i18n) — Mozilla Fluent system
 fluent-bundle = "0.16"
-fluent-syntax = "0.12"
-intl-memoizer = "0.5"
 unic-langid = "0.9"
 
 # API Documentation
@@ -315,6 +287,8 @@ unic-langid = "0.9"
 utoipa = { version = "5.5", optional = true, default-features = false, features = ["macros"] }
 
 [dev-dependencies]
+# sea-orm 恒可用：test_helpers（cfg(test)）与错误类型测试在任意 feature 组合下可编译。
+sea-orm = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-test = "0.4"
 wiremock = "0.6"
@@ -402,7 +376,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # Configuration
 confers = { version = "0.6.0-rc.4", path = "../base/confers", default-features = false, features = ["validation", "toml", "env", "security-rules"] }
-figment = { version = "0.10", default-features = false, features = ["toml", "json", "yaml", "env"] }
 # Error handling
 anyhow = "1.0"
 # Logging

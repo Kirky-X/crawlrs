@@ -16,6 +16,8 @@ pub fn map_to_other_error<E: Display>(error: E) -> CrawlRsError {
 }
 
 /// 将错误转换为 CrawlRsError::Database
+/// platform 门控：Database 变体的 sea_orm 载荷仅在 platform 下存在。
+#[cfg(feature = "platform")]
 pub fn map_to_database_error<E: Display>(error: E) -> CrawlRsError {
     CrawlRsError::Database(sea_orm::DbErr::Custom(error.to_string()))
 }
@@ -36,6 +38,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "platform")]
     fn test_map_to_database_error() {
         let error = map_to_database_error("db error");
         assert!(matches!(error, CrawlRsError::Database(_)));

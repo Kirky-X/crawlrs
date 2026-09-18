@@ -49,7 +49,6 @@ sea-orm.workspace = true
 
 # 配置示例依赖
 confers.workspace = true
-figment.workspace = true
 validator.workspace = true
 
 # SDK 示例依赖
@@ -57,8 +56,7 @@ sdforge.workspace = true
 axum.workspace = true
 
 # Advanced examples
-async-trait = "0.1"
-reqwest = { version = "0.13", features = ["rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 [[bin]]
 name = "async_batch"
 path = "advanced/async_batch.rs"

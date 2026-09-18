@@ -15,6 +15,9 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum InfrastructureError {
     // ==================== 数据库错误 ====================
+    // platform 门控：sea-orm 仅随 platform 编译（2026-09-19 审计）；该变体在
+    // errors.rs 外无引用，门控安全。
+    #[cfg(feature = "platform")]
     #[error("数据库连接失败: {0}")]
     DatabaseConnection(#[from] sea_orm::DbErr),
 
@@ -113,7 +116,9 @@ mod tests {
         ));
     }
 
+    // 变体随 platform 存在，测试同步门控
     #[test]
+    #[cfg(feature = "platform")]
     fn test_database_connection_from_db_err() {
         let db_err = sea_orm::DbErr::Custom("connection refused".to_string());
         let error: InfrastructureError = db_err.into();
@@ -273,6 +278,7 @@ mod tests {
     #[test]
     fn test_all_variants_implement_std_error() {
         fn assert_error<T: std::error::Error>(_: &T) {}
+        #[cfg(feature = "platform")]
         let db_err = sea_orm::DbErr::Custom("e".to_string());
         let json_err: serde_json::Error = serde_json::from_str::<i32>("x").unwrap_err();
         let req_err = reqwest::Client::new()
@@ -280,6 +286,7 @@ mod tests {
             .build()
             .unwrap_err();
         let errors: Vec<InfrastructureError> = vec![
+            #[cfg(feature = "platform")]
             InfrastructureError::DatabaseConnection(db_err),
             InfrastructureError::DatabaseMigration {
                 message: "m".into(),

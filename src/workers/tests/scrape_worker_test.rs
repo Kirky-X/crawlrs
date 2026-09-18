@@ -2968,7 +2968,7 @@ async fn test_mock_process_scrape_task_engine_error() {
     let worker = build_mock_worker().await;
     // 有效 payload（含 url）→ 解析成功 → EngineClient::new() 无引擎 → scrape() 报错。
     // 错误路径内部处理（mark_failed 或 handle_failure），process_scrape_task 返回 Ok(())。
-    // 注：后畸形 payload 会在解析阶段直接 mark_failed，不再进入引擎，
+    // 注：畸形 payload 会在解析阶段直接 mark_failed，不再进入引擎，
     // 故此处用有效 payload 才能真正覆盖"引擎错误"路径。
     let task = make_task(json!({"url": "https://example.com"}));
     let result = worker.process_scrape_task(task).await;

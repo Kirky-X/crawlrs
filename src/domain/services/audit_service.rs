@@ -29,11 +29,12 @@ impl From<AuditServiceError> for CrawlRsError {
         match error {
             AuditServiceError::RepositoryError(repo_err) => match repo_err {
                 AuditRepositoryError::DatabaseError(anyhow_err) => {
+                    // platform 下尝试还原 DbErr（保留结构化信息）；轻量面无 sea-orm，统一转字符串
+                    #[cfg(feature = "platform")]
                     if let Some(db_err) = anyhow_err.downcast_ref::<sea_orm::DbErr>().cloned() {
-                        CrawlRsError::Database(db_err)
-                    } else {
-                        CrawlRsError::Other(format!("Database error: {}", anyhow_err))
+                        return CrawlRsError::Database(db_err);
                     }
+                    CrawlRsError::Other(format!("Database error: {}", anyhow_err))
                 }
                 AuditRepositoryError::NotFound => CrawlRsError::Other(repo_err.to_string()),
             },

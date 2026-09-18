@@ -120,7 +120,6 @@ impl WebhookManagementService for WebhookManagementServiceImpl {
         // 后续 retry_failed 经 claim_pending 可能重复认领并再次外发（客户可见的
         // 重复投递事故）。故回写失败时重试 1 次，仍失败则显式返回 Err
         // （语义：已发送但状态未知）；重复外发由 event msg_id 幂等兜底
-        // 。
         event.status = crate::domain::models::WebhookStatus::Delivered;
         event.delivered_at = Some(chrono::Utc::now());
         if let Err(update_err) = self.event_repository.update(&event).await {

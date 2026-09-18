@@ -24,9 +24,15 @@ use crate::i18n::{I18nBundle, Locale};
 /// 统一所有应用级别的错误，提供清晰的错误分类和上下文信息
 #[derive(Debug, thiserror::Error)]
 pub enum CrawlRsError {
-    /// 数据库错误
+    /// 数据库错误。platform 启用时承载 `sea_orm::DbErr`（`#[from]` 自动转换）；
+    /// 轻量面（agent-lib 等）退化为字符串载荷，不引入 sea-orm。
+    /// 匹配处一律用 `Database(_)` 通配载荷，两种构建形态共用同一 match 臂。
+    #[cfg(feature = "platform")]
     #[error("Database error: {0}")]
     Database(#[from] sea_orm::DbErr),
+    #[cfg(not(feature = "platform"))]
+    #[error("Database error: {0}")]
+    Database(String),
 
     /// 网络错误
     #[error("Network error: {0}")]
@@ -677,14 +683,24 @@ mod tests {
         );
     }
 
+    /// 双 cfg 构造器：platform 下载荷为 sea_orm::DbErr，轻量面下为 String——
+    /// 使 DB 错误映射测试在两种构建形态下都可编译（2026-09-19 审计）。
+    fn make_db_error(msg: &str) -> CrawlRsError {
+        #[cfg(feature = "platform")]
+        {
+            CrawlRsError::Database(sea_orm::DbErr::Custom(msg.to_string()))
+        }
+        #[cfg(not(feature = "platform"))]
+        {
+            CrawlRsError::Database(msg.to_string())
+        }
+    }
+
     #[test]
     fn test_error_code_mapping() {
         // Use a Custom error instead of the specific Conn variant
-        let db_err = sea_orm::DbErr::Custom("test connection error".to_string());
-        assert_eq!(
-            CrawlRsError::Database(db_err).error_code(),
-            "DATABASE_ERROR"
-        );
+        let db_err = make_db_error("test connection error");
+        assert_eq!(db_err.error_code(), "DATABASE_ERROR");
         assert_eq!(
             CrawlRsError::NotFound("test".to_string()).error_code(),
             "NOT_FOUND"
@@ -710,9 +726,9 @@ mod tests {
     #[test]
     fn test_user_message_sanitization() {
         // 数据库错误应该返回通用消息
-        let db_err = CrawlRsError::Database(sea_orm::DbErr::Custom(
-            "Connection failed to postgres://user:password123@localhost:5432".to_string(),
-        ));
+        let db_err = make_db_error(
+            "Connection failed to postgres://user:password123@localhost:5432",
+        );
         let user_msg = db_err.user_message();
         assert!(!user_msg.contains("password123"));
         assert!(!user_msg.contains("localhost:5432"));
@@ -741,9 +757,9 @@ mod tests {
 
     #[test]
     fn test_detailed_message_preserves_info() {
-        let err = CrawlRsError::Database(sea_orm::DbErr::Custom(
-            "Connection failed to postgres://user:password123@localhost:5432".to_string(),
-        ));
+        let err = make_db_error(
+            "Connection failed to postgres://user:password123@localhost:5432",
+        );
         let detailed = err.detailed_message();
         // 详细消息应该包含所有信息
         assert!(detailed.contains("postgres://"));
@@ -918,7 +934,7 @@ mod tests {
         );
         // Database also maps to INTERNAL_SERVER_ERROR
         assert_eq!(
-            CrawlRsError::Database(sea_orm::DbErr::Custom("db down".to_string())).status_code(),
+            make_db_error("db down").status_code(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
         // 新增变体：Authentication(401) / ServiceUnavailable(503)
