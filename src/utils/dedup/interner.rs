@@ -13,7 +13,7 @@
 //! |------|--------|---------|
 //! | HashSet | `hashbrown::HashSet<SymbolUsize>` + `string_interner` | `hashbrown::HashSet<String>` |
 //! | Key type | `CaseInsensitiveString` | `String`（区分大小写） |
-//! | Bloom 集成 | `#[cfg(feature = "bloom")]` | 强制启用 |
+//! | Bloom 集成 | spider 侧按其自有 feature 门控 | 强制启用（本 crate 无 bloom feature） |
 //!
 //! **不引入 `string_interner` 依赖**的原因：crawlrs 的 Bloom+Interner 是短生命
 //! 周期缓存（每个爬取任务一个实例），string_interner 的内存优化收益有限；
