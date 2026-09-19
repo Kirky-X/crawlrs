@@ -14,7 +14,7 @@ use crawlrs::infrastructure::database::entities::auth::audit_log::{
     Column as AuditColumn, Entity as AuditEntity,
 };
 use crawlrs::infrastructure::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 /// 测试创建审计日志并通过 API Key ID 查询
@@ -186,7 +186,7 @@ async fn test_cleanup_old_logs() {
         .await
         .expect("Failed to get session");
     let conn = session.connection().expect("Failed to get connection");
-    sea_orm::ConnectionTrait::execute_unprepared(
+    dbnexus::sea_orm::ConnectionTrait::execute_unprepared(
         conn,
         &format!(
             "UPDATE audit_logs SET created_at = NOW() - INTERVAL '10 days' WHERE id = '{}'",

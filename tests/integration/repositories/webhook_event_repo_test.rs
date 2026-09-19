@@ -12,7 +12,7 @@ use crawlrs::domain::models::{WebhookEvent, WebhookEventType, WebhookStatus};
 use crawlrs::domain::repositories::webhook_event_repository::WebhookEventRepository;
 use crawlrs::infrastructure::database::entities::webhook_event;
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 /// 创建测试用的 WebhookEvent（辅助函数）

@@ -7,11 +7,11 @@ use crate::domain::models::ScrapeResult;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::infrastructure::database::entities::scrape_result as db_entity;
 use async_trait::async_trait;
-use dbnexus::DbPool;
-use sea_orm::{
+use dbnexus::sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
     QueryResult, Set, Statement,
 };
+use dbnexus::DbPool;
 use std::sync::Arc;
 use uuid::Uuid;
 

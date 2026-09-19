@@ -12,7 +12,7 @@ use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use crawlrs::presentation::handlers::task_queries::wait_for_tasks_completion;
 use crawlrs::infrastructure::migrations::MigratorTrait;
-use sea_orm::Database;
+use dbnexus::sea_orm::Database;
 use std::sync::Arc;
 
 fn create_test_task(id: Uuid, team_id: Uuid, status: TaskStatus) -> Task {

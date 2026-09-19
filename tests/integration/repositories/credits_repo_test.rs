@@ -12,7 +12,7 @@ use crawlrs::domain::models::CreditsTransactionType;
 use crawlrs::domain::repositories::credits_repository::CreditsRepository;
 use crawlrs::infrastructure::database::entities::{credits, credits_transactions};
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use dbnexus::sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use uuid::Uuid;
 
 /// 测试新团队的余额查询：应自动初始化为 0
@@ -410,7 +410,7 @@ async fn tc_get_balance_multiple_teams_independent() {
         .await
         .expect("Failed to get session");
     let conn = session.connection().expect("Failed to get connection");
-    sea_orm::ConnectionTrait::execute_unprepared(
+    dbnexus::sea_orm::ConnectionTrait::execute_unprepared(
         conn,
         &format!(
             "INSERT INTO teams (id, name) VALUES ('{}', 'Test Team 2 {}') ON CONFLICT (id) DO NOTHING",
@@ -445,7 +445,7 @@ async fn tc_get_balance_multiple_teams_independent() {
         .filter(credits::Column::TeamId.eq(team2_id))
         .exec(conn)
         .await;
-    sea_orm::ConnectionTrait::execute_unprepared(
+    dbnexus::sea_orm::ConnectionTrait::execute_unprepared(
         conn,
         &format!("DELETE FROM teams WHERE id = '{}'", team2_id),
     )

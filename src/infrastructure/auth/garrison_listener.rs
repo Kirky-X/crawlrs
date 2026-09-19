@@ -1645,7 +1645,7 @@ mod tests {
                 self.notify.notify_one();
                 return Err(AuditServiceError::RepositoryError(
                     crate::domain::repositories::audit_log_repository::AuditRepositoryError::DatabaseError(
-                        sea_orm::DbErr::Custom("mock failure".to_string()).into(),
+                        dbnexus::sea_orm::DbErr::Custom("mock failure".to_string()).into(),
                     ),
                 ));
             }

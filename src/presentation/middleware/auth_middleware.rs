@@ -35,6 +35,8 @@ use axum::{
     response::Response,
 };
 #[cfg(feature = "auth")]
+use dbnexus::sea_orm::EntityTrait;
+#[cfg(feature = "auth")]
 use dbnexus::DbPool;
 #[cfg(feature = "auth")]
 use log::debug;
@@ -42,8 +44,6 @@ use log::debug;
 use lru::LruCache;
 #[cfg(feature = "auth")]
 use parking_lot::RwLock as ParkRwLock;
-#[cfg(feature = "auth")]
-use sea_orm::EntityTrait;
 #[cfg(feature = "auth")]
 use sha2::{Digest, Sha256};
 #[cfg(feature = "auth")]

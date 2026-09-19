@@ -14,12 +14,12 @@ use crate::infrastructure::database::entities::task as task_entity;
 use crate::infrastructure::persistence::mappers::TaskMapper;
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
-use dbnexus::DbPool;
-use sea_orm::{
+use dbnexus::sea_orm::{
     sea_query::Expr, ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseBackend,
     DbErr, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     Statement,
 };
+use dbnexus::DbPool;
 use std::collections::HashSet;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -202,7 +202,7 @@ impl TaskRepository for TaskRepositoryImpl {
             [worker_id.into(), lock_seconds.into()],
         );
 
-        let row: Option<sea_orm::QueryResult> = conn
+        let row: Option<dbnexus::sea_orm::QueryResult> = conn
             .query_one_raw(stmt_queued)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
@@ -243,7 +243,7 @@ impl TaskRepository for TaskRepositoryImpl {
             [worker_id.into(), lock_seconds.into()],
         );
 
-        let row: Option<sea_orm::QueryResult> = conn
+        let row: Option<dbnexus::sea_orm::QueryResult> = conn
             .query_one_raw(stmt_stale)
             .await
             .map_err(|e| RepositoryError::Database(e.into()))?;
@@ -276,7 +276,7 @@ impl TaskRepository for TaskRepositoryImpl {
                        RETURNING id"#,
                     [],
                 );
-                let dead: Option<sea_orm::QueryResult> = conn
+                let dead: Option<dbnexus::sea_orm::QueryResult> = conn
                     .query_one_raw(stmt_dead_letter)
                     .await
                     .map_err(|e| RepositoryError::Database(e.into()))?;

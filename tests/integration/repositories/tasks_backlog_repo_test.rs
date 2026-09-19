@@ -13,7 +13,7 @@ use crawlrs::domain::repositories::tasks_backlog_repository::{
 };
 use crawlrs::infrastructure::database::entities::tasks_backlog;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 /// 创建测试用的 TasksBacklog（辅助函数）

@@ -220,7 +220,7 @@ mod app {
 
         // 1. Ensure default team exists
         use crawlrs::infrastructure::database::entities::team;
-        use sea_orm::{EntityTrait, Set};
+        use dbnexus::sea_orm::{EntityTrait, Set};
         let team_id = DEFAULT_TEAM_ID;
         let existing = team::Entity::find_by_id(team_id)
             .one(conn)

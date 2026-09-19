@@ -5,11 +5,11 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use dbnexus::DbPool;
-use sea_orm::{
+use dbnexus::sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
     QueryOrder, QuerySelect, Set, Statement,
 };
+use dbnexus::DbPool;
 use std::sync::Arc;
 use uuid::Uuid;
 

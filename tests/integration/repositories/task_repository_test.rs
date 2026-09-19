@@ -8,7 +8,7 @@ use crawlrs::domain::models::task_model::Task;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use crawlrs::infrastructure::database::entities::task as task_entity;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -153,7 +153,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
                 let now = chrono::Utc::now();
                 let expired_time = now - chrono::Duration::seconds(1);
 
-                use sea_orm::{ActiveModelTrait, Set};
+                use dbnexus::sea_orm::{ActiveModelTrait, Set};
 
                 let mut task_active: task_entity::ActiveModel = task_model.into();
                 task_active.lock_expires_at = Set(Some(expired_time.into()));

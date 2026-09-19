@@ -165,7 +165,7 @@ impl LimiteronService {
     /// 不支持单次执行多语句，这里按 `;` 拆分逐条执行。
     #[cfg(all(feature = "db-postgres", feature = "platform"))]
     async fn ensure_storage_schema(pool: &Arc<dbnexus::DbPool>) -> Result<(), RateLimitingError> {
-        use sea_orm::ConnectionTrait;
+        use dbnexus::sea_orm::ConnectionTrait;
 
         let ddl = limiteron::create_all_tables_ddl();
         let session = pool.get_session("admin").await.map_err(|e| {

@@ -209,8 +209,9 @@ async fn test_create_pool_with_retry_zero_retries_returns_timeout_error() {
     // 验证错误类型为 ConnectionAcquire(Timeout)（因为 last_error 为 None 时的默认值）
     // 使用 match 而非 unwrap_err()，因为 DbPool 未实现 Debug
     match result {
-        Err(sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout)) => { /* expected */
-        }
+        Err(dbnexus::sea_orm::DbErr::ConnectionAcquire(
+            dbnexus::sea_orm::ConnAcquireErr::Timeout,
+        )) => { /* expected */ }
         Err(e) => panic!("expected ConnectionAcquire(Timeout), got: {:?}", e),
         Ok(_) => panic!("expected error, got Ok"),
     }
@@ -427,8 +428,9 @@ async fn tc_database_pool_get_readonly_session_without_permissions_returns_error
     // 错误被映射为 ConnectionAcquire(ConnectionClosed)。
     // 使用 match 而非 unwrap_err()，因为 Session 未实现 Debug。
     match session {
-        Err(sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed)) => { /* expected */
-        }
+        Err(dbnexus::sea_orm::DbErr::ConnectionAcquire(
+            dbnexus::sea_orm::ConnAcquireErr::ConnectionClosed,
+        )) => { /* expected */ }
         Err(e) => panic!("expected ConnectionAcquire(ConnectionClosed), got: {:?}", e),
         Ok(_) => {
             // 如果 permissions 配置恰好可用，readonly session 也可能成功。

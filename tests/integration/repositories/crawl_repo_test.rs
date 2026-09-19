@@ -13,7 +13,7 @@ use crawlrs::domain::models::{Crawl, CrawlStatus};
 use crawlrs::domain::repositories::crawl_repository::CrawlRepository;
 use crawlrs::infrastructure::database::entities::crawl;
 use crawlrs::infrastructure::repositories::crawl_repo_impl::CrawlRepositoryImpl;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 /// 测试创建 Crawl 并通过 ID 查询

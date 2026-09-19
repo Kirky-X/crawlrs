@@ -14,7 +14,7 @@ use crawlrs::domain::repositories::geo_restriction_repository::{
 use crawlrs::domain::services::team_service::TeamGeoRestrictions;
 use crawlrs::infrastructure::database::entities::geo_restriction_log;
 use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 // ==================== DatabaseGeoRestrictionRepository 测试 ====================

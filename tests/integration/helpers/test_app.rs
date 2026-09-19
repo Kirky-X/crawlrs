@@ -4,8 +4,8 @@
 // Minimal test helpers for queue_client_test and task_repository_test
 // This file provides just enough functionality to run the basic tests
 
+use dbnexus::sea_orm::ConnectionTrait;
 use dbnexus::{CacheConfig, DbConfig, DbPool, PoolConfig};
-use sea_orm::ConnectionTrait;
 use std::sync::Arc;
 use uuid::Uuid;
 

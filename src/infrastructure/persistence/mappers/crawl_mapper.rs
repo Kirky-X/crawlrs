@@ -5,7 +5,7 @@
 
 use crate::domain::models::{Crawl, CrawlStatus};
 use crate::infrastructure::database::entities::crawl;
-use sea_orm::ActiveValue::{Set, Unchanged};
+use dbnexus::sea_orm::ActiveValue::{Set, Unchanged};
 
 /// Mapper for converting between Crawl domain model and database entity
 pub struct CrawlMapper;

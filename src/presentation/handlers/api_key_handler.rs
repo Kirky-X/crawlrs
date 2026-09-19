@@ -37,7 +37,7 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use sea_orm::EntityTrait;
+use dbnexus::sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -302,25 +302,25 @@ fn validate_request(req: &CreateApiKeyRequest) -> Result<(), String> {
 /// # 失败契约
 ///
 /// - `Ok(())`：team 存在
-/// - `Err(sea_orm::DbErr)`：DB 查询失败（连接错误等），由调用方映射为 500
+/// - `Err(dbnexus::sea_orm::DbErr)`：DB 查询失败（连接错误等），由调用方映射为 500
 /// - `team_id` 不存在：返回 `Err(DbErr::RecordNotFound("team not found"))`（CWE-862 IDOR 防护）
 async fn check_team_exists(
     pool: &Arc<dbnexus::DbPool>,
     team_id: Uuid,
-) -> Result<(), sea_orm::DbErr> {
+) -> Result<(), dbnexus::sea_orm::DbErr> {
     let session = pool
         .get_session("admin")
         .await
-        .map_err(|e| sea_orm::DbErr::Custom(format!("db session: {}", e)))?;
+        .map_err(|e| dbnexus::sea_orm::DbErr::Custom(format!("db session: {}", e)))?;
     let conn = session
         .connection()
-        .map_err(|e| sea_orm::DbErr::Custom(format!("db conn: {}", e)))?;
+        .map_err(|e| dbnexus::sea_orm::DbErr::Custom(format!("db conn: {}", e)))?;
     let row = TeamEntity::find_by_id(team_id).one(conn).await?;
     if row.is_some() {
         Ok(())
     } else {
         // 使用 RecordNotFound 而非 Custom，便于上层根据错误类型映射状态码
-        Err(sea_orm::DbErr::RecordNotFound(format!(
+        Err(dbnexus::sea_orm::DbErr::RecordNotFound(format!(
             "team not found: {}",
             team_id
         )))
@@ -340,7 +340,7 @@ fn map_scopes_to_garrison_perms(scopes: &[String]) -> Vec<String> {
             SCOPE_READ => format!("{}{}", PERM_PREFIX, SCOPE_READ),
             SCOPE_WRITE => format!("{}{}", PERM_PREFIX, SCOPE_WRITE),
             SCOPE_ADMIN => format!("{}{}", PERM_PREFIX, SCOPE_ADMIN),
-            _ => unreachable!("validate_request 已保证 scope 合法"),
+            _ => unreachable!("validate_request guarantees the scope is valid"),
         })
         .collect()
 }
@@ -349,7 +349,7 @@ fn map_scopes_to_garrison_perms(scopes: &[String]) -> Vec<String> {
 ///
 /// # 失败契约（显性化）
 ///
-/// 返回 `Err(sea_orm::DbErr)` 由调用方映射为 500，记录到 `log::error!`。
+/// 返回 `Err(dbnexus::sea_orm::DbErr)` 由调用方映射为 500，记录到 `log::error!`。
 /// 常见失败场景：unique 冲突（极小概率，UUID 碰撞）/ DB 连接失败 / NOT NULL 约束。
 ///
 async fn insert_api_key_mapping(
@@ -357,22 +357,22 @@ async fn insert_api_key_mapping(
     api_key_id: Uuid,
     team_id: Uuid,
     garrison_key_id: String,
-) -> Result<(), sea_orm::DbErr> {
+) -> Result<(), dbnexus::sea_orm::DbErr> {
     let session = pool
         .get_session("admin")
         .await
-        .map_err(|e| sea_orm::DbErr::Custom(format!("db session: {}", e)))?;
+        .map_err(|e| dbnexus::sea_orm::DbErr::Custom(format!("db session: {}", e)))?;
     let conn = session
         .connection()
-        .map_err(|e| sea_orm::DbErr::Custom(format!("db conn: {}", e)))?;
+        .map_err(|e| dbnexus::sea_orm::DbErr::Custom(format!("db conn: {}", e)))?;
     let now = time_utils::to_db_datetime(Utc::now());
     let active = ActiveModel {
-        id: sea_orm::ActiveValue::Set(api_key_id),
-        team_id: sea_orm::ActiveValue::Set(team_id),
-        key: sea_orm::ActiveValue::Set(garrison_key_id),
+        id: dbnexus::sea_orm::ActiveValue::Set(api_key_id),
+        team_id: dbnexus::sea_orm::ActiveValue::Set(team_id),
+        key: dbnexus::sea_orm::ActiveValue::Set(garrison_key_id),
         // key_hash 弃用（garrison 自管 sha256(secret_hash)）
-        created_at: sea_orm::ActiveValue::Set(now),
-        updated_at: sea_orm::ActiveValue::Set(None),
+        created_at: dbnexus::sea_orm::ActiveValue::Set(now),
+        updated_at: dbnexus::sea_orm::ActiveValue::Set(None),
     };
     Entity::insert(active).exec(conn).await?;
     Ok(())
@@ -389,7 +389,7 @@ mod tests {
     use crate::infrastructure::database::entities::api_key::Entity as ApiKeyEntity;
     use crate::presentation::handlers::response_builder::ApiResponse;
     use axum::response::IntoResponse;
-    use sea_orm::EntityTrait;
+    use dbnexus::sea_orm::EntityTrait;
 
     // ========== 测试辅助 ==========
 
@@ -442,7 +442,7 @@ mod tests {
     /// DB 写入失败时 panic（测试环境异常，不应静默）。
     async fn seed_team_in_db(pool: &Arc<dbnexus::DbPool>, team_id: Uuid) {
         use crate::infrastructure::database::entities::team::ActiveModel as TeamActiveModel;
-        use sea_orm::ActiveValue;
+        use dbnexus::sea_orm::ActiveValue;
 
         let session = pool
             .get_session("admin")

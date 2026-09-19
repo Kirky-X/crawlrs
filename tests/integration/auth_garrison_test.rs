@@ -38,8 +38,8 @@ use axum::{
     Router,
 };
 use chrono::Utc;
+use dbnexus::sea_orm::{ActiveValue, EntityTrait};
 use once_cell::sync::Lazy;
-use sea_orm::{ActiveValue, EntityTrait};
 use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;

@@ -78,7 +78,7 @@ fn start_testcontainers_pg() -> String {
                 let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
                 // Connect and run SQL migrations
-                use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+                use dbnexus::sea_orm::{ConnectOptions, ConnectionTrait, Database};
                 let mut opt = ConnectOptions::new(&url);
                 opt.sqlx_logging(false);
                 let conn = Database::connect(opt)

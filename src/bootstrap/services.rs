@@ -604,8 +604,8 @@ pub async fn init_garrison_auth(
         use crate::infrastructure::database::entities::team::{
             ActiveModel as TeamActiveModel, Entity as TeamEntity,
         };
+        use dbnexus::sea_orm::{ActiveValue, EntityTrait};
         use garrison::protocol::apikey::ApiKeyHandler;
-        use sea_orm::{ActiveValue, EntityTrait};
         use uuid::Uuid;
 
         const GARRISON_NS: &str = "crawlrs";
@@ -614,7 +614,9 @@ pub async fn init_garrison_auth(
         const TTL_SECS: i64 = 30 * 24 * 60 * 60;
 
         let wrap_db = |ctx: &'static str| {
-            move |e: sea_orm::DbErr| BootstrapError::GarrisonManager(format!("{}: db: {}", ctx, e))
+            move |e: dbnexus::sea_orm::DbErr| {
+                BootstrapError::GarrisonManager(format!("{}: db: {}", ctx, e))
+            }
         };
 
         // `cfg_val` 可选格式：`team_id_uuid`（非空 uuid 时用作目标 team）

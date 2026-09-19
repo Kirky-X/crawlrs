@@ -12,7 +12,7 @@ use crawlrs::domain::models::task_model::Task;
 use crawlrs::domain::repositories::task_repository::{TaskQueryParams, TaskRepository};
 use crawlrs::infrastructure::database::entities::task as task_entity;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
+use dbnexus::sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use uuid::Uuid;
 

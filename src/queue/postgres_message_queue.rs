@@ -12,8 +12,11 @@
 use crate::queue::message_queue::{Message, MessageQueueError, MessageQueueRepository};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use dbnexus::sea_orm;
+use dbnexus::sea_orm::{
+    ConnectionTrait, DatabaseBackend, DbErr, FromQueryResult, JsonValue, Statement,
+};
 use dbnexus::DbPool;
-use sea_orm::{ConnectionTrait, DatabaseBackend, DbErr, FromQueryResult, JsonValue, Statement};
 use std::sync::Arc;
 
 /// Sea-ORM `DbErr` → `MessageQueueError` 转换
@@ -45,7 +48,7 @@ impl PostgresMessageQueueRepository {
     }
 
     /// 获取数据库连接（通过 system session）
-    async fn get_conn(&self) -> Result<sea_orm::DatabaseConnection, MessageQueueError> {
+    async fn get_conn(&self) -> Result<dbnexus::sea_orm::DatabaseConnection, MessageQueueError> {
         let session = self
             .pool
             .get_session("system")
@@ -233,7 +236,7 @@ impl MessageQueueRepository for PostgresMessageQueueRepository {
             placeholders.join(", ")
         );
 
-        let mut values: Vec<sea_orm::Value> = vec![queue_name.into()];
+        let mut values: Vec<dbnexus::sea_orm::Value> = vec![queue_name.into()];
         for id in msg_ids {
             values.push((*id).into());
         }
@@ -307,7 +310,7 @@ impl MessageQueueRepository for PostgresMessageQueueRepository {
             placeholders.join(", "),
         );
 
-        let mut values: Vec<sea_orm::Value> = vec![queue_name.into()];
+        let mut values: Vec<dbnexus::sea_orm::Value> = vec![queue_name.into()];
         // msg_ids 出现两次（INSERT ... SELECT + UPDATE WHERE），需要重复参数
         for id in msg_ids {
             values.push((*id).into());

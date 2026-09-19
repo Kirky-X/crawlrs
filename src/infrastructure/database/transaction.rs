@@ -24,10 +24,10 @@
 //! tx_manager.commit().await?;
 //! ```
 
+use dbnexus::sea_orm::{ConnectionTrait, DbErr};
 use dbnexus::{DbPool, Session};
 use log::{debug, error, info, warn};
 use parking_lot::RwLock;
-use sea_orm::{ConnectionTrait, DbErr};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use thiserror::Error;
@@ -1425,7 +1425,7 @@ mod tests {
 
     // ============================================================
     // Additional From<DbErr> variant coverage
-    // 覆盖 sea_orm::DbErr 各变体到 TransactionError::DatabaseError 的转换
+    // 覆盖 dbnexus::sea_orm::DbErr 各变体到 TransactionError::DatabaseError 的转换
     // ============================================================
 
     #[test]
@@ -1444,7 +1444,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let db_err = DbErr::ConnectionAcquire(dbnexus::sea_orm::ConnAcquireErr::Timeout);
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
     }
@@ -1454,7 +1454,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed);
+        let db_err = DbErr::ConnectionAcquire(dbnexus::sea_orm::ConnAcquireErr::ConnectionClosed);
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
     }
@@ -1474,7 +1474,9 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
+        let db_err = DbErr::Query(dbnexus::sea_orm::RuntimeErr::Internal(
+            "syntax error".to_string(),
+        ));
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
         assert!(tx_err.to_string().contains("syntax error"));
@@ -1486,8 +1488,10 @@ mod tests {
             return;
         }
         // RuntimeErr::SqlxError 包装底层 sqlx 错误（Arc），验证转换仍走 DatabaseError 分支
-        let inner = sea_orm::sqlx::Error::RowNotFound;
-        let db_err = DbErr::Query(sea_orm::RuntimeErr::SqlxError(std::sync::Arc::new(inner)));
+        let inner = dbnexus::sea_orm::sqlx::Error::RowNotFound;
+        let db_err = DbErr::Query(dbnexus::sea_orm::RuntimeErr::SqlxError(
+            std::sync::Arc::new(inner),
+        ));
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
     }
@@ -1520,7 +1524,9 @@ mod tests {
             return;
         }
         // Conn 变体包装 RuntimeErr
-        let db_err = DbErr::Conn(sea_orm::RuntimeErr::Internal("conn lost".to_string()));
+        let db_err = DbErr::Conn(dbnexus::sea_orm::RuntimeErr::Internal(
+            "conn lost".to_string(),
+        ));
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
         assert!(tx_err.to_string().contains("conn lost"));
@@ -1531,7 +1537,9 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = DbErr::Exec(sea_orm::RuntimeErr::Internal("exec fail".to_string()));
+        let db_err = DbErr::Exec(dbnexus::sea_orm::RuntimeErr::Internal(
+            "exec fail".to_string(),
+        ));
         let tx_err: TransactionError = db_err.into();
         assert!(matches!(tx_err, TransactionError::DatabaseError(_)));
         assert!(tx_err.to_string().contains("exec fail"));

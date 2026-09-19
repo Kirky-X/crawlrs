@@ -662,7 +662,7 @@ fn test_from_dberr_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::Custom("query failed".to_string());
+    let db_err = dbnexus::sea_orm::DbErr::Custom("query failed".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
     assert!(repo_err.to_string().contains("query failed"));
@@ -915,7 +915,7 @@ async fn test_exists_by_url_with_empty_string_returns_false() {
 }
 
 // ============================================================
-// Additional From<sea_orm::DbErr> variant coverage
+// Additional From<dbnexus::sea_orm::DbErr> variant coverage
 // ============================================================
 
 #[test]
@@ -923,7 +923,7 @@ fn test_from_dberr_record_not_found_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::RecordNotFound("task missing".to_string());
+    let db_err = dbnexus::sea_orm::DbErr::RecordNotFound("task missing".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
     assert!(repo_err.to_string().contains("task missing"));
@@ -934,7 +934,8 @@ fn test_from_dberr_connection_acquire_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+    let db_err =
+        dbnexus::sea_orm::DbErr::ConnectionAcquire(dbnexus::sea_orm::ConnAcquireErr::Timeout);
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }
@@ -944,7 +945,7 @@ fn test_from_dberr_record_not_inserted_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::RecordNotInserted;
+    let db_err = dbnexus::sea_orm::DbErr::RecordNotInserted;
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }
@@ -954,7 +955,9 @@ fn test_from_dberr_query_runtime_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
+    let db_err = dbnexus::sea_orm::DbErr::Query(dbnexus::sea_orm::RuntimeErr::Internal(
+        "syntax error".to_string(),
+    ));
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
     assert!(repo_err.to_string().contains("syntax error"));
@@ -1029,8 +1032,8 @@ fn test_task_status_cancelled_display() {
 }
 
 // ============================================================
-// Additional From<sea_orm::DbErr> variant coverage (exhaustive)
-// 覆盖 sea_orm::DbErr 所有未在前面测试的变体到 RepositoryError::Database 的转换
+// Additional From<dbnexus::sea_orm::DbErr> variant coverage (exhaustive)
+// 覆盖 dbnexus::sea_orm::DbErr 所有未在前面测试的变体到 RepositoryError::Database 的转换
 // ============================================================
 
 #[test]
@@ -1038,7 +1041,9 @@ fn test_from_dberr_connection_acquire_closed_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed);
+    let db_err = dbnexus::sea_orm::DbErr::ConnectionAcquire(
+        dbnexus::sea_orm::ConnAcquireErr::ConnectionClosed,
+    );
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }
@@ -1048,7 +1053,7 @@ fn test_from_dberr_record_not_updated_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::RecordNotUpdated;
+    let db_err = dbnexus::sea_orm::DbErr::RecordNotUpdated;
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }
@@ -1058,8 +1063,10 @@ fn test_from_dberr_query_sqlx_error_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let inner = sea_orm::sqlx::Error::RowNotFound;
-    let db_err = sea_orm::DbErr::Query(sea_orm::RuntimeErr::SqlxError(std::sync::Arc::new(inner)));
+    let inner = dbnexus::sea_orm::sqlx::Error::RowNotFound;
+    let db_err = dbnexus::sea_orm::DbErr::Query(dbnexus::sea_orm::RuntimeErr::SqlxError(
+        std::sync::Arc::new(inner),
+    ));
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }
@@ -1069,7 +1076,9 @@ fn test_from_dberr_conn_runtime_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal("conn lost".to_string()));
+    let db_err = dbnexus::sea_orm::DbErr::Conn(dbnexus::sea_orm::RuntimeErr::Internal(
+        "conn lost".to_string(),
+    ));
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
     assert!(repo_err.to_string().contains("conn lost"));
@@ -1080,7 +1089,9 @@ fn test_from_dberr_exec_runtime_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::Exec(sea_orm::RuntimeErr::Internal("exec failed".to_string()));
+    let db_err = dbnexus::sea_orm::DbErr::Exec(dbnexus::sea_orm::RuntimeErr::Internal(
+        "exec failed".to_string(),
+    ));
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
     assert!(repo_err.to_string().contains("exec failed"));
@@ -1091,7 +1102,7 @@ fn test_from_dberr_type_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::Type("invalid type".to_string());
+    let db_err = dbnexus::sea_orm::DbErr::Type("invalid type".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
     assert!(repo_err.to_string().contains("invalid type"));
@@ -1102,7 +1113,7 @@ fn test_from_dberr_json_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::Json("parse error".to_string());
+    let db_err = dbnexus::sea_orm::DbErr::Json("parse error".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
     assert!(repo_err.to_string().contains("parse error"));
@@ -1113,7 +1124,7 @@ fn test_from_dberr_attr_not_set_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::AttrNotSet("name".to_string());
+    let db_err = dbnexus::sea_orm::DbErr::AttrNotSet("name".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
     assert!(repo_err.to_string().contains("name"));
@@ -1124,7 +1135,7 @@ fn test_from_dberr_convert_from_u64_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::ConvertFromU64("String");
+    let db_err = dbnexus::sea_orm::DbErr::ConvertFromU64("String");
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }
@@ -1134,7 +1145,7 @@ fn test_from_dberr_unpack_insert_id_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::UnpackInsertId;
+    let db_err = dbnexus::sea_orm::DbErr::UnpackInsertId;
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }
@@ -1144,7 +1155,7 @@ fn test_from_dberr_update_get_primary_key_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::UpdateGetPrimaryKey;
+    let db_err = dbnexus::sea_orm::DbErr::UpdateGetPrimaryKey;
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }
@@ -1154,7 +1165,7 @@ fn test_from_dberr_migration_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::Migration("schema mismatch".to_string());
+    let db_err = dbnexus::sea_orm::DbErr::Migration("schema mismatch".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
     assert!(repo_err.to_string().contains("schema mismatch"));
@@ -1165,7 +1176,7 @@ fn test_from_dberr_mutex_poison_error_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::MutexPoisonError;
+    let db_err = dbnexus::sea_orm::DbErr::MutexPoisonError;
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }
@@ -1175,7 +1186,7 @@ fn test_from_dberr_rbac_error_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::RbacError("forbidden".to_string());
+    let db_err = dbnexus::sea_orm::DbErr::RbacError("forbidden".to_string());
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
     assert!(repo_err.to_string().contains("forbidden"));
@@ -1186,7 +1197,7 @@ fn test_from_dberr_access_denied_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::AccessDenied {
+    let db_err = dbnexus::sea_orm::DbErr::AccessDenied {
         permission: "write".to_string(),
         resource: "task".to_string(),
     };
@@ -1201,7 +1212,7 @@ fn test_from_dberr_backend_not_supported_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::BackendNotSupported {
+    let db_err = dbnexus::sea_orm::DbErr::BackendNotSupported {
         db: "mysql",
         ctx: "not configured",
     };
@@ -1217,7 +1228,7 @@ fn test_from_dberr_try_into_err_to_repository_error() {
     let source_err: std::sync::Arc<dyn std::error::Error + Send + Sync> = std::sync::Arc::new(
         std::io::Error::new(std::io::ErrorKind::InvalidData, "bad value"),
     );
-    let db_err = sea_orm::DbErr::TryIntoErr {
+    let db_err = dbnexus::sea_orm::DbErr::TryIntoErr {
         from: "String",
         into: "i32",
         source: source_err,
@@ -1231,7 +1242,7 @@ fn test_from_dberr_key_arity_mismatch_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::KeyArityMismatch {
+    let db_err = dbnexus::sea_orm::DbErr::KeyArityMismatch {
         expected: 2,
         received: 1,
     };
@@ -1244,7 +1255,7 @@ fn test_from_dberr_primary_key_not_set_to_repository_error() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    let db_err = sea_orm::DbErr::PrimaryKeyNotSet { ctx: "update" };
+    let db_err = dbnexus::sea_orm::DbErr::PrimaryKeyNotSet { ctx: "update" };
     let repo_err: RepositoryError = db_err.into();
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }

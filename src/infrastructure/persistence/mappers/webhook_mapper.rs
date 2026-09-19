@@ -8,7 +8,7 @@ use crate::common::time_utils::{
 };
 use crate::domain::models::{Webhook, WebhookEvent, WebhookEventType, WebhookStatus};
 use crate::infrastructure::database::entities::{webhook, webhook_event};
-use sea_orm::ActiveValue::{Set, Unchanged};
+use dbnexus::sea_orm::ActiveValue::{Set, Unchanged};
 use uuid::Uuid;
 
 /// Mapper for converting between Webhook domain model and database entity

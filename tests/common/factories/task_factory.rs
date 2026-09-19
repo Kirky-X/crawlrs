@@ -5,7 +5,7 @@
 
 use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::infrastructure::database::entities::task::{self, Entity as TaskEntity};
-use sea_orm::{DatabaseConnection, EntityTrait, Set};
+use dbnexus::sea_orm::{DatabaseConnection, EntityTrait, Set};
 use uuid::Uuid;
 
 pub struct TaskFactory;

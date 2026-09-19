@@ -29,7 +29,10 @@ impl From<AuditServiceError> for CrawlRsError {
                 AuditRepositoryError::DatabaseError(anyhow_err) => {
                     // platform 下尝试还原 DbErr（保留结构化信息）；轻量面无 sea-orm，统一转字符串
                     #[cfg(feature = "platform")]
-                    if let Some(db_err) = anyhow_err.downcast_ref::<sea_orm::DbErr>().cloned() {
+                    if let Some(db_err) = anyhow_err
+                        .downcast_ref::<dbnexus::sea_orm::DbErr>()
+                        .cloned()
+                    {
                         return CrawlRsError::Database(db_err);
                     }
                     CrawlRsError::Other(format!("Database error: {}", anyhow_err))
@@ -117,7 +120,7 @@ mod tests {
         ) -> Result<AuditLogEntry, AuditRepositoryError> {
             if self.fail_all {
                 return Err(AuditRepositoryError::DatabaseError(
-                    sea_orm::DbErr::Custom("mock create failure".to_string()).into(),
+                    dbnexus::sea_orm::DbErr::Custom("mock create failure".to_string()).into(),
                 ));
             }
             self.created
@@ -135,7 +138,7 @@ mod tests {
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
             if self.fail_all {
                 return Err(AuditRepositoryError::DatabaseError(
-                    sea_orm::DbErr::Custom("mock find failure".to_string()).into(),
+                    dbnexus::sea_orm::DbErr::Custom("mock find failure".to_string()).into(),
                 ));
             }
             Ok(self.find_results.lock().expect("find lock").clone())
@@ -149,7 +152,7 @@ mod tests {
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
             if self.fail_all {
                 return Err(AuditRepositoryError::DatabaseError(
-                    sea_orm::DbErr::Custom("mock find failure".to_string()).into(),
+                    dbnexus::sea_orm::DbErr::Custom("mock find failure".to_string()).into(),
                 ));
             }
             Ok(self.find_results.lock().expect("find lock").clone())
@@ -162,7 +165,7 @@ mod tests {
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
             if self.fail_all {
                 return Err(AuditRepositoryError::DatabaseError(
-                    sea_orm::DbErr::Custom("mock find failure".to_string()).into(),
+                    dbnexus::sea_orm::DbErr::Custom("mock find failure".to_string()).into(),
                 ));
             }
             Ok(self.find_results.lock().expect("find lock").clone())
@@ -174,7 +177,7 @@ mod tests {
         ) -> Result<u64, AuditRepositoryError> {
             if self.fail_all {
                 return Err(AuditRepositoryError::DatabaseError(
-                    sea_orm::DbErr::Custom("mock cleanup failure".to_string()).into(),
+                    dbnexus::sea_orm::DbErr::Custom("mock cleanup failure".to_string()).into(),
                 ));
             }
             Ok(self.cleanup_count)
@@ -557,13 +560,13 @@ mod tests {
     }
 
     // ---- AuditServiceError From impls ----
-    // 注意：AuditServiceError 已不再实现 From<sea_orm::DbErr>（分层违规）。
+    // 注意：AuditServiceError 已不再实现 From<dbnexus::sea_orm::DbErr>（分层违规）。
     // DbErr 必须先经 AuditRepositoryError::DatabaseError 包装，再 .into() 为 AuditServiceError。
 
     #[test]
     fn test_audit_service_error_from_repository_db_error_to_app_error() {
         let repo_err = AuditRepositoryError::DatabaseError(
-            sea_orm::DbErr::Custom("repo db failure".to_string()).into(),
+            dbnexus::sea_orm::DbErr::Custom("repo db failure".to_string()).into(),
         );
         let service_err: AuditServiceError = repo_err.into();
         let app_err: CrawlRsError = service_err.into();

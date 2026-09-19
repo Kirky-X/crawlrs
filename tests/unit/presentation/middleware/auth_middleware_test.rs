@@ -635,7 +635,7 @@ async fn test_auth_middleware_empty_bearer_token_returns_401() {
 
 #[test]
 fn test_auth_error_database_error_display() {
-    // The DatabaseError variant wraps sea_orm::DbErr — test that it exists
+    // The DatabaseError variant wraps dbnexus::sea_orm::DbErr — test that it exists
     // We can't easily construct a DbErr, but we can verify the variant exists
     let err = AuthError::InvalidKey;
     assert_eq!(err.to_string(), "Invalid or missing API key");

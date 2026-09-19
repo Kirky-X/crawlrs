@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::entity::prelude::*;
+use dbnexus::sea_orm;
+use dbnexus::sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -92,7 +93,7 @@ impl ActiveModelBehavior for ActiveModel {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::ActiveValue;
+    use dbnexus::sea_orm::ActiveValue;
 
     fn make_model() -> Model {
         Model {
@@ -196,18 +197,27 @@ mod tests {
     #[test]
     fn test_relation_defs() {
         let api_keys_def = Relation::ApiKeys.def();
-        assert_eq!(api_keys_def.rel_type, sea_orm::RelationType::HasMany);
+        assert_eq!(
+            api_keys_def.rel_type,
+            dbnexus::sea_orm::RelationType::HasMany
+        );
 
         let tasks_def = Relation::Tasks.def();
-        assert_eq!(tasks_def.rel_type, sea_orm::RelationType::HasMany);
+        assert_eq!(tasks_def.rel_type, dbnexus::sea_orm::RelationType::HasMany);
 
         let crawls_def = Relation::Crawls.def();
-        assert_eq!(crawls_def.rel_type, sea_orm::RelationType::HasMany);
+        assert_eq!(crawls_def.rel_type, dbnexus::sea_orm::RelationType::HasMany);
 
         let webhooks_def = Relation::Webhooks.def();
-        assert_eq!(webhooks_def.rel_type, sea_orm::RelationType::HasMany);
+        assert_eq!(
+            webhooks_def.rel_type,
+            dbnexus::sea_orm::RelationType::HasMany
+        );
 
         let credits_def = Relation::Credits.def();
-        assert_eq!(credits_def.rel_type, sea_orm::RelationType::HasMany);
+        assert_eq!(
+            credits_def.rel_type,
+            dbnexus::sea_orm::RelationType::HasMany
+        );
     }
 }

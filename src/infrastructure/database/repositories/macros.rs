@@ -32,7 +32,7 @@ macro_rules! repository_new {
     ($struct:ident) => {
         impl $struct {
             /// Creates a new repository instance.
-            pub fn new(db: sea_orm::DatabaseConnection) -> Self {
+            pub fn new(db: dbnexus::sea_orm::DatabaseConnection) -> Self {
                 Self { db }
             }
         }
@@ -71,7 +71,7 @@ macro_rules! repository_new_with {
         impl $struct {
             /// Creates a new repository instance.
             pub fn new(
-                db: sea_orm::DatabaseConnection,
+                db: dbnexus::sea_orm::DatabaseConnection,
                 $($field: chrono::Duration),+
             ) -> Self {
                 Self {

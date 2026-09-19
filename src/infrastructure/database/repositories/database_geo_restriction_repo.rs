@@ -6,8 +6,8 @@ use crate::domain::repositories::geo_restriction_repository::{
 };
 use crate::domain::services::team_service::TeamGeoRestrictions;
 use crate::infrastructure::database::entities::{geo_restriction_log, team};
+use dbnexus::sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use dbnexus::DbPool;
-use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use uuid::Uuid;
 
 use std::sync::Arc;
@@ -526,7 +526,7 @@ mod error_path_tests {
         assert_eq!(format!("{}", err), "Other error: ");
     }
 
-    // ========== Production conversion path: sea_orm::DbErr -> Database(msg) ==========
+    // ========== Production conversion path: dbnexus::sea_orm::DbErr -> Database(msg) ==========
     // 验证 map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string())) 路径
     // 对各种 DbErr 变体的转换行为
 
@@ -535,7 +535,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Custom("query failed".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::Custom("query failed".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -550,7 +550,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::RecordNotFound("team missing".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::RecordNotFound("team missing".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -565,7 +565,8 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let db_err =
+            dbnexus::sea_orm::DbErr::ConnectionAcquire(dbnexus::sea_orm::ConnAcquireErr::Timeout);
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -580,7 +581,9 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed);
+        let db_err = dbnexus::sea_orm::DbErr::ConnectionAcquire(
+            dbnexus::sea_orm::ConnAcquireErr::ConnectionClosed,
+        );
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -595,7 +598,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::RecordNotInserted;
+        let db_err = dbnexus::sea_orm::DbErr::RecordNotInserted;
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
             repo_err,
@@ -608,7 +611,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::RecordNotUpdated;
+        let db_err = dbnexus::sea_orm::DbErr::RecordNotUpdated;
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
             repo_err,
@@ -621,8 +624,9 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err =
-            sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
+        let db_err = dbnexus::sea_orm::DbErr::Query(dbnexus::sea_orm::RuntimeErr::Internal(
+            "syntax error".to_string(),
+        ));
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -637,7 +641,9 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal("conn lost".to_string()));
+        let db_err = dbnexus::sea_orm::DbErr::Conn(dbnexus::sea_orm::RuntimeErr::Internal(
+            "conn lost".to_string(),
+        ));
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -652,7 +658,9 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Exec(sea_orm::RuntimeErr::Internal("exec failed".to_string()));
+        let db_err = dbnexus::sea_orm::DbErr::Exec(dbnexus::sea_orm::RuntimeErr::Internal(
+            "exec failed".to_string(),
+        ));
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -667,7 +675,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Type("invalid type".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::Type("invalid type".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -682,7 +690,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Json("parse error".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::Json("parse error".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -697,7 +705,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::AttrNotSet("name".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::AttrNotSet("name".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -712,7 +720,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Migration("schema mismatch".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::Migration("schema mismatch".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -727,7 +735,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::RbacError("forbidden".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::RbacError("forbidden".to_string());
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         match repo_err {
             GeoRestrictionRepositoryError::Database(msg) => {
@@ -742,7 +750,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::AccessDenied {
+        let db_err = dbnexus::sea_orm::DbErr::AccessDenied {
             permission: "write".to_string(),
             resource: "team".to_string(),
         };
@@ -761,7 +769,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::MutexPoisonError;
+        let db_err = dbnexus::sea_orm::DbErr::MutexPoisonError;
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
             repo_err,
@@ -774,7 +782,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::BackendNotSupported {
+        let db_err = dbnexus::sea_orm::DbErr::BackendNotSupported {
             db: "mysql",
             ctx: "not configured",
         };
@@ -790,7 +798,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::UnpackInsertId;
+        let db_err = dbnexus::sea_orm::DbErr::UnpackInsertId;
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
             repo_err,
@@ -803,7 +811,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::UpdateGetPrimaryKey;
+        let db_err = dbnexus::sea_orm::DbErr::UpdateGetPrimaryKey;
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
             repo_err,
@@ -816,7 +824,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::ConvertFromU64("String");
+        let db_err = dbnexus::sea_orm::DbErr::ConvertFromU64("String");
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
             repo_err,
@@ -832,7 +840,7 @@ mod error_path_tests {
         let source_err: std::sync::Arc<dyn std::error::Error + Send + Sync> = std::sync::Arc::new(
             std::io::Error::new(std::io::ErrorKind::InvalidData, "bad value"),
         );
-        let db_err = sea_orm::DbErr::TryIntoErr {
+        let db_err = dbnexus::sea_orm::DbErr::TryIntoErr {
             from: "String",
             into: "i32",
             source: source_err,
@@ -849,7 +857,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::KeyArityMismatch {
+        let db_err = dbnexus::sea_orm::DbErr::KeyArityMismatch {
             expected: 2,
             received: 1,
         };
@@ -865,7 +873,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::PrimaryKeyNotSet { ctx: "update" };
+        let db_err = dbnexus::sea_orm::DbErr::PrimaryKeyNotSet { ctx: "update" };
         let repo_err = GeoRestrictionRepositoryError::Database(db_err.to_string());
         assert!(matches!(
             repo_err,

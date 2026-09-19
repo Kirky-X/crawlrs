@@ -8,7 +8,7 @@
 /// 数据库测试固件
 ///
 /// 提供内存数据库和PostgreSQL数据库的设置和清理功能
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend};
+use dbnexus::sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend};
 use std::sync::Arc;
 
 /// 数据库连接选项
@@ -50,7 +50,7 @@ impl DatabaseFixture {
 
     /// 使用指定选项创建数据库固件
     pub async fn with_options(options: DatabaseOptions) -> Self {
-        use sea_orm::ConnectOptions;
+        use dbnexus::sea_orm::ConnectOptions;
 
         let mut opt = ConnectOptions::new(&options.url);
         opt.max_connections(20)

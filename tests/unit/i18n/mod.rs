@@ -358,7 +358,7 @@ fn test_crawlrs_error_locale_database_en() {
 
     let bundle = test_bundle();
     let locale = en_locale();
-    let err = CrawlRsError::Database(sea_orm::DbErr::Custom("test".to_string()));
+    let err = CrawlRsError::Database(dbnexus::sea_orm::DbErr::Custom("test".to_string()));
 
     let msg = err.user_message_locale(&locale, &bundle);
     assert_eq!(msg, "Database operation failed. Please try again later.");
@@ -370,7 +370,7 @@ fn test_crawlrs_error_locale_database_zh() {
 
     let bundle = test_bundle();
     let locale = zh_locale();
-    let err = CrawlRsError::Database(sea_orm::DbErr::Custom("test".to_string()));
+    let err = CrawlRsError::Database(dbnexus::sea_orm::DbErr::Custom("test".to_string()));
 
     let msg = err.user_message_locale(&locale, &bundle);
     assert_eq!(msg, "数据库操作失败，请稍后重试。");

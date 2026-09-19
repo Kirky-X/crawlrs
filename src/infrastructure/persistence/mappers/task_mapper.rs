@@ -8,7 +8,7 @@ use crate::common::time_utils::{
 };
 use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::infrastructure::database::entities::task;
-use sea_orm::ActiveValue::{Set, Unchanged};
+use dbnexus::sea_orm::ActiveValue::{Set, Unchanged};
 
 /// Mapper for converting between Task domain model and database entity
 pub struct TaskMapper;
@@ -116,7 +116,7 @@ impl TaskMapper {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use sea_orm::ActiveValue;
+    use dbnexus::sea_orm::ActiveValue;
     use uuid::Uuid;
 
     /// 构造一个填充了典型值的 task::Model，供各测试按需覆盖字段

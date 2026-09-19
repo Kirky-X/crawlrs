@@ -8,11 +8,11 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use dbnexus::DbPool;
-use sea_orm::{
+use dbnexus::sea_orm::{
     sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, QuerySelect, Set,
 };
+use dbnexus::DbPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -573,14 +573,14 @@ mod tests {
         assert_eq!(format!("{}", err), "Record not found");
     }
 
-    // ========== From<sea_orm::DbErr> exhaustive ==========
+    // ========== From<dbnexus::sea_orm::DbErr> exhaustive ==========
 
     #[test]
     fn test_repository_error_from_dberr_record_not_found() {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::RecordNotFound("backlog missing".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::RecordNotFound("backlog missing".to_string());
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
             RepositoryError::Database(_) => {}
@@ -593,8 +593,9 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err =
-            sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
+        let db_err = dbnexus::sea_orm::DbErr::Query(dbnexus::sea_orm::RuntimeErr::Internal(
+            "syntax error".to_string(),
+        ));
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
             RepositoryError::Database(_) => {}
@@ -607,7 +608,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let db_err =
+            dbnexus::sea_orm::DbErr::ConnectionAcquire(dbnexus::sea_orm::ConnAcquireErr::Timeout);
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
             RepositoryError::Database(_) => {}
@@ -620,7 +622,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::RecordNotInserted;
+        let db_err = dbnexus::sea_orm::DbErr::RecordNotInserted;
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
             RepositoryError::Database(_) => {}
@@ -635,7 +637,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let inner = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let inner =
+            dbnexus::sea_orm::DbErr::ConnectionAcquire(dbnexus::sea_orm::ConnAcquireErr::Timeout);
         let db_err = dbnexus::DbError::Connection(inner);
         let any_err: anyhow::Error = db_err.into();
         let repo_err = RepositoryError::Database(any_err);
@@ -916,8 +919,8 @@ mod tests {
     }
 
     // ============================================================
-    // Additional From<sea_orm::DbErr> variant coverage (exhaustive)
-    // 覆盖 sea_orm::DbErr 所有未在前面测试的变体到 RepositoryError::Database 的转换
+    // Additional From<dbnexus::sea_orm::DbErr> variant coverage (exhaustive)
+    // 覆盖 dbnexus::sea_orm::DbErr 所有未在前面测试的变体到 RepositoryError::Database 的转换
     // ============================================================
 
     #[test]
@@ -925,7 +928,9 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::ConnectionClosed);
+        let db_err = dbnexus::sea_orm::DbErr::ConnectionAcquire(
+            dbnexus::sea_orm::ConnAcquireErr::ConnectionClosed,
+        );
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
     }
@@ -935,7 +940,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::RecordNotUpdated;
+        let db_err = dbnexus::sea_orm::DbErr::RecordNotUpdated;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
     }
@@ -945,9 +950,10 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let inner = sea_orm::sqlx::Error::RowNotFound;
-        let db_err =
-            sea_orm::DbErr::Query(sea_orm::RuntimeErr::SqlxError(std::sync::Arc::new(inner)));
+        let inner = dbnexus::sea_orm::sqlx::Error::RowNotFound;
+        let db_err = dbnexus::sea_orm::DbErr::Query(dbnexus::sea_orm::RuntimeErr::SqlxError(
+            std::sync::Arc::new(inner),
+        ));
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
     }
@@ -957,7 +963,9 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Conn(sea_orm::RuntimeErr::Internal("conn lost".to_string()));
+        let db_err = dbnexus::sea_orm::DbErr::Conn(dbnexus::sea_orm::RuntimeErr::Internal(
+            "conn lost".to_string(),
+        ));
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
         assert!(repo_err.to_string().contains("conn lost"));
@@ -968,7 +976,9 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Exec(sea_orm::RuntimeErr::Internal("exec failed".to_string()));
+        let db_err = dbnexus::sea_orm::DbErr::Exec(dbnexus::sea_orm::RuntimeErr::Internal(
+            "exec failed".to_string(),
+        ));
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
         assert!(repo_err.to_string().contains("exec failed"));
@@ -979,7 +989,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Type("invalid type".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::Type("invalid type".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
         assert!(repo_err.to_string().contains("invalid type"));
@@ -990,7 +1000,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Json("parse error".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::Json("parse error".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
         assert!(repo_err.to_string().contains("parse error"));
@@ -1001,7 +1011,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::AttrNotSet("name".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::AttrNotSet("name".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
         assert!(repo_err.to_string().contains("name"));
@@ -1012,7 +1022,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::ConvertFromU64("String");
+        let db_err = dbnexus::sea_orm::DbErr::ConvertFromU64("String");
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
     }
@@ -1022,7 +1032,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::UnpackInsertId;
+        let db_err = dbnexus::sea_orm::DbErr::UnpackInsertId;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
     }
@@ -1032,7 +1042,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::UpdateGetPrimaryKey;
+        let db_err = dbnexus::sea_orm::DbErr::UpdateGetPrimaryKey;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
     }
@@ -1042,7 +1052,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::Migration("schema mismatch".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::Migration("schema mismatch".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
         assert!(repo_err.to_string().contains("schema mismatch"));
@@ -1053,7 +1063,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::MutexPoisonError;
+        let db_err = dbnexus::sea_orm::DbErr::MutexPoisonError;
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
     }
@@ -1063,7 +1073,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::RbacError("forbidden".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::RbacError("forbidden".to_string());
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
         assert!(repo_err.to_string().contains("forbidden"));
@@ -1074,7 +1084,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::AccessDenied {
+        let db_err = dbnexus::sea_orm::DbErr::AccessDenied {
             permission: "write".to_string(),
             resource: "backlog".to_string(),
         };
@@ -1089,7 +1099,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::BackendNotSupported {
+        let db_err = dbnexus::sea_orm::DbErr::BackendNotSupported {
             db: "mysql",
             ctx: "not configured",
         };
@@ -1105,7 +1115,7 @@ mod tests {
         let source_err: std::sync::Arc<dyn std::error::Error + Send + Sync> = std::sync::Arc::new(
             std::io::Error::new(std::io::ErrorKind::InvalidData, "bad value"),
         );
-        let db_err = sea_orm::DbErr::TryIntoErr {
+        let db_err = dbnexus::sea_orm::DbErr::TryIntoErr {
             from: "String",
             into: "i32",
             source: source_err,
@@ -1119,7 +1129,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::KeyArityMismatch {
+        let db_err = dbnexus::sea_orm::DbErr::KeyArityMismatch {
             expected: 2,
             received: 1,
         };
@@ -1132,7 +1142,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::PrimaryKeyNotSet { ctx: "delete" };
+        let db_err = dbnexus::sea_orm::DbErr::PrimaryKeyNotSet { ctx: "delete" };
         let repo_err: RepositoryError = db_err.into();
         assert!(matches!(repo_err, RepositoryError::Database(_)));
     }

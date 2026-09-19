@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::entity::prelude::*;
+use dbnexus::sea_orm;
+use dbnexus::sea_orm::entity::prelude::*;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -14,13 +15,13 @@ pub struct Model {
     pub requested_action: String,
     pub decision: String,
     pub denial_reason: Option<String>,
-    pub scope_used: Option<sea_orm::prelude::Json>,
+    pub scope_used: Option<dbnexus::sea_orm::prelude::Json>,
     pub ip_address: Option<String>,
     pub trace_id: Option<Uuid>,
     pub user_agent: Option<String>,
     pub request_path: Option<String>,
     pub request_method: Option<String>,
-    pub metadata: sea_orm::prelude::Json,
+    pub metadata: dbnexus::sea_orm::prelude::Json,
     pub created_at: ChronoDateTimeWithTimeZone,
 }
 
@@ -62,7 +63,7 @@ impl From<Model> for crate::domain::auth::AuditLogEntry {
 mod tests {
     use super::*;
     use crate::domain::auth::{AuditDecision, AuditLogEntry};
-    use sea_orm::ActiveValue;
+    use dbnexus::sea_orm::ActiveValue;
 
     fn make_model() -> Model {
         Model {

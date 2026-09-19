@@ -11,7 +11,7 @@ use crawlrs::domain::models::ScrapeResult;
 use crawlrs::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crawlrs::infrastructure::database::entities::scrape_result as db_entity;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use uuid::Uuid;
 

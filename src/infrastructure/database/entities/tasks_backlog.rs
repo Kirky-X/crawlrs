@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::entity::prelude::*;
+use dbnexus::sea_orm;
+use dbnexus::sea_orm::entity::prelude::*;
 use uuid::Uuid;
 
 /// 任务积压数据库实体模型

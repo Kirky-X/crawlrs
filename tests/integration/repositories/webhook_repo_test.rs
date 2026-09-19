@@ -11,7 +11,7 @@ use crawlrs::domain::models::Webhook;
 use crawlrs::domain::repositories::webhook_repository::WebhookRepository;
 use crawlrs::infrastructure::database::entities::webhook;
 use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 /// 测试创建 Webhook 并通过 ID 查询

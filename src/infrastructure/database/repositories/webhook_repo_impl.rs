@@ -9,8 +9,8 @@ use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::infrastructure::database::entities::webhook;
 use crate::infrastructure::persistence::mappers::WebhookMapper;
 use async_trait::async_trait;
+use dbnexus::sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 use dbnexus::DbPool;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -206,14 +206,14 @@ mod tests {
         assert_eq!(format!("{}", err), "Record not found");
     }
 
-    // ========== From<sea_orm::DbErr> exhaustive ==========
+    // ========== From<dbnexus::sea_orm::DbErr> exhaustive ==========
 
     #[test]
     fn test_repository_error_from_dberr_record_not_found() {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::RecordNotFound("webhook missing".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::RecordNotFound("webhook missing".to_string());
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
             RepositoryError::Database(_) => {}
@@ -226,8 +226,9 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err =
-            sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("syntax error".to_string()));
+        let db_err = dbnexus::sea_orm::DbErr::Query(dbnexus::sea_orm::RuntimeErr::Internal(
+            "syntax error".to_string(),
+        ));
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
             RepositoryError::Database(_) => {}
@@ -240,7 +241,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let db_err =
+            dbnexus::sea_orm::DbErr::ConnectionAcquire(dbnexus::sea_orm::ConnAcquireErr::Timeout);
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
             RepositoryError::Database(_) => {}
@@ -253,7 +255,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let db_err = sea_orm::DbErr::RecordNotInserted;
+        let db_err = dbnexus::sea_orm::DbErr::RecordNotInserted;
         let repo_err: RepositoryError = db_err.into();
         match repo_err {
             RepositoryError::Database(_) => {}
@@ -268,7 +270,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let inner = sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout);
+        let inner =
+            dbnexus::sea_orm::DbErr::ConnectionAcquire(dbnexus::sea_orm::ConnAcquireErr::Timeout);
         let db_err = dbnexus::DbError::Connection(inner);
         let any_err: anyhow::Error = db_err.into();
         let repo_err = RepositoryError::Database(any_err);

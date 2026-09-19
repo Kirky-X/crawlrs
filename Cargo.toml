@@ -31,7 +31,7 @@ default = ["platform", "db-postgres"]
 # 该 feature 只增加编译面无运行时收益。
 platform = [
     "teams", "auth", "rate-limit", "webhook", "metrics", "content",
-    "dep:dbnexus", "dep:axum", "dep:sdforge", "dep:sea-orm",
+    "dep:dbnexus", "dep:axum",
     "http",
 ]
 
@@ -156,10 +156,6 @@ url = "2.5"
 # dbnexus-macros 已移除（2026-09-19 审计）：src 零引用，宏经 dbnexus re-export。
 dbnexus = { workspace = true, optional = true }
 
-# sea-orm optional 化（2026-09-19 审计）：由 platform 激活；agent-lib 等轻量面
-# 不再编译整个 sea-orm 栈。测试侧经 dev-dependencies 恒可用（见文件末尾）。
-sea-orm = { workspace = true, optional = true }
-
 # Caching and state management
 dashmap = "6.2"
 once_cell = "1.21"
@@ -168,14 +164,15 @@ once_cell = "1.21"
 uuid.workspace = true
 chrono.workspace = true
 rand.workspace = true
-validator.workspace = true
 sysinfo = { version = "0.39", optional = true }
 dirs = "7.0"
 
 # Logging and observability
 log.workspace = true
 inklog = { version = "0.3.0-rc.4", path = "../base/inklog", default-features = false, features = ["cli"] }
-sdforge = { workspace = true, optional = true }
+# sdforge 非可选：DTO 层 Validate impl（sdforge::validator 重导出）未做 feature 门控，
+# validator 直依赖已移除，基础验证类型恒经 sdforge 提供
+sdforge.workspace = true
 metrics = { version = "0.24", optional = true }
 metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"], optional = true }
 # inventory：编译期监听器注册（garrison GarrisonListenerEntry 需要，crawlrs 直接使用以注册 CrawlrsAuditListener）
@@ -288,8 +285,9 @@ sys-locale = "0.3"
 utoipa = { version = "5.5", optional = true, default-features = false, features = ["macros"] }
 
 [dev-dependencies]
-# sea-orm 恒可用：test_helpers（cfg(test)）与错误类型测试在任意 feature 组合下可编译。
-sea-orm = { workspace = true }
+# dbnexus 恒可用：test_helpers（cfg(test)）与错误类型测试经 dbnexus::sea_orm
+# re-export 在任意 feature 组合下可编译（2026-09-19 sea-orm 直依赖收敛）。
+dbnexus = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-test = "0.4"
 wiremock = "0.6"
@@ -385,7 +383,6 @@ log = "0.4"
 uuid = { version = "1.26", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 rand = "0.10"
-validator = { version = "0.21", features = ["derive"] }
 # Text processing
 regex = "1.13"
 # Encoding
@@ -393,7 +390,7 @@ base64 = "0.23"
 # Database
 # 驱动与 runtime 特性不在此声明（Cargo feature 只加不减，写死会锁死单一后端），
 # 由 crawlrs 的 db-postgres / db-sqlite / db-mysql 特性组按构建选择
-dbnexus = { version = "0.6.0-rc.4", path = "../base/dbnexus", default-features = false, features = ["cache", "macros", "migration", "config-env", "config-toml", "chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
+dbnexus = { version = "0.6.0-rc.4", path = "../base/dbnexus", default-features = false, features = ["cache", "macros", "migration", "config-env", "config-toml", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
 sea-orm = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK
 sdforge = { version = "0.5.0-rc.4", path = "../base/sdforge", default-features = false, features = ["http"] }

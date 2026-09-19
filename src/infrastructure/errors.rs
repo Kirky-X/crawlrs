@@ -16,40 +16,40 @@ pub enum InfrastructureError {
     // platform 门控：sea-orm 仅随 platform 编译（2026-09-19 审计）；该变体在
     // errors.rs 外无引用，门控安全。
     #[cfg(feature = "platform")]
-    #[error("数据库连接失败: {0}")]
-    DatabaseConnection(#[from] sea_orm::DbErr),
+    #[error("Database connection failed: {0}")]
+    DatabaseConnection(#[from] dbnexus::sea_orm::DbErr),
 
-    #[error("数据库迁移失败: {message}")]
+    #[error("Database migration failed: {message}")]
     DatabaseMigration { message: String },
 
-    #[error("记录未找到: {table} where {condition}")]
+    #[error("Record not found: {table} where {condition}")]
     RecordNotFound { table: String, condition: String },
 
-    #[error("记录已存在: {table}, key: {key}")]
+    #[error("Record already exists: {table}, key: {key}")]
     DuplicateRecord { table: String, key: String },
 
     // ==================== 缓存错误 ====================
-    #[error("缓存未命中: {key}")]
+    #[error("Cache miss: {key}")]
     CacheMiss { key: String },
 
-    #[error("缓存序列化失败: {0}")]
+    #[error("Cache serialization failed: {0}")]
     CacheSerialization(#[from] serde_json::Error),
 
     // ==================== 网络错误 ====================
-    #[error("HTTP请求失败: {url}, 状态码: {status}")]
+    #[error("HTTP request failed: {url}, status: {status}")]
     HttpRequestFailed { url: String, status: u16 },
 
-    #[error("HTTP客户端错误: {0}")]
+    #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
 
-    #[error("连接超时: {host}, 超时时间: {timeout_seconds}秒")]
+    #[error("Connection timeout: {host}, timeout: {timeout_seconds}s")]
     ConnectionTimeout { host: String, timeout_seconds: u64 },
 
     // ==================== 配置错误 ====================
-    #[error("配置缺失: {key}")]
+    #[error("Missing configuration: {key}")]
     ConfigMissing { key: String },
 
-    #[error("配置无效: {key} = {value}")]
+    #[error("Invalid configuration: {key} = {value}")]
     ConfigInvalid { key: String, value: String },
 }
 
@@ -83,7 +83,7 @@ mod tests {
         let error = InfrastructureError::cache_miss("test_key");
 
         let msg = error.to_string();
-        assert!(msg.contains("缓存未命中"));
+        assert!(msg.contains("Cache miss"));
         assert!(msg.contains("test_key"));
     }
 
@@ -118,10 +118,10 @@ mod tests {
     #[test]
     #[cfg(feature = "platform")]
     fn test_database_connection_from_db_err() {
-        let db_err = sea_orm::DbErr::Custom("connection refused".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::Custom("connection refused".to_string());
         let error: InfrastructureError = db_err.into();
         let msg = error.to_string();
-        assert!(msg.contains("数据库连接失败"));
+        assert!(msg.contains("Database connection failed"));
         assert!(msg.contains("connection refused"));
     }
 
@@ -131,7 +131,7 @@ mod tests {
             message: "schema mismatch".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("数据库迁移失败"));
+        assert!(msg.contains("Database migration failed"));
         assert!(msg.contains("schema mismatch"));
     }
 
@@ -141,7 +141,7 @@ mod tests {
             message: String::new(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("数据库迁移失败"));
+        assert!(msg.contains("Database migration failed"));
         assert!(!msg.is_empty());
     }
 
@@ -152,7 +152,7 @@ mod tests {
             condition: "id = 42".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("记录未找到"));
+        assert!(msg.contains("Record not found"));
         assert!(msg.contains("tasks"));
         assert!(msg.contains("id = 42"));
     }
@@ -164,7 +164,7 @@ mod tests {
             key: "user-001".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("记录已存在"));
+        assert!(msg.contains("Record already exists"));
         assert!(msg.contains("users"));
         assert!(msg.contains("user-001"));
     }
@@ -184,7 +184,7 @@ mod tests {
     fn test_cache_miss_empty_key_boundary() {
         let error = InfrastructureError::cache_miss("");
         let msg = error.to_string();
-        assert!(msg.contains("缓存未命中"));
+        assert!(msg.contains("Cache miss"));
         assert!(!msg.is_empty());
     }
 
@@ -194,7 +194,7 @@ mod tests {
         let json_err = result.unwrap_err();
         let error: InfrastructureError = json_err.into();
         let msg = error.to_string();
-        assert!(msg.contains("缓存序列化失败"));
+        assert!(msg.contains("Cache serialization failed"));
     }
 
     #[test]
@@ -204,7 +204,7 @@ mod tests {
             status: 500,
         };
         let msg = error.to_string();
-        assert!(msg.contains("HTTP请求失败"));
+        assert!(msg.contains("HTTP request failed"));
         assert!(msg.contains("https://api.example.com"));
         assert!(msg.contains("500"));
     }
@@ -216,7 +216,7 @@ mod tests {
             status: 0,
         };
         let msg = error.to_string();
-        assert!(msg.contains("状态码: 0"));
+        assert!(msg.contains("status: 0"));
     }
 
     #[test]
@@ -226,7 +226,7 @@ mod tests {
         let req_err = result.unwrap_err();
         let error: InfrastructureError = req_err.into();
         let msg = error.to_string();
-        assert!(msg.contains("HTTP客户端错误"));
+        assert!(msg.contains("HTTP client error"));
     }
 
     #[test]
@@ -236,7 +236,7 @@ mod tests {
             timeout_seconds: 30,
         };
         let msg = error.to_string();
-        assert!(msg.contains("连接超时"));
+        assert!(msg.contains("Connection timeout"));
         assert!(msg.contains("db.internal"));
         assert!(msg.contains("30"));
     }
@@ -248,7 +248,7 @@ mod tests {
             timeout_seconds: 0,
         };
         let msg = error.to_string();
-        assert!(msg.contains("超时时间: 0秒"));
+        assert!(msg.contains("timeout: 0s"));
     }
 
     #[test]
@@ -257,7 +257,7 @@ mod tests {
             key: "DATABASE_URL".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("配置缺失"));
+        assert!(msg.contains("Missing configuration"));
         assert!(msg.contains("DATABASE_URL"));
     }
 
@@ -268,7 +268,7 @@ mod tests {
             value: "not-a-number".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("配置无效"));
+        assert!(msg.contains("Invalid configuration"));
         assert!(msg.contains("PORT"));
         assert!(msg.contains("not-a-number"));
     }
@@ -277,7 +277,7 @@ mod tests {
     fn test_all_variants_implement_std_error() {
         fn assert_error<T: std::error::Error>(_: &T) {}
         #[cfg(feature = "platform")]
-        let db_err = sea_orm::DbErr::Custom("e".to_string());
+        let db_err = dbnexus::sea_orm::DbErr::Custom("e".to_string());
         let json_err: serde_json::Error = serde_json::from_str::<i32>("x").unwrap_err();
         let req_err = reqwest::Client::new()
             .get("ht!tp://bad")
@@ -328,7 +328,7 @@ mod tests {
         let domain_err: crate::domain::errors::DomainError = infra_err.into();
         match domain_err {
             crate::domain::errors::DomainError::CrawlConfigError { message, .. } => {
-                assert!(message.contains("配置缺失"));
+                assert!(message.contains("Missing configuration"));
                 assert!(message.contains("MISSING_KEY"));
             }
             _ => panic!("expected CrawlConfigError for non-RecordNotFound variant"),

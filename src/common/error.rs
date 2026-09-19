@@ -22,12 +22,12 @@ use crate::i18n::{I18nBundle, Locale};
 /// 统一所有应用级别的错误，提供清晰的错误分类和上下文信息
 #[derive(Debug, thiserror::Error)]
 pub enum CrawlRsError {
-    /// 数据库错误。platform 启用时承载 `sea_orm::DbErr`（`#[from]` 自动转换）；
+    /// 数据库错误。platform 启用时承载 `dbnexus::sea_orm::DbErr`（`#[from]` 自动转换）；
     /// 轻量面（agent-lib 等）退化为字符串载荷，不引入 sea-orm。
     /// 匹配处一律用 `Database(_)` 通配载荷，两种构建形态共用同一 match 臂。
     #[cfg(feature = "platform")]
     #[error("Database error: {0}")]
-    Database(#[from] sea_orm::DbErr),
+    Database(#[from] dbnexus::sea_orm::DbErr),
     #[cfg(not(feature = "platform"))]
     #[error("Database error: {0}")]
     Database(String),
@@ -517,19 +517,19 @@ macro_rules! impl_basic_error_conversions {
 /// 后者专用于任务仓库，变体为 `Database(anyhow::Error)` / `NotFound`。
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
-    #[error("数据库错误: {0}")]
+    #[error("Database error: {0}")]
     DatabaseError(String),
 
-    #[error("未找到数据")]
+    #[error("Record not found")]
     NotFound,
 
-    #[error("数据已存在")]
+    #[error("Record already exists")]
     AlreadyExists,
 
-    #[error("无效参数: {0}")]
+    #[error("Invalid parameter: {0}")]
     InvalidParameter(String),
 
-    #[error("内部错误: {0}")]
+    #[error("Internal error: {0}")]
     InternalError(String),
 }
 
@@ -540,22 +540,22 @@ pub enum RepositoryError {
 /// Worker 错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
-    #[error("仓库错误: {0}")]
+    #[error("Repository error: {0}")]
     RepositoryError(String),
 
-    #[error("限流错误: {0}")]
+    #[error("Rate limiting error: {0}")]
     RateLimitingError(String),
 
-    #[error("内部错误: {0}")]
+    #[error("Internal error: {0}")]
     InternalError(String),
 
-    #[error("领域错误: {0}")]
+    #[error("Domain error: {0}")]
     DomainError(String),
 
-    #[error("服务错误: {0}")]
+    #[error("Service error: {0}")]
     ServiceError(String),
 
-    #[error("未找到: {0}")]
+    #[error("Not found: {0}")]
     NotFound(String),
 }
 
@@ -685,12 +685,12 @@ mod tests {
         );
     }
 
-    /// 双 cfg 构造器：platform 下载荷为 sea_orm::DbErr，轻量面下为 String——
+    /// 双 cfg 构造器：platform 下载荷为 dbnexus::sea_orm::DbErr，轻量面下为 String——
     /// 使 DB 错误映射测试在两种构建形态下都可编译（2026-09-19 审计）。
     fn make_db_error(msg: &str) -> CrawlRsError {
         #[cfg(feature = "platform")]
         {
-            CrawlRsError::Database(sea_orm::DbErr::Custom(msg.to_string()))
+            CrawlRsError::Database(dbnexus::sea_orm::DbErr::Custom(msg.to_string()))
         }
         #[cfg(not(feature = "platform"))]
         {

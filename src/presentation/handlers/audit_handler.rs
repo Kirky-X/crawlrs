@@ -460,7 +460,7 @@ mod tests {
             if self.should_fail {
                 return Err(AuditServiceError::RepositoryError(
                     AuditRepositoryError::DatabaseError(
-                        sea_orm::DbErr::Custom("mock error".to_string()).into(),
+                        dbnexus::sea_orm::DbErr::Custom("mock error".to_string()).into(),
                     ),
                 ));
             }
@@ -476,7 +476,7 @@ mod tests {
             if self.should_fail {
                 return Err(AuditServiceError::RepositoryError(
                     AuditRepositoryError::DatabaseError(
-                        sea_orm::DbErr::Custom("mock error".to_string()).into(),
+                        dbnexus::sea_orm::DbErr::Custom("mock error".to_string()).into(),
                     ),
                 ));
             }
@@ -491,7 +491,7 @@ mod tests {
             if self.should_fail {
                 return Err(AuditServiceError::RepositoryError(
                     AuditRepositoryError::DatabaseError(
-                        sea_orm::DbErr::Custom("mock error".to_string()).into(),
+                        dbnexus::sea_orm::DbErr::Custom("mock error".to_string()).into(),
                     ),
                 ));
             }

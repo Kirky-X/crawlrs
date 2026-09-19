@@ -6,7 +6,8 @@
 // 消除派生宏 warning，仅对本文件生效。待全量重签完成后随 `scopes` 表一并移除。
 #![allow(deprecated)]
 
-use sea_orm::entity::prelude::*;
+use dbnexus::sea_orm;
+use dbnexus::sea_orm::entity::prelude::*;
 use uuid::Uuid;
 
 /// 旧 `scopes` 表 entity（已弃用）。
@@ -20,7 +21,7 @@ use uuid::Uuid;
 /// 此 entity 保留供历史数据迁移/查询使用，不参与热路径。待全量重签完成后可移除。
 #[deprecated(
     since = "0.2.0",
-    note = "garrison RBAC 接管；保留仅供历史数据迁移/查询"
+    note = "superseded by garrison RBAC; kept only for historical data migration/queries"
 )]
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "scopes")]

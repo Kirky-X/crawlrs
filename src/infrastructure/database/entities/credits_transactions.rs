@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-use sea_orm::entity::prelude::*;
+use dbnexus::sea_orm;
+use dbnexus::sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
@@ -43,7 +44,7 @@ impl ActiveModelBehavior for ActiveModel {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::ActiveValue;
+    use dbnexus::sea_orm::ActiveValue;
 
     fn make_model() -> Model {
         Model {
@@ -146,6 +147,6 @@ mod tests {
     #[test]
     fn test_relation_def() {
         let def = Relation::ApiKeys.def();
-        assert_eq!(def.rel_type, sea_orm::RelationType::HasOne);
+        assert_eq!(def.rel_type, dbnexus::sea_orm::RelationType::HasOne);
     }
 }

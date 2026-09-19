@@ -8,9 +8,9 @@
 //! based implementation.
 
 use crate::config::DatabaseSettings;
+use dbnexus::sea_orm::{ConnAcquireErr, DbErr};
 use dbnexus::{CacheConfig, DbConfig, DbPool, PoolConfig, Session};
 use log::{debug, info, warn};
-use sea_orm::{ConnAcquireErr, DbErr};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
@@ -522,7 +522,10 @@ mod tests {
         }
         let db_pool = DatabasePool::from(create_test_db_pool());
         let result = db_pool.get_readonly_session().await;
-        assert!(matches!(result, Err(sea_orm::DbErr::ConnectionAcquire(_))));
+        assert!(matches!(
+            result,
+            Err(dbnexus::sea_orm::DbErr::ConnectionAcquire(_))
+        ));
     }
 
     #[tokio::test]
@@ -662,7 +665,9 @@ mod tests {
         let settings = make_settings("not-a-valid-url");
         let result = create_pool_with_retry(&settings, 0, 0).await;
         match result {
-            Err(sea_orm::DbErr::ConnectionAcquire(sea_orm::ConnAcquireErr::Timeout)) => {}
+            Err(dbnexus::sea_orm::DbErr::ConnectionAcquire(
+                dbnexus::sea_orm::ConnAcquireErr::Timeout,
+            )) => {}
             Err(e) => panic!("expected ConnectionAcquire(Timeout), got: {:?}", e),
             Ok(_) => panic!("expected error, got Ok"),
         }

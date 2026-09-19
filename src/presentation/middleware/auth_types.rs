@@ -57,7 +57,7 @@ pub enum AuthError {
     #[error("Missing required scope: {0}")]
     MissingScope(ScopePermission),
     #[error("Database error: {0}")]
-    DatabaseError(#[from] sea_orm::DbErr),
+    DatabaseError(#[from] dbnexus::sea_orm::DbErr),
     #[error("API key associated with nil team_id")]
     NilTeamId,
     #[error("API key has expired")]

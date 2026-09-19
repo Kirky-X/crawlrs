@@ -26,8 +26,8 @@ use axum::{
     routing::{get, post},
     Extension, Json, Router,
 };
+use dbnexus::sea_orm::ConnectionTrait;
 use dbnexus::DbPool;
-use sea_orm::ConnectionTrait;
 use std::sync::Arc;
 use std::time::Duration;
 // put 仅在 teams-on 时被使用（v1/teams/geo-restrictions PUT）
