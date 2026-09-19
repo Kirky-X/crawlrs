@@ -148,7 +148,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 - **Engines & routing**: `EngineClient` is the single public entry point for scraping; internally `EngineRouter` holds `Vec<Arc<dyn ScraperEngine>>` and picks an engine via the `SmartHybrid` (default) / `RaceMode` / `SequentialFallback` strategies.
 - **Dual run modes**: one binary, two personalities — `crawlrs` starts the API server, `crawlrs worker` consumes the task queue in worker mode.
-- **DDD four layers**: `presentation → application → domain → infrastructure`, wired by trait-kit's `AppModule` for DI.
+- **DDD four layers**: `presentation → application → domain → infrastructure`, wired by trait-kit's capability Modules (`SettingsModule`/`CacheModule`/`EngineModule` etc.) for DI.
 - **Configuration**: powered by confers — TOML files plus `CRAWLRS__`-prefixed environment variables (`__` separates nesting, e.g. `CRAWLRS__DATABASE__URL`).
 - **Feature gating**: when business capabilities (teams/auth/rate-limit/webhook) are off, Noop implementations are injected automatically — single-tenant/unauthenticated deployments need zero business-logic changes.
 

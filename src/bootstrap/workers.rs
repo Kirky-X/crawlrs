@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! Worker 启动去重 — 提取 `start_api_service` 和 `start_worker_service` 中
 //! 重复的 worker spawn 代码。

@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 /// API Key 签发 handler（garrison ApiKeyHandler 桥接）。
 /// 仅在 `auth` feature 启用时编译——`api_key_handler` 依赖 garrison 全局 DAO。

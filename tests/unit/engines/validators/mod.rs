@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
+
 // Engine validators unit tests
 //
 // These tests cover the request validation logic.

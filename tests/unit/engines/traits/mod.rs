@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
+
 // Engine traits unit tests
 //
 // These tests cover the internal engine traits.

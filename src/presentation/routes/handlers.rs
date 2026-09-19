@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 路由处理函数
 //!
@@ -111,7 +109,7 @@ pub fn routes() -> Router {
 /// 这是 Kubernetes liveness probe — 总是返回 200 OK + "healthy"，
 /// 表示进程存活。不检查依赖（数据库、缓存）— 避免依赖短暂故障导致 pod 重启。
 /// 如需 readiness probe（检查依赖是否就绪），应单独实现 /ready endpoint
-/// 注入 AppState 检查数据库连接池、缓存可用性等。
+/// 注入 CrawlRsState 检查数据库连接池、缓存可用性等。
 ///
 /// # 返回值
 ///

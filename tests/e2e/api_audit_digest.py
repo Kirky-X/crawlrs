@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2025 Kirky.X
-#
-# Licensed under the Apache License, Version 2.0
-# See LICENSE file in the project root for full license information.
+# Copyright (c) 2025-2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 """从 test-results/api-audit.jsonl 生成人工审查用的 API 交互摘要。
 
 聚焦三类需要人工复核的场景：

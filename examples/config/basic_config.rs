@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 配置加载基础示例
 //!
@@ -30,7 +28,7 @@ use serde::{Deserialize, Serialize};
 /// `env_prefix` 指定环境变量前缀（与 EnvSource 配合使用）。
 #[derive(Debug, Clone, Deserialize, Serialize, Config)]
 #[config(env_prefix = "APP_")]
-struct AppSettings {
+struct CrawlRsSettings {
     /// 服务监听地址
     #[serde(default = "default_host")]
     host: String,
@@ -73,7 +71,7 @@ async fn main() {
     info!("📖 通过 #[derive(Config)] 派生 confers 的加载能力");
     info!("   字段使用 #[serde(default = ...)] 提供缺失时的默认值");
     info!("");
-    let sample = AppSettings::default();
+    let sample = CrawlRsSettings::default();
     info!("✅ 默认配置：");
     info!("   host: {}", sample.host);
     info!("   port: {}", sample.port);
@@ -90,7 +88,7 @@ async fn main() {
     info!("   3. .build()         : 合并所有源并返回类型安全的配置");
     info!("");
     info!("📌 加载示例（需存在 config.toml 文件）：");
-    info!("   let settings = ConfigBuilder::<AppSettings>::new()");
+    info!("   let settings = ConfigBuilder::<CrawlRsSettings>::new()");
     info!("       .file(\"config.toml\")");
     info!("       .source(Box::new(EnvSource::with_prefix(\"APP_\").separator(\"_\")))");
     info!("       .build()?;");
@@ -144,8 +142,8 @@ async fn main() {
 ///
 /// 在 examples 目录下运行时，通常不存在 config.toml，
 /// 此时会返回错误，演示 confers 的错误处理。
-fn try_load_settings() -> Result<AppSettings, confers::ConfigError> {
-    ConfigBuilder::<AppSettings>::new()
+fn try_load_settings() -> Result<CrawlRsSettings, confers::ConfigError> {
+    ConfigBuilder::<CrawlRsSettings>::new()
         .file("config.toml")
         .source(Box::new(EnvSource::with_prefix("APP_").separator("_")))
         .build()

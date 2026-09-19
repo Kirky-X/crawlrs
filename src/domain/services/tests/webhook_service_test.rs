@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
+
 use super::*;
 use crate::domain::models::WebhookEvent;
 use crate::domain::repositories::task_repository::RepositoryError;

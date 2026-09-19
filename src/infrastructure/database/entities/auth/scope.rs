@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 // `Model` 已弃用（garrison RBAC 接管），sea-orm `DeriveEntityModel` 派生宏
 // 生成的代码会访问 `Model`，引发 deprecated warning。文件级 `#[allow(deprecated)]`

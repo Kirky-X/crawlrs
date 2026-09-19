@@ -36,12 +36,12 @@ use confers::{Config, ConfigBuilder};
 
 #[derive(Config)]
 #[config(env_prefix = "APP_")]
-struct AppSettings {
+struct CrawlRsSettings {
     host: String,
     port: u16,
 }
 
-let settings = ConfigBuilder::<AppSettings>::new()
+let settings = ConfigBuilder::<CrawlRsSettings>::new()
     .file("config.toml")
     .build()?;
 ```

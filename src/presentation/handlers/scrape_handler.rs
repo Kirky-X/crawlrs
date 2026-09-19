@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! Scrape handlers — re-export facade for `scrape_queries` + `scrape_commands`.
 
@@ -31,7 +29,7 @@ mod tests {
     use crate::domain::repositories::task_repository::TaskRepository;
     use crate::domain::services::rate_limiting_service::RateLimitingService;
     use crate::i18n::{I18nBundle, Locale};
-    use crate::presentation::extractors::AppDeps;
+    use crate::presentation::extractors::CrawlRsDeps;
     use crate::presentation::middleware::auth_middleware::AuthState;
     use axum::{
         extract::{Extension, Path},
@@ -1582,7 +1580,7 @@ mod tests {
         let payload = make_scrape_request_dto("https://example.com", None);
 
         let response = create_scrape(
-            AppDeps {
+            CrawlRsDeps {
                 queue,
                 settings,
                 task_repo,
@@ -1614,7 +1612,7 @@ mod tests {
         let payload = make_scrape_request_dto("https://example.com", Some(MAX_SYNC_WAIT_MS + 1));
 
         let response = create_scrape(
-            AppDeps {
+            CrawlRsDeps {
                 queue,
                 settings,
                 task_repo,
@@ -1646,7 +1644,7 @@ mod tests {
         let payload = make_scrape_request_dto("http://localhost", None);
 
         let response = create_scrape(
-            AppDeps {
+            CrawlRsDeps {
                 queue,
                 settings,
                 task_repo,
@@ -1678,7 +1676,7 @@ mod tests {
         let payload = make_scrape_request_dto("http://127.0.0.1", None);
 
         let response = create_scrape(
-            AppDeps {
+            CrawlRsDeps {
                 queue,
                 settings,
                 task_repo,
@@ -1710,7 +1708,7 @@ mod tests {
         let payload = make_scrape_request_dto("https://example.com", None);
 
         let response = create_scrape(
-            AppDeps {
+            CrawlRsDeps {
                 queue,
                 settings,
                 task_repo,
@@ -1742,7 +1740,7 @@ mod tests {
         let payload = make_scrape_request_dto("https://example.com", None);
 
         let response = create_scrape(
-            AppDeps {
+            CrawlRsDeps {
                 queue,
                 settings,
                 task_repo,
@@ -1774,7 +1772,7 @@ mod tests {
         let payload = make_scrape_request_dto("https://example.com", None);
 
         let response = create_scrape(
-            AppDeps {
+            CrawlRsDeps {
                 queue,
                 settings,
                 task_repo,
@@ -1806,7 +1804,7 @@ mod tests {
         let payload = make_scrape_request_dto("https://example.com", None);
 
         let response = create_scrape(
-            AppDeps {
+            CrawlRsDeps {
                 queue,
                 settings,
                 task_repo,
@@ -1845,7 +1843,7 @@ mod tests {
         let payload = make_scrape_request_dto("https://example.com", Some(5000));
 
         let response = create_scrape(
-            AppDeps {
+            CrawlRsDeps {
                 queue,
                 settings,
                 task_repo,

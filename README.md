@@ -148,7 +148,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 - **引擎与路由**：`EngineClient` 是抓取操作唯一公开入口，内部 `EngineRouter` 持有 `Vec<Arc<dyn ScraperEngine>>`，按 `SmartHybrid`（默认）/ `RaceMode` / `SequentialFallback` 策略选择引擎。
 - **双运行模式**：同一二进制两种形态——`crawlrs` 启动 API 服务，`crawlrs worker` 以 Worker 模式消费任务队列。
-- **DDD 四层**：`presentation → application → domain → infrastructure`，DI 由 trait-kit 的 `AppModule` 装配。
+- **DDD 四层**：`presentation → application → domain → infrastructure`，DI 由 trait-kit 的各 capability Module（`SettingsModule`/`CacheModule`/`EngineModule` 等）装配。
 - **配置管理**：基于 confers，TOML 文件 + `CRAWLRS__` 前缀环境变量（`__` 分隔嵌套，如 `CRAWLRS__DATABASE__URL`）。
 - **特性门控**：业务能力（teams/auth/rate-limit/webhook）关闭时自动注入 Noop 实现，单租户/无认证部署零业务逻辑改动。
 

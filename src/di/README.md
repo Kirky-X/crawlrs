@@ -15,10 +15,10 @@
 //!   │  kit.set_config(Arc<Settings>)
 //!   │  kit.register::<M>() for each module
 //!   ▼
-//! AsyncKit<Ready>  ──►  AppState::from_kit(&kit)
+//! AsyncKit<Ready>  ──►  CrawlRsState::from_kit(&kit)
 //!                          │
 //!                          ▼
-//!                     Axum handlers (Extension<Arc<AppState>>)
+//!                     Axum handlers (Extension<Arc<CrawlRsState>>)
 //! ```
 //!
 //! ## Module Dependency Graph
@@ -41,7 +41,7 @@
 //! ```rust,no_run
 //! use crawlrs::config::Settings;
 //! use crawlrs::di::modules::*;
-//! use crawlrs::di::AppState;
+//! use crawlrs::di::CrawlRsState;
 //! use trait_kit::AsyncKit;
 //!
 //! # async fn bootstrap() -> anyhow::Result<()> {
@@ -59,7 +59,7 @@
 //! kit.register::<ServiceModule>()?;
 //!
 //! let kit = kit.build().await?;
-//! let app_state = AppState::from_kit(&kit)?;
+//! let app_state = CrawlRsState::from_kit(&kit)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -69,10 +69,10 @@
 //! ```rust,ignore
 //! use std::sync::Arc;
 //! use axum::extract::Extension;
-//! use crawlrs::di::{AppState, AppStateExt};
+//! use crawlrs::di::{CrawlRsState, CrawlRsStateExt};
 //!
 //! async fn my_handler(
-//!     Extension(app_state): Extension<Arc<AppState>>,
+//!     Extension(app_state): Extension<Arc<CrawlRsState>>,
 //! ) -> impl IntoResponse {
 //!     let task_repo = app_state.task_repo();      // Arc<dyn TaskRepository>
 //!     let engine_client = app_state.engine_client(); // Arc<EngineClient>

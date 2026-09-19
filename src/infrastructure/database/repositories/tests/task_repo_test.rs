@@ -1,3 +1,6 @@
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
+
 use super::*;
 use crate::common::test_helpers::acquire_next_test_mutex;
 use crate::common::test_helpers::create_test_db_pool;

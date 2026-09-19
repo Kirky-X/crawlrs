@@ -1,7 +1,5 @@
-// Copyright (c) 2026 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 临时诊断测试：打印 sdforge `build()` 实际注册的路由表。
 //!

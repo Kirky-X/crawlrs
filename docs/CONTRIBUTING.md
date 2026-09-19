@@ -116,7 +116,7 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 
 - 格式化以 `cargo fmt` 为准；clippy 全量告警视为错误（`-D warnings`，含 `--all-targets`，`[lints.rust.unexpected_cfgs]` 为 deny 级）。
 - 并发原语约定：短临界区用 `parking_lot`（非 tokio 同步原语）；指标计数用 `DashMap`。
-- 架构约定：遵循 DDD 四层（presentation → application → domain → infrastructure）；DI 组件在 `src/di/` 的 `AppModule` 装配；新增引擎实现 `ScraperEngine` trait 并接入 `EngineRouter`。
+- 架构约定：遵循 DDD 四层（presentation → application → domain → infrastructure）；DI 组件在 `src/di/` 的各 capability Module（`SettingsModule`/`CacheModule`/`EngineModule` 等）装配；新增引擎实现 `ScraperEngine` trait 并接入 `EngineRouter`。
 - 新特性必须正确 feature 门控：业务能力关闭时提供 Noop 实现，并在 `tests/e2e/feature-matrix.sh` 矩阵中覆盖相应组合。
 - 提交粒度：一个逻辑变更一个 commit，避免混入无关格式化。
 

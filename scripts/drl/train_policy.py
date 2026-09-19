@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2025 Kirky.X
-#
-# Licensed under the Apache License, Version 2.0
-# See LICENSE file in project root for full license information.
+# Copyright (c) 2025-2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 
 """DRL 爬取策略训练脚本
 

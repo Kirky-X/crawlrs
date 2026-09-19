@@ -1,11 +1,9 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! Aggregated application dependency extractor.
 //!
-//! `AppDeps` bundles the five most-commonly-needed request extensions
+//! `CrawlRsDeps` bundles the five most-commonly-needed request extensions
 //! (task queue, settings, task repository, rate-limiting service, and
 //! auth state) into a single axum extractor so that handler signatures
 //! stay concise and consistent.
@@ -13,7 +11,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! async fn my_handler(AppDeps { queue, settings, task_repo, rate_limiting_service, auth_state }: AppDeps) -> impl IntoResponse {
+//! async fn my_handler(CrawlRsDeps { queue, settings, task_repo, rate_limiting_service, auth_state }: CrawlRsDeps) -> impl IntoResponse {
 //!     // ...
 //! }
 //! ```
@@ -42,7 +40,7 @@ use crate::queue::task_queue::TaskQueue;
 /// * `rate_limiting_service` - Rate-limiting service for quota / concurrency checks.
 /// * `auth_state` - Authenticated caller state (team id, api key id).
 #[derive(Clone)]
-pub struct AppDeps {
+pub struct CrawlRsDeps {
     pub queue: Arc<dyn TaskQueue>,
     pub settings: Arc<Settings>,
     pub task_repo: Arc<dyn TaskRepository>,
@@ -57,7 +55,7 @@ fn missing_extension(name: &str) -> Response {
     (status, body).into_response()
 }
 
-impl<S> FromRequestParts<S> for AppDeps
+impl<S> FromRequestParts<S> for CrawlRsDeps
 where
     S: Send + Sync,
 {
@@ -94,7 +92,7 @@ where
             .cloned()
             .ok_or_else(|| missing_extension("AuthState"))?;
 
-        Ok(AppDeps {
+        Ok(CrawlRsDeps {
             queue,
             settings,
             task_repo,
@@ -369,8 +367,8 @@ mod tests {
             return;
         }
         let mut parts = make_parts_with_extensions();
-        let result = AppDeps::from_request_parts(&mut parts, &()).await;
-        assert!(result.is_ok(), "AppDeps should extract successfully");
+        let result = CrawlRsDeps::from_request_parts(&mut parts, &()).await;
+        assert!(result.is_ok(), "CrawlRsDeps should extract successfully");
     }
 
     #[tokio::test]
@@ -396,7 +394,7 @@ mod tests {
             ApiKeyScope::default(),
         ));
 
-        let result = AppDeps::from_request_parts(&mut parts, &()).await;
+        let result = CrawlRsDeps::from_request_parts(&mut parts, &()).await;
         assert!(result.is_err());
     }
 
@@ -423,7 +421,7 @@ mod tests {
             ApiKeyScope::default(),
         ));
 
-        let result = AppDeps::from_request_parts(&mut parts, &()).await;
+        let result = CrawlRsDeps::from_request_parts(&mut parts, &()).await;
         assert!(result.is_err());
     }
 
@@ -450,7 +448,7 @@ mod tests {
             ApiKeyScope::default(),
         ));
 
-        let result = AppDeps::from_request_parts(&mut parts, &()).await;
+        let result = CrawlRsDeps::from_request_parts(&mut parts, &()).await;
         assert!(result.is_err());
     }
 
@@ -477,7 +475,7 @@ mod tests {
             ApiKeyScope::default(),
         ));
 
-        let result = AppDeps::from_request_parts(&mut parts, &()).await;
+        let result = CrawlRsDeps::from_request_parts(&mut parts, &()).await;
         assert!(result.is_err());
     }
 
@@ -501,7 +499,7 @@ mod tests {
             .extensions
             .insert(Arc::new(MockRateLimitService) as Arc<dyn RateLimitingService>);
 
-        let result = AppDeps::from_request_parts(&mut parts, &()).await;
+        let result = CrawlRsDeps::from_request_parts(&mut parts, &()).await;
         assert!(result.is_err());
     }
 
@@ -513,7 +511,7 @@ mod tests {
         let request = Request::builder().body(()).unwrap();
         let (mut parts, _) = request.into_parts();
 
-        let result = AppDeps::from_request_parts(&mut parts, &()).await;
+        let result = CrawlRsDeps::from_request_parts(&mut parts, &()).await;
         assert!(result.is_err());
     }
 
@@ -522,7 +520,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let deps = AppDeps {
+        let deps = CrawlRsDeps {
             queue: Arc::new(MockTaskQueue),
             settings: Arc::new(Settings::default()),
             task_repo: Arc::new(MockTaskRepo),
@@ -544,7 +542,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let deps = AppDeps {
+        let deps = CrawlRsDeps {
             queue: Arc::new(MockTaskQueue),
             settings: Arc::new(Settings::default()),
             task_repo: Arc::new(MockTaskRepo),

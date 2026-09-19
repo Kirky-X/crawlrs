@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2025 Kirky.X
-#
-# Licensed under the Apache License, Version 2.0
-# See LICENSE file in the project root for full license information.
+# Copyright (c) 2025-2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 """crawlrs API 语义级 E2E 测试。
 
 与 tests/e2e/api_test.sh（状态码冒烟）互补：本套件验证每个 API 的

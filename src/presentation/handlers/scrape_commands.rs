@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! Crawl command handlers — POST/DELETE scrape mutation operations.
 
@@ -24,7 +22,7 @@ use crate::{
     domain::repositories::task_repository::TaskRepository,
     domain::services::team_service::TeamService,
     i18n::{I18nBundle, Locale},
-    presentation::extractors::AppDeps,
+    presentation::extractors::CrawlRsDeps,
     presentation::handlers::response_builder::{
         errors, errors_locale, json_rejection_response, success_response, ApiResponse,
     },
@@ -39,7 +37,7 @@ use std::net::SocketAddr;
 ///
 /// # Arguments
 ///
-/// * `deps` - Aggregated application dependencies (`AppDeps`).
+/// * `deps` - Aggregated application dependencies (`CrawlRsDeps`).
 /// * `payload` - Scrape request DTO.
 ///
 /// # Errors
@@ -47,13 +45,13 @@ use std::net::SocketAddr;
 /// Returns 422 if `sync_wait_ms` exceeds the maximum, 400 for SSRF
 /// violations, 402 for insufficient credits, 500 for enqueue failure.
 pub async fn create_scrape(
-    AppDeps {
+    CrawlRsDeps {
         queue,
         settings: _settings,
         task_repo: task_repository,
         rate_limiting_service,
         auth_state,
-    }: AppDeps,
+    }: CrawlRsDeps,
     // scrape 入口补齐地理限制检查。geo repo / team_service 以 Option 注入——
     // teams-off（Extension 未装配）时为 None，跳过检查，行为与单租户降级一致。
     Extension(geo_restriction_repo): Extension<Option<Arc<dyn GeoRestrictionRepository>>>,
