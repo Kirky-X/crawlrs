@@ -667,9 +667,18 @@ fn test_detect_chain_proj_lang_priority_over_lc_all() {
 #[test]
 fn test_detect_chain_sys_locale_used_after_env() {
     // env 链全部未设置 → sys-locale 探测，未知语言同样归一 en-US
-    assert_eq!(detect_locale_from(|_| None, Some("zh-CN")).to_string(), "zh-CN");
-    assert_eq!(detect_locale_from(|_| None, Some("en_US")).to_string(), "en-US");
-    assert_eq!(detect_locale_from(|_| None, Some("fr-FR")).to_string(), "en-US");
+    assert_eq!(
+        detect_locale_from(|_| None, Some("zh-CN")).to_string(),
+        "zh-CN"
+    );
+    assert_eq!(
+        detect_locale_from(|_| None, Some("en_US")).to_string(),
+        "en-US"
+    );
+    assert_eq!(
+        detect_locale_from(|_| None, Some("fr-FR")).to_string(),
+        "en-US"
+    );
 }
 
 #[test]

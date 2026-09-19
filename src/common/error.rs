@@ -728,9 +728,8 @@ mod tests {
     #[test]
     fn test_user_message_sanitization() {
         // 数据库错误应该返回通用消息
-        let db_err = make_db_error(
-            "Connection failed to postgres://user:password123@localhost:5432",
-        );
+        let db_err =
+            make_db_error("Connection failed to postgres://user:password123@localhost:5432");
         let user_msg = db_err.user_message();
         assert!(!user_msg.contains("password123"));
         assert!(!user_msg.contains("localhost:5432"));
@@ -759,9 +758,7 @@ mod tests {
 
     #[test]
     fn test_detailed_message_preserves_info() {
-        let err = make_db_error(
-            "Connection failed to postgres://user:password123@localhost:5432",
-        );
+        let err = make_db_error("Connection failed to postgres://user:password123@localhost:5432");
         let detailed = err.detailed_message();
         // 详细消息应该包含所有信息
         assert!(detailed.contains("postgres://"));

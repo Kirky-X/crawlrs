@@ -169,16 +169,34 @@ impl BacklogWorker {
             tr_log_args(
                 "backlog-processing-summary",
                 &[
-                    ("reactivated", fluent_bundle::FluentValue::from(reactivated_count.to_string())),
-                    ("expired", fluent_bundle::FluentValue::from(expired_count.to_string())),
+                    (
+                        "reactivated",
+                        fluent_bundle::FluentValue::from(reactivated_count.to_string())
+                    ),
+                    (
+                        "expired",
+                        fluent_bundle::FluentValue::from(expired_count.to_string())
+                    ),
                     (
                         "retry_exhausted",
                         fluent_bundle::FluentValue::from(retry_exhausted_count.to_string())
                     ),
-                    ("denied", fluent_bundle::FluentValue::from(denied_count.to_string())),
-                    ("queued", fluent_bundle::FluentValue::from(queued_count.to_string())),
-                    ("skipped", fluent_bundle::FluentValue::from(skipped_count.to_string())),
-                    ("failed", fluent_bundle::FluentValue::from(failed_count.to_string())),
+                    (
+                        "denied",
+                        fluent_bundle::FluentValue::from(denied_count.to_string())
+                    ),
+                    (
+                        "queued",
+                        fluent_bundle::FluentValue::from(queued_count.to_string())
+                    ),
+                    (
+                        "skipped",
+                        fluent_bundle::FluentValue::from(skipped_count.to_string())
+                    ),
+                    (
+                        "failed",
+                        fluent_bundle::FluentValue::from(failed_count.to_string())
+                    ),
                 ],
             )
         );
