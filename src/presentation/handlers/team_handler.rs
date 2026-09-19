@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::application::dto::geo_restriction_request::{
     TeamGeoRestrictionsResponse, UpdateTeamGeoRestrictionsRequest,
@@ -142,6 +140,8 @@ where
 pub async fn update_team_geo_restrictions<GR>(
     Extension(geo_restriction_repo): Extension<Arc<GR>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(locale): Extension<crate::i18n::Locale>,
+    Extension(i18n): Extension<Arc<crate::i18n::I18nBundle>>,
     payload: Result<
         Json<UpdateTeamGeoRestrictionsRequest>,
         axum::extract::rejection::JsonRejection,
@@ -185,10 +185,16 @@ where
     if let Some(ref whitelist) = request.ip_whitelist {
         for ip in whitelist {
             if !is_valid_ip_or_cidr(ip) {
+                // FTL key: api.ftl `team-invalid-ip-cidr`（locale 经 i18n 中间件注入）
                 return error_response_with_code(
                     StatusCode::BAD_REQUEST,
                     error_codes::VALIDATION_ERROR,
-                    format!("Invalid IP address or CIDR notation: {}", ip),
+                    crate::i18n::t_with_args(
+                        &locale,
+                        &i18n,
+                        "team-invalid-ip-cidr",
+                        &[("value", fluent_bundle::FluentValue::from(ip.as_str()))],
+                    ),
                 );
             }
         }
@@ -1022,6 +1028,19 @@ mod tests {
         )
     }
 
+    /// en-US locale（固定，断言不受宿主系统语言影响）
+    fn make_test_locale() -> crate::i18n::Locale {
+        "en-US".parse().unwrap()
+    }
+
+    /// en-US i18n bundle（固定，断言不受宿主系统语言影响）
+    fn make_test_i18n_bundle() -> Arc<crate::i18n::I18nBundle> {
+        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+        Arc::new(
+            crate::i18n::I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap(),
+        )
+    }
+
     // ========== MockCreditsRepository ==========
 
     struct MockCreditsRepository {
@@ -1638,6 +1657,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(make_update_request())),
         )
         .await
@@ -1664,6 +1685,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(request)),
         )
         .await
@@ -1690,6 +1713,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(request)),
         )
         .await
@@ -1716,6 +1741,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(request)),
         )
         .await
@@ -1742,6 +1769,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(request)),
         )
         .await
@@ -1768,6 +1797,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(request)),
         )
         .await
@@ -1790,6 +1821,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(make_update_request())),
         )
         .await
@@ -1812,6 +1845,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(make_update_request())),
         )
         .await
@@ -1838,6 +1873,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(request)),
         )
         .await
@@ -1900,6 +1937,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(make_update_request())),
         )
         .await
@@ -1937,6 +1976,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(request)),
         )
         .await
@@ -1974,6 +2015,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(request)),
         )
         .await
@@ -2011,6 +2054,8 @@ mod tests {
         let response = update_team_geo_restrictions::<MockGeoRestrictionRepository>(
             Extension(repo),
             Extension(auth),
+            Extension(make_test_locale()),
+            Extension(make_test_i18n_bundle()),
             Ok(Json(request)),
         )
         .await

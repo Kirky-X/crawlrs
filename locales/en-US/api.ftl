@@ -13,3 +13,6 @@ api-webhook-url-invalid = Invalid webhook URL: potential security risk detected.
 api-insufficient-permissions-api-key = Insufficient permissions to query other API keys' audit logs.
 api-insufficient-permissions-team = Insufficient permissions to query other teams' audit logs.
 api-task-ids-empty = Task IDs cannot be empty.
+
+# Team geo restriction messages (1 key)
+team-invalid-ip-cidr = Invalid IP address or CIDR notation: { $value }

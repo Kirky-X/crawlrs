@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 统一错误类型定义
 //!
@@ -152,12 +150,16 @@ impl CrawlRsError {
 
     /// 获取用户可见的错误消息（脱敏后）
     ///
-    /// 此方法返回适合展示给最终用户的错误消息，不包含敏感的内部实现细节。
-    /// 用于生产环境中的错误响应。
+    /// 对外默认出口：启动期 i18n 全局束已初始化时经 Fluent 输出本地化消息
+    /// （等价 [`Self::user_message_locale`]，locale 为启动检测/配置决议的默认值）；
+    /// 束未初始化（轻量面构建、单测）时返回英文规范串（双轨基准，FTL 缺失兜底）。
     ///
-    /// 此方法始终返回英文消息（默认 locale 路径）。要获取本地化消息，
-    /// 请使用 `user_message_locale()`。
+    /// 此方法不包含敏感的内部实现细节，用于生产环境中的错误响应。
+    /// 请求级精确 locale 本地化请使用 `user_message_locale()`。
     pub fn user_message(&self) -> String {
+        if let Some((locale, bundle)) = crate::i18n::startup_i18n() {
+            return self.user_message_locale(locale, bundle);
+        }
         match self {
             CrawlRsError::Database(_) => {
                 "Database operation failed. Please try again later.".to_string()

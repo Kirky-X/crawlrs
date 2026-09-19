@@ -13,3 +13,6 @@ api-webhook-url-invalid = 无效的 Webhook URL：检测到潜在安全风险。
 api-insufficient-permissions-api-key = 权限不足，无法查询其他 API 密钥的审计日志。
 api-insufficient-permissions-team = 权限不足，无法查询其他团队的审计日志。
 api-task-ids-empty = 任务 ID 不能为空。
+
+# 团队地理限制消息（1 个 key）
+team-invalid-ip-cidr = 无效的 IP 地址或 CIDR 格式：{ $value }

@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 use crate::common::error::{RepositoryResultExt, WorkerError};
 use crate::config::Settings;
@@ -48,6 +46,24 @@ enum BacklogOutcome {
     Skipped,
 }
 
+/// 经启动期 i18n 全局束翻译运维日志（worker 无请求上下文，locale 取启动
+/// 检测/配置决议的默认值）。未初始化或 key 缺失时回退 key 本身
+/// （与 Fluent 缺 key 语义一致，不 panic）。
+fn tr_log(key: &str) -> String {
+    match crate::i18n::startup_i18n() {
+        Some((locale, bundle)) => crate::i18n::t(locale, bundle, key),
+        None => key.to_string(),
+    }
+}
+
+/// 同 [`tr_log`]，带 Fluent 占位参数（FTL key 见 `locales/*/workers.ftl`）
+fn tr_log_args(key: &str, args: &[(&str, fluent_bundle::FluentValue)]) -> String {
+    match crate::i18n::startup_i18n() {
+        Some((locale, bundle)) => crate::i18n::t_with_args(locale, bundle, key, args),
+        None => key.to_string(),
+    }
+}
+
 impl BacklogWorker {
     pub fn new(
         tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
@@ -66,7 +82,7 @@ impl BacklogWorker {
 
     /// 处理积压任务
     async fn process_backlog(&self) -> Result<(), WorkerError> {
-        info!("开始处理积压任务");
+        info!("{}", tr_log("backlog-processing-started"));
 
         let batch_size = self.settings.concurrency.default_team_limit as usize;
 
@@ -78,11 +94,20 @@ impl BacklogWorker {
             .repo_err()?;
 
         if pending_backlogs.is_empty() {
-            info!("没有待处理的积压任务");
+            info!("{}", tr_log("backlog-none-pending"));
             return Ok(());
         }
 
-        info!("发现 {} 个待处理的积压任务", pending_backlogs.len());
+        info!(
+            "{}",
+            tr_log_args(
+                "backlog-pending-found",
+                &[(
+                    "count",
+                    fluent_bundle::FluentValue::from(pending_backlogs.len().to_string())
+                )],
+            )
+        );
 
         // 分类计数：Ok(false) 曾把 expired/denied/queued/
         // 重试耗尽全部混为"过期"，现按 BacklogOutcome 独立计数并分类输出。
@@ -106,7 +131,22 @@ impl BacklogWorker {
 
         // 3. 处理每个团队的积压任务
         for (team_id, team_backlogs) in backlogs_by_team {
-            info!("处理团队 {} 的 {} 个积压任务", team_id, team_backlogs.len());
+            info!(
+                "{}",
+                tr_log_args(
+                    "backlog-team-processing",
+                    &[
+                        (
+                            "team_id",
+                            fluent_bundle::FluentValue::from(team_id.to_string())
+                        ),
+                        (
+                            "count",
+                            fluent_bundle::FluentValue::from(team_backlogs.len().to_string())
+                        ),
+                    ],
+                )
+            );
 
             for backlog in team_backlogs {
                 match self.process_single_backlog(backlog).await {
@@ -125,14 +165,22 @@ impl BacklogWorker {
         }
 
         info!(
-            "积压任务处理完成: 成功={}, 过期={}, 重试耗尽={}, 并发拒绝={}, 意外排队={}, 跳过={}, 错误={}",
-            reactivated_count,
-            expired_count,
-            retry_exhausted_count,
-            denied_count,
-            queued_count,
-            skipped_count,
-            failed_count
+            "{}",
+            tr_log_args(
+                "backlog-processing-summary",
+                &[
+                    ("reactivated", fluent_bundle::FluentValue::from(reactivated_count.to_string())),
+                    ("expired", fluent_bundle::FluentValue::from(expired_count.to_string())),
+                    (
+                        "retry_exhausted",
+                        fluent_bundle::FluentValue::from(retry_exhausted_count.to_string())
+                    ),
+                    ("denied", fluent_bundle::FluentValue::from(denied_count.to_string())),
+                    ("queued", fluent_bundle::FluentValue::from(queued_count.to_string())),
+                    ("skipped", fluent_bundle::FluentValue::from(skipped_count.to_string())),
+                    ("failed", fluent_bundle::FluentValue::from(failed_count.to_string())),
+                ],
+            )
         );
 
         Ok(())

@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! Tests for the sdforge-based SDK interface layer.
 //!
@@ -15,6 +13,7 @@ use crate::common::test_helpers::create_test_db_pool;
 use crate::domain::auth::ApiKeyScope;
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::services::search_service::SearchServiceTrait;
+use crate::i18n::{I18nBundle, Locale};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 use axum::Extension;
@@ -65,9 +64,18 @@ use super::mocks::{
 
 // ============ TestServer builders ============
 
+/// 构造测试用 i18n bundle（en-US 固定，断言不受宿主系统语言影响）
+fn make_test_i18n() -> (Locale, Arc<I18nBundle>) {
+    let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+    let locale: Locale = "en-US".parse().unwrap();
+    let bundle = Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap());
+    (locale, bundle)
+}
+
 /// 构造 TestServer，注入成功版 mock 服务。
 fn make_server_success() -> TestServer {
     let auth_state = make_auth_state();
+    let (locale, i18n) = make_test_i18n();
     let app = build_sdk_router()
         .layer(Extension(
             Arc::new(MockSearchService) as Arc<dyn SearchServiceTrait>
@@ -76,13 +84,16 @@ fn make_server_success() -> TestServer {
         .layer(Extension(
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
-        .layer(Extension(auth_state));
+        .layer(Extension(auth_state))
+        .layer(Extension(locale))
+        .layer(Extension(i18n));
     TestServer::new(app)
 }
 
 /// 构造 TestServer，注入搜索服务失败版 mock（其他服务用成功版）。
 fn make_server_search_error() -> TestServer {
     let auth_state = make_auth_state();
+    let (locale, i18n) = make_test_i18n();
     let app = build_sdk_router()
         .layer(Extension(
             Arc::new(MockSearchServiceError) as Arc<dyn SearchServiceTrait>
@@ -91,13 +102,16 @@ fn make_server_search_error() -> TestServer {
         .layer(Extension(
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
-        .layer(Extension(auth_state));
+        .layer(Extension(auth_state))
+        .layer(Extension(locale))
+        .layer(Extension(i18n));
     TestServer::new(app)
 }
 
 /// 构造 TestServer，注入任务队列失败版 mock（其他服务用成功版）。
 fn make_server_queue_error() -> TestServer {
     let auth_state = make_auth_state();
+    let (locale, i18n) = make_test_i18n();
     let app = build_sdk_router()
         .layer(Extension(
             Arc::new(MockSearchService) as Arc<dyn SearchServiceTrait>
@@ -106,13 +120,16 @@ fn make_server_queue_error() -> TestServer {
         .layer(Extension(
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
-        .layer(Extension(auth_state));
+        .layer(Extension(auth_state))
+        .layer(Extension(locale))
+        .layer(Extension(i18n));
     TestServer::new(app)
 }
 
 /// 构造 TestServer，注入 crawl 仓库失败版 mock（其他服务用成功版）。
 fn make_server_crawl_repo_error() -> TestServer {
     let auth_state = make_auth_state();
+    let (locale, i18n) = make_test_i18n();
     let app = build_sdk_router()
         .layer(Extension(
             Arc::new(MockSearchService) as Arc<dyn SearchServiceTrait>
@@ -121,7 +138,9 @@ fn make_server_crawl_repo_error() -> TestServer {
         .layer(Extension(
             Arc::new(MockCrawlRepositoryError) as Arc<dyn CrawlRepository>
         ))
-        .layer(Extension(auth_state));
+        .layer(Extension(auth_state))
+        .layer(Extension(locale))
+        .layer(Extension(i18n));
     TestServer::new(app)
 }
 

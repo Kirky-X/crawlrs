@@ -415,7 +415,12 @@ fetch_initial_backoff_secs = 2
 fetch_max_backoff_secs = 10
 
 [i18n]
-# 默认 locale（BCP 47 格式）
+# 默认 locale（BCP 47 格式）。
+# 语义（unify-rust-i18n）：本值为内置默认值——未显式改写（仍为 "en-US"）时，
+# 启动期经系统语言检测链（CRAWLRS_LANG → LC_ALL → LC_MESSAGES → LANG →
+# sys-locale）决议默认 locale；检测结果不受支持时回退到本值。
+# 显式指定（改为 "en-US" 以外的受支持值）时本值优先于检测。
+# 每请求的 Accept-Language 协商行为不受影响。
 default_locale = "en-US"
 # 支持的 locale 列表
 supported_locales = ["en-US", "zh-CN"]

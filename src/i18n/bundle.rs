@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! i18n 翻译 bundle 管理
 //!
@@ -321,7 +319,7 @@ impl I18nBundle {
             "error-internal",
         ]);
 
-        // api.ftl (12 keys)
+        // api.ftl (13 keys)
         keys.extend([
             "api-access-denied",
             "api-internal-error",
@@ -335,14 +333,17 @@ impl I18nBundle {
             "api-insufficient-permissions-api-key",
             "api-insufficient-permissions-team",
             "api-task-ids-empty",
+            "team-invalid-ip-cidr",
         ]);
 
-        // validation.ftl (4 keys)
+        // validation.ftl (6 keys)
         keys.extend([
             "validation-query-empty",
             "validation-url-invalid",
             "validation-credits-insufficient",
             "validation-field-required",
+            "sdk-query-empty",
+            "sdk-url-empty",
         ]);
 
         // domain-error keys (17 keys)
@@ -364,6 +365,30 @@ impl I18nBundle {
             "domain-error-llm-extraction-failed",
             "domain-error-invalid-css-selector",
             "domain-error-validation",
+        ]);
+
+        // rag.ftl (11 keys) — RagSettings::validate_providers() 配置校验消息
+        keys.extend([
+            "rag-config-embedding-provider-local-feature",
+            "rag-config-embedding-provider-remote-feature",
+            "rag-config-remote-embed-model-empty",
+            "rag-config-embedding-provider-invalid",
+            "rag-config-rerank-provider-local-feature",
+            "rag-config-rerank-endpoint-empty",
+            "rag-config-rerank-model-empty",
+            "rag-config-rerank-format-invalid",
+            "rag-config-rerank-provider-invalid",
+            "rag-config-search-rerank-top-n",
+            "rag-config-rag-top-k",
+        ]);
+
+        // workers.ftl (5 keys) — BacklogWorker::process_backlog() 运维日志
+        keys.extend([
+            "backlog-processing-started",
+            "backlog-none-pending",
+            "backlog-pending-found",
+            "backlog-team-processing",
+            "backlog-processing-summary",
         ]);
 
         keys.into_iter().map(String::from).collect()

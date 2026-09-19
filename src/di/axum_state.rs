@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! Axum integration for trait-kit dependency injection.
 //!
@@ -213,9 +211,22 @@ impl CrawlRsState {
             .iter()
             .map(|s| s.as_str())
             .collect();
+        // 启动 default_locale 决议：配置未显式指定（仍为内置默认 en-US）时走
+        // 系统检测链；检测结果不在 supported 内（检测失败）时回退配置值——
+        // 即 default.toml 的 i18n.default_locale 语义 = 检测失败时的回退。
+        // 配置显式指定（≠ en-US）仍优先。Accept-Language 每请求协商不受影响。
+        let default_locale =
+            crate::i18n::resolve_startup_default_locale(&settings.i18n.default_locale, &supported);
+        if default_locale.to_string() != settings.i18n.default_locale {
+            log::info!(
+                "i18n default_locale resolved to '{}' (configured '{}')",
+                default_locale,
+                settings.i18n.default_locale
+            );
+        }
         let i18n_bundle = Arc::new(
             I18nBundle::load(
-                &settings.i18n.default_locale,
+                &default_locale.to_string(),
                 &supported,
                 &settings.i18n.locales_dir,
             )

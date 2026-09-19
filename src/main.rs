@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 /// Service type enumeration.
 enum ServiceType {
@@ -336,6 +334,13 @@ mod app {
 
         let (settings, _port) = crawlrs::bootstrap::config::load_and_configure(is_production)?;
         let settings = Arc::new(settings);
+
+        // 1.5 初始化启动期 i18n 全局束（检测链决议 default_locale）。
+        // 必须先于 kit.build()：RAG 配置校验消息等启动期出口经 Fluent 输出。
+        // 加载失败（locales 目录缺失）保持未初始化，各出口回退英文规范串。
+        if let Some(bundle) = crawlrs::i18n::build_startup_bundle(&settings.i18n) {
+            crawlrs::i18n::init_startup_i18n(bundle);
+        }
 
         // 2. Initialize telemetry and metrics (inklog LoggerManager must be held alive)
         let _logger_manager = crawlrs::bootstrap::telemetry::init_all(&settings.logging)

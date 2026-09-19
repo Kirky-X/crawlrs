@@ -1,14 +1,15 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! i18n 集成测试
 //!
 //! 覆盖：locale 文件加载、Accept-Language 协商、错误响应本地化、
 //! 回退链、缺失 key 处理、参数替换、key 一致性验证。
 
-use crawlrs::i18n::{negotiate_locale, parse_accept_language, t, t_with_args, I18nBundle, Locale};
+use crawlrs::i18n::{
+    detect_locale_from, detect_system_locale, negotiate_locale, parse_accept_language,
+    resolve_startup_default_locale, t, t_with_args, I18nBundle, Locale,
+};
 use fluent_bundle::FluentValue;
 use std::sync::Arc;
 
@@ -574,4 +575,124 @@ fn test_concurrent_translation() {
     for h in handles {
         h.join().unwrap();
     }
+}
+
+// ===========================================================================
+// 11. 系统语言检测链与启动默认 locale 决议（unify-rust-i18n 守卫）
+// ===========================================================================
+
+#[test]
+fn test_detect_chain_zh_cn_utf8_resolves_zh_cn() {
+    // zh_CN.UTF-8（LANG）→ zh-CN
+    let getenv = |key: &str| match key {
+        "LANG" => Some("zh_CN.UTF-8".to_string()),
+        _ => None,
+    };
+    let locale = detect_locale_from(getenv, None);
+    assert_eq!(locale.to_string(), "zh-CN");
+}
+
+#[test]
+fn test_detect_chain_zh_tw_collapses_to_zh_cn() {
+    // zh_TW（LC_ALL）→ zh-CN（zh* 全部归一，禁止第三语言）
+    let getenv = |key: &str| match key {
+        "LC_ALL" => Some("zh_TW".to_string()),
+        _ => None,
+    };
+    let locale = detect_locale_from(getenv, None);
+    assert_eq!(locale.to_string(), "zh-CN");
+}
+
+#[test]
+fn test_detect_chain_unsupported_language_falls_back_to_en() {
+    // fr_FR → en-US（其余一切归一 en-US）
+    let getenv = |key: &str| match key {
+        "LANG" => Some("fr_FR.UTF-8".to_string()),
+        _ => None,
+    };
+    let locale = detect_locale_from(getenv, None);
+    assert_eq!(locale.to_string(), "en-US");
+}
+
+#[test]
+fn test_detect_chain_c_posix_falls_back_to_en() {
+    // 全链 C/POSIX → 终极回退 en-US；C 不阻断链路（LC_ALL=C 时仍读 LANG）
+    let getenv = |key: &str| match key {
+        "LC_ALL" => Some("C".to_string()),
+        "LC_MESSAGES" => Some("C".to_string()),
+        "LANG" => Some("POSIX".to_string()),
+        _ => None,
+    };
+    let locale = detect_locale_from(getenv, None);
+    assert_eq!(locale.to_string(), "en-US");
+
+    let getenv = |key: &str| match key {
+        "LC_ALL" => Some("C".to_string()),
+        "LANG" => Some("zh_CN".to_string()),
+        _ => None,
+    };
+    let locale = detect_locale_from(getenv, None);
+    assert_eq!(locale.to_string(), "zh-CN");
+}
+
+#[test]
+fn test_detect_chain_empty_or_malformed_falls_back_to_en() {
+    // 空/畸形 → 跳过，链尾 en-US
+    let getenv = |key: &str| match key {
+        "LC_ALL" => Some("   ".to_string()),
+        "LC_MESSAGES" => Some("@@@!!!".to_string()),
+        "LANG" => Some(String::new()),
+        _ => None,
+    };
+    let locale = detect_locale_from(getenv, None);
+    assert_eq!(locale.to_string(), "en-US");
+
+    // 全部未设置且 sys-locale 无结果 → en-US
+    let locale = detect_locale_from(|_| None, None);
+    assert_eq!(locale.to_string(), "en-US");
+}
+
+#[test]
+fn test_detect_chain_proj_lang_priority_over_lc_all() {
+    // CRAWLRS_LANG 优先于 LC_ALL
+    let getenv = |key: &str| match key {
+        "CRAWLRS_LANG" => Some("zh-CN".to_string()),
+        "LC_ALL" => Some("en_US.UTF-8".to_string()),
+        _ => None,
+    };
+    let locale = detect_locale_from(getenv, None);
+    assert_eq!(locale.to_string(), "zh-CN");
+}
+
+#[test]
+fn test_detect_chain_sys_locale_used_after_env() {
+    // env 链全部未设置 → sys-locale 探测，未知语言同样归一 en-US
+    assert_eq!(detect_locale_from(|_| None, Some("zh-CN")).to_string(), "zh-CN");
+    assert_eq!(detect_locale_from(|_| None, Some("en_US")).to_string(), "en-US");
+    assert_eq!(detect_locale_from(|_| None, Some("fr-FR")).to_string(), "en-US");
+}
+
+#[test]
+fn test_resolve_startup_explicit_config_beats_detection() {
+    // 配置显式指定（≠ 内置默认 en-US）→ 配置优先
+    let locale = resolve_startup_default_locale("zh-CN", &["en-US", "zh-CN"]);
+    assert_eq!(locale.to_string(), "zh-CN");
+}
+
+#[test]
+fn test_resolve_startup_invalid_config_falls_back_to_builtin_default() {
+    // 配置值非法 → 内置默认 en-US
+    let locale = resolve_startup_default_locale("not-a-locale!!!", &["en-US", "zh-CN"]);
+    assert_eq!(locale.to_string(), "en-US");
+}
+
+#[test]
+fn test_detect_system_locale_result_domain_is_en_or_zh() {
+    // 真实进程环境调用：结果域恒为 {en-US, zh-CN}
+    let locale = detect_system_locale();
+    assert!(
+        locale.to_string() == "en-US" || locale.to_string() == "zh-CN",
+        "detect_system_locale must resolve to en-US or zh-CN, got {}",
+        locale
+    );
 }

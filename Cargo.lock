@@ -1482,6 +1482,7 @@ dependencies = [
  "confers-macros",
  "dashmap",
  "dotenvy",
+ "fluent-bundle",
  "garde",
  "getrandom 0.4.3",
  "hex",
@@ -1498,9 +1499,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "sys-locale",
  "thiserror 2.0.20",
  "tokio",
  "toml",
+ "unic-langid",
  "url",
  "zeroize",
 ]
@@ -1769,6 +1772,7 @@ dependencies = [
  "sha2 0.11.0",
  "standardwebhooks",
  "subtle",
+ "sys-locale",
  "sysinfo 0.39.6",
  "tempfile",
  "testcontainers",
@@ -3349,6 +3353,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "subtle",
+ "sys-locale",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -4313,6 +4318,7 @@ dependencies = [
  "icu_list",
  "icu_locale",
  "icu_normalizer",
+ "icu_pattern",
  "icu_plurals",
  "icu_properties",
  "icu_provider",
@@ -4332,6 +4338,7 @@ dependencies = [
  "icu_locale_core",
  "icu_locale_fallback",
  "icu_provider",
+ "ixdtf",
  "serde",
  "tinystr",
  "zerovec",
@@ -4676,6 +4683,7 @@ version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82d07aafccd67af15d02512a6adf5896fbc5ed00f2e99b471d2efa14016db3db"
 dependencies = [
+ "core_maths",
  "icu_collections",
  "icu_locale_fallback",
  "icu_provider",
@@ -4704,6 +4712,7 @@ dependencies = [
  "icu_locale_core",
  "icu_provider",
  "icu_time_data",
+ "ixdtf",
  "serde",
  "zerotrie",
  "zerovec",
@@ -4989,6 +4998,12 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "ixdtf"
+version = "0.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d3667095d64c3ecffc96463a21157b04bf3e252f6e8d5750b20c02e33c194e3"
 
 [[package]]
 name = "jiff"
@@ -5301,6 +5316,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "dbnexus",
+ "fluent-bundle",
  "futures",
  "hex",
  "hmac 0.13.0",
@@ -5319,6 +5335,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha2 0.11.0",
+ "sys-locale",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
@@ -5328,6 +5345,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trait-kit",
+ "unic-langid",
  "uuid",
 ]
 
@@ -6156,6 +6174,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "flate2",
+ "fluent-bundle",
  "futures",
  "icu",
  "moka",
@@ -6168,6 +6187,7 @@ dependencies = [
  "serde_stacker",
  "tokio",
  "trait-kit",
+ "unic-langid",
  "uuid",
  "writeable",
  "zstd",
@@ -9550,10 +9570,12 @@ name = "trait-kit"
 version = "0.5.0-rc.5"
 dependencies = [
  "confers",
+ "fluent-bundle",
  "icu",
  "serde",
  "serde_json",
  "sys-locale",
+ "unic-langid",
  "writeable",
 ]
 
@@ -9980,10 +10002,12 @@ dependencies = [
  "candle-transformers",
  "chrono",
  "confers",
+ "fluent-bundle",
  "futures",
  "garde",
  "hex",
  "hf-hub 1.0.0",
+ "icu",
  "inklog",
  "limiteron",
  "log",
@@ -10003,6 +10027,7 @@ dependencies = [
  "tokio",
  "trait-kit",
  "unic-langid",
+ "writeable",
  "xxhash-rust",
  "zeroize",
 ]

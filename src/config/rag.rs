@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! RAG 能力配置（嵌入 + 重排）
 //!
@@ -14,7 +12,24 @@
 //! 消费方：搜索结果精准重排（[`crate::domain::services::rerank`]）与
 //! schema 抽取的 RAG 上下文（`extract_with_rag_auto`）。
 
+use fluent_bundle::FluentValue;
 use serde::{Deserialize, Serialize};
+
+/// 配置校验消息出口（双轨基准模式）
+///
+/// 启动期 i18n 全局束已初始化时经 Fluent 输出（FTL key 见 `locales/*/rag.ftl`，
+/// 语言由检测链/配置决议）；未初始化（单测、轻量面构建）时回退英文规范串。
+/// 代码内不再保留中文消息字面量。
+fn rag_config_message(
+    key: &str,
+    english: impl std::fmt::Display,
+    args: &[(&str, FluentValue)],
+) -> String {
+    match crate::i18n::startup_i18n() {
+        Some((locale, bundle)) => crate::i18n::t_with_args(locale, bundle, key, args),
+        None => english.to_string(),
+    }
+}
 
 /// RAG 配置设置
 ///
@@ -158,27 +173,37 @@ impl RagSettings {
             "" => {}
             "local" => {
                 #[cfg(not(feature = "rag-local"))]
-                return Err(
-                    "rag.embedding_provider = \"local\" 需要 rag-local feature（vecboost）；\
-                     请以 --features rag-local 重新构建，或改用 \"remote\""
-                        .to_string(),
-                );
+                return Err(rag_config_message(
+                    "rag-config-embedding-provider-local-feature",
+                    "rag.embedding_provider = \"local\" requires the rag-local feature (vecboost); \
+                     rebuild with --features rag-local, or use \"remote\"",
+                    &[],
+                ));
             }
             "remote" => {
                 #[cfg(not(feature = "rag-remote"))]
-                return Err(
-                    "rag.embedding_provider = \"remote\" 需要 rag-remote feature（rig-core）；\
-                     请以 --features rag-remote 重新构建"
-                        .to_string(),
-                );
+                return Err(rag_config_message(
+                    "rag-config-embedding-provider-remote-feature",
+                    "rag.embedding_provider = \"remote\" requires the rag-remote feature (rig-core); \
+                     rebuild with --features rag-remote",
+                    &[],
+                ));
                 #[cfg(feature = "rag-remote")]
                 if self.remote_embed_model.trim().is_empty() {
-                    return Err("rag.remote_embed_model 不能为空".to_string());
+                    return Err(rag_config_message(
+                        "rag-config-remote-embed-model-empty",
+                        "rag.remote_embed_model cannot be empty",
+                        &[],
+                    ));
                 }
             }
             other => {
-                return Err(format!(
-                    "rag.embedding_provider 取值非法：\"{other}\"（支持 \"\"/local/remote）"
+                return Err(rag_config_message(
+                    "rag-config-embedding-provider-invalid",
+                    format!(
+                        "invalid rag.embedding_provider value \"{other}\" (supported: \"\"/local/remote)"
+                    ),
+                    &[("value", FluentValue::from(other))],
                 ));
             }
         }
@@ -187,48 +212,65 @@ impl RagSettings {
             "" => {}
             "local" => {
                 #[cfg(not(feature = "rag-local"))]
-                return Err(
-                    "rag.rerank_provider = \"local\" 需要 rag-local feature（vecboost）；\
-                     请以 --features rag-local 重新构建，或改用 \"http\""
-                        .to_string(),
-                );
+                return Err(rag_config_message(
+                    "rag-config-rerank-provider-local-feature",
+                    "rag.rerank_provider = \"local\" requires the rag-local feature (vecboost); \
+                     rebuild with --features rag-local, or use \"http\"",
+                    &[],
+                ));
             }
             "http" => {
                 if self.rerank_endpoint.trim().is_empty() {
-                    return Err(
-                        "rag.rerank_provider = \"http\" 时 rag.rerank_endpoint 不能为空"
-                            .to_string(),
-                    );
+                    return Err(rag_config_message(
+                        "rag-config-rerank-endpoint-empty",
+                        "rag.rerank_endpoint cannot be empty when rag.rerank_provider = \"http\"",
+                        &[],
+                    ));
                 }
                 match self.rerank_format.as_str() {
                     "cohere" => {
                         if self.rerank_model.trim().is_empty() {
-                            return Err(
-                                "rag.rerank_format = \"cohere\" 时 rag.rerank_model 不能为空"
-                                    .to_string(),
-                            );
+                            return Err(rag_config_message(
+                                "rag-config-rerank-model-empty",
+                                "rag.rerank_model cannot be empty when rag.rerank_format = \"cohere\"",
+                                &[],
+                            ));
                         }
                     }
                     "tei" => {}
                     other => {
-                        return Err(format!(
-                            "rag.rerank_format 取值非法：\"{other}\"（支持 cohere/tei）"
+                        return Err(rag_config_message(
+                            "rag-config-rerank-format-invalid",
+                            format!("invalid rag.rerank_format value \"{other}\" (supported: cohere/tei)"),
+                            &[("value", FluentValue::from(other))],
                         ));
                     }
                 }
             }
             other => {
-                return Err(format!(
-                    "rag.rerank_provider 取值非法：\"{other}\"（支持 \"\"/local/http）"
+                return Err(rag_config_message(
+                    "rag-config-rerank-provider-invalid",
+                    format!(
+                        "invalid rag.rerank_provider value \"{other}\" (supported: \"\"/local/http)"
+                    ),
+                    &[("value", FluentValue::from(other))],
                 ));
             }
         }
 
         if self.search_rerank_top_n == 0 || self.search_rerank_top_n > 100 {
-            return Err("rag.search_rerank_top_n 须在 1..=100".to_string());
+            return Err(rag_config_message(
+                "rag-config-search-rerank-top-n",
+                "rag.search_rerank_top_n must be within 1..=100",
+                &[],
+            ));
         }
         if self.rag_top_k == 0 || self.rag_top_k > 50 {
-            return Err("rag.rag_top_k 须在 1..=50".to_string());
+            return Err(rag_config_message(
+                "rag-config-rag-top-k",
+                "rag.rag_top_k must be within 1..=50",
+                &[],
+            ));
         }
 
         Ok(())

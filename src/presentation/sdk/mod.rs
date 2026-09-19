@@ -1,7 +1,5 @@
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
+// Copyright (c) 2025-2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! sdforge-based SDK interface layer.
 //!
@@ -22,6 +20,7 @@ use uuid::Uuid;
 use crate::domain::models::{Crawl, Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::services::search_service::{SearchQuery, SearchServiceTrait};
+use crate::i18n::{t, I18nBundle, Locale};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 
@@ -109,11 +108,14 @@ pub struct SdkCrawlResponse {
 async fn sdk_search(
     #[state] search_service: Arc<dyn SearchServiceTrait>,
     #[state] auth_state: AuthState,
+    #[state] locale: Locale,
+    #[state] i18n: Arc<I18nBundle>,
     req: SdkSearchRequest,
 ) -> Result<SdkSearchResponse, ApiError> {
     if req.query.trim().is_empty() {
+        // FTL key: validation.ftl `sdk-query-empty`（locale 经 i18n 中间件注入）
         return Err(ApiError::InvalidInput {
-            message: "query cannot be empty".to_string(),
+            message: t(&locale, &i18n, "sdk-query-empty"),
             field: Some("query".to_string()),
             value: None,
         });
@@ -166,11 +168,14 @@ async fn sdk_search(
 async fn sdk_create_task(
     #[state] queue: Arc<dyn TaskQueue>,
     #[state] auth_state: AuthState,
+    #[state] locale: Locale,
+    #[state] i18n: Arc<I18nBundle>,
     req: SdkCreateTaskRequest,
 ) -> Result<SdkCreateTaskResponse, ApiError> {
     if req.url.trim().is_empty() {
+        // FTL key: validation.ftl `sdk-url-empty`
         return Err(ApiError::InvalidInput {
-            message: "url cannot be empty".to_string(),
+            message: t(&locale, &i18n, "sdk-url-empty"),
             field: Some("url".to_string()),
             value: None,
         });
@@ -236,11 +241,14 @@ async fn sdk_create_task(
 async fn sdk_scrape(
     #[state] queue: Arc<dyn TaskQueue>,
     #[state] auth_state: AuthState,
+    #[state] locale: Locale,
+    #[state] i18n: Arc<I18nBundle>,
     req: SdkScrapeRequest,
 ) -> Result<SdkScrapeResponse, ApiError> {
     if req.url.trim().is_empty() {
+        // FTL key: validation.ftl `sdk-url-empty`
         return Err(ApiError::InvalidInput {
-            message: "url cannot be empty".to_string(),
+            message: t(&locale, &i18n, "sdk-url-empty"),
             field: Some("url".to_string()),
             value: None,
         });
@@ -293,11 +301,14 @@ async fn sdk_scrape(
 async fn sdk_create_crawl(
     #[state] crawl_repo: Arc<dyn CrawlRepository>,
     #[state] auth_state: AuthState,
+    #[state] locale: Locale,
+    #[state] i18n: Arc<I18nBundle>,
     req: SdkCreateCrawlRequest,
 ) -> Result<SdkCrawlResponse, ApiError> {
     if req.url.trim().is_empty() {
+        // FTL key: validation.ftl `sdk-url-empty`
         return Err(ApiError::InvalidInput {
-            message: "url cannot be empty".to_string(),
+            message: t(&locale, &i18n, "sdk-url-empty"),
             field: Some("url".to_string()),
             value: None,
         });
