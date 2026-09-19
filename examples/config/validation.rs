@@ -17,13 +17,14 @@
 
 use confers::{Config, ConfigBuilder};
 use log::info;
+use sdforge::validator::Validate;
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 /// 带验证规则的配置结构
 ///
 /// `#[config(validate)]` 让 confers 在 `build()` 时自动调用 `Validate::validate()`。
 #[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
+#[validate(crate = "sdforge::validator")]
 #[config(env_prefix = "APP_", validate)]
 struct ValidatedSettings {
     /// 服务器端口（1-65535）
@@ -48,13 +49,13 @@ struct ValidatedSettings {
 }
 
 /// 自定义验证函数：检查日志级别是否合法
-fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
+fn validate_log_level(level: &str) -> Result<(), sdforge::validator::ValidationError> {
     let valid_levels = ["trace", "debug", "info", "warn", "error"];
     if valid_levels.contains(&level.to_lowercase().as_str()) {
         Ok(())
     } else {
         Err(
-            validator::ValidationError::new("invalid_log_level").with_message(
+            sdforge::validator::ValidationError::new("invalid_log_level").with_message(
                 format!(
                     "log_level must be one of {:?}, got '{}'",
                     valid_levels, level
@@ -202,7 +203,7 @@ async fn main() {
 }
 
 /// 格式化验证错误为可读字符串
-fn format_validation_errors(e: &validator::ValidationErrors) -> String {
+fn format_validation_errors(e: &sdforge::validator::ValidationErrors) -> String {
     let mut parts = Vec::new();
     for (field, errors) in e.field_errors() {
         for err in errors {

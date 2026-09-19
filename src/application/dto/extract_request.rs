@@ -4,26 +4,30 @@
 use crate::domain::services::extraction_service::ExtractionRule;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use sdforge::validator::Validate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use validator::Validate;
 
 /// URL scheme validation: only http and https are allowed (SSRF mitigation).
 static HTTP_URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^https?://").unwrap());
 
 /// Validate that every URL in a list starts with http:// or https://.
-fn validate_url_list(urls: &[String]) -> Result<(), validator::ValidationError> {
+fn validate_url_list(urls: &[String]) -> Result<(), sdforge::validator::ValidationError> {
     for url in urls {
         if !HTTP_URL_RE.is_match(url) {
-            return Err(validator::ValidationError::new("invalid_url_scheme")
-                .with_message(format!("URL must start with http:// or https://: {}", url).into()));
+            return Err(
+                sdforge::validator::ValidationError::new("invalid_url_scheme").with_message(
+                    format!("URL must start with http:// or https://: {}", url).into(),
+                ),
+            );
         }
     }
     Ok(())
 }
 
 #[derive(Debug, Deserialize, Serialize, Validate)]
+#[validate(crate = "sdforge::validator")]
 pub struct ExtractRequestDto {
     #[validate(length(min = 1, max = 100, message = "urls must have 1-100 entries"))]
     #[validate(custom(function = "validate_url_list"))]

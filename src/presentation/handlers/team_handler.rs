@@ -261,7 +261,7 @@ fn is_valid_ip_or_cidr(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use validator::Validate;
+    use sdforge::validator::Validate;
 
     // ========== is_valid_ip_or_cidr tests ==========
 

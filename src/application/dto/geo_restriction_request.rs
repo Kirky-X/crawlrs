@@ -3,15 +3,15 @@
 
 //! Team geo restriction request and response DTOs
 
+use sdforge::validator::Validate;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use validator::Validate;
 
 /// Validate that each entry in an IP whitelist parses as valid IP or CIDR notation.
-fn validate_cidr_list(ips: &[String]) -> Result<(), validator::ValidationError> {
+fn validate_cidr_list(ips: &[String]) -> Result<(), sdforge::validator::ValidationError> {
     for ip in ips {
         if ip.parse::<std::net::IpAddr>().is_err() && ipnetwork::IpNetwork::from_str(ip).is_err() {
-            return Err(validator::ValidationError::new("invalid_cidr")
+            return Err(sdforge::validator::ValidationError::new("invalid_cidr")
                 .with_message(format!("Invalid IP or CIDR notation: {}", ip).into()));
         }
     }
@@ -22,15 +22,16 @@ use std::str::FromStr;
 
 /// 更新团队地理限制配置的请求 DTO
 #[derive(Debug, Clone, Deserialize, Serialize, Validate)]
+#[validate(crate = "sdforge::validator")]
 #[serde(deny_unknown_fields)]
 pub struct UpdateTeamGeoRestrictionsRequest {
     /// 是否启用地理限制
     pub enable_geo_restrictions: bool,
     /// 允许的国家代码列表 (ISO 3166-1 alpha-2)
-    #[validate(length(min = 1, message = "国家代码列表不能为空"))]
+    #[validate(length(min = 1, message = "Country code list cannot be empty"))]
     pub allowed_countries: Option<Vec<String>>,
     /// 阻止的国家代码列表 (ISO 3166-1 alpha-2)
-    #[validate(length(min = 1, message = "国家代码列表不能为空"))]
+    #[validate(length(min = 1, message = "Country code list cannot be empty"))]
     pub blocked_countries: Option<Vec<String>>,
     /// IP 白名单列表 (支持 CIDR 表示法)
     #[validate(custom(function = "validate_cidr_list"))]

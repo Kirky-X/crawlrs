@@ -26,10 +26,10 @@ mod tests {
         Json,
     };
     use chrono::Datelike;
+    use sdforge::validator::Validate;
     use std::net::SocketAddr;
     use std::sync::Arc;
     use uuid::Uuid;
-    use validator::Validate;
 
     // ========== From<CrawlUseCaseError> mapping tests ==========
 

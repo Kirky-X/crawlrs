@@ -6,8 +6,8 @@
 use crate::utils::SafeUrl;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use sdforge::validator::Validate;
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 /// Maximum crawl depth limit
 pub const MAX_CRAWL_DEPTH: u32 = 100;
@@ -17,20 +17,27 @@ pub const MAX_CONCURRENCY: u32 = 50;
 /// URL scheme validation: only http and https are allowed (SSRF mitigation).
 static HTTP_URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^https?://").unwrap());
 
-fn is_http_url(value: &str) -> Result<(), validator::ValidationError> {
+fn is_http_url(value: &str) -> Result<(), sdforge::validator::ValidationError> {
     if HTTP_URL_RE.is_match(value) {
         Ok(())
     } else {
-        Err(validator::ValidationError::new("invalid_url_scheme")
-            .with_message("URL must start with http:// or https://".into()))
+        Err(
+            sdforge::validator::ValidationError::new("invalid_url_scheme")
+                .with_message("URL must start with http:// or https://".into()),
+        )
     }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Validate)]
+#[validate(crate = "sdforge::validator")]
 #[serde(deny_unknown_fields)]
 pub struct CrawlRequestDto {
     /// URL to crawl
-    #[validate(length(min = 1, max = 2048, message = "URL长度必须在1-2048个字符之间"))]
+    #[validate(length(
+        min = 1,
+        max = 2048,
+        message = "URL length must be between 1 and 2048 characters"
+    ))]
     #[validate(custom(
         function = "is_http_url",
         message = "URL must start with http:// or https://"
@@ -39,18 +46,27 @@ pub struct CrawlRequestDto {
     /// Validated SafeUrl (populated after validation)
     #[serde(skip)]
     pub validated_url: Option<SafeUrl>,
-    #[validate(length(min = 1, max = 255, message = "任务名称长度必须在1-255个字符之间"))]
+    #[validate(length(
+        min = 1,
+        max = 255,
+        message = "Task name length must be between 1 and 255 characters"
+    ))]
     pub name: Option<String>,
     #[validate(nested)]
     pub config: CrawlConfigDto,
     /// 同步等待时长（毫秒，默认 5000，最大 30000）
-    #[validate(range(min = 0, max = 30000, message = "sync_wait_ms必须在0-30000之间"))]
+    #[validate(range(
+        min = 0,
+        max = 30000,
+        message = "sync_wait_ms must be between 0 and 30000"
+    ))]
     pub sync_wait_ms: Option<u32>,
     /// 任务过期时间
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Validate)]
+#[validate(crate = "sdforge::validator")]
 #[serde(deny_unknown_fields)]
 pub struct CrawlConfigDto {
     #[validate(range(max = 100, message = "max_depth must be at most 100"))]

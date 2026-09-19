@@ -9,8 +9,8 @@
 //! - 类型安全的配置解析
 //! - 内置验证
 
+use sdforge::validator::Validate;
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
 // 重新导出子模块中的类型
 pub use super::app::{
@@ -46,6 +46,7 @@ pub use super::search::{
 /// }
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
+#[validate(crate = "sdforge::validator")]
 #[config(env_prefix = "CRAWLRS__", validate)]
 pub struct Settings {
     /// 服务器配置
@@ -130,6 +131,7 @@ pub struct Settings {
 ///   请求级 `options.respect_robots` 可覆盖此全局默认。
 ///   robots.txt 自身获取失败时 fail-open（放行，与 crawl 路径一致）。
 #[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
+#[validate(crate = "sdforge::validator")]
 #[config(env_prefix = "CRAWLRS__ROBOTS__")]
 pub struct RobotsSettings {
     /// robots.txt 匹配与抓取使用的 User-Agent
@@ -427,6 +429,7 @@ impl WorkerCount {
 /// 调用 `EngineTimeoutSettings::validate()`，覆盖所有 `#[validate(range(min=1, max=600))]`
 /// 约束。其余子结构（workers/retry/cache）无 range 约束，不需要 nested。
 #[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
+#[validate(crate = "sdforge::validator")]
 #[config(env_prefix = "CRAWLRS__TIMEOUTS__")]
 pub struct TimeoutSettings {
     /// Worker相关超时
@@ -465,6 +468,7 @@ pub struct WorkerTimeoutSettings {
 ///   立即超时，触发瀑布式 fallback 直到所有引擎失败，造成 DoS
 /// - `max = 600`：防止配置过大值（10 分钟已足够覆盖最慢的浏览器引擎）
 #[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
+#[validate(crate = "sdforge::validator")]
 #[config(env_prefix = "CRAWLRS__TIMEOUTS__ENGINES__")]
 pub struct EngineTimeoutSettings {
     /// 默认请求超时（秒）
@@ -719,20 +723,20 @@ pub struct I18nSettings {
 /// - `default_locale` 必须是有效 BCP 47 语言标识符
 /// - `supported_locales` 必须包含 `default_locale`
 /// - `locales_dir` 必须存在且至少包含一个有效 locale 子目录
-pub fn validate_i18n(settings: &I18nSettings) -> Result<(), validator::ValidationError> {
+pub fn validate_i18n(settings: &I18nSettings) -> Result<(), sdforge::validator::ValidationError> {
     use unic_langid::LanguageIdentifier;
 
     // default_locale 必须是有效 BCP 47
     settings
         .default_locale
         .parse::<LanguageIdentifier>()
-        .map_err(|_| validator::ValidationError::new("i18n_invalid_default_locale"))?;
+        .map_err(|_| sdforge::validator::ValidationError::new("i18n_invalid_default_locale"))?;
 
     // supported_locales 每个都必须是有效 BCP 47
     for locale in &settings.supported_locales {
-        locale
-            .parse::<LanguageIdentifier>()
-            .map_err(|_| validator::ValidationError::new("i18n_invalid_supported_locale"))?;
+        locale.parse::<LanguageIdentifier>().map_err(|_| {
+            sdforge::validator::ValidationError::new("i18n_invalid_supported_locale")
+        })?;
     }
 
     // supported_locales 必须包含 default_locale
@@ -740,7 +744,7 @@ pub fn validate_i18n(settings: &I18nSettings) -> Result<(), validator::Validatio
         .supported_locales
         .contains(&settings.default_locale)
     {
-        return Err(validator::ValidationError::new(
+        return Err(sdforge::validator::ValidationError::new(
             "i18n_default_locale_not_in_supported",
         ));
     }
@@ -748,7 +752,7 @@ pub fn validate_i18n(settings: &I18nSettings) -> Result<(), validator::Validatio
     // locales_dir 必须存在
     let dir = std::path::Path::new(&settings.locales_dir);
     if !dir.exists() {
-        return Err(validator::ValidationError::new(
+        return Err(sdforge::validator::ValidationError::new(
             "i18n_locales_dir_not_found",
         ));
     }
@@ -759,7 +763,7 @@ pub fn validate_i18n(settings: &I18nSettings) -> Result<(), validator::Validatio
         .iter()
         .any(|l| dir.join(l).exists());
     if !has_valid_subdir {
-        return Err(validator::ValidationError::new(
+        return Err(sdforge::validator::ValidationError::new(
             "i18n_no_valid_locale_directory",
         ));
     }

@@ -25,7 +25,7 @@ use crawlrs::domain::models::task_model::Task;
 use crawlrs::domain::repositories::task_repository::RepositoryError;
 use crawlrs::presentation::handlers::task_queries::SyncWaitResult;
 use crawlrs::presentation::handlers::{extract_task_ids, tasks_to_id_map};
-use validator::Validate;
+use sdforge::validator::Validate;
 
 // ============================================================================
 // Helper: construct a Task with sensible defaults

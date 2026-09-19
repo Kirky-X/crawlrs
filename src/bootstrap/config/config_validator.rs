@@ -98,7 +98,7 @@ pub fn validate_security(settings: &Settings, is_production: bool) -> Result<()>
     // 说明：
     //
     // 早期版本此函数为空扩展点（confers 0.4 的 #[config(validate)] 绑定 garde，
-    // 与 Settings 的 validator::Validate 不兼容，故 validator 注解校验留在
+    // 与 Settings 的 sdforge::validator::Validate 不兼容，故 validator 注解校验留在
     // `load_settings()` 中）。现接入 confers `security-rules` 注册表，补齐
     // 密钥强度 / CORS 等 cross-field 业务规则校验。
     debug!("Running security rule validators (confers security-rules)");
@@ -212,9 +212,10 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
     if std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok() && !is_dev
     {
         warn!(
-            "⚠️ SSRF 保护已通过 CRAWLRS_DISABLE_SSRF_PROTECTION 禁用！\
-             此开关仅限开发/测试环境使用，生产环境禁用将导致内网探测风险。\
-             当前环境: {}。如需生产部署，请移除该环境变量并配置 trusted_proxies。",
+            "SSRF protection disabled via CRAWLRS_DISABLE_SSRF_PROTECTION! \
+             This switch is for development/testing only; disabling it in production \
+             enables internal network probing. Current environment: {}. \
+             For production deployment, remove this env var and configure trusted_proxies.",
             env
         );
     }

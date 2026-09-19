@@ -501,10 +501,10 @@ impl ExtractionService {
 }
 
 // Implement Validate for ExtractionRule to enable DTO validation
-use validator::Validate;
+use sdforge::validator::Validate;
 
 impl Validate for ExtractionRule {
-    fn validate(&self) -> Result<(), validator::ValidationErrors> {
+    fn validate(&self) -> Result<(), sdforge::validator::ValidationErrors> {
         // No custom validation needed - all fields are optional or have defaults
         // The struct is valid by default
         Ok(())

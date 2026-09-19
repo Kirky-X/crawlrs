@@ -7,7 +7,7 @@ use crate::config::settings::Settings;
 use anyhow::Result;
 use confers::{ConfigBuilder, EnvSource};
 use log::{error, info};
-use validator::Validate;
+use sdforge::validator::Validate;
 
 /// Load application configuration from the standard settings file and environment.
 ///
@@ -19,7 +19,7 @@ use validator::Validate;
 /// # 安全验证
 ///
 /// confers 0.4 `#[config(validate)]` 集成的是 `garde::Validate`，而 `Settings` 用的是
-/// `validator::Validate`，两者不兼容——`#[validate(range(...))]` 等注解不会被
+/// `sdforge::validator::Validate`，两者不兼容——`#[validate(range(...))]` 等注解不会被
 /// confers 自动触发。本函数在 `build()` 后显式调用 `Settings::validate()`，
 /// 覆盖所有 `#[validate(...)]` 注解（EngineTimeoutSettings 的 range、TaskQueryRequestDto
 /// 的 range 等），防止环境变量注入 `CRAWLRS__TIMEOUTS__ENGINES__DEFAULT_TIMEOUT_SECONDS=0`
@@ -33,7 +33,7 @@ pub fn load_settings() -> Result<Settings> {
         .build()
         .map_err(|e| anyhow::anyhow!("Configuration load failed: {}", e))?;
 
-    // 显式调用 validator::Validate::validate()
+    // 显式调用 sdforge::validator::Validate::validate()
     // 防止环境变量绕过 #[validate(range(min = 1, max = 600))] 等约束
     settings
         .validate()

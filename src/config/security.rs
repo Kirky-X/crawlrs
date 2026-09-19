@@ -8,10 +8,12 @@ use super::settings::Settings;
 /// 安全验证函数
 ///
 /// 验证配置的安全性要求，包括 webhook secret、数据库密码、S3 凭据等
-pub fn validate_security(settings: &Settings) -> Result<(), validator::ValidationError> {
+pub fn validate_security(settings: &Settings) -> Result<(), sdforge::validator::ValidationError> {
     // 检查 webhook secret 是否为空
     if settings.webhook.secret().is_empty() {
-        return Err(validator::ValidationError::new("webhook_secret_empty"));
+        return Err(sdforge::validator::ValidationError::new(
+            "webhook_secret_empty",
+        ));
     }
 
     // 检查 webhook secret 是否使用默认值
@@ -24,17 +26,23 @@ pub fn validate_security(settings: &Settings) -> Result<(), validator::Validatio
         "password",
     ];
     if weak_secrets.contains(&settings.webhook.secret()) {
-        return Err(validator::ValidationError::new("webhook_secret_weak"));
+        return Err(sdforge::validator::ValidationError::new(
+            "webhook_secret_weak",
+        ));
     }
 
     // 检查 webhook secret 长度
     if settings.webhook.secret().len() < 32 {
-        return Err(validator::ValidationError::new("webhook_secret_short"));
+        return Err(sdforge::validator::ValidationError::new(
+            "webhook_secret_short",
+        ));
     }
 
     // 检查速率限制是否禁用
     if !settings.rate_limiting.enabled {
-        return Err(validator::ValidationError::new("rate_limiting_disabled"));
+        return Err(sdforge::validator::ValidationError::new(
+            "rate_limiting_disabled",
+        ));
     }
 
     // 检查数据库密码
@@ -43,7 +51,9 @@ pub fn validate_security(settings: &Settings) -> Result<(), validator::Validatio
         .iter()
         .any(|p| settings.database.url().contains(p))
     {
-        return Err(validator::ValidationError::new("database_password_weak"));
+        return Err(sdforge::validator::ValidationError::new(
+            "database_password_weak",
+        ));
     }
 
     // 生产环境密码长度验证
@@ -55,7 +65,7 @@ pub fn validate_security(settings: &Settings) -> Result<(), validator::Validatio
     if is_production {
         let password_length = extract_password_length(settings.database.url());
         if password_length > 0 && password_length < 16 {
-            return Err(validator::ValidationError::new(
+            return Err(sdforge::validator::ValidationError::new(
                 "database_password_short_production",
             ));
         }
@@ -70,10 +80,14 @@ pub fn validate_security(settings: &Settings) -> Result<(), validator::Validatio
     {
         let jwt_secret = settings.auth.jwt_secret();
         if jwt_secret.is_empty() {
-            return Err(validator::ValidationError::new("auth_jwt_secret_empty"));
+            return Err(sdforge::validator::ValidationError::new(
+                "auth_jwt_secret_empty",
+            ));
         }
         if jwt_secret.len() < 32 {
-            return Err(validator::ValidationError::new("auth_jwt_secret_weak"));
+            return Err(sdforge::validator::ValidationError::new(
+                "auth_jwt_secret_weak",
+            ));
         }
     }
 

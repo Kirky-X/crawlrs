@@ -6,9 +6,9 @@
 use crate::common::CacheMode;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use sdforge::validator::Validate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use validator::Validate;
 
 /// Maximum allowed URL length (2048 characters)
 pub const MAX_URL_LENGTH: usize = 2048;
@@ -22,17 +22,21 @@ pub const MAX_METADATA_DEPTH: usize = 5;
 /// URL scheme validation: only http and https are allowed (SSRF mitigation).
 static HTTP_URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^https?://").unwrap());
 
-fn is_http_url(value: &str) -> Result<(), validator::ValidationError> {
+fn is_http_url(value: &str) -> Result<(), sdforge::validator::ValidationError> {
     if HTTP_URL_RE.is_match(value) {
         Ok(())
     } else {
-        Err(validator::ValidationError::new("invalid_url_scheme")
-            .with_message("URL must start with http:// or https://".into()))
+        Err(
+            sdforge::validator::ValidationError::new("invalid_url_scheme")
+                .with_message("URL must start with http:// or https://".into()),
+        )
     }
 }
 
 /// Validate that metadata JSON nesting depth does not exceed MAX_METADATA_DEPTH.
-fn validate_metadata_depth(value: &serde_json::Value) -> Result<(), validator::ValidationError> {
+fn validate_metadata_depth(
+    value: &serde_json::Value,
+) -> Result<(), sdforge::validator::ValidationError> {
     fn depth(v: &serde_json::Value) -> usize {
         match v {
             serde_json::Value::Object(map) => 1 + map.values().map(depth).max().unwrap_or(0),
@@ -42,7 +46,7 @@ fn validate_metadata_depth(value: &serde_json::Value) -> Result<(), validator::V
     }
     if depth(value) > MAX_METADATA_DEPTH {
         Err(
-            validator::ValidationError::new("metadata_too_deep").with_message(
+            sdforge::validator::ValidationError::new("metadata_too_deep").with_message(
                 format!("metadata JSON depth must not exceed {}", MAX_METADATA_DEPTH).into(),
             ),
         )
@@ -56,6 +60,7 @@ fn validate_metadata_depth(value: &serde_json::Value) -> Result<(), validator::V
 /// 用于封装客户端发起的网页爬取请求的相关参数
 /// 拒绝未知字段以增强安全性
 #[derive(Debug, Deserialize, Serialize, Validate)]
+#[validate(crate = "sdforge::validator")]
 #[serde(deny_unknown_fields)]
 pub struct ScrapeRequestDto {
     /// 要爬取的网页URL (仅支持 http/https)
@@ -105,6 +110,7 @@ pub struct ScrapeRequestDto {
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Validate)]
+#[validate(crate = "sdforge::validator")]
 #[serde(deny_unknown_fields)]
 pub struct ScrapeOptionsDto {
     /// 自定义HTTP请求头

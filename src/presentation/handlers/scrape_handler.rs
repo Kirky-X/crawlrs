@@ -38,9 +38,9 @@ mod tests {
         Json,
     };
     use chrono::NaiveDateTime;
+    use sdforge::validator::Validate;
     use std::sync::Arc;
     use uuid::Uuid;
-    use validator::Validate;
 
     // ========== ScrapeRequestDto validation tests ==========
 

@@ -3,13 +3,14 @@
 
 use crate::domain::models::{TaskStatus, TaskType};
 use chrono::{DateTime, FixedOffset};
+use sdforge::validator::Validate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
-use validator::Validate;
 
 /// 任务查询请求DTO
 #[derive(Debug, Deserialize, Serialize, Validate)]
+#[validate(crate = "sdforge::validator")]
 pub struct TaskQueryRequestDto {
     /// 任务ID列表（批量查询）
     pub task_ids: Option<Vec<Uuid>>,
@@ -116,6 +117,7 @@ pub struct ScrapeResultInfoDto {
 
 /// 任务取消请求DTO
 #[derive(Debug, Deserialize, Serialize, Validate)]
+#[validate(crate = "sdforge::validator")]
 pub struct TaskCancelRequestDto {
     /// 任务ID列表（批量取消）
     pub task_ids: Vec<Uuid>,
