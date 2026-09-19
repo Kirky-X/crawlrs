@@ -38,3 +38,22 @@ domain-error-invalid-webhook-url = Invalid webhook URL: { $url }
 domain-error-llm-extraction-failed = LLM extraction failed.
 domain-error-invalid-css-selector = Invalid CSS selector: { $selector }
 domain-error-validation = Validation error: { $field } - { $message }
+
+# Search error messages (16 keys) — SearchError::user_message_locale()
+
+search-error-network = Network request failed: { $message }
+search-error-timeout = Search timed out: { $message }
+search-error-parse = Parse error: { $message }
+search-error-content-parsing = Content parsing error: { $message }
+search-error-engine-client = Engine { $engine } client call failed: { $message }
+search-error-bad-http-status = Engine { $engine } returned HTTP error status: { $status }
+search-error-rate-limited = Engine rate limited: { $message }
+search-error-captcha = Engine { $engine } returned a CAPTCHA page
+search-error-insufficient-content = Engine { $engine } returned insufficient content: { $message }
+search-error-all-engines-failed = All search engines failed.
+search-error-engine-failed = Engine { $engine } execution failed.
+search-error-smart-routing-failed = Smart routing failed: { $message }
+search-error-smart-routing-timeout = Smart routing timed out: { $seconds }s
+search-error-engine-creation-failed = Engine creation failed: { $message }
+search-error-circuit-open = Circuit breaker open: { $message }
+search-error-no-engine-available = No available search engine.

@@ -9,9 +9,9 @@ use thiserror::Error;
 /// 端口嗅探错误类型
 #[derive(Error, Debug)]
 pub enum PortSnifferError {
-    #[error("端口号 {0} 超出有效范围 (0-65535)")]
+    #[error("Port {0} out of valid range (0-65535)")]
     PortOutOfRange(u16),
-    #[error("未找到可用端口: {0}")]
+    #[error("No available port: {0}")]
     NoAvailablePort(String),
 }
 
@@ -62,16 +62,22 @@ impl PortSniffer {
         max_attempts: u16,
     ) -> Result<PortSnifferResult, PortSnifferError> {
         let mut logs = Vec::new();
-        logs.push(format!("开始端口检测，起始端口: {}", start_port));
+        logs.push(format!(
+            "Starting port detection, start port: {}",
+            start_port
+        ));
 
         // 如果未启用检测功能，直接检查起始端口
         if !enable_detection {
             if Self::is_port_in_use(start_port) {
                 logs.push(format!(
-                    "端口 {} 已被占用，且自动嗅探功能未启用",
+                    "Port {} is in use and auto-sniffing is not enabled",
                     start_port
                 ));
-                warn!("端口 {} 已被占用，且自动嗅探功能未启用", start_port);
+                warn!(
+                    "Port {} is in use and auto-sniffing is not enabled",
+                    start_port
+                );
                 return Ok(PortSnifferResult {
                     success: true,
                     port: start_port,
@@ -90,8 +96,8 @@ impl PortSniffer {
 
         while attempts < max_attempts {
             if !Self::is_port_in_use(current_port) {
-                logs.push(format!("找到可用端口: {}", current_port));
-                info!("找到可用端口: {}", current_port);
+                logs.push(format!("Found available port: {}", current_port));
+                info!("Found available port: {}", current_port);
                 return Ok(PortSnifferResult {
                     success: true,
                     port: current_port,
@@ -100,12 +106,12 @@ impl PortSniffer {
             }
 
             attempts += 1;
-            logs.push(format!("端口 {} 已被占用", current_port));
+            logs.push(format!("Port {} is in use", current_port));
 
             // 只在最后几次尝试时显示警告
             if attempts < max_attempts {
                 warn!(
-                    "端口 {} 已被占用，尝试下一个端口... ({}/{})",
+                    "Port {} is in use, trying next port... ({}/{})",
                     current_port, attempts, max_attempts
                 );
             }
@@ -122,7 +128,7 @@ impl PortSniffer {
         }
 
         Err(PortSnifferError::NoAvailablePort(format!(
-            "在尝试 {} 个端口后未找到可用端口 (范围 {}-{})",
+            "No available port found after {} attempts (range {}-{})",
             max_attempts,
             start_port,
             current_port - 1
@@ -171,7 +177,7 @@ mod tests {
 
         assert!(result.port > port);
         assert!(result.success);
-        assert!(result.logs.iter().any(|log| log.contains("已被占用")));
+        assert!(result.logs.iter().any(|log| log.contains("in use")));
     }
 
     #[test]
@@ -217,7 +223,8 @@ mod tests {
             result
                 .logs
                 .iter()
-                .any(|log| log.contains("开始端口检测") && log.contains(&port.to_string())),
+                .any(|log| log.contains("Starting port detection")
+                    && log.contains(&port.to_string())),
             "logs should contain start message with port, got: {:?}",
             result.logs
         );
@@ -231,7 +238,10 @@ mod tests {
 
         let result = PortSniffer::find_available_port(port, true, 5).unwrap();
         assert!(
-            result.logs.iter().any(|log| log.contains("找到可用端口")),
+            result
+                .logs
+                .iter()
+                .any(|log| log.contains("Found available port")),
             "logs should contain found message, got: {:?}",
             result.logs
         );
@@ -249,7 +259,7 @@ mod tests {
             result
                 .logs
                 .iter()
-                .any(|log| log.contains("已被占用") && log.contains("自动嗅探功能未启用")),
+                .any(|log| log.contains("in use") && log.contains("auto-sniffing")),
             "logs should indicate port in use and detection disabled, got: {:?}",
             result.logs
         );
@@ -265,7 +275,7 @@ mod tests {
         let result = PortSniffer::find_available_port(port, false, 5).unwrap();
         // 禁用检测且端口可用时，不应有 "已被占用" 日志
         assert!(
-            !result.logs.iter().any(|log| log.contains("已被占用")),
+            !result.logs.iter().any(|log| log.contains("in use")),
             "should not log in-use when port is free, got: {:?}",
             result.logs
         );
@@ -309,7 +319,7 @@ mod tests {
             "should find a port greater than occupied start port"
         );
         // 日志应包含 "已被占用" 记录
-        assert!(result.logs.iter().any(|log| log.contains("已被占用")));
+        assert!(result.logs.iter().any(|log| log.contains("in use")));
     }
 
     // ========== find_available_port: 错误路径 ==========
@@ -385,14 +395,14 @@ mod tests {
         let err = PortSnifferError::PortOutOfRange(65535u16);
         let msg = err.to_string();
         assert!(msg.contains("65535"), "msg: {}", msg);
-        assert!(msg.contains("超出有效范围"), "msg: {}", msg);
+        assert!(msg.contains("out of valid range"), "msg: {}", msg);
     }
 
     #[test]
     fn test_port_sniffer_error_no_available_port_display() {
         let err = PortSnifferError::NoAvailablePort("no port found in range".to_string());
         let msg = err.to_string();
-        assert!(msg.contains("未找到可用端口"), "msg: {}", msg);
+        assert!(msg.contains("No available port"), "msg: {}", msg);
         assert!(msg.contains("no port found in range"), "msg: {}", msg);
     }
 

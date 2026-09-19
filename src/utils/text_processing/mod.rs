@@ -38,10 +38,10 @@ pub use processor::{
 
 /// 模块健康检查
 pub fn health_check() -> Result<(), String> {
-    let test_content = "健康检查测试内容";
+    let test_content = "health check sample content";
     match TextEncodingProcessor::new().process_text(test_content.as_bytes()) {
         Ok(_) => Ok(()),
-        Err(e) => Err(format!("文本处理模块故障: {}", e)),
+        Err(e) => Err(format!("Text processing module failure: {}", e)),
     }
 }
 

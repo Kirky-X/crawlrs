@@ -39,7 +39,13 @@ impl ScrapeWorker {
         let processed_content = match process_text_encoding(&task, &scrape_resp).await {
             Ok(content) => content.into_owned(),
             Err(e) => {
-                warn!("文本编码处理失败，使用原始内容: {}", e);
+                warn!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "scrape-task-encoding-fallback",
+                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    )
+                );
                 scrape_resp.content.clone()
             }
         };

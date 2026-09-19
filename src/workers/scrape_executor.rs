@@ -16,6 +16,7 @@ use crate::common::CacheContext;
 use crate::domain::models::{ScrapeResult, Task};
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::engines::engine_client::ScrapeResponse;
+use crate::i18n::tr_log_args;
 use crate::infrastructure::oxcache::CacheService;
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
 use crate::utils::robots::RobotsCheckerTrait;
@@ -34,8 +35,17 @@ pub async fn process_text_encoding<'a>(
     response: &'a ScrapeResponse,
 ) -> Result<std::borrow::Cow<'a, str>> {
     info!(
-        "开始处理文本编码转换，任务ID: {}, URL: {}",
-        task.id, task.url
+        "{}",
+        tr_log_args(
+            "scrape-exec-encoding-started",
+            &[
+                (
+                    "task_id",
+                    fluent_bundle::FluentValue::from(task.id.to_string())
+                ),
+                ("url", fluent_bundle::FluentValue::from(task.url.as_str())),
+            ],
+        )
     );
 
     // 创建文本处理集成器
@@ -67,10 +77,33 @@ pub async fn process_text_encoding<'a>(
         Ok(processed_response) => {
             if processed_response.processing_success {
                 info!(
-                    "文本编码处理成功，检测到的编码: {:?}, 处理时间: {}ms, 质量评分: {}",
-                    processed_response.encoding_detected,
-                    processed_response.processing_success as u32,
-                    processed_response.processing_error.is_none() as u32
+                    "{}",
+                    tr_log_args(
+                        "scrape-exec-encoding-succeeded",
+                        &[
+                            (
+                                "encoding",
+                                fluent_bundle::FluentValue::from(
+                                    processed_response
+                                        .encoding_detected
+                                        .clone()
+                                        .unwrap_or_else(|| "none".to_string())
+                                )
+                            ),
+                            (
+                                "elapsed",
+                                fluent_bundle::FluentValue::from(
+                                    processed_response.processing_success.to_string()
+                                )
+                            ),
+                            (
+                                "quality",
+                                fluent_bundle::FluentValue::from(
+                                    processed_response.processing_error.is_none().to_string()
+                                )
+                            ),
+                        ],
+                    )
                 );
                 Ok(std::borrow::Cow::Owned(
                     processed_response.processed_content,
@@ -78,14 +111,29 @@ pub async fn process_text_encoding<'a>(
             } else {
                 let error_msg = processed_response
                     .processing_error
-                    .unwrap_or_else(|| "未知错误".to_string());
-                warn!("文本编码处理失败: {}", error_msg);
-                Err(anyhow::anyhow!("文本编码处理失败: {}", error_msg))
+                    .unwrap_or_else(|| "Unknown error".to_string());
+                warn!(
+                    "{}",
+                    tr_log_args(
+                        "scrape-exec-encoding-failed",
+                        &[("error", fluent_bundle::FluentValue::from(error_msg.clone()))],
+                    )
+                );
+                Err(anyhow::anyhow!(
+                    "Text encoding processing failed: {}",
+                    error_msg
+                ))
             }
         }
         Err(e) => {
-            warn!("文本编码处理异常: {}", e);
-            Err(anyhow::anyhow!("文本编码处理异常: {}", e))
+            warn!(
+                "{}",
+                tr_log_args(
+                    "scrape-exec-encoding-error",
+                    &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                )
+            );
+            Err(anyhow::anyhow!("Text encoding processing exception: {}", e))
         }
     }
 }

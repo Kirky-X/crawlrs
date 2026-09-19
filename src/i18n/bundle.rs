@@ -391,6 +391,91 @@ impl I18nBundle {
             "backlog-processing-summary",
         ]);
 
+        // workers.ftl 追加 (27 keys) — 积压 Worker 详细日志/链接提取器/抓取执行器
+        keys.extend([
+            "backlog-processing-failed",
+            "backlog-expired-marked",
+            "backlog-retry-exhausted-marked",
+            "backlog-concurrency-available",
+            "backlog-state-transition-skipped",
+            "backlog-reactivated",
+            "backlog-reactivation-failed",
+            "backlog-concurrency-denied",
+            "backlog-unexpected-requeue",
+            "backlog-concurrency-check-failed",
+            "backlog-task-status-not-activatable",
+            "backlog-task-reactivated",
+            "backlog-cleanup-started",
+            "backlog-cleanup-none",
+            "backlog-cleanup-failed",
+            "backlog-cleanup-completed",
+            "backlog-cleanup-processing",
+            "backlog-task-marked-failed-by-expiry",
+            "backlog-process-error",
+            "backlog-cleanup-error",
+            "link-score-skip",
+            "link-frontier-enqueued",
+            "scrape-exec-encoding-started",
+            "scrape-exec-encoding-succeeded",
+            "scrape-exec-encoding-failed",
+            "scrape-exec-encoding-error",
+            "scrape-task-encoding-fallback",
+        ]);
+
+        // logs.ftl (29 keys) — 非 worker 运维日志（文本处理流水线/启动期 CORS/
+        // 浏览器下载器/引擎路由）
+        keys.extend([
+            "text-short-input",
+            "text-long-input",
+            "text-cached-detection",
+            "text-unicode-escapes-detected",
+            "text-unicode-escapes-parsed",
+            "text-detection-started",
+            "text-encoding-detected",
+            "text-detection-low-confidence",
+            "text-html-structure-detected",
+            "text-encoding-succeeded",
+            "text-encoding-failed",
+            "text-web-content-started",
+            "text-crawl-started",
+            "text-crawl-completed",
+            "text-config-updated",
+            "text-integration-enabled",
+            "text-integration-disabled",
+            "text-integration-disabled-direct",
+            "text-integration-succeeded",
+            "text-integration-failed",
+            "text-integration-disabled-batch",
+            "text-integration-item-failed",
+            "boot-cors-wildcard",
+            "boot-cors-invalid-fallback",
+            "browser-check-started",
+            "browser-fetcher-download-failed",
+            "browser-cleaned-up",
+            "browser-system-found",
+            "engine-registered",
+        ]);
+
+        // errors.ftl 追加 (16 keys) — SearchError::user_message_locale()
+        keys.extend([
+            "search-error-network",
+            "search-error-timeout",
+            "search-error-parse",
+            "search-error-content-parsing",
+            "search-error-engine-client",
+            "search-error-bad-http-status",
+            "search-error-rate-limited",
+            "search-error-captcha",
+            "search-error-insufficient-content",
+            "search-error-all-engines-failed",
+            "search-error-engine-failed",
+            "search-error-smart-routing-failed",
+            "search-error-smart-routing-timeout",
+            "search-error-engine-creation-failed",
+            "search-error-circuit-open",
+            "search-error-no-engine-available",
+        ]);
+
         keys.into_iter().map(String::from).collect()
     }
 }

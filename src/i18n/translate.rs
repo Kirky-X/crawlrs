@@ -48,6 +48,24 @@ pub fn t_with_args(
     bundle.translate_with_args(locale, key, args)
 }
 
+/// 经启动期 i18n 全局束翻译运维日志（worker/引擎等无请求上下文出口，locale
+/// 取启动检测/配置决议的默认值）。未初始化或 key 缺失时回退 key 本身
+/// （与 Fluent 缺 key 语义一致，不 panic）。
+pub fn tr_log(key: &str) -> String {
+    match super::startup_i18n() {
+        Some((locale, bundle)) => t(locale, bundle, key),
+        None => key.to_string(),
+    }
+}
+
+/// 同 [`tr_log`]，带 Fluent 占位参数
+pub fn tr_log_args(key: &str, args: &[(&str, FluentValue)]) -> String {
+    match super::startup_i18n() {
+        Some((locale, bundle)) => t_with_args(locale, bundle, key, args),
+        None => key.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

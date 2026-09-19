@@ -412,7 +412,7 @@ impl EnvVarSecurityMonitor {
                         var_name: var_name.to_string(),
                         warning_type: SensitiveVarWarningType::EmptyValue,
                         message: format!(
-                            "敏感环境变量 {} 在生产环境中为空，这可能是一个安全风险",
+                            "Sensitive environment variable {} is empty in production, which may be a security risk",
                             var_name
                         ),
                         severity: WarningSeverity::Critical,
@@ -427,7 +427,7 @@ impl EnvVarSecurityMonitor {
                             var_name: var_name.to_string(),
                             warning_type: SensitiveVarWarningType::WeakDefaultValue,
                             message: format!(
-                                "敏感环境变量 {} 包含弱默认值模式: '{}'",
+                                "Sensitive environment variable {} contains weak default value pattern: '{}'",
                                 var_name, weak
                             ),
                             severity: WarningSeverity::High,
@@ -443,7 +443,7 @@ impl EnvVarSecurityMonitor {
                             var_name: var_name.to_string(),
                             warning_type: SensitiveVarWarningType::TestValue,
                             message: format!(
-                                "敏感环境变量 {} 包含测试值模式: '{}'",
+                                "Sensitive environment variable {} contains test value pattern: '{}'",
                                 var_name, pattern
                             ),
                             severity: if environment == "production" {
@@ -462,7 +462,7 @@ impl EnvVarSecurityMonitor {
                         var_name: var_name.to_string(),
                         warning_type: SensitiveVarWarningType::ShortValue,
                         message: format!(
-                            "敏感环境变量 {} 的值过短（{} 字符），建议至少使用 32 字符的强密钥",
+                            "Sensitive environment variable {} value too short ({} characters); a strong key of at least 32 characters is recommended",
                             var_name,
                             value.len()
                         ),
@@ -476,7 +476,7 @@ impl EnvVarSecurityMonitor {
                         var_name: var_name.to_string(),
                         warning_type: SensitiveVarWarningType::InsecurePattern,
                         message: format!(
-                            "敏感环境变量 {} 的值与变量名相同，这是一个严重的安全问题",
+                            "Sensitive environment variable {} value equals its variable name, which is a serious security issue",
                             var_name
                         ),
                         severity: WarningSeverity::Critical,
@@ -497,8 +497,11 @@ impl EnvVarSecurityMonitor {
             if lower_level.contains("debug") || lower_level.contains("trace") {
                 warnings.push(LoggingSecurityWarning {
                     warning_type: LoggingWarningType::VerboseLogLevel,
-                    message: format!("日志级别设置为 '{}'，可能会在日志中泄露敏感信息", log_level),
-                    recommendation: "建议在生产环境使用 INFO 或 WARN 级别".to_string(),
+                    message: format!(
+                        "Log level set to '{}', sensitive information may leak into logs",
+                        log_level
+                    ),
+                    recommendation: "Use INFO or WARN level in production".to_string(),
                 });
             }
         }
@@ -507,8 +510,8 @@ impl EnvVarSecurityMonitor {
             if log_file.starts_with("/tmp") || log_file.starts_with("/var/tmp") {
                 warnings.push(LoggingSecurityWarning {
                     warning_type: LoggingWarningType::InsecureLogPath,
-                    message: format!("日志文件路径 '{}' 位于临时目录，可能存在权限问题", log_file),
-                    recommendation: "建议将日志文件存储在安全的目录中".to_string(),
+                    message: format!("Log file path '{}' is in a temporary directory, which may cause permission issues", log_file),
+                    recommendation: "Store log files in a secure directory".to_string(),
                 });
             }
         }
@@ -521,10 +524,10 @@ impl EnvVarSecurityMonitor {
                 warnings.push(LoggingSecurityWarning {
                     warning_type: LoggingWarningType::SensitiveVarDebug,
                     message: format!(
-                        "发现调试变量 '{}'，可能会泄露敏感变量 '{}' 的值",
+                        "Debug variable '{}' found, which may leak the value of sensitive variable '{}'",
                         debug_var, var_name
                     ),
-                    recommendation: "建议删除此调试变量".to_string(),
+                    recommendation: "Remove this debug variable".to_string(),
                 });
             }
 
@@ -532,10 +535,10 @@ impl EnvVarSecurityMonitor {
                 warnings.push(LoggingSecurityWarning {
                     warning_type: LoggingWarningType::SensitiveVarLogging,
                     message: format!(
-                        "发现日志变量 '{}'，可能会记录敏感变量 '{}' 的值",
+                        "Logging variable '{}' found, which may log the value of sensitive variable '{}'",
                         log_var, var_name
                     ),
-                    recommendation: "建议删除此日志变量".to_string(),
+                    recommendation: "Remove this logging variable".to_string(),
                 });
             }
         }

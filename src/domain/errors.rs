@@ -16,68 +16,68 @@ use crate::i18n::{I18nBundle, Locale};
 #[derive(Error, Debug)]
 pub enum DomainError {
     // ==================== 爬虫配置错误 ====================
-    #[error("爬虫配置无效: {message}")]
+    #[error("Crawler configuration error: {message}")]
     CrawlConfigError {
         message: String,
         #[source]
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
-    #[error("爬取深度超出限制: 最大深度 {max}, 请求深度 {requested}")]
+    #[error("Crawl depth exceeded: maximum {max}, requested {requested}")]
     CrawlDepthExceeded { max: u32, requested: u32 },
 
-    #[error("URL路径被过滤规则排除: {path}")]
+    #[error("URL path excluded by filter rules: {path}")]
     PathFiltered { path: String },
 
     // ==================== 任务错误 ====================
-    #[error("任务未找到: {task_id}")]
+    #[error("Task not found: {task_id}")]
     TaskNotFound { task_id: uuid::Uuid },
 
-    #[error("任务状态无效: 当前状态 {current}, 期望状态 {expected}")]
+    #[error("Invalid task state: current {current}, expected {expected}")]
     InvalidTaskState { current: String, expected: String },
 
-    #[error("任务已过期: 创建于 {created_at}, 超时时间 {timeout_seconds}秒")]
+    #[error("Task expired: created at {created_at}, timeout {timeout_seconds}s")]
     TaskExpired {
         created_at: chrono::DateTime<chrono::Utc>,
         timeout_seconds: u64,
     },
 
     // ==================== 团队和配额错误 ====================
-    #[error("团队不存在: {team_id}")]
+    #[error("Team not found: {team_id}")]
     TeamNotFound { team_id: uuid::Uuid },
 
-    #[error("积分不足: 需要 {required}, 可用 {available}")]
+    #[error("Insufficient credits: required {required}, available {available}")]
     InsufficientCredits { required: i64, available: i64 },
 
-    #[error("团队并发限制: 当前 {current}, 限制 {limit}")]
+    #[error("Team concurrency limit: current {current}, limit {limit}")]
     ConcurrencyLimitExceeded { current: usize, limit: usize },
 
     // ==================== URL验证错误 ====================
-    #[error("无效的URL: {url}")]
+    #[error("Invalid URL: {url}")]
     InvalidUrl { url: String },
 
-    #[error("URL在黑名单中: {domain}")]
+    #[error("URL is blacklisted: {domain}")]
     DomainBlacklisted { domain: String },
 
-    #[error("URL被robots.txt禁止: {url}")]
+    #[error("URL is forbidden by robots.txt: {url}")]
     RobotsForbidden { url: String },
 
     // ==================== Webhook错误 ====================
-    #[error("Webhook投递失败: {url}, 状态码 {status}")]
+    #[error("Webhook delivery failed: {url}, status {status}")]
     WebhookDeliveryFailed { url: String, status: u16 },
 
-    #[error("无效的webhook URL: {url}")]
+    #[error("Invalid webhook URL: {url}")]
     InvalidWebhookUrl { url: String },
 
     // ==================== 提取错误 ====================
-    #[error("LLM提取失败: {model}, 错误: {message}")]
+    #[error("LLM extraction failed: model {model}, error: {message}")]
     LLMExtractionFailed { model: String, message: String },
 
-    #[error("CSS选择器无效: {selector}")]
+    #[error("Invalid CSS selector: {selector}")]
     InvalidCssSelector { selector: String },
 
     // ==================== 验证错误 ====================
-    #[error("输入验证失败: {field} - {message}")]
+    #[error("Validation failed: {field} - {message}")]
     ValidationError { field: String, message: String },
 }
 
@@ -218,7 +218,7 @@ mod tests {
         };
 
         let msg = error.to_string();
-        assert!(msg.contains("积分不足"));
+        assert!(msg.contains("Insufficient credits"));
         assert!(msg.contains("100"));
         assert!(msg.contains("50"));
     }
@@ -228,7 +228,7 @@ mod tests {
         let error = DomainError::validation("url", "Invalid format");
 
         let msg = error.to_string();
-        assert!(msg.contains("输入验证失败"));
+        assert!(msg.contains("Validation failed"));
         assert!(msg.contains("url"));
         assert!(msg.contains("Invalid format"));
     }
@@ -239,7 +239,7 @@ mod tests {
         let error = DomainError::TaskNotFound { task_id };
 
         let msg = error.to_string();
-        assert!(msg.contains("任务未找到"));
+        assert!(msg.contains("Task not found"));
         assert!(msg.contains(&task_id.to_string()));
     }
 
@@ -250,7 +250,7 @@ mod tests {
         };
 
         let msg = error.to_string();
-        assert!(msg.contains("无效的URL"));
+        assert!(msg.contains("Invalid URL"));
         assert!(msg.contains("not-a-url"));
     }
 
@@ -258,7 +258,7 @@ mod tests {
     fn test_crawl_config_error_without_source() {
         let error = DomainError::crawl_config("missing field");
         let msg = error.to_string();
-        assert!(msg.contains("爬虫配置无效"));
+        assert!(msg.contains("Crawler configuration error"));
         assert!(msg.contains("missing field"));
         // source 为 None 时不应 panic
         assert!(error.source().is_none());
@@ -272,7 +272,7 @@ mod tests {
             source: Some(Box::new(source_err)),
         };
         let msg = error.to_string();
-        assert!(msg.contains("爬虫配置无效"));
+        assert!(msg.contains("Crawler configuration error"));
         assert!(msg.contains("wrapped"));
         // source 链应返回内部错误
         let src = error.source();
@@ -287,7 +287,7 @@ mod tests {
             requested: 10,
         };
         let msg = error.to_string();
-        assert!(msg.contains("爬取深度超出限制"));
+        assert!(msg.contains("Crawl depth exceeded"));
         assert!(msg.contains("5"));
         assert!(msg.contains("10"));
     }
@@ -299,8 +299,8 @@ mod tests {
             requested: 1,
         };
         let msg = error.to_string();
-        assert!(msg.contains("最大深度 0"));
-        assert!(msg.contains("请求深度 1"));
+        assert!(msg.contains("maximum 0"));
+        assert!(msg.contains("requested 1"));
     }
 
     #[test]
@@ -309,7 +309,7 @@ mod tests {
             path: "/admin/*".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("URL路径被过滤规则排除"));
+        assert!(msg.contains("URL path excluded by filter rules"));
         assert!(msg.contains("/admin/*"));
     }
 
@@ -319,7 +319,7 @@ mod tests {
             path: String::new(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("URL路径被过滤规则排除"));
+        assert!(msg.contains("URL path excluded by filter rules"));
         // 空字符串边界值：仍能渲染
         assert!(!msg.is_empty());
     }
@@ -331,7 +331,7 @@ mod tests {
             expected: "Pending".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("任务状态无效"));
+        assert!(msg.contains("Invalid task state"));
         assert!(msg.contains("Running"));
         assert!(msg.contains("Pending"));
     }
@@ -344,7 +344,7 @@ mod tests {
             timeout_seconds: 60,
         };
         let msg = error.to_string();
-        assert!(msg.contains("任务已过期"));
+        assert!(msg.contains("Task expired"));
         // Display 格式可能不是 RFC3339，验证日期组成部分（年月日）存在
         assert!(msg.contains(&created_at.format("%Y").to_string()));
         assert!(msg.contains("60"));
@@ -358,7 +358,7 @@ mod tests {
             timeout_seconds: 0,
         };
         let msg = error.to_string();
-        assert!(msg.contains("超时时间 0秒"));
+        assert!(msg.contains("timeout 0s"));
     }
 
     #[test]
@@ -366,7 +366,7 @@ mod tests {
         let team_id = uuid::Uuid::new_v4();
         let error = DomainError::TeamNotFound { team_id };
         let msg = error.to_string();
-        assert!(msg.contains("团队不存在"));
+        assert!(msg.contains("Team not found"));
         assert!(msg.contains(&team_id.to_string()));
     }
 
@@ -375,7 +375,7 @@ mod tests {
         let team_id = uuid::Uuid::nil();
         let error = DomainError::TeamNotFound { team_id };
         let msg = error.to_string();
-        assert!(msg.contains("团队不存在"));
+        assert!(msg.contains("Team not found"));
         assert!(msg.contains("00000000-0000-0000-0000-000000000000"));
     }
 
@@ -386,7 +386,7 @@ mod tests {
             limit: 10,
         };
         let msg = error.to_string();
-        assert!(msg.contains("团队并发限制"));
+        assert!(msg.contains("Team concurrency limit"));
         assert!(msg.contains("11"));
         assert!(msg.contains("10"));
     }
@@ -398,8 +398,8 @@ mod tests {
             limit: 0,
         };
         let msg = error.to_string();
-        assert!(msg.contains("当前 0"));
-        assert!(msg.contains("限制 0"));
+        assert!(msg.contains("current 0"));
+        assert!(msg.contains("limit 0"));
     }
 
     #[test]
@@ -408,7 +408,7 @@ mod tests {
             domain: "example.com".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("URL在黑名单中"));
+        assert!(msg.contains("URL is blacklisted"));
         assert!(msg.contains("example.com"));
     }
 
@@ -418,7 +418,7 @@ mod tests {
             url: "https://example.com/private".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("URL被robots.txt禁止"));
+        assert!(msg.contains("URL is forbidden by robots.txt"));
         assert!(msg.contains("https://example.com/private"));
     }
 
@@ -429,7 +429,7 @@ mod tests {
             status: 503,
         };
         let msg = error.to_string();
-        assert!(msg.contains("Webhook投递失败"));
+        assert!(msg.contains("Webhook delivery failed"));
         assert!(msg.contains("https://hook.example.com"));
         assert!(msg.contains("503"));
     }
@@ -450,7 +450,7 @@ mod tests {
             url: "ftp://not-webhook".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("无效的webhook URL"));
+        assert!(msg.contains("Invalid webhook URL"));
         assert!(msg.contains("ftp://not-webhook"));
     }
 
@@ -461,7 +461,7 @@ mod tests {
             message: "rate limited".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("LLM提取失败"));
+        assert!(msg.contains("LLM extraction failed"));
         assert!(msg.contains("gpt-4"));
         assert!(msg.contains("rate limited"));
     }
@@ -472,17 +472,17 @@ mod tests {
             selector: "div >".to_string(),
         };
         let msg = error.to_string();
-        assert!(msg.contains("CSS选择器无效"));
+        assert!(msg.contains("Invalid CSS selector"));
         assert!(msg.contains("div >"));
     }
 
     #[test]
     fn test_validation_helper_constructor() {
-        let error = DomainError::validation("email", "格式不正确");
+        let error = DomainError::validation("email", "invalid format");
         match error {
             DomainError::ValidationError { field, message } => {
                 assert_eq!(field, "email");
-                assert_eq!(message, "格式不正确");
+                assert_eq!(message, "invalid format");
             }
             _ => panic!("expected ValidationError variant"),
         }
@@ -507,8 +507,8 @@ mod tests {
             available: 0,
         };
         let msg = error.to_string();
-        assert!(msg.contains("需要 0"));
-        assert!(msg.contains("可用 0"));
+        assert!(msg.contains("required 0"));
+        assert!(msg.contains("available 0"));
     }
 
     #[test]

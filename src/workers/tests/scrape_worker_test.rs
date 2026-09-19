@@ -1067,7 +1067,7 @@ fn test_scrape_worker_error_from_url_parse_error() {
     let url_err = url::Url::parse("not a url").expect_err("should be invalid");
     let err: ScrapeWorkerError = url_err.into();
     match err {
-        ScrapeWorkerError::TaskError(msg) => assert!(msg.contains("URL解析错误")),
+        ScrapeWorkerError::TaskError(msg) => assert!(msg.contains("URL parse error")),
         other => panic!("Expected TaskError, got {:?}", other),
     }
 }

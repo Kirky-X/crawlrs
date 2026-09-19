@@ -55,7 +55,7 @@ fn create_cors_layer(settings: &Settings) -> CorsLayer {
 
     let cors_layer = if allowed_origins.is_empty() || allowed_origins.iter().any(|o| o == "*") {
         // 生产环境不应使用通配符，这里仅作为开发回退
-        log::warn!("CORS 使用通配符 '*'，建议在生产环境中配置具体的来源");
+        log::warn!("{}", crate::i18n::tr_log("boot-cors-wildcard"));
         // 非 test/development 环境下对 CORS 通配符输出显式生产告警
         let env = std::env::var(crate::common::constants::env_vars::ENV)
             .or_else(|_| std::env::var(crate::common::constants::env_vars::APP_ENVIRONMENT))
@@ -76,7 +76,7 @@ fn create_cors_layer(settings: &Settings) -> CorsLayer {
             .collect();
 
         if origins.is_empty() {
-            log::warn!("CORS 配置无效，允许所有来源作为回退");
+            log::warn!("{}", crate::i18n::tr_log("boot-cors-invalid-fallback"));
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)

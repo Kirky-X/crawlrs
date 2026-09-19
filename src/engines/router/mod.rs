@@ -17,6 +17,8 @@ use crate::utils::retry::{RetryReason, RetryTracker};
 use crate::utils::ua_pool::UaPool;
 use dashmap::DashMap;
 use log::{info, warn};
+
+use crate::i18n::tr_log_args;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -425,7 +427,13 @@ impl EngineRouter {
         // DashMap::insert 直接替换/插入，无需获取写锁
         self.engine_stats
             .insert(name.clone(), EngineStats::default());
-        info!("引擎已注册: {}", name);
+        info!(
+            "{}",
+            tr_log_args(
+                "engine-registered",
+                &[("name", fluent_bundle::FluentValue::from(name.as_str()))],
+            )
+        );
     }
 
     /// 获取所有已注册的引擎名称

@@ -554,19 +554,19 @@ fn tc_web_content_processor_trait_process_batch() {
 fn tc_web_content_error_encoding_error_display() {
     let err =
         WebContentError::EncodingError(TextEncodingError::DetectionFailed("test".to_string()));
-    assert!(err.to_string().contains("编码处理错误"));
+    assert!(err.to_string().contains("Encoding error"));
 }
 
 #[test]
 fn tc_web_content_error_html_parse_error_display() {
     let err = WebContentError::HtmlParseError("parse issue".to_string());
-    assert!(err.to_string().contains("HTML解析错误"));
+    assert!(err.to_string().contains("HTML parse error"));
 }
 
 #[test]
 fn tc_web_content_error_content_extraction_error_display() {
     let err = WebContentError::ContentExtractionError("extract fail".to_string());
-    assert!(err.to_string().contains("内容提取错误"));
+    assert!(err.to_string().contains("Content extraction error"));
 }
 
 #[test]
@@ -583,7 +583,7 @@ fn tc_crawl_processing_error_content_too_large_display() {
 #[test]
 fn tc_crawl_processing_error_processing_timeout_display() {
     let err = CrawlProcessingError::ProcessingTimeout;
-    assert_eq!(err.to_string(), "处理超时");
+    assert_eq!(err.to_string(), "Processing timeout");
 }
 
 #[test]
@@ -591,7 +591,7 @@ fn tc_crawl_processing_error_text_encoding_display() {
     let err = CrawlProcessingError::TextEncodingError(TextEncodingError::DetectionFailed(
         "detect fail".to_string(),
     ));
-    assert!(err.to_string().contains("文本编码处理错误"));
+    assert!(err.to_string().contains("Text encoding processing error"));
 }
 
 #[test]
@@ -599,7 +599,7 @@ fn tc_crawl_processing_error_web_content_display() {
     let err = CrawlProcessingError::WebContentError(WebContentError::HtmlParseError(
         "parse error".to_string(),
     ));
-    assert!(err.to_string().contains("网页内容处理错误"));
+    assert!(err.to_string().contains("Web content processing error"));
 }
 
 #[test]

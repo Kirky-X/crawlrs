@@ -289,38 +289,38 @@ pub trait RateLimitingService:
 /// 限流与并发控制错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum RateLimitingError {
-    #[error("限流已达到上限: {0}")]
+    #[error("Rate limit exceeded: {0}")]
     RateLimitExceeded(String),
 
-    #[error("并发限制已达到上限: {0}")]
+    #[error("Concurrency limit exceeded: {0}")]
     ConcurrencyLimitExceeded(String),
 
-    #[error("配置错误: {0}")]
+    #[error("Configuration error: {0}")]
     ConfigurationError(String),
 
-    #[error("数据库操作失败，请稍后重试")]
+    #[error("Database operation failed, please try again later")]
     DatabaseError,
 
-    #[error("积分系统暂时不可用")]
+    #[error("Credits service temporarily unavailable")]
     CreditsError,
 
-    #[error("其他错误: {0}")]
+    #[error("Other error: {0}")]
     Other(#[from] anyhow::Error),
 }
 
 /// 配置验证错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
-    #[error("速率限制不能为零: {0}")]
+    #[error("Rate limit cannot be zero: {0}")]
     ZeroRate(&'static str),
 
-    #[error("容量不能为零: {0}")]
+    #[error("Capacity cannot be zero: {0}")]
     ZeroCapacity(String),
 
-    #[error("超时时间无效: {0}")]
+    #[error("Invalid timeout: {0}")]
     InvalidTimeout(String),
 
-    #[error("速率配置不一致: {0}")]
+    #[error("Inconsistent rate configuration: {0}")]
     InconsistentRates(String),
 }
 
@@ -785,40 +785,42 @@ mod tests {
     #[test]
     fn test_rate_limiting_error_rate_limit_exceeded_display() {
         let err = RateLimitingError::RateLimitExceeded("100/min".to_string());
-        assert!(err.to_string().contains("限流已达到上限"));
+        assert!(err.to_string().contains("Rate limit exceeded"));
         assert!(err.to_string().contains("100/min"));
     }
 
     #[test]
     fn test_rate_limiting_error_concurrency_limit_exceeded_display() {
         let err = RateLimitingError::ConcurrencyLimitExceeded("5 tasks".to_string());
-        assert!(err.to_string().contains("并发限制已达到上限"));
+        assert!(err.to_string().contains("Concurrency limit exceeded"));
         assert!(err.to_string().contains("5 tasks"));
     }
 
     #[test]
     fn test_rate_limiting_error_configuration_error_display() {
         let err = RateLimitingError::ConfigurationError("bad config".to_string());
-        assert!(err.to_string().contains("配置错误"));
+        assert!(err.to_string().contains("Configuration error"));
         assert!(err.to_string().contains("bad config"));
     }
 
     #[test]
     fn test_rate_limiting_error_database_error_display() {
         let err = RateLimitingError::DatabaseError;
-        assert!(err.to_string().contains("数据库操作失败"));
+        assert!(err.to_string().contains("Database operation failed"));
     }
 
     #[test]
     fn test_rate_limiting_error_credits_error_display() {
         let err = RateLimitingError::CreditsError;
-        assert!(err.to_string().contains("积分系统暂时不可用"));
+        assert!(err
+            .to_string()
+            .contains("Credits service temporarily unavailable"));
     }
 
     #[test]
     fn test_rate_limiting_error_other_from_anyhow() {
         let err = RateLimitingError::Other(anyhow::anyhow!("something broke"));
-        assert!(err.to_string().contains("其他错误"));
+        assert!(err.to_string().contains("Other error"));
         assert!(err.to_string().contains("something broke"));
     }
 
@@ -827,7 +829,7 @@ mod tests {
     #[test]
     fn test_validation_error_zero_rate_display() {
         let err = ValidationError::ZeroRate("requests_per_second cannot be zero");
-        assert!(err.to_string().contains("速率限制不能为零"));
+        assert!(err.to_string().contains("Rate limit cannot be zero"));
         assert!(err
             .to_string()
             .contains("requests_per_second cannot be zero"));
@@ -836,21 +838,21 @@ mod tests {
     #[test]
     fn test_validation_error_zero_capacity_display() {
         let err = ValidationError::ZeroCapacity("bucket_capacity cannot be zero".to_string());
-        assert!(err.to_string().contains("容量不能为零"));
+        assert!(err.to_string().contains("Capacity cannot be zero"));
         assert!(err.to_string().contains("bucket_capacity cannot be zero"));
     }
 
     #[test]
     fn test_validation_error_invalid_timeout_display() {
         let err = ValidationError::InvalidTimeout("timeout too short".to_string());
-        assert!(err.to_string().contains("超时时间无效"));
+        assert!(err.to_string().contains("Invalid timeout"));
         assert!(err.to_string().contains("timeout too short"));
     }
 
     #[test]
     fn test_validation_error_inconsistent_rates_display() {
         let err = ValidationError::InconsistentRates("mismatch".to_string());
-        assert!(err.to_string().contains("速率配置不一致"));
+        assert!(err.to_string().contains("Inconsistent rate configuration"));
         assert!(err.to_string().contains("mismatch"));
     }
 

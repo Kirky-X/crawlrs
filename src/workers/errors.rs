@@ -11,19 +11,19 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum ScrapeWorkerError {
     /// 正则表达式编译错误
-    #[error("正则表达式编译错误: {0}")]
+    #[error("Regex compilation failed: {0}")]
     RegexError(String),
 
     /// 缓存锁获取失败
-    #[error("正则表达式缓存锁获取失败")]
+    #[error("Regex cache lock acquisition failed")]
     CacheLockError,
 
     /// 选择器解析错误
-    #[error("选择器解析错误: {0}")]
+    #[error("Selector parse error: {0}")]
     SelectorError(String),
 
     /// 任务处理错误
-    #[error("任务处理错误: {0}")]
+    #[error("Task processing error: {0}")]
     TaskError(String),
 }
 
@@ -41,7 +41,7 @@ impl From<regex::Error> for ScrapeWorkerError {
 
 impl From<url::ParseError> for ScrapeWorkerError {
     fn from(e: url::ParseError) -> Self {
-        ScrapeWorkerError::TaskError(format!("URL解析错误: {}", e))
+        ScrapeWorkerError::TaskError(format!("URL parse error: {}", e))
     }
 }
 
@@ -59,8 +59,8 @@ mod tests {
         let err = ScrapeWorkerError::RegexError("invalid pattern".to_string());
         let msg = format!("{}", err);
         assert!(
-            msg.contains("正则表达式编译错误"),
-            "Display should contain 正则表达式编译错误"
+            msg.contains("Regex compilation failed"),
+            "Display should contain \"Regex compilation failed\""
         );
         assert!(
             msg.contains("invalid pattern"),
@@ -73,7 +73,7 @@ mod tests {
         let err = ScrapeWorkerError::CacheLockError;
         let msg = format!("{}", err);
         assert!(
-            msg.contains("正则表达式缓存锁获取失败"),
+            msg.contains("Regex cache lock acquisition failed"),
             "Display should contain cache lock message"
         );
     }
@@ -83,8 +83,8 @@ mod tests {
         let err = ScrapeWorkerError::SelectorError("bad selector".to_string());
         let msg = format!("{}", err);
         assert!(
-            msg.contains("选择器解析错误"),
-            "Display should contain 选择器解析错误"
+            msg.contains("Selector parse error"),
+            "Display should contain \"Selector parse error\""
         );
         assert!(msg.contains("bad selector"));
     }
@@ -94,8 +94,8 @@ mod tests {
         let err = ScrapeWorkerError::TaskError("task failed".to_string());
         let msg = format!("{}", err);
         assert!(
-            msg.contains("任务处理错误"),
-            "Display should contain 任务处理错误"
+            msg.contains("Task processing error"),
+            "Display should contain \"Task processing error\""
         );
         assert!(msg.contains("task failed"));
     }
@@ -202,8 +202,8 @@ mod tests {
         match err {
             ScrapeWorkerError::TaskError(msg) => {
                 assert!(
-                    msg.contains("URL解析错误"),
-                    "From<url::ParseError> should contain URL解析错误 prefix"
+                    msg.contains("URL parse error"),
+                    "From<url::ParseError> should contain \"URL parse error\" prefix"
                 );
             }
             other => panic!("Expected TaskError, got {:?}", other),

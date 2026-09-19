@@ -22,13 +22,13 @@ use async_trait::async_trait;
 /// Robots.txt 检查器错误
 #[derive(Error, Debug)]
 pub enum RobotsCheckerError {
-    #[error("缓存锁获取失败: {0}")]
+    #[error("Cache lock acquisition failed: {0}")]
     CacheLockError(String),
 
-    #[error("URL解析失败: {0}")]
+    #[error("URL parse failed: {0}")]
     UrlParseError(String),
 
-    #[error("验证失败: {0}")]
+    #[error("Validation failed: {0}")]
     ValidationError(String),
 }
 
@@ -448,7 +448,7 @@ mod tests {
     fn test_robots_checker_error_cache_lock_display() {
         let err = RobotsCheckerError::CacheLockError("lock poisoned".to_string());
         let msg = format!("{}", err);
-        assert!(msg.contains("缓存锁获取失败"));
+        assert!(msg.contains("Cache lock acquisition failed"));
         assert!(msg.contains("lock poisoned"));
     }
 
@@ -456,7 +456,7 @@ mod tests {
     fn test_robots_checker_error_url_parse_display() {
         let err = RobotsCheckerError::UrlParseError("bad url".to_string());
         let msg = format!("{}", err);
-        assert!(msg.contains("URL解析失败"));
+        assert!(msg.contains("URL parse failed"));
         assert!(msg.contains("bad url"));
     }
 
@@ -464,7 +464,7 @@ mod tests {
     fn test_robots_checker_error_validation_display() {
         let err = RobotsCheckerError::ValidationError("invalid input".to_string());
         let msg = format!("{}", err);
-        assert!(msg.contains("验证失败"));
+        assert!(msg.contains("Validation failed"));
         assert!(msg.contains("invalid input"));
     }
 

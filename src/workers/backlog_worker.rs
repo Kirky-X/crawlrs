@@ -8,6 +8,7 @@ use crate::domain::repositories::{
     task_repository::TaskRepository, tasks_backlog_repository::TasksBacklogRepository,
 };
 use crate::domain::services::rate_limiting_service::RateLimitingService;
+use crate::i18n::{tr_log, tr_log_args};
 use crate::workers::worker::{ProcessResult, WorkerProcess};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -44,24 +45,6 @@ enum BacklogOutcome {
     Queued,
     /// 积压项非 Pending（已被他方处理），跳过
     Skipped,
-}
-
-/// 经启动期 i18n 全局束翻译运维日志（worker 无请求上下文，locale 取启动
-/// 检测/配置决议的默认值）。未初始化或 key 缺失时回退 key 本身
-/// （与 Fluent 缺 key 语义一致，不 panic）。
-fn tr_log(key: &str) -> String {
-    match crate::i18n::startup_i18n() {
-        Some((locale, bundle)) => crate::i18n::t(locale, bundle, key),
-        None => key.to_string(),
-    }
-}
-
-/// 同 [`tr_log`]，带 Fluent 占位参数（FTL key 见 `locales/*/workers.ftl`）
-fn tr_log_args(key: &str, args: &[(&str, fluent_bundle::FluentValue)]) -> String {
-    match crate::i18n::startup_i18n() {
-        Some((locale, bundle)) => crate::i18n::t_with_args(locale, bundle, key, args),
-        None => key.to_string(),
-    }
 }
 
 impl BacklogWorker {
@@ -157,7 +140,13 @@ impl BacklogWorker {
                     Ok(BacklogOutcome::Queued) => queued_count += 1,
                     Ok(BacklogOutcome::Skipped) => skipped_count += 1,
                     Err(e) => {
-                        error!("处理积压任务失败: {}", e);
+                        error!(
+                            "{}",
+                            tr_log_args(
+                                "backlog-processing-failed",
+                                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                            )
+                        );
                         failed_count += 1;
                     }
                 }
@@ -211,7 +200,16 @@ impl BacklogWorker {
     ) -> Result<BacklogOutcome, WorkerError> {
         // 1. 检查任务是否已过期
         if backlog.is_expired() {
-            info!("积压任务 {} 已过期，标记为过期状态", backlog.id);
+            info!(
+                "{}",
+                tr_log_args(
+                    "backlog-expired-marked",
+                    &[(
+                        "task_id",
+                        fluent_bundle::FluentValue::from(backlog.id.to_string())
+                    )],
+                )
+            );
 
             let mut expired_backlog = backlog.clone();
             expired_backlog
@@ -228,7 +226,16 @@ impl BacklogWorker {
 
         // 2. 检查是否超过重试次数
         if !backlog.can_retry() {
-            warn!("积压任务 {} 重试次数已达上限，标记为失败", backlog.id);
+            warn!(
+                "{}",
+                tr_log_args(
+                    "backlog-retry-exhausted-marked",
+                    &[(
+                        "task_id",
+                        fluent_bundle::FluentValue::from(backlog.id.to_string())
+                    )],
+                )
+            );
 
             let mut failed_backlog = backlog.clone();
             failed_backlog
@@ -251,8 +258,20 @@ impl BacklogWorker {
         {
             Ok(crate::domain::services::rate_limiting_service::ConcurrencyResult::Allowed) => {
                 info!(
-                    "团队 {} 并发槽位可用，处理积压任务 {}",
-                    backlog.team_id, backlog.id
+                    "{}",
+                    tr_log_args(
+                        "backlog-concurrency-available",
+                        &[
+                            (
+                                "team_id",
+                                fluent_bundle::FluentValue::from(backlog.team_id.to_string())
+                            ),
+                            (
+                                "task_id",
+                                fluent_bundle::FluentValue::from(backlog.id.to_string())
+                            ),
+                        ],
+                    )
                 );
 
                 // 4. 前置状态迁移：Pending → Processing（域状态机守卫，仅 Pending 可迁移）。
@@ -262,8 +281,21 @@ impl BacklogWorker {
                 let mut processing_backlog = backlog.clone();
                 if let Err(e) = processing_backlog.mark_processing() {
                     warn!(
-                        "积压任务 {} 无法迁移到 Processing（当前状态 {}）: {}，跳过",
-                        backlog.id, backlog.status, e
+                        "{}",
+                        tr_log_args(
+                            "backlog-state-transition-skipped",
+                            &[
+                                (
+                                    "task_id",
+                                    fluent_bundle::FluentValue::from(backlog.id.to_string())
+                                ),
+                                (
+                                    "current",
+                                    fluent_bundle::FluentValue::from(backlog.status.to_string())
+                                ),
+                                ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                            ],
+                        )
                     );
                     return Ok(BacklogOutcome::Skipped);
                 }
@@ -271,11 +303,26 @@ impl BacklogWorker {
                 // 5. 重新激活任务（reactivate_task 内 mark_completed 现从 Processing 迁移，不再恒败）
                 match self.reactivate_task(processing_backlog).await {
                     Ok(_) => {
-                        info!("积压任务 {} 重新激活成功", backlog.id);
+                        info!(
+                            "{}",
+                            tr_log_args(
+                                "backlog-reactivated",
+                                &[(
+                                    "task_id",
+                                    fluent_bundle::FluentValue::from(backlog.id.to_string())
+                                )],
+                            )
+                        );
                         Ok(BacklogOutcome::Reactivated)
                     }
                     Err(e) => {
-                        error!("重新激活任务失败: {}", e);
+                        error!(
+                            "{}",
+                            tr_log_args(
+                                "backlog-reactivation-failed",
+                                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                            )
+                        );
 
                         // 失败重试：在原始 Pending 快照上累加重试次数并持久化，
                         // 保持 Pending 以便下一周期重新拉取（不残留 Processing 状态）。
@@ -295,8 +342,21 @@ impl BacklogWorker {
                 reason,
             }) => {
                 info!(
-                    "团队 {} 并发限制未释放: {}，积压任务 {} 继续保持积压状态",
-                    backlog.team_id, reason, backlog.id
+                    "{}",
+                    tr_log_args(
+                        "backlog-concurrency-denied",
+                        &[
+                            (
+                                "team_id",
+                                fluent_bundle::FluentValue::from(backlog.team_id.to_string())
+                            ),
+                            ("reason", fluent_bundle::FluentValue::from(reason)),
+                            (
+                                "task_id",
+                                fluent_bundle::FluentValue::from(backlog.id.to_string())
+                            ),
+                        ],
+                    )
                 );
                 Ok(BacklogOutcome::Denied)
             }
@@ -304,11 +364,26 @@ impl BacklogWorker {
                 ..
             }) => {
                 // 这种情况不应该发生，因为我们正在处理积压任务
-                warn!("积压任务 {} 被重新排队，这是意外的行为", backlog.id);
+                warn!(
+                    "{}",
+                    tr_log_args(
+                        "backlog-unexpected-requeue",
+                        &[(
+                            "task_id",
+                            fluent_bundle::FluentValue::from(backlog.id.to_string())
+                        )],
+                    )
+                );
                 Ok(BacklogOutcome::Queued)
             }
             Err(e) => {
-                error!("检查团队并发限制失败: {}", e);
+                error!(
+                    "{}",
+                    tr_log_args(
+                        "backlog-concurrency-check-failed",
+                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    )
+                );
                 Err(WorkerError::ServiceError(e.to_string()))
             }
         }
@@ -325,11 +400,26 @@ impl BacklogWorker {
             .find_by_id(backlog.task_id)
             .await
             .repo_err()?
-            .ok_or_else(|| WorkerError::NotFound(format!("任务 {} 不存在", backlog.task_id)))?;
+            .ok_or_else(|| WorkerError::NotFound(format!("Task {} not found", backlog.task_id)))?;
 
         // 2. 检查任务状态
         if task.status != TaskStatus::Queued {
-            info!("任务 {} 状态为 {}，不需要重新激活", task.id, task.status);
+            info!(
+                "{}",
+                tr_log_args(
+                    "backlog-task-status-not-activatable",
+                    &[
+                        (
+                            "task_id",
+                            fluent_bundle::FluentValue::from(task.id.to_string())
+                        ),
+                        (
+                            "status",
+                            fluent_bundle::FluentValue::from(task.status.to_string())
+                        ),
+                    ],
+                )
+            );
 
             // 标记积压任务为已完成
             let mut completed_backlog = backlog.clone();
@@ -366,13 +456,22 @@ impl BacklogWorker {
             .await
             .repo_err()?;
 
-        info!("任务 {} 重新激活成功", task.id);
+        info!(
+            "{}",
+            tr_log_args(
+                "backlog-task-reactivated",
+                &[(
+                    "task_id",
+                    fluent_bundle::FluentValue::from(task.id.to_string())
+                )],
+            )
+        );
         Ok(())
     }
 
     /// 清理过期任务
     async fn cleanup_expired_tasks(&self) -> Result<(), WorkerError> {
-        info!("开始清理过期积压任务");
+        info!("{}", tr_log("backlog-cleanup-started"));
 
         let expired_backlogs = self
             .tasks_backlog_repository
@@ -381,7 +480,7 @@ impl BacklogWorker {
             .repo_err()?;
 
         if expired_backlogs.is_empty() {
-            info!("没有过期的积压任务");
+            info!("{}", tr_log("backlog-cleanup-none"));
             return Ok(());
         }
 
@@ -391,12 +490,27 @@ impl BacklogWorker {
             match self.process_expired_backlog(backlog).await {
                 Ok(_) => cleaned_count += 1,
                 Err(e) => {
-                    error!("清理过期积压任务失败: {}", e);
+                    error!(
+                        "{}",
+                        tr_log_args(
+                            "backlog-cleanup-failed",
+                            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                        )
+                    );
                 }
             }
         }
 
-        info!("清理过期积压任务完成，共清理 {} 个任务", cleaned_count);
+        info!(
+            "{}",
+            tr_log_args(
+                "backlog-cleanup-completed",
+                &[(
+                    "count",
+                    fluent_bundle::FluentValue::from(cleaned_count.to_string())
+                )],
+            )
+        );
         Ok(())
     }
 
@@ -405,7 +519,16 @@ impl BacklogWorker {
         &self,
         backlog: crate::domain::repositories::tasks_backlog_repository::TasksBacklog,
     ) -> Result<(), WorkerError> {
-        info!("处理过期积压任务 {}", backlog.id);
+        info!(
+            "{}",
+            tr_log_args(
+                "backlog-cleanup-processing",
+                &[(
+                    "task_id",
+                    fluent_bundle::FluentValue::from(backlog.id.to_string())
+                )],
+            )
+        );
 
         // 1. 标记积压任务为过期
         let mut expired_backlog = backlog.clone();
@@ -434,7 +557,16 @@ impl BacklogWorker {
 
                 self.task_repository.update(&failed_task).await.repo_err()?;
 
-                info!("任务 {} 因积压过期被标记为失败", task.id);
+                info!(
+                    "{}",
+                    tr_log_args(
+                        "backlog-task-marked-failed-by-expiry",
+                        &[(
+                            "task_id",
+                            fluent_bundle::FluentValue::from(task.id.to_string())
+                        )],
+                    )
+                );
             }
         }
 
@@ -451,14 +583,20 @@ impl WorkerProcess for BacklogWorker {
     async fn process(&self) -> ProcessResult {
         // 处理积压任务
         if let Err(e) = self.process_backlog().await {
-            return ProcessResult::Error(format!("处理积压任务时发生错误: {}", e));
+            return ProcessResult::Error(tr_log_args(
+                "backlog-process-error",
+                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+            ));
         }
 
         // 定期清理过期任务（每10个周期清理一次）
         let counter = self.cleanup_cycle_counter.fetch_add(1, Ordering::SeqCst);
         if counter.is_multiple_of(10) {
             if let Err(e) = self.cleanup_expired_tasks().await {
-                return ProcessResult::Error(format!("清理过期积压任务时发生错误: {}", e));
+                return ProcessResult::Error(tr_log_args(
+                    "backlog-cleanup-error",
+                    &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                ));
             }
         }
 
@@ -1015,7 +1153,10 @@ mod tests {
         let result = worker.process().await;
         match result {
             ProcessResult::Error(msg) => {
-                assert!(msg.contains("处理积压任务时发生错误"));
+                assert!(
+                msg.contains("backlog-process-error"),
+                "tr_log falls back to the key when the startup bundle is not initialized: {msg}"
+            );
             }
             _ => panic!("Expected ProcessResult::Error, got {:?}", result),
         }

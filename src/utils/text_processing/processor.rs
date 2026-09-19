@@ -4,6 +4,8 @@
 use crate::utils::text_processing::encoding::{TextEncodingError, TextEncodingProcessor};
 use async_trait::async_trait;
 use log::{debug, error, info};
+
+use crate::i18n::{tr_log, tr_log_args};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,10 +15,10 @@ use thiserror::Error;
 /// 文本处理错误类型
 #[derive(Error, Debug)]
 pub enum TextProcessingError {
-    #[error("正则表达式编译失败: {0}")]
+    #[error("Regex compilation failed: {0}")]
     RegexCompilationError(String),
 
-    #[error("编码处理错误: {0}")]
+    #[error("Encoding error: {0}")]
     EncodingError(#[from] TextEncodingError),
 }
 
@@ -135,8 +137,24 @@ impl WebContentProcessorTrait for WebContentProcessorComponent {
         let is_html = self.detect_html_structure(&text_content);
         let declared_encoding = self.extract_declared_encoding(&text_content);
         debug!(
-            "检测到HTML结构: {}, 声明编码: {:?}",
-            is_html, declared_encoding
+            "{}",
+            tr_log_args(
+                "text-html-structure-detected",
+                &[
+                    (
+                        "is_html",
+                        fluent_bundle::FluentValue::from(is_html.to_string())
+                    ),
+                    (
+                        "encoding",
+                        fluent_bundle::FluentValue::from(
+                            declared_encoding
+                                .clone()
+                                .unwrap_or_else(|| "none".to_string())
+                        )
+                    ),
+                ],
+            )
         );
         let extracted_text = if is_html {
             self.extract_text_from_html(&text_content)?
@@ -171,11 +189,17 @@ impl WebContentProcessorComponent {
     fn process_encoding(&self, content: &[u8]) -> Result<String, WebContentError> {
         match self.text_processor.process_text(content) {
             Ok(text) => {
-                debug!("文本编码处理成功");
+                debug!("{}", tr_log("text-encoding-succeeded"));
                 Ok(text)
             }
             Err(e) => {
-                error!("文本编码处理失败: {}", e);
+                error!(
+                    "{}",
+                    tr_log_args(
+                        "text-encoding-failed",
+                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    )
+                );
                 Err(WebContentError::EncodingError(e))
             }
         }
@@ -294,13 +318,38 @@ impl WebContentProcessor {
         content: &[u8],
         content_type: Option<&str>,
     ) -> Result<ProcessedWebContent, WebContentError> {
-        info!("开始处理网页内容，大小: {} 字节", content.len());
+        info!(
+            "{}",
+            tr_log_args(
+                "text-web-content-started",
+                &[(
+                    "size",
+                    fluent_bundle::FluentValue::from(content.len().to_string())
+                )],
+            )
+        );
         let text_content = self.process_encoding(content)?;
         let is_html = self.detect_html_structure(&text_content);
         let declared_encoding = self.extract_declared_encoding(&text_content);
         debug!(
-            "检测到HTML结构: {}, 声明编码: {:?}",
-            is_html, declared_encoding
+            "{}",
+            tr_log_args(
+                "text-html-structure-detected",
+                &[
+                    (
+                        "is_html",
+                        fluent_bundle::FluentValue::from(is_html.to_string())
+                    ),
+                    (
+                        "encoding",
+                        fluent_bundle::FluentValue::from(
+                            declared_encoding
+                                .clone()
+                                .unwrap_or_else(|| "none".to_string())
+                        )
+                    ),
+                ],
+            )
         );
         let extracted_text = if is_html {
             self.extract_text_from_html(&text_content)?
@@ -323,11 +372,17 @@ impl WebContentProcessor {
     fn process_encoding(&self, content: &[u8]) -> Result<String, WebContentError> {
         match self.text_processor.process_text(content) {
             Ok(text) => {
-                debug!("文本编码处理成功");
+                debug!("{}", tr_log("text-encoding-succeeded"));
                 Ok(text)
             }
             Err(e) => {
-                error!("文本编码处理失败: {}", e);
+                error!(
+                    "{}",
+                    tr_log_args(
+                        "text-encoding-failed",
+                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    )
+                );
                 Err(WebContentError::EncodingError(e))
             }
         }
@@ -462,11 +517,11 @@ pub struct ProcessedWebContent {
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebContentError {
-    #[error("编码处理错误: {0}")]
+    #[error("Encoding error: {0}")]
     EncodingError(#[from] TextEncodingError),
-    #[error("HTML解析错误: {0}")]
+    #[error("HTML parse error: {0}")]
     HtmlParseError(String),
-    #[error("内容提取错误: {0}")]
+    #[error("Content extraction error: {0}")]
     ContentExtractionError(String),
 }
 
@@ -508,8 +563,17 @@ impl CrawlTextProcessor {
         let start_time = Instant::now();
         let content_size = content.len();
         info!(
-            "开始处理抓取的内容: URL={}, 大小={} 字节",
-            url, content_size
+            "{}",
+            tr_log_args(
+                "text-crawl-started",
+                &[
+                    ("url", fluent_bundle::FluentValue::from(url)),
+                    (
+                        "size",
+                        fluent_bundle::FluentValue::from(content_size.to_string())
+                    ),
+                ],
+            )
         );
         if content_size > self.max_content_size {
             return Err(CrawlProcessingError::ContentTooLarge {
@@ -523,10 +587,23 @@ impl CrawlTextProcessor {
         let processed_content = self.process_content_with_timeout(content, content_type)?;
         let processing_time = start_time.elapsed();
         info!(
-            "内容处理完成: URL={}, 耗时={:?}, 提取文本长度={}",
-            url,
-            processing_time,
-            processed_content.extracted_text.len()
+            "{}",
+            tr_log_args(
+                "text-crawl-completed",
+                &[
+                    ("url", fluent_bundle::FluentValue::from(url)),
+                    (
+                        "elapsed",
+                        fluent_bundle::FluentValue::from(format!("{:?}", processing_time))
+                    ),
+                    (
+                        "length",
+                        fluent_bundle::FluentValue::from(
+                            processed_content.extracted_text.len().to_string()
+                        )
+                    ),
+                ],
+            )
         );
         Ok(ProcessedCrawlContent {
             url: url.to_string(),
@@ -589,19 +666,19 @@ impl CrawlTextProcessor {
             .split_whitespace()
             .count();
         if text_length < 50 {
-            return ContentQuality::Poor("文本内容过短".to_string());
+            return ContentQuality::Poor("Text content too short".to_string());
         }
         if word_count < 10 {
-            return ContentQuality::Poor("单词数量过少".to_string());
+            return ContentQuality::Poor("Too few words".to_string());
         }
         let text_ratio = text_length as f64 / content.original_size as f64;
         if text_ratio < 0.01 && content.original_size > 1000 {
-            return ContentQuality::Poor("有效内容比例过低".to_string());
+            return ContentQuality::Poor("Effective content ratio too low".to_string());
         }
         let repetitive_ratio =
             self.calculate_repetitive_ratio(&content.processed_content.extracted_text);
         if repetitive_ratio > 0.8 {
-            return ContentQuality::Poor("内容重复度过高".to_string());
+            return ContentQuality::Poor("Content too repetitive".to_string());
         }
         if content.processing_time.as_secs() > 10 {
             ContentQuality::Good
@@ -634,7 +711,16 @@ impl CrawlTextProcessor {
     pub fn update_config(&mut self, config: CrawlProcessorConfig) {
         self.max_processing_time = Duration::from_secs(config.max_processing_time_secs);
         self.max_content_size = config.max_content_size_mb * 1024 * 1024;
-        info!("更新爬虫文本处理器配置: {:?}", config);
+        info!(
+            "{}",
+            tr_log_args(
+                "text-config-updated",
+                &[(
+                    "config",
+                    fluent_bundle::FluentValue::from(format!("{:?}", config))
+                )],
+            )
+        );
     }
 }
 
@@ -649,15 +735,15 @@ pub struct ProcessedCrawlContent {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CrawlProcessingError {
-    #[error("文本编码处理错误: {0}")]
+    #[error("Text encoding processing error: {0}")]
     TextEncodingError(#[from] TextEncodingError),
-    #[error("网页内容处理错误: {0}")]
+    #[error("Web content processing error: {0}")]
     WebContentError(#[from] WebContentError),
-    #[error("内容过大: {size} 字节 (最大允许: {max_size} 字节)")]
+    #[error("Content too large: {size} bytes (max allowed: {max_size} bytes)")]
     ContentTooLarge { size: usize, max_size: usize },
-    #[error("处理超时")]
+    #[error("Processing timeout")]
     ProcessingTimeout,
-    #[error("内容质量过低: {0}")]
+    #[error("Content quality too low: {0}")]
     PoorContentQuality(String),
 }
 
@@ -1006,19 +1092,19 @@ mod tests {
     fn test_web_content_error_display_encoding() {
         let err =
             WebContentError::EncodingError(TextEncodingError::DetectionFailed("test".to_string()));
-        assert!(err.to_string().contains("编码处理错误"));
+        assert!(err.to_string().contains("Encoding error"));
     }
 
     #[test]
     fn test_web_content_error_display_html_parse() {
         let err = WebContentError::HtmlParseError("parse issue".to_string());
-        assert!(err.to_string().contains("HTML解析错误"));
+        assert!(err.to_string().contains("HTML parse error"));
     }
 
     #[test]
     fn test_web_content_error_display_content_extraction() {
         let err = WebContentError::ContentExtractionError("extract fail".to_string());
-        assert!(err.to_string().contains("内容提取错误"));
+        assert!(err.to_string().contains("Content extraction error"));
     }
 
     // ========== CrawlTextProcessor tests ==========
@@ -1169,7 +1255,12 @@ mod tests {
             .unwrap();
         let quality = processor.validate_content_quality(&result);
         match quality {
-            ContentQuality::Poor(msg) => assert!(msg.contains("过短") || msg.contains("过少")),
+            ContentQuality::Poor(msg) => {
+                assert!(
+                    msg.contains("too short") || msg.contains("few words"),
+                    "got: {msg}"
+                );
+            }
             other => panic!("expected Poor, got {:?}", other),
         }
     }
@@ -1183,7 +1274,7 @@ mod tests {
             .unwrap();
         let quality = processor.validate_content_quality(&result);
         match quality {
-            ContentQuality::Poor(msg) => assert!(msg.contains("重复"), "got: {}", msg),
+            ContentQuality::Poor(msg) => assert!(msg.contains("repetitive"), "got: {msg}"),
             other => panic!("expected Poor repetitive, got {:?}", other),
         }
     }
@@ -1238,7 +1329,7 @@ mod tests {
     #[test]
     fn test_crawl_processing_error_processing_timeout_display() {
         let err = CrawlProcessingError::ProcessingTimeout;
-        assert_eq!(err.to_string(), "处理超时");
+        assert_eq!(err.to_string(), "Processing timeout");
     }
 
     #[test]
@@ -1314,7 +1405,7 @@ mod tests {
     #[test]
     fn test_text_processing_error_regex_compilation_display() {
         let err = TextProcessingError::RegexCompilationError("bad regex".to_string());
-        assert!(err.to_string().contains("正则表达式编译失败"));
+        assert!(err.to_string().contains("Regex compilation failed"));
         assert!(err.to_string().contains("bad regex"));
     }
 
@@ -1384,10 +1475,10 @@ mod tests {
             ContentQuality::Poor(msg) => {
                 // Any Poor reason is valid: short text, few words, low ratio, or repetitive
                 assert!(
-                    msg.contains("过短")
-                        || msg.contains("过少")
-                        || msg.contains("比例")
-                        || msg.contains("重复"),
+                    msg.contains("too short")
+                        || msg.contains("few words")
+                        || msg.contains("ratio")
+                        || msg.contains("repetitive"),
                     "expected Poor with meaningful reason, got: {}",
                     msg
                 );
@@ -1511,7 +1602,7 @@ mod tests {
         let err = CrawlProcessingError::TextEncodingError(TextEncodingError::DetectionFailed(
             "detect fail".to_string(),
         ));
-        assert!(err.to_string().contains("文本编码处理错误"));
+        assert!(err.to_string().contains("Text encoding processing error"));
     }
 
     #[test]
@@ -1519,7 +1610,7 @@ mod tests {
         let err = CrawlProcessingError::WebContentError(WebContentError::HtmlParseError(
             "parse error".to_string(),
         ));
-        assert!(err.to_string().contains("网页内容处理错误"));
+        assert!(err.to_string().contains("Web content processing error"));
     }
 
     // ========== WebContentProcessorComponent with injected processor ==========
@@ -1868,7 +1959,7 @@ mod tests {
         };
         let quality = processor.validate_content_quality(&processed);
         match quality {
-            ContentQuality::Poor(msg) => assert!(msg.contains("过短")),
+            ContentQuality::Poor(msg) => assert!(msg.contains("too short")),
             other => panic!("expected Poor (too short), got {:?}", other),
         }
     }
@@ -2103,7 +2194,7 @@ mod tests {
         match quality {
             ContentQuality::Poor(msg) => {
                 assert!(
-                    msg.contains("过少"),
+                    msg.contains("few words"),
                     "expected Poor (too few words), got: {}",
                     msg
                 );
@@ -2142,7 +2233,7 @@ mod tests {
         match quality {
             ContentQuality::Poor(msg) => {
                 assert!(
-                    msg.contains("比例"),
+                    msg.contains("ratio"),
                     "expected Poor (low text ratio), got: {}",
                     msg
                 );

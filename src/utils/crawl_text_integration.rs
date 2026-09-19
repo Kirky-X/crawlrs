@@ -3,6 +3,8 @@
 
 use crate::utils::text_processing::processor::{CrawlProcessingError, CrawlTextProcessor};
 use log::{debug, error, info, warn};
+
+use crate::i18n::{tr_log, tr_log_args};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -28,13 +30,13 @@ impl CrawlTextIntegration {
     pub async fn enable(&self) {
         let _processor = self.processor.write().await;
         self.enabled.store(true, Ordering::SeqCst);
-        info!("启用爬虫文本处理功能");
+        info!("{}", tr_log("text-integration-enabled"));
     }
 
     pub async fn disable(&self) {
         let _processor = self.processor.write().await;
         self.enabled.store(false, Ordering::SeqCst);
-        info!("禁用爬虫文本处理功能");
+        info!("{}", tr_log("text-integration-disabled"));
     }
 
     pub async fn process_scrape_response(
@@ -47,7 +49,7 @@ impl CrawlTextIntegration {
         // 禁用时不分配 2 份 String，
         // 用 Cow 延迟转换并直接返回原始字节引用。
         if !self.is_enabled() {
-            debug!("文本处理功能已禁用，直接返回原始内容");
+            debug!("{}", tr_log("text-integration-disabled-direct"));
             // 仅在最终需要 String 时做一次 utf8_lossy（lazy）
             let original = String::from_utf8_lossy(content).into_owned();
             return Ok(ProcessedScrapeResponse {
@@ -87,15 +89,42 @@ impl CrawlTextIntegration {
                     processing_error: None,
                 };
                 info!(
-                    "文本处理成功: URL={}, 提取文本长度={}, 语言={:?}",
-                    url,
-                    result.processed_content.len(),
-                    result.language_detected
+                    "{}",
+                    tr_log_args(
+                        "text-integration-succeeded",
+                        &[
+                            ("url", fluent_bundle::FluentValue::from(url)),
+                            (
+                                "length",
+                                fluent_bundle::FluentValue::from(
+                                    result.processed_content.len().to_string()
+                                ),
+                            ),
+                            (
+                                "language",
+                                fluent_bundle::FluentValue::from(
+                                    result
+                                        .language_detected
+                                        .clone()
+                                        .unwrap_or_else(|| "none".to_string())
+                                ),
+                            ),
+                        ],
+                    )
                 );
                 Ok(result)
             }
             Err(e) => {
-                error!("文本处理失败: URL={}, 错误={}", url, e);
+                error!(
+                    "{}",
+                    tr_log_args(
+                        "text-integration-failed",
+                        &[
+                            ("url", fluent_bundle::FluentValue::from(url)),
+                            ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                        ],
+                    )
+                );
                 Ok(ProcessedScrapeResponse {
                     original_content: String::from_utf8_lossy(content).into_owned(),
                     processed_content: String::from_utf8_lossy(content).into_owned(),
@@ -117,7 +146,7 @@ impl CrawlTextIntegration {
         responses: Vec<ScrapeResponseInput>,
     ) -> Vec<Result<ProcessedScrapeResponse, CrawlProcessingError>> {
         if !self.is_enabled() {
-            debug!("文本处理功能已禁用，批量返回原始内容");
+            debug!("{}", tr_log("text-integration-disabled-batch"));
             return responses
                 .into_iter()
                 .map(|response| {
@@ -175,7 +204,19 @@ impl CrawlTextIntegration {
                     processing_error: None,
                 }),
                 Err(e) => {
-                    warn!("批量处理中的单个项目失败: URL={}, 错误={}", response.url, e);
+                    warn!(
+                        "{}",
+                        tr_log_args(
+                            "text-integration-item-failed",
+                            &[
+                                (
+                                    "url",
+                                    fluent_bundle::FluentValue::from(response.url.as_str())
+                                ),
+                                ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                            ],
+                        )
+                    );
                     Ok(ProcessedScrapeResponse {
                         original_content: String::from_utf8_lossy(&response.content).into_owned(),
                         processed_content: String::from_utf8_lossy(&response.content).into_owned(),

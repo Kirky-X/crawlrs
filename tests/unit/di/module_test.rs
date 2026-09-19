@@ -350,55 +350,79 @@ async fn settings_module_without_config_errors() {
 #[test]
 fn module_build_error_display_settings_not_configured() {
     let err = ModuleBuildError::SettingsNotConfigured("missing key".into());
-    assert_eq!(err.to_string(), "Settings 未配置: missing key");
+    assert_eq!(err.to_string(), "Settings not configured: missing key");
 }
 
 #[test]
 fn module_build_error_display_database_init() {
     let err = ModuleBuildError::DatabaseInit("connection refused".into());
-    assert_eq!(err.to_string(), "数据库初始化失败: connection refused");
+    assert_eq!(
+        err.to_string(),
+        "Database initialization failed: connection refused"
+    );
 }
 
 #[test]
 fn module_build_error_display_http_init() {
     let err = ModuleBuildError::HttpInit("tls error".into());
-    assert_eq!(err.to_string(), "HTTP 客户端初始化失败: tls error");
+    assert_eq!(
+        err.to_string(),
+        "HTTP client initialization failed: tls error"
+    );
 }
 
 #[test]
 fn module_build_error_display_cache_init() {
     let err = ModuleBuildError::CacheInit("backend unavailable".into());
-    assert_eq!(err.to_string(), "缓存初始化失败: backend unavailable");
+    assert_eq!(
+        err.to_string(),
+        "Cache initialization failed: backend unavailable"
+    );
 }
 
 #[test]
 fn module_build_error_display_repository_init() {
     let err = ModuleBuildError::RepositoryInit("schema mismatch".into());
-    assert_eq!(err.to_string(), "仓储初始化失败: schema mismatch");
+    assert_eq!(
+        err.to_string(),
+        "Repository initialization failed: schema mismatch"
+    );
 }
 
 #[test]
 fn module_build_error_display_engine_init() {
     let err = ModuleBuildError::EngineInit("no engines configured".into());
-    assert_eq!(err.to_string(), "引擎初始化失败: no engines configured");
+    assert_eq!(
+        err.to_string(),
+        "Engine initialization failed: no engines configured"
+    );
 }
 
 #[test]
 fn module_build_error_display_service_init() {
     let err = ModuleBuildError::ServiceInit("dependency cycle".into());
-    assert_eq!(err.to_string(), "服务初始化失败: dependency cycle");
+    assert_eq!(
+        err.to_string(),
+        "Service initialization failed: dependency cycle"
+    );
 }
 
 #[test]
 fn module_build_error_display_infrastructure_init() {
     let err = ModuleBuildError::InfrastructureInit("pool exhausted".into());
-    assert_eq!(err.to_string(), "基础设施初始化失败: pool exhausted");
+    assert_eq!(
+        err.to_string(),
+        "Infrastructure initialization failed: pool exhausted"
+    );
 }
 
 #[test]
 fn module_build_error_display_dependency_missing() {
     let err = ModuleBuildError::DependencyMissing("HttpModule not registered".into());
-    assert_eq!(err.to_string(), "依赖缺失: HttpModule not registered");
+    assert_eq!(
+        err.to_string(),
+        "Missing dependency: HttpModule not registered"
+    );
 }
 
 // =============================================================================

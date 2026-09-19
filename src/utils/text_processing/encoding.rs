@@ -4,6 +4,8 @@
 use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use encoding_rs::Encoding;
 use log::{debug, warn};
+
+use crate::i18n::{tr_log, tr_log_args};
 use lru::LruCache;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -12,22 +14,22 @@ use thiserror::Error;
 /// 文本编码处理错误类型
 #[derive(Error, Debug, Clone)]
 pub enum TextEncodingError {
-    #[error("编码检测失败: {0}")]
+    #[error("Encoding detection failed: {0}")]
     DetectionFailed(String),
 
-    #[error("编码转换失败: {0}")]
+    #[error("Encoding conversion failed: {0}")]
     ConversionFailed(String),
 
-    #[error("Unicode转换失败: {0}")]
+    #[error("Unicode conversion failed: {0}")]
     UnicodeConversionFailed(String),
 
-    #[error("无效的编码格式: {0}")]
+    #[error("Invalid encoding format: {0}")]
     InvalidEncoding(String),
 
-    #[error("文本处理超时")]
+    #[error("Text processing timeout")]
     ProcessingTimeout,
 
-    #[error("缓存锁获取失败: {0}")]
+    #[error("Cache lock acquisition failed: {0}")]
     CacheLockError(String),
 }
 
@@ -85,7 +87,16 @@ impl TextEncodingProcessor {
 
     /// 处理短文本（优化性能）
     fn process_short_text(&self, input: &[u8]) -> Result<String, TextEncodingError> {
-        debug!("处理短文本，长度: {} 字节", input.len());
+        debug!(
+            "{}",
+            tr_log_args(
+                "text-short-input",
+                &[(
+                    "length",
+                    fluent_bundle::FluentValue::from(input.len().to_string())
+                )],
+            )
+        );
         if let Ok(utf8_str) = std::str::from_utf8(input) {
             if self.contains_unicode_escapes(utf8_str) {
                 return self.normalize_unicode(utf8_str);
@@ -98,10 +109,28 @@ impl TextEncodingProcessor {
 
     /// 处理长文本（完整处理流程）
     fn process_long_text(&self, input: &[u8]) -> Result<String, TextEncodingError> {
-        debug!("处理长文本，长度: {} 字节", input.len());
+        debug!(
+            "{}",
+            tr_log_args(
+                "text-long-input",
+                &[(
+                    "length",
+                    fluent_bundle::FluentValue::from(input.len().to_string())
+                )],
+            )
+        );
         let cache_key = self.generate_cache_key(input);
         if let Some(cached_result) = self.get_cached_detection(&cache_key) {
-            debug!("使用缓存的编码检测结果: {:?}", cached_result);
+            debug!(
+                "{}",
+                tr_log_args(
+                    "text-cached-detection",
+                    &[(
+                        "detection",
+                        fluent_bundle::FluentValue::from(format!("{:?}", cached_result))
+                    )],
+                )
+            );
             return self.apply_cached_conversion(input, &cached_result);
         }
         let (result, detection) = self.detect_and_convert_encoding(input);
@@ -173,9 +202,15 @@ impl TextEncodingProcessor {
 
     /// Unicode字符串规范化转换
     fn normalize_unicode(&self, text: &str) -> Result<String, TextEncodingError> {
-        debug!("检测到Unicode转义序列，执行规范化转换");
+        debug!("{}", tr_log("text-unicode-escapes-detected"));
         let parsed = self.parse_unicode_escapes(text);
-        debug!("Unicode转义序列解析完成: {:?}", parsed);
+        debug!(
+            "{}",
+            tr_log_args(
+                "text-unicode-escapes-parsed",
+                &[("result", fluent_bundle::FluentValue::from(parsed.clone()))],
+            )
+        );
         Ok(parsed)
     }
 
@@ -184,7 +219,7 @@ impl TextEncodingProcessor {
         &self,
         input: &[u8],
     ) -> (Result<String, TextEncodingError>, EncodingDetection) {
-        debug!("开始编码检测");
+        debug!("{}", tr_log("text-detection-started"));
         let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
         detector.feed(input, true);
         let encoding = detector.guess(None, Utf8Detection::Allow);
@@ -196,7 +231,19 @@ impl TextEncodingProcessor {
             confidence,
             is_utf8,
         };
-        debug!("检测到编码: {}, 置信度: {:.2}", encoding_name, confidence);
+        debug!(
+            "{}",
+            tr_log_args(
+                "text-encoding-detected",
+                &[
+                    ("encoding", fluent_bundle::FluentValue::from(encoding_name)),
+                    (
+                        "confidence",
+                        fluent_bundle::FluentValue::from(format!("{:.2}", confidence))
+                    ),
+                ],
+            )
+        );
         if is_utf8 {
             let result = std::str::from_utf8(input)
                 .map(|s| s.to_string())
@@ -227,12 +274,21 @@ impl TextEncodingProcessor {
         confidence: f32,
     ) -> Result<String, TextEncodingError> {
         if confidence < 0.3 {
-            warn!("编码检测置信度过低: {:.2}，使用UTF-8尝试解析", confidence);
+            warn!(
+                "{}",
+                tr_log_args(
+                    "text-detection-low-confidence",
+                    &[(
+                        "confidence",
+                        fluent_bundle::FluentValue::from(format!("{:.2}", confidence))
+                    )],
+                )
+            );
         }
         let (decoded, _, had_errors) = encoding.decode(input);
         if had_errors && confidence < 0.5 {
             return Err(TextEncodingError::ConversionFailed(format!(
-                "编码转换错误，检测到编码: {}，置信度: {:.2}",
+                "Encoding conversion error, detected encoding: {}, confidence: {:.2}",
                 encoding.name(),
                 confidence
             )));
@@ -523,22 +579,22 @@ mod tests {
     #[test]
     fn test_text_encoding_error_display() {
         let err = TextEncodingError::DetectionFailed("test reason".to_string());
-        assert_eq!(err.to_string(), "编码检测失败: test reason");
+        assert_eq!(err.to_string(), "Encoding detection failed: test reason");
 
         let err = TextEncodingError::ConversionFailed("conv error".to_string());
-        assert_eq!(err.to_string(), "编码转换失败: conv error");
+        assert_eq!(err.to_string(), "Encoding conversion failed: conv error");
 
         let err = TextEncodingError::UnicodeConversionFailed("uni error".to_string());
-        assert_eq!(err.to_string(), "Unicode转换失败: uni error");
+        assert_eq!(err.to_string(), "Unicode conversion failed: uni error");
 
         let err = TextEncodingError::InvalidEncoding("bad enc".to_string());
-        assert_eq!(err.to_string(), "无效的编码格式: bad enc");
+        assert_eq!(err.to_string(), "Invalid encoding format: bad enc");
 
         let err = TextEncodingError::ProcessingTimeout;
-        assert_eq!(err.to_string(), "文本处理超时");
+        assert_eq!(err.to_string(), "Text processing timeout");
 
         let err = TextEncodingError::CacheLockError("lock fail".to_string());
-        assert_eq!(err.to_string(), "缓存锁获取失败: lock fail");
+        assert_eq!(err.to_string(), "Cache lock acquisition failed: lock fail");
     }
 
     #[test]

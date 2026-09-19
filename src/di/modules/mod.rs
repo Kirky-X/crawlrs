@@ -57,31 +57,31 @@ use std::sync::Arc;
 /// 模块构建错误
 #[derive(Debug, thiserror::Error)]
 pub enum ModuleBuildError {
-    #[error("Settings 未配置: {0}")]
+    #[error("Settings not configured: {0}")]
     SettingsNotConfigured(String),
 
-    #[error("数据库初始化失败: {0}")]
+    #[error("Database initialization failed: {0}")]
     DatabaseInit(String),
 
-    #[error("HTTP 客户端初始化失败: {0}")]
+    #[error("HTTP client initialization failed: {0}")]
     HttpInit(String),
 
-    #[error("缓存初始化失败: {0}")]
+    #[error("Cache initialization failed: {0}")]
     CacheInit(String),
 
-    #[error("仓储初始化失败: {0}")]
+    #[error("Repository initialization failed: {0}")]
     RepositoryInit(String),
 
-    #[error("引擎初始化失败: {0}")]
+    #[error("Engine initialization failed: {0}")]
     EngineInit(String),
 
-    #[error("服务初始化失败: {0}")]
+    #[error("Service initialization failed: {0}")]
     ServiceInit(String),
 
-    #[error("基础设施初始化失败: {0}")]
+    #[error("Infrastructure initialization failed: {0}")]
     InfrastructureInit(String),
 
-    #[error("依赖缺失: {0}")]
+    #[error("Missing dependency: {0}")]
     DependencyMissing(String),
 }
 

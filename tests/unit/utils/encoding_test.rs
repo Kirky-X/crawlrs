@@ -415,35 +415,35 @@ fn tc_process_text_with_chinese_unicode_escape() {
 #[test]
 fn tc_text_encoding_error_detection_failed_display() {
     let err = TextEncodingError::DetectionFailed("detect fail".to_string());
-    assert_eq!(err.to_string(), "编码检测失败: detect fail");
+    assert_eq!(err.to_string(), "Encoding detection failed: detect fail");
 }
 
 #[test]
 fn tc_text_encoding_error_conversion_failed_display() {
     let err = TextEncodingError::ConversionFailed("conv fail".to_string());
-    assert_eq!(err.to_string(), "编码转换失败: conv fail");
+    assert_eq!(err.to_string(), "Encoding conversion failed: conv fail");
 }
 
 #[test]
 fn tc_text_encoding_error_unicode_conversion_failed_display() {
     let err = TextEncodingError::UnicodeConversionFailed("uni fail".to_string());
-    assert_eq!(err.to_string(), "Unicode转换失败: uni fail");
+    assert_eq!(err.to_string(), "Unicode conversion failed: uni fail");
 }
 
 #[test]
 fn tc_text_encoding_error_invalid_encoding_display() {
     let err = TextEncodingError::InvalidEncoding("bad enc".to_string());
-    assert_eq!(err.to_string(), "无效的编码格式: bad enc");
+    assert_eq!(err.to_string(), "Invalid encoding format: bad enc");
 }
 
 #[test]
 fn tc_text_encoding_error_processing_timeout_display() {
     let err = TextEncodingError::ProcessingTimeout;
-    assert_eq!(err.to_string(), "文本处理超时");
+    assert_eq!(err.to_string(), "Text processing timeout");
 }
 
 #[test]
 fn tc_text_encoding_error_cache_lock_error_display() {
     let err = TextEncodingError::CacheLockError("lock fail".to_string());
-    assert_eq!(err.to_string(), "缓存锁获取失败: lock fail");
+    assert_eq!(err.to_string(), "Cache lock acquisition failed: lock fail");
 }

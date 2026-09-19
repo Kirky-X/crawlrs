@@ -23,6 +23,7 @@ use crate::domain::models::{CrawlStatus, Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::engines::engine_client::ScrapeResponse;
+use crate::i18n::tr_log_args;
 use crate::utils::dedup::{DedupResult, Deduplicator};
 use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::crawl::{
@@ -287,16 +288,43 @@ pub async fn extract_and_queue_links(
             match crate::workers::crawl::ScoredUrl::new(url.clone(), score) {
                 Ok(scored) => frontier.push(scored),
                 Err(e) => {
-                    warn!("task_id: {}, URL 评分失败跳过: {} ({})", task.id, url, e);
+                    warn!(
+                        "{}",
+                        tr_log_args(
+                            "link-score-skip",
+                            &[
+                                (
+                                    "task_id",
+                                    fluent_bundle::FluentValue::from(task.id.to_string())
+                                ),
+                                ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                                ("url", fluent_bundle::FluentValue::from(url.as_str())),
+                            ],
+                        )
+                    );
                 }
             }
         }
 
         info!(
-            "task_id: {}, {} URLs 入 Frontier（{} 域名），按评分出队",
-            task.id,
-            frontier.len(),
-            frontier.domain_count()
+            "{}",
+            tr_log_args(
+                "link-frontier-enqueued",
+                &[
+                    (
+                        "task_id",
+                        fluent_bundle::FluentValue::from(task.id.to_string())
+                    ),
+                    (
+                        "count",
+                        fluent_bundle::FluentValue::from(frontier.len().to_string())
+                    ),
+                    (
+                        "domains",
+                        fluent_bundle::FluentValue::from(frontier.domain_count().to_string())
+                    ),
+                ],
+            )
         );
 
         while let Some(scored) = frontier.pop() {

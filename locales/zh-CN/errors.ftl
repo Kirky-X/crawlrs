@@ -38,3 +38,22 @@ domain-error-invalid-webhook-url = 无效的 Webhook URL：{ $url }
 domain-error-llm-extraction-failed = LLM 提取失败。
 domain-error-invalid-css-selector = CSS 选择器无效：{ $selector }
 domain-error-validation = 验证错误：{ $field } - { $message }
+
+# 搜索错误消息（16 keys）— SearchError::user_message_locale()
+
+search-error-network = 网络请求失败: { $message }
+search-error-timeout = 搜索超时: { $message }
+search-error-parse = 解析错误: { $message }
+search-error-content-parsing = 内容解析错误: { $message }
+search-error-engine-client = 引擎 { $engine } 客户端调用失败: { $message }
+search-error-bad-http-status = 引擎 { $engine } 返回 HTTP 错误状态码: { $status }
+search-error-rate-limited = 引擎被限流: { $message }
+search-error-captcha = 引擎 { $engine } 返回 CAPTCHA 验证页面
+search-error-insufficient-content = 引擎 { $engine } 返回内容不足: { $message }
+search-error-all-engines-failed = 所有搜索引擎都失败。
+search-error-engine-failed = 引擎 { $engine } 执行失败。
+search-error-smart-routing-failed = 智能路由失败: { $message }
+search-error-smart-routing-timeout = 智能路由超时: { $seconds } 秒
+search-error-engine-creation-failed = 引擎创建失败: { $message }
+search-error-circuit-open = 熔断器打开: { $message }
+search-error-no-engine-available = 没有可用的搜索引擎。

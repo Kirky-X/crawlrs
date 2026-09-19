@@ -27,7 +27,7 @@ pub use locale::{
 };
 #[cfg(feature = "platform")]
 pub use middleware::i18n_middleware;
-pub use translate::{t, t_with_args};
+pub use translate::{t, t_with_args, tr_log, tr_log_args};
 
 /// 启动期全局翻译束（主程序启动时初始化一次，进程内只读）
 static STARTUP_BUNDLE: OnceLock<Arc<I18nBundle>> = OnceLock::new();

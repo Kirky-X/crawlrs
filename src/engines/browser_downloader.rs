@@ -8,6 +8,8 @@
 //! 注意：当前版本使用系统浏览器检测，chromiumoxide_fetcher 的完整支持将在后续版本中添加。
 
 use log::info;
+
+use crate::i18n::{tr_log, tr_log_args};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
@@ -25,16 +27,16 @@ pub enum DownloadStatus {
 /// 浏览器下载错误
 #[derive(Error, Debug)]
 pub enum BrowserDownloadError {
-    #[error("下载失败: {0}")]
+    #[error("Download failed: {0}")]
     DownloadFailed(String),
 
-    #[error("浏览器目录创建失败: {0}")]
+    #[error("Browser directory creation failed: {0}")]
     DirectoryCreationFailed(String),
 
-    #[error("浏览器可执行文件不存在: {0}")]
+    #[error("Browser executable not found: {0}")]
     ExecutableNotFound(PathBuf),
 
-    #[error("权限被拒绝: {0}")]
+    #[error("Permission denied: {0}")]
     PermissionDenied(String),
 }
 
@@ -135,7 +137,7 @@ impl BrowserDownloadManager {
     /// 当前版本检测系统浏览器并提示用户。
     /// 完整的自动下载功能需要 chromiumoxide_fetcher 的稳定支持。
     pub async fn download_browser(&self) -> Result<PathBuf, BrowserDownloadError> {
-        info!("开始检查浏览器...");
+        info!("{}", tr_log("browser-check-started"));
 
         // 更新状态为下载中
         {
@@ -160,7 +162,7 @@ impl BrowserDownloadManager {
 
         // 创建下载目录
         if let Err(e) = tokio::fs::create_dir_all(&self.config.download_dir).await {
-            let err_msg = format!("创建下载目录失败: {}", e);
+            let err_msg = format!("Failed to create download directory: {}", e);
             let mut status = self.status.write().await;
             *status = DownloadStatus::Failed(err_msg.clone());
             return Err(BrowserDownloadError::DirectoryCreationFailed(err_msg));
@@ -174,11 +176,13 @@ impl BrowserDownloadManager {
         }
 
         // 如果自动下载失败，返回错误提示
+        // 运维人员可见的安装提示（错误载荷）：i18n 初始化前即可能触发，
+        // 保持英文规范串以保证回退可读性。
         let err_msg = String::from(
-            "未找到 Chrome/Chromium 浏览器。请安装以下任一浏览器后重试：\n\
+            "Chrome/Chromium browser not found. Install one of the following and retry:\n\
              - Google Chrome (https: // www.google.com/chrome)\n\
              - Chromium (https: // www.chromium.org/getting-involved/download-chromium)\n\
-             或确保浏览器在系统 PATH 中。",
+             or make sure the browser is available on PATH.",
         );
         let mut status = self.status.write().await;
         *status = DownloadStatus::Failed(err_msg.clone());
@@ -194,13 +198,19 @@ impl BrowserDownloadManager {
             match self.do_fetcher_download().await {
                 Ok(path) => return Ok(path),
                 Err(e) => {
-                    log::warn!("fetcher 下载失败: {}", e);
+                    log::warn!(
+                        "{}",
+                        tr_log_args(
+                            "browser-fetcher-download-failed",
+                            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                        )
+                    );
                 }
             }
         }
 
         Err(BrowserDownloadError::DownloadFailed(
-            "Fetcher 不可用".to_string(),
+            "Fetcher unavailable".to_string(),
         ))
     }
 
@@ -224,10 +234,12 @@ impl BrowserDownloadManager {
         if self.config.download_dir.exists() {
             tokio::fs::remove_dir_all(&self.config.download_dir)
                 .await
-                .map_err(|e| BrowserDownloadError::DownloadFailed(format!("清理失败: {}", e)))?;
+                .map_err(|e| {
+                    BrowserDownloadError::DownloadFailed(format!("Cleanup failed: {}", e))
+                })?;
             let mut status = self.status.write().await;
             *status = DownloadStatus::NotDownloaded;
-            info!("已清理下载的浏览器");
+            info!("{}", tr_log("browser-cleaned-up"));
         }
         Ok(())
     }
@@ -256,7 +268,16 @@ pub async fn find_system_browser() -> Option<PathBuf> {
 
     for path in &common_paths {
         if path.exists() {
-            log::info!("找到系统浏览器: {:?}", path);
+            log::info!(
+                "{}",
+                tr_log_args(
+                    "browser-system-found",
+                    &[(
+                        "path",
+                        fluent_bundle::FluentValue::from(format!("{:?}", path))
+                    )],
+                )
+            );
             return Some(path.clone());
         }
     }
@@ -320,13 +341,16 @@ mod tests {
     #[test]
     fn test_browser_download_error_download_failed() {
         let err = BrowserDownloadError::DownloadFailed("timeout".to_string());
-        assert_eq!(err.to_string(), "下载失败: timeout");
+        assert_eq!(err.to_string(), "Download failed: timeout");
     }
 
     #[test]
     fn test_browser_download_error_directory_creation_failed() {
         let err = BrowserDownloadError::DirectoryCreationFailed("permission denied".to_string());
-        assert_eq!(err.to_string(), "浏览器目录创建失败: permission denied");
+        assert_eq!(
+            err.to_string(),
+            "Browser directory creation failed: permission denied"
+        );
     }
 
     #[test]
@@ -335,14 +359,14 @@ mod tests {
         let err = BrowserDownloadError::ExecutableNotFound(path.clone());
         assert_eq!(
             err.to_string(),
-            format!("浏览器可执行文件不存在: {}", path.display())
+            format!("Browser executable not found: {}", path.display())
         );
     }
 
     #[test]
     fn test_browser_download_error_permission_denied() {
         let err = BrowserDownloadError::PermissionDenied("/root/.cache".to_string());
-        assert_eq!(err.to_string(), "权限被拒绝: /root/.cache");
+        assert_eq!(err.to_string(), "Permission denied: /root/.cache");
     }
 
     // === BrowserDownloadConfig tests ===
@@ -839,7 +863,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             BrowserDownloadError::DownloadFailed(msg) => {
-                assert!(msg.contains("清理失败"));
+                assert!(msg.contains("Cleanup failed"));
             }
             other => panic!("Expected DownloadFailed, got {:?}", other),
         }
