@@ -109,7 +109,6 @@ pub fn build_query_string<S: AsRef<str>>(params: &[(&str, S)]) -> String {
 
 #[cfg(test)]
 mod tests {
-    // Copyright (c) 2025 Kirky.X
     use super::*;
     use scraper::Html;
 

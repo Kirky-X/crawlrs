@@ -485,11 +485,6 @@ pub fn is_metrics_stale_with_monitor(monitor: &dyn SystemMonitorTrait) -> bool {
     monitor.is_metrics_stale()
 }
 
-// Copyright (c) 2025 Kirky.X
-//
-// Licensed under the Apache License, Version 2.0
-// See LICENSE file in the project root for full license information.
-
 #[cfg(test)]
 mod tests {
     use super::*;

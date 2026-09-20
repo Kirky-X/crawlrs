@@ -282,9 +282,6 @@ fn baidu_test_results_override(query: &str) -> Option<Response<ResponseItem>> {
 
 #[cfg(test)]
 mod tests {
-    // Copyright (c) 2025 Kirky.X
-    // Licensed under the Apache License, Version 2.0
-    // See LICENSE file in the project root for full license information.
 
     use super::*;
     use crate::engines::engine_client::EngineClient;

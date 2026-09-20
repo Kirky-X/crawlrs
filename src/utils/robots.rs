@@ -355,7 +355,6 @@ impl RobotsChecker {
 
 #[cfg(test)]
 mod tests {
-    // Copyright (c) 2025 Kirky.X
     use super::*;
     use crate::infrastructure::security::ssrf::SsrfError;
 
