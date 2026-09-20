@@ -39,7 +39,7 @@ export default function () {
     };
 
     res = http.post(`${BASE_URL}/v1/scrape`, payload, params);
-    
+
     const isCreateSuccess = check(res, {
         'create scrape status was 200 or 201': (r) => r.status === 200 || r.status === 201,
     });
@@ -57,7 +57,7 @@ export default function () {
         if (taskId) {
             // 3. Check Task Status
             sleep(Math.random() * 2 + 1); // Wait 1-3 seconds
-            
+
             res = http.get(`${BASE_URL}/v1/scrape/${taskId}`);
             check(res, {
                 'get status status was 200': (r) => r.status === 200,

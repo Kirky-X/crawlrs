@@ -38,17 +38,17 @@ def make_request(request_id):
 
 def run_stress_test():
     print(f"🚀 Starting Stress Test: {TOTAL_REQUESTS} requests with {CONCURRENT_USERS} concurrent users")
-    
+
     results = []
     start_time = time.time()
-    
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=CONCURRENT_USERS) as executor:
         futures = [executor.submit(make_request, i) for i in range(TOTAL_REQUESTS)]
         for future in concurrent.futures.as_completed(futures):
             results.append(future.result())
-            
+
     total_time = time.time() - start_time
-    
+
     # Analyze results
     total_requests = len(results)
     successful_requests = sum(1 for r in results if r['success'])
@@ -57,7 +57,7 @@ def run_stress_test():
     avg_latency = sum(latencies) / total_requests if total_requests > 0 else 0
     max_latency = max(latencies) if latencies else 0
     p95_latency = sorted(latencies)[int(total_requests * 0.95)] if latencies else 0
-    
+
     print("\n📊 Stress Test Results:")
     print(f"Total Time: {total_time:.2f}s")
     print(f"Requests per Second (RPS): {total_requests / total_time:.2f}")

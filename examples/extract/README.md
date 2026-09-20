@@ -50,12 +50,12 @@ use crawlrs::prelude::*;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let html = "<html><body><h1>Title</h1></body></html>";
-    
+
     let extracted = extract(html)?
         .select("h1")
         .text()
         .await?;
-    
+
     println!("Extracted: {}", extracted);
     Ok(())
 }

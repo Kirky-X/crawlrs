@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .url("https://your-server.com/webhook")
         .events(["crawl.completed", "crawl.failed"])
         .await?;
-    
+
     println!("Webhook ID: {}", webhook.id);
     Ok(())
 }

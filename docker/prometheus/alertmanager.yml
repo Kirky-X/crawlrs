@@ -19,7 +19,7 @@ route:
   group_interval: 5m
   repeat_interval: 4h
   receiver: 'default-receiver'
-  
+
   # 子路由 - 按严重性分发到不同渠道
   routes:
     # P0-Critical: 立即通知 on-call 人员
@@ -28,13 +28,13 @@ route:
       receiver: 'pagerduty'
       group_wait: 0s
       repeat_interval: 1h
-    
+
     # P1-High: 通知平台团队
     - match:
         severity: high
       receiver: 'platform-slack'
       group_wait: 1m
-    
+
     # P3-Low: 记录到日志即可
     - match:
         severity: low
@@ -84,7 +84,7 @@ receivers:
         dedup_key: '{{ .GroupLabels.Alertname }}-{{ .Labels.severity }}'
         description: |
           Crawlrs Alert: {{ .Labels.alertname }}
-          
+
           {{ .Annotations.description }}
         details:
           severity: '{{ .Labels.severity }}'
@@ -105,14 +105,14 @@ receivers:
         text: |
           *Severity:* {{ .Labels.severity }}
           *Team:* {{ .Labels.team }}
-          
+
           {{ .Annotations.description }}
-          
+
           {{ if gt (len .Labels) 1 }}
           *Labels:*
           {{ range $key, $value := .Labels }}{{ if ne $key "severity" }}{{ if ne $key "team" }}{{ if ne $key "alertname" }}• {{ $key }}: {{ $value }}
           {{ end }}{{ end }}{{ end }}{{ end }}
-          
+
           <{{ .GeneratorURL }}|View in Prometheus> | <{{ .Annotations.runbook_url }}|Runbook>
         actions:
           - type: button

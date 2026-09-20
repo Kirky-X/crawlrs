@@ -42,7 +42,7 @@ use crawlrs::prelude::*;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 使用API密钥认证
     let client = crawlrs::Client::with_api_key("your-api-key");
-    
+
     let result = client.scrape("https://example.com").await?;
     Ok(())
 }

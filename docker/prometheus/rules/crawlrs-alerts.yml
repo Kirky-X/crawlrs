@@ -23,7 +23,7 @@ groups:
       # P0-Critical: API 成功率低于 50%
       - alert: CrawlrsAPISuccessRateCritical
         expr: |
-          sum(rate(crawlrs_api_requests_total{status="success"}[5m])) 
+          sum(rate(crawlrs_api_requests_total{status="success"}[5m]))
           / sum(rate(crawlrs_api_requests_total[5m])) < 0.5
         for: 5m
         labels:
@@ -52,7 +52,7 @@ groups:
       # P1-High: 任务成功率低于 95%
       - alert: CrawlrsTaskSuccessRateLow
         expr: |
-          sum(rate(crawlrs_tasks_completed{status="success"}[15m])) 
+          sum(rate(crawlrs_tasks_completed{status="success"}[15m]))
           / sum(rate(crawlrs_tasks_completed[15m])) < 0.95
         for: 15m
         labels:
@@ -161,25 +161,25 @@ groups:
       # API 成功率
       - record: crawlrs_api_success_rate
         expr: |
-          sum(rate(crawlrs_api_requests_total{status="success"}[5m])) 
+          sum(rate(crawlrs_api_requests_total{status="success"}[5m]))
           / sum(rate(crawlrs_api_requests_total[5m]))
 
       # 任务成功率
       - record: crawlrs_task_success_rate
         expr: |
-          sum(rate(crawlrs_tasks_completed{status="success"}[15m])) 
+          sum(rate(crawlrs_tasks_completed{status="success"}[15m]))
           / sum(rate(crawlrs_tasks_completed[15m]))
 
       # 按引擎的成功率
       - record: crawlrs_engine_success_rate
         expr: |
-          sum by (engine) (rate(crawlrs_engine_requests_total{status="success"}[5m])) 
+          sum by (engine) (rate(crawlrs_engine_requests_total{status="success"}[5m]))
           / sum by (engine) (rate(crawlrs_engine_requests_total[5m]))
 
       # 按引擎的平均响应时间
       - record: crawlrs_engine_avg_response_time
         expr: |
-          sum by (engine) (rate(crawlrs_engine_response_time_seconds_sum[5m])) 
+          sum by (engine) (rate(crawlrs_engine_response_time_seconds_sum[5m]))
           / sum by (engine) (rate(crawlrs_engine_response_time_seconds_count[5m]))
 
       # 队列深度

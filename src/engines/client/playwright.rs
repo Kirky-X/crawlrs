@@ -660,7 +660,7 @@ impl ScraperEngine for PlaywrightEngine {
                 .await
                 .map_err(|e| EngineError::BrowserError(e.to_string()))?;
 
-            if content.contains("如果您在几秒钟内没有被重定向") || 
+            if content.contains("如果您在几秒钟内没有被重定向") ||
                content.contains("Having trouble accessing Google") ||
                content.contains("enablejs") {
                 log::warn!("Detected bot detection page from Google");

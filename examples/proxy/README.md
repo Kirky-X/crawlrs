@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = scrape("https://example.com")
         .proxy("http://proxy.example.com:8080")
         .await?;
-    
+
     println!("Content length: {}", result.content.len());
     Ok(())
 }

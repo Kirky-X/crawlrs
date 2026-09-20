@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .requests_per_second(10)
         .max_concurrent(100)
         .build()?;
-    
+
     let permit = rate_limiter.acquire().await?;
     // 执行请求
     Ok(())

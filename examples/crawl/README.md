@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .max_depth(3)
         .max_pages(100)
         .await?;
-    
+
     println!("Crawl ID: {}", crawl.id);
     Ok(())
 }

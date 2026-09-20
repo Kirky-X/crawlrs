@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .concurrency(5)
     .collect()
     .await?;
-    
+
     println!("Scraped {} pages", results.len());
     Ok(())
 }

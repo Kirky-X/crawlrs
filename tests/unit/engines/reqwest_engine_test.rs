@@ -39,7 +39,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("Failed to bind to address");
             let addr = listener.local_addr().expect("Failed to get local address");
-        
+
             tokio::spawn(async move {
                 axum::serve(listener, app).await.expect("Failed to start server");
             });

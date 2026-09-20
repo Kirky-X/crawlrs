@@ -426,4 +426,3 @@ default_locale = "en-US"
 supported_locales = ["en-US", "zh-CN"]
 # 翻译文件根目录路径（相对于工作目录）
 locales_dir = "locales"
-

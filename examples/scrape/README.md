@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = scrape("https://example.com")
         .format("markdown")
         .await?;
-    
+
     println!("{}", result.content);
     Ok(())
 }

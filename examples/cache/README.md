@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cache = Cache::builder()
         .default_ttl(3600)
         .build()?;
-    
+
     let result = cache.get("key").await?;
     Ok(())
 }

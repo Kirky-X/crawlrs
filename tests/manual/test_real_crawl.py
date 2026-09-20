@@ -25,9 +25,9 @@ def run_crawl(url):
         "url": url,
         "name": f"Test Crawl - {url[-20:]}",
         "config": {
-            "max_depth": 1, # Fetch the page and maybe one level deep, or just 0 if we want strictly one page. 
+            "max_depth": 1, # Fetch the page and maybe one level deep, or just 0 if we want strictly one page.
                             # But wait, if max_depth is 0, process_crawl_result returns empty immediately.
-                            # The initial task has depth 0. 
+                            # The initial task has depth 0.
                             # If max_depth is 1, depth 0 < 1, so it extracts links and creates depth 1 tasks.
                             # If max_depth is 0, depth 0 >= 0, so it returns empty.
                             # So max_depth 0 means "only this page".
@@ -57,7 +57,7 @@ def run_crawl(url):
                 print(f"⚠️ Failed to get status: {status_res.status_code}")
                 time.sleep(1)
                 continue
-            
+
             crawl_data = status_res.json()
             status = crawl_data["status"]
             completed = crawl_data["completed_tasks"]
@@ -72,7 +72,7 @@ def run_crawl(url):
                 else:
                     print(f"❌ Crawl finished but no tasks completed. Status: {status}")
                 break
-            
+
             time.sleep(1)
         else:
             print("❌ Timeout waiting for crawl to complete")
@@ -82,7 +82,7 @@ def run_crawl(url):
 
 if __name__ == "__main__":
     print("🌍 Starting Real-World Crawl Test")
-    
+
     # Verify Health First
     try:
         h = requests.get("http://localhost:8899/health")
