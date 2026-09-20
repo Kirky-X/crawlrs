@@ -1,0 +1,17 @@
+# Copyright (c) 2025-2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+#
+# typos 白名单 — 仅收录本仓中的"误报词"。新增条目必须写明出处与理由，
+# 严禁用白名单掩盖真实拼写错误（真实错误请直接改正源码）。
+# 参考: https://github.com/crate-ci/typos/blob/master/docs/reference.md
+
+[files]
+# 机器生成的扫描基线（含逐条哈希），不做拼写检查
+extend-exclude = [".secrets.baseline"]
+
+[default.extend-words]
+# src/common/text_slice.rs 单元测试中的断言字面量：
+#   assert_eq!(truncate_chars("hello", 3), "hel");   // 截断 3 个字符的期望结果
+#   assert_eq!(safe_prefix("hello", 3), "hel");
+# "hel" 是 "hello" 的前 3 个字符，属测试数据而非拼写错误。
+hel = "hel"
