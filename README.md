@@ -380,7 +380,7 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 ## 📄 许可证
 
-本项目采用 [Apache License 2.0](LICENSE) 许可证。Copyright © 2025 Kirky.X。
+本项目采用 [Apache License 2.0](LICENSE) 许可证。Copyright © 2025-2026 Kirky.X🌠。
 
 ---
 

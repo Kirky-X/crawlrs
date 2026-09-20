@@ -381,7 +381,7 @@ For the full version history see the [📋 Changelog](docs/CHANGELOG.md) (follow
 
 ## 📄 License
 
-This project is licensed under the [Apache License 2.0](LICENSE). Copyright © 2025 Kirky.X.
+This project is licensed under the [Apache License 2.0](LICENSE). Copyright © 2025-2026 Kirky.X🌠.
 
 ---
 

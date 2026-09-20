@@ -28,7 +28,7 @@ crawlrs 是一个使用 Rust 构建的自托管企业级网页数据采集平台
 
 ### ❓ 项目采用什么许可证？
 
-[Apache License 2.0](../LICENSE)。Copyright © 2025 Kirky.X。
+[Apache License 2.0](../LICENSE)。Copyright © 2025-2026 Kirky.X🌠。
 
 ### ❓ 在哪里可以获得帮助？
 
