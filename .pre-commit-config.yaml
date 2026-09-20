@@ -18,6 +18,10 @@ repos:
       - id: check-added-large-files
         args: ['--maxkb=1000']
       - id: detect-private-key
+        # scripts/pre-commit-check.sh 是仓库自带的私钥扫描器，其 patterns 数组里存放的正是
+        # 它要匹配的 PEM 头字面量（见 docs/SECURITY.md「私钥扫描」），属工具签名而非私钥。
+        # 仅豁免这一个文件；其余文件仍全量检测私钥。
+        exclude: '^scripts/pre-commit-check\.sh$'
       - id: check-merge-conflict
         args: ['--assume-in-merge']
         # 注意：本仓工作流直接在 main 分支提交，故不启用 no-commit-to-branch
@@ -27,8 +31,12 @@ repos:
     rev: v1.5.0
     hooks:
       - id: detect-secrets
-        args: [--exclude-files, tests/, --exclude-files, examples/]
-        exclude: '^Cargo\.lock$'
+        # 已审计基线：收录 30 个文件 / 60 条既有命中（测试向量、文档占位符、本地 DSN、
+        # CI service 容器口令、密钥扫描脚本自身的模式表），逐条确认非真实凭据。
+        # 新增真实凭据仍会拦截；新增误报需重跑 `detect-secrets scan` 更新基线并在此提交。
+        args: [--baseline, .secrets.baseline, --exclude-files, tests/, --exclude-files, examples/]
+        # 基线文件与锁文件不参与扫描
+        exclude: '^(Cargo\.lock|\.secrets\.baseline)$'
 
   - repo: https://github.com/crate-ci/typos
     rev: v1.28.0
