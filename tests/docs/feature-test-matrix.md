@@ -110,9 +110,9 @@ engine-tls-fingerprint ──> dep:wreq
 
 ### 3.3 后端组合轴
 
-- 数据库：PostgreSQL 16（唯一支持后端，见 §1.3）。testcontainers 自动拉起（`src/common/test_helpers.rs`，
+- 数据库：PostgreSQL 16（默认测试后端，见 §1.3）。项目支持 PostgreSQL / SQLite / MySQL 三后端（`db-postgres` / `db-sqlite` / `db-mysql` feature），测试套件默认使用 PostgreSQL。testcontainers 自动拉起（`src/common/test_helpers.rs`，
   进程级共享容器 + 迁移自动应用），或外部 `TEST_DATABASE_URL`（docker-compose.test.yml 的 `test-db`）。
-- 中间件需求结论：**仅需 PostgreSQL**；Chrome/FlareSolverr 为可选浏览器 profile；Redis/Keycloak 不适用。
+- 中间件需求结论：测试**仅需 PostgreSQL**（默认后端）；Chrome/FlareSolverr 为可选浏览器 profile；Redis/Keycloak 不适用。
 
 ## 4. 环境与清理
 
