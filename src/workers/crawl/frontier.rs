@@ -141,7 +141,7 @@ impl Ord for ScoredUrl {
 /// - **pop**：从 `cursor` 位置开始扫描域名列表，找到第一个非空堆并弹出堆顶，
 ///   然后 `cursor` 前进到下一域名（round-robin）
 ///
-/// 域内按分数排序（[`ScoredUrl::Ord`]），域名间按 round-robin 公平调度。
+/// 域内按分数排序（`ScoredUrl::Ord`），域名间按 round-robin 公平调度。
 ///
 /// # 线程安全
 ///
@@ -205,7 +205,7 @@ impl Frontier {
     /// 用 `Arc<str>` 替代 `String` 作为 domain key，
     /// `Arc::clone` 是 O(1) 原子引用计数加 1（无堆分配），原 3 次 String clone 改为 1 次 `Arc::from` 堆分配 + 2 次 O(1) Arc::clone。
     /// 借用检查器不允许 entry().or_insert_with(closure) 内访问 `inner.domain_order`（双可变借用），
-    /// 故仍用 contains_key + insert 模式，但 Arc<str> 已消除主要开销。
+    /// 故仍用 contains_key + insert 模式，但 Arc\<str\> 已消除主要开销。
     pub fn push(&self, scored: ScoredUrl) {
         let mut inner = self.inner.lock();
         let domain: Arc<str> = Arc::from(scored.domain.as_str());

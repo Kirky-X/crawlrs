@@ -15,7 +15,7 @@ pub mod crawl_text_integration;
 ///
 /// UrlNormalizer + Bloom + UrlInterner 三层组合：
 /// - L1: Bloom 预筛（mmap+MAP_HUGETLB，1M URLs ~1.2MB，假阳性 <1%）
-/// - L2: HashSet 精确校验（hashbrown::HashSet<String>）
+/// - L2: HashSet 精确校验（`hashbrown::HashSet<String>`）
 /// - L3: DB（scrape_worker.find_existing_urls）保权威
 ///
 /// Bloom 阴性 → 绝对新（无假阴性）；Bloom 阳性 → 回落 DB 校验。

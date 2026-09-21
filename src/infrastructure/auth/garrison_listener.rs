@@ -14,15 +14,15 @@
 //! ## 时序与依赖注入
 //!
 //! `GarrisonManager::init` 通过 `inventory::iter` 收集监听器，发生在
-//! [`init_garrison_auth`]（bootstrap 早期）。但 [`AuditServiceTrait`] 实例
-//! 在 [`init_services`] 中创建（bootstrap 后期），时序上晚于 garrison 初始化。
+//! `init_garrison_auth`（bootstrap 早期）。但 [`AuditServiceTrait`] 实例
+//! 在 `init_services` 中创建（bootstrap 后期），时序上晚于 garrison 初始化。
 //!
 //! 解法：使用 [`parking_lot::RwLock`]`<Option<Arc<…>>>` 全局态持有
 //! `Arc<dyn AuditServiceTrait>` 引用——
 //! - 监听器在 `on_event` 中通过 `read()` 读取 audit_service（懒读）
-//! - [`init_services`] 创建 audit_service 后调用 [`set_audit_service`] 注入
+//! - `init_services` 创建 audit_service 后调用 [`set_audit_service`] 注入
 //! - 在注入前若 garrison 广播事件，`on_event` 仅 `log::warn!` 不中断
-//! - 测试可通过 [`reset_audit_service_for_test`] 重置全局态（解决测试污染）
+//! - 测试可通过 `reset_audit_service_for_test` 重置全局态（解决测试污染）
 //!
 //! ## 背压与可观察性
 //!
@@ -49,7 +49,7 @@
 //!   [`AuditLogEntry`]，仅在 metadata 中记录前 8 字符前缀（与 garrison
 //!   `mask_audit_token` 一致）。短 token（< 16 字符）直接脱敏为 `***…`，
 //!   避免完整原文落入 metadata
-//! - **失败不传播**：[`on_event`] 失败仅 `log::warn!`，返回 `Ok(())`
+//! - **失败不传播**：`on_event` 失败仅 `log::warn!`，返回 `Ok(())`
 //!   （与 garrison `AuditLogListener` 行为一致：监听器失败不中断主流程）
 //! - **异步写入**：通过 [`JoinSet`] 异步执行避免阻塞 garrison 主流程
 //! - **字段长度限制（CWE-400 防 DoS）**：所有 metadata 字段均截断到上限：
@@ -347,8 +347,8 @@ impl GarrisonListener for CrawlrsAuditListener {
     ///
     /// # 行为
     ///
-    /// 1. 调用 [`event_to_audit_entry`] 将 [`GarrisonEvent`] 转换为 [`AuditLogEntry`]
-    /// 2. 通过 [`get_audit_service`] 读取全局 audit_service
+    /// 1. 调用 `event_to_audit_entry` 将 [`GarrisonEvent`] 转换为 [`AuditLogEntry`]
+    /// 2. 通过 `get_audit_service` 读取全局 audit_service
     ///    - 未注入：`log::warn!` 后返回 `Ok(())`（不阻塞 garrison 主流程）
     /// 3. 通过 [`Semaphore::try_acquire`] 获取 inflight permit（背压）
     ///    - 满时 drop 事件 + warn + metrics counter（避免 DB 异常时 task 雪崩 OOM）

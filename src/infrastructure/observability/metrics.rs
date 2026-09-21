@@ -233,7 +233,7 @@ impl MutableSystemMonitor {
         }
     }
 
-    /// 刷新系统指标（改为 `&self`，内部 Arc<Mutex> 保证线程安全）
+    /// 刷新系统指标（改为 `&self`，内部 Arc\<Mutex\> 保证线程安全）
     pub fn refresh(&self) {
         let mut sys = match self.system.lock() {
             Ok(guard) => guard,

@@ -386,7 +386,7 @@ pub struct RagComponents {
 
 /// 初始化 RAG 能力组件。
 ///
-/// 校验语义（fail-fast）由 [`RagSettings::validate_providers`] 承担：配置了
+/// 校验语义（fail-fast）由 `RagSettings::validate_providers` 承担：配置了
 /// 未编译的 feature（local 无 `rag-local` / remote 无 `rag-remote`）或非法
 /// provider 值时返回带重建指引的错误。vecboost 模型加载（秒级）发生在此处，
 /// 即启动期一次性成本。
@@ -448,10 +448,10 @@ pub async fn init_rag_components(settings: &Settings) -> Result<RagComponents, S
 ///
 /// 装配流程：
 /// 1. 调用 [`init_garrison_dao`] 获取 `Arc<dyn GarrisonDao>`（oxcache 内存存储，自管理实例）
-/// 2. 调用 [`build_garrison_config`] 构造 [`GarrisonConfig`]（弱密钥拒绝，HS256 ≥32 字节）
+/// 2. 调用 [`build_garrison_config`] 构造 `GarrisonConfig`（弱密钥拒绝，HS256 ≥32 字节）
 /// 3. 构造 [`CrawlrsGarrisonInterface`] 并装为 `Arc<dyn GarrisonInterface>`
 ///    （注入 crawlrs 的 `DbPool` 用于查询 garrison RBAC 表）
-/// 4. 调用 [`GarrisonManager::init`] 写入 `GARRISON_MANAGER` 全局单例
+/// 4. 调用 `GarrisonManager::init` 写入 `GARRISON_MANAGER` 全局单例
 /// 5. 错误按故障层级映射为类型化变体
 ///    - 弱密钥 / 空密钥 → [`BootstrapError::GarrisonConfig`]（`#[from]` 自动转换）
 ///    - DAO oxcache 初始化失败 → [`BootstrapError::GarrisonDao`]

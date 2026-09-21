@@ -4,11 +4,11 @@
 //! 正文提取模块（content-processing R2/R3 -）
 //!
 //! 模块结构：
-//! - [`traits`]：`ContentExtractor` trait + `ExtractedContent` + `PageType`
-//! - [`css_rule_extractor`]：`CssRuleExtractor` 兜底实现（无 feature 依赖）
-//! - [`trafilatura_extractor`]：`TrafilaturaExtractor` 主路径（gated `trafilatura`）
-//! - [`dom_smoothie_extractor`]：`DomSmoothieExtractor` 性能回退（gated `dom-smoothie`）
-//! - [`facade`]：`ContentExtractionFacade` 优先级路由 + LLM 回退
+//! - `traits`：`ContentExtractor` trait + `ExtractedContent` + `PageType`
+//! - `css_rule_extractor`：`CssRuleExtractor` 兜底实现（无 feature 依赖）
+//! - `trafilatura_extractor`：`TrafilaturaExtractor` 主路径（gated `trafilatura`）
+//! - `dom_smoothie_extractor`：`DomSmoothieExtractor` 性能回退（gated `dom-smoothie`）
+//! - `facade`：`ContentExtractionFacade` 优先级路由 + LLM 回退
 //!
 //! 特性门控策略
 //! - `trafilatura`：启用 trafilatura 实现

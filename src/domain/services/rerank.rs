@@ -3,7 +3,7 @@
 
 //! 语义重排（rerank）能力
 //!
-//! 领域层只定义 [`RerankProvider`] 抽象与 [`SearchReranker`] 编排；具体实现：
+//! 领域层只定义 `RerankProvider` 抽象与 `SearchReranker` 编排；具体实现：
 //! - `local`：vecboost 进程内推理（`rag-local` feature，
 //!   `infrastructure::services::vecboost_provider`）
 //! - `http`：通用 /rerank REST 适配（无条件编译，

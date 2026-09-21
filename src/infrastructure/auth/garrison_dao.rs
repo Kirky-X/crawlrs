@@ -18,14 +18,14 @@
 //!
 //! ## 全局 DAO 注入
 //!
-//! [`GarrisonManager::init`] 持有 dao 后通过 `GarrisonSession::dao()` 暴露给 garrison
+//! `GarrisonManager::init` 持有 dao 后通过 `GarrisonSession::dao()` 暴露给 garrison
 //! 内部模块（`pub(crate)`），但**外部业务代码无法访问**——garrison 0.8.1 未对外暴露
 //! `ApiKeyHandler` 单例或 `dao()` 公共 API。
 //!
 //! 解法（与 `garrison_listener.rs::AUDIT_SERVICE` 一致）：
 //! - [`init_garrison_dao`] 创建 dao 后立即 [`set_garrison_dao`] 注入全局态
 //! - 业务 handler（`api_key_handler`）通过 [`get_garrison_dao`] 读取
-//! - 测试可通过 [`reset_garrison_dao_for_test`] 重置（避免测试间污染）
+//! - 测试可通过 `reset_garrison_dao_for_test` 重置（避免测试间污染）
 //!
 //! 使用 [`parking_lot::RwLock`]`<Option<…>>` 而非 [`std::sync::OnceLock`] 的理由：
 //! - 测试可重置全局态，避免并行测试污染

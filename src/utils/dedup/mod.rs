@@ -26,13 +26,13 @@
 //! ## 设计原则
 //!
 //! - **DB 保权威**：Bloom 阳性不直接判定为"已存在"，必须回落 DB 校验
-//! - **错误显性化** 去重错误显性返回 [`DedupError`]，不静默跳过
-//! - **简洁优先** 仅暴露 [`Deduplicator::check`] 与 [`Deduplicator::insert`]，
+//! - **错误显性化** 去重错误显性返回 `DedupError`，不静默跳过
+//! - **简洁优先** 仅暴露 `Deduplicator::check` 与 `Deduplicator::insert`，
 //!   内部组合 UrlNormalizer + UrlInterner
-//! - **TOCTOU 防御**：[`Deduplicator::check_and_insert`] 原子化 check + insert，
+//! - **TOCTOU 防御**：`Deduplicator::check_and_insert` 原子化 check + insert，
 //!   避免多 worker 并发时重复入队
 //! - **接口隔离** `mod.rs` 只放 trait/pub 结构体/re-export，
-//!   实现见 [`deduplicator`]、[`bloom`]、[`interner`] 子模块
+//!   实现见 `deduplicator`、`bloom`、`interner` 子模块
 
 pub mod bloom;
 pub mod deduplicator;

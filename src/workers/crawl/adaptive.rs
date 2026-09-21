@@ -13,7 +13,7 @@
 //!
 //! 设计文档 §16 要求"BM25 相关性用现有 `relevance_scorer.rs`（TF-IDF）扩展"。
 //! 当前阶段 `AdaptiveContext` 仅含 URL 列表（无正文），故 BM25 降级为
-//! **URL 关键词命中率**（复用 [`scorers::KeywordRelevanceScorer`] 逻辑）。
+//! **URL 关键词命中率**（复用 `scorers::KeywordRelevanceScorer` 逻辑）。
 //! 后续正文提取接入后可升级为正文 TF-IDF 评分。
 
 use super::scorers::KeywordRelevanceScorer;

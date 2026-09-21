@@ -6,7 +6,7 @@
 //! 基于 Mozilla Fluent 系统提供多语言翻译支持。
 //! 翻译文件位于项目根目录 `locales/` 下，按 locale 子目录组织。
 //!
-//! 另提供启动期全局束（[`init_startup_i18n`] / [`startup_i18n`]）：主程序在
+//! 另提供启动期全局束（`init_startup_i18n` / `startup_i18n`）：主程序在
 //! 读取配置后立即初始化，供无请求上下文的对外出口（`CrawlRsError` 错误响应、
 //! RAG 配置校验消息、worker 运维日志）经 Fluent 输出。
 

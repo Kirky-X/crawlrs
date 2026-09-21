@@ -132,7 +132,7 @@ impl ReqwestEngine {
 
     /// 创建带代理提供者配置的 ReqwestEngine 实例（依赖 `ProxyProvider` trait）
     ///
-    /// 默认使用 `ProxyStrategy::RoundRobin`。如需 sticky，请使用 [`Self::with_provider_and_strategy`]。
+    /// 默认使用 `ProxyStrategy::RoundRobin`。如需 sticky，请使用 `Self::with_provider_and_strategy`。
     /// 使用 DEFAULT_TIMEOUT_SECONDS（30 秒）作为引擎级超时。
     #[must_use]
     pub fn with_provider(

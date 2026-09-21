@@ -8,9 +8,9 @@
 //! 将 garrison 校验返回的 `Principal` 桥接为 crawlrs 既有 `AuthState`，
 //! 保持 handler 层 19 个 `Extension<AuthState>` 提取点零改动（换内核保外壳）。
 //!
-//! - [`map_perms_to_scope`]：garrison 权限串 → crawlrs `ApiKeyScope`（确定性查找表）
-//! - [`bridge_to_auth_state`]：login_id/perms/team_id → AuthState
-//! - [`extract_bearer`]：从 axum Request 提取 Bearer token
+//! - `map_perms_to_scope`：garrison 权限串 → crawlrs `ApiKeyScope`（确定性查找表）
+//! - `bridge_to_auth_state`：login_id/perms/team_id → AuthState
+//! - `extract_bearer`：从 axum Request 提取 Bearer token
 //!
 //! ## feature 门控
 //!
@@ -128,7 +128,7 @@ pub fn map_perms_to_scope(perms: &[String]) -> ApiKeyScope {
 /// 2. header 值非可见 ASCII → `AuthError::InvalidKey`
 /// 3. 不以 `Bearer ` 前缀开头 → `AuthError::InvalidKey`（RFC 7235：scheme 大小写敏感）
 /// 4. 截取前缀后的 token；空 token → `AuthError::InvalidKey`
-/// 5. token 长度 > [`MAX_BEARER_TOKEN_LEN`] → `AuthError::InvalidKey`（CWE-208 超长输入拒绝）
+/// 5. token 长度 > `MAX_BEARER_TOKEN_LEN` → `AuthError::InvalidKey`（CWE-208 超长输入拒绝）
 ///
 /// ## 安全
 ///

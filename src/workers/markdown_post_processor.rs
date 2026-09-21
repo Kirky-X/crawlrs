@@ -9,12 +9,12 @@
 //! # 职责
 //!
 //! 根据任务请求的 `formats` 字段判断是否需要生成 Markdown，
-//! 命中 `"markdown"` 则通过注入的 [`MarkdownServiceTrait`] 转换 HTML → Markdown。
+//! 命中 `"markdown"` 则通过注入的 `MarkdownServiceTrait` 转换 HTML → Markdown。
 //!
 //! # 依赖倒置（DIP）
 //!
 //! 本类型通过 `Arc<dyn MarkdownServiceTrait>` 注入转换服务，而非硬编码
-//! [`HtmdMarkdownService`]，便于测试时 mock 替换，未来扩展其他实现时无需修改源码。
+//! `HtmdMarkdownService`，便于测试时 mock 替换，未来扩展其他实现时无需修改源码。
 //!
 //! # 特性门控
 //!

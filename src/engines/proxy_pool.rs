@@ -150,11 +150,11 @@ impl ProxyPool {
     /// - `sticky_ttl`: 粘性会话 TTL（`sticky` 命中后在此时间内返回同一代理）
     /// - `default_cooldown`: `mark_failure` 默认冷却时长
     ///
-    /// sticky 表容量上限默认为 [`MAX_STICKY_BINDINGS`]，可通过
+    /// sticky 表容量上限默认为 `MAX_STICKY_BINDINGS`，可通过
     /// [`with_sticky_max_capacity`](Self::with_sticky_max_capacity) 调整。
     ///
     /// sticky 表预分配容量，避免高并发下大量 session_id
-    /// 触发 DashMap 反复 rehash（默认 [`MAX_STICKY_BINDINGS`] = 10_000）。
+    /// 触发 DashMap 反复 rehash（默认 `MAX_STICKY_BINDINGS` = 10_000）。
     #[must_use]
     pub fn new(entries: Vec<ProxyEntry>, sticky_ttl: Duration, default_cooldown: Duration) -> Self {
         let entries: Vec<Arc<ProxyEntry>> = entries.into_iter().map(Arc::new).collect();
@@ -173,7 +173,7 @@ impl ProxyPool {
 
     /// 设置 sticky 表最大容量
     ///
-    /// 用于需要调整默认 [`MAX_STICKY_BINDINGS`] 上限的场景。
+    /// 用于需要调整默认 `MAX_STICKY_BINDINGS` 上限的场景。
     /// 返回 `self` 以支持链式调用。
     #[must_use]
     pub fn with_sticky_max_capacity(mut self, capacity: usize) -> Self {
@@ -215,7 +215,7 @@ impl ProxyPool {
     ///
     /// # 容量限制
     ///
-    /// sticky 表上限 [`MAX_STICKY_BINDINGS`]。超限时先清理过期绑定；
+    /// sticky 表上限 `MAX_STICKY_BINDINGS`。超限时先清理过期绑定；
     /// 清理后仍超限则返回代理 URL 但不绑定（降级，不拒绝服务）。
     pub fn sticky(&self, session_id: &str) -> Option<String> {
         use dashmap::mapref::entry::Entry;

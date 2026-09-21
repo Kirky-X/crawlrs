@@ -181,14 +181,14 @@ pub struct ConcurrencySettings {
 
     /// 内存使用率进入 Pressure 状态的阈值（0.0 - 1.0）
     ///
-    /// 调度器在该阈值之上会对新任务执行 [`Admission::Defer`]。
+    /// 调度器在该阈值之上会对新任务执行 `Admission::Defer`。
     /// 必须严格小于 `mem_critical_threshold`。
     #[config(default = 0.8)]
     pub mem_pressure_threshold: f64,
 
     /// 内存使用率进入 Critical 状态的阈值（0.0 - 1.0）
     ///
-    /// 调度器在该阈值之上会对新任务执行 [`Admission::Reschedule`]，
+    /// 调度器在该阈值之上会对新任务执行 `Admission::Reschedule`，
     /// 持续超过 `critical_timeout_seconds` 后发出优雅关闭信号。
     #[config(default = 0.9)]
     pub mem_critical_threshold: f64,

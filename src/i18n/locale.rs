@@ -401,8 +401,9 @@ mod tests {
     fn test_detect_system_locale_result_domain() {
         // 真实环境调用：结果域恒为 {en-US, zh-CN}，不 panic
         let locale = detect_system_locale();
+        let resolved = locale.to_string();
         assert!(
-            locale.to_string() == "en-US" || locale.to_string() == "zh-CN",
+            resolved == "en-US" || resolved == "zh-CN",
             "detect_system_locale must resolve to en-US or zh-CN, got {}",
             locale
         );
@@ -460,8 +461,19 @@ mod tests {
 
     #[test]
     fn test_resolve_startup_invalid_config_falls_back_to_builtin() {
-        // 配置值非法 → 内置默认 en-US
+        // 配置值非法 → 内置默认 en-US。
+        // CRAWLRS_LANG 为进程级环境变量,经 ENV_MUTEX 串行化并显式移除,
+        // 避免并行兄弟测试的 env 泄漏让"检测成功"路径抢先。
+        let _guard = crate::common::test_support::ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var("CRAWLRS_LANG").ok();
+        std::env::remove_var("CRAWLRS_LANG");
         let locale = resolve_startup_default_locale("not-a-locale!!!", &["en-US", "zh-CN"]);
+        match saved {
+            Some(v) => std::env::set_var("CRAWLRS_LANG", v),
+            None => std::env::remove_var("CRAWLRS_LANG"),
+        }
         assert_eq!(locale.to_string(), "en-US");
     }
 }

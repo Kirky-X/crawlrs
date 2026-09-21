@@ -64,7 +64,7 @@ use std::collections::HashSet;
 ///
 /// # 使用
 ///
-/// 通常由 `ServiceModule` 构建期注入到 [`garrison::manager::GarrisonManager::init`]：
+/// 通常由 `ServiceModule` 构建期注入到 `garrison::manager::GarrisonManager::init`：
 ///
 /// ```no_run
 /// # use std::sync::Arc;

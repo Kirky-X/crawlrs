@@ -1356,11 +1356,11 @@ impl ScrapeWorker {
     /// 从 [`Task`] 一次性解析并构造 [`ScrapeRequest`]（便利入口）。
     ///
     /// 调用方仅需 `&Task`，无需关心 dto 解析细节。内部委托
-    /// [`Self::parse_scrape_request_dto`] + [`Self::build_scrape_request_from_dto`]。
+    /// `Self::parse_scrape_request_dto` + `Self::build_scrape_request_from_dto`。
     ///
     /// **若调用方需要同时使用 [`ScrapeRequestDto`] 与 [`ScrapeRequest`]**，
-    /// 应直接调 [`Self::parse_scrape_request_dto`] 拿到 dto 后再调
-    /// [`Self::build_scrape_request_from_dto`]，避免双解析双 clone payload。
+    /// 应直接调 `Self::parse_scrape_request_dto` 拿到 dto 后再调
+    /// `Self::build_scrape_request_from_dto`，避免双解析双 clone payload。
     pub fn build_scrape_request(task: &Task) -> Result<ScrapeRequest> {
         let dto = Self::parse_scrape_request_dto(task)?;
         Self::build_scrape_request_from_dto(&dto)

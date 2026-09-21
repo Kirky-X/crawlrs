@@ -9,13 +9,13 @@
 //! ## 子模块
 //!
 //! - [`garrison_config`] — `GarrisonConfig` 构造器（从 confers 读 jwt_secret/超时等，弱密钥拒绝）
-//! - [`garrison_dao`] — DAO 工厂（复用 garrison 内建 [`GarrisonDaoOxcache`]，无需自实现）
+//! - [`garrison_dao`] — DAO 工厂（复用 garrison 内建 `GarrisonDaoOxcache`，无需自实现）
 //! - [`garrison_interface`] — RBAC 接口（实现 garrison `GarrisonInterface`，从 RBAC 表读权限/角色）
-//! - [`garrison_listener`] — 审计监听器（实现 [`GarrisonListener`]，桥接 [`GarrisonEvent`] → [`AuditServiceTrait`]）
+//! - [`garrison_listener`] — 审计监听器（实现 ``GarrisonListener``，桥接 `GarrisonEvent` → `AuditServiceTrait`）
 //!
 //! ## 设计决策
 //!
-//! - **DAO 复用而非自实现**：garrison v0.8.1 内建 [`GarrisonDaoOxcache::new()`] 已实现完整 `GarrisonDao` trait
+//! - **DAO 复用而非自实现**：garrison v0.8.1 内建 ``GarrisonDaoOxcache::new()`` 已实现完整 `GarrisonDao` trait
 //!   （自管理 oxcache 实例），按 proposal「全量重签 + garrison 原生存储」garrison 用自己的 schema，
 //!   不读 crawlrs 旧 `api_keys`/`scopes` 表，故无需共享 crawlrs 的 `pool`/`cache`。
 //! - **Interface 自实现**：`GarrisonInterface` 是业务回调 trait（`get_permission_list`/`get_role_list`），

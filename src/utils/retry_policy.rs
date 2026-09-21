@@ -75,7 +75,7 @@ impl RetryPolicy {
     /// 计算下次重试的退避时间（基于 backon ExponentialBuilder）
     ///
     /// - `attempt=0` 退化为 `initial_backoff`（保护边界）
-    /// - 启用 jitter 时调用 [`backoff::backoff_delay`]（backon 指数退避 + jitter）
+    /// - 启用 jitter 时调用 `backoff::backoff_delay`（backon 指数退避 + jitter）
     /// - 禁用 jitter 时返回 deterministic cap（指数 + max cap，无随机）
     ///
     /// 调用方约定：`attempt=1` 表示第一次重试，对应 spider 公式 `attempt=0`。

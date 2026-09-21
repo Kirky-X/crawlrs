@@ -10,7 +10,7 @@
 //!
 //! 对同 URL 并发请求执行 single-flight 协调：
 //! - **Proceed 路径**：首个 worker（leader）获得执行权，正常抓取后通过 guard Drop
-//!   广播 [`CoalesceSignal::Completed`]
+//!   广播 `CoalesceSignal::Completed`
 //! - **Wait 路径**：等待方监听广播信号（45s 超时）：
 //!   - `Completed` → 按 leader task_id 从 `result_repo` 读取结果，命中则 mark_completed，
 //!     未命中则延后 5s 重排（leader 仍在写入）

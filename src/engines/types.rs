@@ -110,8 +110,8 @@ pub fn validate_session_id(session_id: &str) -> bool {
 ///
 /// 三种模式：
 /// - [`WaitFor::NetworkIdle`]：等待网络空闲（无新请求持续 500ms）
-/// - [`WaitFor::Selector(String)`]：等待指定 CSS selector 出现在 DOM 中
-/// - [`WaitFor::DomStable(Duration)`]：等待 DOM 稳定（无变化持续指定时长）
+/// - `WaitFor::Selector(String)`：等待指定 CSS selector 出现在 DOM 中
+/// - `WaitFor::DomStable(Duration)`：等待 DOM 稳定（无变化持续指定时长）
 ///
 /// # 设计动机
 ///

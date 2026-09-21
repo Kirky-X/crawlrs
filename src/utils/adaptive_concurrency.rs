@@ -7,10 +7,10 @@
 //! 拥塞控制算法，动态调整并发上限。
 //!
 //! 核心组件：
-//! - [`AIMDController`]：无锁（`AtomicUsize`）记录成功/失败，输出动态 target
+//! - `AIMDController`：无锁（`AtomicUsize`）记录成功/失败，输出动态 target
 //!   - **Additive Increase**：连续 `increase_threshold` 次成功后 `+1`
 //!   - **Multiplicative Decrease**：单次失败后 `target /= 2`（clamp 到 `min_limit`）
-//! - [`AdaptiveSemaphore`]：桥接 `tokio::sync::Semaphore`，`set_target` 调和可用许可
+//! - `AdaptiveSemaphore`：桥接 `tokio::sync::Semaphore`，`set_target` 调和可用许可
 //!
 //! 集成路径 `TeamSemaphore::with_adaptive` + `scrape_worker::record_*`。
 //! 默认关闭（`concurrency.adaptive_enabled=false`），开启后增强固定并发为动态带宽利用。

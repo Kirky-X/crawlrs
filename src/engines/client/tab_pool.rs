@@ -25,7 +25,7 @@
 //! **跨 Browser 使用风险**：chromiumoxide 的 Page 持有 CDP session，session 与
 //! Browser 关联，跨 Browser 使用会在 CDP 调用时失败。调用方应保证 TabPool 的
 //! 生命周期与单个 Browser 一致（per-Browser 实例化），或在多 Browser 场景下
-//! 由上层（如 [`super::playwright_pool::BrowserPool`]）按 instance_id 路由。
+//! 由上层（如 `super::playwright_pool::BrowserPool`）按 instance_id 路由。
 //!
 //! # 参考
 //!

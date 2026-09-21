@@ -6,7 +6,7 @@
 //! ## 重构（决策 1-4）
 //!
 //! 本模块在完成 DTO 化与 garrison 桥接：
-//! - `AuthState` / `AuthError` 抽出到 [`super::auth_types`]（决策 3：解决循环依赖）
+//! - `AuthState` / `AuthError` 抽出到 `super::auth_types`（决策 3：解决循环依赖）
 //! - 删除 `ApiKeyCache` / `AuthRateLimiter` / `validate_api_key_from_db` 等死代码（决策 1）
 //! - 限速仅依赖 garrison firewall（决策 2），crawlrs 侧不再做暴力破解防护
 //! - 新增 `TeamIdCache`（api_key_id → team_id LRU，容量 4096，TTL 60s，决策 4）

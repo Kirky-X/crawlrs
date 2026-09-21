@@ -4,10 +4,10 @@
 //! 通用 HTTP rerank provider（无条件编译，仅依赖 reqwest）
 //!
 //! 对接事实标准 `/rerank` REST 契约，覆盖主流远端重排服务：
-//! - [`RerankFormat::Cohere`]：`POST {model, query, documents, top_n}` →
+//! - `RerankFormat::Cohere`：`POST {model, query, documents, top_n}` →
 //!   `{results: [{index, relevance_score}]}`。兼容 Cohere v2、Jina
 //!   `/v1/rerank` 及多数自建推理服务（Xinference/vLLM 等）
-//! - [`RerankFormat::Tei`]：`POST {query, texts}` →
+//! - `RerankFormat::Tei`：`POST {query, texts}` →
 //!   `[{index, score}]`。HuggingFace text-embeddings-inference
 //!
 //! 与 rig 的取舍：rig 0.42 rerank 原生仅支持 Voyage；通用 HTTP 适配让

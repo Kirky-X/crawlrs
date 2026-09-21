@@ -7,14 +7,14 @@
 //! 其余 worker 等待首个完成后从缓存/DB 读取结果，避免重复网络往返。
 //!
 //! 核心数据结构：
-//! - [`RequestCoalescer`]：`DashMap<String, InFlightEntry>` 共享状态
-//! - [`CoalesceResult`]：`try_start` 返回枚举（`Proceed`/`Wait`）
-//! - [`CoalesceGuard`]：RAII guard，Drop 时广播完成通知并移除条目
+//! - `RequestCoalescer`：`DashMap<String, InFlightEntry>` 共享状态
+//! - `CoalesceResult`：`try_start` 返回枚举（`Proceed`/`Wait`）
+//! - `CoalesceGuard`：RAII guard，Drop 时广播完成通知并移除条目
 //!
 //! 设计要点：
 //! - `STALE_TIMEOUT = 120s`：超过该时长的 in-flight 条目视为僵死，`purge_stale` 清理
 //! - `broadcast::channel(1)`：容量 1 即可，完成只发一次
-//! - [`CoalesceSignal`]：广播载荷区分 `Completed`（leader 正常完成）与 `Purged`
+//! - `CoalesceSignal`：广播载荷区分 `Completed`（leader 正常完成）与 `Purged`
 //!   （僵死条目被清理），等待方据此决定是否按 leader task_id 查询结果
 //! - guard 持有 `Arc<DashMap>` 引用，不持有 `&RequestCoalescer`，避免生命周期耦合
 //! - `CompactString` 改用 `String`（项目无 compact_str 依赖）
@@ -65,7 +65,7 @@ pub enum CoalesceResult {
 /// RAII guard：持有期间该 URL 被标记为 in-flight
 ///
 /// Drop 时从 `in_flight` 移除条目并广播 [`CoalesceSignal::Completed`] 通知所有等待方。
-/// 调用方可显式 [`complete`](Self::complete) 以提前释放（语义等价于 drop）。
+/// 调用方可显式 `complete`(Self::complete) 以提前释放（语义等价于 drop）。
 #[derive(Debug)]
 pub struct CoalesceGuard {
     url: String,

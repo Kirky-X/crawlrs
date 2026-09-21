@@ -4,14 +4,14 @@
 //! 抓取缓存工具集
 //!
 //! 本模块从 `scrape_worker` 抽离缓存相关纯函数，符合单一职责原则：
-//! - [`generate_scrape_cache_key`]：cache key 生成（纳入 ScrapeOptions 影响字段）
-//! - [`redact_url_for_log`]：URL 日志脱敏（防 query/fragment 凭据泄露）
-//! - [`filter_sensitive_headers`]：敏感响应头过滤（CWE-200）
-//! - [`SanitizedScrapeResponse`]：borrowed 序列化结构体（性能，避免完整克隆）
+//! - `generate_scrape_cache_key`：cache key 生成（纳入 ScrapeOptions 影响字段）
+//! - `redact_url_for_log`：URL 日志脱敏（防 query/fragment 凭据泄露）
+//! - `filter_sensitive_headers`：敏感响应头过滤（CWE-200）
+//! - `SanitizedScrapeResponse`：borrowed 序列化结构体（性能，避免完整克隆）
 //!
 //! `scrape_worker` 的 `try_read_scrape_cache` / `try_write_scrape_cache` 通过
 //! 这些工具完成 cache key 计算与安全过滤，调用方在 `process_scrape_task`
-//! 中先用 [`generate_scrape_cache_key`] 计算 key，再传入读写方法。
+//! 中先用 `generate_scrape_cache_key` 计算 key，再传入读写方法。
 
 use std::collections::HashMap;
 
@@ -33,7 +33,7 @@ use crate::engines::engine_client::{ScrapeOptions, ScrapeResponse};
 /// scrape:{method}:{url}?fp={fingerprint}
 /// ```
 ///
-/// 其中 `fingerprint` 由 [`options_fingerprint`] 计算，纳入影响响应内容的
+/// 其中 `fingerprint` 由 `options_fingerprint` 计算，纳入影响响应内容的
 /// `ScrapeOptions` 字段，避免同 URL 不同 options 的缓存串扰。
 ///
 /// # 纳入 ScrapeOptions 影响字段
@@ -215,7 +215,7 @@ pub fn filter_sensitive_headers(headers: &mut HashMap<String, String>) {
 /// 但只用到了 headers 字段做过滤，其余字段原样参与序列化。这是不必要的堆分配。
 ///
 /// 本结构体借用原 response 的所有字段，仅 headers 字段在序列化时通过
-/// [`SanitizedHeaders`] 自定义 Serialize 跳过敏感头，实现零克隆序列化。
+/// `SanitizedHeaders` 自定义 Serialize 跳过敏感头，实现零克隆序列化。
 ///
 /// # 序列化结果与原 ScrapeResponse 一致
 ///

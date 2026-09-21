@@ -3,7 +3,7 @@
 
 //! HTML → Markdown 转换服务
 //!
-//! 提供 [`MarkdownServiceTrait`] 抽象与 [`HtmdMarkdownService`] 实现，
+//! 提供 `MarkdownServiceTrait` 抽象与 `HtmdMarkdownService` 实现，
 //! 后者使用 `htmd` crate 作为转换主路径。
 //!
 //! `only_main_content=true` 时，调用方应先经正文提取器（[`crate::domain::services`]

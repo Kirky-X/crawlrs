@@ -8,10 +8,10 @@
 //!
 //! # 模块组成
 //!
-//! - [`filters`]：URL 过滤器 trait + FilterChain + 三个具体 filter
-//! - [`scorers`]：URL 评分器 trait + CompositeScorer + 两个具体 scorer
-//! - [`frontier`]：优先级队列 ScoredUrl + 域名 round-robin
-//! - [`adaptive`]：自适应策略 + 停止条件
+//! - `filters`：URL 过滤器 trait + FilterChain + 三个具体 filter
+//! - `scorers`：URL 评分器 trait + CompositeScorer + 两个具体 scorer
+//! - `frontier`：优先级队列 ScoredUrl + 域名 round-robin
+//! - `adaptive`：自适应策略 + 停止条件
 
 pub mod adaptive;
 /// DRL 自适应爬取策略

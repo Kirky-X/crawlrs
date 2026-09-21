@@ -45,7 +45,7 @@ pub use cache_service::OxcacheService;
 ///
 /// async fn example(cache: &dyn CacheService) -> anyhow::Result<()> {
 ///     cache.set("key", "value", 3600).await?;     // TTL = 3600s
-///     let val = cache.get("key").await?;           // Option<String>
+///     let val = cache.get("key").await?;           // `Option<String>`
 ///     assert!(cache.exists("key").await?);
 ///     cache.delete("key").await?;
 ///     Ok(())

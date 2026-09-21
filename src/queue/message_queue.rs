@@ -323,7 +323,7 @@ impl MessageQueue for DbMessageQueue {
     }
 }
 
-/// Arc<T> 的 MessageQueue 委托实现
+/// Arc\<T\> 的 MessageQueue 委托实现
 #[async_trait]
 impl<T: MessageQueue + ?Sized> MessageQueue for Arc<T> {
     async fn send(
