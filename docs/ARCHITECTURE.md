@@ -571,7 +571,7 @@ infrastructure/
 
 **Technology:** dbnexus 0.6.0-rc.2 (builds on Sea-ORM 2.0.1)
 
-dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access. PostgreSQL is the only supported backend.
+dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access. Three database backends are supported: PostgreSQL (default), SQLite, and MySQL — selectable via `db-postgres` / `db-sqlite` / `db-mysql` features.
 
 **Key Tables:**
 
