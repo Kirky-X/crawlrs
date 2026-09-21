@@ -1,7 +1,7 @@
 # 业内最佳实践对标报告
 
 > 对标对象：crawlrs 0.2.0-rc.1 vs Firecrawl（SaaS/开源混合）× Crawl4AI（Python 开源）× Crawlee（Node/Python 框架）
-> 产出背景：`specmark/changes/bdd-acceptance-hardening`（T014）
+> 产出背景：`specmark/changes/bdd-acceptance-hardening`
 > 证据口径：crawlrs 侧每条结论均附**代码路径 + 行号**，可通过 `git blame` 复核；竞品侧结论基于其公开文档（见 §6 数据来源）。
 
 ---

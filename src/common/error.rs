@@ -582,7 +582,14 @@ impl From<RepositoryError> for WorkerError {
 impl From<RepositoryError> for CrawlRsError {
     fn from(err: RepositoryError) -> Self {
         match err {
-            RepositoryError::DatabaseError(msg) => CrawlRsError::Other(msg),
+            // 双态:platform 下重建 DbErr::Custom 保住 Database 变体语义;
+            // 轻量面 Database 直接承载字符串。
+            #[cfg(feature = "platform")]
+            RepositoryError::DatabaseError(msg) => {
+                CrawlRsError::Database(dbnexus::sea_orm::DbErr::Custom(msg))
+            }
+            #[cfg(not(feature = "platform"))]
+            RepositoryError::DatabaseError(msg) => CrawlRsError::Database(msg),
             RepositoryError::NotFound => CrawlRsError::NotFound("Resource not found".to_string()),
             RepositoryError::AlreadyExists => {
                 CrawlRsError::Validation("Resource already exists".to_string())
@@ -1399,7 +1406,12 @@ mod tests {
     #[test]
     fn test_app_error_from_repository_database_error() {
         let err: CrawlRsError = RepositoryError::DatabaseError("conn refused".to_string()).into();
-        assert!(matches!(err, CrawlRsError::Other(msg) if msg == "conn refused"));
+        // 双态:platform 下为 Database(DbErr::Custom),轻量面为 Database(String)——
+        // 统一断言 Database(_) 变体与消息语义
+        assert!(matches!(
+            err,
+            CrawlRsError::Database(ref m) if m.to_string().contains("conn refused")
+        ));
     }
 
     #[test]

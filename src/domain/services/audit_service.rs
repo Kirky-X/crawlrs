@@ -35,7 +35,12 @@ impl From<AuditServiceError> for CrawlRsError {
                     {
                         return CrawlRsError::Database(db_err);
                     }
-                    CrawlRsError::Other(format!("Database error: {}", anyhow_err))
+                    // 轻量面(platform 关)Database 变体为字符串载荷,保留 Database 语义;
+                    // platform 下非 DbErr 的 anyhow 错误才落到 Other。
+                    #[cfg(not(feature = "platform"))]
+                    return CrawlRsError::Database(anyhow_err.to_string());
+                    #[cfg(feature = "platform")]
+                    return CrawlRsError::Other(format!("Database error: {}", anyhow_err));
                 }
                 AuditRepositoryError::NotFound => CrawlRsError::Other(repo_err.to_string()),
             },
