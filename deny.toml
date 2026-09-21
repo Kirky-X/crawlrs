@@ -13,7 +13,14 @@ yanked = "deny"
 # CVSS 5.3 MEDIUM，官方 patched >=0.23.45，2026-09-14 发布）。复查（2026-09-15）：
 # 依赖树 rustls 已锁定 0.23.45 = 修复版本，`cargo deny check` 报告 advisories ok，
 # 无需 ignore 也无需进一步升级。后续 rustls 相关依赖变更时随 `cargo deny check` 一并复核。
-ignore = ["RUSTSEC-2023-0071"]
+#
+# 以下 advisory 为传递依赖中已停止维护的 crate，无可用升级版本，待上游迁移后移除：
+# - RUSTSEC-2024-0436: paste（vecboost → candle-core/gemm 传递依赖，编译期 proc-macro，
+#   无运行时攻击面；merge 时自旧线恢复该 ignore，cargo-deny-action 默认
+#   --all-features 才会扫到）
+# - RUSTSEC-2025-0119: number_prefix（vecboost → hf-hub → indicatif 传递依赖，
+#   仅进度条数字格式化，无运行时攻击面）
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119"]
 
 [licenses]
 allow = [

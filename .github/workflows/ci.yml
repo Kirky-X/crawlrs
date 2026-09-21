@@ -188,7 +188,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [1.95, stable]
+        # MSRV 与 Cargo.toml rust-version = "1.97" 对齐（0.2.0-rc.2 起自研依赖
+        # confers/dbnexus/inklog/limiteron/oxcache/sdforge/trait-kit 0.x-rc.5+
+        # 均要求 rustc 1.97.1，1.95 腿在 cargo resolve 阶段即报 MSRV 不满足）
+        # 注：toolchain "1.97" 解析为最新 1.97.x（即 1.97.1）
+        rust: [1.97, stable]
     services:
       postgres:
         image: postgres:16
