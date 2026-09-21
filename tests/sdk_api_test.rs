@@ -24,6 +24,7 @@ use common::helpers::db_pool::create_test_pool_or_panic;
 use crawlrs::domain::auth::ApiKeyScope;
 use crawlrs::domain::repositories::crawl_repository::CrawlRepository;
 use crawlrs::domain::services::search_service::SearchServiceTrait;
+use crawlrs::i18n::{I18nBundle, Locale};
 use crawlrs::presentation::middleware::auth_middleware::AuthState;
 use crawlrs::presentation::sdk::build_sdk_router;
 use crawlrs::presentation::sdk::mocks::{MockCrawlRepository, MockSearchService, MockTaskQueue};
@@ -34,11 +35,22 @@ use crawlrs::queue::task_queue::TaskQueue;
 /// SDK endpoints use `#[state] auth_state: AuthState` which sdforge resolves
 /// from the axum Extension layer — without it, every request returns 500
 /// "Missing request extension: AuthState".
+///
+/// locale/i18n 两个 Extension 同理（SDK handler 的 `#[state] locale/i18n`），
+/// 固定 en-US bundle，断言不受宿主系统语言影响（与
+/// `src/presentation/sdk/tests.rs::make_test_i18n` 同模式）。
 fn make_server() -> TestServer {
     let team_id = Uuid::parse_str(TEAM_ID).expect("valid TEAM_ID uuid");
     let api_key_id = Uuid::parse_str(API_KEY_ID).expect("valid API_KEY_ID uuid");
     let pool = create_test_pool_or_panic();
     let auth_state = AuthState::new(pool, team_id, api_key_id, ApiKeyScope::default());
+
+    let locale_dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+    let locale: Locale = "en-US".parse().expect("valid en-US locale");
+    let i18n = std::sync::Arc::new(
+        I18nBundle::load("en-US", &["en-US", "zh-CN"], &locale_dir)
+            .expect("load en-US i18n bundle"),
+    );
 
     let app = build_sdk_router()
         .layer(Extension(
@@ -48,7 +60,9 @@ fn make_server() -> TestServer {
         .layer(Extension(
             Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>
         ))
-        .layer(Extension(auth_state));
+        .layer(Extension(auth_state))
+        .layer(Extension(locale))
+        .layer(Extension(i18n));
     TestServer::new(app)
 }
 

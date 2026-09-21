@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use limiteron::prelude::*;
 use limiteron::storage::{BanStorage, MemoryBanStorage, MemoryStorage, Storage};
-use log::{debug, info, warn};
+use log::{debug, warn};
 
 use crate::domain::repositories::{
     credits_repository::CreditsRepository, task_repository::TaskRepository,
@@ -140,7 +140,9 @@ impl LimiteronService {
         #[cfg(all(feature = "db-postgres", feature = "platform"))]
         if let StorageHandle::Database(pool) = &handle {
             Self::ensure_storage_schema(pool).await?;
-            info!("LimiteronService: using Postgres shared storage (cross-process rate limiting)");
+            log::info!(
+                "LimiteronService: using Postgres shared storage (cross-process rate limiting)"
+            );
             return Ok((
                 Arc::new(DBNexusStorageAdapter::new(pool.clone())),
                 Arc::new(DBNexusBanStorageAdapter::new(pool.clone())),
@@ -148,8 +150,9 @@ impl LimiteronService {
             ));
         }
 
-        #[cfg(all(feature = "db-postgres", feature = "platform"))]
-        let _ = &handle; // Memory 分支下避免 unused 警告
+        // Memory 分支（含 db-postgres 关闭的构建）不消费 handle，统一借用一次
+        // 避免 unused variable（`#[warn]` 级在 CI RUSTFLAGS=-D warnings 下为 error）
+        let _ = &handle;
 
         debug!("LimiteronService: using in-memory storage (single-process semantics)");
         Ok((

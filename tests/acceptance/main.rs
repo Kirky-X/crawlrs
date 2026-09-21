@@ -11,6 +11,11 @@
 //! 离线模式：`CRAWLRS_ACCEPTANCE_OFFLINE=1` 时跳过 `@requires-internet` 标记的
 //! 场景（真实搜索引擎结果依赖外网，CI 不可控）。CI job 固定启用离线模式。
 
+// support::harness() 的 async fn body（DI kit 8 模块注册 + WorkerManager 组装 +
+// 5 个 mock 站）在 monomorphization 时布局深度超过默认 128，编译报
+// "queries overflow the depth limit"，这里提到 256。
+#![recursion_limit = "256"]
+
 mod support;
 
 use cucumber::World;

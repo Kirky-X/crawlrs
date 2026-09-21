@@ -248,7 +248,7 @@ impl SharedHarness {
 
         // 7. workers 真实运行（scrape/crawl 任务由 DB 队列驱动消费）
         let _worker_handles =
-            crawlrs::bootstrap::workers::spawn_common_workers(&app_state, &settings, true).await;
+            crawlrs::bootstrap::workers::spawn_common_workers(&app_state, &settings).await;
 
         // 7b. 任务执行 worker：spawn_common_workers 只覆盖 webhook/backlog/expiration/
         // retention，队列里的 scrape/crawl 任务需 WorkerManager 消费（对齐 main.rs
@@ -267,19 +267,12 @@ impl SharedHarness {
             engine_client: app_state.engine_client(),
             create_scrape_use_case: app_state.create_scrape_use_case(),
             team_semaphore: app_state.team_semaphore.clone(),
-            webhook_event_repository: app_state.webhook_event_repo(),
-            geo_restriction_repository: app_state.geo_restriction_repo(),
-            audit_service: app_state.audit_service(),
             request_coalescer: app_state.request_coalescer.clone(),
             robots_checker: app_state.robots_checker.clone(),
             http_client,
             extraction_service: app_state.extraction_service(),
-            regex_cache: (*app_state.regex_cache()).clone(),
             cache_service: app_state.cache_service(),
             shutdown_coordinator: coordinator,
-            retention_lock: std::sync::Arc::new(
-                crawlrs::workers::retention_worker::PgRetentionLock::new(app_state.db_pool()),
-            ),
         };
         let worker_config = crawlrs::workers::manager::WorkerManagerConfig {
             settings: settings.clone(),
@@ -326,7 +319,7 @@ async fn bootstrap_admin_key(pool: Arc<dbnexus::DbPool>) -> anyhow::Result<Strin
     use crawlrs::infrastructure::database::entities::api_key::Entity as ApiKeyEntity;
     use crawlrs::infrastructure::database::entities::team::ActiveModel as TeamActiveModel;
     use crawlrs::infrastructure::database::entities::team::Entity as TeamEntity;
-    use sea_orm::{ActiveValue, ConnectionTrait, EntityTrait};
+    use dbnexus::sea_orm::{ActiveValue, ConnectionTrait, EntityTrait};
     use uuid::Uuid;
 
     let team_id = DEFAULT_TEAM_ID;
@@ -392,7 +385,6 @@ async fn bootstrap_admin_key(pool: Arc<dbnexus::DbPool>) -> anyhow::Result<Strin
             id: ActiveValue::Set(api_key_id),
             team_id: ActiveValue::Set(team_id),
             key: ActiveValue::Set(garrison_key_id),
-            key_hash: ActiveValue::Set(None),
             created_at: ActiveValue::Set(now),
             updated_at: ActiveValue::Set(None),
         })
@@ -1337,7 +1329,7 @@ fn start_testcontainers_pg() -> String {
                         let url =
                             format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
-                        use sea_orm::{ConnectOptions, ConnectionTrait, Database};
+                        use dbnexus::sea_orm::{ConnectOptions, ConnectionTrait, Database};
                         let mut opt = ConnectOptions::new(&url);
                         opt.sqlx_logging(false);
                         let conn = Database::connect(opt)
