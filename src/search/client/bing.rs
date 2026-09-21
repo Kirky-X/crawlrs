@@ -465,7 +465,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_bing_url_unparseable_url_returned_as_is() {
+    fn test_decode_bing_url_unparsable_url_returned_as_is() {
         // 边界情况：URL 无法解析时原样返回
         let engine = create_engine();
         // 构造一个以 bing 开头但无法被 url crate 解析的字符串

@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_ip_in_cidr_unparseable_network_returns_false() {
+    fn test_is_ip_in_cidr_unparsable_network_returns_false() {
         // network 部分无法解析为 IpAddr → Ok 分支不匹配 → _ => false
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
         assert!(!is_ip_in_cidr(&ip, "not-an-ip/24"));

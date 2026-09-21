@@ -862,11 +862,11 @@ mod tests {
     // ========== create_cors_layer: invalid origin fallback ==========
     // Note: Most strings (including those with spaces) are valid HeaderValue bytes,
     // so the "origins is empty after filter_map" fallback is nearly unreachable via
-    // normal string input. Here we verify the behavior of an unparseable config:
+    // normal string input. Here we verify the behavior of an unparsable config:
     // a string with control chars that HeaderValue::from_str rejects.
 
     #[tokio::test]
-    async fn test_cors_unparseable_origin_falls_back_to_wildcard() {
+    async fn test_cors_unparsable_origin_falls_back_to_wildcard() {
         // A string containing a NUL byte cannot be parsed as HeaderValue,
         // so the origins vec is empty after filter_map → wildcard fallback.
         let invalid = format!("https://{}.example.com", '\0');
@@ -889,7 +889,7 @@ mod tests {
         assert_eq!(
             response.headers().get("access-control-allow-origin"),
             Some(&HeaderValue::from_static("*")),
-            "unparseable origin config should fall back to wildcard"
+            "unparsable origin config should fall back to wildcard"
         );
     }
 

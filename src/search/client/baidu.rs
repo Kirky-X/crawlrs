@@ -53,14 +53,14 @@ impl BaiduSearchEngine {
             BaiduSearchCategory::General => {
                 params.insert("wd".to_string(), query.to_string());
                 params.insert("rn".to_string(), "10".to_string());
-                params.insert("pn".to_string(), offset);
+                params.insert("on".to_string(), offset);
                 params.insert("tn".to_string(), "json".to_string());
                 ("https://www.baidu.com/s".to_string(), params)
             }
             BaiduSearchCategory::Images => {
                 params.insert("word".to_string(), query.to_string());
                 params.insert("tn".to_string(), "resultjson_com".to_string());
-                params.insert("pn".to_string(), offset);
+                params.insert("on".to_string(), offset);
                 params.insert("rn".to_string(), "30".to_string()); // Images usually have more results
                 ("https://image.baidu.com/search/acjson".to_string(), params)
             }
@@ -304,17 +304,17 @@ mod tests {
         assert_eq!(url, "https://www.baidu.com/s");
         assert_eq!(params.get("wd"), Some(&"rust 语言".to_string()));
         assert_eq!(params.get("rn"), Some(&"10".to_string()));
-        assert_eq!(params.get("pn"), Some(&"0".to_string()));
+        assert_eq!(params.get("on"), Some(&"0".to_string()));
         assert_eq!(params.get("tn"), Some(&"json".to_string()));
     }
 
     #[test]
     fn test_build_baidu_url_general_page3_offset() {
-        // 测试页码对应的偏移量计算：page=3 → pn=20
+        // 测试页码对应的偏移量计算：page=3 → on=20
         let engine = create_engine();
         let (_url, params) = engine.build_baidu_url("test", 3, BaiduSearchCategory::General);
 
-        assert_eq!(params.get("pn"), Some(&"20".to_string()));
+        assert_eq!(params.get("on"), Some(&"20".to_string()));
     }
 
     #[test]
@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(params.get("word"), Some(&"cat".to_string()));
         assert_eq!(params.get("tn"), Some(&"resultjson_com".to_string()));
         assert_eq!(params.get("rn"), Some(&"30".to_string()));
-        assert_eq!(params.get("pn"), Some(&"0".to_string()));
+        assert_eq!(params.get("on"), Some(&"0".to_string()));
     }
 
     #[test]

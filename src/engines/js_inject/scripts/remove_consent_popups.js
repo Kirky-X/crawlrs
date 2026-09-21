@@ -65,7 +65,7 @@
     var ACCEPT_BUTTON_SELECTORS = [
         '#onetrust-accept-all-handler',
         '.qc-cmp2-summary-agree',
-        '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+        '#CybotCookiebotDialogBodyLevelButtonLevelOptionAllowAll',
         '#truste-consent-button',
         '.sp_choice_type_11', // Sourcepoint "Accept"
         '#didomi-notice-agree-button',

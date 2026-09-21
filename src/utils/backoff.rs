@@ -1,21 +1,21 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Backoff delay — 基于 backon 的指数退避 + jitter
+//! Backoff delay — 基于 limiteron retry 的指数退避 + jitter
 //!
-//! 使用 `backon::ExponentialBuilder` 替代手写 xorshift32 + full-jitter 实现：
-//! - 指数退避：`delay = min * factor^n`
-//! - jitter：启用时在 `(1-jitter)..=(1+jitter)` 范围随机化（默认 full jitter = 1.0）
-//! - 上限 cap：`min(delay, max)`
+//! 2026-09 自研库收敛：延迟公式由 `limiteron::retry::delay_for_attempt` 承载
+//! （与 `RetryPolicy::execute` 的内部退避共用同一公式）：
+//! - 指数退避：`delay = base * 2^(attempt-1)`，封顶 `max`
+//! - jitter：`[1, 1+jitter]` 比例随机化（jitter=1.0，等效打散重试尖峰）
 //!
-//! 相比旧实现（full-jitter: `[0, cap]` 均匀采样），backon 使用
-//! "jitter around exponential" 策略，在工程实践中同样有效避免 thundering-herd。
+//! 与旧 backon 的 "jitter around exponential"（±50%）分布不同但同属
+//! anti-thundering-herd 抖动；对外契约（≤ max、均值随 attempt 增大）不变。
 
 use std::time::Duration;
 
-use backon::{BackoffBuilder, ExponentialBuilder};
+use limiteron::retry::delay_for_attempt;
 
-/// 指数退避延迟（基于 backon）。
+/// 指数退避延迟（基于 limiteron retry）。
 ///
 /// - `attempt`：重试次数（0 = 首次重试前的退避）
 /// - `base_ms`：基础退避毫秒（min delay）
@@ -31,18 +31,23 @@ pub fn backoff_delay(attempt: u32, base_ms: u64, max_ms: u64) -> Duration {
         return Duration::ZERO;
     }
 
-    let backoff = ExponentialBuilder::default()
-        .with_min_delay(Duration::from_millis(base_ms))
-        .with_max_delay(Duration::from_millis(max_ms))
-        .with_jitter()
-        .with_max_times(attempt.saturating_add(1) as usize);
-
-    let max = Duration::from_millis(max_ms);
-    backoff
-        .build()
-        .nth(attempt as usize)
-        .unwrap_or(max)
-        .min(max)
+    if attempt == 0 {
+        // 首次重试前按 base 退避（jitter=1.0 与后续 attempt 一致）
+        return delay_for_attempt(
+            1,
+            Duration::from_millis(base_ms),
+            2.0,
+            Duration::from_millis(max_ms),
+            1.0,
+        );
+    }
+    delay_for_attempt(
+        attempt,
+        Duration::from_millis(base_ms),
+        2.0,
+        Duration::from_millis(max_ms),
+        1.0,
+    )
 }
 
 #[cfg(test)]

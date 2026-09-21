@@ -136,7 +136,7 @@ fn make_coalesce_coordinator_with_coalescer(
     ))
 }
 
-/// PERF-H1 测试辅助：模拟生产路径解析 payload 得到 ScrapeRequestDto。
+/// 测试辅助：模拟生产路径解析 payload 得到 ScrapeRequestDto。
 ///
 /// 调用方完成 `let dto = parse_dto_for_test(&task);` 后，
 /// 应以 `dto.as_ref()` 作为 `handle_scrape_success` 的第二参数，

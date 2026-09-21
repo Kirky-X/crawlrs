@@ -23,12 +23,12 @@ mod tests {
         assert_eq!(url, "https://www.baidu.com/s");
         assert_eq!(params.get("wd"), Some(&"测试查询".to_string()));
         assert_eq!(params.get("rn"), Some(&"10".to_string()));
-        assert_eq!(params.get("pn"), Some(&"0".to_string()));
+        assert_eq!(params.get("on"), Some(&"0".to_string()));
         assert_eq!(params.get("tn"), Some(&"json".to_string()));
 
         // 测试第二页
         let (_url, params) = engine.build_baidu_url("测试查询", 2, BaiduSearchCategory::General);
-        assert_eq!(params.get("pn"), Some(&"10".to_string()));
+        assert_eq!(params.get("on"), Some(&"10".to_string()));
 
         // 测试图片搜索
         let (url, params) = engine.build_baidu_url("图片查询", 1, BaiduSearchCategory::Images);

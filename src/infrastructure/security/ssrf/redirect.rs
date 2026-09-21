@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn test_validate_invalid_url_returns_invalid_url_error() {
         let mut validator = RedirectValidator::new();
-        // Unparseable URL should fail with InvalidUrl
+        // Unparsable URL should fail with InvalidUrl
         let result = validator.validate("http://[invalid", 0);
         assert!(result.is_err());
         assert!(matches!(result, Err(SsrfError::InvalidUrl { .. })));

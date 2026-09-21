@@ -947,7 +947,7 @@ fn extract_request_context(event: &GarrisonEvent) -> Option<&RequestContext> {
 /// - 字符数达到 `MASK_TOKEN_MIN_LEN` 后立即 break，避免遍历剩余字符
 /// - `prefix_byte_end` 必然在 `char_count == MASK_TOKEN_PREFIX_LEN` 时被设置
 ///   （因 `MASK_TOKEN_PREFIX_LEN=8 < MASK_TOKEN_MIN_LEN=16`），故删除死代码
-///   fallback 分支（安全架构 L1）
+///   fallback 分支
 fn mask_token(token: &str) -> String {
     let mut char_count = 0usize;
     let mut prefix_byte_end = 0usize;
@@ -1348,7 +1348,7 @@ mod tests {
     }
 
     #[test]
-    fn test_login_id_unparseable_yields_none_api_key_id() {
+    fn test_login_id_unparsable_yields_none_api_key_id() {
         let event = GarrisonEvent::Login {
             login_id: "not-a-uuid".to_string(),
             token: "tok".to_string(),
@@ -1487,7 +1487,7 @@ mod tests {
             let raw_ip = map
                 .get("request_ip_raw")
                 .and_then(|v| v.as_str())
-                .expect("request_ip_raw metadata should exist for unparseable IP");
+                .expect("request_ip_raw metadata should exist for unparsable IP");
             assert_eq!(raw_ip, malicious_ip);
         } else {
             panic!("metadata should be a JSON object");

@@ -28,11 +28,10 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use limiteron::sync::SyncFixedWindowLimiter;
 use log::{debug, error, warn};
-use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Default rate limit for unauthenticated requests (requests per minute)
 const DEFAULT_IP_RATE_LIMIT: u64 = 10;
@@ -54,95 +53,58 @@ pub(crate) static RATE_LIMIT_FAIL_OPEN: once_cell::sync::Lazy<bool> =
             .unwrap_or(false)
     });
 
-/// 简单的内存速率限制器（用于测试和 IP 限流）
+/// 内存速率限制器（用于测试和 IP 限流）。
+///
+/// 2026-09 自研库收敛：窗口计数/淘汰交由 limiteron
+/// [`SyncFixedWindowLimiter`]（per-identifier 固定窗口，拒绝不消耗预算，
+/// 标识表满员自动清理过期条目），本结构体仅保留原 API 形状。
+/// 可观察语义与旧手写版一致：limit=0 时首个请求放行（计数记 1）后续全拒。
 #[derive(Clone)]
 pub struct RateLimiter {
-    /// 内存中速率限制计数器
-    in_memory_counts: Arc<RwLock<HashMap<String, (u64, Instant)>>>,
-    /// 请求限制数
+    /// limiteron 固定窗口限流器（线程安全，内部自动淘汰过期条目）
+    inner: Arc<SyncFixedWindowLimiter>,
+    /// 请求限制数（get_status 对未跟踪键的 remaining 展示值）
     limit: u64,
-    /// 时间窗口（秒）
-    window_seconds: u64,
 }
 
 impl RateLimiter {
     /// 创建新的速率限制器
     pub fn new(limit: u64) -> Self {
-        Self {
-            in_memory_counts: Arc::new(RwLock::new(HashMap::new())),
-            limit,
-            window_seconds: 60,
-        }
+        Self::with_window(limit, 60)
     }
 
     /// 创建用于 IP 限流的内存速率限制器
     pub fn new_for_ip_limit(limit: u64) -> Self {
+        Self::with_window(limit, IP_RATE_LIMIT_WINDOW_SECS)
+    }
+
+    fn with_window(limit: u64, window_seconds: u64) -> Self {
         Self {
-            in_memory_counts: Arc::new(RwLock::new(HashMap::new())),
+            // limit<1 抬升为 1：与旧实现 limit=0「首请求计数记 1、其后全拒」
+            // 的可观察语义一致
+            inner: Arc::new(SyncFixedWindowLimiter::new(
+                limit.max(1),
+                Duration::from_secs(window_seconds.max(1)),
+            )),
             limit,
-            window_seconds: IP_RATE_LIMIT_WINDOW_SECS,
         }
     }
 
     /// 检查是否超过速率限制
     pub fn check_rate_limit(&self, key: &str) -> bool {
-        let now = Instant::now();
-        let mut counts = self.in_memory_counts.write();
-
-        // 先检查是否存在记录
-        let should_reset = if let Some((_count, last_time)) = counts.get(key) {
-            let elapsed = now.duration_since(*last_time);
-            elapsed >= Duration::from_secs(self.window_seconds)
-        } else {
-            false
-        };
-
-        if should_reset {
-            // 没有记录或已过期，重置计数
-            counts.insert(key.to_string(), (1, now));
-            return true;
-        }
-
-        // 获取当前值并检查
-        if let Some((count, last_time)) = counts.get(key) {
-            if *count >= self.limit {
-                return false; // 超过限制
-            }
-            // 增加计数
-            let new_count = *count + 1;
-            let last_time = *last_time;
-            counts.insert(key.to_string(), (new_count, last_time));
-            return true;
-        }
-
-        // 没有记录，创建新记录
-        counts.insert(key.to_string(), (1, now));
-        true
+        self.inner.check(key).is_ok()
     }
 
     /// 获取当前计数和剩余配额
     pub fn get_status(&self, key: &str) -> (u64, u64) {
-        let now = Instant::now();
-        let counts = self.in_memory_counts.read();
-
-        if let Some((count, last_time)) = counts.get(key) {
-            let elapsed = now.duration_since(*last_time);
-            if elapsed < Duration::from_secs(self.window_seconds) {
-                return (*count, self.limit.saturating_sub(*count));
-            }
-        }
-
-        (0, self.limit)
+        self.inner.peek(key).unwrap_or((0, self.limit))
     }
 
-    /// 清理过期的计数器
-    pub fn cleanup_expired(&self) {
-        let now = Instant::now();
-        let mut counts = self.in_memory_counts.write();
-        counts.retain(|_, (_, last_time)| {
-            now.duration_since(*last_time) < Duration::from_secs(self.window_seconds * 2)
-        });
-    }
+    /// 清理过期的计数器。
+    ///
+    /// limiteron 在标识表满员时自动清除过期条目（`make_room`），无需手动 GC；
+    /// 保留空实现以维持 API 兼容。
+    pub fn cleanup_expired(&self) {}
 }
 
 /// IP 速率限制器（全局单例）

@@ -4,7 +4,7 @@
 authors = ["Kirky-X <Kirky-X@outlook.com>"]
 [package]
 name = "crawlrs"
-version = "0.2.0"
+version = "0.2.0-rc.2"
 edition = "2021"
 rust-version = "1.97"
 authors = ["Kirky-X <Kirky-X@outlook.com>"]
@@ -42,15 +42,15 @@ db-postgres = [
     "dbnexus?/postgres", "dbnexus?/runtime-tokio-rustls",
     # replica-routing 必须保留：inklog 的 dbnexus 集成无条件引用 DbConfig.replica_config
     "dbnexus?/replica-routing",
-    "garrison?/db-postgres", "limiteron?/postgres", "inklog/postgres",
+    "garrison?/db-postgres", "limiteron/postgres", "inklog/postgres",
 ]
 db-sqlite = [
     "dbnexus?/sqlite", "dbnexus?/runtime-tokio-rustls", "dbnexus?/replica-routing",
-    "garrison?/db-sqlite", "limiteron?/sqlite", "inklog/sqlite",
+    "garrison?/db-sqlite", "limiteron/sqlite", "inklog/sqlite",
 ]
 db-mysql = [
     "dbnexus?/mysql", "dbnexus?/runtime-tokio-rustls", "dbnexus?/replica-routing",
-    "garrison?/db-mysql", "limiteron?/mysql", "inklog/mysql",
+    "garrison?/db-mysql", "limiteron/mysql", "inklog/mysql",
 ]
 # sdforge 0.4 `#[forge]` 宏生成 `cfg(feature = "http")` 门控的 HTTP 路由注册代码
 # （inventory submit）。下游 crate 必须显式声明本 feature 才会生成路由。
@@ -110,8 +110,8 @@ teams = ["auth"]
 # （DEFAULT_TEAM_ID/DEFAULT_API_KEY_ID 见 src/common/constants.rs::default_identity）
 # auth-on 改由 garrison 提供认证引擎，故 `auth` 隐含 `dep:garrison`
 auth = ["dep:garrison", "dep:inventory"]
-# `rate-limit` 门控 limiteron 依赖；关闭时注入 NoopRateLimitingService
-rate-limit = ["dep:limiteron"]
+# `rate-limit` 门控限流行为（limiteron 已转非可选：utils/backoff 引擎退避无条件依赖其 retry 原语）；关闭时注入 NoopRateLimitingService
+rate-limit = []
 # `webhook` 关闭时注入 NoopWebhookService 并移除 /v1/webhooks 路由
 webhook = []
 
@@ -137,7 +137,6 @@ thiserror = "2.0"
 anyhow.workspace = true
 
 # Retry with exponential backoff
-backon = { version = "1.6", default-features = false, features = ["tokio-sleep"] }
 
 # Security — constant-time comparison for HMAC signature verification
 subtle = "2.6"
@@ -169,7 +168,7 @@ dirs = "7.0"
 
 # Logging and observability
 log.workspace = true
-inklog = { version = "0.3.0-rc.4", path = "../base/inklog", default-features = false, features = ["cli"] }
+inklog = { version = "0.3.0-rc.5", default-features = false, features = ["cli"] }
 # sdforge 非可选：DTO 层 Validate impl（sdforge::validator 重导出）未做 feature 门控，
 # validator 直依赖已移除，基础验证类型恒经 sdforge 提供
 sdforge.workspace = true
@@ -225,19 +224,22 @@ ipnetwork = "0.21"
 hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
 
 # Rate limiting and circuit breaking — gated by `rate-limit` feature
-limiteron = { version = "0.3.0-rc.4", path = "../base/limiteron", default-features = false, optional = true, features = [
+limiteron = { version = "0.3.0-rc.5", default-features = false, features = [
     # postgres 驱动由 crawlrs db-* 特性组透传 limiteron?/postgres
     "ban-manager",
     "quota-control",
     "circuit-breaker",
     "monitoring",
     "parallel-checker",
+    # IP 限流中间件的同步固定窗口（rate_limit_middleware）+ 引擎退避（utils/backoff）
+    "sync",
+    "retry",
 ] }
 
 # Authentication & authorization framework — gated by `auth` feature
 # auth-on 改由 garrison 提供认证引擎
 # 版本与 dbnexus/oxcache/trait-kit/confers/inklog/sdforge/limiteron 同作者对齐（共享 rc.43 链）
-garrison = { version = "0.9.0-rc.1", path = "../garrison", default-features = false, features = ["backend-embedded", "web-axum", "cache-memory", "protocol-apikey", "protocol-jwt", "core-advanced", "authorize-api", "listener", "audit-log", "audit-inklog", "firewall", "firewall-bruteforce", "tenant-isolation", "tracing-log", "three-tier-cache", "protocol-zeroize", "db-retry"], optional = true }
+garrison = { version = "0.9.0-rc.2", default-features = false, features = ["backend-embedded", "web-axum", "cache-memory", "protocol-apikey", "protocol-jwt", "core-advanced", "authorize-api", "listener", "audit-log", "audit-inklog", "firewall", "firewall-bruteforce", "tenant-isolation", "tracing-log", "three-tier-cache", "protocol-zeroize", "db-retry"], optional = true }
 
 # Concurrency and synchronization
 parking_lot = "0.12"
@@ -261,17 +263,17 @@ toml = "1.1"
 # default-features = false 剥离 axum/db/auth 服务面；其 inklog sqlite/kit 已在
 # vecboost 侧改为 log-kit/log-sqlite 透传（否则与 db-postgres 触发 dbnexus
 # 嵌入式/服务端互斥 compile_error）。Candle CPU 引擎零额外 feature。
-vecboost = { version = "0.2.1", path = "../vecboost", optional = true, default-features = false }
+vecboost = { version = "0.3.0-rc.1", optional = true, default-features = false }
 # rig-core：远端嵌入统一客户端（OpenAI 兼容 Client::builder().api_key().base_url()）。
 # 仅用嵌入方向；rig 原生 rerank 只支持 Voyage，远端重排改走自有通用 HTTP 适配。
 # reqwest 0.13 + rustls 与 crawlrs 对齐，feature 联合无重复 TLS 栈。
 rig-core = { version = "0.42", optional = true, default-features = false, features = ["reqwest", "rustls"] }
 
 # Dependency Injection
-trait-kit = { version = "0.5.0-rc.5", path = "../base/trait-kit", features = ["async", "confers", "shutdown"] }
+trait-kit = { version = "0.5.0-rc.6", features = ["async", "confers", "shutdown"] }
 # feature 裁剪（hygiene）：macros/batch/bloom 在 crawlrs 源码中零使用（已 grep 验证），
 # 仅保留 memory（L1 缓存）+ serialization（类型化存取）+ metrics（命中统计）。
-oxcache = { version = "0.5.0-rc.4", path = "../base/oxcache", default-features = false, features = ["memory", "serialization", "metrics"] }
+oxcache = { version = "0.5.0-rc.5", default-features = false, features = ["memory", "serialization", "metrics"] }
 ahash = "0.8"
 
 # Internationalization (i18n) — Mozilla Fluent system
@@ -360,7 +362,7 @@ debug = true
 members = ["examples"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.0-rc.2"
 edition = "2021"
 rust-version = "1.97"
 authors = ["Kirky-X <Kirky-X@outlook.com>"]
@@ -374,7 +376,7 @@ tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "fs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # Configuration
-confers = { version = "0.6.0-rc.4", path = "../base/confers", default-features = false, features = ["validation", "toml", "env", "security-rules"] }
+confers = { version = "0.6.0-rc.5", default-features = false, features = ["validation", "toml", "env", "security-rules"] }
 # Error handling
 anyhow = "1.0"
 # Logging
@@ -390,10 +392,10 @@ base64 = "0.23"
 # Database
 # 驱动与 runtime 特性不在此声明（Cargo feature 只加不减，写死会锁死单一后端），
 # 由 crawlrs 的 db-postgres / db-sqlite / db-mysql 特性组按构建选择
-dbnexus = { version = "0.6.0-rc.4", path = "../base/dbnexus", default-features = false, features = ["cache", "macros", "migration", "config-env", "config-toml", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
+dbnexus = { version = "0.6.0-rc.5", default-features = false, features = ["cache", "macros", "migration", "config-env", "config-toml", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
 sea-orm = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK
-sdforge = { version = "0.5.0-rc.4", path = "../base/sdforge", default-features = false, features = ["http"] }
+sdforge = { version = "0.5.0-rc.5", default-features = false, features = ["http"] }
 # Web framework
 axum = "0.8"
 
@@ -407,20 +409,8 @@ axum = "0.8"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-[patch.crates-io]
-# 自研依赖统一使用本地路径，避免 garrison 等传递依赖从 crates.io 拉取不同实例
-dbnexus = { path = "../base/dbnexus" }
-oxcache = { path = "../base/oxcache" }
-confers = { path = "../base/confers" }
-inklog = { path = "../base/inklog" }
-limiteron = { path = "../base/limiteron" }
-sdforge = { path = "../base/sdforge" }
-trait-kit = { path = "../base/trait-kit" }
-
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
     'cfg(feature, values("platform", "agent-lib", "engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability", "db-postgres", "db-sqlite", "db-mysql", "rag", "rag-local", "rag-remote"))'
 ]
-
-

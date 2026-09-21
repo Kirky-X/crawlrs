@@ -209,7 +209,7 @@ mod tests {
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
         // No slash → parts.len() != 2
         assert!(!is_ip_in_cidr(&ip, "192.168.1.0"));
-        // Unparseable network address → parse::<IpAddr>() fails → _ => false
+        // Unparsable network address → parse::<IpAddr>() fails → _ => false
         assert!(!is_ip_in_cidr(&ip, "not-an-ip/24"));
     }
 

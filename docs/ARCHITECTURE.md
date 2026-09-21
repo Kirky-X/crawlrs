@@ -419,7 +419,7 @@ domain/
 │   ├── audit_log_builder.rs
 │   ├── geo_location.rs
 │   ├── llm_service.rs
-│   ├── llm_provider_strategy.rs  # T006/R-sec-006: ProviderStrategy 策略模式（OllamaStrategy）
+│   ├── llm_provider_strategy.rs  # ProviderStrategy 策略模式（OllamaStrategy）
 │   ├── llm/                       # LLM 子模块（prompt_builder, provider_adapter）
 │   ├── content_extractor/         # 正文提取（trafilatura/dom_smoothie/css_rule/facade）
 │   ├── markdown_service.rs
@@ -876,7 +876,7 @@ pub enum LoadBalancingStrategy {
 pub struct EngineRouter {
     engines: Vec<Arc<dyn ScraperEngine>>,
     circuit_breaker: Arc<CircuitBreaker>,
-    // T003/R-sec-003: 使用 DashMap 替代 RwLock<HashMap>，避免读写锁借用开销
+    // 使用 DashMap 替代 RwLock<HashMap>，避免读写锁借用开销
     engine_stats: Arc<DashMap<String, EngineStats>>,
     round_robin_index: Arc<parking_lot::Mutex<usize>>,
     strategy: LoadBalancingStrategy,
@@ -886,7 +886,7 @@ pub struct EngineRouter {
     feature_filter_enabled: bool,
     race_mode_enabled: bool,
     dynamic_threshold_factor: f64,
-    // T070/R-runtime-004：Hedge 控制器，race 胜出后记录延迟用于 P84 估算
+    // Hedge 控制器，race 胜出后记录延迟用于 P84 估算
     hedge_controller: HedgeController,
 }
 ```
@@ -896,7 +896,7 @@ The router:
 2. Applies the selected load balancing strategy
 3. Falls back to sequential engines on failure
 4. Supports race mode (concurrent execution, return first success)
-5. **T070**: race mode 胜出后调用 `hedge_controller.record_latency(response_time)` 更新 EMA/方差，用于后续 P84 阈值估算（详见 [Hedge 请求副本控制器](#hedge-请求副本控制器)）
+5. race mode 胜出后调用 `hedge_controller.record_latency(response_time)` 更新 EMA/方差，用于后续 P84 阈值估算（详见 [Hedge 请求副本控制器](#hedge-请求副本控制器)）
 
 ### Hedge 请求副本控制器
 
@@ -904,7 +904,7 @@ The router:
 
 **Location:** `src/utils/hedge.rs`
 
-**背景（T070/R-runtime-004，design.md §17）：** 移植 spider `hedge.rs`，基于 EMA（指数移动平均）+ 方差估算 P84 延迟阈值，超阈值时建议发送副本请求降尾延迟。
+**背景（design.md §17）：** 移植 spider `hedge.rs`，基于 EMA（指数移动平均）+ 方差估算 P84 延迟阈值，超阈值时建议发送副本请求降尾延迟。
 
 **核心算法：**
 
@@ -937,7 +937,7 @@ if router.hedge_controller().should_hedge(elapsed) {
 
 **Location:** 枚举定义在 `src/engines/engine_client.rs`，实现在 `src/engines/wait.rs`（`engine-playwright` feature 门控）
 
-**背景（T069/R-jsrender-004，design.md §17）：** 替代原有 `sync_wait_ms` 固定 sleep，提供条件式等待：满足条件立即返回，超时返回错误，避免无谓阻塞。
+**背景（design.md §17）：** 替代原有 `sync_wait_ms` 固定 sleep，提供条件式等待：满足条件立即返回，超时返回错误，避免无谓阻塞。
 
 ```rust
 pub enum WaitFor {
@@ -959,7 +959,7 @@ pub enum WaitFor {
 
 **Location:** `src/engines/client/tab_pool.rs`
 
-**背景（T068/R-runtime-003，design.md §17）：** Playwright 引擎每次抓取创建新 Tab 开销大（CDP `Target.createTarget` + `Page.goto`，约 50-200ms），TabPool 在 BrowserPool 之上进一步复用 Page，消除 tab 创建开销。
+**背景（design.md §17）：** Playwright 引擎每次抓取创建新 Tab 开销大（CDP `Target.createTarget` + `Page.goto`，约 50-200ms），TabPool 在 BrowserPool 之上进一步复用 Page，消除 tab 创建开销。
 
 **实现：** 基于 `DashMap<usize, Page>` + `AtomicUsize` 栈顶指针的 LIFO 无锁栈：
 
@@ -1072,7 +1072,7 @@ All three modes share the same FlareSolverr API client implementation, differing
 
 ---
 
-### Search Subsystem (T007/R-sec-007 委托架构)
+### Search Subsystem
 
 **Location:** `src/search/`
 
@@ -1081,12 +1081,12 @@ All three modes share the same FlareSolverr API client implementation, differing
 - **smart 层** (`src/search/smart/mod.rs`)：URL 构建、速率限制、超时/重试控制、scoring、验证码前置检查、测试数据加载
 - **client 层** (`src/search/client/{google,bing,baidu,sogou}.rs`)：HTML 解析、URL 提取、XSS 防护、CSS 选择器管理
 
-**委托关系**：smart 端 `parse_google/bing/baidu/sogou_results` 委托 client 端 `parse_results`/`parse_search_results` 实现，消除 Stage 0 前的平行解析实现。smart 端补 score 由 `apply_scoring` 统一处理（PERF-03/MEDIUM-1）。
+**委托关系**：smart 端 `parse_google/bing/baidu/sogou_results` 委托 client 端 `parse_results`/`parse_search_results` 实现，消除 Stage 0 前的平行解析实现。smart 端补 score 由 `apply_scoring` 统一处理。
 
 **性能优化**：
-- PERF-02：smart 端用 `OnceCell` 缓存 4 个 client 引擎实例，避免每次解析都 `new` 一个 client 引擎
-- PERF-05：client 端 `HtmlParser` 改为 `once_cell::sync::Lazy` 全局单例，`baidu.rs`/`bing.rs` 不再持有 `parser` 字段
-- PERF-01：`google.rs` 的 `GoogleParseContext` 改为 `Lazy` 全局单例，避免重复编译 15 个 CSS 选择器
+- smart 端用 `OnceCell` 缓存 4 个 client 引擎实例，避免每次解析都 `new` 一个 client 引擎
+- client 端 `HtmlParser` 改为 `once_cell::sync::Lazy` 全局单例，`baidu.rs`/`bing.rs` 不再持有 `parser` 字段
+- `google.rs` 的 `GoogleParseContext` 改为 `Lazy` 全局单例，避免重复编译 15 个 CSS 选择器
 
 ---
 
@@ -1141,7 +1141,7 @@ gated `engine-playwright`：
 
 ### Request Interception (`src/engines/intercept.rs`)
 
-gated `engine-playwright`，T033 / R-jsrender-003：
+gated `engine-playwright`，R-jsrender-003：
 
 - 广告/追踪域名黑名单（`AD_DOMAIN_BLACKLIST`）：命中请求经 CDP `Fetch.failRequest` 中止
 - 可选媒体资源拦截（`ResourceType::{Image, Media, Font}`）：由 `ScrapeOptions.block_media` 开关

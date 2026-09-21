@@ -638,7 +638,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
 dependencies = [
  "fastrand",
- "tokio",
 ]
 
 [[package]]
@@ -1471,7 +1470,9 @@ checksum = "6e8ccc4ea9f6acc32d102c0f6d471d11d913ad15f20c04de743374861fa1d414"
 
 [[package]]
 name = "confers"
-version = "0.6.0-rc.4"
+version = "0.6.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff95e01ed3c29084efe4e95e365fa831e3101504d269a59972d5914020b3d389"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1510,7 +1511,9 @@ dependencies = [
 
 [[package]]
 name = "confers-macros"
-version = "0.6.0-rc.4"
+version = "0.6.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f68d3acdd765107a376e4fca48d40d8bc027d52a99a94e307992f2dfdc824077"
 dependencies = [
  "darling 0.24.1",
  "proc-macro2",
@@ -1710,7 +1713,7 @@ dependencies = [
 
 [[package]]
 name = "crawlrs"
-version = "0.2.0"
+version = "0.2.0-rc.2"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -1718,7 +1721,6 @@ dependencies = [
  "async-trait",
  "axum",
  "axum-test",
- "backon",
  "base64 0.23.1",
  "bcrypt",
  "bytes",
@@ -1795,7 +1797,7 @@ dependencies = [
 
 [[package]]
 name = "crawlrs-examples"
-version = "0.2.0"
+version = "0.2.0-rc.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -2268,7 +2270,9 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "dbnexus"
-version = "0.6.0-rc.4"
+version = "0.6.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "241e972a062928ae8faacbc955bfdf0fb7599f09fe6497dfd27ec8527d1b1961"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2301,7 +2305,9 @@ dependencies = [
 
 [[package]]
 name = "dbnexus-macros"
-version = "0.6.0-rc.4"
+version = "0.6.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e59f55af4b148aa7625bc4cf36148bb018e632da2e2970c8bb193197432b8393"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3323,7 +3329,9 @@ dependencies = [
 
 [[package]]
 name = "garrison"
-version = "0.9.0-rc.1"
+version = "0.9.0-rc.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03c464a29ea5b1a29be591d9d524cc7a0e8d04b1454a9da324b5b0059a193f7b"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4826,7 +4834,9 @@ checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
 
 [[package]]
 name = "inklog"
-version = "0.3.0-rc.4"
+version = "0.3.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25233fa7e1dfc3ee5c212d98438d1329af15a3157319cfa81a6cc6b49d68cbf1"
 dependencies = [
  "aes-gcm",
  "aho-corasick",
@@ -5305,7 +5315,9 @@ dependencies = [
 
 [[package]]
 name = "limiteron"
-version = "0.3.0-rc.4"
+version = "0.3.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c685b8ff732b1ce61180adea8bb895dea52284b231a3b59557acece62f4067f2"
 dependencies = [
  "ahash",
  "async-trait",
@@ -5347,7 +5359,9 @@ dependencies = [
 
 [[package]]
 name = "limiteron-macros"
-version = "0.3.0-rc.4"
+version = "0.3.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc1ebeec82d76989bed521c0c7a7593231bb9dae43e99a4b0097d8e3770b52c1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6163,7 +6177,9 @@ checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
 
 [[package]]
 name = "oxcache"
-version = "0.5.0-rc.4"
+version = "0.5.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1306b2d6f269d6e7f406878426f3f0d13aebd8e30297ac6ebc06e85cf1531941"
 dependencies = [
  "async-trait",
  "bloomfilter",
@@ -6191,7 +6207,9 @@ dependencies = [
 
 [[package]]
 name = "oxcache_macros"
-version = "0.5.0-rc.4"
+version = "0.5.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7329772b7638c563558d5d5719913e8ad111e73b12a84a6f7abf57e54e705fc3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7653,7 +7671,9 @@ dependencies = [
 
 [[package]]
 name = "sdforge"
-version = "0.5.0-rc.4"
+version = "0.5.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "678394737868a422cac83a685f8fdc09246f6013fda68aa0863c7ee29169ca6a"
 dependencies = [
  "axum",
  "axum-extra",
@@ -7680,7 +7700,9 @@ dependencies = [
 
 [[package]]
 name = "sdforge-macros"
-version = "0.5.0-rc.4"
+version = "0.5.0-rc.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "681b005a3788c688e86f422991cc16b06d2cc4aafb0b1851873d1ff062afc709"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9572,7 +9594,9 @@ dependencies = [
 
 [[package]]
 name = "trait-kit"
-version = "0.5.0-rc.5"
+version = "0.5.0-rc.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "726ca13fe2e870e40548c8eff4d02614548e31615282395da2df696a4981bfb9"
 dependencies = [
  "confers",
  "fluent-bundle",
@@ -9997,7 +10021,9 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "vecboost"
-version = "0.2.1"
+version = "0.3.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9c9e2426cae299bb0c524a1238b0b73362d6fd38678461ea7c4e4bad2abf2b4"
 dependencies = [
  "anyhow",
  "argon2",

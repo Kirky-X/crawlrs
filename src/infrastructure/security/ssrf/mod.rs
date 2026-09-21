@@ -544,7 +544,7 @@ mod tests {
     #[tokio::test]
     async fn test_validate_invalid_url_format() {
         let validator = SsrfValidator::new();
-        // Unparseable URL should fail with InvalidUrl
+        // Unparsable URL should fail with InvalidUrl
         let result = validator.validate("http://[invalid").await;
         assert!(result.is_err());
         assert!(matches!(result, Err(SsrfError::InvalidUrl { .. })));
