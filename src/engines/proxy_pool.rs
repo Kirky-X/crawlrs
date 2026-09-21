@@ -936,10 +936,16 @@ mod tests {
         // 核心测试：多线程并发 sticky 同一 session_id，
         // 所有线程必须返回同一 URL（entry API 保证原子性）。
         //
-        // 场景：TTL 极短（1ms），所有线程几乎同时发现绑定过期，
-        // 进入慢路径重选。修复前：各线程独立 rr_pick + insert，互相覆盖，
-        // 返回不同 URL。修复后：entry API 保证只有一个线程 insert，
-        // 其余线程在 entry 锁内复用。
+        // 场景：sleep 60ms 后绑定过期（TTL 50ms），8 线程几乎同时 sticky，
+        // 第一个线程进入慢路径重选，其余线程复用其绑定。
+        // 修复前：各线程独立 rr_pick + insert，互相覆盖，返回不同 URL。
+        // 修复后：entry API 保证只有一个线程 insert，其余线程在 entry 锁内复用。
+        //
+        // TTL 取 50ms 而非更短的 1ms：窗口只需覆盖 8 线程完成竞态的耗时
+        //（单次 sticky 为微秒级）。此前 1ms 窗口下，CI 重负载（多 job 抢同一
+        // runner）时线程被去调度 >1ms 即再次过期、慢路径重选到不同 URL，
+        // 造成与被测逻辑无关的偶发失败（stable 腿同日同代码通过、本地双
+        // 工具链通过，唯 1.97 腿在高并发时失败）。
         let pool = std::sync::Arc::new(
             make_pool_with_ttl(
                 vec![
@@ -948,14 +954,14 @@ mod tests {
                     "http://c:8080",
                     "http://d:8080",
                 ],
-                Duration::from_millis(1),
+                Duration::from_millis(50),
             )
             .with_sticky_max_capacity(100),
         );
         // 先建立初始绑定
         let initial_url = pool.sticky("race-session").unwrap();
-        // 等待 TTL 过期
-        thread::sleep(Duration::from_millis(5));
+        // 等待 TTL 过期（60ms > 50ms TTL）
+        thread::sleep(Duration::from_millis(60));
 
         let threads = 8;
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(threads));
