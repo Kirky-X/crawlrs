@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0-rc.2] - 2026-09-21
+
+### Changed
+- **自研依赖全面切换 crates.io registry**：confers/inklog/dbnexus/sdforge/oxcache/limiteron → 0.x.0-rc.5、trait-kit → 0.5.0-rc.6、garrison → 0.9.0-rc.2、vecboost → 0.3.0-rc.1；移除全部 `../base`、`../garrison` 跨仓 path 依赖与 `[patch.crates-io]` 段，CI 不再依赖兄弟仓 checkout
+- 合并 github/main 双远端分叉历史（文档双远端对齐、BDD 验收线素材保留于历史）
+
+### Fixed
+- `audit_service` 错误映射：`RepositoryError::DatabaseError` 双态（platform 重建 `DbErr::Custom`，轻量面 `Database(String)`），保住 `Database` 变体语义
+- i18n locale 测试环境竞态（`CRAWLRS_LANG` 进程级 env 经 ENV_MUTEX 串行化 + 显式清理）
+- rustdoc 1.98 严格模式 88 处（裸链接转代码字体/全路径、懒续行缩进、裸泛型 HTML 转义）
+- clippy 1.98：`result_large_err` 显式豁免、`cmp_owned` 消除
+
 ## [0.2.0-rc.1] - 2026-08-25
 
 ### Added
