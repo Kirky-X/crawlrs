@@ -666,6 +666,49 @@ Search using various search engines.
 
 ---
 
+### Map API (new in 0.2.0)
+
+Discover URLs from a site s's sitemap. Synchronous endpoint.
+
+**Endpoint:** `POST /v1/map`
+
+**Request Body:**
+```json
+{
+  "url": "https://example.com",
+  "include_patterns": ["*/blog/*"],
+  "exclude_patterns": ["*/tag/*"],
+  "limit": 1000
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|-------|----------|-------------|
+| `url` | string | Yes | Site origin; `{origin}/sitemap.xml` is fetched |
+| `include_patterns` | string[] | No | Glob whitelist (`*`/`?`) applied first |
+| `exclude_patterns` | string[] | No | Glob blacklist applied after include |
+| `limit` | integer | No | Max URLs returned (default: 1000, max: 10000) |
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "links": ["https://example.com/", "https://example.com/blog/post-1"]
+  }
+}
+```
+
+**Behavior notes:**
+- Missing sitemap (404) returns 200 with empty `links` (valid state, not an error).
+- Sitemap index (`<sitemapindex>`) is expanded one level (up to 5 sub-sitemaps).
+
+**Errors:** `422` invalid URL/params · `502` `MAP_TARGET_UNREACHABLE` target unreachable or 5xx
+
+---
+
 ### Extract API
 
 > **Conditional Endpoint (R-teams-003):** This endpoint's signature depends on the `teams` feature:
