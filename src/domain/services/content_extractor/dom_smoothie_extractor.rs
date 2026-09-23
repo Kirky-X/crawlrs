@@ -79,6 +79,8 @@ impl ContentExtractor for DomSmoothieExtractor {
 
         Ok(ExtractedContent {
             text: trimmed_text,
+            // dom_smoothie 输出纯文本，无结构化正文 HTML
+            html: None,
             title: Some(article.title),
             author: article.byline,
             confidence,

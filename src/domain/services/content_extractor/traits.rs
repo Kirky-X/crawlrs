@@ -39,6 +39,14 @@ pub enum PageType {
 pub struct ExtractedContent {
     /// 提取的正文文本（非空）
     pub text: String,
+    /// 保留结构的正文 HTML（可选）
+    ///
+    /// P16：`only_main_content` 的 Markdown 产物若由纯文本转换，表格/链接/
+    /// 代码块结构全部丢失。抽取器能产出正文 HTML 的（如 trafilatura）应填充
+    /// 此字段，Markdown 转换链路优先用它；无法产出结构化 HTML 的实现填 `None`。
+    /// `default` 兼容反序列化无此字段的旧数据。
+    #[serde(default)]
+    pub html: Option<String>,
     /// 标题（可选，来自 `<title>` / `<h1>` / 元数据）
     pub title: Option<String>,
     /// 作者（可选，来自元数据）
@@ -60,6 +68,7 @@ impl ExtractedContent {
     pub fn new(text: String) -> Self {
         Self {
             text,
+            html: None,
             title: None,
             author: None,
             confidence: 0.0,
@@ -170,6 +179,7 @@ mod tests {
     fn extracted_content_roundtrips_through_serde() {
         let c = ExtractedContent {
             text: "body".to_string(),
+            html: Some("<p>body</p>".to_string()),
             title: Some("Title".to_string()),
             author: Some("Author".to_string()),
             confidence: 0.85,

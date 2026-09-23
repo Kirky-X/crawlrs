@@ -209,6 +209,8 @@ impl ContentExtractionFacade {
 
         Some(ExtractedContent {
             text,
+            // LLM 回退输出纯文本，无结构化正文 HTML
+            html: None,
             title,
             author,
             confidence: LLM_FALLBACK_CONFIDENCE,

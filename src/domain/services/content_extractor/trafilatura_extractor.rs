@@ -53,6 +53,9 @@ impl TrafilaturaExtractor {
     fn build_options(url: &str) -> Options {
         Options {
             url: Some(url.to_string()),
+            // P16：保留链接——Markdown 转换需要 <a href> 才能产出 [text](url)，
+            // 默认 false 会在抽取阶段剥掉链接
+            include_links: true,
             ..Default::default()
         }
     }
@@ -101,6 +104,8 @@ impl ContentExtractor for TrafilaturaExtractor {
 
         Ok(ExtractedContent {
             text,
+            // P16：正文 HTML（保留表格/链接/代码块结构），供 Markdown 转换链路优先使用
+            html: result.content_html.filter(|h| !h.trim().is_empty()),
             title: result.metadata.title,
             author: result.metadata.author,
             confidence,

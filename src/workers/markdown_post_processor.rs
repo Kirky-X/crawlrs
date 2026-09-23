@@ -169,7 +169,19 @@ impl MarkdownPostProcessor {
             .and_then(|o| o.only_main_content)
             .unwrap_or(false);
 
-        let content_for_md: std::borrow::Cow<'_, str> = if only_main {
+        // P16：优先用保留结构的正文 HTML（表格/链接/代码块不丢）。
+        // `ExtractedContent.text` 是纯文本——纯文本喂 Markdown 转换器
+        // 会把结构信息全部抹平。
+        enum MainContentSource {
+            /// 结构化正文 HTML
+            StructuredHtml(String),
+            /// 纯文本（抽取器未产出正文 HTML，显性降级）
+            PlainText(String),
+            /// 整页 HTML
+            FullHtml,
+        }
+
+        let content_source: MainContentSource = if only_main {
             if let Some(extractor) = &self.content_extractor {
                 match extractor.extract(content, &req.url).await {
                     Ok(extracted) if !extracted.text.trim().is_empty() => {
@@ -179,34 +191,52 @@ impl MarkdownPostProcessor {
                             extracted.confidence,
                             extracted.text.len()
                         );
-                        std::borrow::Cow::Owned(extracted.text)
+                        match extracted.html.filter(|h| !h.trim().is_empty()) {
+                            Some(html) => MainContentSource::StructuredHtml(html),
+                            None => {
+                                // 降级必须显性：纯文本转 Markdown 无结构
+                                warn!(
+                                    "task_id: {}, extractor produced no main-content HTML; \
+                                     Markdown will be structureless (plain text)",
+                                    task_id
+                                );
+                                MainContentSource::PlainText(extracted.text)
+                            }
+                        }
                     }
                     Ok(_) => {
                         warn!(
                                 "task_id: {}, content extraction returned empty, falling back to full HTML",
                                 task_id
                             );
-                        std::borrow::Cow::Borrowed(content)
+                        MainContentSource::FullHtml
                     }
                     Err(e) => {
                         warn!(
                             "task_id: {}, content extraction failed: {}, falling back to full HTML",
                             task_id, e
                         );
-                        std::borrow::Cow::Borrowed(content)
+                        MainContentSource::FullHtml
                     }
                 }
             } else {
-                std::borrow::Cow::Borrowed(content)
+                MainContentSource::FullHtml
             }
         } else {
-            std::borrow::Cow::Borrowed(content)
+            MainContentSource::FullHtml
         };
 
-        match self
-            .markdown_service
-            .to_markdown(content_for_md.as_ref(), false)
-        {
+        // 结构化正文与整页 HTML 走 Markdown 转换；纯文本没有可转换的结构，
+        // 直接作为 Markdown 正文（与修复前行为一致）。按值消费避免整文深拷贝。
+        let markdown_result = match content_source {
+            MainContentSource::PlainText(text) => Ok(text),
+            MainContentSource::StructuredHtml(html) => {
+                self.markdown_service.to_markdown(&html, false)
+            }
+            MainContentSource::FullHtml => self.markdown_service.to_markdown(content, false),
+        };
+
+        match markdown_result {
             Ok(md) if !md.trim().is_empty() => {
                 debug!(
                     "task_id: {}, Markdown generated ({} bytes)",
@@ -375,6 +405,84 @@ mod tests {
         assert!(
             generated.is_none(),
             "expected no markdown on empty html error"
+        );
+    }
+
+    /// P16 回归钉：only_main_content=true 且抽取器产出正文 HTML 时，
+    /// Markdown 必须保留结构（表格/链接），而非退化为纯文本。
+    ///
+    /// 修复前：直接把 `ExtractedContent.text`（纯文本）喂给 Markdown 转换器，
+    /// 表格/链接/代码块结构全部丢失。
+    #[cfg(feature = "trafilatura")]
+    #[tokio::test]
+    async fn only_main_content_preserves_markdown_structure_from_extracted_html() {
+        use crate::domain::services::content_extractor::ContentExtractionFacade;
+
+        let p = MarkdownPostProcessor::new(
+            Arc::new(HtmdMarkdownService::new()),
+            Some(Arc::new(ContentExtractionFacade::new(None))),
+        );
+        let req = make_req(json!({
+            "url": "https://example.com/article",
+            "formats": ["markdown"],
+            "options": { "only_main_content": true }
+        }));
+        let html = "<html><head><title>Engine Benchmarks Report</title></head><body>\
+                    <nav>home | about | contact</nav>\
+                    <article>\
+                    <h1>Engine Benchmarks Report</h1>\
+                    <p>This report covers the latest round of performance testing across \
+                    all supported crawling engines. The methodology focuses on sustained \
+                    request throughput under realistic network latency conditions.\
+                    Read the <a href=\"https://example.com/docs\">full documentation</a> for setup details.</p>\
+                    <h2>Methodology</h2>\
+                    <p>Each engine ran for ten minutes against a controlled test cluster. \
+                    We measured requests per second, error rates, and memory overhead. \
+                    The test harness pinned CPU affinity to eliminate scheduler noise.</p>\
+                    <h2>Results</h2>\
+                    <ul><li>wreq reached 9000 rps</li><li>reqwest reached 6500 rps</li></ul>\
+                    <p>For deeper analysis see the <a href=\"https://example.com/analysis\">analysis</a> page.</p>\
+                    </article>\
+                    </body></html>";
+        let result = p.generate(Uuid::new_v4(), &req, html).await;
+        let md = result
+            .expect("expected Ok")
+            .expect("expected Some(markdown)");
+        assert!(
+            md.contains("documentation") && md.contains("]("),
+            "links must survive as Markdown links, got: {md}"
+        );
+        assert!(
+            md.contains('#'),
+            "heading structure must survive as Markdown heading, got: {md}"
+        );
+        // 注：rs-trafilatura 0.2.2 的 content_html 会把 <table> 扁平化为文本，
+        // 表格结构无法经此链路保留（外部依赖能力边界，见 design.md Consequences）
+    }
+
+    /// P16 降级路径：only_main_content=true 但无抽取器注入时，
+    /// 维持整页 HTML 转换行为（与修复前一致）
+    #[tokio::test]
+    async fn only_main_content_without_extractor_falls_back_to_full_html() {
+        let p = make_processor();
+        let req = make_req(json!({
+            "url": "https://example.com/article",
+            "formats": ["markdown"],
+            "options": { "only_main_content": true }
+        }));
+        let result = p
+            .generate(
+                Uuid::new_v4(),
+                &req,
+                "<html><body><h1>Title</h1><p>Body text.</p></body></html>",
+            )
+            .await;
+        let md = result
+            .expect("expected Ok")
+            .expect("expected Some(markdown)");
+        assert!(
+            md.contains("Title"),
+            "full HTML conversion should still work, got: {md}"
         );
     }
 }

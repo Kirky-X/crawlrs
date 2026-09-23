@@ -104,6 +104,8 @@ impl ContentExtractor for CssRuleExtractor {
 
         Ok(ExtractedContent {
             text: text.to_string(),
+            // CSS 启发式无法产出结构化正文 HTML
+            html: None,
             title,
             author,
             // 固定 0.5：兜底实现，最低可信度，触发 Facade 的 LLM 回退
