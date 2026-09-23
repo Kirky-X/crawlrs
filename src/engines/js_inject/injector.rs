@@ -134,6 +134,14 @@ impl JsInjector {
     /// 根据 `phase` 选择 `before` 或 `after` 脚本列表，依次调用
     /// `page.evaluate(script)`。
     ///
+    /// # 注意（P06）
+    ///
+    /// `evaluate` 在**当前文档**上执行。若页面尚未导航（about:blank），
+    /// 脚本会随 `goto` 创建的新文档一起丢失——BeforeLoad 阶段的脚本
+    /// （stealth 覆盖 navigator 等）应改用
+    /// [`JsInjector::apply_before_document`]，经 CDP
+    /// `Page.addScriptToEvaluateOnNewDocument` 注册到**所有后续文档**。
+    ///
     /// # 错误
     ///
     /// 任一脚本执行失败立即返回 [`EngineError::BrowserError`]，不再执行后续脚本。
@@ -156,6 +164,39 @@ impl JsInjector {
                     e
                 )));
             }
+        }
+        Ok(())
+    }
+
+    /// 将 before 阶段脚本经 CDP 注册为"新文档创建时执行"（P06 修复）
+    ///
+    /// 通过 `Page.addScriptToEvaluateOnNewDocument` 把脚本绑定到**所有后续
+    /// 导航创建的文档**，保证 stealth 覆盖在目标页任何脚本执行前生效——
+    /// `apply(BeforeLoad)` 的 `page.evaluate` 只作用于当前文档（通常是
+    /// about:blank），goto 后即失效，`navigator.webdriver` 覆盖形同虚设。
+    ///
+    /// # 错误
+    ///
+    /// 任一脚本注册失败立即返回 [`EngineError::BrowserError`]。
+    /// 空脚本列表 no-op 返回 `Ok(())`。
+    pub async fn apply_before_document(&self, page: &Page) -> Result<(), EngineError> {
+        use chromiumoxide::cdp::browser_protocol::page::AddScriptToEvaluateOnNewDocumentParams;
+
+        for (idx, script) in self.before.iter().enumerate() {
+            page.execute(AddScriptToEvaluateOnNewDocumentParams {
+                source: script.clone(),
+                world_name: None,
+                include_command_line_api: None,
+                run_immediately: None,
+            })
+            .await
+            .map_err(|e| {
+                EngineError::BrowserError(format!(
+                    "addScriptToEvaluateOnNewDocument failed for script #{}: {}",
+                    idx + 1,
+                    e
+                ))
+            })?;
         }
         Ok(())
     }

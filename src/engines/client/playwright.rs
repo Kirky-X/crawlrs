@@ -528,8 +528,10 @@ impl ScraperEngine for PlaywrightEngine {
             // 错误路径下 Page 可能不可用，TabPool::release 会 drop 它（关闭 tab）。
 
             // 从 UaPool 取一致的 UA + viewport profile
-            // 替换原固定移动 UA 分支；mobile 和 desktop 都从池中取 profile
-            let profile = self.ua_pool.pick(request.mobile);
+            // 替换原固定移动 UA 分支；mobile 和 desktop 都从池中取 profile。
+            // P08：Playwright 是真实 Chromium 内核——只取 Chromium 系 profile，
+            // 避免 Safari/Firefox UA 与真实 JS 引擎指纹矛盾的检测点。
+            let profile = self.ua_pool.pick_chromium(request.mobile);
 
             // Set User-Agent（所有请求都设，不只 mobile）
             page.set_user_agent(profile.ua)
@@ -558,13 +560,24 @@ impl ScraperEngine for PlaywrightEngine {
             }
 
             // 导航前注入 stealth 脚本（best-effort）
-            // 覆盖 navigator.webdriver 等反爬指纹属性，必须在页面脚本执行前生效
+            // P06：经 CDP addScriptToEvaluateOnNewDocument 注册到所有后续文档——
+            // 此前的 page.evaluate 只作用于当前文档（about:blank），goto 创建
+            // 新文档后覆盖丢失，navigator.webdriver 恒为 true
             let stealth_injector = crate::engines::js_inject::JsInjector::stealth();
-            if let Err(e) = stealth_injector
-                .apply(&page, crate::engines::js_inject::InjectPhase::BeforeLoad)
+            // 幂等守卫：CDP 注册 target 级持久、随 tab 复用存活，重复注册会让
+            // 每个 tab 的 stealth 脚本份数随请求次数线性累积。脚本在每个新文档
+            // 重打 `__crawlrs_stealth_installed` 标记——标记存在即已注册，跳过。
+            let already_installed: bool = match page
+                .evaluate("() => window.__crawlrs_stealth_installed === true")
                 .await
             {
-                log::warn!("Stealth injection failed (best-effort, continue): {}", e);
+                Ok(v) => v.into_value::<bool>().unwrap_or(false),
+                Err(_) => false,
+            };
+            if !already_installed {
+                if let Err(e) = stealth_injector.apply_before_document(&page).await {
+                    log::warn!("Stealth injection failed (best-effort, continue): {}", e);
+                }
             }
 
             // 拦截事件处理 task 的守卫：声明在 if 块外的 async 作用域，覆盖整个

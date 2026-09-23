@@ -140,3 +140,8 @@
         };
     }
 })();
+
+// CDP 注册幂等标记：该脚本经 Page.addScriptToEvaluateOnNewDocument 注册
+// （target 级持久、随每个新文档执行）。宿主通过检查此标记跳过重复注册，
+// 避免 tab 复用场景下注册数随每 tab 请求数线性累积。
+window.__crawlrs_stealth_installed = true;

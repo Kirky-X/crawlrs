@@ -25,6 +25,9 @@ use std::time::{Duration, Instant};
 /// 默认网络空闲判定窗口（500ms 内无新请求视为空闲）
 const DEFAULT_NETWORK_IDLE_WINDOW: Duration = Duration::from_millis(500);
 
+/// 网络事件轮询间隔（事件流等待的超时步长，用于周期检查 deadline）
+const NETWORK_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
 /// Selector 等待的默认轮询间隔（100ms）
 const SELECTOR_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -49,7 +52,9 @@ impl WaitFor {
     /// - DomStable 的 stable_duration 超过 60s：`EngineError::BrowserError`
     pub async fn wait(&self, page: &Page, timeout: Duration) -> Result<(), EngineError> {
         match self {
-            Self::NetworkIdle => Self::wait_network_idle(page, timeout).await,
+            Self::NetworkIdle => {
+                Self::wait_network_idle(page, DEFAULT_NETWORK_IDLE_WINDOW, timeout).await
+            }
             Self::Selector(selector) => Self::wait_selector(page, selector, timeout).await,
             Self::DomStable(stable_duration) => {
                 Self::wait_dom_stable(page, *stable_duration, timeout).await
@@ -57,14 +62,94 @@ impl WaitFor {
         }
     }
 
-    /// NetworkIdle：简单 sleep 500ms
+    /// NetworkIdle：基于 CDP 网络事件的真实空闲等待（P07 修复）
     ///
-    /// chromiumoxide 的 `goto` 已等待 load 事件，此处额外等待确保异步请求完成。
-    /// 若 `timeout` < 500ms 则用 `timeout`。
-    async fn wait_network_idle(_page: &Page, timeout: Duration) -> Result<(), EngineError> {
-        let wait = DEFAULT_NETWORK_IDLE_WINDOW.min(timeout);
-        tokio::time::sleep(wait).await;
-        Ok(())
+    /// 监听 `EventRequestWillBeSent`（+1）/ `EventLoadingFinished`、
+    /// `EventLoadingFailed`（-1）维护 in-flight 计数，连续 `quiet_window`
+    /// 无在途请求即返回。此前实现是固定 sleep 500ms——命名与语义不符，
+    /// SPA 懒加载内容会被截断。
+    ///
+    /// 语义为尽力而为：超时返回 `Ok`（不因等待失败而失败，与旧行为一致）；
+    /// CDP 订阅失败 fail-open 到固定 sleep（`log::warn!` 显性降级）。
+    async fn wait_network_idle(
+        page: &Page,
+        quiet_window: Duration,
+        timeout: Duration,
+    ) -> Result<(), EngineError> {
+        use chromiumoxide::cdp::browser_protocol::network::{
+            EnableParams as NetworkEnableParams, EventLoadingFailed, EventLoadingFinished,
+            EventRequestWillBeSent,
+        };
+        use futures::StreamExt;
+
+        // 事件流订阅是异步的，任何失败都 fail-open 到固定 sleep
+        let setup = async {
+            page.execute(NetworkEnableParams::default())
+                .await
+                .map_err(|e| e.to_string())?;
+            let started = page
+                .event_listener::<EventRequestWillBeSent>()
+                .await
+                .map_err(|e| e.to_string())?;
+            let finished = page
+                .event_listener::<EventLoadingFinished>()
+                .await
+                .map_err(|e| e.to_string())?;
+            let failed = page
+                .event_listener::<EventLoadingFailed>()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok::<_, String>((started, finished, failed))
+        };
+
+        let (mut started, mut finished, mut failed) = match setup.await {
+            Ok(streams) => streams,
+            Err(e) => {
+                log::warn!(
+                    "network idle: CDP event subscription failed ({e}); \
+                     falling back to fixed sleep"
+                );
+                tokio::time::sleep(quiet_window.min(timeout)).await;
+                return Ok(());
+            }
+        };
+
+        let mut tracker = NetworkIdleTracker::default();
+        let deadline = Instant::now() + timeout;
+
+        // 统一出口：等待结束时 best-effort Network.disable——tab 池复用下
+        // Network domain 常开会让浏览器为页面剩余生命周期持续分发网络事件
+        let result: Result<(), EngineError> = loop {
+            tracker.tick(Instant::now());
+            if tracker.is_idle_for(Instant::now(), quiet_window) {
+                break Ok(());
+            }
+            if Instant::now() >= deadline {
+                // 尽力而为语义：超时不视为错误（与旧行为一致）
+                break Ok(());
+            }
+
+            tokio::select! {
+                Some(ev) = started.next() => {
+                    // 重定向跳只补发 RequestWillBeSent（redirect_response 为
+                    // Some），不为原请求发 LoadingFinished——若无条件 +1，
+                    // http→https / www 规范化等每次重定向都会净泄漏一个
+                    // in-flight，idle 永不成立。净 0 处理对齐 CDP 语义。
+                    if ev.redirect_response.is_some() {
+                        tracker.on_request_finished(Instant::now());
+                    }
+                    tracker.on_request_started(Instant::now());
+                }
+                Some(_) = finished.next() => tracker.on_request_finished(Instant::now()),
+                Some(_) = failed.next() => tracker.on_request_finished(Instant::now()),
+                _ = tokio::time::sleep(NETWORK_EVENT_POLL_INTERVAL) => {}
+            }
+        };
+
+        let _ = page
+            .execute(chromiumoxide::cdp::browser_protocol::network::DisableParams::default())
+            .await;
+        result
     }
 
     /// Selector：轮询 `document.querySelector(selector)` 直到非 null 或超时
@@ -146,6 +231,45 @@ impl WaitFor {
                 stable_since = None;
             }
             tokio::time::sleep(DOM_STABLE_POLL_INTERVAL).await;
+        }
+    }
+}
+
+/// 网络空闲状态机（纯逻辑，独立于 CDP 便于单测）
+///
+/// - `on_request_started`：in-flight +1，清除空闲起点
+/// - `on_request_finished`：in-flight -1（下限 0，防止事件乱序导致负数）
+/// - `tick`：每轮循环对齐状态——in_flight 为 0 且尚未记录空闲起点时打点
+/// - `is_idle_for`：空闲起点存在且已持续 ≥ quiet_window
+#[derive(Debug, Default)]
+struct NetworkIdleTracker {
+    in_flight: i64,
+    idle_since: Option<Instant>,
+}
+
+impl NetworkIdleTracker {
+    fn on_request_started(&mut self, _now: Instant) {
+        self.in_flight += 1;
+        self.idle_since = None;
+    }
+
+    fn on_request_finished(&mut self, _now: Instant) {
+        self.in_flight = (self.in_flight - 1).max(0);
+    }
+
+    fn tick(&mut self, now: Instant) {
+        if self.in_flight <= 0 && self.idle_since.is_none() {
+            self.idle_since = Some(now);
+        }
+        if self.in_flight > 0 {
+            self.idle_since = None;
+        }
+    }
+
+    fn is_idle_for(&self, now: Instant, quiet_window: Duration) -> bool {
+        match self.idle_since {
+            Some(since) => now.duration_since(since) >= quiet_window,
+            None => false,
         }
     }
 }
@@ -276,5 +400,66 @@ mod tests {
         let timeout = Duration::from_millis(100);
         let wait = DEFAULT_NETWORK_IDLE_WINDOW.min(timeout);
         assert_eq!(wait, Duration::from_millis(100));
+    }
+
+    // ============ NetworkIdleTracker（P07 状态机单测） ============
+
+    fn t(ms: u64) -> Instant {
+        // 用相对构造的 Instant 序列验证状态机（Instant 只能取 now，
+        // 这里以单调递增的 now 偏移模拟时间推进）
+        let mut base = Instant::now();
+        base += Duration::from_millis(ms);
+        base
+    }
+
+    /// Started→Finished 后 quiet window 满足 → 空闲
+    #[test]
+    fn tracker_idle_after_finish_and_quiet_window() {
+        let mut tr = NetworkIdleTracker::default();
+        tr.on_request_started(t(0));
+        assert!(!tr.is_idle_for(t(10), Duration::from_millis(500)));
+        tr.on_request_finished(t(20));
+        tr.tick(t(20));
+        // 空闲起点 t(20)，300ms < 500ms → 未空闲
+        assert!(!tr.is_idle_for(t(320), Duration::from_millis(500)));
+        // 600ms ≥ 500ms → 空闲
+        assert!(tr.is_idle_for(t(620), Duration::from_millis(500)));
+    }
+
+    /// 在途请求未完成 → 不进入空闲
+    #[test]
+    fn tracker_stays_busy_while_in_flight() {
+        let mut tr = NetworkIdleTracker::default();
+        tr.on_request_started(t(0));
+        tr.tick(t(100));
+        tr.tick(t(2000));
+        assert!(
+            !tr.is_idle_for(t(2000), Duration::from_millis(500)),
+            "in-flight request must block idle detection"
+        );
+    }
+
+    /// 空闲期出现新请求 → 打断空闲计时，需重新计满 quiet window
+    #[test]
+    fn tracker_idle_interrupted_by_new_request() {
+        let mut tr = NetworkIdleTracker::default();
+        // 首个请求完成并进入空闲
+        tr.on_request_started(t(0));
+        tr.on_request_finished(t(10));
+        tr.tick(t(10));
+        assert!(tr.is_idle_for(t(600), Duration::from_millis(500)));
+        // 新请求打断
+        tr.on_request_started(t(610));
+        tr.on_request_finished(t(620));
+        tr.tick(t(620));
+        // 距新起点仅 500ms 临界——但起点已重置为 tick 时刻
+        assert!(
+            !tr.is_idle_for(t(1000), Duration::from_millis(500)),
+            "idle window must restart after new activity"
+        );
+        assert!(
+            tr.is_idle_for(t(1120), Duration::from_millis(500)),
+            "idle should be detected quiet_window after the last finish"
+        );
     }
 }

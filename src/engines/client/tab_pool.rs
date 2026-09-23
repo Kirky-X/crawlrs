@@ -129,6 +129,21 @@ impl TabPool {
             .execute(chromiumoxide::cdp::browser_protocol::fetch::DisableParams::default())
             .await;
 
+        // P08：清空 cookies（best-effort）——tab 复用不清会话会把上一任务
+        // 的登录态/反爬 cookie 泄漏给下一任务（甚至跨站点）。cookies 无法
+        // 随导航自动清除，必须显式清空。
+        if let Err(e) = page
+            .execute(
+                chromiumoxide::cdp::browser_protocol::network::ClearBrowserCookiesParams::default(),
+            )
+            .await
+        {
+            log::debug!(
+                "ClearBrowserCookies on tab release failed (best-effort): {}",
+                e
+            );
+        }
+
         // 导航到 about:blank 清理状态（5s 超时）
         let ok = matches!(
             tokio::time::timeout(RESET_NAVIGATION_TIMEOUT, page.goto("about:blank")).await,

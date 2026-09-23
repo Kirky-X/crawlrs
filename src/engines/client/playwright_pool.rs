@@ -238,6 +238,17 @@ struct BrowserPoolState {
     browser_path: OnceCell<PathBuf>,
 }
 
+/// P08：池路径的代理 URL 校验（argv 注入防护）
+///
+/// 校验格式 + scheme 白名单 + 无空白字符。含空白字符的值拼进
+/// `--proxy-server=` 会被 Chrome 拆成额外 flag。校验失败显性报错，
+/// 不启动浏览器。
+fn validate_pool_proxy(proxy: &str) -> Result<String, EngineError> {
+    const ALLOWED_PROXY_SCHEMES: &[&str] = &["http", "https", "socks5", "socks4"];
+    crate::utils::proxy::validate_proxy_url(proxy, ALLOWED_PROXY_SCHEMES)
+        .map_err(|e| EngineError::Other(format!("Invalid proxy URL: {}", e)))
+}
+
 impl BrowserPoolState {
     fn new(
         config: BrowserPoolConfig,
@@ -449,6 +460,11 @@ impl BrowserPoolState {
         let remote_debugging_url = self.browser_config.get_remote_debugging_url();
         let proxy_url = self.browser_config.get_proxy_url();
 
+        // P08：代理校验前置——在任何浏览器下载/启动动作之前 fail-fast。
+        // 含空白字符的代理串拼进 `--proxy-server=` 会被 Chrome 拆成额外
+        // flag（argv 注入），且 playwright.rs 单实例路径已有同款校验。
+        let validated_proxy = proxy_url.as_deref().map(validate_pool_proxy).transpose()?;
+
         let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
             info!("Connecting to remote Chrome instance at: {}", url);
             Browser::connect(url).await.map_err(|e| {
@@ -473,9 +489,12 @@ impl BrowserPoolState {
                 builder = builder.arg(arg.as_str());
             }
 
-            if let Some(ref proxy) = proxy_url {
-                info!("Using proxy for browser: {}", proxy);
-                builder = builder.arg(format!("--proxy-server={}", proxy));
+            if let Some(validated) = validated_proxy {
+                info!(
+                    "Using proxy for browser: {}",
+                    crate::utils::proxy::redact_proxy_url(&validated)
+                );
+                builder = builder.arg("--proxy-server").arg(validated);
             }
 
             Browser::launch(
@@ -1310,5 +1329,16 @@ mod tests {
         // 重建的时间应接近 now（误差 < 100ms）
         let diff = Instant::now().duration_since(reconstructed);
         assert!(diff < Duration::from_millis(100));
+    }
+
+    // ==== P08：池路径代理校验 ====
+
+    /// 含空白字符的代理串必须被拒绝（argv 注入防护）
+    #[test]
+    fn test_validate_pool_proxy_rejects_whitespace_injection() {
+        assert!(validate_pool_proxy("http://bad proxy --flag").is_err());
+        assert!(validate_pool_proxy("ftp://not-allowed").is_err());
+        assert!(validate_pool_proxy("http://proxy.example.com:8080").is_ok());
+        assert!(validate_pool_proxy("socks5://user:pass@proxy:1080").is_ok()); // pragma: allowlist secret
     }
 }

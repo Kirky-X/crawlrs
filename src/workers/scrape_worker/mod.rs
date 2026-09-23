@@ -35,7 +35,7 @@ use crate::common::HttpMethod;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::engines::engine_client::{
     EngineClient, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse, ScreenshotConfig,
-    ScrollDirection,
+    ScrollDirection, WaitFor,
 };
 use crate::infrastructure::oxcache::CacheService;
 use crate::infrastructure::security::ssrf::is_internal_url;
@@ -1330,7 +1330,7 @@ impl ScrapeWorker {
                     })
                     .collect(),
                 sync_wait_ms: dto.sync_wait_ms.unwrap_or(0),
-                // NOTE: ScrapeOptionsDto 当前未暴露 block_ads/block_media/session_id/wait_for/needs_mllm 字段，
+                // NOTE: ScrapeOptionsDto 当前未暴露 block_ads/block_media/session_id/needs_mllm 字段，
                 // 默认硬编码为 false/None。若未来 DTO 增加这些字段，需同步更新此处。
                 block_ads: false,
                 block_media: false,
@@ -1347,7 +1347,10 @@ impl ScrapeWorker {
                         options.and_then(|o| o.cache_mode)
                     }
                 },
-                wait_for: None,
+                // P22 接线：DTO 的 wait_for（毫秒）映射为 DomStable 等待策略——
+                // 与 create_scrape use-case 层的映射保持一致（此前此处硬编码
+                // None，调用方传入的 wait_for 被静默丢弃）
+                wait_for: map_wait_for(options.and_then(|o| o.wait_for)),
                 needs_mllm: false,
             },
         })
@@ -1365,6 +1368,14 @@ impl ScrapeWorker {
         let dto = Self::parse_scrape_request_dto(task)?;
         Self::build_scrape_request_from_dto(&dto)
     }
+}
+
+/// P22：DTO `wait_for`（毫秒）→ 引擎等待策略映射
+///
+/// 与 create_scrape use-case 层保持一致：毫秒数映射为 `DomStable`（DOM
+/// 连续该时长无变化视为就绪）。`None` → `None`（引擎回落 NetworkIdle 默认）。
+fn map_wait_for(ms: Option<u64>) -> Option<WaitFor> {
+    ms.map(|ms| WaitFor::DomStable(std::time::Duration::from_millis(ms)))
 }
 
 // ===== Test-only wrappers for extracted free functions =====

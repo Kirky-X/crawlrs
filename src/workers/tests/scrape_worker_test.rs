@@ -7349,3 +7349,29 @@ async fn test_process_scrape_task_default_mode_reads_cache() {
     );
     assert_eq!(cache.set_count(), 0, "Should not write on scrape failure");
 }
+
+// ==== P22：wait_for 映射 ====
+
+/// DTO `wait_for`（毫秒）→ DomStable 等待策略；None → None
+#[test]
+fn test_map_wait_for_covers_all_branches() {
+    use crate::workers::scrape_worker::map_wait_for;
+
+    assert_eq!(map_wait_for(None), None);
+
+    let zero = map_wait_for(Some(0));
+    assert_eq!(
+        zero,
+        Some(crate::engines::engine_client::WaitFor::DomStable(
+            Duration::from_millis(0)
+        ))
+    );
+
+    let long = map_wait_for(Some(5000));
+    assert_eq!(
+        long,
+        Some(crate::engines::engine_client::WaitFor::DomStable(
+            Duration::from_millis(5000)
+        ))
+    );
+}
