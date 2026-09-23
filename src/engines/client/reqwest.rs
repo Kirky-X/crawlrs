@@ -38,6 +38,14 @@ const DEFAULT_REQWEST_MRT_SECONDS: u64 = 5;
 /// 正文 < 5MB，10MB 留足富余（含内联资源的大型页面）同时阻断异常超大响应。
 const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
 
+/// 构建全 scheme 代理：http 与 https 请求一律经代理转发。
+///
+/// 必须用 [`reqwest::Proxy::all`]——`Proxy::http` 只拦截 `http://` scheme，
+/// 爬虫目标绝大多数是 https，会让配置的代理被静默绕过直连（真实 IP 暴露）。
+pub(crate) fn build_all_proxy(url: &str) -> Result<reqwest::Proxy, reqwest::Error> {
+    reqwest::Proxy::all(url)
+}
+
 /// 基于reqwest实现的基本HTTP抓取引擎
 ///
 /// 代理来源：
@@ -273,7 +281,7 @@ impl ReqwestEngine {
 
         match effective_proxy {
             Some(url) => {
-                match reqwest::Proxy::http(url) {
+                match build_all_proxy(url) {
                     Ok(proxy) => match builder.proxy(proxy).build() {
                         Ok(client) => {
                             // 安全：代理 URL 可能含 user:pass@host 凭据，日志输出必须脱敏
@@ -516,7 +524,7 @@ impl ScraperEngine for ReqwestEngine {
                 b = b.danger_accept_invalid_certs(true);
             }
             if let Some(proxy_url) = handle.used_proxy_url.take() {
-                match reqwest::Proxy::http(&proxy_url) {
+                match build_all_proxy(&proxy_url) {
                     Ok(px) => b = b.proxy(px),
                     Err(e) => {
                         // 静默裸连（CWE-436）会让请求绕过代理出口且
@@ -545,7 +553,7 @@ impl ScraperEngine for ReqwestEngine {
                         .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
                         .danger_accept_invalid_certs(true);
                     if let Some(proxy_url) = handle.used_proxy_url.take() {
-                        match reqwest::Proxy::http(&proxy_url) {
+                        match build_all_proxy(&proxy_url) {
                             Ok(px) => b = b.proxy(px),
                             Err(e) => {
                                 error!(
@@ -763,6 +771,16 @@ mod tests {
     use std::time::Duration;
 
     // === Helper functions ===
+
+    #[test]
+    fn test_build_all_proxy_accepts_valid_url_and_rejects_invalid() {
+        // P02 回归钉：代理构建走 Proxy::all（全 scheme 拦截），
+        // 合法 URL（含带凭据的）必须 Ok，非法 URL 必须 Err 由调用点显性降级
+        assert!(build_all_proxy("http://proxy.example:8080").is_ok());
+        assert!(build_all_proxy("socks5://user:pass@proxy.example:1080").is_ok()); // pragma: allowlist secret
+        assert!(build_all_proxy("::not a url::").is_err());
+        assert!(build_all_proxy("").is_err());
+    }
 
     fn create_test_client() -> Arc<reqwest::Client> {
         Arc::new(

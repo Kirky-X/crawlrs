@@ -147,7 +147,10 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 # wreq 5.x 稳定版已全部 yanked，暂用 6.0.0-rc.31（唯一可用版本）。
 # EmulationProvider/EmulationProviderFactory/TlsConfig
 # 均为 wreq 自有 API，无需引入 GPL 的 wreq-util。构建需 cmake + C 编译器（BoringSSL）。
-wreq = { version = "6.0.0-rc.31", default-features = false, features = ["tokio-rt"], optional = true }
+# features：cookies（会话保持）/ gzip / brotli / zstd（解压，accept-encoding 与之一致）/ charset（非 UTF8 解码）
+# / stream（bytes_stream 限长读取）——
+# 缺 cookies 时 Set-Cookie 完全不处理（挑战通过后无法保持会话）；缺解压时服务器强推 gzip 会得到乱码。
+wreq = { version = "6.0.0-rc.31", default-features = false, features = ["tokio-rt", "cookies", "gzip", "brotli", "zstd", "charset", "stream"], optional = true }
 url = "2.5"
 
 # Database

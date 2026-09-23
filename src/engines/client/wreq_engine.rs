@@ -50,11 +50,137 @@ const DEFAULT_PROXY_STRATEGY: ProxyStrategy = ProxyStrategy::RoundRobin;
 ///
 /// # 当前保真度
 ///
-/// 全部变体当前解析为 `Emulation::default()`（wreq 内置 Chrome 系浏览器指纹）。
-/// 详见模块级文档「指纹保真度说明」。
+/// Chromium 系变体（Chrome/Edge）构建真实仿真：浏览器默认头（accept /
+/// sec-fetch-* 一族，值与 UA profile 一致）+ Chrome H2 SETTINGS 帧参数
+/// （HEADER_TABLE_SIZE=65536、INITIAL_WINDOW_SIZE=6291456、
+/// MAX_HEADER_LIST_SIZE=262144 等）。TLS 层保持 BoringSSL 默认——wreq
+/// 本身即 Chromium 衍生栈，默认 ClientHello 已与 Chrome 同源。
+///
+/// Firefox/Safari 变体**不做伪仿真**：BoringSSL 无法呈现 Gecko/WebKit 的
+/// ClientHello，硬仿只会制造"Firefox UA + Chromium 系 JA4"指纹矛盾。
+/// wreq 路径的 UA 候选集经 [`UaPool::pick_chromium`] 过滤后不会出现这些
+/// 变体；此分支仅作为 release 兜底（返回 Chromium 仿真）+ debug_assert。
 #[must_use]
-pub fn emulation_provider(_emulation: TlsEmulation) -> wreq::Emulation {
-    wreq::Emulation::builder().build(wreq::Group::default())
+pub fn emulation_provider(emulation: TlsEmulation) -> wreq::Emulation {
+    if !emulation.is_chromium_family() {
+        debug_assert!(
+            emulation.is_chromium_family(),
+            "non-Chromium TlsEmulation must never reach WreqEngine (UA pool filters them)"
+        );
+        log::warn!(
+            "non-Chromium TlsEmulation {emulation:?} reached emulation_provider; \
+             falling back to Chromium emulation (UA pool filter should prevent this)"
+        );
+    }
+    wreq::Emulation::builder()
+        .headers(chromium_default_headers())
+        .http2_options(chrome_http2_options())
+        .build(wreq::Group::default())
+}
+
+/// Chromium 系浏览器静态默认头。
+///
+/// 只放与 UA profile 无关的头：`user-agent`/`accept-language`/`sec-ch-ua`
+/// 由请求级从所选 profile 注入（wreq_engine scrape 路径），避免两处维护
+/// 漂移。`accept-encoding` 亦不在列——必须与启用了解压 feature 的编码集
+/// 一致，由 feature 接线处补齐。
+fn chromium_default_headers() -> wreq::header::HeaderMap {
+    use wreq::header::{HeaderMap, HeaderName, HeaderValue};
+
+    // (name, value, sensitive?) —— 名称小写，与 Chrome 原始顺序一致
+    const DEFAULTS: &[(&str, &str)] = &[
+        (
+            "accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        ),
+        ("sec-fetch-dest", "document"),
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-site", "none"),
+        ("sec-fetch-user", "?1"),
+        ("upgrade-insecure-requests", "1"),
+    ];
+
+    let mut headers = HeaderMap::new();
+    for (name, value) in DEFAULTS {
+        let name =
+            HeaderName::from_bytes(name.as_bytes()).expect("static header name must be valid");
+        let value = HeaderValue::from_str(value).expect("static header value must be valid");
+        headers.insert(name, value);
+    }
+    headers
+}
+
+/// Chrome 系 HTTP/2 SETTINGS 帧参数（Chrome 131 实测值）。
+fn chrome_http2_options() -> wreq::http2::Http2Options {
+    wreq::http2::Http2Options::builder()
+        .header_table_size(65_536)
+        .enable_push(false)
+        .initial_window_size(6_291_456)
+        .max_header_list_size(262_144)
+        .max_concurrent_streams(1_000)
+        .build()
+}
+
+/// 读取 wreq 响应体并强制大小上限（与 reqwest 侧 `read_body_limited` 语义对齐）。
+///
+/// 双保险：`Content-Length` 预检先行（超限直接拒绝，不建立缓冲）；
+/// 无 `Content-Length`（chunked）或声明不实时流式累积并在超限时中断。
+/// 避免对超大/恶意响应无界读入内存。编码解码按 Content-Type charset
+/// （encoding_rs），与 reqwest 侧一致。
+async fn read_wreq_body_limited(
+    response: wreq::Response,
+    max_bytes: usize,
+) -> Result<String, EngineError> {
+    use futures::StreamExt;
+
+    // 在消费 body 前提取 charset（bytes_stream 会消耗 response）
+    let charset = response
+        .headers()
+        .get(wreq::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|ct| {
+            ct.split(';')
+                .map(|part| part.trim())
+                .find_map(|part| part.strip_prefix("charset="))
+        })
+        .map(|s| s.trim().trim_matches('"').to_string());
+
+    // 1. content_length 预检
+    if let Some(len) = response.content_length() {
+        if len as usize > max_bytes {
+            return Err(EngineError::Other(format!(
+                "Response body size {} exceeds limit {}",
+                len, max_bytes
+            )));
+        }
+    }
+
+    // 2. bytes_stream 累积 + 上限中断
+    let mut buffer: Vec<u8> = Vec::with_capacity(64 * 1024);
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| EngineError::RequestFailed(e.to_string()))?;
+        if buffer.len() + chunk.len() > max_bytes {
+            return Err(EngineError::Other(format!(
+                "Response body exceeds limit {} (chunked transfer)",
+                max_bytes
+            )));
+        }
+        buffer.extend_from_slice(&chunk);
+    }
+
+    // 3. 编码解码（对齐 reqwest 侧 read_body_limited）
+    let decoded = match charset.as_deref() {
+        Some(label) => {
+            let encoding =
+                encoding_rs::Encoding::for_label(label.as_bytes()).unwrap_or(encoding_rs::UTF_8);
+            let (text, _, _) = encoding.decode(&buffer);
+            text.into_owned()
+        }
+        None => String::from_utf8_lossy(&buffer).into_owned(),
+    };
+
+    Ok(decoded)
 }
 
 /// TLS 指纹引擎
@@ -68,6 +194,10 @@ pub struct WreqEngine {
     /// wreq 客户端（构造时构建，含 TLS 指纹模拟配置）
     /// 生产路径使用 `build_resolve_client` 静态方法构建 per-request client；
     /// 此字段保留供测试路径 `get_client` 使用。
+    ///
+    /// 会话隔离约束：本 client 开启 `cookie_store`（jar 跨请求持久）。
+    /// 生产 scrape 每请求经 `build_resolve_client` 新建独立 client（jar 隔离，
+    /// 无跨任务串扰）；若未来生产路径改用本字段，必须先解决跨任务会话隔离。
     #[allow(dead_code)]
     client: wreq::Client,
     /// UA 池每请求选一致 UA + Accept-Language + sec-ch-ua + tls_emulation
@@ -81,7 +211,13 @@ pub struct WreqEngine {
     /// 单引擎最大响应时间（MRT）。
     /// 注入自 `settings.timeouts.engines.tls_seconds`（默认 15 秒）。
     mrt: Duration,
+    /// 响应体大小上限（字节）—— 注入自 `EngineSettings::max_response_body_bytes`，
+    /// 与 ReqwestEngine 同款防 OOM 双保险（Content-Length 预检 + 流式累积）。
+    max_response_body_bytes: usize,
 }
+
+/// wreq 引擎响应体大小上限缺省值（10MB，对齐 ReqwestEngine::DEFAULT_MAX_RESPONSE_BODY_BYTES）。
+const DEFAULT_WREQ_MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
 
 /// 构建 SSRF 安全的 wreq 重定向策略。
 ///
@@ -182,6 +318,7 @@ impl WreqEngine {
             proxy_strategy: DEFAULT_PROXY_STRATEGY,
             timeout_seconds,
             mrt,
+            max_response_body_bytes: DEFAULT_WREQ_MAX_RESPONSE_BODY_BYTES,
         })
     }
 
@@ -201,7 +338,14 @@ impl WreqEngine {
             proxy_strategy,
             timeout_seconds,
             mrt,
+            max_response_body_bytes: DEFAULT_WREQ_MAX_RESPONSE_BODY_BYTES,
         })
+    }
+
+    /// 注入响应体大小上限（来自 `EngineSettings::max_response_body_bytes`，对齐 ReqwestEngine）。
+    pub fn with_max_response_body_bytes(mut self, bytes: usize) -> Self {
+        self.max_response_body_bytes = bytes;
+        self
     }
 
     /// 构建基础 wreq 客户端（含默认 Chrome 系 TLS 指纹模拟 + 超时 + SSRF 安全重定向）。
@@ -210,6 +354,7 @@ impl WreqEngine {
             .emulation(emulation_provider(TlsEmulation::Chrome131))
             .redirect(create_ssrf_safe_wreq_redirect_policy(5))
             .timeout(Duration::from_secs(timeout_seconds))
+            .cookie_store(true)
             .build()
             .map_err(|e| EngineError::Internal(format!("wreq client build failed: {e}")))
     }
@@ -222,7 +367,7 @@ impl WreqEngine {
     /// 调用方在 `None` 时回退到基础 client（rule 12：失败显性化到日志，不静默吞掉）。
     #[cfg(test)]
     fn build_proxy_client(proxy_url: &str, timeout_seconds: u64) -> Option<wreq::Client> {
-        let proxy = match wreq::Proxy::http(proxy_url) {
+        let proxy = match wreq::Proxy::all(proxy_url) {
             Ok(p) => p,
             Err(e) => {
                 error!(
@@ -237,6 +382,7 @@ impl WreqEngine {
             .redirect(create_ssrf_safe_wreq_redirect_policy(5))
             .proxy(proxy)
             .timeout(Duration::from_secs(timeout_seconds))
+            .cookie_store(true)
             .build()
         {
             Ok(c) => {
@@ -354,18 +500,21 @@ impl WreqEngine {
     /// 构建含 SSRF resolve 覆盖的 wreq client。
     ///
     /// 保持原始 hostname 不变，通过 `resolve_to_addrs` 将 DNS 解析固定到 SSRF 验证过的 IP，
-    /// 确保 TLS SNI 和 HTTP 虚拟主机路由正确。
+    /// 确保 TLS SNI 和 HTTP 虚拟主机路由正确。TLS 仿真参数来自所选 UA profile，
+    /// 保证 UA 声明的浏览器与 TLS/H2 指纹一致。
     fn build_resolve_client(
         host: &str,
         resolve_addrs: &[std::net::SocketAddr],
         proxy_url: Option<&str>,
         skip_tls: bool,
         timeout_seconds: u64,
+        emulation: TlsEmulation,
     ) -> Result<wreq::Client, EngineError> {
         let mut builder = wreq::Client::builder()
-            .emulation(emulation_provider(TlsEmulation::Chrome131))
+            .emulation(emulation_provider(emulation))
             .redirect(create_ssrf_safe_wreq_redirect_policy(5))
-            .timeout(Duration::from_secs(timeout_seconds));
+            .timeout(Duration::from_secs(timeout_seconds))
+            .cookie_store(true);
 
         // SSRF resolve 覆盖：hostname → 验证过的 IP
         if !host.is_empty() && host.parse::<std::net::IpAddr>().is_err() {
@@ -380,10 +529,10 @@ impl WreqEngine {
         }
 
         if let Some(url) = proxy_url {
-            match wreq::Proxy::http(url) {
+            match wreq::Proxy::all(url) {
                 Ok(px) => {
                     builder = builder.proxy(px);
-                    log::debug!("Using wreq HTTP proxy: {}", redact_proxy_url(url));
+                    log::debug!("Using wreq proxy (all schemes): {}", redact_proxy_url(url));
                 }
                 Err(e) => {
                     error!(
@@ -434,8 +583,10 @@ impl ScraperEngine for WreqEngine {
             return Err(EngineError::Other("SSRF: no resolved IPs".to_string()));
         }
 
-        // 选与请求匹配的 UA profile（ua + accept_language + sec-ch-ua + tls_emulation）
-        let profile = self.ua_pool.pick(request.mobile);
+        // 选与请求匹配的 UA profile（ua + accept_language + sec-ch-ua + tls_emulation）。
+        // wreq 只能仿真 Chromium 系 TLS，必须从 Chromium 子集中选取，
+        // 避免"Firefox UA + Chromium 系 JA4"指纹矛盾。
+        let profile = self.ua_pool.pick_chromium(request.mobile);
 
         // 确定本次请求使用的代理 URL（与 get_client 逻辑一致）
         let used_proxy_url = self.resolve_proxy_url(&request.proxy, request.session_id.as_deref());
@@ -447,6 +598,7 @@ impl ScraperEngine for WreqEngine {
             used_proxy_url.as_deref(),
             request.skip_tls_verification,
             self.timeout_seconds,
+            profile.tls_emulation,
         )?;
 
         let request_url = validated_url.parsed_url.as_str();
@@ -524,10 +676,7 @@ impl ScraperEngine for WreqEngine {
             }
         }
 
-        let content = response
-            .text()
-            .await
-            .map_err(|e| EngineError::RequestFailed(e.to_string()))?;
+        let content = read_wreq_body_limited(response, self.max_response_body_bytes).await?;
 
         if request.sync_wait_ms > 0 {
             tokio::time::sleep(Duration::from_millis(request.sync_wait_ms as u64)).await;
@@ -711,6 +860,41 @@ mod tests {
         assert_eq!(engine.support_score(&request), 10);
     }
 
+    // === P03：TLS 仿真真实化 ===
+
+    #[test]
+    fn test_emulation_provider_sets_browser_defaults() {
+        let emulation = emulation_provider(TlsEmulation::Chrome131);
+        assert!(
+            !emulation.headers.is_empty(),
+            "emulation must carry browser default headers (accept/sec-fetch-*), got empty"
+        );
+        assert!(
+            emulation.headers.contains_key("accept"),
+            "accept header is the most basic browser fingerprint header"
+        );
+        assert!(
+            emulation.http2_options.is_some(),
+            "emulation must set explicit H2 SETTINGS (Chrome fingerprint)"
+        );
+    }
+
+    #[test]
+    fn test_emulation_provider_accepts_all_chromium_variants() {
+        for variant in [
+            TlsEmulation::Chrome131,
+            TlsEmulation::Chrome130,
+            TlsEmulation::Chrome120,
+            TlsEmulation::Edge131,
+        ] {
+            let emulation = emulation_provider(variant);
+            assert!(
+                !emulation.headers.is_empty(),
+                "{variant:?} must get headers"
+            );
+        }
+    }
+
     #[test]
     fn test_support_score_needs_screenshot_returns_10() {
         let engine = create_engine();
@@ -801,13 +985,13 @@ mod tests {
 
     #[test]
     fn test_emulation_provider_roundtrips_all_variants() {
-        // 全部变体都能构造出 EmulationProvider（当前统一默认 Chrome 系指纹，见模块文档）
+        // 仅 Chromium 系变体能构造 Emulation——Firefox/Safari 不做伪仿真
+        // （BoringSSL 无法呈现 Gecko/WebKit ClientHello），由 UA 池过滤，
+        // 传非 Chromium 变体属契约违规（debug_assert 拦截）。
         for variant in [
             TlsEmulation::Chrome131,
             TlsEmulation::Chrome130,
             TlsEmulation::Chrome120,
-            TlsEmulation::Firefox133,
-            TlsEmulation::Safari17,
             TlsEmulation::Edge131,
         ] {
             let _provider = emulation_provider(variant);

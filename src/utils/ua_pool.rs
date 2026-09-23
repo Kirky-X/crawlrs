@@ -14,6 +14,7 @@
 //! `DEFAULT_USER_AGENT`（`http_client.rs`）作为 UaPool 不可用时的最终回退常量保留。
 
 use rand::seq::IndexedRandom;
+use std::sync::OnceLock;
 
 /// TLS 指纹模拟类型
 ///
@@ -36,6 +37,24 @@ pub enum TlsEmulation {
     Safari17,
     /// Microsoft Edge 131
     Edge131,
+}
+
+impl TlsEmulation {
+    /// 是否属于 Chromium 系浏览器（Chrome/Edge）。
+    ///
+    /// wreq 基于 BoringSSL（Chromium 衍生），只能可靠仿真 Chromium 系 TLS 指纹；
+    /// Firefox/Safari 的 ClientHello 与之差异极大，伪造只会制造
+    /// "Firefox UA + Chromium 系 JA4"的指纹矛盾。因此 wreq 路径的 UA 候选集
+    /// 必须经 [`UaPool::pick_chromium`] 过滤，只保留 Chromium 系 profile。
+    pub fn is_chromium_family(self) -> bool {
+        matches!(
+            self,
+            TlsEmulation::Chrome131
+                | TlsEmulation::Chrome130
+                | TlsEmulation::Chrome120
+                | TlsEmulation::Edge131
+        )
+    }
 }
 
 /// 单个 User-Agent profile — 所有字段为 `&'static str`，编译期常量
@@ -73,6 +92,9 @@ pub struct UaPool {
     pub desktop: Vec<UaProfile>,
     /// 移动 profile 集（mobile=true）
     pub mobile: Vec<UaProfile>,
+    /// Chromium 系 profile 索引缓存（懒构建，pick_chromium 免每次分配）
+    chromium_desktop: OnceLock<Vec<usize>>,
+    chromium_mobile: OnceLock<Vec<usize>>,
 }
 
 impl UaPool {
@@ -85,7 +107,26 @@ impl UaPool {
         Self {
             desktop: desktop_profiles(),
             mobile: mobile_profiles(),
+            chromium_desktop: OnceLock::new(),
+            chromium_mobile: OnceLock::new(),
         }
+    }
+
+    /// 惰性构建对应分组的 Chromium 系 profile 索引（内置池恒定，只算一次）
+    fn chromium_indices(&self, mobile: bool) -> &Vec<usize> {
+        let (group, cache) = if mobile {
+            (&self.mobile, &self.chromium_mobile)
+        } else {
+            (&self.desktop, &self.chromium_desktop)
+        };
+        cache.get_or_init(|| {
+            group
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.tls_emulation.is_chromium_family())
+                .map(|(i, _)| i)
+                .collect()
+        })
     }
 
     /// 随机选取一个 profile
@@ -97,6 +138,24 @@ impl UaPool {
         let pool = if mobile { &self.mobile } else { &self.desktop };
         pool.choose(&mut rand::rng())
             .expect("UA pool group must be non-empty")
+    }
+
+    /// 随机选取一个 Chromium 系 profile（Chrome/Edge）
+    ///
+    /// 供 wreq（BoringSSL，仅能仿真 Chromium 系 TLS）与 Playwright（真实
+    /// Chromium 内核）引擎使用——这些引擎配上 Firefox/Safari UA 会构成
+    /// "UA 声称 A、指纹实为 B"的矛盾，正是反爬风控的检测点。
+    ///
+    /// # Panics
+    /// 仅当对应分组的 Chromium profile 为空时 panic（内置 pool 不可能为空）
+    #[must_use]
+    pub fn pick_chromium(&self, mobile: bool) -> &UaProfile {
+        let pool = if mobile { &self.mobile } else { &self.desktop };
+        let indices = self.chromium_indices(mobile);
+        let idx = indices
+            .choose(&mut rand::rng())
+            .expect("UA pool must contain at least one Chromium profile");
+        &pool[*idx]
     }
 
     /// 按 seed 确定性选取 profile — 同 seed 必须返回同一 profile
@@ -604,6 +663,35 @@ fn mobile_profiles() -> Vec<UaProfile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // === P03：TLS 仿真的 Chromium 家族过滤 ===
+
+    #[test]
+    fn test_is_chromium_family_classification() {
+        assert!(TlsEmulation::Chrome131.is_chromium_family());
+        assert!(TlsEmulation::Chrome130.is_chromium_family());
+        assert!(TlsEmulation::Chrome120.is_chromium_family());
+        assert!(TlsEmulation::Edge131.is_chromium_family());
+        // 非 Chromium 系：wreq（BoringSSL）无法可靠仿真，必须被过滤
+        assert!(!TlsEmulation::Firefox133.is_chromium_family());
+        assert!(!TlsEmulation::Safari17.is_chromium_family());
+    }
+
+    #[test]
+    fn test_pick_chromium_only_returns_chromium_profiles() {
+        let pool = UaPool::new();
+        for mobile in [false, true] {
+            for _ in 0..50 {
+                let profile = pool.pick_chromium(mobile);
+                assert!(
+                    profile.tls_emulation.is_chromium_family(),
+                    "pick_chromium must never return a non-Chromium profile, got {} ({:?})",
+                    profile.ua,
+                    profile.tls_emulation
+                );
+            }
+        }
+    }
 
     // === profile 数量 ≥ 20 ===
 
