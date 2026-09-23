@@ -252,22 +252,13 @@ pub async fn extract_and_queue_links(
         let mut to_db_enqueue: Vec<String> = Vec::with_capacity(to_db_insert.len());
         if !to_db_insert.is_empty() {
             let mut dedup = deduplicator.write();
+            // DB 已确认这些 URL 不存在——布隆阳性必为假阳性，必须无条件
+            // insert + 入队。禁止再走 check_and_insert：首轮检查已置位布隆，
+            // 二次检查必然复现 MaybeExisting，会把 DB 确认的新 URL 静默丢弃
+            // （永久漏抓）。
             for normalized in &to_db_insert {
-                match dedup.check_and_insert(normalized) {
-                    Ok(DedupResult::DefinitelyNew { normalized: n }) => {
-                        to_db_enqueue.push(n);
-                    }
-                    Ok(DedupResult::MaybeExisting { .. }) => {
-                        continue;
-                    }
-                    Err(e) => {
-                        return Err(anyhow::anyhow!(
-                            "URL dedup check_and_insert failed for {}: {}",
-                            normalized,
-                            e
-                        ));
-                    }
-                }
+                dedup.insert(normalized);
+                to_db_enqueue.push(normalized.to_string());
             }
         }
 
@@ -330,8 +321,11 @@ pub async fn extract_and_queue_links(
         while let Some(scored) = frontier.pop() {
             let mut priority = task.priority;
             if let Some(strategy) = &config.strategy {
+                // 出队按 priority ASC（小值先出）。DFS（栈语义，深层先出）
+                // 需要比父任务更小的 priority；BFS（层序）则更大。
+                // 此前 DFS 用 saturating_add 实为 BFS 行为，策略标签与行为相反。
                 if strategy.to_lowercase() == "dfs" {
-                    priority = priority.saturating_add(1);
+                    priority = priority.saturating_sub(1);
                 }
             }
 
@@ -561,19 +555,23 @@ mod tests {
 
     struct CountingTaskRepo {
         create_count: AtomicU32,
+        /// 记录入队任务的 priority（P01 DFS/BFS 语义验证用）
+        captured_priorities: std::sync::Mutex<Vec<i32>>,
     }
     impl CountingTaskRepo {
         fn new() -> Self {
             Self {
                 create_count: AtomicU32::new(0),
+                captured_priorities: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
 
     #[async_trait::async_trait]
     impl TaskRepository for CountingTaskRepo {
-        async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
+        async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
             self.create_count.fetch_add(1, Ordering::SeqCst);
+            self.captured_priorities.lock().unwrap().push(task.priority);
             Ok(Task::new(
                 Uuid::new_v4(),
                 TaskType::Crawl,
@@ -846,6 +844,53 @@ mod tests {
         assert!(
             repo.create_count.load(Ordering::SeqCst) > 0,
             "DFS strategy should enqueue links"
+        );
+    }
+
+    /// P01 回归钉：DFS 子链接 priority 必须小于父任务（出队 priority ASC
+    /// → 深层先出，栈语义）；BFS 子链接必须大于父任务（层序）。
+    /// 修复前 DFS 用 saturating_add，实际行为是 BFS，策略标签与行为相反。
+    #[tokio::test]
+    async fn test_dfs_child_priority_below_parent_and_bfs_above() {
+        async fn run_with_strategy(strategy: Option<&str>, html: &str) -> Vec<i32> {
+            let mut task = make_task("https://example.com/page");
+            task.priority = 5;
+            let response = make_response("text/html", html);
+            let repo = CountingTaskRepo::new();
+            let crawl_repo = MockCrawlRepo::default();
+            let dedup = Arc::new(parking_lot::RwLock::new(Deduplicator::new()));
+            let mut config = default_config();
+            config.strategy = strategy.map(str::to_string);
+
+            extract_and_queue_links(
+                &task,
+                &response,
+                Uuid::new_v4(),
+                0,
+                &config,
+                &repo,
+                &crawl_repo,
+                &dedup,
+            )
+            .await
+            .unwrap();
+            let priorities = repo.captured_priorities.lock().unwrap().clone();
+            priorities
+        }
+
+        let html = r#"<html><body>
+            <a href="https://example.com/child">Child</a>
+        </body></html>"#;
+
+        let dfs = run_with_strategy(Some("dfs"), html).await;
+        assert!(
+            dfs.iter().all(|&p| p < 5),
+            "dfs child priority must be BELOW parent (5), got {dfs:?}"
+        );
+        let bfs = run_with_strategy(Some("bfs"), html).await;
+        assert!(
+            bfs.iter().all(|&p| p >= 5),
+            "bfs child priority must be >= parent (5), got {bfs:?}"
         );
     }
 
@@ -1183,6 +1228,49 @@ mod tests {
             repo.create_count.load(Ordering::SeqCst),
             0,
             "existing URLs should not be enqueued"
+        );
+    }
+
+    /// P09 回归钉：布隆阳性 + DB 确认"不存在"的 URL 必须入队，不得静默丢弃。
+    ///
+    /// 修复前：二次 check_and_insert 必然复现 MaybeExisting（首轮已置位布隆），
+    /// 走 continue 分支丢弃——to_db_enqueue 恒为空，假阳性变成永久漏抓。
+    #[tokio::test]
+    async fn test_extract_links_bloom_false_positive_enqueued_after_db_miss() {
+        let task = make_task("https://example.com/page");
+        let html = r#"<html><body>
+            <a href="https://example.com/fresh-link">Fresh</a>
+        </body></html>"#;
+        let response = make_response("text/html", html);
+
+        // 预插入目标 URL 使布隆阳性 → 触发 MaybeExisting / DB 校验路径
+        let dedup = Arc::new(parking_lot::RwLock::new(Deduplicator::new()));
+        {
+            let mut d = dedup.write();
+            d.insert("https://example.com/fresh-link");
+        }
+
+        // DB 判定该 URL 不存在（existing 集为空）→ 修复后必须入队
+        let repo = ExistingUrlTaskRepo::new_with_existing(vec![]);
+        let crawl_repo = MockCrawlRepo::default();
+        let config = default_config();
+
+        extract_and_queue_links(
+            &task,
+            &response,
+            Uuid::new_v4(),
+            0,
+            &config,
+            &repo,
+            &crawl_repo,
+            &dedup,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            repo.create_count.load(Ordering::SeqCst),
+            1,
+            "DB-confirmed-new URL must be enqueued despite bloom positive (false positive must not cause missed URLs)"
         );
     }
 }

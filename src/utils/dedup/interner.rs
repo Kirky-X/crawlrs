@@ -67,12 +67,34 @@ impl UrlInterner {
 
     /// 添加一个 URL 到 interner（同时插入 Bloom 和 HashSet）
     ///
-    /// 重复插入不会增加计数（HashSet 语义）
+    /// 重复插入不会增加计数（HashSet 语义）。
+    ///
+    /// 装载率 ≥90% 时先以权威 HashSet 重建 2× 容量布隆（P11）——
+    /// 布隆接近满载后误判率持续攀升，会把越来越多的新 URL 错误地
+    /// 打入 DB 校验慢路径；重建后 m/k 按新容量重算，FP 率回到目标值。
     #[inline]
     pub fn insert(&mut self, url: impl AsRef<str>) {
         let url_ref = url.as_ref();
+        // 阈值用 HashSet 精确长度而非 bloom.len()（后者计每次 insert 调用，
+        // 重复插入/remove 流量下会提前触发多余重建）。溢出安全：usize 下安全。
+        if self.links_visited.len() * 10 >= self.bloom.capacity() * 9 {
+            self.rebuild_bloom_scaled();
+        }
         self.bloom.insert(url_ref);
         self.links_visited.insert(url_ref.to_string());
+    }
+
+    /// 以权威 HashSet 重建 2 倍容量的布隆过滤器
+    ///
+    /// 权威集合是精确真源（HashSet 全量在内存），重建只重放哈希，
+    /// 布隆位图翻倍后 FP 率恢复到构造目标（TARGET_FP）。
+    fn rebuild_bloom_scaled(&mut self) {
+        let new_cap = self.bloom.capacity().saturating_mul(2);
+        let mut new_bloom = MmapBloom::new(new_cap);
+        for url in &self.links_visited {
+            new_bloom.insert(url);
+        }
+        self.bloom = new_bloom;
     }
 
     /// 批量插入
@@ -176,6 +198,29 @@ mod tests {
         let interner = UrlInterner::new();
         assert!(interner.is_empty());
         assert_eq!(interner.len(), 0);
+    }
+
+    /// P11 回归钉：装载率 ≥90% 时布隆自动 2× 扩容重建，且重建后
+    /// 所有已插入元素必须仍然命中（无假阴性）
+    #[test]
+    fn test_interner_rebuilds_bloom_when_near_capacity() {
+        let mut interner = UrlInterner::with_capacity(16);
+        for i in 0..20 {
+            interner.insert(format!("https://example.com/page{i}"));
+        }
+        assert_eq!(
+            interner.bloom().capacity(),
+            32,
+            "bloom must double capacity once load passes 90% of 16"
+        );
+        assert_eq!(interner.bloom().len(), 20);
+        assert_eq!(interner.len(), 20, "HashSet count must be exact");
+        for i in 0..20 {
+            assert!(
+                interner.contains(&format!("https://example.com/page{i}")),
+                "rebuild must not introduce false negatives for page{i}"
+            );
+        }
     }
 
     #[test]

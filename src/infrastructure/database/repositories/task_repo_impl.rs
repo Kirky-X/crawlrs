@@ -628,6 +628,41 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok(existing)
     }
 
+    async fn list_distinct_urls(
+        &self,
+        limit: u32,
+        after_url: Option<String>,
+    ) -> Result<Vec<String>, RepositoryError> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        // keyset 分页（url > after_url）：每页 O(limit)，配合 url 升序稳定
+        // 翻页。用于去重状态启动预热（预热幂等，页间轻微漂移无害）。
+        let mut query = task_entity::Entity::find()
+            .select_only()
+            .column(task_entity::Column::Url)
+            .distinct()
+            .order_by_asc(task_entity::Column::Url)
+            .limit(u64::from(limit));
+        if let Some(after) = after_url {
+            query = query.filter(task_entity::Column::Url.gt(after));
+        }
+        let urls = query
+            .into_tuple::<String>()
+            .all(conn)
+            .await
+            .map_err(|e| RepositoryError::Database(e.into()))?;
+
+        Ok(urls)
+    }
+
     async fn reset_stuck_tasks(&self, timeout: Duration) -> Result<u64, RepositoryError> {
         let cutoff = Utc::now() - timeout;
 

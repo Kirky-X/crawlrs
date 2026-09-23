@@ -71,6 +71,9 @@ pub struct MmapBloom {
     mask: u64,
     /// Number of elements inserted (approximate — counts every insert call).
     count: usize,
+    /// Effective element capacity this filter was sized for
+    /// (`0` normalized to [`DEFAULT_CAPACITY`] at construction).
+    capacity: usize,
     /// How the memory was allocated, for correct deallocation.
     alloc_kind: AllocKind,
 }
@@ -99,6 +102,7 @@ impl MmapBloom {
             len_bytes,
             mask: (bits as u64) - 1,
             count: 0,
+            capacity: cap,
             alloc_kind,
         }
     }
@@ -106,6 +110,15 @@ impl MmapBloom {
     /// Create with the default 1 M element capacity.
     pub fn with_default_capacity() -> Self {
         Self::new(DEFAULT_CAPACITY)
+    }
+
+    /// Effective element capacity this filter was sized for.
+    ///
+    /// 调用方（`UrlInterner`）据此在装载率 ≥90% 时触发扩容重建——
+    /// 布隆超容后误判率会持续失控攀升。
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 
     /// View the entire backing region as an immutable byte slice.
@@ -350,6 +363,7 @@ impl Clone for MmapBloom {
             len_bytes: self.len_bytes,
             mask: self.mask,
             count: self.count,
+            capacity: self.capacity,
             alloc_kind,
         };
         // Safe copy via slices: source & target are both valid, non-overlapping.

@@ -127,6 +127,22 @@ pub trait TaskRepository: Send + Sync {
     /// 批量检查URL是否存在（优化 N+1 查询）
     async fn find_existing_urls(&self, urls: &[String])
         -> Result<HashSet<String>, RepositoryError>;
+    /// 分页列出 distinct 任务 URL（去重状态启动预热用）
+    ///
+    /// keyset 分页：返回按 url 升序排列、大于 `after_url` 的前 `limit` 条
+    /// （`None` 从头开始）。每页 O(limit)，避免 OFFSET 的 O(n²) 扫描。
+    /// 生产仓库必须覆写本方法提供真实查询；默认实现显性报错，
+    /// 避免预热在某个实现上被静默跳过（重启后布隆为空会导致全站重爬）。
+    async fn list_distinct_urls(
+        &self,
+        limit: u32,
+        after_url: Option<String>,
+    ) -> Result<Vec<String>, RepositoryError> {
+        let _ = (limit, after_url);
+        Err(RepositoryError::Database(anyhow::anyhow!(
+            "list_distinct_urls not implemented by this repository (dedup warmup unavailable)"
+        )))
+    }
     /// 重置卡住的任务（长时间处于Active状态）
     async fn reset_stuck_tasks(&self, timeout: chrono::Duration) -> Result<u64, RepositoryError>;
     /// 按本副本 worker 身份回滚在途任务

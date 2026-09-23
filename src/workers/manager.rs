@@ -21,7 +21,7 @@ use crate::workers::scrape_worker::{ScrapeWorker, ScrapeWorkerDeps};
 // 优雅退出协调器
 use crate::workers::shutdown::ShutdownCoordinator;
 use crate::workers::{AbstractWorker, Worker};
-use log::info;
+use log::{error, info};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
@@ -178,6 +178,55 @@ impl WorkerManager {
         }
     }
 
+    /// 从 DB 分页预热去重器（P10）
+    ///
+    /// 重启后进程内布隆/HashSet 全空，所有链接会走 `DefinitelyNew` 快路径
+    /// 绕过 DB 校验 → 全站重爬。启动时把 tasks 表的 distinct URL 灌回
+    /// Deduplicator（幂等：重复灌入只影响布隆位图，HashSet 自动去重）。
+    ///
+    /// 失败显性化：任一页失败打 error 日志（含后果说明）并中止预热，
+    /// 进程以空去重状态继续运行（预热是优化，不阻塞可用性）。
+    async fn warmup_deduplicator(&self) {
+        const PAGE_SIZE: u32 = 5000;
+        // keyset 分页（url > 上一页末条）：每页 O(PAGE_SIZE)，
+        // 避免 OFFSET 在大库上的 O(n²) 扫描压制 DB
+        let mut after_url: Option<String> = None;
+        let mut total: usize = 0;
+
+        loop {
+            let urls = match self
+                .repository
+                .list_distinct_urls(PAGE_SIZE, after_url.clone())
+                .await
+            {
+                Ok(urls) => urls,
+                Err(e) => {
+                    error!(
+                        "Deduplicator warmup failed at cursor {after_url:?}: {e}; \
+                         continuing with EMPTY dedup state — already-crawled URLs \
+                         will be re-crawled this run"
+                    );
+                    return;
+                }
+            };
+
+            let page_len = urls.len();
+            if page_len > 0 {
+                let mut dedup = self.deduplicator.write();
+                dedup.extend(urls.iter().map(String::as_str));
+                total += page_len;
+                after_url = urls.into_iter().last();
+            }
+            if page_len < PAGE_SIZE as usize {
+                break;
+            }
+        }
+
+        if total > 0 {
+            info!("Deduplicator warmed up with {total} distinct URLs from previous runs");
+        }
+    }
+
     /// 启动工作进程
     ///
     /// 创建并启动指定数量的工作进程
@@ -186,6 +235,10 @@ impl WorkerManager {
     ///
     /// * `count` - 要启动的工作进程数量
     pub async fn start_workers(&mut self, count: usize) {
+        // P10：去重状态启动预热——从 DB 分页灌入已爬 URL，
+        // 否则重启后布隆全空，所有链接走 DefinitelyNew 快路径 → 全站重爬
+        self.warmup_deduplicator().await;
+
         // 启动过期清理工作器（使用新模板模式）
         let expiration_processor = Arc::new(ExpirationWorker::new(
             self.repository.clone(),
@@ -748,7 +801,14 @@ mod tests {
         }
     }
 
-    struct MockTaskRepository;
+    /// 可注入预热 URL 的任务仓库 mock
+    ///
+    /// `warmup_urls` 非空时 `list_distinct_urls` 返回它们（一页内，循环终止），
+    /// 空（Default）时返回空页——预热循环一轮即结束，既有用例不受影响。
+    #[derive(Default)]
+    struct MockTaskRepository {
+        warmup_urls: Vec<String>,
+    }
 
     #[async_trait]
     impl TaskRepository for MockTaskRepository {
@@ -789,6 +849,13 @@ mod tests {
             _urls: &[String],
         ) -> Result<HashSet<String>, RepositoryError> {
             Ok(HashSet::new())
+        }
+        async fn list_distinct_urls(
+            &self,
+            _limit: u32,
+            _after_url: Option<String>,
+        ) -> Result<Vec<String>, RepositoryError> {
+            Ok(self.warmup_urls.clone())
         }
         async fn reset_stuck_tasks(
             &self,
@@ -1023,7 +1090,7 @@ mod tests {
     fn make_deps() -> WorkerManagerDeps {
         WorkerManagerDeps {
             queue: Arc::new(MockTaskQueue),
-            repository: Arc::new(MockTaskRepository),
+            repository: Arc::new(MockTaskRepository::default()),
             result_repository: Arc::new(MockScrapeResultRepository),
             crawl_repository: Arc::new(MockCrawlRepository),
             webhook_service: Arc::new(MockWebhookService),
@@ -1100,6 +1167,37 @@ mod tests {
         assert!(
             manager.handles.is_empty(),
             "new() should start with no handles"
+        );
+    }
+
+    // ---- P10：去重状态启动预热 ----
+
+    #[tokio::test]
+    async fn test_warmup_deduplicator_loads_previous_urls() {
+        let repo = Arc::new(MockTaskRepository {
+            warmup_urls: vec![
+                "https://example.com/a".to_string(),
+                "https://example.com/b".to_string(),
+                "https://example.com/c".to_string(),
+            ],
+        });
+        let mut deps = make_deps();
+        deps.repository = repo;
+        let manager = WorkerManager::new(deps, make_config());
+
+        assert_eq!(manager.deduplicator.read().len(), 0);
+        manager.warmup_deduplicator().await;
+
+        let dedup = manager.deduplicator.read();
+        assert_eq!(dedup.len(), 3, "warmup must load all distinct URLs");
+        // 预热后已爬 URL 不再 DefinitelyNew——否则重启后会全站重爬
+        let result = dedup.check("https://example.com/a").unwrap();
+        assert!(
+            matches!(
+                result,
+                crate::utils::dedup::DedupResult::MaybeExisting { .. }
+            ),
+            "warmed-up URL must be MaybeExisting, got {result:?}"
         );
     }
 
