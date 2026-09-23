@@ -103,6 +103,7 @@ impl From<anyhow::Error> for SearchServiceError {
 
 use crate::domain::services::rerank::SearchReranker;
 use crate::search::client::SearchClientTrait;
+use crate::search::engine_trait::SearchEngine;
 
 /// Search service trait for trait object support.
 #[async_trait::async_trait]
@@ -122,6 +123,9 @@ pub struct SearchService {
     task_repo: Arc<dyn TaskRepository>,
     credits_repo: Arc<dyn CreditsRepository>,
     search_client: Arc<dyn SearchClientTrait>,
+    /// P12：SmartSearchEngine（多引擎 fan-out + RRF 聚合）。
+    /// 未注入时 engine=None 的请求回落到单引擎路径（agent-lib / 测试面）。
+    smart_engine: Option<Arc<dyn SearchEngine>>,
     max_results: u32,
     reranker: Arc<SearchReranker>,
 }
@@ -140,9 +144,17 @@ impl SearchService {
             task_repo,
             credits_repo,
             search_client,
+            smart_engine: None,
             max_results: settings.search.max_results,
             reranker,
         }
+    }
+
+    /// 注入 SmartSearchEngine（P12 接线：engine=None / "smart" 时走聚合路径）。
+    #[must_use]
+    pub fn with_smart_engine(mut self, engine: Arc<dyn SearchEngine>) -> Self {
+        self.smart_engine = Some(engine);
+        self
     }
 
     pub async fn search(
@@ -268,6 +280,46 @@ impl SearchService {
         _country: Option<&str>,
         engine: Option<&str>,
     ) -> Result<Vec<SearchResult>, SearchServiceError> {
+        // P12：路由决策——engine 为 None 或 "smart" 时走 SmartSearchEngine
+        // （多引擎 fan-out + RRF 聚合）；显式引擎名走 SearchClient 单引擎路径。
+        let use_smart = engine.is_none() || engine == Some("smart");
+        if use_smart {
+            if let Some(smart) = &self.smart_engine {
+                let request =
+                    crate::search::engine_trait::SearchRequest::new(query).with_limit(limit);
+                let response = smart
+                    .search(&request)
+                    .await
+                    .map_err(|e| SearchServiceError::SearchEngine(format!("smart search: {e}")))?;
+                let results: Vec<SearchResult> = response
+                    .items
+                    .into_iter()
+                    .take(limit as usize)
+                    .map(|item| SearchResult {
+                        title: item.title,
+                        url: item.url,
+                        description: Some(item.description),
+                        engine: item.engine.name().to_string(),
+                        score: None,
+                    })
+                    .collect();
+                // 与单引擎路径同款语义重排（数量不变，仅调序）
+                return Ok(self.reranker.rerank_results(query, results).await);
+            }
+            // 未注入 smart engine（agent-lib / 测试面）→ 落回单引擎，显性记录
+            log::warn!("smart engine not injected; falling back to single-engine search path");
+        }
+
+        // 显式引擎名必须可解析——此前未知引擎名会静默替换为默认 bing
+        if let Some(name) = engine {
+            if name != "smart" && crate::search::types::SearchEngineType::from_name(name).is_none()
+            {
+                return Err(SearchServiceError::ValidationError(format!(
+                    "unknown search engine: {name}"
+                )));
+            }
+        }
+
         let mut command = self.search_client.search(query).await;
 
         command = command.limit(limit);
@@ -777,6 +829,106 @@ mod tests {
         }
     }
 
+    // ========== P12：smart 引擎路由 ==========
+
+    fn make_service_with_smart(
+        search_client: MockSearchClient,
+        smart: Arc<dyn SearchEngine>,
+    ) -> SearchService {
+        SearchService {
+            crawl_repo: Arc::new(MockCrawlRepo::new()),
+            task_repo: Arc::new(MockTaskRepo::new()),
+            credits_repo: Arc::new(MockCreditsRepo::with_balance(100)),
+            search_client: Arc::new(search_client),
+            smart_engine: Some(smart),
+            max_results: 50,
+            reranker: Arc::new(SearchReranker::new(None, 25)),
+        }
+    }
+
+    /// engine=None 时必须路由到 SmartSearchEngine（fan-out + RRF），
+    /// 而非单引擎路径
+    #[tokio::test]
+    async fn test_engine_none_routes_to_smart_engine() {
+        let smart: Arc<dyn SearchEngine> = Arc::new(MockSearchEngine::success_with_items(
+            SearchEngineType::Smart,
+            vec![make_response_item(
+                "smart consensus",
+                "https://smart.example/1",
+                SearchEngineType::Smart,
+            )],
+        ));
+        let client = MockSearchClient::new_with_items(vec![make_response_item(
+            "bing single",
+            "https://bing.example/1",
+            SearchEngineType::Bing,
+        )]);
+        let service = make_service_with_smart(client, smart);
+
+        let results = service
+            .perform_search("rust async", 10, None, None, None)
+            .await
+            .expect("perform_search");
+        assert!(
+            results.iter().all(|r| r.title == "smart consensus"),
+            "engine=None must route to smart engine, got: {:?}",
+            results.iter().map(|r| r.title.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// 显式引擎名走单引擎路径，不得被 smart 拦截
+    #[tokio::test]
+    async fn test_explicit_engine_routes_to_single_engine() {
+        let smart: Arc<dyn SearchEngine> = Arc::new(MockSearchEngine::success_with_items(
+            SearchEngineType::Smart,
+            vec![make_response_item(
+                "smart consensus",
+                "https://smart.example/1",
+                SearchEngineType::Smart,
+            )],
+        ));
+        let client = MockSearchClient::new_with_items(vec![make_response_item(
+            "bing single",
+            "https://bing.example/1",
+            SearchEngineType::Bing,
+        )]);
+        let service = make_service_with_smart(client, smart);
+
+        let results = service
+            .perform_search("rust async", 10, None, None, Some("bing"))
+            .await
+            .expect("perform_search");
+        assert!(
+            results.iter().all(|r| r.title == "bing single"),
+            "explicit engine must bypass smart aggregation, got: {:?}",
+            results.iter().map(|r| r.title.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    /// 未知引擎名必须显性报错——修复前会静默替换为默认 bing
+    #[tokio::test]
+    async fn test_unknown_engine_name_returns_validation_error() {
+        let service = make_service_with_smart(
+            MockSearchClient::new(),
+            Arc::new(MockSearchEngine::success_with_items(
+                SearchEngineType::Smart,
+                vec![],
+            )),
+        );
+        let result = service
+            .perform_search("rust async", 10, None, None, Some("google"))
+            .await;
+        match result {
+            Err(SearchServiceError::ValidationError(msg)) => {
+                assert!(
+                    msg.contains("google"),
+                    "error should name the engine: {msg}"
+                );
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
+    }
+
     // ========== Helpers ==========
 
     fn make_service(credits: Arc<dyn CreditsRepository>) -> SearchService {
@@ -785,6 +937,7 @@ mod tests {
             task_repo: Arc::new(MockTaskRepo::new()),
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::new()),
+            smart_engine: None,
             max_results: 50,
             reranker: Arc::new(SearchReranker::new(None, 25)),
         }
@@ -816,6 +969,7 @@ mod tests {
             task_repo: task_repo.clone(),
             credits_repo: credits,
             search_client,
+            smart_engine: None,
             max_results: 50,
             reranker: Arc::new(SearchReranker::new(None, 25)),
         };
@@ -829,6 +983,7 @@ mod tests {
             task_repo: Arc::new(MockTaskRepo::new()),
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::failing()),
+            smart_engine: None,
             max_results: 50,
             reranker: Arc::new(SearchReranker::new(None, 25)),
         }
@@ -881,6 +1036,7 @@ mod tests {
             task_repo: Arc::new(MockTaskRepo::new()),
             credits_repo: Arc::new(MockCreditsRepo::with_balance(100)),
             search_client: Arc::new(MockSearchClient::new_with_items(items)),
+            smart_engine: None,
             max_results: 50,
             reranker: Arc::new(SearchReranker::new(
                 Some(Arc::new(PrefixScoreReranker { fail: false })),
@@ -911,6 +1067,7 @@ mod tests {
             task_repo: Arc::new(MockTaskRepo::new()),
             credits_repo: Arc::new(MockCreditsRepo::with_balance(100)),
             search_client: Arc::new(MockSearchClient::new_with_items(items)),
+            smart_engine: None,
             max_results: 50,
             reranker: Arc::new(SearchReranker::new(
                 Some(Arc::new(PrefixScoreReranker { fail: true })),
@@ -1486,6 +1643,7 @@ mod tests {
             task_repo: Arc::new(MockTaskRepo::new()),
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::new()),
+            smart_engine: None,
             max_results: 50,
             reranker: Arc::new(SearchReranker::new(None, 25)),
         };
@@ -1509,6 +1667,7 @@ mod tests {
             task_repo: Arc::new(MockTaskRepo::failing()),
             credits_repo: credits,
             search_client: Arc::new(MockSearchClient::new()),
+            smart_engine: None,
             max_results: 50,
             reranker: Arc::new(SearchReranker::new(None, 25)),
         };

@@ -155,8 +155,36 @@ impl BingSearchEngine {
             ));
         }
 
+        // P14：与 baidu(wappass)/sogou(antispider) 同款语义——解析前检测
+        // 挑战/验证码页。此前 Bing 返回挑战页会被解析成"0 结果成功"，
+        // smart 层的部分失败容忍完全感知不到引擎实际被封。
+        // 挑战页极小：只扫前 32KB（按字符边界截断），避免整页 to_lowercase 分配。
+        let probe_end = html
+            .char_indices()
+            .nth(32 * 1024)
+            .map(|(i, _)| i)
+            .unwrap_or(html.len());
+        let lower = html[..probe_end].to_lowercase();
+        const CHALLENGE_MARKERS: &[&str] = &[
+            "bnp.bing.com",         // Bing 人机验证挑战端点
+            "verify you are human", // 常见挑战文案
+        ];
+        for marker in CHALLENGE_MARKERS {
+            if lower.contains(marker) {
+                return Err(SearchError::Captcha("Bing".to_string()));
+            }
+        }
+
         // 性能 PERF-05：使用全局 Lazy 单例，避免每次 new 都重复解析选择器
-        Ok(HtmlParser::bing().parse(html, SearchEngineType::Bing))
+        let mut items = HtmlParser::bing().parse(html, SearchEngineType::Bing);
+
+        // P15：出口统一解包 bing.com/ck/a 跟踪重定向——真实 URL 才能参与
+        // 跨引擎去重与 RRF 聚合（decode 对非 ck/a URL 原样返回）
+        for item in &mut items {
+            item.url = self.decode_bing_url(&item.url);
+        }
+
+        Ok(items)
     }
 }
 
@@ -527,6 +555,55 @@ mod tests {
         let html = r#"<html><body><div>no bing results here</div></body></html>"#;
         let results = engine.parse_search_results(html).unwrap();
         assert!(results.is_empty());
+    }
+
+    /// P14 回归钉：Bing 挑战页必须显性返回 Captcha 错误，
+    /// 不得被解析成"0 结果成功"
+    #[test]
+    fn test_parse_search_results_captcha_page_returns_captcha_error() {
+        let engine = create_engine();
+        let html = r#"
+        <html><head><title>Verify to continue</title></head>
+        <body><div>Please verify you are human to continue browsing.
+        Challenge endpoint: https://bnp.bing.com/challenge</div></body></html>
+        "#;
+        match engine.parse_search_results(html) {
+            Err(SearchError::Captcha(engine_name)) => {
+                assert_eq!(engine_name, "Bing");
+            }
+            other => panic!(
+                "expected SearchError::Captcha, got {:?}",
+                other.map(|r| r.len())
+            ),
+        }
+    }
+
+    /// P15 回归钉：bing.com/ck/a 跟踪重定向链接必须在解析出口解包为
+    /// 真实 URL——否则跨引擎 URL 去重与 RRF 聚合对 Bing 结果完全失效
+    #[test]
+    fn test_parse_search_results_decodes_bing_redirect_urls() {
+        let engine = create_engine();
+        // 真实 ck/a 结构：u 参数为 base64（'a' 前缀 + base64 of target URL）
+        let redirect =
+            "https://www.bing.com/ck/a?!&&p=abc123&u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS9wYWdlMQ&ntb=1";
+        let html = format!(
+            r#"
+        <html><body>
+            <li class="b_algo">
+                <h2><a href="{redirect}">Encoded Result</a></h2>
+                <p>Description with direct link <a href="https://example.com/direct">direct</a></p>
+            </li>
+        </body></html>
+        "#
+        );
+
+        let results = engine.parse_search_results(&html).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].url, "https://example.com/page1",
+            "ck/a redirect must be unwrapped to the real target URL, got: {}",
+            results[0].url
+        );
     }
 
     // ========== SearchEngine trait 方法测试 ==========

@@ -363,9 +363,10 @@ pub fn init_search_service(
     settings: &Settings,
     search_client: Arc<dyn SearchClientTrait>,
     reranker: Arc<SearchReranker>,
+    smart_engine: Option<Arc<dyn SearchEngine>>,
 ) -> Arc<dyn SearchServiceTrait> {
     // Create SearchService with concrete repository types
-    let service = SearchService::new(
+    let mut service = SearchService::new(
         repositories.crawl_repo.clone(),
         repositories.task_repo.clone(),
         repositories.credits_repo.clone(),
@@ -373,6 +374,11 @@ pub fn init_search_service(
         search_client,
         reranker,
     );
+    // P12：注入 SmartSearchEngine——engine=None / "smart" 的 /search 请求
+    // 走多引擎 fan-out + RRF 聚合，显式引擎名走单引擎路径
+    if let Some(smart) = smart_engine {
+        service = service.with_smart_engine(smart);
+    }
     Arc::new(service)
 }
 
@@ -889,6 +895,7 @@ pub async fn init_services(
         settings,
         search_client.clone(),
         search_reranker,
+        Some(search_engine_service.clone()),
     );
 
     // 初始化 garrison 认证鉴权（auth-on 时 fail-fast）
@@ -1381,6 +1388,7 @@ mod tests {
             &settings,
             search_client,
             Arc::new(SearchReranker::new(None, 25)),
+            None,
         );
         assert!(Arc::strong_count(&service) >= 1);
     }

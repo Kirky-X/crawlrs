@@ -72,10 +72,18 @@ impl SmartSearchEngine {
     }
 
     /// 在 RRF 分数基础上叠加 RelevanceScorer 相关度 + 新鲜度评分
+    ///
+    /// P13：RRF 原始分数量级仅 ~0.016-0.05（k=60），而 relevance 无上界
+    /// （多词命中可达 10+），直接加权时 0.4 权重的 RRF 贡献 ≤0.02、会被
+    /// 0.42 权重的 relevance 完全淹没——多引擎共识信号名存实亡。
+    /// 修正：RRF 与 relevance 分别按集合内 min-max 归一化到 [0,1]
+    /// （freshness 本身有界），分量间量纲可比后再按现权重加权。
     fn apply_relevance_scoring(results: &mut [SearchResult], query: &str) {
         let scorer = RelevanceScorer::for_query(query);
         let date_parser = DateParserComponent::with_defaults();
 
+        // 第一遍：收集各分量原始值（relevance, freshness）
+        let mut components: Vec<(f64, f64)> = Vec::with_capacity(results.len());
         for result in results.iter_mut() {
             let relevance_score =
                 scorer.calculate_score(&result.title, result.description.as_deref(), &result.url);
@@ -94,9 +102,32 @@ impl SmartSearchEngine {
             } else {
                 0.5
             };
+            components.push((relevance_score, freshness_score));
+        }
 
-            // RRF 分数权重 40%，相关性 42%，新鲜度 18%
-            result.score = result.score * 0.4 + relevance_score * 0.42 + freshness_score * 0.18;
+        let max_rrf = results.iter().map(|r| r.score).fold(0.0_f64, f64::max);
+        let min_rrf = results
+            .iter()
+            .map(|r| r.score)
+            .fold(f64::INFINITY, f64::min);
+        let max_rel = components.iter().map(|c| c.0).fold(0.0_f64, f64::max);
+        let min_rel = components.iter().map(|c| c.0).fold(f64::INFINITY, f64::min);
+
+        // min-max 归一化：max==min（空集/单条/全同分）时分量取 0，
+        // 对排序无影响且避免除零
+        let normalize = |v: f64, min: f64, max: f64| {
+            if max > min {
+                (v - min) / (max - min)
+            } else {
+                0.0
+            }
+        };
+
+        // 第二遍：归一化后加权——RRF 40%，相关性 42%，新鲜度 18%
+        for (result, (relevance_score, freshness_score)) in results.iter_mut().zip(&components) {
+            let rrf_norm = normalize(result.score, min_rrf, max_rrf);
+            let rel_norm = normalize(*relevance_score, min_rel, max_rel);
+            result.score = rrf_norm * 0.4 + rel_norm * 0.42 + freshness_score * 0.18;
         }
 
         results.sort_by(|a, b| {
@@ -315,6 +346,70 @@ mod tests {
         );
         // Scores should be non-zero after relevance scoring
         assert!(results[0].score > 0.0);
+    }
+
+    /// P13 回归钉：双引擎共识结果（RRF 最高、relevance 约为满分一半）
+    /// 总分必须超过单引擎满分 relevance 结果。
+    ///
+    /// 修复前：RRF 原始量级 ~0.016-0.05 经 0.4 权重后 ≤0.02，被 0.42 权重的
+    /// relevance 完全淹没；修复后双分量 min-max 归一化，量纲可比。
+    #[test]
+    fn test_apply_relevance_scoring_consensus_beats_single_engine_relevance() {
+        let mut results = vec![
+            // A：单引擎、relevance 满分（title 命中全部查询词）
+            SearchResult {
+                title: "Rust Programming".to_string(),
+                url: "https://example.com/rust".to_string(),
+                description: None,
+                engine: "bing".to_string(),
+                score: 1.0 / 61.0, // 单引擎 rank1 的 RRF ≈ 0.0164
+                published_time: None,
+            },
+            // B：双引擎共识（两引擎都返回，RRF 更高）、relevance 居中
+            // （命中 "Programming"，未命中 "Rust"）
+            SearchResult {
+                title: "Guide to Programming".to_string(),
+                url: "https://example.com/guide".to_string(),
+                description: None,
+                engine: "baidu".to_string(),
+                score: 1.0 / 61.0 + 1.0 / 62.0, // 双引擎共识 RRF ≈ 0.0325
+                published_time: None,
+            },
+            // C：完全不相关（relevance 集合内最低，做归一化下界）
+            SearchResult {
+                title: "Unrelated Cooking Tips".to_string(),
+                url: "https://example.com/cooking".to_string(),
+                description: None,
+                engine: "sogou".to_string(),
+                score: 1.0 / 65.0, // 单引擎低排名
+                published_time: None,
+            },
+        ];
+
+        SmartSearchEngine::apply_relevance_scoring(&mut results, "Rust Programming");
+
+        let top = &results[0];
+        assert!(
+            top.url == "https://example.com/guide",
+            "multi-engine consensus result must outrank single-engine max-relevance result, got order: {:?}",
+            results.iter().map(|r| (&r.url, r.score)).collect::<Vec<_>>()
+        );
+    }
+
+    /// P13 除零保护：单条结果（max==min）时归一化分量取 0，不 panic
+    #[test]
+    fn test_apply_relevance_scoring_single_result_no_panic() {
+        let mut results = vec![SearchResult {
+            title: "Only Result".to_string(),
+            url: "https://example.com/only".to_string(),
+            description: None,
+            engine: "bing".to_string(),
+            score: 0.016,
+            published_time: None,
+        }];
+        SmartSearchEngine::apply_relevance_scoring(&mut results, "Only Result");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].score.is_finite());
     }
 
     #[test]
