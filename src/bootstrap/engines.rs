@@ -173,7 +173,9 @@ pub fn init_engines(
                 proxy_strategy,
                 tls_mrt,
                 wreq_timeout,
-            ) {
+            )
+            .map(|e| e.with_max_response_body_bytes(max_response_body_bytes))
+            {
                 Ok(engine) => engines.push(Arc::new(engine)),
                 Err(e) => log::error!("WreqEngine init failed, skipping: {e}"),
             },
@@ -181,7 +183,9 @@ pub fn init_engines(
                 Arc::new(crate::utils::ua_pool::UaPool::new()),
                 tls_mrt,
                 wreq_timeout,
-            ) {
+            )
+            .map(|e| e.with_max_response_body_bytes(max_response_body_bytes))
+            {
                 Ok(engine) => engines.push(Arc::new(engine)),
                 Err(e) => log::error!("WreqEngine init failed, skipping: {e}"),
             },

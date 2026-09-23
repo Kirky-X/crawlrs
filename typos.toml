@@ -15,3 +15,6 @@ extend-exclude = [".secrets.baseline"]
 #   assert_eq!(safe_prefix("hello", 3), "hel");
 # "hel" 是 "hello" 的前 3 个字符，属测试数据而非拼写错误。
 hel = "hel"
+# Akamai Bot Manager 会话 cookie 的真实名称（src/engines/antibot/patterns.rs、
+# CHANGELOG 修复记录），typos 会误判为 "_back" 的拼写错误。
+abck = "abck"

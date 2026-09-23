@@ -387,7 +387,7 @@ Scrape a single web page.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `headers` | object | empty | Custom HTTP headers (e.g. `User-Agent`) |
-| `wait_for` | integer | — | **0.2.0 reserved field** (ignored by handler). Playwright engine internally uses conditional wait strategy (`WaitFor::NetworkIdle` by default); see [ARCHITECTURE.md → WaitFor](ARCHITECTURE.md#waitfor-策略) for the internal enum and planned API surface. |
+| `wait_for` | integer | — | Wait hint in milliseconds (max 60000). Mapped to the `DomStable` wait strategy (DOM unchanged for this duration ⇒ ready); `None` uses the engine default (`WaitFor::NetworkIdle`, CDP network-event based). See [ARCHITECTURE.md → WaitFor](ARCHITECTURE.md#waitfor-策略). |
 | `timeout` | integer | 30 | Request timeout in seconds |
 | `js_rendering` | boolean | false | Enable JavaScript rendering |
 | `screenshot` | boolean | false | Capture screenshot |
@@ -635,7 +635,7 @@ Search using various search engines.
 
 | Parameter | Type | Required | Description |
 |-----------|-------|----------|-------------|
-| `engine` | string | Yes | Search engine: `google`, `bing`, `baidu`, `sogou` |
+| `engine` | string | No | Search engine: `smart`（默认，多引擎 fan-out + RRF 聚合）、`bing`、`baidu`、`sogou`。未提供或 `smart` 时并发查询多个引擎并做融合排序与去重；显式引擎名走单引擎路径；未知引擎名返回 400 参数错误（不会静默替换）。`exa`/`tavily` 保留枚举值，需对应引擎注册才可用，未注册时返回 `NoEngineAvailable` |
 | `query` | string | Yes | Search query |
 | `limit` | integer | No | Number of results (default: 10, max: 100) |
 | `lang` | string | No | Search language (default: `en`) |
@@ -643,6 +643,9 @@ Search using various search engines.
 | `safe_search` | boolean | No | Enable safe search (default: false) |
 | `webhook` | string | No | Webhook URL for notifications |
 | `sync_wait_ms` | integer | No | Wait time for synchronous response |
+
+> **0.2.0 行为变更**：`engine` 省略时从"单引擎 bing"改为 smart 聚合（fan-out + RRF + 跨来源去重）；
+> 显式指定 `engine: "bing"` 等仍为单引擎路径。
 
 **Response (Success):**
 ```json
