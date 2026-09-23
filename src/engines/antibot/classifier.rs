@@ -355,6 +355,30 @@ mod tests {
     }
 
     #[test]
+    fn classify_normal_back_wording_not_akamai() {
+        // P05 回归钉：go_back()/btn_back 等正常 JS/CSS 命名曾被 `_back\b` 宽泛
+        // 规则误判为 Akamai，导致正常 200 页被无谓升级到浏览器引擎
+        let body = "<html><body><button onclick=\"goBack()\" class=\"btn_back\">返回</button>\
+                    <p>This is a normal product page with plenty of visible text so the \
+                    near-empty structural detector will never fire on it.</p></body></html>";
+        assert!(
+            classify(200, body, &html_headers(), "https://example.com").is_none(),
+            "normal page containing go_back/btn_back must not be flagged as anti-bot"
+        );
+    }
+
+    #[test]
+    fn classify_akamai_bot_manager_cookie_markers() {
+        // Akamai Bot Manager 真实 cookie 标志：_back / ak_bmsc / bm_sv
+        let body = "<html><body><script>document.cookie=\"_back=8AC40FDA...~-1~\";</script>\
+                    <p>content filler for length</p></body></html>";
+        let det = classify(200, body, &html_headers(), "https://example.com")
+            .expect("_back marker should detect on 200");
+        assert_eq!(det.tech, AntiBotTech::Akamai);
+        assert!(det.needs_browser);
+    }
+
+    #[test]
     fn classify_datadome_tier1_match_overrides_status() {
         // 即使 200 + DataDome 标记也要命中
         let body = "<html><body><script src=\"https://ct.captcha-delivery.com/c.js\"></script></body></html>";

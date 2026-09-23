@@ -5,6 +5,8 @@
 //!
 //! 同时发起多个引擎请求，返回最快成功的结果。
 
+#[cfg(feature = "content")]
+use super::check_antibot_response;
 use super::EngineRouter;
 use crate::common::metrics_shim::{counter, histogram};
 use crate::engines::engine_client::{
@@ -122,6 +124,37 @@ impl EngineRouter {
                     pending = others;
                     match result {
                         Ok((engine_name, response, response_time)) => {
+                            // 胜出响应先过反爬分类：最快的引擎若返回的是挑战页
+                            // （200 + Just a moment 等），作废该结果并继续竞速剩余候选，
+                            // 与顺序模式的防护语义对齐。检查必须在成功统计之前。
+                            #[cfg(feature = "content")]
+                            {
+                                if let Some(detection) =
+                                    check_antibot_response(&response, &request.url)
+                                {
+                                    if detection.needs_browser {
+                                        // 口径与顺序模式一致：挑战页丢弃只记
+                                        // engine_stats/engine_failure，不计全局
+                                        // total/failed 计数（挑战是站点行为非引擎故障）
+                                        self.update_engine_stats(
+                                            &engine_name,
+                                            false,
+                                            response_time,
+                                        );
+                                        self.metrics
+                                            .record_engine_failure(&engine_name, &detection.reason);
+                                        warn!(
+                                            "Race mode: {} returned anti-bot challenge ({:?}): {}, \
+                                             discarding and racing remaining candidates",
+                                            engine_name, detection.tech, detection.reason
+                                        );
+                                        last_error =
+                                            Some(EngineError::AntiBotDetected(detection.reason));
+                                        continue;
+                                    }
+                                }
+                            }
+
                             self.update_engine_stats(&engine_name, true, response_time);
                             self.circuit_breaker.record_success(&engine_name);
                             self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);

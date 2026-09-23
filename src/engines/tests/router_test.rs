@@ -1014,9 +1014,16 @@ async fn test_route_race_mode_success() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+            // race 胜出响应会过 antibot 分类，夹具内容须像真实渲染页
+            // （过短会命中 Tier3 近空页 StructuralBlock 被作废）
             Ok(InternalScrapeResponse {
                 status_code: 200,
-                content: format!("from-{}", self.name),
+                content: format!(
+                    "<html><body><p>from-{} with plenty of realistic rendered \
+                     content to pass the structural checks of the antibot \
+                     classifier in race mode.</p></body></html>",
+                    self.name
+                ),
                 screenshot: None,
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),
@@ -1045,7 +1052,11 @@ async fn test_route_race_mode_success() {
     let result = router.route(&request).await;
     assert!(result.is_ok());
     let response = result.unwrap();
-    assert!(response.content.starts_with("from-"));
+    assert!(
+        response.content.contains("from-"),
+        "fastest clean engine must win the race, got: {}",
+        response.content
+    );
 }
 
 /// §17：验证 race 胜出后延迟被记录到 hedge_controller
@@ -1062,9 +1073,16 @@ async fn test_route_race_mode_records_hedge_latency() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+            // race 胜出响应会过 antibot 分类，夹具内容须像真实渲染页
+            // （过短会命中 Tier3 近空页 StructuralBlock 被作废）
             Ok(InternalScrapeResponse {
                 status_code: 200,
-                content: format!("from-{}", self.name),
+                content: format!(
+                    "<html><body><p>from-{} with plenty of realistic rendered \
+                     content to pass the structural checks of the antibot \
+                     classifier in race mode.</p></body></html>",
+                    self.name
+                ),
                 screenshot: None,
                 content_type: "text/html".to_string(),
                 headers: HashMap::new(),

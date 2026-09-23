@@ -69,7 +69,12 @@ pub static TIER1_PATTERNS: &[(&str, AntiBotTech)] = &[
     // --- Akamai ---
     (r"(?i)reference\s*#(\d+)", AntiBotTech::Akamai),
     (r"(?i)akamai_bmbl", AntiBotTech::Akamai),
-    (r"(?i)_back\b", AntiBotTech::Akamai),
+    // Bot Manager cookie 标志：_back（传感器）、ak_bmsc（遥测）、bm_sv（会话）。
+    // 注意不能用 `_back\b` 之类宽泛词——go_back()/btn_back 等正常 JS/CSS
+    // 命名会造成大面积误报，把正常 200 页升级到浏览器引擎。
+    (r"(?i)\b_abck\b", AntiBotTech::Akamai),
+    (r"(?i)\bak_bmsc\b", AntiBotTech::Akamai),
+    (r"(?i)\bbm_sv\b", AntiBotTech::Akamai),
     (r"(?i)pardon our interruption", AntiBotTech::Akamai),
     // --- PerimeterX ---
     (r"(?i)px-captcha", AntiBotTech::PerimeterX),

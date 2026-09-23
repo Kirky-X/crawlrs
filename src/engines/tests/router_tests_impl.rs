@@ -1233,3 +1233,170 @@ async fn test_t028_retry_tracker_caps_feature_toggle() {
         );
     }
 }
+
+/// race 模式：胜出引擎返回挑战页时必须作废并继续竞速剩余候选（P04 回归钉）。
+///
+/// 修复前：race 路径不做 antibot 分类，最快引擎返回的 Cloudflare 挑战页
+/// 会被直接当成功返回。修复后：胜出响应过 check_antibot_response，
+/// 检出反爬按失败处理，最终只可能返回正常页。
+#[cfg(feature = "content")]
+#[tokio::test]
+async fn test_race_mode_discards_antibot_challenge_winner() {
+    // Cloudflare 挑战页：命中 Tier1 /cdn-cgi/challenge-platform/ 标记
+    let cloudflare_body = concat!(
+        "<html><head><title>Just a moment...</title></head>",
+        "<body>",
+        "<script src=\"/cdn-cgi/challenge-platform/h/g/orchestrate/jsch/v1\"></script>",
+        "</body></html>"
+    );
+
+    let challenge_engine: Arc<dyn ScraperEngine> = Arc::new(TestScraperEngineImpl::new(
+        "challenge-fast",
+        vec!["example.com".to_string()],
+        100,
+        Ok(InternalScrapeResponse {
+            status_code: 200,
+            content: cloudflare_body.to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 10,
+            final_url: None,
+        }),
+        10,
+    ));
+
+    // 正常页 body 需足够长，避免被 Tier3 近空页检测误判
+    let clean_engine: Arc<dyn ScraperEngine> = Arc::new(TestScraperEngineImpl::new(
+        "clean-slow",
+        vec!["example.com".to_string()],
+        100,
+        Ok(InternalScrapeResponse {
+            status_code: 200,
+            content: "<html><body>This is the clean rendered content that must survive \
+                      the race even when the challenge engine finishes first.</body></html>"
+                .to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 20,
+            final_url: None,
+        }),
+        10,
+    ));
+
+    let mut router = EngineRouter::new(vec![challenge_engine, clean_engine]);
+    router.set_feature_filter_enabled(false);
+    router.set_race_mode_enabled(true);
+
+    let request = InternalScrapeRequest {
+        url: "https://example.com/protected".to_string(),
+        method: crate::engines::engine_client::HttpMethod::Get,
+        headers: HashMap::new(),
+        timeout: Duration::from_secs(30),
+        needs_js: false,
+        needs_screenshot: false,
+        screenshot_config: None,
+        mobile: false,
+        proxy: None,
+        skip_tls_verification: false,
+        needs_tls_fingerprint: false,
+        use_fire_engine: false,
+        actions: Vec::new(),
+        body: None,
+        sync_wait_ms: 0,
+        block_ads: false,
+        block_media: false,
+        session_id: None,
+        wait_for: None,
+        needs_mllm: false,
+    };
+
+    let result = router.route(&request).await;
+    let resp = result.expect("clean engine result must win after challenge is discarded");
+    assert!(
+        !resp.content.contains("Just a moment"),
+        "challenge page must never be returned in race mode"
+    );
+    assert!(
+        resp.content.contains("clean rendered content"),
+        "expected clean engine content, got: {}",
+        resp.content
+    );
+}
+
+/// race 模式：全部候选都返回挑战页时不返回任何挑战页内容（P04）。
+#[cfg(feature = "content")]
+#[tokio::test]
+async fn test_race_mode_all_challenge_candidates_returns_error() {
+    let cloudflare_body = concat!(
+        "<html><head><title>Just a moment...</title></head>",
+        "<body>",
+        "<script src=\"/cdn-cgi/challenge-platform/h/g/orchestrate/jsch/v1\"></script>",
+        "</body></html>"
+    );
+
+    let engine_a: Arc<dyn ScraperEngine> = Arc::new(TestScraperEngineImpl::new(
+        "challenge-a",
+        vec!["example.com".to_string()],
+        100,
+        Ok(InternalScrapeResponse {
+            status_code: 200,
+            content: cloudflare_body.to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 10,
+            final_url: None,
+        }),
+        10,
+    ));
+    let engine_b: Arc<dyn ScraperEngine> = Arc::new(TestScraperEngineImpl::new(
+        "challenge-b",
+        vec!["example.com".to_string()],
+        100,
+        Ok(InternalScrapeResponse {
+            status_code: 200,
+            content: cloudflare_body.to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 20,
+            final_url: None,
+        }),
+        10,
+    ));
+
+    let mut router = EngineRouter::new(vec![engine_a, engine_b]);
+    router.set_feature_filter_enabled(false);
+    router.set_race_mode_enabled(true);
+
+    let request = InternalScrapeRequest {
+        url: "https://example.com/protected".to_string(),
+        method: crate::engines::engine_client::HttpMethod::Get,
+        headers: HashMap::new(),
+        timeout: Duration::from_secs(30),
+        needs_js: false,
+        needs_screenshot: false,
+        screenshot_config: None,
+        mobile: false,
+        proxy: None,
+        skip_tls_verification: false,
+        needs_tls_fingerprint: false,
+        use_fire_engine: false,
+        actions: Vec::new(),
+        body: None,
+        sync_wait_ms: 0,
+        block_ads: false,
+        block_media: false,
+        session_id: None,
+        wait_for: None,
+        needs_mllm: false,
+    };
+
+    let result = router.route(&request).await;
+    assert!(
+        result.is_err(),
+        "all-challenge race must fail, not return a challenge page"
+    );
+}
