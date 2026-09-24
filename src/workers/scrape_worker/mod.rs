@@ -1375,7 +1375,10 @@ impl ScrapeWorker {
 /// 与 create_scrape use-case 层保持一致：毫秒数映射为 `DomStable`（DOM
 /// 连续该时长无变化视为就绪）。`None` → `None`（引擎回落 NetworkIdle 默认）。
 fn map_wait_for(ms: Option<u64>) -> Option<WaitFor> {
-    ms.map(|ms| WaitFor::DomStable(std::time::Duration::from_millis(ms)))
+    // 复查 H3：钳制到 10s（引擎侧 WAIT_TIMEOUT_CAP）——DTO 允许 ≤60000ms，
+    // 但 stable_duration 超过等待预算时 DomStable 数学上不可能满足，
+    // 会把 API 合法输入变成确定性失败。超预算部分属"尽力等待"语义。
+    ms.map(|ms| WaitFor::DomStable(std::time::Duration::from_millis(ms.min(10_000))))
 }
 
 // ===== Test-only wrappers for extracted free functions =====

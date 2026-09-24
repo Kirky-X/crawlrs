@@ -115,7 +115,9 @@ impl CreateScrapeUseCase {
             cache_mode,
             wait_for: options
                 .wait_for
-                .map(|ms| WaitFor::DomStable(Duration::from_millis(ms))),
+                // 复查 H3：钳制到 10s（引擎侧 WAIT_TIMEOUT_CAP），防合法输入
+                // 触发 DomStable 超预算确定性失败
+                .map(|ms| WaitFor::DomStable(Duration::from_millis(ms.min(10_000)))),
             needs_mllm: false,
         };
 

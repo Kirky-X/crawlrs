@@ -22,7 +22,7 @@ use regex::Regex;
 pub enum AntiBotTech {
     /// Cloudflare：CF Ray / Challenge Platform / Just a moment 等
     Cloudflare,
-    /// Akamai：BM BL / Reference # / _back cookie 等
+    /// Akamai：BM BL / Reference # / _abck cookie 等
     Akamai,
     /// PerimeterX（HUMAN）：px-captcha / _pxhd cookie 等
     PerimeterX,
@@ -50,7 +50,7 @@ pub enum AntiBotTech {
 
 /// Tier1 单条模式：`(正则模式, 命中后归属的反爬技术)`
 ///
-/// 高置信度结构标记，例如 `/cdn-cgi/challenge-platform/`、`_back` cookie、
+/// 高置信度结构标记，例如 `/cdn-cgi/challenge-platform/`、`_abck` cookie、
 /// `Reference #18` Akamai 错误页等。命中任一即可直接判定。
 ///
 /// 注：少量模式含 backreference（如 `Reference\s*#(\d+)`），故整体走 regex 而非 AC。
@@ -69,7 +69,7 @@ pub static TIER1_PATTERNS: &[(&str, AntiBotTech)] = &[
     // --- Akamai ---
     (r"(?i)reference\s*#(\d+)", AntiBotTech::Akamai),
     (r"(?i)akamai_bmbl", AntiBotTech::Akamai),
-    // Bot Manager cookie 标志：_back（传感器）、ak_bmsc（遥测）、bm_sv（会话）。
+    // Bot Manager cookie 标志：_abck（传感器）、ak_bmsc（遥测）、bm_sv（会话）。
     // 注意不能用 `_back\b` 之类宽泛词——go_back()/btn_back 等正常 JS/CSS
     // 命名会造成大面积误报，把正常 200 页升级到浏览器引擎。
     (r"(?i)\b_abck\b", AntiBotTech::Akamai),

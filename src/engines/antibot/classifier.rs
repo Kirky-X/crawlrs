@@ -369,11 +369,11 @@ mod tests {
 
     #[test]
     fn classify_akamai_bot_manager_cookie_markers() {
-        // Akamai Bot Manager 真实 cookie 标志：_back / ak_bmsc / bm_sv
-        let body = "<html><body><script>document.cookie=\"_back=8AC40FDA...~-1~\";</script>\
+        // Akamai Bot Manager 真实 cookie 标志：_abck / ak_bmsc / bm_sv
+        let body = "<html><body><script>document.cookie=\"_abck=8AC40FDA...~-1~\";</script>\
                     <p>content filler for length</p></body></html>";
         let det = classify(200, body, &html_headers(), "https://example.com")
-            .expect("_back marker should detect on 200");
+            .expect("_abck marker should detect on 200");
         assert_eq!(det.tech, AntiBotTech::Akamai);
         assert!(det.needs_browser);
     }

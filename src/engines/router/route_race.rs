@@ -106,6 +106,19 @@ impl EngineRouter {
                     "Race mode: all {} candidates failed for {}",
                     total_candidates, request.url
                 );
+                // 复查 M2：全候选被挑战页作废且请求未要求 JS 时，按顺序模式
+                // 语义以 needs_js=true 重派一轮浏览器引擎（升级链对齐）
+                let antibot_detected = matches!(last_error, Some(EngineError::AntiBotDetected(_)));
+                if antibot_detected && !request.needs_js {
+                    let mut js_request = request.clone();
+                    js_request.needs_js = true;
+                    info!(
+                        "Race mode: all candidates hit anti-bot, retrying once with needs_js=true"
+                    );
+                    // Box::pin 打断 route_internal→race→route_internal 的
+                    // async 递归环
+                    return Box::pin(self.route_internal(&js_request)).await;
+                }
                 return Err(last_error.unwrap_or(EngineError::AllEnginesFailed(
                     "race mode: all engines failed".to_string(),
                 )));
@@ -116,6 +129,10 @@ impl EngineRouter {
                     "Race mode timed out after {:?} for request to {}",
                     timeout_duration, request.url
                 );
+                // 复查 L1：已有 AntiBotDetected 诊断时优先返回真实原因
+                if let Some(e) = last_error {
+                    return Err(e);
+                }
                 return Err(EngineError::Timeout(timeout_duration));
             }
 

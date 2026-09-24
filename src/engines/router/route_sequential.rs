@@ -24,8 +24,29 @@ impl EngineRouter {
     ) -> Result<InternalScrapeResponse, EngineError> {
         let start_time = Instant::now();
 
+        // F7：host 反爬记忆——TTL 内检出过挑战页的 host 直接按 needs_js
+        // 路由（HTTP 引擎不再每次撞墙），过期后恢复候选重探
+        let request = if let Some(host) = url::Url::parse(&request.url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+        {
+            if self.host_needs_browser(&host) {
+                debug!(
+                    "host {} has anti-bot hint, routing with needs_js=true",
+                    host
+                );
+                let mut hinted = request.clone();
+                hinted.needs_js = true;
+                hinted
+            } else {
+                request.clone()
+            }
+        } else {
+            request.clone()
+        };
+
         // 选择最优引擎
-        let mut candidates = self.select_optimal_engines(request);
+        let mut candidates = self.select_optimal_engines(&request);
 
         // 记录候选引擎数量
         self.metrics.record_candidates(candidates.len());
@@ -52,7 +73,7 @@ impl EngineRouter {
 
         // 并发竞速模式
         if self.race_mode_enabled && candidates.len() > 1 {
-            return self.route_race_mode(request, candidates, start_time).await;
+            return self.route_race_mode(&request, candidates, start_time).await;
         }
 
         // 传统顺序模式 (带 max_retries 限制)
@@ -200,6 +221,13 @@ impl EngineRouter {
                     {
                         if let Some(detection) = check_antibot_response(&response, &request.url) {
                             if detection.needs_browser {
+                                // F7：记录 host 反爬记忆，TTL 内后续同 host
+                                // 请求直接按 needs_js 路由
+                                if let Ok(u) = url::Url::parse(&request.url) {
+                                    if let Some(host) = u.host_str() {
+                                        self.record_host_browser_hint(host);
+                                    }
+                                }
                                 self.update_engine_stats(engine_name, false, response_time);
                                 self.metrics
                                     .record_engine_failure(engine_name, &detection.reason);

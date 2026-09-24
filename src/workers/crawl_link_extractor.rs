@@ -319,13 +319,16 @@ pub async fn extract_and_queue_links(
         );
 
         while let Some(scored) = frontier.pop() {
+            // 出队按 priority ASC（小值先出）。
+            // DFS（栈语义）：子链接键 = 父 priority - (子深度)，i32 负空间
+            // 保证默认 priority=0 与超深链路下仍严格随深度递减（复查 M1：
+            // 此前 saturating_sub(1) 在 priority=0 或深链路塌缩回 BFS）。
+            // BFS（层序）：继承父 priority。
             let mut priority = task.priority;
             if let Some(strategy) = &config.strategy {
-                // 出队按 priority ASC（小值先出）。DFS（栈语义，深层先出）
-                // 需要比父任务更小的 priority；BFS（层序）则更大。
-                // 此前 DFS 用 saturating_add 实为 BFS 行为，策略标签与行为相反。
                 if strategy.to_lowercase() == "dfs" {
-                    priority = priority.saturating_sub(1);
+                    let depth_key = (current_depth.min(1_000_000) as i32).saturating_add(1);
+                    priority = task.priority.saturating_sub(depth_key);
                 }
             }
 

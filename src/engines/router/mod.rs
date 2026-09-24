@@ -16,6 +16,9 @@ use crate::utils::hedge::HedgeController;
 use crate::utils::retry::{RetryReason, RetryTracker};
 use crate::utils::ua_pool::UaPool;
 use dashmap::DashMap;
+
+/// host 反爬记忆 TTL：期内同 host 请求直接按 needs_js 路由
+const HOST_BROWSER_HINT_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 use log::{info, warn};
 
 use crate::i18n::tr_log_args;
@@ -79,6 +82,10 @@ pub struct EngineRouter {
     circuit_breaker: Arc<CircuitBreaker>,
     /// 引擎性能统计（DashMap 优化并发读写，避免 RwLock 借用）
     engine_stats: Arc<DashMap<String, EngineStats>>,
+    /// host 反爬记忆（F7）：host → 检出 needs_browser 的时刻。
+    /// TTL 内同 host 请求直接按 needs_js 路由，避免对已知挑战站点
+    /// 每次都从 HTTP 引擎撞墙；读取时惰性清除过期条目。
+    host_browser_hint: DashMap<String, Instant>,
     /// 当前轮询索引
     round_robin_index: Arc<parking_lot::Mutex<usize>>,
     /// 负载均衡策略
@@ -127,6 +134,7 @@ impl EngineRouter {
             engines,
             circuit_breaker: Arc::new(CircuitBreaker::new()),
             engine_stats: Arc::new(engine_stats),
+            host_browser_hint: DashMap::new(),
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy: LoadBalancingStrategy::SmartHybrid,
             metrics: Arc::new(RouterMetrics::new()),
@@ -165,6 +173,7 @@ impl EngineRouter {
             engines,
             circuit_breaker,
             engine_stats: Arc::new(engine_stats),
+            host_browser_hint: DashMap::new(),
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy,
             metrics: Arc::new(RouterMetrics::new()),
@@ -334,6 +343,26 @@ impl EngineRouter {
 
     // route_internal 已拆分到 route_sequential.rs (partial impl block)
     // route_race_mode 已拆分到 route_race.rs (partial impl block)
+
+    /// 记录 host 检出反爬挑战（F7）
+    pub(super) fn record_host_browser_hint(&self, host: &str) {
+        self.host_browser_hint
+            .insert(host.to_string(), Instant::now());
+    }
+
+    /// 查询 host 是否处于"需要浏览器"记忆期内（TTL 内有效，过期惰性清除）
+    pub(super) fn host_needs_browser(&self, host: &str) -> bool {
+        // 先 drop get 守卫再 remove——DashMap 同 shard 的 get 守卫存活期间
+        // remove 会死锁（过期清除路径必触发）
+        let fresh = match self.host_browser_hint.get(host) {
+            Some(ts) => ts.elapsed() < HOST_BROWSER_HINT_TTL,
+            None => return false,
+        };
+        if !fresh {
+            self.host_browser_hint.remove(host);
+        }
+        fresh
+    }
 
     /// 聚合多个引擎的搜索结果
     ///

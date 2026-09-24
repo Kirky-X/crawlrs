@@ -105,6 +105,13 @@ impl WaitFor {
         let (mut started, mut finished, mut failed) = match setup.await {
             Ok(streams) => streams,
             Err(e) => {
+                // 复查 L2：enable 可能已成功而 listener 订阅失败——先关闭
+                // Network domain，避免页面存活期事件常开分发
+                let _ = page
+                    .execute(
+                        chromiumoxide::cdp::browser_protocol::network::DisableParams::default(),
+                    )
+                    .await;
                 log::warn!(
                     "network idle: CDP event subscription failed ({e}); \
                      falling back to fixed sleep"
@@ -206,10 +213,14 @@ impl WaitFor {
         let mut stable_since: Option<Instant> = None;
         loop {
             if Instant::now() >= deadline {
-                return Err(EngineError::BrowserError(format!(
-                    "wait timeout: dom not stable after {}ms",
+                // 复查 H3：对齐 NetworkIdle 的尽力语义——超时降级为 Ok 而非
+                // 整个 scrape 失败（stable_duration 超过等待预算时循环数学上
+                // 不可能满足，此前会把 API 合法输入变成确定性失败）
+                log::warn!(
+                    "dom not stable after {}ms, degrading (best-effort wait)",
                     timeout.as_millis()
-                )));
+                );
+                return Ok(());
             }
             let len: i64 = page
                 .evaluate(check_expr)
