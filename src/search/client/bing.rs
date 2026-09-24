@@ -102,6 +102,11 @@ impl BingSearchEngine {
         }
     }
 
+    /// F2：offset/limit 推导 1-based 页码（limit 0 防除零取 1）
+    fn page_from_offset(offset: u32, limit: u32) -> u32 {
+        (offset / limit.max(1)) + 1
+    }
+
     pub fn build_bing_url(&self, query: &str, page: u32) -> String {
         self.build_bing_url_with_locale(query, page, None, None)
     }
@@ -155,28 +160,28 @@ impl BingSearchEngine {
             ));
         }
 
-        // P14：与 baidu(wappass)/sogou(antispider) 同款语义——解析前检测
-        // 挑战/验证码页。此前 Bing 返回挑战页会被解析成"0 结果成功"，
-        // smart 层的部分失败容忍完全感知不到引擎实际被封。
-        // 挑战页极小：只扫前 32KB（按字符边界截断），避免整页 to_lowercase 分配。
-        let probe_end = html
-            .char_indices()
-            .nth(32 * 1024)
-            .map(|(i, _)| i)
-            .unwrap_or(html.len());
-        let lower = html[..probe_end].to_lowercase();
-        const CHALLENGE_MARKERS: &[&str] = &[
-            "bnp.bing.com",         // Bing 人机验证挑战端点
-            "verify you are human", // 常见挑战文案
-        ];
-        for marker in CHALLENGE_MARKERS {
-            if lower.contains(marker) {
+        // 性能 PERF-05：使用全局 Lazy 单例，避免每次 new 都重复解析选择器
+        let mut items = HtmlParser::bing().parse(html, SearchEngineType::Bing);
+
+        // P14（复查修正）：挑战判定放在解析之后——挑战页解析必为 0 结果。
+        // 此前"解析前全文扫标记"会把正文含 "verify you are human" 的正常
+        // 结果页（搜索 CAPTCHA 类话题时的有机摘要）误判为挑战页整页丢弃。
+        if items.is_empty() {
+            // 挑战页极小：只扫前 32KB（按字符边界截断），避免整页分配
+            let probe_end = html
+                .char_indices()
+                .nth(32 * 1024)
+                .map(|(i, _)| i)
+                .unwrap_or(html.len());
+            let lower = html[..probe_end].to_lowercase();
+            const CHALLENGE_MARKERS: &[&str] = &[
+                "bnp.bing.com",         // Bing 人机验证挑战端点
+                "verify you are human", // 常见挑战文案
+            ];
+            if CHALLENGE_MARKERS.iter().any(|m| lower.contains(m)) {
                 return Err(SearchError::Captcha("Bing".to_string()));
             }
         }
-
-        // 性能 PERF-05：使用全局 Lazy 单例，避免每次 new 都重复解析选择器
-        let mut items = HtmlParser::bing().parse(html, SearchEngineType::Bing);
 
         // P15：出口统一解包 bing.com/ck/a 跟踪重定向——真实 URL 才能参与
         // 跨引擎去重与 RRF 聚合（decode 对非 ck/a URL 原样返回）
@@ -215,9 +220,11 @@ impl SearchEngine for BingSearchEngine {
             ));
         }
 
+        // F2：offset 推导翻页页码（first=offset+1 由 builder 按 page 计算）
+        let page = Self::page_from_offset(request.offset, request.limit);
         let url = self.build_bing_url_with_locale(
             &request.query,
-            1,
+            page,
             request.lang.as_deref(),
             request.country.as_deref(),
         );
@@ -546,6 +553,33 @@ mod tests {
         assert_eq!(results[0].url, "https://example.com/1");
         assert_eq!(results[0].engine, SearchEngineType::Bing);
         assert_eq!(results[1].title, "Second Result");
+    }
+
+    /// F2：offset 推导页码 → first=offset+1
+    #[test]
+    fn test_bing_offset_derives_first_param() {
+        let engine = create_engine();
+        assert_eq!(BingSearchEngine::page_from_offset(10, 10), 2);
+        assert_eq!(BingSearchEngine::page_from_offset(0, 10), 1);
+        // limit=0 防除零按 1 处理：offset/1+1
+        assert_eq!(BingSearchEngine::page_from_offset(10, 0), 11);
+
+        let page = BingSearchEngine::page_from_offset(10, 10);
+        let url = engine.build_bing_url_with_locale("rust", page, None, None);
+        assert!(
+            url.contains("first=11"),
+            "page 2 must carry first=11, got: {url}"
+        );
+    }
+
+    /// F2：lang+country 齐备时携带 mkt，缺一则不带（既有语义）
+    #[test]
+    fn test_bing_mkt_requires_lang_and_country() {
+        let engine = create_engine();
+        let both = engine.build_bing_url_with_locale("rust", 1, Some("en"), Some("US"));
+        assert!(both.contains("mkt=en-US"), "got: {both}");
+        let lang_only = engine.build_bing_url_with_locale("rust", 1, Some("en"), None);
+        assert!(!lang_only.contains("mkt="), "got: {lang_only}");
     }
 
     #[test]

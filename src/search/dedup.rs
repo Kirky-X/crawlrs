@@ -132,8 +132,12 @@ impl ResultDeduplicator {
             }
         }
 
-        // 移除查询参数
-        if self.config.ignore_query_params {
+        // 移除查询参数。
+        // 豁免：百度 /link 中转 URL 的真实 URL 编码在 query 里，剥除后所有
+        // 结果坍缩为同一 key（每查询最多存活 1 条百度结果）。保留 query 使
+        // 各中转链接互异，跨引擎同内容交给标题 SimHash 去重兜底。
+        let is_baidu_link = normalized.contains("baidu.com/link");
+        if self.config.ignore_query_params && !is_baidu_link {
             if let Some(pos) = normalized.rfind('?') {
                 normalized.truncate(pos);
             }
@@ -896,6 +900,40 @@ mod tests {
             deduplicated.len(),
             1,
             "URLs should match case-insensitively"
+        );
+    }
+
+    // ==== r2 复查 M3：baidu /link 归一化豁免 ====
+
+    /// 百度中转链接的真实 URL 编码在 query 里——剥除 query 会让全部结果
+    /// 坍缩为同一 key（每查询最多存活 1 条）。豁免后各中转链接互异，
+    /// 跨引擎同内容由标题 SimHash 兜底。
+    #[test]
+    fn test_baidu_link_urls_not_collapsed_by_query_strip() {
+        let mut d = ResultDeduplicator::with_default_config();
+        let merged = vec![
+            SearchResult {
+                title: "Result A".to_string(),
+                url: "https://www.baidu.com/link?url=aaa111".to_string(),
+                description: None,
+                engine: "baidu".to_string(),
+                score: 0.9,
+                published_time: None,
+            },
+            SearchResult {
+                title: "Result B".to_string(),
+                url: "https://www.baidu.com/link?url=bbb222".to_string(),
+                description: None,
+                engine: "baidu".to_string(),
+                score: 0.8,
+                published_time: None,
+            },
+        ];
+        let out = d.deduplicate(merged);
+        assert_eq!(
+            out.len(),
+            2,
+            "distinct baidu /link redirect URLs must not collapse into one"
         );
     }
 }

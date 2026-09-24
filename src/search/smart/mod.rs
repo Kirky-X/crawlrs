@@ -8,7 +8,8 @@
 
 use async_trait::async_trait;
 use log::{error, info, warn};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::domain::models::search_result::SearchResult;
 use crate::domain::services::relevance_scorer::{DateParserComponent, RelevanceScorer};
@@ -44,6 +45,83 @@ pub struct SmartSearchEngine {
     bing_engine: BingSearchEngine,
     sogou_engine: SogouSearchEngine,
     rrf_fuser: RRFFuser,
+    /// 单引擎 fan-out 超时（F1）：超时引擎按失败降级，不拖死整体聚合
+    engine_timeout: Duration,
+    /// 出站 per-engine 最小间隔 gate（F4）：防止把搜索引擎自己打进封禁
+    gates: [OutboundGate; 3],
+}
+
+/// 出站请求节流 gate：每引擎维护上次请求时刻，wait_turn 睡到到期。
+/// 等待在锁外进行（先算出目标时刻再释放锁），避免持锁睡眠。
+struct OutboundGate {
+    min_interval: Duration,
+    last: Mutex<Option<Instant>>,
+}
+
+impl OutboundGate {
+    fn new(min_interval: Duration) -> Self {
+        Self {
+            min_interval,
+            last: Mutex::new(None),
+        }
+    }
+
+    async fn wait_turn(&self) {
+        let target = {
+            let mut last = self.last.lock().unwrap();
+            let now = Instant::now();
+            let start = match *last {
+                Some(prev) => prev + self.min_interval,
+                None => now,
+            };
+            *last = Some(start.max(now));
+            start.max(now)
+        };
+        let wait = target.saturating_duration_since(Instant::now());
+        if wait > Duration::ZERO {
+            tokio::time::sleep(wait).await;
+        }
+    }
+}
+
+/// 单引擎 fan-out 超时默认值（秒，对齐 SearchSettings::timeout_seconds 默认）
+const DEFAULT_ENGINE_TIMEOUT_SECS: u64 = 30;
+
+/// 引擎 gate 索引（与 engines 数组顺序一致）
+const GATE_BING: usize = 0;
+const GATE_BAIDU: usize = 1;
+const GATE_SOGOU: usize = 2;
+
+/// F1：单引擎 future 超时包裹——超时按失败降级（部分结果容忍）
+async fn with_timeout<F, T>(timeout: Duration, fut: F) -> Result<T, SearchError>
+where
+    F: std::future::Future<Output = Result<T, SearchError>>,
+{
+    match tokio::time::timeout(timeout, fut).await {
+        Ok(result) => result,
+        Err(_) => {
+            warn!(
+                "engine timed out after {:?} in smart fan-out, degrading",
+                timeout
+            );
+            Err(SearchError::SmartRoutingTimeout(timeout.as_secs()))
+        }
+    }
+}
+
+/// F2：从用户请求构造引擎共享请求（query/limit + locale/offset 贯通）
+fn build_base_request(request: &SearchRequest) -> SearchRequest {
+    let mut base = SearchRequest::new(&request.query).with_limit(request.limit);
+    if request.offset > 0 {
+        base = base.with_offset(request.offset);
+    }
+    if let Some(lang) = &request.lang {
+        base = base.with_lang(lang);
+    }
+    if let Some(country) = &request.country {
+        base = base.with_country(country);
+    }
+    base
 }
 
 impl SmartSearchEngine {
@@ -56,7 +134,20 @@ impl SmartSearchEngine {
             bing_engine: BingSearchEngine::new(engine_client.clone()),
             sogou_engine: SogouSearchEngine::new(engine_client),
             rrf_fuser: RRFFuser::default(),
+            engine_timeout: Duration::from_secs(DEFAULT_ENGINE_TIMEOUT_SECS),
+            gates: [
+                OutboundGate::new(Duration::from_secs(1)), // bing
+                OutboundGate::new(Duration::from_secs(2)), // baidu
+                OutboundGate::new(Duration::from_secs(2)), // sogou
+            ],
         }
+    }
+
+    /// 注入单引擎 fan-out 超时（秒，来自 `SearchSettings.timeout_seconds`）
+    #[must_use]
+    pub fn with_engine_timeout(mut self, secs: u64) -> Self {
+        self.engine_timeout = Duration::from_secs(secs);
+        self
     }
 
     /// 将 ResponseItem 转换为 SearchResult（用于内部处理）
@@ -156,16 +247,29 @@ impl SearchEngine for SmartSearchEngine {
         let query = &request.query;
         let limit = request.limit;
 
-        info!("Smart search start: query={}, limit={}", query, limit);
+        info!(
+            "Smart search start: query={}, limit={}, lang={:?}, country={:?}, offset={}",
+            query, limit, request.lang, request.country, request.offset
+        );
 
-        // 构建共享请求（每个基础引擎使用相同 query/limit）
-        let base_request = SearchRequest::new(query).with_limit(limit);
+        // 构建共享请求（每个基础引擎使用相同 query/limit/locale/offset）。
+        // F2：lang/country/offset 端到端贯通——此前在此处被丢弃。
+        let base_request = build_base_request(request);
+
+        // F1：每个引擎 future 独立超时——超时引擎按失败降级（部分结果容忍），
+        // 消除"单引擎 hang 拖死整体聚合"（引擎路由层的瀑布重试会叠加耗时）
+        macro_rules! engine_with_timeout {
+            ($gate:expr, $fut:expr) => {{
+                self.gates[$gate].wait_turn().await;
+                with_timeout(self.engine_timeout, $fut).await
+            }};
+        }
 
         // 并发查询三个基础引擎
         let (bing_result, baidu_result, sogou_result) = tokio::join!(
-            self.bing_engine.search(&base_request),
-            self.baidu_engine.search(&base_request),
-            self.sogou_engine.search(&base_request),
+            async { engine_with_timeout!(GATE_BING, self.bing_engine.search(&base_request)) },
+            async { engine_with_timeout!(GATE_BAIDU, self.baidu_engine.search(&base_request)) },
+            async { engine_with_timeout!(GATE_SOGOU, self.sogou_engine.search(&base_request)) },
         );
 
         // 收集各引擎结果，记录来源和排名顺序
@@ -242,6 +346,18 @@ impl SearchEngine for SmartSearchEngine {
             .fuse(vec![bing_results, baidu_results, sogou_results]);
 
         info!("RRF fused {} unique results", fused.len());
+
+        // F3：跨引擎标题近重复去重——RRF 只按 URL 归一合并，两引擎返回
+        // 同内容不同 URL 时会双双存活；SimHash 标题去重兜底（保序）。
+        let mut cross_dedup = ResultDeduplicator::with_default_config();
+        let before = fused.len();
+        fused = cross_dedup.deduplicate(fused);
+        if fused.len() != before {
+            info!(
+                "Cross-engine title dedup removed {} near-duplicates",
+                before - fused.len()
+            );
+        }
 
         // Step 3: 叠加 RelevanceScorer 评分
         Self::apply_relevance_scoring(&mut fused, query);
@@ -449,5 +565,105 @@ mod tests {
         // No description → no date extraction → freshness defaults to 0.5
         assert!(results[0].published_time.is_none());
         assert!(results[0].score > 0.0);
+    }
+
+    // ==== r2：F1 超时降级 / F2 locale 贯通 / F3 跨引擎去重 / F4 出站限速 ====
+
+    /// F1：超时 future 映射 SmartRoutingTimeout，正常 future 原样透传
+    #[tokio::test]
+    async fn test_with_timeout_degrades_on_slow_future() {
+        use std::time::Duration;
+
+        // SmartRoutingTimeout 载荷为秒：用秒级差值断言语义
+        let slow = async {
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            Ok::<_, SearchError>(1u8)
+        };
+        let result = with_timeout(Duration::from_secs(1), slow).await;
+        assert!(
+            matches!(result, Err(SearchError::SmartRoutingTimeout(1))),
+            "slow future must degrade to SmartRoutingTimeout(1), got {result:?}"
+        );
+
+        let fast = async { Ok::<_, SearchError>(2u8) };
+        assert_eq!(with_timeout(Duration::from_secs(1), fast).await.unwrap(), 2);
+    }
+
+    /// F2：base_request 贯通 lang/country/offset（此前被丢弃）
+    #[test]
+    fn test_build_base_request_carries_locale_and_offset() {
+        let mut request = SearchRequest::new("rust");
+        request.limit = 20;
+        request.offset = 10;
+        request.lang = Some("en".to_string());
+        request.country = Some("US".to_string());
+
+        let base = build_base_request(&request);
+        assert_eq!(base.query, "rust");
+        assert_eq!(base.limit, 20);
+        assert_eq!(base.offset, 10);
+        assert_eq!(base.lang.as_deref(), Some("en"));
+        assert_eq!(base.country.as_deref(), Some("US"));
+
+        // 无 locale/offset 时字段保持缺省
+        let plain = build_base_request(&SearchRequest::new("go"));
+        assert_eq!(plain.offset, 0);
+        assert!(plain.lang.is_none());
+        assert!(plain.country.is_none());
+    }
+
+    /// F3：跨引擎同标题不同 URL 的结果经 SimHash 去重只存活一条
+    #[test]
+    fn test_cross_engine_title_dedup_merges_same_title() {
+        let mut dedup = ResultDeduplicator::with_default_config();
+        let merged = vec![
+            SearchResult {
+                title: "Rust Async Programming Guide".to_string(),
+                url: "https://a.example/rust".to_string(),
+                description: None,
+                engine: "bing".to_string(),
+                score: 0.9,
+                published_time: None,
+            },
+            SearchResult {
+                title: "Rust Async Programming Guide".to_string(),
+                url: "https://b.example/rust-async".to_string(),
+                description: None,
+                engine: "baidu".to_string(),
+                score: 0.8,
+                published_time: None,
+            },
+        ];
+        let out = dedup.deduplicate(merged);
+        assert_eq!(
+            out.len(),
+            1,
+            "same-title cross-engine duplicates must merge"
+        );
+    }
+
+    /// F4：同一 gate 连续两次 wait_turn，第二次等待 ≥ min_interval
+    #[tokio::test]
+    async fn test_outbound_gate_enforces_min_interval() {
+        let gate = OutboundGate::new(Duration::from_millis(120));
+        // 首次不等待
+        let start = Instant::now();
+        gate.wait_turn().await;
+        assert!(
+            start.elapsed() < Duration::from_millis(80),
+            "first turn must not wait"
+        );
+        // 第二次必须等满 min_interval
+        gate.wait_turn().await;
+        let waited = {
+            let last = gate.last.lock().unwrap();
+            last.unwrap()
+        };
+        let _ = waited;
+        // 直接断言：距首闸记录时刻已推进至少一个间隔（由 wait_turn 内部 sleep 保证）
+        let second_start = Instant::now();
+        gate.wait_turn().await;
+        let elapsed_ok = second_start.elapsed() >= Duration::from_millis(100);
+        assert!(elapsed_ok, "second turn must wait out the min interval");
     }
 }

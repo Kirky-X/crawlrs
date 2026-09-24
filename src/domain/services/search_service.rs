@@ -306,8 +306,12 @@ impl SearchService {
                 // 与单引擎路径同款语义重排（数量不变，仅调序）
                 return Ok(self.reranker.rerank_results(query, results).await);
             }
-            // 未注入 smart engine（agent-lib / 测试面）→ 落回单引擎，显性记录
-            log::warn!("smart engine not injected; falling back to single-engine search path");
+            // 未注入 smart engine（agent-lib / 测试面）：
+            // engine=None 真降级到单引擎；engine="smart" 将在下方被
+            // from_name 解析后因 SearchClient 未注册 Smart 引擎而显性报错
+            if engine.is_none() {
+                log::warn!("smart engine not injected; falling back to single-engine search path");
+            }
         }
 
         // 显式引擎名必须可解析——此前未知引擎名会静默替换为默认 bing

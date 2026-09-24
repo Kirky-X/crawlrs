@@ -331,17 +331,20 @@ pub async fn init_rate_limiting_service(
 /// # Arguments
 ///
 /// * `engine_client` - Engine client for making requests
-/// * `_settings` - Application settings (unused, kept for API compatibility)
+/// * `settings` - Application settings（`search.timeout_seconds` 注入单引擎 fan-out 超时）
 ///
 /// # Returns
 ///
 /// Returns an initialized search engine.
 pub fn init_search_engine(
     engine_client: Arc<EngineClient>,
-    _settings: &Settings,
+    settings: &Settings,
 ) -> Arc<dyn SearchEngine> {
     info!("Initializing SmartSearchEngine (concurrent Baidu+Bing+Sogou + RRF fusion)");
-    smart_search::create_smart_search(engine_client)
+    Arc::new(
+        smart_search::SmartSearchEngine::new(engine_client)
+            .with_engine_timeout(settings.search.timeout_seconds),
+    )
 }
 
 /// Initialize search service.

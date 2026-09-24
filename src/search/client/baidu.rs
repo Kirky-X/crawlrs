@@ -40,6 +40,11 @@ impl BaiduSearchEngine {
         Self { engine_client }
     }
 
+    /// F2：offset 推导 1-based 页码（百度 rn 固定 10 条/页）
+    fn page_from_offset(offset: u32) -> u32 {
+        (offset / 10) + 1
+    }
+
     pub fn build_baidu_url(
         &self,
         query: &str,
@@ -158,7 +163,10 @@ impl SearchEngine for BaiduSearchEngine {
             }
         }
 
-        let (url, params) = self.build_baidu_url(&request.query, 1, BaiduSearchCategory::General);
+        // F2：offset 推导翻页页码（lang/country 参数百度接口不支持，忽略）
+        let page = Self::page_from_offset(request.offset);
+        let (url, params) =
+            self.build_baidu_url(&request.query, page, BaiduSearchCategory::General);
 
         // 构建带查询参数的完整 URL
         let full_url = if !params.is_empty() {
@@ -315,6 +323,25 @@ mod tests {
         let (_url, params) = engine.build_baidu_url("test", 3, BaiduSearchCategory::General);
 
         assert_eq!(params.get("on"), Some(&"20".to_string()));
+    }
+
+    /// F2：offset 推导百度页码（rn=10/页）
+    #[test]
+    fn test_baidu_offset_derives_page_param() {
+        assert_eq!(BaiduSearchEngine::page_from_offset(0), 1);
+        assert_eq!(BaiduSearchEngine::page_from_offset(10), 2);
+
+        let engine = create_engine();
+        let (url, params) = engine.build_baidu_url(
+            "rust",
+            BaiduSearchEngine::page_from_offset(10),
+            BaiduSearchCategory::General,
+        );
+        assert_eq!(
+            params.get("on").map(String::as_str),
+            Some("10"),
+            "page 2 → on=10, url={url}"
+        );
     }
 
     #[test]
