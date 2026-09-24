@@ -119,7 +119,13 @@ impl RobotsCheckerTrait for RobotsChecker {
         let content = self.get_robots_content(url_str).await?;
         let url = Url::parse(url_str)?;
         let mut matcher = DefaultMatcher::default();
-        Ok(matcher.one_agent_allowed_by_robots(&content, user_agent, url.path()))
+        // F6：匹配目标携带 query——`Disallow: /*?s=` 类规则以 query 为
+        // 匹配特征，只传 path 会让此类规则永不命中
+        let path_and_query = match url.query() {
+            Some(q) => format!("{}?{}", url.path(), q),
+            None => url.path().to_string(),
+        };
+        Ok(matcher.one_agent_allowed_by_robots(&content, user_agent, &path_and_query))
     }
 
     async fn get_crawl_delay(&self, url_str: &str, user_agent: &str) -> Result<Option<Duration>> {
@@ -1510,6 +1516,23 @@ Crawl-delay: 8
             router_ref.call_count(),
             0,
             "no HTTP fetch should occur when SSRF blocks the URL"
+        );
+    }
+
+    // ==== r2 F6：匹配规则携带 query ====
+
+    #[test]
+    fn test_query_disallow_rule_requires_query_in_target() {
+        // `Disallow: /*?s=` 以 query 为匹配特征——只传 path 时该规则永不命中
+        let content = "User-agent: *\nDisallow: /*?s=";
+        let mut matcher = DefaultMatcher::default();
+        assert!(
+            !matcher.one_agent_allowed_by_robots(content, "crawlrs", "/page?s=a"),
+            "query-bearing URL must be disallowed by /*?s= rule"
+        );
+        assert!(
+            matcher.one_agent_allowed_by_robots(content, "crawlrs", "/page"),
+            "clean path must be allowed"
         );
     }
 }

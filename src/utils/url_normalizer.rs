@@ -117,15 +117,40 @@ impl UrlNormalizer {
             normalized.set_path(if new_path.is_empty() { "/" } else { new_path });
         }
 
-        // query 处理：strip 或排序
+        // query 处理：strip、剥已知 tracking 参数、或排序
         if self.strip_query {
             normalized.set_query(None);
         } else if let Some(q) = normalized.query() {
-            let sorted = Self::sort_query(q);
+            let filtered = Self::strip_known_tracking(q);
+            let sorted = Self::sort_query(&filtered);
             normalized.set_query(Some(&sorted));
         }
 
         Ok(normalized.to_string())
+    }
+
+    /// 已知 tracking 参数（剥除清单，保守集）
+    ///
+    /// `utm_` 为前缀匹配（utm_source/medium/campaign/term/content 等），
+    /// 其余为各平台点击追踪的精确键名。
+    const TRACKING_EXACT_KEYS: &[&str] = &[
+        "fbclid", "gclid", "msclkid", "dclid", "twclid", "mc_eid", "_ga",
+    ];
+
+    /// 剥除已知 tracking 参数后重排（serde_urlencoded 解析失败时原样返回，
+    /// 与 sort_query 的回退语义一致）
+    fn strip_known_tracking(query: &str) -> String {
+        let pairs: Vec<(String, String)> = match serde_urlencoded::from_str(query) {
+            Ok(pairs) => pairs,
+            Err(_) => return query.to_string(),
+        };
+        let kept: Vec<(String, String)> = pairs
+            .into_iter()
+            .filter(|(k, _)| {
+                !k.starts_with("utm_") && !Self::TRACKING_EXACT_KEYS.contains(&k.as_str())
+            })
+            .collect();
+        serde_urlencoded::to_string(&kept).unwrap_or_else(|_| query.to_string())
     }
 
     /// 排序 query 字符串
@@ -612,5 +637,40 @@ mod tests {
             n1.normalize("https://example.com/path?a=1").unwrap(),
             n2.normalize("https://example.com/path?a=1").unwrap()
         );
+    }
+
+    // ==== r2 F5：已知 tracking 参数剥离 ====
+
+    #[test]
+    fn test_strip_tracking_utm_prefixed_keys() {
+        let n = UrlNormalizer::with_default();
+        let a = n
+            .normalize("https://example.com/page?utm_source=x&id=1")
+            .unwrap();
+        let b = n.normalize("https://example.com/page?id=1").unwrap();
+        assert_eq!(a, b, "utm_* variants must normalize to the same key");
+        assert!(!a.contains("utm_"), "utm params must be stripped, got {a}");
+        assert!(
+            a.contains("id=1"),
+            "non-tracking params must survive, got {a}"
+        );
+    }
+
+    #[test]
+    fn test_strip_tracking_exact_keys() {
+        let n = UrlNormalizer::with_default();
+        let a = n
+            .normalize("https://example.com/p?fbclid=abc&gclid=def&id=2")
+            .unwrap();
+        assert!(!a.contains("fbclid") && !a.contains("gclid"), "got {a}");
+        assert!(a.contains("id=2"), "got {a}");
+    }
+
+    #[test]
+    fn test_malformed_query_falls_back_without_panic() {
+        let n = UrlNormalizer::with_default();
+        // serde_urlencoded 解析失败的畸形 query：保持原样参与归一，不 panic
+        let result = n.normalize("https://example.com/p?%%%bad&id=3");
+        assert!(result.is_ok(), "malformed query must not error");
     }
 }
