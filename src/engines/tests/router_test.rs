@@ -2203,3 +2203,133 @@ fn test_select_optimal_engines_feature_filter_tls_fingerprint() {
         "high-score engine should remain"
     );
 }
+
+// ==== r2 F7：host 反爬记忆 ====
+
+/// 记录调用次数的假引擎
+struct CallCountEngine {
+    name: &'static str,
+    content: String,
+    calls: std::sync::atomic::AtomicU32,
+}
+#[async_trait]
+impl ScraperEngine for CallCountEngine {
+    async fn scrape(
+        &self,
+        _request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(InternalScrapeResponse {
+            status_code: 200,
+            content: self.content.clone(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 5,
+            final_url: None,
+        })
+    }
+    fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
+        if request.needs_js {
+            if self.name == "browser" {
+                100
+            } else {
+                10
+            }
+        } else if self.name == "browser" {
+            10
+        } else {
+            100
+        }
+    }
+    fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
+fn hint_test_request() -> InternalScrapeRequest {
+    InternalScrapeRequest {
+        url: "https://example.com/page".to_string(),
+        method: crate::engines::engine_client::HttpMethod::Get,
+        headers: HashMap::new(),
+        timeout: Duration::from_secs(30),
+        needs_js: false,
+        needs_screenshot: false,
+        screenshot_config: None,
+        mobile: false,
+        proxy: None,
+        skip_tls_verification: false,
+        needs_tls_fingerprint: false,
+        use_fire_engine: false,
+        actions: Vec::new(),
+        body: None,
+        sync_wait_ms: 0,
+        block_ads: false,
+        block_media: false,
+        session_id: None,
+        wait_for: None,
+        needs_mllm: false,
+    }
+}
+
+fn browser_content() -> String {
+    "<html><body><p>browser rendered content with enough visible text to pass      structural checks of the antibot classifier.</p></body></html>".to_string()
+}
+
+/// hint 命中：needs_js=false 的请求直接按 needs_js 路由，HTTP 引擎不再被选中
+#[tokio::test]
+async fn test_host_browser_hint_skips_http_engine() {
+    let http = Arc::new(CallCountEngine {
+        name: "http-reqwest",
+        content: "<html><body><p>http engine content with enough visible text                   for structural checks.</p></body></html>".to_string(),
+        calls: std::sync::atomic::AtomicU32::new(0),
+    });
+    let browser = Arc::new(CallCountEngine {
+        name: "browser",
+        content: browser_content(),
+        calls: std::sync::atomic::AtomicU32::new(0),
+    });
+    let mut router = EngineRouter::new(vec![http.clone(), browser.clone()]);
+    router.set_feature_filter_enabled(false);
+    router.record_host_browser_hint("example.com");
+
+    let resp = router.route(&hint_test_request()).await.unwrap();
+    assert!(
+        resp.content.contains("browser rendered"),
+        "hint must route to browser engine, got: {}",
+        resp.content
+    );
+    assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(browser.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// hint 过期：恢复 HTTP 候选（重探语义）
+#[tokio::test]
+async fn test_host_browser_hint_expiry_restores_http_candidates() {
+    let http = Arc::new(CallCountEngine {
+        name: "http-reqwest",
+        content: "<html><body><p>http engine content with enough visible text                   for structural checks.</p></body></html>".to_string(),
+        calls: std::sync::atomic::AtomicU32::new(0),
+    });
+    let browser = Arc::new(CallCountEngine {
+        name: "browser",
+        content: browser_content(),
+        calls: std::sync::atomic::AtomicU32::new(0),
+    });
+    let mut router = EngineRouter::new(vec![http.clone(), browser.clone()]);
+    router.set_feature_filter_enabled(false);
+    // 插入过期时间戳（TTL 600s + 60s 余量前）
+    router.host_browser_hint.insert(
+        "example.com".to_string(),
+        Instant::now() - crate::engines::router::HOST_BROWSER_HINT_TTL - Duration::from_secs(60),
+    );
+
+    let resp = router.route(&hint_test_request()).await.unwrap();
+    // 过期后 needs_js=false → HTTP 引擎评分最高被选中
+    assert!(
+        resp.content.contains("http engine content"),
+        "expired hint must restore http candidate, got: {}",
+        resp.content
+    );
+    assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
