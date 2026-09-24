@@ -227,11 +227,15 @@ impl MarkdownPostProcessor {
         };
 
         // 结构化正文与整页 HTML 走 Markdown 转换；纯文本没有可转换的结构，
-        // 直接作为 Markdown 正文（与修复前行为一致）。按值消费避免整文深拷贝。
+        // 直接作为 Markdown 正文（按值消费避免整文深拷贝；行首元字符做最小
+        // 转义防下游误渲染为标题/列表——见 escape_leading_markdown_chars）。
         let markdown_result = match content_source {
-            MainContentSource::PlainText(text) => Ok(text),
+            MainContentSource::PlainText(text) => Ok(escape_leading_markdown_chars(&text)),
             MainContentSource::StructuredHtml(html) => {
-                self.markdown_service.to_markdown(&html, false)
+                // 复查 M2：rs-trafilatura 0.2.2 的 content_html 不做相对→绝对
+                // URL 转换（上游 convert_tags 为死代码），先以页面 URL 为基重写
+                let absolute = absoluteize_links(&html, &req.url);
+                self.markdown_service.to_markdown(&absolute, false)
             }
             MainContentSource::FullHtml => self.markdown_service.to_markdown(content, false),
         };
@@ -260,6 +264,80 @@ impl MarkdownPostProcessor {
             }
         }
     }
+}
+
+/// 复查 M2：把 HTML 中相对的 href/src 重写为基于 `base_url` 的绝对 URL
+///
+/// rs-trafilatura 0.2.2 的 `content_html` 不做相对→绝对转换（上游
+/// `convert_tags` 为死代码），相对链接直接进 Markdown 会产出下游无法
+/// 解析的 `[text](/relative/path)`。锚点/协议相对/数据/邮件等非相对目标
+/// 原样保留；base 解析失败时原样返回。
+fn absoluteize_links(html: &str, base_url: &str) -> String {
+    use regex::Regex;
+
+    let base = match url::Url::parse(base_url) {
+        Ok(b) => b,
+        Err(_) => return html.to_string(),
+    };
+    let attr_re = match Regex::new(r#"(?i)(\s(?:href|src)=")([^"]*)(")"#) {
+        Ok(r) => r,
+        Err(_) => return html.to_string(),
+    };
+    attr_re
+        .replace_all(html, |caps: &regex::Captures| {
+            let value = &caps[2];
+            let is_special = value.is_empty()
+                || value.starts_with('#')
+                || value.starts_with("//")
+                || value.starts_with("mailto:")
+                || value.starts_with("tel:")
+                || value.starts_with("javascript:")
+                || value.starts_with("data:");
+            if is_special {
+                return caps[0].to_string();
+            }
+            match base.join(value) {
+                Ok(absolute) => format!("{}{}{}", &caps[1], absolute, &caps[3]),
+                // join 失败（如 base 与 value 组合非法）保留原值
+                Err(_) => caps[0].to_string(),
+            }
+        })
+        .into_owned()
+}
+
+/// 复查 L2：纯文本降级分支的最小 Markdown 转义——仅转义行首会误渲染为
+/// 结构的字符（ATX 标题 #、引用 >、无序列表 - + *、有序列表 "1."）
+fn escape_leading_markdown_chars(text: &str) -> String {
+    fn needs_escape(trimmed: &str) -> bool {
+        if trimmed.starts_with('#') || trimmed.starts_with('>') {
+            return true;
+        }
+        for marker in ["- ", "+ ", "* "] {
+            if trimmed.starts_with(marker) {
+                return true;
+            }
+        }
+        // 有序列表：行首 "数字."（如 "1. " / "42. "）
+        match trimmed.split_once('.') {
+            Some((num, rest)) if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) => {
+                rest.starts_with(' ') || rest.is_empty()
+            }
+            _ => false,
+        }
+    }
+
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let leading = line.len() - line.trim_start().len();
+        if needs_escape(line.trim_start()) {
+            out.push_str(&line[..leading]);
+            out.push('\\');
+            out.push_str(&line[leading..]);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
