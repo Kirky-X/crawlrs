@@ -641,6 +641,8 @@ Search using various search engines.
 | `lang` | string | No | Search language (default: `en`) |
 | `country` | string | No | Search region (default: `us`) |
 | `safe_search` | boolean | No | Enable safe search (default: false) |
+| `lang` | string | No | 与 `country` 同时提供时驱动 Bing mkt/Accept-Language（baidu/sogou 忽略） |
+| `offset` | integer | No | 分页偏移：bing `first=`、baidu/sogou 按页推导 |
 | `webhook` | string | No | Webhook URL for notifications |
 | `sync_wait_ms` | integer | No | Wait time for synchronous response |
 
