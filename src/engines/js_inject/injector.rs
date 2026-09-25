@@ -4,8 +4,8 @@
 //! JS 注入器：在浏览器页面加载前后注入指定的 JavaScript 脚本。
 //!
 //! 提供两个预设构造函数：
-//! - [`JsInjector::stealth`]：在导航前注入 `navigator_overrider.js`，覆盖 webdriver 等
-//!   反爬指纹属性。
+//! - [`JsInjector::stealth`]：在导航前注入 `navigator_overrider.js` +
+//!   `webgl_overrider.js`，覆盖 webdriver/WebGL 等反爬指纹属性并为 canvas 加噪。
 //! - [`JsInjector::cleanup`]：在页面加载完成后注入 `remove_consent_popups.js` +
 //!   `remove_overlay_elements.js` + `flatten_shadow_dom.js`，移除 consent 弹窗、
 //!   遮罩元素并展平 shadow DOM。
@@ -47,7 +47,7 @@ impl fmt::Display for InjectPhase {
 ///
 /// # 预设
 ///
-/// - [`JsInjector::stealth`]：navigator_overrider（before）
+/// - [`JsInjector::stealth`]：navigator_overrider + webgl_overrider（before）
 /// - [`JsInjector::cleanup`]：remove_consent_popups + remove_overlay_elements + flatten_shadow_dom（after）
 ///
 /// # 扩展
@@ -68,14 +68,19 @@ pub struct JsInjector {
 }
 
 impl JsInjector {
-    /// stealth 预设：在导航前注入 `navigator_overrider.js`
+    /// stealth 预设：在导航前注入 `navigator_overrider.js` + `webgl_overrider.js`
     ///
-    /// 覆盖 `navigator.webdriver`、`navigator.platform`、`navigator.languages`、
-    /// `navigator.plugins` 等反爬指纹属性，隐藏自动化痕迹。
+    /// `navigator_overrider.js` 覆盖 `navigator.webdriver`、`navigator.platform`、
+    /// `navigator.languages`、`navigator.plugins` 等反爬指纹属性，隐藏自动化痕迹；
+    /// `webgl_overrider.js` 覆盖 WebGL `getParameter` 的 vendor/renderer 指纹，
+    /// 并对 canvas 像素读取/导出加极小随机噪声，破坏 WebGL/canvas 指纹稳定性。
     #[must_use]
     pub fn stealth() -> Self {
         Self {
-            before: vec![include_str!("scripts/navigator_overrider.js").to_string()],
+            before: vec![
+                include_str!("scripts/navigator_overrider.js").to_string(),
+                include_str!("scripts/webgl_overrider.js").to_string(),
+            ],
             after: Vec::new(),
         }
     }
@@ -219,14 +224,51 @@ mod tests {
         let injector = JsInjector::stealth();
         assert_eq!(
             injector.before_scripts().len(),
-            1,
-            "stealth before must have 1 script"
+            2,
+            "stealth before must have 2 scripts (navigator + webgl)"
         );
         let script = &injector.before_scripts()[0];
         assert!(
             script.contains("navigator") && script.contains("webdriver"),
             "stealth before[0] must reference navigator.webdriver: {}",
             &script[..script.len().min(80)]
+        );
+    }
+
+    #[test]
+    fn stealth_contains_webgl_overrider_in_before() {
+        let injector = JsInjector::stealth();
+        assert_eq!(
+            injector.before_scripts().len(),
+            2,
+            "stealth before must have 2 scripts (navigator + webgl)"
+        );
+        let script = &injector.before_scripts()[1];
+        assert!(
+            script.contains("getParameter"),
+            "stealth before[1] must hook WebGL getParameter: {}",
+            &script[..script.len().min(80)]
+        );
+        assert!(
+            script.contains("UNMASKED_VENDOR_WEBGL") && script.contains("UNMASKED_RENDERER_WEBGL"),
+            "stealth before[1] must override unmasked vendor/renderer"
+        );
+        assert!(
+            script.contains("toDataURL") && script.contains("getImageData"),
+            "stealth before[1] must add canvas noise via toDataURL/getImageData"
+        );
+        assert!(
+            script.contains("Google Inc. (Intel)") && script.contains("ANGLE (Intel"),
+            "stealth before[1] must return the faked GPU vendor/renderer strings"
+        );
+        assert!(
+            !script.contains("__crawlrs_stealth_installed =")
+                && !script.contains("__crawlrs_stealth_installed="),
+            "webgl 脚本不得设置 __crawlrs_stealth_installed（由 navigator_overrider 统一管理）"
+        );
+        assert!(
+            script.trim_end().ends_with("})();"),
+            "webgl script must be an IIFE"
         );
     }
 
@@ -358,7 +400,7 @@ mod tests {
     fn add_before_does_not_touch_after() {
         let mut injector = JsInjector::stealth();
         injector.add_before("console.log('extra');".to_string());
-        assert_eq!(injector.before_scripts().len(), 2);
+        assert_eq!(injector.before_scripts().len(), 3);
         assert!(injector.after_scripts().is_empty());
     }
 
@@ -456,17 +498,18 @@ mod tests {
         for s in cleanup.after_scripts() {
             injector.add_after(s.clone());
         }
-        assert_eq!(injector.before_scripts().len(), 1);
+        assert_eq!(injector.before_scripts().len(), 2);
         assert_eq!(injector.after_scripts().len(), 3);
     }
 
     #[test]
-    fn all_four_scripts_have_crawl4ai_source_header() {
-        // 所有脚本必须保留来源注释
+    fn script_source_headers_preserved() {
+        // crawl4ai 移植脚本必须保留来源注释；crawlrs 原创的 webgl_overrider
+        // 标注原创来源，但所有脚本都必须带 Apache-2.0 license 头
         let stealth = JsInjector::stealth();
         let cleanup = JsInjector::cleanup();
-        for s in stealth
-            .before_scripts()
+
+        for s in stealth.before_scripts()[..1]
             .iter()
             .chain(cleanup.after_scripts().iter())
         {
@@ -475,6 +518,18 @@ mod tests {
                 "script missing crawl4ai source header: {}",
                 &s[..s.len().min(60)]
             );
+        }
+        let webgl = &stealth.before_scripts()[1];
+        assert!(
+            webgl.starts_with("// Source: crawlrs original"),
+            "webgl_overrider is original and must be marked as such: {}",
+            &webgl[..webgl.len().min(60)]
+        );
+        for s in stealth
+            .before_scripts()
+            .iter()
+            .chain(cleanup.after_scripts().iter())
+        {
             assert!(
                 s.contains("License: Apache-2.0"),
                 "script missing license header"
