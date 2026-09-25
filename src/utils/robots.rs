@@ -86,7 +86,21 @@ struct CachedRobots {
 
     /// 过期时间
     expires_at: Instant,
+
+    /// 是否为获取失败标记（重试耗尽）。`fail_closed=true` 时命中该标记判禁，
+    /// 避免对不可达目标站反复发起 robots.txt 请求。
+    fetch_failed: bool,
 }
+
+/// robots.txt 获取结果：内容 + 是否为获取失败标记
+#[derive(Clone)]
+struct FetchedRobots {
+    content: String,
+    fetch_failed: bool,
+}
+
+/// robots.txt 获取失败标记的缓存 TTL（短 TTL，防止对不可达目标站打爆）
+const ROBOTS_FAILURE_CACHE_TTL: Duration = Duration::from_secs(60);
 
 /// Robots.txt检查器
 #[derive(Clone)]
@@ -109,6 +123,10 @@ pub struct RobotsChecker {
     /// 重试策略
     retry_policy: RetryPolicy,
 
+    /// robots.txt 获取失败（重试耗尽）时是否判禁（fail-closed）。
+    /// 默认 `false` 维持 fail-open 放行（见 `RobotsSettings::fail_closed`）。
+    fail_closed: bool,
+
     /// 缓存统计
     cache_stats: Arc<CacheStats>,
 }
@@ -116,7 +134,10 @@ pub struct RobotsChecker {
 #[async_trait]
 impl RobotsCheckerTrait for RobotsChecker {
     async fn is_allowed(&self, url_str: &str, user_agent: &str) -> Result<bool> {
-        let content = self.get_robots_content(url_str).await?;
+        let fetched = self.get_robots_content(url_str).await?;
+        if fetched.fetch_failed && self.fail_closed {
+            return Ok(false);
+        }
         let url = Url::parse(url_str)?;
         let mut matcher = DefaultMatcher::default();
         // F6：匹配目标携带 query——`Disallow: /*?s=` 类规则以 query 为
@@ -125,12 +146,12 @@ impl RobotsCheckerTrait for RobotsChecker {
             Some(q) => format!("{}?{}", url.path(), q),
             None => url.path().to_string(),
         };
-        Ok(matcher.one_agent_allowed_by_robots(&content, user_agent, &path_and_query))
+        Ok(matcher.one_agent_allowed_by_robots(&fetched.content, user_agent, &path_and_query))
     }
 
     async fn get_crawl_delay(&self, url_str: &str, user_agent: &str) -> Result<Option<Duration>> {
-        let content = self.get_robots_content(url_str).await?;
-        Ok(self.parse_crawl_delay(&content, user_agent))
+        let fetched = self.get_robots_content(url_str).await?;
+        Ok(self.parse_crawl_delay(&fetched.content, user_agent))
     }
 }
 
@@ -165,6 +186,7 @@ impl RobotsChecker {
                 max_backoff: Duration::from_secs(settings.fetch_max_backoff_secs),
                 ..Default::default()
             },
+            fail_closed: settings.fail_closed,
             cache_stats: cache_stats.unwrap_or_else(|| Arc::new(CacheStats::default())),
         }
     }
@@ -175,7 +197,13 @@ impl RobotsChecker {
     }
 
     /// 获取Robots.txt内容（带缓存）
-    async fn get_robots_content(&self, url_str: &str) -> Result<String, RobotsCheckerError> {
+    ///
+    /// 返回内容与是否为获取失败标记。获取失败（重试耗尽）时：
+    /// - `fail_closed=true`：内容置空、`fetch_failed=true`，并按短 TTL
+    ///   （60s）写入内存缓存防打爆；不写入 `cache_service`（其 TTL 长，
+    ///   短时失败不应被长期缓存否决）。
+    /// - `fail_closed=false`：维持现行 fail-open——空内容按正常 TTL 缓存。
+    async fn get_robots_content(&self, url_str: &str) -> Result<FetchedRobots, RobotsCheckerError> {
         let url =
             Url::parse(url_str).map_err(|e| RobotsCheckerError::UrlParseError(e.to_string()))?;
         let host = url
@@ -192,7 +220,10 @@ impl RobotsChecker {
             if let Some(cached) = cache.get(&robots_url) {
                 if cached.expires_at > Instant::now() {
                     self.cache_stats.record_hit();
-                    return Ok(cached.content.clone());
+                    return Ok(FetchedRobots {
+                        content: cached.content.clone(),
+                        fetch_failed: cached.fetch_failed,
+                    });
                 } else {
                     cache.remove(&robots_url);
                 }
@@ -201,7 +232,7 @@ impl RobotsChecker {
 
         self.cache_stats.record_miss();
 
-        // 2. Check cache service
+        // 2. Check cache service（仅存成功获取的内容，fetch_failed 恒为 false）
         let cache_key = format!("robots_cache:{}", robots_url);
         if let Some(ref cache_service) = self.cache_service {
             if let Ok(Some(content)) = cache_service.get(&cache_key).await {
@@ -212,10 +243,14 @@ impl RobotsChecker {
                     CachedRobots {
                         content: content.clone(),
                         expires_at: Instant::now() + self.cache_ttl,
+                        fetch_failed: false,
                     },
                 );
                 self.cache_stats.record_hit();
-                return Ok(content);
+                return Ok(FetchedRobots {
+                    content,
+                    fetch_failed: false,
+                });
             }
         }
 
@@ -272,6 +307,29 @@ impl RobotsChecker {
         }
 
         if let Some(err) = last_error {
+            if self.fail_closed {
+                log::warn!(
+                    "Failed to fetch robots.txt from {} (fail-closed): {}",
+                    robots_url,
+                    err
+                );
+                // 失败标记按短 TTL 写入内存缓存，防止对不可达目标站打爆
+                {
+                    let mut cache = self.memory_cache.lock().await;
+                    cache.insert(
+                        robots_url.clone(),
+                        CachedRobots {
+                            content: String::new(),
+                            expires_at: Instant::now() + ROBOTS_FAILURE_CACHE_TTL,
+                            fetch_failed: true,
+                        },
+                    );
+                }
+                return Ok(FetchedRobots {
+                    content: String::new(),
+                    fetch_failed: true,
+                });
+            }
             log::warn!("Failed to fetch robots.txt from {}: {}", robots_url, err);
             // Default to empty content on persistent error
             content = "".to_string();
@@ -285,6 +343,7 @@ impl RobotsChecker {
                 CachedRobots {
                     content: content.clone(),
                     expires_at: Instant::now() + self.cache_ttl, // Cache for 1 hour
+                    fetch_failed: false,
                 },
             );
         }
@@ -294,7 +353,10 @@ impl RobotsChecker {
             let _ = cache_service.set(&cache_key, &content, 86400).await; // Cache for 24 hours
         }
 
-        Ok(content)
+        Ok(FetchedRobots {
+            content,
+            fetch_failed: false,
+        })
     }
 
     /// 解析Crawl-delay指令
@@ -802,6 +864,7 @@ Crawl-delay: 8
             CachedRobots {
                 content: content.to_string(),
                 expires_at: Instant::now() + checker.cache_ttl,
+                fetch_failed: false,
             },
         );
     }
@@ -1188,6 +1251,15 @@ Crawl-delay: 8
     /// Build a RobotsChecker backed by a mock engine router, with short
     /// retry delays so tests run fast.
     fn make_checker_with_mock_router(router: Arc<dyn EngineRouterTrait>) -> RobotsChecker {
+        make_fail_closed_checker_with_mock_router(router, false)
+    }
+
+    /// Same as [`make_checker_with_mock_router`], but with an explicit
+    /// `fail_closed` flag for fail-closed behavior tests.
+    fn make_fail_closed_checker_with_mock_router(
+        router: Arc<dyn EngineRouterTrait>,
+        fail_closed: bool,
+    ) -> RobotsChecker {
         let engine_client = Arc::new(EngineClient::with_router(router));
         RobotsChecker {
             engine_client,
@@ -1202,6 +1274,7 @@ Crawl-delay: 8
                 max_backoff: Duration::from_millis(10),
                 ..Default::default()
             },
+            fail_closed,
             cache_stats: Arc::new(CacheStats::default()),
         }
     }
@@ -1226,6 +1299,7 @@ Crawl-delay: 8
 
             cache_ttl: Duration::from_secs(3600),
             retry_policy: RetryPolicy::default(),
+            fail_closed: false,
             cache_stats: Arc::new(CacheStats::default()),
         };
 
@@ -1267,6 +1341,7 @@ Crawl-delay: 8
 
             cache_ttl: Duration::from_secs(3600),
             retry_policy: RetryPolicy::default(),
+            fail_closed: false,
             cache_stats: Arc::new(CacheStats::default()),
         };
 
@@ -1278,6 +1353,7 @@ Crawl-delay: 8
                 CachedRobots {
                     content: "old-expired-content".to_string(),
                     expires_at: Instant::now() - Duration::from_secs(1),
+                    fetch_failed: false,
                 },
             );
         }
@@ -1443,6 +1519,7 @@ Crawl-delay: 8
                 max_backoff: Duration::from_millis(10),
                 ..Default::default()
             },
+            fail_closed: false,
             cache_stats: Arc::new(CacheStats::default()),
         };
 
@@ -1517,6 +1594,115 @@ Crawl-delay: 8
             0,
             "no HTTP fetch should occur when SSRF blocks the URL"
         );
+    }
+
+    // ==== fail_closed：robots.txt 获取失败（重试耗尽）的兜底策略 ====
+
+    #[tokio::test]
+    async fn test_fetch_failure_fail_closed_blocks_and_caches_marker() {
+        // fail_closed=true：获取失败判禁；失败标记按短 TTL（60s）写入内存缓存，
+        // 后续同 host 请求命中标记，不再发起 HTTP 请求（防打爆）。
+        let router = Arc::new(MockEngineRouter::with_error("connection refused"));
+        let router_ref = router.clone();
+        let checker = make_fail_closed_checker_with_mock_router(router, true);
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/anything", "MyBot")
+            .await
+            .expect("fail-closed 判禁应返回 Ok(false) 而非 Err");
+        assert!(!allowed, "fail_closed=true 时获取失败应判禁");
+        assert_eq!(router_ref.call_count(), 3, "应重试至 max_retries 耗尽");
+
+        // 失败标记入缓存，TTL 为短 TTL（60s）而非正常 cache_ttl
+        {
+            let cache = checker.memory_cache.lock().await;
+            let entry = cache
+                .get("http://8.8.8.8:80/robots.txt")
+                .expect("失败标记应写入内存缓存");
+            assert!(entry.fetch_failed, "缓存条目应携带失败标记");
+            assert_eq!(entry.content, "", "失败标记条目内容为空");
+            assert!(
+                entry.expires_at <= Instant::now() + ROBOTS_FAILURE_CACHE_TTL,
+                "失败标记应使用短 TTL（60s）"
+            );
+            assert!(entry.expires_at > Instant::now());
+        }
+
+        // 第二次调用命中失败标记：不再发起网络请求，仍判禁
+        let allowed2 = checker
+            .is_allowed("http://8.8.8.8/other", "MyBot")
+            .await
+            .expect("命中失败标记应返回 Ok(false)");
+        assert!(!allowed2, "命中失败标记仍应判禁");
+        assert_eq!(
+            router_ref.call_count(),
+            3,
+            "命中失败标记不应再次发起 HTTP 请求（防打爆）"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_failure_fail_closed_false_keeps_fail_open() {
+        // fail_closed=false（默认）：获取失败维持现行 fail-open 放行，
+        // 缓存写入的是普通空内容条目（非失败标记）。
+        let router = Arc::new(MockEngineRouter::with_error("connection refused"));
+        let router_ref = router.clone();
+        let checker = make_fail_closed_checker_with_mock_router(router, false);
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/anything", "MyBot")
+            .await
+            .expect("fail-open 路径应成功返回");
+        assert!(allowed, "fail_closed=false（默认）时获取失败应放行");
+        assert_eq!(router_ref.call_count(), 3);
+
+        let cache = checker.memory_cache.lock().await;
+        let entry = cache
+            .get("http://8.8.8.8:80/robots.txt")
+            .expect("失败后仍应缓存空内容");
+        assert!(!entry.fetch_failed, "fail-open 失败缓存的是普通空内容条目");
+        assert!(
+            entry.expires_at > Instant::now() + ROBOTS_FAILURE_CACHE_TTL,
+            "fail-open 失败条目使用正常 cache_ttl 而非短 TTL"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_500_exhausted_fail_closed_blocks() {
+        // 5xx 重试耗尽 + fail_closed=true：判禁（与请求错误同路径）
+        let router = Arc::new(MockEngineRouter::with_response(
+            500,
+            "Internal Server Error",
+        ));
+        let checker = make_fail_closed_checker_with_mock_router(router, true);
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/anything", "MyBot")
+            .await
+            .expect("fail-closed 判禁应返回 Ok(false)");
+        assert!(!allowed, "5xx 重试耗尽且 fail_closed=true 应判禁");
+    }
+
+    #[tokio::test]
+    async fn test_fail_closed_success_path_unaffected() {
+        // fail_closed=true 且 robots.txt 获取成功：按规则正常判定，不受失败标记影响
+        let router = Arc::new(MockEngineRouter::with_response(
+            200,
+            "User-agent: *\nDisallow: /private\n",
+        ));
+        let checker = make_fail_closed_checker_with_mock_router(router, true);
+
+        let allowed = checker
+            .is_allowed("http://8.8.8.8/page", "MyBot")
+            .await
+            .expect("成功获取后应正常判定");
+        assert!(allowed, "未命中 Disallow 的路径应放行");
+
+        let blocked = checker
+            .is_allowed("http://8.8.8.8/private", "MyBot")
+            .await
+            .expect("成功获取后应正常判定");
+        assert!(!blocked, "命中 Disallow 的路径应被拦下");
     }
 
     // ==== r2 F6：匹配规则携带 query ====

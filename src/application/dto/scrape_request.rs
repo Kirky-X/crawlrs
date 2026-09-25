@@ -228,5 +228,27 @@ mod respect_robots_tests {
             Some(true),
             "respect_robots=true 应正确反序列化"
         );
+
+        let with_false: ScrapeRequestDto = serde_json::from_str(
+            r#"{"url":"https://text.npr.org","options":{"respect_robots":false}}"#,
+        )
+        .expect("parse with respect_robots=false");
+        assert_eq!(
+            with_false.options.as_ref().unwrap().respect_robots,
+            Some(false),
+            "respect_robots=false 应正确反序列化（用于覆盖全局默认 true）"
+        );
+    }
+
+    /// 三分支生效值：请求级 override 优先于全局默认（语义在
+    /// `scrape_executor::check_scrape_robots_allowed`，此处固化
+    /// `unwrap_or` 的选择逻辑本身）。
+    #[test]
+    fn respect_robots_override_resolution() {
+        let global_default = true;
+        let resolve = |override_value: Option<bool>| override_value.unwrap_or(global_default);
+        assert!(resolve(Some(true)), "Some(true) 应覆盖全局默认");
+        assert!(!resolve(Some(false)), "Some(false) 应覆盖全局默认");
+        assert!(resolve(None), "None 应回退全局默认");
     }
 }

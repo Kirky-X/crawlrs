@@ -130,6 +130,9 @@ pub struct Settings {
 ///   robots.txt。默认 `false`（单页抓取定位为直接取页接口，向后兼容）；
 ///   请求级 `options.respect_robots` 可覆盖此全局默认。
 ///   robots.txt 自身获取失败时 fail-open（放行，与 crawl 路径一致）。
+/// - `fail_closed`：robots.txt 获取失败（重试耗尽）时的兜底策略。默认
+///   `false` 维持 fail-open；`true` 时判禁并将失败标记按短 TTL（60s）写入
+///   缓存，避免对不可达目标站反复打 robots 请求。
 #[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
 #[validate(crate = "sdforge::validator")]
 #[config(env_prefix = "CRAWLRS__ROBOTS__")]
@@ -142,6 +145,14 @@ pub struct RobotsSettings {
     /// `/v1/scrape` 是否默认遵从 robots.txt（请求级 respect_robots 可覆盖）
     #[config(default = false)]
     pub scrape_respect_robots: bool,
+
+    /// robots.txt 获取失败（重试耗尽）时是否判禁（fail-closed）。
+    /// 默认 `false` 维持 fail-open 放行（向后兼容）。
+    ///
+    /// `serde(default)` 兼容旧 config/default.toml 缺键（同 MRT 字段先例）。
+    #[serde(default)]
+    #[config(default = false)]
+    pub fail_closed: bool,
 
     /// robots.txt 缓存 TTL（秒）
     #[config(default = 3600)]
@@ -817,6 +828,44 @@ mod tests {
         assert_eq!(settings.i18n.supported_locales.len(), 2);
         assert_eq!(settings.robots.user_agent, "crawlrs-bot/1.0");
         assert!(!settings.robots.scrape_respect_robots);
+        assert!(!settings.robots.fail_closed);
+    }
+
+    /// RobotsSettings 新增 fail_closed 字段使用 serde(default) 兼容旧 config 文件。
+    ///
+    /// 验证：旧 toml（如未同步更新的 config/default.toml `[robots]` 节）缺少
+    /// `fail_closed` 键时，反序列化回退到 `false`（维持 fail-open），不报错。
+    #[test]
+    fn test_robots_settings_serde_default_for_fail_closed() {
+        // 模拟旧 config 文件：只有原有字段，无 fail_closed
+        let old_toml = r#"
+            user_agent = "crawlrs-bot/1.0"
+            scrape_respect_robots = false
+            cache_ttl_secs = 3600
+            fetch_max_retries = 5
+            fetch_initial_backoff_secs = 2
+            fetch_max_backoff_secs = 10
+        "#;
+        let settings: RobotsSettings = toml::from_str(old_toml).expect("deserialize");
+        assert!(
+            !settings.fail_closed,
+            "缺键时应回退 serde 默认 false（fail-open）"
+        );
+
+        // 显式传值可覆盖为 true
+        let enabled: RobotsSettings = toml::from_str(
+            r#"
+            user_agent = "crawlrs-bot/1.0"
+            scrape_respect_robots = false
+            cache_ttl_secs = 3600
+            fetch_max_retries = 5
+            fetch_initial_backoff_secs = 2
+            fetch_max_backoff_secs = 10
+            fail_closed = true
+        "#,
+        )
+        .expect("deserialize override");
+        assert!(enabled.fail_closed, "显式 fail_closed=true 应生效");
     }
 
     /// AuthSettings Debug 输出对 jwt_secret 脱敏（CWE-532 防护）。
