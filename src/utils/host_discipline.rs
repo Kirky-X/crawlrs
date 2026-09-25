@@ -4,7 +4,8 @@
 //! Per-host 纪律组件
 //!
 //! 每个 host 独立维护三件事：
-//! 1. **礼貌限速**：`gate` 保证同 host 相邻请求间隔 ≥ `min_interval`
+//! 1. **礼貌限速**：`gate` 在 per-host 预约时刻表上串行发放放行时刻，
+//!    同 host 相邻请求（含并发到达的）间隔 ≥ `min_interval`
 //! 2. **429 冷却**：收到 429 后按 `max(retry_after, cooldown_default)` 冷却，
 //!    冷却期内 `gate` 有界等待（单次钳制 ≤5s，避免占用 worker 过久）
 //! 3. **裸 403 连击**：无 WAF 指纹的 403 连续 `bare403_threshold` 次后置
@@ -15,9 +16,13 @@
 //!
 //! 与 `EngineRouter::host_browser_hint` 同款 `DashMap` 约定：先 drop `get`
 //! 守卫再做任何写操作（同 shard 的 get 守卫存活期间写入会死锁，
-//! 见 `host_needs_browser` 的过期清除路径）。`gate` 内部先在独立作用域
-//! 计算 `pending_wait`（守卫随即释放），再 sleep，最后 `entry` 写入；
-//! `observe` 各分支的 `get_mut`/`entry` 守卫作用域内无二次 map 访问。
+//! 见 `host_needs_browser` 的过期清除路径）。`gate` 的检查与预约在同一个
+//! `entry` 临界区内完成（读 `max(next_allowed, cooldown_until)` → 写
+//! `next_allowed = release_at + min_interval`），守卫块尾即放、不跨
+//! `await` 持有——并发同 host 请求各自取到严格递增的预约时刻。若检查与
+//! 写入分离在 sleep 两侧，一批请求会读到同一快照、等同一时长后同时放行，
+//! 批内间隔 0，限速退化为每窗口放一整批。`observe` 各分支的
+//! `get_mut`/`entry` 守卫作用域内无二次 map 访问。
 
 use std::time::{Duration, Instant};
 
@@ -36,8 +41,8 @@ const MAX_GATE_WAIT: Duration = Duration::from_secs(5);
 /// 单个 host 的纪律状态
 #[derive(Debug, Clone)]
 struct HostState {
-    /// 上次放行时刻（`gate` 尾部刷新）
-    last_request: Instant,
+    /// 下一个预约放行时刻（`gate` 在临界区内推进 `+= min_interval`）
+    next_allowed: Instant,
     /// 429 冷却截止时刻；`None` 表示不在冷却期
     cooldown_until: Option<Instant>,
     /// 裸 403 连击计数（Success 清零，challenge 403 / Failure 不动）
@@ -110,27 +115,44 @@ impl HostDiscipline {
         )
     }
 
-    /// 通过纪律门：必要时等待，然后记录本次放行
+    /// 通过纪律门：必要时等待，然后放行
     ///
-    /// 距 `last_request` 不足 `min_interval` 或处于 429 冷却期时 sleep 到
-    /// 两者的较晚到期点，单次等待钳制 ≤ [`MAX_GATE_WAIT`]，随后刷新
-    /// `last_request`。等待是有界的——冷却期长于 5s 时也只等 5s：
-    /// 冷却是礼貌信号而非硬门禁，不能把 worker 无限期占住。
+    /// 在 per-host 预约时刻表上领取本次放行时刻：
+    /// `release_at = max(next_allowed, cooldown_until, now)`，并在同一临界区
+    /// 把时刻表推进 `next_allowed = release_at + min_interval`。检查与预约
+    /// 必须在同一 `entry` 临界区内完成——并发到达的同 host 请求各自取到
+    /// 严格递增的 `release_at`，相邻放行间隔 ≥ `min_interval`。
+    ///
+    /// 随后 sleep 到 `release_at`，单次等待钳制 ≤ [`MAX_GATE_WAIT`]：
+    /// 冷却是礼貌信号而非硬门禁，不能把 worker 无限期占住。钳制只缩短
+    /// 实际睡眠时长，不回改时刻表——批内间隔仍由预约序列保证。
     pub async fn gate(&self, host: &str) {
-        let wait = self.pending_wait(host, Instant::now()).min(MAX_GATE_WAIT);
+        let now = Instant::now();
+        let release_at = {
+            let mut st = self
+                .state
+                .entry(host.to_string())
+                .or_insert_with(|| HostState {
+                    next_allowed: now,
+                    cooldown_until: None,
+                    bare403_streak: 0,
+                    tls_suspect: false,
+                });
+            let release_at = st
+                .cooldown_until
+                .unwrap_or(now)
+                .max(st.next_allowed)
+                .max(now);
+            st.next_allowed = release_at + self.min_interval;
+            release_at
+        };
+        let wait = release_at
+            .checked_duration_since(Instant::now())
+            .unwrap_or_default()
+            .min(MAX_GATE_WAIT);
         if !wait.is_zero() {
             tokio::time::sleep(wait).await;
         }
-        // get 守卫已在 pending_wait 内释放，此处 entry 写入无死锁面
-        self.state
-            .entry(host.to_string())
-            .and_modify(|st| st.last_request = Instant::now())
-            .or_insert(HostState {
-                last_request: Instant::now(),
-                cooldown_until: None,
-                bare403_streak: 0,
-                tls_suspect: false,
-            });
     }
 
     /// 记录一次请求结果（语义见 [`ObserveOutcome`]）
@@ -140,8 +162,12 @@ impl HostDiscipline {
     pub fn observe(&self, host: &str, outcome: ObserveOutcome) {
         match outcome {
             ObserveOutcome::Success => {
+                let now = Instant::now();
                 if let Some(mut st) = self.state.get_mut(host) {
                     st.cooldown_until = None;
+                    // 时刻表一并收敛到当前时刻：成功即恢复健康，
+                    // 长冷却期残留的远期预约不应继续钳制后续请求
+                    st.next_allowed = st.next_allowed.min(now);
                     st.bare403_streak = 0;
                     st.tls_suspect = false;
                 }
@@ -153,7 +179,7 @@ impl HostDiscipline {
                     .entry(host.to_string())
                     .and_modify(|st| st.cooldown_until = Some(until))
                     .or_insert(HostState {
-                        last_request: now,
+                        next_allowed: now + self.min_interval,
                         cooldown_until: Some(until),
                         bare403_streak: 0,
                         tls_suspect: false,
@@ -170,7 +196,7 @@ impl HostDiscipline {
                         }
                     })
                     .or_insert(HostState {
-                        last_request: Instant::now(),
+                        next_allowed: Instant::now() + self.min_interval,
                         cooldown_until: None,
                         bare403_streak: 1,
                         tls_suspect: threshold <= 1,
@@ -188,27 +214,6 @@ impl HostDiscipline {
             .get(host)
             .map(|st| st.tls_suspect)
             .unwrap_or(false)
-    }
-
-    /// 计算当前需要等待的时长（未钳制）
-    ///
-    /// 取冷却剩余与 min_interval 剩余的较大者；get 守卫在返回前释放，
-    /// 调用方随后可安全写 map。
-    fn pending_wait(&self, host: &str, now: Instant) -> Duration {
-        match self.state.get(host) {
-            Some(st) => {
-                let cooldown_wait = st
-                    .cooldown_until
-                    .and_then(|until| until.checked_duration_since(now))
-                    .unwrap_or_default();
-                let interval_wait = now
-                    .checked_duration_since(st.last_request)
-                    .and_then(|since| self.min_interval.checked_sub(since))
-                    .unwrap_or_default();
-                cooldown_wait.max(interval_wait)
-            }
-            None => Duration::ZERO,
-        }
     }
 }
 
@@ -298,30 +303,42 @@ mod tests {
         );
     }
 
-    // ========== pending_wait / 钳制（纯同步，不 sleep） ==========
+    // ========== 冷却 / 时刻表状态（读内部状态，纯同步） ==========
+
+    /// host 当前冷却截止剩余时长；无条目或已过期返回 ZERO
+    fn cooldown_remaining(d: &HostDiscipline, host: &str) -> Duration {
+        let now = Instant::now();
+        d.state
+            .get(host)
+            .and_then(|st| st.cooldown_until)
+            .and_then(|until| until.checked_duration_since(now))
+            .unwrap_or_default()
+    }
 
     #[test]
-    fn pending_wait_zero_for_unknown_host() {
+    fn state_absent_for_unknown_host() {
         let d = discipline();
-        assert_eq!(
-            d.pending_wait("x.example.com", Instant::now()),
-            Duration::ZERO
+        assert!(
+            d.state.get("x.example.com").is_none(),
+            "未知 host 不应被预先建档"
         );
     }
 
     #[test]
-    fn pending_wait_covers_min_interval_after_first_gate_state() {
-        // Forbidden 路径建档（last_request=now、无冷却），
-        // pending_wait 应由 min_interval 剩余量主导
+    fn next_allowed_scheduled_min_interval_after_forbidden_creation() {
+        // Forbidden 路径建档（next_allowed=now+min_interval、无冷却），
+        // 时刻表应把下一个放行预约在 min_interval 之后
         let d = HostDiscipline::new(Duration::from_millis(300), Duration::from_secs(60), 3);
         d.observe(
             "i.example.com",
             ObserveOutcome::Forbidden { challenge: false },
         );
-        let wait = d.pending_wait("i.example.com", Instant::now());
+        let now = Instant::now();
+        let next_allowed = d.state.get("i.example.com").unwrap().next_allowed;
+        let remaining = next_allowed.checked_duration_since(now).unwrap_or_default();
         assert!(
-            (Duration::from_millis(200)..=Duration::from_millis(300)).contains(&wait),
-            "pending_wait should be ~min_interval remainder, got {wait:?}"
+            (Duration::from_millis(200)..=Duration::from_millis(300)).contains(&remaining),
+            "next_allowed should be ~min_interval ahead, got {remaining:?}"
         );
     }
 
@@ -334,7 +351,7 @@ mod tests {
                 retry_after: Some(Duration::from_secs(30)),
             },
         );
-        let wait = d.pending_wait("rl.example.com", Instant::now());
+        let wait = cooldown_remaining(&d, "rl.example.com");
         assert!(
             wait >= Duration::from_secs(29),
             "RateLimited should write ~30s cooldown, got {wait:?}"
@@ -348,7 +365,7 @@ mod tests {
             "rl.example.com",
             ObserveOutcome::RateLimited { retry_after: None },
         );
-        let wait = d.pending_wait("rl.example.com", Instant::now());
+        let wait = cooldown_remaining(&d, "rl.example.com");
         assert!(
             wait >= Duration::from_secs(19),
             "RateLimited without header should fall back to cooldown_default, got {wait:?}"
@@ -364,7 +381,7 @@ mod tests {
                 retry_after: Some(Duration::from_secs(2)),
             },
         );
-        let wait = d.pending_wait("rl.example.com", Instant::now());
+        let wait = cooldown_remaining(&d, "rl.example.com");
         assert!(
             wait >= Duration::from_secs(19),
             "cooldown should be max(retry_after, default)=20s, got {wait:?}"
@@ -380,14 +397,16 @@ mod tests {
                 retry_after: Some(Duration::from_secs(600)),
             },
         );
+        let raw = cooldown_remaining(&d, "clamped.example.com");
         assert!(
-            d.pending_wait("clamped.example.com", Instant::now()) > MAX_GATE_WAIT,
-            "raw pending_wait should exceed the clamp for this scenario"
+            raw > MAX_GATE_WAIT,
+            "raw cooldown should exceed the clamp for this scenario"
         );
-        let wait = d
-            .pending_wait("clamped.example.com", Instant::now())
-            .min(MAX_GATE_WAIT);
-        assert_eq!(wait, MAX_GATE_WAIT, "gate wait must be clamped to 5s");
+        assert_eq!(
+            raw.min(MAX_GATE_WAIT),
+            MAX_GATE_WAIT,
+            "gate wait must be clamped to 5s"
+        );
     }
 
     // ========== 裸 403 连击 → tls_suspect → Success 清除 ==========
@@ -448,14 +467,61 @@ mod tests {
             },
         );
         assert!(
-            d.pending_wait("ok.example.com", Instant::now()) >= Duration::from_secs(29),
+            cooldown_remaining(&d, "ok.example.com") >= Duration::from_secs(29),
             "precondition: host should be cooling down"
         );
         d.observe("ok.example.com", ObserveOutcome::Success);
-        let wait = d.pending_wait("ok.example.com", Instant::now());
+        let st = d.state.get("ok.example.com").unwrap();
+        assert!(st.cooldown_until.is_none(), "Success must clear cooldown");
         assert!(
-            wait < Duration::from_millis(100),
-            "Success must clear cooldown, got {wait:?}"
+            st.next_allowed <= Instant::now(),
+            "Success must collapse the schedule so later gates are not held back"
+        );
+    }
+
+    // ========== 并发间隔语义：批内相邻放行间隔 ≥ min_interval ==========
+
+    #[tokio::test]
+    async fn concurrent_gate_release_times_spaced_by_min_interval() {
+        // gate 的检查与写入若在 sleep 两侧分离，并发同 host 请求会读到同一
+        // 快照、等同一时长后同时放行——批内间隔 0，限速退化为每窗口放一批。
+        // 预约时刻表语义下 N 个并发 gate 必须串行领取放行时刻：
+        // 相邻实际放行时刻差 ≥ min_interval（容差覆盖调度抖动），
+        // 完成总耗时 ≥ (N-1)×min_interval。
+        let interval = Duration::from_millis(40);
+        let d = Arc::new(HostDiscipline::new(interval, Duration::from_secs(60), 3));
+        let n = 12u32;
+
+        let mut handles = Vec::new();
+        for _ in 0..n {
+            let dd = Arc::clone(&d);
+            handles.push(tokio::spawn(async move {
+                dd.gate("burst.example.com").await;
+                Instant::now()
+            }));
+        }
+        let mut released: Vec<Instant> = Vec::new();
+        for handle in handles {
+            released.push(handle.await.expect("task join failed"));
+        }
+        released.sort();
+
+        let jitter = Duration::from_millis(10);
+        for (i, pair) in released.windows(2).enumerate() {
+            let gap = pair[1].duration_since(pair[0]);
+            assert!(
+                gap + jitter >= interval,
+                "release #{i} to #{} gap {gap:?} must be ~min_interval {interval:?}",
+                i + 1
+            );
+        }
+        let total = released
+            .last()
+            .unwrap()
+            .duration_since(*released.first().unwrap());
+        assert!(
+            total + jitter >= interval * (n - 1),
+            "{n} concurrent gates must span >= (N-1)×min_interval, got {total:?}"
         );
     }
 
