@@ -17,6 +17,8 @@
 //     "[native code]" 源文本，抗 fn.toString() 检测。
 //   - toDataURL 在离屏副本上加噪后导出，不污染页面可见画布；
 //     tainted canvas（跨域像素）等异常时回退原始调用。
+//   - toDataURL 的加噪路径仅作用于已持有 2d context 的画布（getContext
+//     包装记录类型）——不给空画布物化 context，避免锁定 context 类型。
 //   - 本脚本不设置 window.__crawlrs_stealth_installed（该标记由
 //     navigator_overrider.js 统一管理），避免幂等语义分叉。
 (function () {
@@ -110,11 +112,37 @@
         return imageData;
     });
 
-    // toDataURL：在离屏副本上加噪后导出，不污染可见画布本身
+    // getContext：透明透传，同时在 canvas 元素上记录已创建的 context 类型
+    // （toDataURL 的加噪路径据此判断，避免物化 2d context——见下方说明）
+    var ctx2d_getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = wrapFunction(
+        ctx2d_getContext,
+        function (canvas, args, orig) {
+            var result = orig();
+            if (result) {
+                try {
+                    canvas.__crawlrs_ctx_type = args[0];
+                } catch (e) {
+                    // 只读画布等极端对象上写入失败：放弃记录，toDataURL 走透传
+                }
+            }
+            return result;
+        },
+    );
+
+    // toDataURL：在离屏副本上加噪后导出，不污染可见画布本身。
+    // 仅当 canvas 已经持有 2d context（由下方 getContext 包装记录）时才走加噪
+    // 路径——对尚未持有任何 context 的 canvas 无条件 getContext('2d') 会把
+    // context 类型固化为 2d（HTML 规范：类型一经创建不可变），页面此后请求
+    // getContext('webgl') 将得到 null，与原生行为不一致。未知类型（context
+    // 在本脚本注入前创建）与其他类型一律透传原始 toDataURL。
     canvasProto.toDataURL = wrapFunction(canvasProto.toDataURL, function (canvas, args, orig) {
         try {
+            if (canvas.__crawlrs_ctx_type !== '2d' || canvas.width === 0 || canvas.height === 0) {
+                return orig();
+            }
             var ctx = canvas.getContext('2d');
-            if (!ctx || canvas.width === 0 || canvas.height === 0) {
+            if (!ctx) {
                 return orig();
             }
             var imageData = rawGetImageData.call(ctx, 0, 0, canvas.width, canvas.height);

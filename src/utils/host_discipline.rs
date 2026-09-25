@@ -38,6 +38,10 @@ pub const DEFAULT_BARE403_THRESHOLD: u32 = 3;
 /// `gate` 单次等待钳制上限：冷却再长也不能把 worker 占住超过 5s
 const MAX_GATE_WAIT: Duration = Duration::from_secs(5);
 
+/// 惰性清扫间隔：达到间隔后下一次 `gate`/`observe` 触发一次全表清扫，
+/// 回收只被访问过一次的 host 条目（评审 LOW：state 只增不删，内存无界）
+const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+
 /// 单个 host 的纪律状态
 #[derive(Debug, Clone)]
 struct HostState {
@@ -84,6 +88,8 @@ pub struct HostDiscipline {
     cooldown_default: Duration,
     /// 裸 403 连击阈值（不可变）
     bare403_threshold: u32,
+    /// 上次全表清扫时刻（惰性触发，间隔 [`SWEEP_INTERVAL`]）
+    last_sweep: parking_lot::Mutex<Instant>,
 }
 
 impl HostDiscipline {
@@ -103,6 +109,7 @@ impl HostDiscipline {
             min_interval,
             cooldown_default,
             bare403_threshold,
+            last_sweep: parking_lot::Mutex::new(Instant::now()),
         }
     }
 
@@ -127,6 +134,7 @@ impl HostDiscipline {
     /// 冷却是礼貌信号而非硬门禁，不能把 worker 无限期占住。钳制只缩短
     /// 实际睡眠时长，不回改时刻表——批内间隔仍由预约序列保证。
     pub async fn gate(&self, host: &str) {
+        self.maybe_sweep();
         let now = Instant::now();
         let release_at = {
             let mut st = self
@@ -160,6 +168,7 @@ impl HostDiscipline {
     /// 对未经过 `gate` 的 host 同样生效（`entry` 惰性建档），
     /// 调用方无需保证 observe 先于 gate 发生。
     pub fn observe(&self, host: &str, outcome: ObserveOutcome) {
+        self.maybe_sweep();
         match outcome {
             ObserveOutcome::Success => {
                 let now = Instant::now();
@@ -214,6 +223,38 @@ impl HostDiscipline {
             .get(host)
             .map(|st| st.tls_suspect)
             .unwrap_or(false)
+    }
+
+    /// 距上次清扫超过 [`SWEEP_INTERVAL`] 时做一次全表回收。
+    ///
+    /// 在 `gate`/`observe` 上惰性触发（不引入后台任务）：
+    /// `state.retain` 逐 shard 持锁，60s 一次的摊销成本可忽略。
+    fn maybe_sweep(&self) {
+        let mut last = self.last_sweep.lock();
+        if last.elapsed() < SWEEP_INTERVAL {
+            return;
+        }
+        *last = Instant::now();
+        drop(last);
+        self.state
+            .retain(|_, st| !Self::is_stale(st, Instant::now()));
+    }
+
+    /// 条目是否已不含任何信息——与"该 host 从未出现过"等价：
+    /// 无冷却、无连击、无 TLS 可疑、时刻表也已过期。
+    /// 注意 `tls_suspect == true` 的条目永不过期（只能被 Success 清除）。
+    fn is_stale(st: &HostState, now: Instant) -> bool {
+        st.bare403_streak == 0
+            && !st.tls_suspect
+            && st.cooldown_until.is_none_or(|until| until <= now)
+            && st.next_allowed <= now
+    }
+
+    /// 立即执行一次全表清扫（不受 [`SWEEP_INTERVAL`] 节流；测试与诊断用）
+    #[cfg(test)]
+    fn sweep_now(&self) {
+        self.state
+            .retain(|_, st| !Self::is_stale(st, Instant::now()));
     }
 }
 
@@ -553,5 +594,82 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), futures::future::join_all(handles))
             .await
             .expect("concurrent gate/observe/tls_suspect must not deadlock");
+    }
+
+    // ==== 评审 LOW：state 惰性清扫 ====
+
+    /// 过期中性条目被清扫回收；携带纪律信息的条目（tls_suspect/连击/冷却）保留
+    #[test]
+    fn test_sweep_removes_stale_keeps_disciplined_entries() {
+        let d = HostDiscipline::with_defaults();
+        let now = Instant::now();
+        // 过期中性条目：等价于"从未出现过"
+        d.state.insert(
+            "stale.example".to_string(),
+            HostState {
+                next_allowed: now - Duration::from_secs(1),
+                cooldown_until: None,
+                bare403_streak: 0,
+                tls_suspect: false,
+            },
+        );
+        // TLS 可疑条目：永不过期（只能被 Success 清除）
+        d.state.insert(
+            "suspect.example".to_string(),
+            HostState {
+                next_allowed: now - Duration::from_secs(1),
+                cooldown_until: None,
+                bare403_streak: 0,
+                tls_suspect: true,
+            },
+        );
+        // 冷却中条目：冷却期内不回收
+        d.state.insert(
+            "cooldown.example".to_string(),
+            HostState {
+                next_allowed: now - Duration::from_secs(1),
+                cooldown_until: Some(now + Duration::from_secs(30)),
+                bare403_streak: 0,
+                tls_suspect: false,
+            },
+        );
+
+        d.sweep_now();
+
+        assert!(
+            !d.state.contains_key("stale.example"),
+            "stale entry must be evicted"
+        );
+        assert!(
+            d.state.contains_key("suspect.example"),
+            "tls_suspect entry must persist"
+        );
+        assert!(
+            d.state.contains_key("cooldown.example"),
+            "cooling entry must persist until cooldown expires"
+        );
+    }
+
+    /// Success 后收敛为中性且时刻表已过期的条目会被下一次清扫回收
+    #[test]
+    fn test_sweep_collects_success_reset_entry() {
+        let d = HostDiscipline::with_defaults();
+        let now = Instant::now();
+        // Success 之后的收敛态：next_allowed 被压回 now、其余全中性
+        d.state.insert(
+            "recovered.example".to_string(),
+            HostState {
+                next_allowed: now,
+                cooldown_until: None,
+                bare403_streak: 0,
+                tls_suspect: false,
+            },
+        );
+        // next_allowed == now 满足 is_stale（<= now），但先强制触发清扫
+        d.sweep_now();
+        assert!(
+            !d.state.contains_key("recovered.example"),
+            "fully reset entry is equivalent to absent and must be collected"
+        );
     }
 }
