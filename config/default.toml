@@ -133,6 +133,18 @@ endpoint = "https://search.parallel.ai/mcp"
 api_key = ""  # Set via CRAWLRS__SEARCH__FALLBACK__TAVILY__API_KEY
 endpoint = "https://api.tavily.com"
 
+# Single-engine path credentials (SearchClient, engine="exa" / engine="tavily")
+# Registered only when api_key is set; unset keys are skipped at startup (info log)
+[search.exa]
+# Set via CRAWLRS__SEARCH__EXA__API_KEY
+# api_key defaults to None
+# base_url = ""  # Optional endpoint override, set via CRAWLRS__SEARCH__EXA__BASE_URL
+
+[search.tavily]
+# Set via CRAWLRS__SEARCH__TAVILY__API_KEY
+# api_key defaults to None
+# base_url = ""  # Optional base URL override, set via CRAWLRS__SEARCH__TAVILY__BASE_URL
+
 # FlareSolverr Configuration (for Google search proxy)
 [search.flaresolverr]
 enabled = true

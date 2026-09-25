@@ -6,7 +6,7 @@
 
 use super::{ResponseItem, SearchEngineType};
 use once_cell::sync::Lazy;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 
 use super::shared_utils::{escape_html_text, safe_parse_selector};
 
@@ -145,17 +145,17 @@ impl HtmlParser {
             }
 
             // Extract URL
-            let url = {
-                let mut found_url = String::new();
-                if let Some(a) = element.select(&self.link_selector).next() {
-                    if let Some(href) = a.value().attr("href") {
-                        if !href.is_empty() {
-                            found_url = Self::clean_url(href);
-                        }
-                    }
+            let mut url = String::new();
+            if let Some(a) = element.select(&self.link_selector).next() {
+                let raw_href = a.value().attr("href").unwrap_or("");
+                if !raw_href.is_empty() {
+                    url = if engine == SearchEngineType::Baidu {
+                        self.resolve_baidu_url(raw_href, &element)
+                    } else {
+                        Self::clean_url(raw_href)
+                    };
                 }
-                found_url
-            };
+            }
 
             if url.is_empty() || !url.starts_with("http") {
                 continue;
@@ -188,6 +188,42 @@ impl HtmlParser {
         }
 
         results
+    }
+
+    /// 解析百度结果锚点的最终 URL（仅 `SearchEngineType::Baidu` 路径调用）。
+    ///
+    /// 百度桌面版结果 href 常为 `www.baidu.com/link?url=<id>` 中转形态，真实
+    /// URL 有时由结果块内锚点的 `mu`、`data-url` 属性携带。按成本分层解包：
+    /// 1. 中转形态时优先读 `mu` → `data-url` 属性，取首个 http(s) 值（零网络成本）；
+    /// 2. 属性不可得时保留中转链接，不做网络跟随：`EngineClient::scrape` 是
+    ///    异步全页抓取语义（跟随 302 只会拿到目标页 HTML，无法单独取得
+    ///    Location 头），而 parse 路径为同步函数——逐条跟随中转意味着对每个
+    ///    外部站点发起完整抓取，成本与反爬风险不成比例。保留原链接保证结果
+    ///    不丢失，仅跨引擎去重时该条退化为未命中（tn=json 兜底路径返回的
+    ///    是真实 URL，可部分弥补）。
+    fn resolve_baidu_url(&self, raw_href: &str, element: &ElementRef) -> String {
+        let is_redirect =
+            raw_href.starts_with("/link?url=") || raw_href.contains("baidu.com/link?url=");
+        if !is_redirect {
+            return Self::clean_url(raw_href);
+        }
+
+        for attr in ["mu", "data-url"] {
+            if let Some(real_url) = element
+                .select(&self.link_selector)
+                .filter_map(|a| a.value().attr(attr))
+                .map(str::trim)
+                .find(|v| v.starts_with("http"))
+            {
+                return real_url.to_string();
+            }
+        }
+
+        if raw_href.starts_with("/link?url=") {
+            // 相对中转链接补全主机，避免进入 clean_url 被误加 google 前缀
+            return format!("https://www.baidu.com{}", raw_href);
+        }
+        raw_href.to_string()
     }
 
     /// Clean and normalize URLs
@@ -518,6 +554,134 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Baidu Result");
         assert_eq!(results[0].engine, SearchEngineType::Baidu);
+    }
+
+    // ========== 百度中转链接（link?url=）解包测试 ==========
+
+    #[test]
+    fn test_parse_baidu_redirect_unwraps_mu_attribute() {
+        // 锚点/结果块带 mu 属性时解包出真实 URL（零网络成本路径）
+        let parser = HtmlParser::baidu();
+        let html = r#"
+        <html><body>
+            <div class="c-container">
+                <h3><a href="https://www.baidu.com/link?url=abc123" mu="https://example.com/real">Baidu Result</a></h3>
+                <div class="c-abstract">snippet</div>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Baidu);
+        assert_eq!(results.len(), 1, "unwrapped result must not be dropped");
+        assert_eq!(results[0].url, "https://example.com/real");
+        assert_eq!(results[0].title, "Baidu Result");
+    }
+
+    #[test]
+    fn test_parse_baidu_redirect_unwraps_mu_on_sibling_anchor() {
+        // mu 属性不在标题锚上而在结果块内其他锚点时同样可解包（sogou data-url 先例模式）
+        let parser = HtmlParser::baidu();
+        let html = r#"
+        <html><body>
+            <div class="c-container">
+                <h3><a href="https://www.baidu.com/link?url=abc123">Baidu Result</a></h3>
+                <a href="https://www.baidu.com/link?url=abc123" mu="https://example.com/sibling">site</a>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Baidu);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/sibling");
+    }
+
+    #[test]
+    fn test_parse_baidu_redirect_falls_back_to_data_url() {
+        // 无 mu 属性时回退到 data-url 属性
+        let parser = HtmlParser::baidu();
+        let html = r#"
+        <html><body>
+            <div class="c-container">
+                <h3><a href="https://www.baidu.com/link?url=abc123" data-url="https://example.com/from-data-url">Baidu Result</a></h3>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Baidu);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/from-data-url");
+    }
+
+    #[test]
+    fn test_parse_baidu_redirect_kept_when_no_attributes() {
+        // 无任何真实 URL 属性：保留中转链接（不跟随 302，不丢结果）
+        let parser = HtmlParser::baidu();
+        let html = r#"
+        <html><body>
+            <div class="c-container">
+                <h3><a href="https://www.baidu.com/link?url=abc123">Baidu Result</a></h3>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Baidu);
+        assert_eq!(results.len(), 1, "redirect link must not be dropped");
+        assert_eq!(results[0].url, "https://www.baidu.com/link?url=abc123");
+    }
+
+    #[test]
+    fn test_parse_baidu_redirect_ignores_non_http_attribute() {
+        // 属性值非 http(s) 开头不可信：回退保留中转链接
+        let parser = HtmlParser::baidu();
+        let html = r#"
+        <html><body>
+            <div class="c-container">
+                <h3><a href="https://www.baidu.com/link?url=abc123" mu="javascript:alert(1)">Baidu Result</a></h3>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Baidu);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://www.baidu.com/link?url=abc123");
+    }
+
+    #[test]
+    fn test_parse_baidu_relative_redirect_gets_baidu_host() {
+        // 相对形态 /link?url= 补全为百度主机，不被 clean_url 误加 google 前缀
+        let parser = HtmlParser::baidu();
+        let html = r#"
+        <html><body>
+            <div class="c-container">
+                <h3><a href="/link?url=abc123">Baidu Result</a></h3>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Baidu);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://www.baidu.com/link?url=abc123");
+    }
+
+    #[test]
+    fn test_parse_baidu_normal_url_untouched() {
+        // 普通真实 URL 不受解包逻辑影响
+        let parser = HtmlParser::baidu();
+        let html = r#"
+        <html><body>
+            <div class="c-container">
+                <h3><a href="https://example.com/plain">Baidu Result</a></h3>
+            </div>
+            <div class="c-container">
+                <h3><a href="http://example.org/another" mu="https://ignored.example/">Baidu Result 2</a></h3>
+            </div>
+        </body></html>
+        "#;
+
+        let results = parser.parse(html, SearchEngineType::Baidu);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].url, "https://example.com/plain");
+        assert_eq!(results[1].url, "http://example.org/another");
     }
 
     // ========== UserAgentManager 补充测试 ==========

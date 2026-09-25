@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::config::SearchSettings;
 use crate::engines::engine_client::EngineClient;
 use std::sync::Arc;
 
@@ -67,7 +68,15 @@ impl SearchClient {
             default_engine: default_engine_type(),
         };
 
-        // Register all supported search engines
+        Self::register_default_engines(&mut inner, &engine_client);
+
+        SearchClient {
+            inner: Arc::new(inner),
+        }
+    }
+
+    /// Register the built-in scraping-backed engines (bing/baidu/sogou).
+    fn register_default_engines(inner: &mut SearchClientInner, engine_client: &Arc<EngineClient>) {
         inner
             .engines
             .push(Arc::new(BingSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
@@ -76,7 +85,86 @@ impl SearchClient {
             .push(Arc::new(BaiduSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
         inner
             .engines
-            .push(Arc::new(SogouSearchEngine::new(engine_client)) as Arc<dyn SearchEngine>);
+            .push(Arc::new(SogouSearchEngine::new(engine_client.clone())) as Arc<dyn SearchEngine>);
+    }
+
+    /// Create a SearchClient with engines assembled from [`SearchSettings`].
+    ///
+    /// 始终注册内置引擎（bing/baidu/sogou）；API 引擎（exa/tavily）仅在配置了
+    /// 非空 `api_key` 时注册：
+    ///
+    /// - Exa: `search.exa.api_key`（env: `CRAWLRS__SEARCH__EXA__API_KEY`）
+    /// - Tavily: `search.tavily.api_key`（env: `CRAWLRS__SEARCH__TAVILY__API_KEY`）
+    ///
+    /// 未配置凭据不是错误——跳过注册并输出 info 日志；此后显式请求
+    /// `engine="exa"` / `engine="tavily"` 会得到 `SearchError::NoEngineAvailable`。
+    pub fn with_configured_engines(
+        engine_client: Arc<EngineClient>,
+        http_client: Arc<reqwest::Client>,
+        settings: &SearchSettings,
+    ) -> Self {
+        let mut inner = SearchClientInner {
+            engines: Vec::new(),
+            default_engine: default_engine_type(),
+        };
+
+        Self::register_default_engines(&mut inner, &engine_client);
+
+        match settings
+            .exa
+            .api_key()
+            .filter(|key| !key.trim().is_empty())
+        {
+            Some(api_key) => {
+                let mut config = ExaConfig {
+                    api_key: api_key.to_string(),
+                    ..ExaConfig::default()
+                };
+                if let Some(base_url) = settings
+                    .exa
+                    .base_url()
+                    .filter(|url| !url.trim().is_empty())
+                {
+                    config.endpoint = base_url.to_string();
+                }
+                inner.engines.push(Arc::new(ExaSearchEngine::new(
+                    http_client.as_ref().clone(),
+                    config,
+                )) as Arc<dyn SearchEngine>);
+                log::info!("Exa engine registered (engine=\"exa\")");
+            }
+            None => log::info!(
+                "Exa engine skipped: api_key not configured (set CRAWLRS__SEARCH__EXA__API_KEY to enable engine=\"exa\")"
+            ),
+        }
+
+        match settings
+            .tavily
+            .api_key()
+            .filter(|key| !key.trim().is_empty())
+        {
+            Some(api_key) => {
+                let mut config = TavilyConfig {
+                    api_key: api_key.to_string(),
+                    ..TavilyConfig::default()
+                };
+                if let Some(base_url) = settings
+                    .tavily
+                    .base_url()
+                    .filter(|url| !url.trim().is_empty())
+                {
+                    config.endpoint = base_url.to_string();
+                }
+                inner.engines.push(Arc::new(TavilySearchEngine::new(
+                    http_client.as_ref().clone(),
+                    config,
+                )) as Arc<dyn SearchEngine>);
+                log::info!("Tavily engine registered (engine=\"tavily\")");
+            }
+            None => log::info!(
+                "Tavily engine skipped: api_key not configured (set CRAWLRS__SEARCH__TAVILY__API_KEY to enable engine=\"tavily\")"
+            ),
+        }
 
         SearchClient {
             inner: Arc::new(inner),
@@ -378,6 +466,140 @@ mod tests {
             make_mock_items(SearchEngineType::Bing, 1),
         )));
         assert_eq!(client.inner.engines.len(), 2);
+    }
+
+    // ========== with_configured_engines tests ==========
+
+    fn build_configured_client(settings: &SearchSettings) -> SearchClient {
+        let engine_client = Arc::new(EngineClient::new());
+        let http_client = Arc::new(reqwest::Client::new());
+        SearchClient::with_configured_engines(engine_client, http_client, settings)
+    }
+
+    fn registered_engine_types(client: &SearchClient) -> Vec<SearchEngineType> {
+        client
+            .inner
+            .engines
+            .iter()
+            .map(|e| e.engine_type())
+            .collect()
+    }
+
+    #[test]
+    fn test_with_configured_engines_without_api_keys_skips_exa_and_tavily() {
+        let client = build_configured_client(&SearchSettings::default());
+        let types = registered_engine_types(&client);
+
+        assert_eq!(
+            client.inner.engines.len(),
+            3,
+            "only bing/baidu/sogou should be registered without api keys"
+        );
+        assert!(
+            !types.contains(&SearchEngineType::Exa),
+            "exa should not be registered without api_key"
+        );
+        assert!(
+            !types.contains(&SearchEngineType::Tavily),
+            "tavily should not be registered without api_key"
+        );
+    }
+
+    #[test]
+    fn test_with_configured_engines_with_exa_api_key_registers_exa() {
+        let mut settings = SearchSettings::default();
+        settings.exa.api_key = Some("test-exa-key".to_string());
+
+        let client = build_configured_client(&settings);
+        let types = registered_engine_types(&client);
+
+        assert_eq!(client.inner.engines.len(), 4);
+        assert!(
+            types.contains(&SearchEngineType::Exa),
+            "exa should be registered when api_key is configured"
+        );
+        // SearchCommand::with_engine("exa") 依赖 from_name 解析路径
+        assert_eq!(
+            SearchEngineType::from_name("exa"),
+            Some(SearchEngineType::Exa)
+        );
+    }
+
+    #[test]
+    fn test_with_configured_engines_with_tavily_api_key_registers_tavily() {
+        let mut settings = SearchSettings::default();
+        settings.tavily.api_key = Some("test-tavily-key".to_string());
+
+        let client = build_configured_client(&settings);
+        let types = registered_engine_types(&client);
+
+        assert_eq!(client.inner.engines.len(), 4);
+        assert!(
+            types.contains(&SearchEngineType::Tavily),
+            "tavily should be registered when api_key is configured"
+        );
+        assert_eq!(
+            SearchEngineType::from_name("tavily"),
+            Some(SearchEngineType::Tavily)
+        );
+    }
+
+    #[test]
+    fn test_with_configured_engines_with_both_api_keys_registers_all() {
+        let mut settings = SearchSettings::default();
+        settings.exa.api_key = Some("test-exa-key".to_string());
+        settings.tavily.api_key = Some("test-tavily-key".to_string());
+
+        let client = build_configured_client(&settings);
+        let types = registered_engine_types(&client);
+
+        assert_eq!(client.inner.engines.len(), 5);
+        assert!(types.contains(&SearchEngineType::Exa));
+        assert!(types.contains(&SearchEngineType::Tavily));
+    }
+
+    #[test]
+    fn test_with_configured_engines_empty_api_key_string_skips_registration() {
+        let mut settings = SearchSettings::default();
+        settings.exa.api_key = Some(String::new());
+        settings.tavily.api_key = Some("   ".to_string());
+
+        let client = build_configured_client(&settings);
+
+        assert_eq!(
+            client.inner.engines.len(),
+            3,
+            "blank api_key should be treated as not configured"
+        );
+        assert!(!registered_engine_types(&client).contains(&SearchEngineType::Exa));
+        assert!(!registered_engine_types(&client).contains(&SearchEngineType::Tavily));
+    }
+
+    #[tokio::test]
+    async fn test_with_engine_exa_unregistered_returns_no_engine_available() {
+        let client = build_configured_client(&SearchSettings::default());
+
+        // with_engine("exa") 解析为 Some(Exa)，但引擎未注册 → 显性 NoEngineAvailable
+        let result = client.search("test").with_engine("exa").execute().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchError::NoEngineAvailable => {}
+            other => panic!("Expected NoEngineAvailable, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_with_engine_tavily_unregistered_returns_no_engine_available() {
+        let client = build_configured_client(&SearchSettings::default());
+
+        let result = client
+            .search_with_engine("test", SearchEngineType::Tavily)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SearchError::NoEngineAvailable => {}
+            other => panic!("Expected NoEngineAvailable, got {:?}", other),
+        }
     }
 
     // ========== search_with_engine tests ==========

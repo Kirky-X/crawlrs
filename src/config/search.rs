@@ -63,8 +63,94 @@ pub struct SearchSettings {
     #[config(default = 50)]
     pub max_results: u32,
 
+    /// Exa 引擎凭据配置（SearchClient 单引擎路径装配）
+    ///
+    /// `serde(default)` 兼容旧 config/default.toml 缺键（同 robots.fail_closed 先例）。
+    #[serde(default)]
+    pub exa: ExaEngineSettings,
+
+    /// Tavily 引擎凭据配置（SearchClient 单引擎路径装配）
+    ///
+    /// `serde(default)` 兼容旧 config/default.toml 缺键（同 robots.fail_closed 先例）。
+    #[serde(default)]
+    pub tavily: TavilyEngineSettings,
+
     /// Fallback 搜索引擎配置
     pub fallback: SearchFallbackConfig,
+}
+
+/// Exa 引擎凭据配置
+///
+/// SearchClient 单引擎路径（engine="exa" 显式调用）的装配凭据。
+/// `api_key` 未配置时 SearchClient 跳过注册 Exa 引擎（fallback 路径不受影响）。
+///
+/// # 安全提示
+///
+/// `api_key` 字段包含 Exa API 密钥，泄露可能导致未经授权的访问。
+/// 该字段仅对 crate 可见，外部模块应使用 `api_key()` 方法访问。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__SEARCH__EXA__")]
+pub struct ExaEngineSettings {
+    /// Exa API Key (敏感信息)
+    /// 注意：此字段包含敏感信息，仅 crate 内部可访问
+    pub(crate) api_key: Option<String>,
+
+    /// Exa MCP 端点 URL 覆盖（留空使用引擎内置默认端点）
+    pub(crate) base_url: Option<String>,
+}
+
+impl ExaEngineSettings {
+    /// 获取 Exa API 密钥
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回 Exa API 密钥，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn api_key(&self) -> Option<&str> {
+        self.api_key.as_deref()
+    }
+
+    /// 获取 Exa MCP 端点 URL 覆盖
+    pub fn base_url(&self) -> Option<&str> {
+        self.base_url.as_deref()
+    }
+}
+
+/// Tavily 引擎凭据配置
+///
+/// SearchClient 单引擎路径（engine="tavily" 显式调用）的装配凭据。
+/// `api_key` 未配置时 SearchClient 跳过注册 Tavily 引擎（fallback 路径不受影响）。
+///
+/// # 安全提示
+///
+/// `api_key` 字段包含 Tavily API 密钥，泄露可能导致未经授权的访问。
+/// 该字段仅对 crate 可见，外部模块应使用 `api_key()` 方法访问。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__SEARCH__TAVILY__")]
+pub struct TavilyEngineSettings {
+    /// Tavily API Key (敏感信息)
+    /// 注意：此字段包含敏感信息，仅 crate 内部可访问
+    pub(crate) api_key: Option<String>,
+
+    /// Tavily API 基础 URL 覆盖（留空使用引擎内置默认端点）
+    pub(crate) base_url: Option<String>,
+}
+
+impl TavilyEngineSettings {
+    /// 获取 Tavily API 密钥
+    ///
+    /// # 安全提示
+    ///
+    /// 此方法返回 Tavily API 密钥，调用者应谨慎处理，
+    /// 不要记录到日志或暴露给用户。
+    pub fn api_key(&self) -> Option<&str> {
+        self.api_key.as_deref()
+    }
+
+    /// 获取 Tavily API 基础 URL 覆盖
+    pub fn base_url(&self) -> Option<&str> {
+        self.base_url.as_deref()
+    }
 }
 
 /// Fallback 搜索引擎配置
@@ -266,6 +352,8 @@ mod tests {
             max_retries: 10,
             retry_delay_ms: 2000,
             max_results: 100,
+            exa: ExaEngineSettings::default(),
+            tavily: TavilyEngineSettings::default(),
             fallback: SearchFallbackConfig::default(),
         };
         let json = serde_json::to_string(&settings).expect("serialize");
@@ -290,6 +378,8 @@ mod tests {
             max_retries: 5,
             retry_delay_ms: 500,
             max_results: 75,
+            exa: ExaEngineSettings::default(),
+            tavily: TavilyEngineSettings::default(),
             fallback: SearchFallbackConfig::default(),
         };
         let cloned = settings.clone();
@@ -371,5 +461,111 @@ mod tests {
         let settings = SearchSettings::default();
         assert!(!settings.fallback.enabled);
         assert_eq!(settings.fallback.engines.len(), 3);
+    }
+
+    // ========== ExaEngineSettings tests ==========
+
+    #[test]
+    fn test_exa_engine_settings_default_is_none() {
+        let settings = ExaEngineSettings::default();
+        assert!(
+            settings.api_key().is_none(),
+            "default exa api_key should be None"
+        );
+        assert!(
+            settings.base_url().is_none(),
+            "default exa base_url should be None"
+        );
+    }
+
+    #[test]
+    fn test_exa_engine_settings_accessors_return_values() {
+        let settings = ExaEngineSettings {
+            api_key: Some("secret-exa-key".to_string()),
+            base_url: Some("https://mcp.example.com/mcp".to_string()),
+        };
+        assert_eq!(settings.api_key(), Some("secret-exa-key"));
+        assert_eq!(settings.base_url(), Some("https://mcp.example.com/mcp"));
+    }
+
+    #[test]
+    fn test_exa_engine_settings_serde_roundtrip() {
+        let settings = ExaEngineSettings {
+            api_key: Some("key-456".to_string()),
+            base_url: None,
+        };
+        let json = serde_json::to_string(&settings).expect("serialize");
+        let back: ExaEngineSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.api_key(), Some("key-456"));
+        assert!(back.base_url().is_none());
+    }
+
+    #[test]
+    fn test_exa_engine_settings_missing_env_key_deserializes_to_none() {
+        // 模拟旧配置/环境未注入 api_key 的场景：空对象应反序列化为 None
+        let back: ExaEngineSettings = serde_json::from_str("{}").expect("deserialize");
+        assert!(back.api_key().is_none());
+        assert!(back.base_url().is_none());
+    }
+
+    // ========== TavilyEngineSettings tests ==========
+
+    #[test]
+    fn test_tavily_engine_settings_default_is_none() {
+        let settings = TavilyEngineSettings::default();
+        assert!(
+            settings.api_key().is_none(),
+            "default tavily api_key should be None"
+        );
+        assert!(
+            settings.base_url().is_none(),
+            "default tavily base_url should be None"
+        );
+    }
+
+    #[test]
+    fn test_tavily_engine_settings_accessors_return_values() {
+        let settings = TavilyEngineSettings {
+            api_key: Some("secret-tavily-key".to_string()),
+            base_url: Some("https://api.example.com".to_string()),
+        };
+        assert_eq!(settings.api_key(), Some("secret-tavily-key"));
+        assert_eq!(settings.base_url(), Some("https://api.example.com"));
+    }
+
+    #[test]
+    fn test_tavily_engine_settings_serde_roundtrip() {
+        let settings = TavilyEngineSettings {
+            api_key: Some("key-789".to_string()),
+            base_url: Some("https://api.tavily.com".to_string()),
+        };
+        let json = serde_json::to_string(&settings).expect("serialize");
+        let back: TavilyEngineSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.api_key(), Some("key-789"));
+        assert_eq!(back.base_url(), Some("https://api.tavily.com"));
+    }
+
+    // ========== SearchSettings exa/tavily integration tests ==========
+
+    #[test]
+    fn test_search_settings_default_engine_credentials_are_none() {
+        let settings = SearchSettings::default();
+        assert!(
+            settings.exa.api_key().is_none(),
+            "default SearchSettings should not configure exa api_key"
+        );
+        assert!(
+            settings.tavily.api_key().is_none(),
+            "default SearchSettings should not configure tavily api_key"
+        );
+    }
+
+    #[test]
+    fn test_search_settings_serde_roundtrip_preserves_none_credentials() {
+        let settings = SearchSettings::default();
+        let json = serde_json::to_string(&settings).expect("serialize");
+        let back: SearchSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(back.exa.api_key().is_none());
+        assert!(back.tavily.api_key().is_none());
     }
 }

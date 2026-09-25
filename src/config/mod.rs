@@ -29,7 +29,7 @@ pub use engines::{
 pub use logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 
 pub use search::BingSearchSettings;
-pub use search::SearchSettings;
+pub use search::{ExaEngineSettings, SearchSettings, TavilyEngineSettings};
 
 pub use llm::LLMSettings;
 

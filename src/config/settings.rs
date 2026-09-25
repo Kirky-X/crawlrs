@@ -23,7 +23,8 @@ pub use super::llm::LLMSettings;
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 pub use super::rag::RagSettings;
 pub use super::search::{
-    BingSearchSettings, FallbackEngineConfig, SearchFallbackConfig, SearchSettings,
+    BingSearchSettings, ExaEngineSettings, FallbackEngineConfig, SearchFallbackConfig,
+    SearchSettings, TavilyEngineSettings,
 };
 
 // =============================================================================

@@ -875,8 +875,13 @@ pub async fn init_services(
         init_search_engine(engine_client.clone(), settings);
 
     // Initialize search client (wraps search engines)
+    // 按配置装配引擎：bing/baidu/sogou 恒注册；exa/tavily 配置了 api_key 才注册
     let search_client: Arc<dyn SearchClientTrait> = Arc::new(
-        crate::search::client::SearchClient::new(engine_client.clone()),
+        crate::search::client::SearchClient::with_configured_engines(
+            engine_client.clone(),
+            http_client.clone(),
+            &settings.search,
+        ),
     );
 
     // RAG 能力组件（默认全关：rag.enabled = false 时 provider 全 None，零开销）。

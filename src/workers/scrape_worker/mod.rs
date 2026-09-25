@@ -421,7 +421,7 @@ impl ScrapeWorker {
         //   2) build_scrape_request_from_dto(&dto) 复用 dto 构造 ScrapeRequest（零额外解析）
         //   3) handle_scrape_success(&task, dto.as_ref(), &response) 复用 dto 引用（零额外解析）
         // → 每次抓取 clone + 解析 payload 1 次。
-        let (scrape_request_dto, scrape_request) = match Self::parse_scrape_request_dto(&task) {
+        let (scrape_request_dto, mut scrape_request) = match Self::parse_scrape_request_dto(&task) {
             Ok(dto) => {
                 let req = match Self::build_scrape_request_from_dto(&dto) {
                     Ok(r) => r,
@@ -520,6 +520,45 @@ impl ScrapeWorker {
         // `AIMDController::record_*` 并经 `AdaptiveSemaphore::set_target` 推入新 target。
         // guard 在 match 块作用域结束时 Drop，确保先广播给等待方再释放。
 
+        // 增量抓取（scoped 切片）：`conditional_request=true` 且同任务已有
+        // 带验证器的历史结果时，把 If-None-Match / If-Modified-Since 合并进
+        // 请求头发起条件请求；`304` 时复用历史结果内容（见下方短路分支）。
+        // 历史查询失败降级为无条件抓取（warn 显性化，不阻塞抓取）。
+        let mut prior_result: Option<crate::domain::models::ScrapeResult> = None;
+        let conditional_enabled = scrape_request_dto
+            .as_ref()
+            .and_then(|d| d.options.as_ref())
+            .and_then(|o| o.conditional_request)
+            .unwrap_or(false);
+        if conditional_enabled {
+            match self.result_repository.find_by_task_id(task.id).await {
+                Ok(Some(prior)) => {
+                    if let Some((etag, last_modified)) = extract_cache_validators(&prior.headers) {
+                        if !etag.is_empty() {
+                            scrape_request
+                                .options
+                                .headers
+                                .insert("If-None-Match".to_string(), etag);
+                        }
+                        if let Some(lm) = last_modified.filter(|m| !m.is_empty()) {
+                            scrape_request
+                                .options
+                                .headers
+                                .insert("If-Modified-Since".to_string(), lm);
+                        }
+                        prior_result = Some(prior);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    warn!(
+                        "Conditional request: prior result lookup failed for task {},                          degrading to unconditional fetch: {}",
+                        task.id, e
+                    );
+                }
+            }
+        }
+
         // 高级缓存模式门控
         //
         // 构造 `CacheContext`，按 `cache_mode` 决定读写行为：
@@ -606,6 +645,33 @@ impl ScrapeWorker {
         match response {
             Ok(response) => {
                 self.team_semaphore.record_success(task.team_id);
+
+                // 304 短路：目标站确认内容未变，复用历史结果内容回填 200 响应，
+                // 省去重复传输与重新提取。无历史结果可回填时为协议异常（304
+                // 必然对应我们发出的条件请求），显性置 Failed 不返回空正文。
+                let response = if response.status_code == 304 {
+                    match prior_result {
+                        Some(ref prior) => {
+                            info!(
+                                "Task {} got 304 Not Modified, reusing prior result ({} bytes)",
+                                task.id,
+                                prior.content.len()
+                            );
+                            not_modified_response(prior, &response)
+                        }
+                        None => {
+                            error!(
+                                "Task {} got 304 without prior result to reuse, marking failed",
+                                task.id
+                            );
+                            self.handle_failure(&mut task).await?;
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    response
+                };
+
                 debug!("status_code: {}", response.status_code);
                 info!("Scrape successful, status: {}", response.status_code);
 
@@ -1374,6 +1440,163 @@ impl ScrapeWorker {
 ///
 /// 与 create_scrape use-case 层保持一致：毫秒数映射为 `DomStable`（DOM
 /// 连续该时长无变化视为就绪）。`None` → `None`（引擎回落 NetworkIdle 默认）。
+/// 增量抓取（scoped 切片）：从历史结果 headers JSON 提取缓存验证器
+///
+/// 返回 `(etag, last_modified)`——均为响应头原文，大小写不敏感匹配键名
+/// （上游服务器发送 `ETag`/`etag` 均有可能）。两个验证器都缺失时返回
+/// `None`（无法发起条件请求）。
+fn extract_cache_validators(headers: &serde_json::Value) -> Option<(String, Option<String>)> {
+    let map = headers.as_object()?;
+    let lookup = |name: &str| {
+        map.iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .and_then(|(_, v)| v.as_str())
+            .map(str::to_string)
+    };
+    let etag = lookup("etag");
+    let last_modified = lookup("last-modified");
+    if etag.is_some() || last_modified.is_some() {
+        Some((etag.unwrap_or_default(), last_modified))
+    } else {
+        None
+    }
+}
+
+/// 增量抓取（scoped 切片）：304 响应合成——用历史结果内容回填 200 响应，
+/// 附加 `x-crawlrs-not-modified: true` 标记头。下游（提取/落库/webhook）
+/// 走常规路径，无感知 304 语义。
+fn not_modified_response(
+    prior: &crate::domain::models::ScrapeResult,
+    response: &ScrapeResponse,
+) -> ScrapeResponse {
+    let mut headers = response.headers.clone();
+    headers.insert("x-crawlrs-not-modified".to_string(), "true".to_string());
+    // 历史结果的响应头一并回填（客户端可读到原始 ETag 等）
+    for (k, v) in prior.headers.as_object().into_iter().flatten() {
+        if let Some(v_str) = v.as_str() {
+            headers
+                .entry(k.clone())
+                .or_insert_with(|| v_str.to_string());
+        }
+    }
+    ScrapeResponse {
+        content: prior.content.clone(),
+        status_code: 200,
+        screenshot: None,
+        content_type: prior.content_type.clone(),
+        headers,
+        response_time_ms: response.response_time_ms,
+        final_url: response.final_url.clone(),
+        markdown: None,
+    }
+}
+
+/// 单测锚点：纯函数模块级可测（无 worker 依赖）
+#[cfg(test)]
+mod incremental_scrape_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extract_validators_reads_etag_and_last_modified_case_insensitive() {
+        let headers =
+            json!({"ETag": "\"abc123\"", "Last-Modified": "Wed, 24 Sep 2026 08:00:00 GMT"});
+        let (etag, lm) = extract_cache_validators(&headers).expect("validators present");
+        assert_eq!(etag, "\"abc123\"");
+        assert_eq!(lm.as_deref(), Some("Wed, 24 Sep 2026 08:00:00 GMT"));
+
+        // 小写键名（部分代理/引擎会规范化）
+        let headers = json!({"etag": "\"x\"", "last-modified": "Wed, 24 Sep 2026 09:00:00 GMT"});
+        let (etag, _) = extract_cache_validators(&headers).expect("lowercase keys");
+        assert_eq!(etag, "\"x\"");
+    }
+
+    #[test]
+    fn extract_validators_none_when_missing() {
+        assert!(extract_cache_validators(&json!({"content-type": "text/html"})).is_none());
+        assert!(extract_cache_validators(&serde_json::Value::Null).is_none());
+        assert!(extract_cache_validators(&json!("not an object")).is_none());
+    }
+
+    #[test]
+    fn not_modified_response_reuses_prior_content_with_marker() {
+        use crate::domain::models::ScrapeResult;
+        let prior = ScrapeResult {
+            id: uuid::Uuid::new_v4(),
+            task_id: uuid::Uuid::new_v4(),
+            url: "https://example.com/a".to_string(),
+            status_code: 200,
+            content: "<html>original body</html>".to_string(),
+            content_type: "text/html".to_string(),
+            headers: json!({"etag": "\"v1\"", "content-type": "text/html"}),
+            meta_data: serde_json::Value::Null,
+            screenshot: None,
+            response_time_ms: 42,
+            created_at: chrono::Utc::now(),
+        };
+        let not_modified = ScrapeResponse {
+            status_code: 304,
+            content: String::new(),
+            content_type: String::new(),
+            headers: {
+                let mut h = std::collections::HashMap::new();
+                h.insert("etag".to_string(), "\"v1\"".to_string());
+                h
+            },
+            screenshot: None,
+            response_time_ms: 5,
+            final_url: None,
+            markdown: None,
+        };
+
+        let reused = not_modified_response(&prior, &not_modified);
+        assert_eq!(reused.status_code, 200, "304 must be rewritten as 200");
+        assert_eq!(reused.content, "<html>original body</html>");
+        assert_eq!(reused.content_type, "text/html");
+        assert_eq!(
+            reused
+                .headers
+                .get("x-crawlrs-not-modified")
+                .map(String::as_str),
+            Some("true"),
+            "not-modified marker must be present"
+        );
+        // 历史响应头回填（客户端可读原始 ETag）
+        assert_eq!(
+            reused.headers.get("etag").map(String::as_str),
+            Some("\"v1\"")
+        );
+    }
+
+    #[test]
+    fn conditional_request_dto_deserializes_all_branches() {
+        use crate::application::dto::scrape_request::ScrapeRequestDto;
+        let on: ScrapeRequestDto = serde_json::from_value(
+            json!({"url": "https://x.com", "options": {"conditional_request": true}}),
+        )
+        .expect("valid");
+        assert_eq!(
+            on.options.as_ref().and_then(|o| o.conditional_request),
+            Some(true)
+        );
+        let off: ScrapeRequestDto = serde_json::from_value(
+            json!({"url": "https://x.com", "options": {"conditional_request": false}}),
+        )
+        .expect("valid");
+        assert_eq!(
+            off.options.as_ref().and_then(|o| o.conditional_request),
+            Some(false)
+        );
+        let absent: ScrapeRequestDto =
+            serde_json::from_value(json!({"url": "https://x.com"})).expect("valid");
+        assert_eq!(
+            absent.options.as_ref().and_then(|o| o.conditional_request),
+            None,
+            "field absent must default to None (disabled)"
+        );
+    }
+}
+
 fn map_wait_for(ms: Option<u64>) -> Option<WaitFor> {
     // 复查 H3：钳制到 10s（引擎侧 WAIT_TIMEOUT_CAP）——DTO 允许 ≤60000ms，
     // 但 stable_duration 超过等待预算时 DomStable 数学上不可能满足，

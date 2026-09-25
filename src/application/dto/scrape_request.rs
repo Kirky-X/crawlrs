@@ -165,6 +165,14 @@ pub struct ScrapeOptionsDto {
     /// 命中 Disallow 时任务置 Failed（error 可观测）；robots.txt 获取失败
     /// fail-open 放行（与 crawl 路径一致）。单页抓取不执行 Crawl-delay。
     pub respect_robots: Option<bool>,
+    /// 条件请求（增量抓取，scoped 切片）
+    ///
+    /// `Some(true)` 时 worker 查询同任务的历史结果，携带 `If-None-Match` /
+    /// `If-Modified-Since` 发起条件请求；目标站返回 `304` 时复用历史结果
+    /// 内容（响应头附 `x-crawlrs-not-modified: true`），不重复传输正文。
+    /// 历史结果缺验证器或查询失败时降级为无条件抓取。默认 `None`（关闭）。
+    #[serde(default)]
+    pub conditional_request: Option<bool>,
 }
 
 impl ScrapeOptionsDto {
