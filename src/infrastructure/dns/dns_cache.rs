@@ -5,8 +5,10 @@
 
 use crate::common::metrics_shim::counter;
 use crate::infrastructure::oxcache::{generate_dns_key, DnsCache, DnsCacheEntry};
+use dashmap::DashMap;
 use hickory_resolver::Resolver;
 use log::{debug, warn};
+use std::future::Future;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +19,9 @@ pub struct DnsCacheService {
     cache: Arc<DnsCache>,
     resolver: Resolver<hickory_resolver::net::runtime::TokioRuntimeProvider>,
     default_ttl: Duration,
+    /// per-key single-flight：在飞解析的 key → 锁。同 host 并发查询只放行一个
+    /// 调用者实际走系统解析，其余调用者等锁释放后直接读缓存，避免 thundering herd。
+    in_flight: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl DnsCacheService {
@@ -30,6 +35,7 @@ impl DnsCacheService {
             cache,
             resolver,
             default_ttl: Duration::from_secs(default_ttl_seconds),
+            in_flight: Arc::new(DashMap::new()),
         })
     }
 
@@ -75,37 +81,55 @@ impl DnsCacheService {
             }
         }
 
-        // 缓存未命中，执行DNS解析（hickory-resolver）
-        let lookup = self.resolver.lookup_ip(hostname).await.map_err(|e| {
-            std::io::Error::other(format!("DNS resolution failed for {}: {}", hostname, e))
-        })?;
-        let ips: Vec<IpAddr> = lookup.iter().collect();
-
-        if ips.is_empty() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("No IP addresses resolved for {}", hostname),
-            ));
-        }
-
-        // 存储到缓存
-        let entry = DnsCacheEntry {
-            ips: ips.clone(),
-            remaining_ttl_secs: self.default_ttl.as_secs(),
-        };
-
-        if let Err(e) = self.cache.set(&cache_key, &entry).await {
-            warn!("Failed to cache DNS result for {}: {}", cache_key, e);
-        } else {
-            debug!(
-                "Cached DNS result for {} with {} IPs, TTL: {}s",
-                cache_key,
-                ips.len(),
-                self.default_ttl.as_secs()
-            );
-        }
-
-        Ok(ips)
+        // 缓存未命中：per-key single-flight，同 host 并发查询只放行一个实际解析，
+        // 后来者等锁释放后 double-check 缓存命中即返回，不再各自走系统解析。
+        let resolver = &self.resolver;
+        let cache_for_check = Arc::clone(&self.cache);
+        let key_for_check = cache_key.clone();
+        let cache_for_store = Arc::clone(&self.cache);
+        let key_for_store = cache_key.clone();
+        let default_ttl_secs = self.default_ttl.as_secs();
+        resolve_single_flight(
+            &self.in_flight,
+            &cache_key,
+            move || async move {
+                cache_for_check
+                    .get(&key_for_check)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|entry| entry.ips)
+            },
+            move || async move {
+                let lookup = resolver.lookup_ip(hostname).await.map_err(|e| {
+                    std::io::Error::other(format!("DNS resolution failed for {}: {}", hostname, e))
+                })?;
+                let ips: Vec<IpAddr> = lookup.iter().collect();
+                if ips.is_empty() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("No IP addresses resolved for {}", hostname),
+                    ));
+                }
+                Ok(ips)
+            },
+            move |ips| async move {
+                let ip_count = ips.len();
+                let entry = DnsCacheEntry {
+                    ips,
+                    remaining_ttl_secs: default_ttl_secs,
+                };
+                if let Err(e) = cache_for_store.set(&key_for_store, &entry).await {
+                    warn!("Failed to cache DNS result for {}: {}", key_for_store, e);
+                } else {
+                    debug!(
+                        "Cached DNS result for {} with {} IPs, TTL: {}s",
+                        key_for_store, ip_count, default_ttl_secs
+                    );
+                }
+            },
+        )
+        .await
     }
 
     /// 获取缓存统计信息
@@ -151,6 +175,60 @@ impl DnsCacheService {
             debug!("Removed DNS cache for {}", cache_key);
         }
     }
+}
+
+/// per-key single-flight 执行器：同一 `key` 的并发解析只放行一个调用者实际执行。
+///
+/// 流程：抢 per-key 锁 → double-check 缓存（`cache_get` 返回 `Some` 即命中直接返回）
+/// → 未命中则执行 `resolve` 并经 `cache_store` 写回缓存 → 释放锁并清理在飞记录。
+/// 排队的后来者拿锁后 double-check 命中前一个调用者的结果，不再重复解析。
+///
+/// 缓存读取失败视为未命中（与 [`DnsCacheService::lookup_host`] 的既有语义一致）；
+/// `resolve` 失败同样清理在飞记录，保证后续调用者可重试，不会永久串行化该 host。
+async fn resolve_single_flight<G, GF, R, RF, S, SF>(
+    in_flight: &DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+    key: &str,
+    cache_get: G,
+    resolve: R,
+    cache_store: S,
+) -> Result<Vec<IpAddr>, std::io::Error>
+where
+    G: FnOnce() -> GF,
+    GF: Future<Output = Option<Vec<IpAddr>>>,
+    R: FnOnce() -> RF,
+    RF: Future<Output = Result<Vec<IpAddr>, std::io::Error>>,
+    S: FnOnce(Vec<IpAddr>) -> SF,
+    SF: Future<Output = ()>,
+{
+    // 获取（或创建）该 key 的在飞锁。DashMap 的 entry 守卫在块尾即释放，
+    // 绝不跨 await 持有；持锁期间也不再触碰 in_flight 的分片锁。
+    let key_lock = {
+        let entry = in_flight
+            .entry(key.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())));
+        Arc::clone(entry.value())
+    };
+
+    // 首个调用者持锁解析；后来者在此排队等待
+    let guard = key_lock.lock().await;
+
+    let result = match cache_get().await {
+        Some(ips) => Ok(ips),
+        None => {
+            let resolved = resolve().await;
+            if let Ok(ips) = &resolved {
+                cache_store(ips.clone()).await;
+            }
+            resolved
+        }
+    };
+
+    drop(guard);
+    // 仅当条目仍指向本次获取的锁实例时移除（窗口期内可能已被并发调用者重建），
+    // 避免每个查询过的 host 在 map 中永久残留一个锁条目。
+    in_flight.remove_if(&key.to_string(), |_, v| Arc::ptr_eq(v, &key_lock));
+
+    result
 }
 
 /// DNS缓存统计信息
@@ -494,5 +572,229 @@ mod tests {
         assert!(!ips.is_empty());
         let has_loopback = ips.iter().any(|ip| ip.is_loopback());
         assert!(has_loopback, "localhost should resolve to loopback");
+    }
+
+    // =========================================================================
+    // resolve_single_flight：per-key single-flight 行为
+    // hickory Resolver 为具体类型不可注入 fake，故按设计把 single-flight 逻辑
+    // 抽成独立函数，用计数 fake 缓存/解析器直接测试。
+    // =========================================================================
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// single-flight 独立测试用的 fake 缓存：Option<ips>
+    type FakeCache = Arc<tokio::sync::Mutex<Option<Vec<IpAddr>>>>;
+
+    fn new_in_flight() -> Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>> {
+        Arc::new(DashMap::new())
+    }
+
+    #[tokio::test]
+    async fn test_single_flight_ten_concurrent_callers_resolve_once() {
+        let in_flight = new_in_flight();
+        let cache: FakeCache = Arc::new(tokio::sync::Mutex::new(None));
+        let resolve_count = Arc::new(AtomicUsize::new(0));
+        let ips = vec![IpAddr::from([203, 0, 113, 77])];
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let in_flight = Arc::clone(&in_flight);
+            let cache_get = Arc::clone(&cache);
+            let cache_store = Arc::clone(&cache);
+            let resolve_count = Arc::clone(&resolve_count);
+            let expected = ips.clone();
+            handles.push(tokio::spawn(async move {
+                resolve_single_flight(
+                    &in_flight,
+                    "dns:fake.example:443",
+                    move || async move { cache_get.lock().await.clone() },
+                    move || async move {
+                        resolve_count.fetch_add(1, Ordering::SeqCst);
+                        // 模拟真实解析耗时，制造并发窗口
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        Ok(expected.clone())
+                    },
+                    move |resolved| async move {
+                        *cache_store.lock().await = Some(resolved);
+                    },
+                )
+                .await
+            }));
+        }
+
+        for handle in handles {
+            let got = handle
+                .await
+                .expect("task join failed")
+                .expect("single-flight call should succeed");
+            assert_eq!(got, ips, "所有调用者应拿到相同的解析结果");
+        }
+        assert_eq!(
+            resolve_count.load(Ordering::SeqCst),
+            1,
+            "同 key 并发 10 次查询只应实际解析 1 次"
+        );
+        assert!(in_flight.is_empty(), "完成后在飞记录应被清理");
+    }
+
+    #[tokio::test]
+    async fn test_single_flight_waiter_waits_for_lock_then_hits_cache_without_resolve() {
+        let in_flight = new_in_flight();
+        let cache: FakeCache = Arc::new(tokio::sync::Mutex::new(None));
+        let resolve_count = Arc::new(AtomicUsize::new(0));
+        let cached_ips = vec![IpAddr::from([198, 51, 100, 42])];
+
+        // 模拟"第一个调用者正在解析"：外部持有该 key 的在飞锁，结果已写入缓存
+        let key_lock = {
+            let entry = in_flight
+                .entry("dns:held.example:80".to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())));
+            Arc::clone(entry.value())
+        };
+        let guard = key_lock.lock().await;
+        *cache.lock().await = Some(cached_ips.clone());
+
+        // 第二个调用者：应阻塞在锁上，锁释放后 double-check 命中缓存，不再解析
+        let in_flight2 = Arc::clone(&in_flight);
+        let cache_get = Arc::clone(&cache);
+        let cache_store = Arc::clone(&cache);
+        let resolve_count2 = Arc::clone(&resolve_count);
+        let waiter = tokio::spawn(async move {
+            resolve_single_flight(
+                &in_flight2,
+                "dns:held.example:80",
+                move || async move { cache_get.lock().await.clone() },
+                move || async move {
+                    resolve_count2.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![IpAddr::from([203, 0, 113, 1])])
+                },
+                move |resolved| async move {
+                    *cache_store.lock().await = Some(resolved);
+                },
+            )
+            .await
+        });
+
+        // 锁仍被持有时，第二个调用者必须处于等待状态（未解析）
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            resolve_count.load(Ordering::SeqCst),
+            0,
+            "锁被持有时第二个调用者必须等待，不得自行解析"
+        );
+
+        drop(guard);
+        let got = waiter
+            .await
+            .expect("task join failed")
+            .expect("waiter should succeed via cache hit");
+        assert_eq!(got, cached_ips, "等待者应拿到第一个调用者写入缓存的结果");
+        assert_eq!(
+            resolve_count.load(Ordering::SeqCst),
+            0,
+            "缓存命中后不应再解析"
+        );
+        assert!(in_flight.is_empty(), "等待者完成后应清理在飞记录");
+    }
+
+    #[tokio::test]
+    async fn test_single_flight_resolve_failure_cleans_in_flight_and_allows_retry() {
+        let in_flight = new_in_flight();
+        let cache: FakeCache = Arc::new(tokio::sync::Mutex::new(None));
+        let attempts = Arc::new(AtomicUsize::new(0));
+
+        // 第一次调用：解析失败
+        let attempts1 = Arc::clone(&attempts);
+        let cache_get1 = Arc::clone(&cache);
+        let first = resolve_single_flight(
+            &in_flight,
+            "dns:flaky.example:80",
+            move || async move { cache_get1.lock().await.clone() },
+            move || async move {
+                attempts1.fetch_add(1, Ordering::SeqCst);
+                Err(std::io::Error::other("simulated DNS failure"))
+            },
+            move |_resolved| async move {},
+        )
+        .await;
+        assert!(first.is_err(), "解析失败应显性返回错误");
+        assert!(
+            in_flight.is_empty(),
+            "失败后在飞记录必须清理，否则该 host 被永久串行化"
+        );
+
+        // 第二次调用：不被残留在飞记录挡住，可重试并成功
+        let attempts2 = Arc::clone(&attempts);
+        let cache_get2 = Arc::clone(&cache);
+        let cache_store2 = Arc::clone(&cache);
+        let second = resolve_single_flight(
+            &in_flight,
+            "dns:flaky.example:80",
+            move || async move { cache_get2.lock().await.clone() },
+            move || async move {
+                attempts2.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![IpAddr::from([192, 0, 2, 9])])
+            },
+            move |resolved| async move {
+                *cache_store2.lock().await = Some(resolved);
+            },
+        )
+        .await;
+        assert!(second.is_ok(), "失败清理后应允许重试");
+        assert_eq!(attempts.load(Ordering::SeqCst), 2, "重试应实际再次解析");
+    }
+
+    #[tokio::test]
+    async fn test_single_flight_cache_hit_returns_without_resolving() {
+        let in_flight = new_in_flight();
+        let cache: FakeCache = Arc::new(tokio::sync::Mutex::new(None));
+        let cached_ips = vec![IpAddr::from([192, 0, 2, 55])];
+        *cache.lock().await = Some(cached_ips.clone());
+
+        let cache_get = Arc::clone(&cache);
+        let got = resolve_single_flight(
+            &in_flight,
+            "dns:hot.example:80",
+            move || async move { cache_get.lock().await.clone() },
+            || async move { panic!("缓存命中时绝不应执行解析") },
+            move |_resolved| async move {},
+        )
+        .await
+        .expect("cache hit should succeed");
+        assert_eq!(got, cached_ips, "应返回缓存内容而非新解析结果");
+    }
+
+    #[tokio::test]
+    async fn test_lookup_host_concurrent_misses_share_single_resolution() {
+        // 公开入口冒烟：hickory Resolver 不可注入，解析次数无法直接计数，
+        // 退而验证并发 miss 下全部成功、结果一致、缓存已写入。
+        // 解析次数 == 1 的断言见上方 resolve_single_flight 独立测试。
+        let svc = Arc::new(make_service(300).await);
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let svc = Arc::clone(&svc);
+            handles.push(tokio::spawn(async move {
+                svc.lookup_host("localhost", 80).await
+            }));
+        }
+
+        let mut expected: Option<Vec<IpAddr>> = None;
+        for handle in handles {
+            let ips = handle
+                .await
+                .expect("task join failed")
+                .expect("concurrent lookup should succeed");
+            match &expected {
+                None => expected = Some(ips),
+                Some(prev) => assert_eq!(&ips, prev, "single-flight 下并发结果应一致"),
+            }
+        }
+        assert!(expected.is_some());
+        let key = generate_dns_key("localhost", 80);
+        assert!(
+            svc.cache.get(&key).await.unwrap().is_some(),
+            "解析结果应已写入缓存"
+        );
     }
 }
