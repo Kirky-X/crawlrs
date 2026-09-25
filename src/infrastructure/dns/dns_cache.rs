@@ -21,7 +21,7 @@ pub struct DnsCacheService {
     default_ttl: Duration,
     /// per-key single-flight：在飞解析的 key → 锁。同 host 并发查询只放行一个
     /// 调用者实际走系统解析，其余调用者等锁释放后直接读缓存，避免 thundering herd。
-    in_flight: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    in_flight: Arc<DashMap<String, Arc<tokio::sync::Mutex<FlightSlot>>>>,
 }
 
 impl DnsCacheService {
@@ -177,6 +177,15 @@ impl DnsCacheService {
     }
 }
 
+/// 一次在飞解析的共享槽：leader 把结果（成功或失败）写入，同批排队的
+/// waiter 领锁后直接取用，不再各自重试解析（评审 LOW：失败路径串行放大，
+/// 最后者等待 ≈ K×解析超时）。新 flight（槽位被清理后重建）result 为 None，
+/// 允许全新重试。
+#[derive(Debug, Default)]
+struct FlightSlot {
+    result: Option<Result<Vec<IpAddr>, String>>,
+}
+
 /// per-key single-flight 执行器：同一 `key` 的并发解析只放行一个调用者实际执行。
 ///
 /// 流程：抢 per-key 锁 → double-check 缓存（`cache_get` 返回 `Some` 即命中直接返回）
@@ -186,7 +195,7 @@ impl DnsCacheService {
 /// 缓存读取失败视为未命中（与 [`DnsCacheService::lookup_host`] 的既有语义一致）；
 /// `resolve` 失败同样清理在飞记录，保证后续调用者可重试，不会永久串行化该 host。
 async fn resolve_single_flight<G, GF, R, RF, S, SF>(
-    in_flight: &DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+    in_flight: &DashMap<String, Arc<tokio::sync::Mutex<FlightSlot>>>,
     key: &str,
     cache_get: G,
     resolve: R,
@@ -200,27 +209,39 @@ where
     S: FnOnce(Vec<IpAddr>) -> SF,
     SF: Future<Output = ()>,
 {
-    // 获取（或创建）该 key 的在飞锁。DashMap 的 entry 守卫在块尾即释放，
+    // 获取（或创建）该 key 的在飞槽。DashMap 的 entry 守卫在块尾即释放，
     // 绝不跨 await 持有；持锁期间也不再触碰 in_flight 的分片锁。
     let key_lock = {
         let entry = in_flight
             .entry(key.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())));
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(FlightSlot::default())));
         Arc::clone(entry.value())
     };
 
     // 首个调用者持锁解析；后来者在此排队等待
-    let guard = key_lock.lock().await;
+    let mut guard = key_lock.lock().await;
 
     let result = match cache_get().await {
         Some(ips) => Ok(ips),
-        None => {
-            let resolved = resolve().await;
-            if let Ok(ips) = &resolved {
-                cache_store(ips.clone()).await;
+        None => match guard.result.clone() {
+            // 同批 waiter：直接取用 leader 的结果（成功或失败），不再重复解析。
+            // 必须 clone 而非 take——同批有 K 个 waiter 依次领锁，take 会让
+            // 第二个看到 None 而重新解析（恰是本修复要消除的串行放大）。
+            Some(shared) => shared.map_err(std::io::Error::other),
+            None => {
+                let resolved = resolve().await;
+                if let Ok(ips) = &resolved {
+                    cache_store(ips.clone()).await;
+                }
+                // 结果写入共享槽：同批排队者直接取用（失败也共享，
+                // 避免 K 个 waiter 各自完整等一次解析超时）
+                guard.result = Some(match &resolved {
+                    Ok(ips) => Ok(ips.clone()),
+                    Err(e) => Err(e.to_string()),
+                });
+                resolved
             }
-            resolved
-        }
+        },
     };
 
     drop(guard);
@@ -585,7 +606,7 @@ mod tests {
     /// single-flight 独立测试用的 fake 缓存：Option<ips>
     type FakeCache = Arc<tokio::sync::Mutex<Option<Vec<IpAddr>>>>;
 
-    fn new_in_flight() -> Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>> {
+    fn new_in_flight() -> Arc<DashMap<String, Arc<tokio::sync::Mutex<FlightSlot>>>> {
         Arc::new(DashMap::new())
     }
 
@@ -648,7 +669,7 @@ mod tests {
         let key_lock = {
             let entry = in_flight
                 .entry("dns:held.example:80".to_string())
-                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())));
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(FlightSlot::default())));
             Arc::clone(entry.value())
         };
         let guard = key_lock.lock().await;
@@ -695,6 +716,61 @@ mod tests {
             "缓存命中后不应再解析"
         );
         assert!(in_flight.is_empty(), "等待者完成后应清理在飞记录");
+    }
+
+    /// 评审 LOW：失败共享——leader 解析失败时，同批排队的 waiter 直接取用
+    /// leader 的错误结果，不再各自完整重试一次解析（此前失败尾部延迟 ×K）
+    #[tokio::test]
+    async fn test_single_flight_failure_is_shared_with_queued_waiters() {
+        let in_flight = new_in_flight();
+        let cache: FakeCache = Arc::new(tokio::sync::Mutex::new(None));
+        let attempts = Arc::new(AtomicUsize::new(0));
+
+        // leader 慢速失败（150ms），期间 3 个 waiter 排队
+        let mut handles = Vec::new();
+        for i in 0..4 {
+            let in_flight = Arc::clone(&in_flight);
+            let cache_get = Arc::clone(&cache);
+            let attempts = Arc::clone(&attempts);
+            handles.push(tokio::spawn(async move {
+                resolve_single_flight(
+                    &in_flight,
+                    "dns:down.example:80",
+                    move || async move { cache_get.lock().await.clone() },
+                    move || async move {
+                        let n = attempts.fetch_add(1, Ordering::SeqCst);
+                        if n == 0 {
+                            // 只有 leader 走慢速失败路径
+                            tokio::time::sleep(Duration::from_millis(150)).await;
+                            Err(std::io::Error::other("simulated DNS failure"))
+                        } else {
+                            // 若结果共享失效，waiter 会各自走到这里并快速成功
+                            Ok(vec![IpAddr::from([192, 0, 2, i])])
+                        }
+                    },
+                    move |_resolved| async move {},
+                )
+                .await
+            }));
+        }
+
+        let mut errors = 0;
+        let mut successes = 0;
+        for handle in handles {
+            match handle.await.expect("task join failed") {
+                Err(_) => errors += 1,
+                Ok(_) => successes += 1,
+            }
+        }
+
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "失败结果必须共享给同批 waiter：只允许 leader 实际解析 1 次"
+        );
+        assert_eq!(errors, 4, "4 个调用者全部拿到 leader 的共享错误");
+        assert_eq!(successes, 0, "不允许任何 waiter 绕过共享结果自行成功");
+        assert!(in_flight.is_empty(), "完成后在飞记录应被清理");
     }
 
     #[tokio::test]
