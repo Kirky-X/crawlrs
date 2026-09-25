@@ -9,6 +9,8 @@
 //! # 主要特性
 //!
 //! - 浏览器实例复用
+//! - per-task BrowserContext 隔离（`context_isolation`，默认开启：每任务
+//!   独立 context + page，归还时销毁整个 context，cookie/storage 不跨任务串扰）
 //! - 最大实例数限制
 //! - 空闲实例自动清理
 //! - 健康检查机制
@@ -18,6 +20,10 @@ use crate::engines::browser_downloader::{BrowserDownloadConfig, BrowserDownloadM
 use crate::engines::client::tab_pool::TabPool;
 use crate::engines::engine_client::EngineError;
 use crate::infrastructure::services::config_service::BrowserConfigTrait;
+use chromiumoxide::cdp::browser_protocol::browser::BrowserContextId;
+use chromiumoxide::cdp::browser_protocol::target::{
+    CreateBrowserContextParams, CreateTargetParams,
+};
 use chromiumoxide::{Browser, BrowserConfig, Page};
 use futures::StreamExt;
 use log::{debug, error, info, warn};
@@ -49,6 +55,15 @@ pub struct BrowserPoolConfig {
     /// 每个 Browser 实例独立的 Tab 池容量。0 = 禁用 tab 复用。
     /// 默认 10（每个 Browser 缓存最多 10 个空闲 Page）。
     pub tab_pool_max_size: usize,
+    /// per-task BrowserContext 隔离
+    ///
+    /// `true`（默认）：每次 `acquire_page` 为任务创建独立 BrowserContext +
+    /// 其内 Page，归还时销毁整个 context——cookie/localStorage/indexedDB
+    /// 随之消失，消除 tab 复用导致的跨任务会话串扰。隔离页不进 TabPool。
+    ///
+    /// `false`：走既有 TabPool 复用路径（顺序复用间 cookie 泄漏是已知取舍），
+    /// 作为逃生门保留。
+    pub context_isolation: bool,
 }
 
 impl Default for BrowserPoolConfig {
@@ -66,6 +81,7 @@ impl Default for BrowserPoolConfig {
                 "--disable-dev-shm-usage".to_string(),
             ],
             tab_pool_max_size: 10,
+            context_isolation: true,
         }
     }
 }
@@ -662,6 +678,32 @@ impl BrowserPoolState {
     fn clone_return_sender(&self) -> Arc<mpsc::Sender<ReturnMessage>> {
         self.return_sender.clone()
     }
+
+    /// Page 获取失败后归还 Browser：优先走 return channel；通道满/关闭时
+    /// 直接 await [`return_instance`](Self::return_instance) 移除 in_use 槽位，
+    /// 防止信号量 permit 泄漏导致池容量收缩。
+    /// 供 TabPool 路径与 context 隔离路径的失败分支复用。
+    async fn reclaim_after_page_acquire_failure(
+        &self,
+        instance_id: u64,
+        browser: Arc<Browser>,
+        reason: &str,
+    ) {
+        match self.clone_return_sender().try_send(ReturnMessage {
+            instance_id,
+            browser,
+        }) {
+            Ok(_) => {}
+            Err(mpsc::error::TrySendError::Full(msg))
+            | Err(mpsc::error::TrySendError::Closed(msg)) => {
+                error!(
+                    "Return channel unavailable while reclaiming browser instance {} after page acquire failure ({}); removing in_use slot directly",
+                    msg.instance_id, reason
+                );
+                self.return_instance(msg.instance_id, msg.browser).await;
+            }
+        }
+    }
 }
 
 /// 浏览器实例包装器
@@ -769,24 +811,31 @@ impl Drop for BrowserInstance {
 
 /// 浏览器 Page 包装器
 ///
-/// 同时持有 [`BrowserInstance`] 和 [`Page`]，drop 时自动归还两者：
+/// 同时持有 [`BrowserInstance`] 和 [`Page`]，drop/release 时自动归还 Browser，
+/// 并按归还模式处理 Page：
 ///
-/// 1. **Page 归还**：通过 `tokio::spawn` 异步调用 [`TabPool::release`]（导航到
-///    `about:blank` 清理状态后压栈）。runtime 不可用时 Page 直接 drop（关闭 tab）。
-/// 2. **Browser 归还**：`browser_instance` 字段 drop 时触发
-///    [`BrowserInstance::drop`]，通过 return channel 归还到 BrowserPool。
+/// - **TabPool 复用页**（`context_id: None`，`context_isolation = false`）：
+///   Page 通过 `tokio::spawn` 异步调用 [`TabPool::release`]（导航到
+///   `about:blank` 清理状态后压栈）。runtime 不可用时 Page 直接 drop（关闭 tab）。
+/// - **context 隔离页**（`context_id: Some(..)`，`context_isolation = true`）：
+///   归还时销毁整个 BrowserContext——页面随之关闭，cookie/localStorage/
+///   indexedDB 全部消失。Drop 无法 await，通过 spawn 清理 task 完成销毁 +
+///   Browser 归还，保证早退/panic/超时路径不泄漏 context。
 ///
 /// # 手动释放
 ///
-/// 调用 [`release`](Self::release) 可显式异步归还两者（等待 Page 导航完成），
-/// 适用于需要在 drop 前确保 Page 状态清理的场景。
+/// 调用 [`release`](Self::release) 可显式异步归还（等待 Page 清理/context
+/// 销毁完成），适用于需要在 drop 前确保资源释放时序的场景。
 pub struct PooledPage {
     /// Page 实例（Option 便于 Drop 中 take）
     page: Option<Page>,
+    /// 归还模式标记：`Some(id)` = context 隔离页（归还时销毁该 context）；
+    /// `None` = TabPool 复用页（归还时压栈复用）
+    context_id: Option<BrowserContextId>,
     /// 对应的 BrowserInstance（drop 时归还 Browser）
     browser_instance: Option<BrowserInstance>,
-    /// 对应的 TabPool（用于归还 Page）
-    tab_pool: Arc<TabPool>,
+    /// 对应的 TabPool（仅复用页持有；隔离页为 None，归还路径不得触碰 TabPool）
+    tab_pool: Option<Arc<TabPool>>,
 }
 
 impl PooledPage {
@@ -815,16 +864,30 @@ impl PooledPage {
 
     /// 手动释放（异步归还 Page + Browser）
     ///
-    /// 1. 调用 [`TabPool::release`] 归还 Page（等待导航到 `about:blank`）
-    /// 2. 调用 [`BrowserInstance::release`] 归还 Browser（发送到 return channel）
+    /// 1. TabPool 复用页：调用 [`TabPool::release`] 归还 Page（等待导航到
+    ///    `about:blank`）；context 隔离页：直接 drop Page（随 context 销毁）
+    /// 2. 隔离页：销毁 BrowserContext（等待完成，cookie/storage 随之清除）
+    /// 3. 调用 [`BrowserInstance::release`] 归还 Browser（发送到 return channel）
     ///
     /// 调用后 `self` 被消费，不应再访问。
     pub async fn release(mut self) {
-        // 1. 归还 Page 到 TabPool
+        // 1. 归还 Page：复用页压栈，隔离页直接关闭（context 销毁会兜底）
         if let Some(page) = self.page.take() {
-            self.tab_pool.release(page).await;
+            match self.tab_pool.as_ref() {
+                Some(tab_pool) => tab_pool.release(page).await,
+                None => drop(page),
+            }
         }
-        // 2. 归还 BrowserInstance（BrowserInstance::release 消费 self）
+        // 2. 销毁隔离 context：cookie/localStorage/indexedDB 随之全部消失。
+        //    失败仅记日志——浏览器连接已坏时归还路径的健康检查会剔除实例兜底。
+        if let Some(context_id) = self.context_id.take() {
+            if let Some(instance) = self.browser_instance.as_ref() {
+                if let Err(e) = instance.browser().dispose_browser_context(context_id).await {
+                    error!("Failed to dispose browser context on release: {}", e);
+                }
+            }
+        }
+        // 3. 归还 BrowserInstance（BrowserInstance::release 消费 self）
         if let Some(instance) = self.browser_instance.take() {
             instance.release().await;
         }
@@ -833,24 +896,52 @@ impl PooledPage {
 
 impl Drop for PooledPage {
     fn drop(&mut self) {
-        // 1. 归还 Page（spawn task，因为 TabPool::release 是 async）
+        // 1. Page：复用页 spawn 归还 task（TabPool::release 是 async）；隔离页
+        //    直接 drop 客户端句柄（tab 随 context 销毁关闭）
         if let Some(page) = self.page.take() {
-            let tab_pool = self.tab_pool.clone();
-            // 尝试在当前 runtime spawn 归还 task
-            match tokio::runtime::Handle::try_current() {
-                Ok(handle) => {
-                    handle.spawn(async move {
-                        tab_pool.release(page).await;
-                    });
-                }
-                Err(_) => {
-                    // runtime 不可用（如 shutdown 中），Page 直接 drop（关闭 tab）
-                    debug!("tokio runtime unavailable, dropping Page directly");
+            if let Some(tab_pool) = self.tab_pool.clone() {
+                // 尝试在当前 runtime spawn 归还 task
+                match tokio::runtime::Handle::try_current() {
+                    Ok(handle) => {
+                        handle.spawn(async move {
+                            tab_pool.release(page).await;
+                        });
+                    }
+                    Err(_) => {
+                        // runtime 不可用（如 shutdown 中），Page 直接 drop（关闭 tab）
+                        debug!("tokio runtime unavailable, dropping Page directly");
+                    }
                 }
             }
         }
-        // 2. BrowserInstance drop 自动归还 Browser（通过 return_sender）
-        // browser_instance 字段 drop 时触发 BrowserInstance::drop
+        // 2. 隔离页：Drop 无法 await dispose——spawn 清理 task 先销毁 context
+        //    再归还 Browser，保证早退/panic/超时路径不泄漏 context
+        if let Some(context_id) = self.context_id.take() {
+            if let Some(instance) = self.browser_instance.take() {
+                match tokio::runtime::Handle::try_current() {
+                    Ok(handle) => {
+                        handle.spawn(async move {
+                            let browser = instance.browser().clone();
+                            if let Err(e) = browser.dispose_browser_context(context_id).await {
+                                error!("Failed to dispose browser context on drop: {}", e);
+                            }
+                            instance.release().await;
+                        });
+                    }
+                    Err(_) => {
+                        // runtime 不可用：context 销毁只能放弃（浏览器进程退出时回收）。
+                        // BrowserInstance 放回字段走自身 Drop 经 return channel 归还，
+                        // 避免信号量 permit 泄漏导致池容量收缩。
+                        error!(
+                            "tokio runtime unavailable, isolated browser context cannot be disposed; context may leak until browser exits"
+                        );
+                        self.browser_instance = Some(instance);
+                    }
+                }
+            }
+        }
+        // 3. 复用页：browser_instance 未被 take，字段 drop 触发
+        //    BrowserInstance::drop 经 return channel 归还 Browser
     }
 }
 
@@ -903,46 +994,75 @@ impl BrowserPool {
 
     /// 获取 Browser + Page
     ///
-    /// 在 [`acquire`](Self::acquire) 基础上额外从对应 Browser 的 [`TabPool`]
-    /// 获取/复用 [`Page`]。返回的 [`PooledPage`] 在 drop 时自动归还 Browser 与 Page。
+    /// 在 [`acquire`](Self::acquire) 基础上获取任务用 [`Page`]。返回的
+    /// [`PooledPage`] 在 drop/release 时自动归还 Browser，并按归还模式处理 Page。
     ///
-    /// # Page 复用语义
+    /// # Page 获取语义（按 `BrowserPoolConfig::context_isolation` 分支）
     ///
-    /// - 池中有空闲 Page（LIFO）→ 弹出复用，避免 `browser.new_page` 开销
-    /// - 池空 → 调用 `browser.new_page("about:blank")` 新建
+    /// - `true`（默认）：为本次任务创建独立 [`BrowserContextId`] + 其内 Page，
+    ///   归还时销毁整个 context——cookie/localStorage 等随任务终结，跨任务零串扰。
+    ///   隔离页不进 TabPool。
+    /// - `false`（逃生门）：从对应 Browser 的 [`TabPool`] 复用 Page（LIFO），
+    ///   池空时 `browser.new_page("about:blank")` 新建。
     ///
     /// # 错误
     ///
     /// - 池已关闭、信号量失败、实例不在 in_use：透传 [`acquire`](Self::acquire) 错误
-    /// - TabPool::acquire 失败（`browser.new_page` CDP 错误）：
+    /// - context 创建失败 / Page 创建失败 / TabPool::acquire 失败：
     ///   `EngineError::BrowserError`，并自动归还 Browser 避免泄漏
+    ///   （隔离路径还会先销毁半创建的 context）
     pub async fn acquire_page(&self) -> Result<PooledPage, EngineError> {
-        let (instance_id, browser, tab_pool) = self.state.acquire_with_tab_pool().await?;
+        if self.state.config.context_isolation {
+            self.acquire_page_isolated().await
+        } else {
+            self.acquire_page_tab_pool().await
+        }
+    }
 
-        // 从 TabPool 获取 Page，失败时归还 Browser 避免泄漏
-        let page = match tab_pool.acquire(&browser).await {
+    /// 隔离路径：每任务独立 BrowserContext + Page
+    ///
+    /// Browser 实例本身仍从池中复用（context 创建为轻量 CDP 调用，无进程开销）；
+    /// Page 创建在指定 context 内（`CreateTargetParams.browser_context_id` 显式传入，
+    /// chromiumoxide 仅在未指定时才填充浏览器默认 context）。
+    ///
+    /// 失败路径：context 已创建但 Page 创建失败时，先销毁半创建的 context
+    /// 再归还 Browser，防止 context 泄漏累积。
+    async fn acquire_page_isolated(&self) -> Result<PooledPage, EngineError> {
+        let (instance_id, browser) = self.state.acquire().await?;
+
+        let context_id = match browser
+            .create_browser_context(CreateBrowserContextParams::default())
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                let err_msg = format!("Failed to create browser context: {}", e);
+                self.state
+                    .reclaim_after_page_acquire_failure(instance_id, browser, &err_msg)
+                    .await;
+                return Err(EngineError::BrowserError(err_msg));
+            }
+        };
+
+        let params = CreateTargetParams {
+            browser_context_id: Some(context_id.clone()),
+            ..CreateTargetParams::new("about:blank")
+        };
+        let page = match browser.new_page(params).await {
             Ok(page) => page,
             Err(e) => {
-                // acquire Page 失败，归还 Browser 到 return channel；通道满/关闭时
-                // 直接 await return_instance 移除 in_use 槽位，防止 permit 泄漏
-                // 导致池容量收缩。
-                let err_msg = e.to_string();
-                match self.state.clone_return_sender().try_send(ReturnMessage {
-                    instance_id,
-                    browser,
-                }) {
-                    Ok(_) => {}
-                    Err(mpsc::error::TrySendError::Full(msg))
-                    | Err(mpsc::error::TrySendError::Closed(msg)) => {
-                        error!(
-                            "Return channel unavailable while reclaiming browser instance {} after page acquire failure ({}); removing in_use slot directly",
-                            instance_id, err_msg
-                        );
-                        self.state
-                            .return_instance(msg.instance_id, msg.browser)
-                            .await;
-                    }
+                // Page 创建失败：尽力销毁半创建 context（失败仅记日志——
+                // 浏览器连接已坏时归还路径的健康检查会兜底剔除实例）
+                if let Err(dispose_err) = browser.dispose_browser_context(context_id).await {
+                    error!(
+                        "Failed to dispose browser context after page creation failure: {}",
+                        dispose_err
+                    );
                 }
+                let err_msg = format!("Failed to create page in isolated context: {}", e);
+                self.state
+                    .reclaim_after_page_acquire_failure(instance_id, browser, &err_msg)
+                    .await;
                 return Err(EngineError::BrowserError(err_msg));
             }
         };
@@ -951,13 +1071,45 @@ impl BrowserPool {
 
         Ok(PooledPage {
             page: Some(page),
+            context_id: Some(context_id),
             browser_instance: Some(BrowserInstance {
                 browser: Some(browser),
                 instance_id,
                 return_sender,
                 state: self.state.clone(),
             }),
-            tab_pool,
+            tab_pool: None,
+        })
+    }
+
+    /// 复用路径（逃生门）：从对应 Browser 的 [`TabPool`] 获取/复用 Page
+    async fn acquire_page_tab_pool(&self) -> Result<PooledPage, EngineError> {
+        let (instance_id, browser, tab_pool) = self.state.acquire_with_tab_pool().await?;
+
+        // 从 TabPool 获取 Page，失败时归还 Browser 避免泄漏
+        let page = match tab_pool.acquire(&browser).await {
+            Ok(page) => page,
+            Err(e) => {
+                let err_msg = e.to_string();
+                self.state
+                    .reclaim_after_page_acquire_failure(instance_id, browser, &err_msg)
+                    .await;
+                return Err(EngineError::BrowserError(err_msg));
+            }
+        };
+
+        let return_sender = Some(self.state.clone_return_sender());
+
+        Ok(PooledPage {
+            page: Some(page),
+            context_id: None,
+            browser_instance: Some(BrowserInstance {
+                browser: Some(browser),
+                instance_id,
+                return_sender,
+                state: self.state.clone(),
+            }),
+            tab_pool: Some(tab_pool),
         })
     }
 
@@ -1120,11 +1272,52 @@ mod tests {
         assert!(config.enable_reuse);
         // tab_pool_max_size 默认 10
         assert_eq!(config.tab_pool_max_size, 10);
+        // context_isolation 默认开启（per-task BrowserContext 隔离）
+        assert!(
+            config.context_isolation,
+            "context_isolation must default to true"
+        );
         // SEC-001: 默认不包含 --no-sandbox（生产环境安全默认）
         assert!(
             !config.browser_args.iter().any(|a| a == "--no-sandbox"),
             "default browser_args should not contain --no-sandbox"
         );
+    }
+
+    #[test]
+    fn test_context_isolation_branch_selection() {
+        // acquire_page 的分支选择完全由 config.context_isolation 决定：
+        // 默认 true → 隔离路径；显式 false → TabPool 复用路径（逃生门）
+        let isolation_on = BrowserPoolConfig::default();
+        assert!(isolation_on.context_isolation);
+
+        let isolation_off = BrowserPoolConfig {
+            context_isolation: false,
+            ..BrowserPoolConfig::default()
+        };
+        assert!(!isolation_off.context_isolation);
+        // 结构体更新语法保留其余默认值（逃生门只切 Page 来源，不动池参数）
+        assert_eq!(isolation_off.max_instances, 5);
+        assert_eq!(isolation_off.tab_pool_max_size, 10);
+        assert!(isolation_off.enable_reuse);
+
+        // docker_safe_args() 继承 default → 隔离同样默认开启（容器临时池不降级）
+        assert!(BrowserPoolConfig::docker_safe_args().context_isolation);
+    }
+
+    #[tokio::test]
+    async fn test_acquire_page_tab_pool_escape_hatch_shutdown_fails() {
+        // context_isolation=false（逃生门）路径在池关闭后同样安全失败，
+        // 且失败路径不得触碰 TabPool 既有归还逻辑
+        let config = BrowserPoolConfig {
+            context_isolation: false,
+            ..BrowserPoolConfig::default()
+        };
+        let browser_config = Arc::new(BrowserConfigComponent::default());
+        let pool = BrowserPool::new(config, browser_config);
+        pool.shutdown().await;
+        let result = pool.acquire_page().await;
+        assert!(result.is_err());
     }
 
     #[test]

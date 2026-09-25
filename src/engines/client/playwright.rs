@@ -517,15 +517,17 @@ impl ScraperEngine for PlaywrightEngine {
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
             // 从池中获取 Browser + Page
-            // Page 优先从 TabPool 复用（LIFO），池空时调用 browser.new_page
+            // 默认（context_isolation=true）每任务独立 BrowserContext，归还时
+            // 整体销毁，cookie/storage 不跨任务串扰；isolation=false 时 Page
+            // 从 TabPool 复用（LIFO），池空时调用 browser.new_page
             let pooled_page = pool.acquire_page().await?;
             // Page 是 Arc-based，clone 廉价；pooled_page 持有原始 Page 用于归还
             let page: chromiumoxide::page::Page = pooled_page.page().clone();
 
-            // Note: Page 在 pooled_page drop 时自动归还到 TabPool
-            // （TabPool::release 导航到 about:blank 清理状态后压栈复用）。
+            // Note: pooled_page drop 时自动归还资源——复用页经 TabPool 导航
+            // about:blank 后压栈，隔离页随整个 BrowserContext 销毁。
             // Browser 也在 pooled_page drop 时归还到 BrowserPool。
-            // 错误路径下 Page 可能不可用，TabPool::release 会 drop 它（关闭 tab）。
+            // 错误路径下 Page 可能不可用，归还路径会 drop 它（关闭 tab）。
 
             // 从 UaPool 取一致的 UA + viewport profile
             // 替换原固定移动 UA 分支；mobile 和 desktop 都从池中取 profile。
@@ -834,9 +836,9 @@ impl ScraperEngine for PlaywrightEngine {
                 screenshot = Some(BASE64.encode(screenshot_bytes));
             }
 
-            // 不调用 page.close()，让 pooled_page drop 时归还 Page 到 TabPool
-            // （TabPool::release 会导航到 about:blank 清理状态后压栈复用）
-            // Browser 也在 pooled_page drop 时归还到 BrowserPool
+            // 不调用 page.close()，让 pooled_page drop 时按归还模式收尾：
+            // 复用页归还 TabPool（导航 about:blank 后压栈），隔离页销毁整个
+            // BrowserContext。Browser 也在 pooled_page drop 时归还到 BrowserPool
             drop(pooled_page);
 
             Ok(InternalScrapeResponse {

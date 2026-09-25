@@ -132,8 +132,10 @@ impl TabPool {
         // 复查 H2 回退：不能在此处调用 CDP ClearBrowserCookies——该命令是
         // 浏览器级（清空全部 cookie），池内 tab 同属一个 Browser，并发时会把
         // 其他在途 tab 的会话（cf_clearance/登录态）一并清掉。顺序复用的
-        // cookie 泄漏是已知取舍；真正的任务间隔离需要 per-task browser
-        // context（见 fix-audit-mediums-r2 design.md 技术债登记）。
+        // cookie 泄漏是本复用路径的已知取舍；真正的任务间隔离由
+        // BrowserPoolConfig::context_isolation（默认开启）提供——每任务独立
+        // BrowserContext，归还时整体销毁，不经过本池（见 playwright_pool.rs
+        // acquire_page_isolated / PooledPage::context_id）。
 
         // 导航到 about:blank 清理状态（5s 超时）
         let ok = matches!(
