@@ -25,6 +25,10 @@ pub mod error_helpers;
 ///
 /// EMA + 方差估 P84 延迟阈值，超阈值时建议发送副本请求降尾延迟。
 pub mod hedge;
+/// Per-host 纪律组件
+///
+/// 礼貌限速（min_interval）+ 429 冷却 + 裸 403 连击触发 TLS 指纹升级。
+pub mod host_discipline;
 /// 工具模块
 ///
 /// 提供通用的工具函数和辅助功能

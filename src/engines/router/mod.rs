@@ -13,6 +13,7 @@ use crate::engines::engine_client::{
 };
 use crate::engines::validators::validate_url;
 use crate::utils::hedge::HedgeController;
+use crate::utils::host_discipline::HostDiscipline;
 use crate::utils::retry::{RetryReason, RetryTracker};
 use crate::utils::ua_pool::UaPool;
 use dashmap::DashMap;
@@ -86,6 +87,9 @@ pub struct EngineRouter {
     /// TTL 内同 host 请求直接按 needs_js 路由，避免对已知挑战站点
     /// 每次都从 HTTP 引擎撞墙；读取时惰性清除过期条目。
     host_browser_hint: DashMap<String, Instant>,
+    /// per-host 纪律：礼貌限速 + 429 冷却 + 裸 403 连击 → TLS 指纹升级。
+    /// route_internal 发请求前 `gate`，反爬检出/成功后 `observe`。
+    host_discipline: HostDiscipline,
     /// 当前轮询索引
     round_robin_index: Arc<parking_lot::Mutex<usize>>,
     /// 负载均衡策略
@@ -135,6 +139,7 @@ impl EngineRouter {
             circuit_breaker: Arc::new(CircuitBreaker::new()),
             engine_stats: Arc::new(engine_stats),
             host_browser_hint: DashMap::new(),
+            host_discipline: HostDiscipline::with_defaults(),
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy: LoadBalancingStrategy::SmartHybrid,
             metrics: Arc::new(RouterMetrics::new()),
@@ -174,6 +179,7 @@ impl EngineRouter {
             circuit_breaker,
             engine_stats: Arc::new(engine_stats),
             host_browser_hint: DashMap::new(),
+            host_discipline: HostDiscipline::with_defaults(),
             round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
             strategy,
             metrics: Arc::new(RouterMetrics::new()),

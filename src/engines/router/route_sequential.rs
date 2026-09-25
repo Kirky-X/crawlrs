@@ -10,10 +10,29 @@ use super::check_antibot_response;
 use super::{check_js_upgrade_probe, EngineRouter, LoadBalancingStrategy};
 use crate::common::metrics_shim::{counter, histogram};
 use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse};
+use crate::utils::host_discipline::ObserveOutcome;
 use crate::utils::retry::{RetryDirective, RetryReason, RetryTracker};
 use log::{debug, info, warn};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
+
+/// 已知 WAF 变体：403 命中任一即为带 challenge 的拦截页，
+/// 只有"无 WAF 指纹的裸 403"才计入 host 纪律连击
+#[cfg(feature = "content")]
+fn is_known_waf(tech: crate::engines::antibot::AntiBotTech) -> bool {
+    use crate::engines::antibot::AntiBotTech;
+    matches!(
+        tech,
+        AntiBotTech::Cloudflare
+            | AntiBotTech::Akamai
+            | AntiBotTech::PerimeterX
+            | AntiBotTech::DataDome
+            | AntiBotTech::Imperva
+            | AntiBotTech::Sucuri
+            | AntiBotTech::Kasada
+            | AntiBotTech::AwsWaf
+    )
+}
 
 impl EngineRouter {
     /// Internal route implementation without timeout
@@ -25,18 +44,25 @@ impl EngineRouter {
         let start_time = Instant::now();
 
         // F7：host 反爬记忆——TTL 内检出过挑战页的 host 直接按 needs_js
-        // 路由（HTTP 引擎不再每次撞墙），过期后恢复候选重探
-        let request = if let Some(host) = url::Url::parse(&request.url)
+        // 路由（HTTP 引擎不再每次撞墙），过期后恢复候选重探。
+        // host 纪律叠加：tls_suspect 的 host 附加 needs_tls_fingerprint。
+        let host = url::Url::parse(&request.url)
             .ok()
-            .and_then(|u| u.host_str().map(str::to_string))
-        {
-            if self.host_needs_browser(&host) {
+            .and_then(|u| u.host_str().map(str::to_string));
+
+        let request = if let Some(host) = &host {
+            let needs_js_hint = self.host_needs_browser(host);
+            let tls_suspect = self.host_discipline.tls_suspect(host);
+            if needs_js_hint {
                 debug!(
                     "host {} has anti-bot hint, routing with needs_js=true",
                     host
                 );
+            }
+            if needs_js_hint || tls_suspect {
                 let mut hinted = request.clone();
-                hinted.needs_js = true;
+                hinted.needs_js |= needs_js_hint;
+                hinted.needs_tls_fingerprint |= tls_suspect;
                 hinted
             } else {
                 request.clone()
@@ -44,6 +70,11 @@ impl EngineRouter {
         } else {
             request.clone()
         };
+
+        // per-host 纪律 gate：礼貌限速 + 429 冷却（单次等待钳制 ≤5s）
+        if let Some(host) = &host {
+            self.host_discipline.gate(host).await;
+        }
 
         // 选择最优引擎
         let mut candidates = self.select_optimal_engines(&request);
@@ -226,6 +257,27 @@ impl EngineRouter {
                                 if let Ok(u) = url::Url::parse(&request.url) {
                                     if let Some(host) = u.host_str() {
                                         self.record_host_browser_hint(host);
+                                        // host 纪律观测：429 → 冷却；
+                                        // 裸 403（无 WAF 指纹）→ 连击计数
+                                        if detection.tech
+                                            == crate::engines::antibot::AntiBotTech::RateLimited
+                                        {
+                                            self.host_discipline.observe(
+                                                host,
+                                                ObserveOutcome::RateLimited {
+                                                    retry_after: detection
+                                                        .retry_after_secs
+                                                        .map(Duration::from_secs),
+                                                },
+                                            );
+                                        } else if response.status_code == 403
+                                            && !is_known_waf(detection.tech)
+                                        {
+                                            self.host_discipline.observe(
+                                                host,
+                                                ObserveOutcome::Forbidden { challenge: false },
+                                            );
+                                        }
                                     }
                                 }
                                 self.update_engine_stats(engine_name, false, response_time);
@@ -322,6 +374,13 @@ impl EngineRouter {
                         response_time,
                         start_time.elapsed()
                     );
+
+                    // host 纪律观测：最终 2xx 成功 → 清除该 host 的冷却与连击记忆
+                    if (200..300).contains(&response.status_code) {
+                        if let Some(host) = &host {
+                            self.host_discipline.observe(host, ObserveOutcome::Success);
+                        }
+                    }
 
                     return Ok(response);
                 }

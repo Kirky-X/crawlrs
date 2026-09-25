@@ -31,6 +31,9 @@ pub struct Detection {
     pub reason: String,
     /// 是否需要浏览器引擎重试（true 表示该反爬必须靠 JS 渲染才能突破）
     pub needs_browser: bool,
+    /// 429 响应 Retry-After 头解析出的等待秒数（钳制 ≤600）；
+    /// 非 429 或头缺失/不可解析时为 `None`
+    pub retry_after_secs: Option<u64>,
 }
 
 impl Detection {
@@ -40,6 +43,7 @@ impl Detection {
             tech,
             reason: reason.into(),
             needs_browser,
+            retry_after_secs: None,
         }
     }
 }
@@ -74,6 +78,32 @@ fn looks_like_data(body: &str, headers: &HeaderMap) -> bool {
         return true;
     }
     false
+}
+
+/// Retry-After 解析结果的钳制上限（秒）：
+/// 冷却是礼貌信号而非硬门禁，超长等待由调用方的有界 gate 钳制
+const RETRY_AFTER_MAX_SECS: u64 = 600;
+
+/// 解析 429 响应的 Retry-After 头
+///
+/// 支持 RFC 7231 规定的两种形式：纯数字秒（`30`）与 HTTP 日期
+/// （`Wed, 21 Oct 2015 07:28:00 GMT`）。日期形式的等待量按当前时刻折算，
+/// 过去的日期视为 0；数字溢出按"等待极长"处理钳到上限。
+/// 头缺失、非 UTF-8 或两种形式均不可解析时返回 `None`。
+fn parse_retry_after(headers: &HeaderMap) -> Option<u64> {
+    let raw = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    let secs = if !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit()) {
+        raw.parse::<u64>().unwrap_or(u64::MAX)
+    } else {
+        let deadline = chrono::DateTime::parse_from_rfc2822(raw).ok()?;
+        let delta = deadline.with_timezone(&chrono::Utc) - chrono::Utc::now();
+        u64::try_from(delta.num_seconds()).unwrap_or(0)
+    };
+    Some(secs.min(RETRY_AFTER_MAX_SECS))
 }
 
 /// `<style>` 块正则（与 `TIER3_SCRIPT_BLOCK` 配套，用于大页 strip）
@@ -188,11 +218,9 @@ pub fn classify(status: u16, body: &str, headers: &HeaderMap, _url: &str) -> Opt
 
     // Step 1：429 → RateLimited（needs_browser=true）
     if status == 429 {
-        return Some(Detection::new(
-            AntiBotTech::RateLimited,
-            "HTTP 429 rate limited",
-            true,
-        ));
+        let mut detection = Detection::new(AntiBotTech::RateLimited, "HTTP 429 rate limited", true);
+        detection.retry_after_secs = parse_retry_after(headers);
+        return Some(detection);
     }
 
     // Step 2：Tier1 命中（任意状态码，含大页 strip 深扫）
@@ -313,6 +341,78 @@ mod tests {
             .expect("429 should detect");
         assert_eq!(det.tech, AntiBotTech::RateLimited);
         assert!(det.needs_browser, "rate limited should need browser");
+    }
+
+    // -------- Step 1：Retry-After 头解析 --------
+
+    #[test]
+    fn classify_429_parses_numeric_retry_after() {
+        let mut h = HeaderMap::new();
+        h.insert(reqwest::header::RETRY_AFTER, HeaderValue::from_static("30"));
+        let det =
+            classify(429, "rate limited", &h, "https://example.com").expect("429 should detect");
+        assert_eq!(det.retry_after_secs, Some(30));
+    }
+
+    #[test]
+    fn classify_429_without_retry_after_header_yields_none() {
+        let det = classify(429, "rate limited", &empty_headers(), "https://example.com")
+            .expect("429 should detect");
+        assert_eq!(det.retry_after_secs, None);
+    }
+
+    #[test]
+    fn classify_429_retry_after_clamped_to_600() {
+        let mut h = HeaderMap::new();
+        h.insert(
+            reqwest::header::RETRY_AFTER,
+            HeaderValue::from_static("99999"),
+        );
+        let det =
+            classify(429, "rate limited", &h, "https://example.com").expect("429 should detect");
+        assert_eq!(det.retry_after_secs, Some(600));
+    }
+
+    #[test]
+    fn classify_429_parses_http_date_retry_after() {
+        let future = chrono::Utc::now() + chrono::Duration::seconds(60);
+        let value = future.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        let mut h = HeaderMap::new();
+        h.insert(
+            reqwest::header::RETRY_AFTER,
+            HeaderValue::from_str(&value).expect("http-date is a valid header value"),
+        );
+        let det =
+            classify(429, "rate limited", &h, "https://example.com").expect("429 should detect");
+        let secs = det
+            .retry_after_secs
+            .expect("future http-date should parse to a wait");
+        assert!(secs <= 60, "http-date delta should be ~60s, got {secs}");
+    }
+
+    #[test]
+    fn classify_429_past_http_date_retry_after_is_zero() {
+        let past = chrono::Utc::now() - chrono::Duration::seconds(120);
+        let value = past.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        let mut h = HeaderMap::new();
+        h.insert(
+            reqwest::header::RETRY_AFTER,
+            HeaderValue::from_str(&value).expect("http-date is a valid header value"),
+        );
+        let det =
+            classify(429, "rate limited", &h, "https://example.com").expect("429 should detect");
+        assert_eq!(
+            det.retry_after_secs,
+            Some(0),
+            "past http-date means retryable now"
+        );
+    }
+
+    #[test]
+    fn non_429_detection_has_no_retry_after() {
+        let det =
+            classify(403, "", &html_headers(), "https://example.com").expect("403 should detect");
+        assert_eq!(det.retry_after_secs, None);
     }
 
     // -------- Step 0：JSON 响应返回 None --------
