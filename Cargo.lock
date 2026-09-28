@@ -1759,7 +1759,7 @@ dependencies = [
  "once_cell",
  "oxcache",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "regex",
  "reqwest",
  "rig-core",
@@ -1808,7 +1808,7 @@ dependencies = [
  "dbnexus",
  "env_logger",
  "log",
- "rand 0.10.2",
+ "rand 0.10.3",
  "regex",
  "reqwest",
  "sdforge",
@@ -2015,7 +2015,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.5",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -2285,7 +2285,7 @@ dependencies = [
  "icu",
  "oxcache",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "regex",
  "sea-orm",
  "serde",
@@ -2592,9 +2592,9 @@ dependencies = [
 
 [[package]]
 name = "dom_smoothie"
-version = "0.18.1"
+version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90cea52c49b95c4d1011fa998aa1b558f5ade4fabc051827b3c00df0f6112486"
+checksum = "1afbed996f0bcb119c068504c7c504d625700d58c8bd862d6f66abd7ae7d3859"
 dependencies = [
  "dom_query 0.28.0",
  "flagset",
@@ -2966,7 +2966,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee93edf3c501f0035bbeffeccfed0b79e14c311f12195ec0e661e114a0f60da4"
 dependencies = [
  "portable-atomic",
- "rand 0.10.2",
+ "rand 0.10.3",
  "web-time",
 ]
 
@@ -3937,7 +3937,7 @@ dependencies = [
  "idna",
  "ipnet",
  "jni",
- "rand 0.10.2",
+ "rand 0.10.3",
  "thiserror 2.0.20",
  "tinyvec",
  "tokio",
@@ -3957,7 +3957,7 @@ dependencies = [
  "jni",
  "once_cell",
  "prefix-trie",
- "rand 0.10.2",
+ "rand 0.10.3",
  "ring",
  "thiserror 2.0.20",
  "tinyvec",
@@ -3982,7 +3982,7 @@ dependencies = [
  "ndk-context",
  "once_cell",
  "parking_lot",
- "rand 0.10.2",
+ "rand 0.10.3",
  "resolv-conf",
  "smallvec",
  "system-configuration",
@@ -4860,7 +4860,7 @@ dependencies = [
  "oxcache",
  "parking_lot",
  "pbkdf2",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rayon",
  "regex",
  "serde",
@@ -6904,7 +6904,7 @@ dependencies = [
  "bytes",
  "getrandom 0.4.3",
  "lru-slab",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_pcg",
  "ring",
  "rustc-hash",
@@ -6975,9 +6975,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.2"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
+checksum = "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
@@ -7160,7 +7160,7 @@ dependencies = [
  "log",
  "percent-encoding",
  "pin-project-lite",
- "rand 0.10.2",
+ "rand 0.10.3",
  "ryu",
  "sha1_smol",
  "socket2",
@@ -7430,7 +7430,7 @@ dependencies = [
  "futures-util",
  "http",
  "mime",
- "rand 0.10.2",
+ "rand 0.10.3",
  "thiserror 2.0.20",
 ]
 
@@ -8514,7 +8514,7 @@ dependencies = [
  "log",
  "md-5",
  "memchr",
- "rand 0.10.2",
+ "rand 0.10.3",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -8872,7 +8872,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -9206,7 +9206,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a129d95275ebf4c493ec53bf0f8cd95f5ac161bc4f381700809a54f595d4470"
 dependencies = [
  "pin-project-lite",
- "rand 0.10.2",
+ "rand 0.10.3",
  "tokio",
 ]
 
@@ -10044,7 +10044,7 @@ dependencies = [
  "log",
  "num_cpus",
  "oxcache",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rayon",
  "regex",
  "schemars 1.2.2",
@@ -10747,7 +10747,7 @@ dependencies = [
  "http",
  "hyper",
  "more-asserts",
- "rand 0.10.2",
+ "rand 0.10.3",
  "redb",
  "reqwest",
  "reqwest-middleware",
@@ -10787,7 +10787,7 @@ dependencies = [
  "itertools 0.14.0",
  "lz4_flex",
  "more-asserts",
- "rand 0.10.2",
+ "rand 0.10.3",
  "regex",
  "safe-transmute",
  "serde",
@@ -10815,7 +10815,7 @@ dependencies = [
  "http",
  "itertools 0.14.0",
  "more-asserts",
- "rand 0.10.2",
+ "rand 0.10.3",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -10855,7 +10855,7 @@ dependencies = [
  "more-asserts",
  "oneshot",
  "pin-project",
- "rand 0.10.2",
+ "rand 0.10.3",
  "reqwest",
  "serde",
  "serde_json",
