@@ -4,9 +4,11 @@
 [advisories]
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "deny"
-# RUSTSEC-2023-0071: rsa Marvin Attack（jsonwebtoken v11.0 rust_crypto 后端携带 rsa v0.9.10，
-# crawlrs 与 garrison 双路径传递）。风险评估：crawlrs 仅用 HS256 对称 JWT，
-# 不调用 rsa crate 任何函数，攻击面为零。待上游提供无 rsa 的后端或 rsa 发布修复后移除。
+# RUSTSEC-2023-0071: rsa Marvin Attack（jsonwebtoken rust_crypto 后端携带 rsa v0.9.10）。
+# 2026-10-03：crawlrs 的 jsonwebtoken 直接声明已移除（src 零引用死依赖），
+# 残余路径仅 garrison(auth) → jsonwebtoken → rsa 单条。风险评估：crawlrs 仅用
+# HS256 对称 JWT，不调用 rsa crate 任何函数，攻击面为零。待上游提供无 rsa 的
+# 后端或 rsa 发布修复后移除。
 # （原 RUSTSEC-2026-0173 proc-macro-error2 已不再出现于依赖树，ignore 已移除。）
 #
 # RUSTSEC-2026-0285: rustls TLS 1.3 握手消息跨加密层边界被错误接受（crypto-failure，

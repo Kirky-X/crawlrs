@@ -27,7 +27,7 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 ### 依赖安全基线
 
 - `cargo deny check` 在 CI 每次运行：advisories（`yanked = "deny"`）、license 白名单、bans（`wildcards = "deny"`）、来源校验（仅 crates.io）。
-- `jsonwebtoken` v11 仅启用 `rust_crypto` 最小后端（不开 rsa/p256/p384/ed25519-dalek 等非必要特性）。
+- `jsonwebtoken` 无直接声明（2026-10-03 移除 src 零引用的死依赖）；JWT 能力经 garrison（auth feature）自带，`rust_crypto` 最小后端。
 - TLS 指纹引擎的 `wreq-util`（GPL-3.0）被刻意排除：`TlsEmulation` 由本项目自有枚举映射到 Apache-2.0 的 wreq `EmulationProvider` API。
 
 ---

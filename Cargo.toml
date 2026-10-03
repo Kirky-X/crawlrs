@@ -154,8 +154,9 @@ wreq = { version = "6.0.0-rc.31", default-features = false, features = ["tokio-r
 url = "2.5"
 
 # Database
-# SAST jsonwebtoken 已单独声明（仅 hmac+sha2+rand 最小 feature，不开 rsa/p256/p384/ed25519-dalek）
 # dbnexus-macros 已移除（2026-09-19 审计）：src 零引用，宏经 dbnexus re-export。
+# jsonwebtoken 直接声明已移除（2026-10-03 审计）：src 全仓零引用的死依赖，
+# JWT 能力由 garrison(auth feature) 自带；直接声明只会把 rsa 塞进全部消费方依赖树。
 dbnexus = { workspace = true, optional = true }
 
 # Caching and state management
@@ -217,9 +218,6 @@ hex = "0.4"
 bcrypt = "0.19"
 # Standard Webhooks — webhook 签名/验签标准化（T-webhook-001）
 standardwebhooks = { version = "1.0", default-features = false }
-# SAST jsonwebtoken v11 将 features 重组为加密后端选择
-# rustCrypto: 纯 Rust 加密后端（替代旧版独立的 hmac/sha2/rand features）
-jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 
 # Network utilities
 ipnetwork = "0.21"

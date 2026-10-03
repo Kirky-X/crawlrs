@@ -1751,7 +1751,6 @@ dependencies = [
  "inklog",
  "inventory",
  "ipnetwork",
- "jsonwebtoken",
  "libc",
  "limiteron",
  "log",
