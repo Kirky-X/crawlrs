@@ -13,6 +13,7 @@ use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
 use crate::engines::mllm::action_executor::{execute_decision, ActionResult};
+use crate::engines::mllm::ax_tree;
 use crate::engines::mllm::config::MllmEngineConfig;
 use crate::engines::mllm::decision::{parse_decision, MllmDecision};
 use crate::engines::validators;
@@ -93,11 +94,15 @@ impl MllmEngine {
     }
 
     /// 构造视觉分析的 prompt
+    ///
+    /// `outline` 为 AX 树文本大纲（F12 混合通道；`None` 时与旧版 prompt
+    /// 逐字节一致，截图视觉通道不受影响）
     fn build_vision_prompt(
         &self,
         goal: &str,
         iteration: u8,
         last_result: Option<&ActionResult>,
+        outline: Option<&str>,
     ) -> String {
         let mut prompt = format!(
             "Analyze the current page screenshot and decide the next action to accomplish this goal: {}\n",
@@ -123,7 +128,38 @@ impl MllmEngine {
         }
 
         prompt.push_str("\nRespond with a JSON object representing your decision.");
+
+        if let Some(outline) = outline {
+            prompt.push_str(&format!(
+                "\nPage accessibility outline:\n{outline}\nUse [id] to reference elements"
+            ));
+        }
         prompt
+    }
+
+    /// 采集 AX 树文本大纲（F12）：`ax_tree_enabled = false` 时零开销返回 None；
+    /// 采集失败仅 warn（差量通道不阻塞截图主通道）
+    async fn capture_ax_outline(&self, page: &chromiumoxide::Page) -> Option<String> {
+        if !self.config.ax_tree_enabled {
+            return None;
+        }
+        match ax_tree::capture(page).await {
+            Ok(nodes) => {
+                let outline = ax_tree::outline(nodes, self.config.max_token_budget as usize);
+                if outline.is_empty() {
+                    None
+                } else {
+                    Some(outline)
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "MLLM AX tree outline capture failed (visual channel unaffected): {}",
+                    e
+                );
+                None
+            }
+        }
     }
 }
 
@@ -194,8 +230,16 @@ impl ScraperEngine for MllmEngine {
                 // Step 1: Take screenshot
                 let screenshot_b64 = self.take_screenshot_base64(&page).await?;
 
+                // Step 1.5: AX tree outline (F12 hybrid channel; None when disabled)
+                let ax_outline = self.capture_ax_outline(&page).await;
+
                 // Step 2: Send to vision model
-                let prompt = self.build_vision_prompt(&goal, iteration, last_result.as_ref());
+                let prompt = self.build_vision_prompt(
+                    &goal,
+                    iteration,
+                    last_result.as_ref(),
+                    ax_outline.as_deref(),
+                );
                 let vision_response = self
                     .vision_adapter
                     .send_vision_request(
@@ -311,5 +355,70 @@ async fn get_page_content(page: &chromiumoxide::Page) -> String {
             error!("Failed to get page content: {}", e);
             String::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::services::llm::vision_adapter::VisionAdapterTrait;
+
+    /// 测试桩适配器：prompt 构造不触网，永不被调用（调用即 panic 显性失败）
+    struct UnusedVisionAdapter;
+
+    #[async_trait::async_trait]
+    impl VisionAdapterTrait for UnusedVisionAdapter {
+        async fn send_vision_request(
+            &self,
+            _screenshot_b64: &str,
+            _prompt: &str,
+            _system_prompt: &str,
+            _model: &str,
+        ) -> anyhow::Result<String> {
+            panic!("vision adapter must not be called during prompt construction")
+        }
+    }
+
+    fn engine_with(ax_tree_enabled: bool) -> MllmEngine {
+        MllmEngine::new(
+            Arc::new(UnusedVisionAdapter),
+            MllmEngineConfig {
+                ax_tree_enabled,
+                ..MllmEngineConfig::default()
+            },
+        )
+    }
+
+    /// ax_tree_enabled=false：prompt 与旧版（无 outline 参数）逐字节一致（快照）
+    #[test]
+    fn prompt_without_outline_is_byte_identical_to_legacy() {
+        let engine = engine_with(false);
+        let last = ActionResult::err("click failed for '#x': not found");
+        let prompt = engine.build_vision_prompt("buy milk", 2, Some(&last), None);
+        let mut legacy = format!(
+            "Analyze the current page screenshot and decide the next action to accomplish this goal: {}\n",
+            "buy milk"
+        );
+        legacy.push_str(&format!("\nThis is iteration {}/{}.\n", 2, 10));
+        legacy.push_str("\nLast action failed: click failed for '#x': not found. Please try a different approach.\n");
+        legacy.push_str("\nRespond with a JSON object representing your decision.");
+        assert_eq!(prompt, legacy);
+    }
+
+    /// outline 注入：追加「Page accessibility outline:\n{outline}\nUse [id] to reference elements」
+    #[test]
+    fn prompt_with_outline_appends_ax_outline_block() {
+        let engine = engine_with(true);
+        let base = engine.build_vision_prompt("goal", 1, None, None);
+        let with = engine.build_vision_prompt("goal", 1, None, Some("[12] heading: Welcome"));
+        assert!(
+            with.starts_with(&base),
+            "outline 只追加在尾部，不改动既有段落"
+        );
+        assert!(
+            with.ends_with("\nPage accessibility outline:\n[12] heading: Welcome\nUse [id] to reference elements"),
+            "追加块格式固定: {}",
+            with
+        );
     }
 }

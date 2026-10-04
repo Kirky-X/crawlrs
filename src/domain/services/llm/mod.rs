@@ -9,6 +9,7 @@
 
 pub mod chunker; // token 窗口分块 + 并行提问 + merge（F8）
 pub mod prompt_builder;
+pub mod provenance; // 提取结果字符级溯源对齐（F9）
 pub mod provider_adapter;
 pub mod vision_adapter; // 视觉模型适配器（MLLM 引擎依赖）
 
@@ -61,6 +62,22 @@ pub trait LLMServiceTrait: Send + Sync {
     ) -> Result<(Value, TokenUsage), anyhow::Error> {
         self.extract_data(text, schema, format).await
     }
+
+    /// 提取 + 字符级溯源（F9）：结果字符串字段对齐回原文字符区间。
+    ///
+    /// 返回 `(value, provenance, usage)`；`provenance` 为
+    /// `{field_path: {start, end, coverage}}` 映射（对齐失败字段为 null，调用方
+    /// 过滤），`llm.provenance_enabled = false` 时为 `None`（mock 零改动）。
+    /// 启用时 `value` 额外并列挂载 `_provenance` 键，RAG 入库链可直接持久该 JSON。
+    async fn extract_data_with_provenance(
+        &self,
+        text: &str,
+        schema: &Value,
+        format: &str,
+    ) -> Result<(Value, Option<Value>, TokenUsage), anyhow::Error> {
+        let (value, usage) = self.extract_data(text, schema, format).await?;
+        Ok((value, None, usage))
+    }
 }
 
 /// LLM服务 - 处理与LLM提供商的交互
@@ -82,6 +99,8 @@ pub struct LLMService {
     templates: HashMap<String, String>,
     /// token 窗口分块配置（F8；来自 `[llm.chunking]`，未接线构造为禁用）
     chunking: ChunkingConfig,
+    /// 溯源对齐配置（F9；来自 `[llm]` 的 `provenance_*` 两键，未接线构造为禁用）
+    provenance: provenance::ProvenanceConfig,
 }
 
 impl LLMService {
@@ -102,6 +121,7 @@ impl LLMService {
         let api_base_url = settings.llm.api_base_url.clone();
         let api_key = settings.llm.api_key.clone();
         let chunking = ChunkingConfig::from_settings(&settings.llm.chunking);
+        let provenance = provenance::ProvenanceConfig::from_settings(&settings.llm);
 
         Self {
             engine_client,
@@ -113,6 +133,7 @@ impl LLMService {
             api_key,
             templates,
             chunking,
+            provenance,
         }
     }
 
@@ -146,6 +167,7 @@ impl LLMService {
             api_key: Some(_api_key),
             templates,
             chunking: ChunkingConfig::default(),
+            provenance: provenance::ProvenanceConfig::default(),
         }
     }
 
@@ -171,6 +193,7 @@ impl LLMService {
             api_key: Some(_api_key),
             templates,
             chunking: ChunkingConfig::default(),
+            provenance: provenance::ProvenanceConfig::default(),
         }
     }
 }
@@ -227,6 +250,25 @@ impl LLMServiceTrait for LLMService {
         };
 
         chunker::extract_chunked(text, schema, &self.chunking, extract_one, merge_call).await
+    }
+
+    /// 溯源提取（F9）：`provenance_enabled = false` 短路等价 extract_data；
+    /// 启用时提取（分块开启则走 [`Self::extract_data_chunked`]）后对 merge 后
+    /// 结果做全文对齐——merge 后字段值仍出自原文各块切片，全文对齐即可还原
+    /// 全局 char 区间（chunker::extract_chunked 不暴露逐块偏移，故不做逐块换算）。
+    async fn extract_data_with_provenance(
+        &self,
+        text: &str,
+        schema: &Value,
+        format: &str,
+    ) -> Result<(Value, Option<Value>, TokenUsage)> {
+        if !self.provenance.enabled {
+            let (value, usage) = self.extract_data(text, schema, format).await?;
+            return Ok((value, None, usage));
+        }
+        let (value, usage) = self.extract_data_chunked(text, schema, format).await?;
+        let (value, prov) = provenance::apply_provenance(text, value, &self.provenance);
+        Ok((value, prov, usage))
     }
 }
 
@@ -473,6 +515,72 @@ json = 'json only'
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
+    // ===== extract_data_with_provenance（F9）=====
+
+    /// trait 默认实现：mock 只实现 extract_data 时，溯源方法返回 None（mock 零破坏）
+    #[tokio::test]
+    async fn test_extract_data_with_provenance_default_impl_yields_none() {
+        struct ProvenancelessMock {
+            calls: Arc<AtomicU32>,
+        }
+
+        #[async_trait]
+        impl LLMServiceTrait for ProvenancelessMock {
+            async fn extract_data(
+                &self,
+                text: &str,
+                _schema: &Value,
+                _format: &str,
+            ) -> Result<(Value, TokenUsage)> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok((serde_json::json!({"echo": text}), TokenUsage::default()))
+            }
+        }
+
+        let calls = Arc::new(AtomicU32::new(0));
+        let mock = ProvenancelessMock {
+            calls: calls.clone(),
+        };
+        let schema = serde_json::json!({"type": "object"});
+        let (value, provenance, usage) = mock
+            .extract_data_with_provenance("some text", &schema, "json")
+            .await
+            .expect("provenance call ok");
+        assert_eq!(value, serde_json::json!({"echo": "some text"}));
+        assert!(provenance.is_none(), "默认实现溯源为 None");
+        assert!(value.get("_provenance").is_none(), "不挂载 _provenance");
+        assert_eq!(usage, TokenUsage::default());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// LLMService 构造：`[llm]` 的 `provenance_*` 两键映射进服务配置
+    #[test]
+    fn test_llm_service_provenance_config_from_settings() {
+        let mut llm = llm_settings_default();
+        llm.provenance_enabled = true;
+        llm.provenance_min_coverage = 0.6;
+        let settings = make_test_settings(llm);
+        let service = LLMService::new_with_template_loader(
+            &settings,
+            Arc::new(reqwest::Client::new()),
+            Arc::new(InMemoryTemplateLoader::new()),
+        );
+        assert!(service.provenance.enabled);
+        assert!((service.provenance.min_coverage - 0.6).abs() < f64::EPSILON);
+    }
+
+    /// 显式配置构造（无 Settings）时溯源默认禁用（与 chunking 同惯例）
+    #[test]
+    fn test_llm_service_new_with_config_provenance_disabled() {
+        let service = LLMService::new_with_config(
+            "key".to_string(),
+            "m".to_string(),
+            "https://api.example.com".to_string(),
+            Arc::new(reqwest::Client::new()),
+        );
+        assert!(!service.provenance.enabled);
+    }
+
     // ===== LLMService constructor tests =====
 
     #[test]
@@ -542,6 +650,8 @@ json = 'json only'
             model: Some("gpt-3.5-turbo".to_string()),
             api_base_url: None,
             chunking: crate::config::settings::LlmChunkingSettings::default(),
+            provenance_enabled: false,
+            provenance_min_coverage: 0.75,
         }
     }
 

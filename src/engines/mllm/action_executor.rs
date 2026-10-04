@@ -7,6 +7,8 @@
 //! 在浏览器页面上执行点击、滚动、输入、等待等动作。
 
 use super::decision::{MllmDecision, ScrollDirection};
+use chromiumoxide::cdp::browser_protocol::dom::{BackendNodeId, ResolveNodeParams};
+use chromiumoxide::cdp::js_protocol::runtime::CallFunctionOnParams;
 use chromiumoxide::Page;
 use log::debug;
 use std::time::Duration;
@@ -50,7 +52,9 @@ impl ActionResult {
 /// `ActionResult` 描述执行结果
 pub async fn execute_decision(decision: &MllmDecision, page: &Page) -> ActionResult {
     match decision {
-        MllmDecision::Click { selector, .. } => execute_click(page, selector).await,
+        MllmDecision::Click {
+            selector, ax_id, ..
+        } => execute_click(page, selector, *ax_id).await,
         MllmDecision::Scroll { direction, .. } => execute_scroll(page, direction).await,
         MllmDecision::Input { selector, text, .. } => execute_input(page, selector, text).await,
         MllmDecision::Wait { seconds, .. } => execute_wait(*seconds).await,
@@ -59,8 +63,21 @@ pub async fn execute_decision(decision: &MllmDecision, page: &Page) -> ActionRes
     }
 }
 
-/// 执行点击操作 — 通过 CSS 选择器找到元素并点击
-async fn execute_click(page: &Page, selector: &str) -> ActionResult {
+/// 执行点击操作 — 优先按 AX 树 `[id]`（backendNodeId）经 CDP resolveNode 直取
+/// 定位（省 selector 猜测），失败回退 CSS selector 路径
+async fn execute_click(page: &Page, selector: &str, ax_id: Option<i64>) -> ActionResult {
+    if let Some(backend_id) = ax_id {
+        match click_by_backend_node_id(page, backend_id).await {
+            Ok(result) => return result,
+            Err(e) => {
+                debug!(
+                    "MLLM action: click by ax_id {} failed ({}); falling back to selector '{}'",
+                    backend_id, e, selector
+                );
+            }
+        }
+    }
+
     debug!("MLLM action: click({})", selector);
 
     match page.find_element(selector).await {
@@ -70,6 +87,44 @@ async fn execute_click(page: &Page, selector: &str) -> ActionResult {
         },
         Err(e) => ActionResult::err(format!("element not found '{}': {}", selector, e)),
     }
+}
+
+/// AX 树 `[id]` 引用协议的定位路径：`DOM.resolveNode(backendNodeId)` 拿
+/// RemoteObjectId，再 `Runtime.callFunctionOn` 滚动至视口中央并触发 click
+/// （用户手势语义，等价 Element::click 的滚动+点击两步）
+async fn click_by_backend_node_id(page: &Page, backend_id: i64) -> Result<ActionResult, String> {
+    let resolve_params = ResolveNodeParams::builder()
+        .backend_node_id(BackendNodeId::new(backend_id))
+        .build();
+    let resolved = page
+        .execute(resolve_params)
+        .await
+        .map_err(|e| format!("DOM.resolveNode failed: {e}"))?;
+    let object_id = resolved
+        .result
+        .object
+        .object_id
+        .ok_or_else(|| "resolved node has no RemoteObjectId".to_string())?;
+
+    let call_params = CallFunctionOnParams::builder()
+        .object_id(object_id)
+        .function_declaration(
+            r#"function() {
+                this.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                this.click();
+            }"#,
+        )
+        .user_gesture(true)
+        .build()
+        .map_err(|e| format!("invalid callFunctionOn params: {e}"))?;
+    page.execute(call_params)
+        .await
+        .map_err(|e| format!("callFunctionOn click failed: {e}"))?;
+
+    Ok(ActionResult::ok(format!(
+        "clicked via ax_id {}",
+        backend_id
+    )))
 }
 
 /// 执行滚动操作 — 通过 JS evaluate 滚动页面

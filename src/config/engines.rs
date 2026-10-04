@@ -137,6 +137,12 @@ pub struct MllmEngineSettings {
     /// 引擎级最大响应时间（秒）
     #[config(default = 60)]
     pub mrt_seconds: u64,
+
+    /// 混合 DOM+AX 树快照开关（F12）：true 时每轮导航决策附 `[id] role: name`
+    /// 文本大纲，与截图视觉通道并存；序列化长度受 `max_token_budget` 约束
+    #[serde(default)]
+    #[config(default = false)]
+    pub ax_tree_enabled: bool,
 }
 
 /// Playwright 引擎配置
@@ -196,4 +202,55 @@ pub struct EngineSettings {
 
     /// Playwright 引擎配置（XHR/Fetch 后台响应捕获等）
     pub playwright: PlaywrightEngineSettings,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MllmEngineSettings 默认值与 config/default.toml `[engines.mllm]` 节一致（F12）
+    #[test]
+    fn test_mllm_engine_settings_defaults_match_spec() {
+        let s = MllmEngineSettings::default();
+        assert!(!s.enabled);
+        assert_eq!(s.max_iterations, 10);
+        assert_eq!(s.screenshot_quality, 70);
+        assert_eq!(s.max_token_budget, 4096);
+        assert_eq!(s.mrt_seconds, 60);
+        assert!(!s.ax_tree_enabled, "AX 树快照默认关（F12）");
+    }
+
+    /// MllmEngineSettings 从 toml 全键反序列化（含 ax_tree_enabled，F12）
+    #[test]
+    fn test_mllm_engine_settings_toml_parses_ax_tree_enabled() {
+        let toml = r#"
+            enabled = true
+            vision_model = "gemini:gemini-2.0-flash"
+            max_iterations = 5
+            screenshot_quality = 80
+            max_token_budget = 2048
+            mrt_seconds = 90
+            ax_tree_enabled = true
+        "#;
+        let s: MllmEngineSettings = toml::from_str(toml).expect("deserialize");
+        assert!(s.enabled);
+        assert_eq!(s.max_iterations, 5);
+        assert_eq!(s.max_token_budget, 2048);
+        assert!(s.ax_tree_enabled);
+    }
+
+    /// 旧配置缺 `ax_tree_enabled` 键时 serde 默认兜底（其余键按既有惯例必填，F12）
+    #[test]
+    fn test_mllm_engine_settings_without_ax_tree_key_defaults() {
+        let toml = r#"
+            enabled = false
+            vision_model = "gemini:gemini-2.0-flash"
+            max_iterations = 10
+            screenshot_quality = 70
+            max_token_budget = 4096
+            mrt_seconds = 60
+        "#;
+        let s: MllmEngineSettings = toml::from_str(toml).expect("deserialize");
+        assert!(!s.ax_tree_enabled);
+    }
 }

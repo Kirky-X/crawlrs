@@ -29,6 +29,11 @@ pub struct MllmEngineConfig {
 
     /// 引擎级最大响应时间（秒）
     pub mrt_seconds: u64,
+
+    /// 混合 DOM+AX 树快照开关（F12）：true 时每轮导航决策附 `[id] role: name`
+    /// 文本大纲（`[id]` 为 backendNodeId，可在 Click 决策中以 `ax_id` 引用），
+    /// 与截图视觉通道并存；大纲长度受 [`MllmEngineConfig::max_token_budget`] 约束
+    pub ax_tree_enabled: bool,
 }
 
 impl Default for MllmEngineConfig {
@@ -40,6 +45,7 @@ impl Default for MllmEngineConfig {
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             max_token_budget: 4096,
             mrt_seconds: 60,
+            ax_tree_enabled: false,
         }
     }
 }
@@ -72,6 +78,7 @@ mod tests {
         assert_eq!(config.screenshot_quality, 70);
         assert_eq!(config.max_token_budget, 4096);
         assert_eq!(config.mrt_seconds, 60);
+        assert!(!config.ax_tree_enabled, "AX 树快照默认关（F12）");
         assert!(!config.system_prompt.is_empty());
     }
 
@@ -82,5 +89,18 @@ mod tests {
         let deserialized: MllmEngineConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.vision_model, config.vision_model);
         assert_eq!(deserialized.max_iterations, config.max_iterations);
+        assert_eq!(deserialized.ax_tree_enabled, config.ax_tree_enabled);
+    }
+
+    /// AX 树快照开关反序列化（F12；serde 按既有惯例全键必填）
+    #[test]
+    fn test_config_ax_tree_enabled_parses() {
+        let config: MllmEngineConfig = serde_json::from_str(
+            r#"{"vision_model": "m", "max_iterations": 3, "screenshot_quality": 70,
+                "system_prompt": "s", "max_token_budget": 2048, "mrt_seconds": 60,
+                "ax_tree_enabled": true}"#,
+        )
+        .unwrap();
+        assert!(config.ax_tree_enabled);
     }
 }

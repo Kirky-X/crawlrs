@@ -232,6 +232,7 @@ pub fn init_engines(
             system_prompt: crate::engines::mllm::config::MllmEngineConfig::default().system_prompt,
             max_token_budget: engine_config.mllm.max_token_budget,
             mrt_seconds: engine_config.mllm.mrt_seconds,
+            ax_tree_enabled: engine_config.mllm.ax_tree_enabled,
         };
         let vision_adapter = std::sync::Arc::new(GenaiVisionAdapter::new());
         engines.push(std::sync::Arc::new(MllmEngine::new(

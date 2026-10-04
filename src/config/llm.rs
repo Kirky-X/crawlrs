@@ -89,6 +89,11 @@ fn default_chunking_term_precheck_enabled() -> bool {
     true
 }
 
+/// serde 默认值：溯源覆盖率门下限（与 `#[config(default = 0.75)]` 保持一致）
+fn default_provenance_min_coverage() -> f64 {
+    0.75
+}
+
 /// LLM 配置设置
 ///
 /// 配置 LLM（大语言模型）服务的参数
@@ -126,6 +131,22 @@ pub struct LLMSettings {
     /// （同 `sitemap` / `crawl` 节先例）。
     #[serde(default)]
     pub chunking: LlmChunkingSettings,
+
+    /// 提取结果字符级溯源对齐开关（F9）
+    ///
+    /// true 时 `extract_data_with_provenance` 对结果字符串字段尝试对齐回
+    /// 原文字符区间，产出 `_provenance` 映射（`serde(default)` 兼容旧配置缺键）。
+    #[serde(default)]
+    #[config(default = false)]
+    pub provenance_enabled: bool,
+
+    /// 溯源对齐双门下限：token 覆盖率门（字符密度门 1/3 为代码内常量）（F9）
+    ///
+    /// 对齐结果须同时满足 coverage ≥ 此值且 density ≥ 1/3，否则该字段区间置
+    /// null 由调用方过滤。
+    #[serde(default = "default_provenance_min_coverage")]
+    #[config(default = 0.75)]
+    pub provenance_min_coverage: f64,
 }
 
 impl std::fmt::Debug for LLMSettings {
@@ -205,6 +226,41 @@ mod tests {
         assert_eq!(s.chunking.model_context_tokens, 8192);
     }
 
+    /// 溯源配置默认值与 config/default.toml `[llm]` 节及蓝图 configKeys 一致（F9）
+    #[test]
+    fn test_llm_provenance_settings_defaults_match_spec() {
+        let s = LLMSettings::default();
+        assert!(!s.provenance_enabled, "默认关：结果不挂 _provenance");
+        assert!(
+            (s.provenance_min_coverage - 0.75).abs() < f64::EPSILON,
+            "langextract 同款覆盖率门 0.75"
+        );
+    }
+
+    /// 溯源配置从 toml 全键反序列化（F9）
+    #[test]
+    fn test_llm_provenance_settings_toml_parses() {
+        let toml = r#"
+            provider = "openai"
+            provenance_enabled = true
+            provenance_min_coverage = 0.8
+        "#;
+        let s: LLMSettings = toml::from_str(toml).expect("deserialize");
+        assert!(s.provenance_enabled);
+        assert!((s.provenance_min_coverage - 0.8).abs() < f64::EPSILON);
+    }
+
+    /// 旧配置缺溯源键时 serde 默认兜底：开关关、覆盖率门 0.75（向后兼容，F9）
+    #[test]
+    fn test_llm_settings_without_provenance_keys_defaults() {
+        let toml = r#"
+            provider = "openai"
+        "#;
+        let s: LLMSettings = toml::from_str(toml).expect("deserialize");
+        assert!(!s.provenance_enabled);
+        assert!((s.provenance_min_coverage - 0.75).abs() < f64::EPSILON);
+    }
+
     #[test]
     fn test_llm_default_api_key_is_none() {
         let settings = LLMSettings::default();
@@ -251,6 +307,8 @@ mod tests {
             model: Some("gpt-4".to_string()),
             api_base_url: Some("https://api.openai.com/v1".to_string()),
             chunking: LlmChunkingSettings::default(),
+            provenance_enabled: false,
+            provenance_min_coverage: 0.75,
         };
         assert_eq!(settings.api_key(), Some("sk-secret-key"));
     }
@@ -263,6 +321,8 @@ mod tests {
             model: None,
             api_base_url: None,
             chunking: LlmChunkingSettings::default(),
+            provenance_enabled: false,
+            provenance_min_coverage: 0.75,
         };
         assert!(settings.api_key().is_none());
     }
@@ -275,6 +335,8 @@ mod tests {
             model: Some("claude-3".to_string()),
             api_base_url: Some("https://api.anthropic.com".to_string()),
             chunking: LlmChunkingSettings::default(),
+            provenance_enabled: false,
+            provenance_min_coverage: 0.75,
         };
         let json = serde_json::to_string(&settings).expect("serialize");
         let back: LLMSettings = serde_json::from_str(&json).expect("deserialize");
@@ -309,6 +371,8 @@ mod tests {
             model: Some("llama2".to_string()),
             api_base_url: Some("http://localhost:11434".to_string()),
             chunking: LlmChunkingSettings::default(),
+            provenance_enabled: false,
+            provenance_min_coverage: 0.75,
         };
         let cloned = settings.clone();
         assert_eq!(cloned.provider, settings.provider);
@@ -325,6 +389,8 @@ mod tests {
             model: Some("gpt-4".to_string()),
             api_base_url: Some("https://api.openai.com/v1".to_string()),
             chunking: LlmChunkingSettings::default(),
+            provenance_enabled: false,
+            provenance_min_coverage: 0.75,
         };
         let debug = format!("{:?}", settings);
         assert!(

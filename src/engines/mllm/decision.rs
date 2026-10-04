@@ -14,6 +14,10 @@ pub enum MllmDecision {
     /// 点击页面元素
     Click {
         selector: String,
+        /// 可选：AX 树大纲中的 backendNodeId（F12）。模型按 `[id]` 协议返回时，
+        /// executor 优先经 CDP DOM.resolveNode 直取该节点，失败回退 selector
+        #[serde(default)]
+        ax_id: Option<i64>,
         #[serde(default)]
         reasoning: String,
     },
@@ -135,11 +139,30 @@ mod tests {
         assert!(matches!(decision, MllmDecision::Click { .. }));
         if let MllmDecision::Click {
             selector,
+            ax_id,
             reasoning,
         } = decision
         {
             assert_eq!(selector, "#submit-btn");
             assert_eq!(reasoning, "Click submit");
+            assert_eq!(ax_id, None, "旧协议无 ax_id 时为 None（向后兼容）");
+        }
+    }
+
+    /// AX 树 `[id]` 引用协议：模型返回 ax_id 时解析为 backendNodeId（F12）
+    #[test]
+    fn test_parse_click_with_ax_id() {
+        let json =
+            r##"{"action": "click", "selector": "#submit-btn", "ax_id": 42, "reasoning": "r"}"##;
+        let decision = parse_decision(json).unwrap();
+        if let MllmDecision::Click {
+            selector, ax_id, ..
+        } = decision
+        {
+            assert_eq!(selector, "#submit-btn");
+            assert_eq!(ax_id, Some(42));
+        } else {
+            panic!("Expected Click decision");
         }
     }
 
@@ -248,6 +271,7 @@ Let me know if you need anything else."#;
         let decisions = vec![
             MllmDecision::Click {
                 selector: "#btn".to_string(),
+                ax_id: Some(7),
                 reasoning: "test".to_string(),
             },
             MllmDecision::Scroll {

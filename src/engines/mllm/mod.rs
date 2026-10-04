@@ -7,5 +7,6 @@
 //! 实现 agentic loop 式的智能爬取。由 `engine-mllm` feature 门控。
 
 pub mod action_executor; // 动作执行器
+pub mod ax_tree; // 混合 DOM+AX 树快照（F12）
 pub mod config;
 pub mod decision;
