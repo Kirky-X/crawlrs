@@ -8,13 +8,17 @@
 //! - `css_rule_extractor`：`CssRuleExtractor` 兜底实现（无 feature 依赖）
 //! - `trafilatura_extractor`：`TrafilaturaExtractor` 主路径（gated `trafilatura`）
 //! - `dom_smoothie_extractor`：`DomSmoothieExtractor` 性能回退（gated `dom-smoothie`）
-//! - `facade`：`ContentExtractionFacade` 优先级路由 + LLM 回退
+//! - `quality_gate`：prose 质量度量与硬门槛判定（降级阶梯 F7）
+//! - `facade`：`ContentExtractionFacade` 优先级路由 + 质量门裁决 + LLM 回退
 //!
 //! 特性门控策略
 //! - `trafilatura`：启用 trafilatura 实现
 //! - `dom-smoothie`：启用 dom_smoothie 实现
 //! - `extractors`：聚合两者
 //! - 三特性均关闭时 Facade 退化为 CssRule 兜底（编译通过，功能可用）
+
+pub mod quality_gate;
+pub use quality_gate::{ProseMetrics, QualityGateConfig};
 
 pub mod traits;
 pub use traits::{ContentExtractor, ExtractError, ExtractedContent, PageType, Result};

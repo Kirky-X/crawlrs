@@ -232,6 +232,38 @@ api_key = ""
 model = "qwen3:1.7b"
 api_base_url = "http://localhost:11434/v1"
 
+
+# LLM 提取 token 窗口分块（不依赖 --features llm，该 feature 仅门控 genai provider 路径）
+# enabled=false 时长文仍单 prompt 直发（向后兼容）；true 后按模型窗口切块→并行提问→单次 merge
+[llm.chunking]
+enabled = false
+# 模型上下文窗口（token）；查不到模型窗口时用此值兜底
+model_context_tokens = 8192
+# 单次回答预留输出 token
+max_output_tokens = 2048
+# prompt 模板/边界标记等注入开销预留 token
+prompt_overhead_tokens = 1024
+# token→字符保守换算（1 token ≈ N 字符；分块预算 = (窗口-输出-开销) × N ÷ 2 留 50% 余量）
+chars_per_token = 4
+# 分块提取并发度（tokio JoinSet 并行上限）
+max_parallel = 4
+# 分块结果单次 merge prompt 综合（false 时逐块结果直接按字段拼接）
+merge_enabled = true
+# 术语预检：schema 字段名拆词（停用词过滤后）均不在文本中时告警并短路（省 token）
+term_precheck_enabled = true
+
+# 提取降级重试阶梯质量门（吸收点 F7；ContentExtractionFacade 跨通道编排）
+# 现状已按 confidence ≥0.7 短路 + LLM 回退；此节补 word_count 驱动升级与长度比裁决
+[content_extraction]
+# 正文词数低于该值时继续尝试下一通道（否则按 confidence 短路）
+min_word_count = 150
+# 候选替换裁决：新结果长度 ≥ 当前 × 该比例才采纳（防短结果退化）
+replacement_length_ratio = 1.5
+# prose 硬门槛（defuddle）：句子平均词数下限
+prose_min_sentence_words = 7
+# prose 硬门槛：链接密度上限（超过视为导航/索引页噪声）
+prose_max_link_density = 0.7
+
 # RAG 能力配置（嵌入 + 重排）——最小引入：默认全关，provider 依赖可选 feature
 # 嵌入 provider："" 禁用 | "local"（vecboost，需 --features rag-local）| "remote"（rig，需 --features rag-remote）
 # 重排 provider："" 禁用 | "local"（vecboost，需 --features rag-local）| "http"（通用 /rerank REST，无 feature 要求）

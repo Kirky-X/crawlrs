@@ -4,10 +4,14 @@
 //! 正文提取 Facade
 //!
 //! [`ContentExtractionFacade`] 持有 `Vec<Box<dyn ContentExtractor>>`，按优先级
-//! Trafilatura → DomSmoothie → CssRule 依次调用。首个 `confidence >= 0.7` 的成功结果
-//! 立即返回；全部 `confidence < 0.7` 时取首个成功结果，LLMService 可用时触发回退升级。
+//! Trafilatura → DomSmoothie → CssRule 依次调用。
 //!
-//! LLM 回退：将首选 extractor 的低置信度结果送 LLM 结构化提取，输出 confidence=0.8。
+//! 调用策略（质量门禁用时为既有语义：首个 `confidence >= 0.7` 即返，全低置信取首个）：
+//! - 快路径：候选 `confidence >= 0.7` 且词数达 [`QualityGateConfig::min_word_count`]
+//!   且无 prose 硬失败 → 立即返回
+//! - 裁决：未达快路径的候选按 word_count + 长度比替换 best，链尽返回 best
+//! - LLM 回退：`confidence < 0.7` ‖ 词数低于门槛 ‖ prose 硬失败 时触发，
+//!   输出 confidence=0.8
 //!
 //! 特性兼容
 //! - `trafilatura` on → Trafilatura 优先
@@ -21,10 +25,15 @@ use serde_json::{json, Value};
 
 use crate::domain::services::llm::LLMServiceTrait;
 
+use super::quality_gate::{self, QualityGateConfig};
 use super::traits::{ContentExtractor, ExtractError, ExtractedContent};
 
 /// LLM 回退后内容 confidence（约定）
 const LLM_FALLBACK_CONFIDENCE: f32 = 0.8;
+
+/// 链路裁决结果：内容 + 其 prose metrics（质量门启用时恒 `Some`，供
+/// `extract` 复用免二次全量 DOM 解析；disabled 时为 `None`）
+type ChainOutcome = (ExtractedContent, Option<quality_gate::ProseMetrics>);
 
 /// LLM 输入文本最大长度（防止 token 滥用 DoS，约 32K 字符 ~8K tokens）
 const LLM_INPUT_MAX_LEN: usize = 32_768;
@@ -33,15 +42,18 @@ const LLM_INPUT_MAX_LEN: usize = 32_768;
 const LLM_INPUT_BEGIN_TAG: &str = "<scraped_content_begin>";
 const LLM_INPUT_END_TAG: &str = "<scraped_content_end>";
 
-/// ContentExtractionFacade：按优先级路由多 extractor + LLM 回退
+/// ContentExtractionFacade：按优先级路由多 extractor + 质量门裁决 + LLM 回退
 ///
 /// 持有 `Vec<Box<dyn ContentExtractor>>`，构造时按优先级入队：
 /// 1. Trafilatura（gated `trafilatura`）— 主路径，质量最高
 /// 2. DomSmoothie（gated `dom-smoothie`）— 性能回退
 /// 3. CssRule（无条件）— 兜底
 ///
-/// 调用策略：依次尝试，首个 `confidence >= 0.7` 立即返回；
-/// 全部 `confidence < 0.7` 时取首个成功结果，LLMService 可用时触发回退升级。
+/// 调用策略（`QualityGateConfig::disabled()` 时为既有语义）：
+/// - 快路径：候选 `confidence >= 0.7` 且词数达标且无 prose 硬失败 → 立即返回
+/// - 裁决：未达快路径的候选按 word_count + 长度比（`replacement_length_ratio`）
+///   替换当前 best，链尽返回 best（保留低置信兜底语义）
+/// - LLM 回退：`confidence < 0.7` ‖ 词数低于门槛 ‖ prose 硬失败 时触发
 pub struct ContentExtractionFacade {
     /// 按优先级排列的 extractor 链
     extractors: Vec<Box<dyn ContentExtractor>>,
@@ -49,14 +61,27 @@ pub struct ContentExtractionFacade {
     ///
     /// 注入时触发低 confidence 的结构化提取升级；缺失则跳过 LLM 回退。
     llm_service: Option<Arc<dyn LLMServiceTrait>>,
+    /// 质量门配置（disabled = 既有行为零变化）
+    quality: QualityGateConfig,
 }
 
 impl ContentExtractionFacade {
-    /// 创建新 Facade 实例
+    /// 创建新 Facade 实例（质量门禁用，既有行为零变化）
     ///
     /// 各 extractor 按 cfg 编译期决定是否入队，运行期按入队顺序（优先级）调用。
     /// LLM 回退按 `llm_service` 注入与否决定是否启用。
     pub fn new(llm_service: Option<Arc<dyn LLMServiceTrait>>) -> Self {
+        Self::with_quality_config(llm_service, QualityGateConfig::disabled())
+    }
+
+    /// 创建 Facade 实例并启用质量门配置
+    ///
+    /// bootstrap 从 `settings.content_extraction` 四键构造
+    /// [`QualityGateConfig::active`] 注入；未接线调用点走 [`ContentExtractionFacade::new`]。
+    pub fn with_quality_config(
+        llm_service: Option<Arc<dyn LLMServiceTrait>>,
+        quality: QualityGateConfig,
+    ) -> Self {
         let extractors: Vec<Box<dyn ContentExtractor>> = vec![
             #[cfg(feature = "trafilatura")]
             Box::new(super::trafilatura_extractor::TrafilaturaExtractor::new()),
@@ -69,50 +94,84 @@ impl ContentExtractionFacade {
         Self {
             extractors,
             llm_service,
+            quality,
         }
     }
 
-    /// 按优先级链路尝试 extractor
+    /// 按优先级链路尝试 extractor（disabled 时为既有语义：首个 ≥0.7 即返 / 低置信取首个）
     ///
-    /// 策略：依次调用 `extractors` 中的 extractor：
-    /// - 首个 `confidence >= 0.7` 的成功结果立即返回（Ok）
-    /// - 成功但 `confidence < 0.7` 的结果记为 `first_low_confidence`，继续尝试后续 extractor
+    /// 返回内容随附其 prose metrics：质量门启用时恒 `Some`（链内已 evaluate 过，
+    /// 调用方复用即免二次全量 DOM 解析）；disabled 时为 `None`。
+    ///
+    /// 启用质量门后的裁决策略：
+    /// - 快路径：`confidence >= 0.7` 且 `word_count >= min_word_count` 且无 prose 硬失败
+    ///   → 立即返回（Ok）
+    /// - 否则候选参与裁决：best 为空，或候选 `word_count >= best.word_count` 且
+    ///   字符数 ≥ `replacement_length_ratio × best 字符数`（字符数对 CJK 公平）时替换 best
     /// - 某次提取错误时记录并继续尝试下一实现
-    /// - 全部尝试完毕后：有 `first_low_confidence` 则返回它（供调用方决定 LLM 回退），
-    ///   否则返回所有错误（Err）
+    /// - 链尽：有 best 则返回它（低置信兜底语义保留），否则返回所有错误（Err）
     fn try_extract_chain(
         &self,
         html: &str,
         url: &str,
-    ) -> Result<ExtractedContent, Vec<(&'static str, ExtractError)>> {
+    ) -> Result<ChainOutcome, Vec<(&'static str, ExtractError)>> {
         let mut errors: Vec<(&'static str, ExtractError)> = Vec::new();
-        let mut first_low_confidence: Option<ExtractedContent> = None;
+        let mut best: Option<ExtractedContent> = None;
+        let mut best_metrics: Option<quality_gate::ProseMetrics> = None;
 
         for extractor in &self.extractors {
             match extractor.extract(html, url) {
                 Ok(content) => {
-                    if content.confidence >= 0.7 {
-                        return Ok(content);
+                    if !self.quality.enabled {
+                        // 既有语义：首个高置信即返；低置信记首个，继续尝试后续
+                        if content.confidence >= 0.7 {
+                            return Ok((content, None));
+                        }
+                        if best.is_none() {
+                            best = Some(content);
+                        }
+                        continue;
                     }
-                    // 低置信度成功：记录首个，继续尝试后续 extractor（可能更高 confidence）
-                    if first_low_confidence.is_none() {
-                        first_low_confidence = Some(content);
+
+                    let metrics = quality_gate::evaluate(&content.text, content.html.as_deref());
+                    if content.confidence >= 0.7
+                        && metrics.word_count >= self.quality.min_word_count
+                        && !quality_gate::is_hard_fail(&metrics, &self.quality)
+                    {
+                        return Ok((content, Some(metrics)));
+                    }
+
+                    let should_replace = match (&best, &best_metrics) {
+                        (None, _) => true,
+                        (Some(b), Some(bm)) => {
+                            metrics.word_count >= bm.word_count
+                                && content.text.chars().count() as f64
+                                    >= self.quality.replacement_length_ratio
+                                        * b.text.chars().count() as f64
+                        }
+                        // best 与 best_metrics 同步维护，此分支不可达；保守取替换
+                        (Some(_), None) => true,
+                    };
+                    if should_replace {
+                        best = Some(content);
+                        best_metrics = Some(metrics);
                     }
                 }
                 Err(e) => errors.push((extractor.name(), e)),
             }
         }
 
-        // 全部 extractor 尝试完毕：返回首个低置信度成功结果，或全部失败错误
-        match first_low_confidence {
-            Some(content) => Ok(content),
+        // 全部 extractor 尝试完毕：返回裁决后的 best，或全部失败错误
+        match best {
+            Some(content) => Ok((content, best_metrics)),
             None => Err(errors),
         }
     }
 
     /// LLM 回退提取：将原文送 LLM 结构化提取，输出 `text` 字段
     ///
-    /// 调用 `LLMServiceTrait::extract_data(text, schema, "json")`，
+    /// 调用 `LLMServiceTrait::extract_data_chunked(text, schema, "json")`
+    ///（长文按 `[llm.chunking]` 分块并行提取，关闭时等价单发 extract_data），
     /// schema 要求返回 `{"text": string, "title": string?, "author": string?}`。
     ///
     /// 返回 `ExtractedContent` confidence=0.8（高可信度）。
@@ -181,7 +240,7 @@ impl ContentExtractionFacade {
             "required": ["text"]
         });
 
-        let result = llm.extract_data(&safe_input, &schema, "json").await;
+        let result = llm.extract_data_chunked(&safe_input, &schema, "json").await;
         let (value, _token_usage) = match result {
             Ok(v) => v,
             Err(e) => {
@@ -221,16 +280,17 @@ impl ContentExtractionFacade {
     /// 提取正文（异步，可能触发 LLM 回退）
     ///
     /// 流程：
-    /// 1. 调用 `try_extract_chain` 按优先级尝试 extractor
-    /// 2. 若返回 `confidence < 0.7` 且 LLM 可用 → 触发 LLM 回退升级
-    /// 3. LLM 不可用 / 失败 → 保留首选 extractor 结果
+    /// 1. 调用 `try_extract_chain` 按优先级尝试 extractor（含质量门裁决）
+    /// 2. 若 `confidence < 0.7`，或（质量门启用时）词数低于门槛 / prose 硬失败，
+    ///    且 LLM 可用 → 触发 LLM 回退升级
+    /// 3. LLM 不可用 / 失败 → 保留裁决结果
     ///
     /// # 错误
     ///
     /// 所有 extractor 均失败时返回 [`ExtractError::ExtractorFailed`]，
     /// 包含每个 extractor 的失败原因（不吞错）。
     pub async fn extract(&self, html: &str, url: &str) -> Result<ExtractedContent, ExtractError> {
-        let content = self.try_extract_chain(html, url).map_err(|errors| {
+        let (content, chain_metrics) = self.try_extract_chain(html, url).map_err(|errors| {
             // 所有 extractor 失败，拼接错误信息（不吞错显性化）
             let detail = errors
                 .iter()
@@ -240,8 +300,19 @@ impl ContentExtractionFacade {
             ExtractError::ExtractorFailed(format!("all extractors failed: {}", detail))
         })?;
 
-        // LLM 回退条件检查
-        if content.should_fallback_to_llm() && self.llm_service.is_some() {
+        // LLM 回退条件：confidence < 0.7，或质量门启用时的词数/硬失败门槛（析取）。
+        // 质量门启用时链内已对返回候选 evaluate 过（chain_metrics 随链返回），
+        // 直接复用——避免第二次全量 DOM 解析（link_density 重建 document）。
+        let quality_failed = self.quality.enabled && {
+            let metrics = match chain_metrics {
+                Some(metrics) => metrics,
+                // 不可达防御：启用时链路恒随附 metrics；保留 evaluate 兜底
+                None => quality_gate::evaluate(&content.text, content.html.as_deref()),
+            };
+            metrics.word_count < self.quality.min_word_count
+                || quality_gate::is_hard_fail(&metrics, &self.quality)
+        };
+        if (content.should_fallback_to_llm() || quality_failed) && self.llm_service.is_some() {
             if let Some(llm_content) = self.try_llm_fallback(&content).await {
                 return Ok(llm_content);
             }
@@ -258,6 +329,8 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+
+    use super::super::traits::PageType;
 
     /// Mock LLM service：用于验证 LLM 回退触发与不触发
     struct MockLLMService {
@@ -467,5 +540,277 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ===== 降级重试阶梯（质量门裁决）tests =====
+    //
+    // 用 ScriptedExtractor 直接构造 extractor 链（tests 模块可访问私有字段），
+    // 使裁决逻辑与 feature 配置解耦、完全确定性。
+
+    use super::super::quality_gate::QualityGateConfig;
+
+    /// 预设结果的测试 extractor（None → Err(NoContent)）
+    struct ScriptedExtractor {
+        name: &'static str,
+        content: Option<ExtractedContent>,
+    }
+
+    impl ScriptedExtractor {
+        fn ok(name: &'static str, text: String, confidence: f32, html: Option<String>) -> Self {
+            Self {
+                name,
+                content: Some(ExtractedContent {
+                    text,
+                    html,
+                    title: None,
+                    author: None,
+                    confidence,
+                    page_type: PageType::Unknown,
+                }),
+            }
+        }
+    }
+
+    impl ContentExtractor for ScriptedExtractor {
+        fn extract(&self, _html: &str, _url: &str) -> Result<ExtractedContent, ExtractError> {
+            match &self.content {
+                Some(c) => Ok(c.clone()),
+                None => Err(ExtractError::NoContent),
+            }
+        }
+        fn name(&self) -> &'static str {
+            self.name
+        }
+    }
+
+    fn words(n: usize) -> String {
+        vec!["word"; n].join(" ")
+    }
+
+    fn scripted_facade(
+        extractors: Vec<Box<dyn ContentExtractor>>,
+        quality: QualityGateConfig,
+        llm: Option<Arc<dyn LLMServiceTrait>>,
+    ) -> ContentExtractionFacade {
+        ContentExtractionFacade {
+            extractors,
+            llm_service: llm,
+            quality,
+        }
+    }
+
+    fn enabled_cfg() -> QualityGateConfig {
+        QualityGateConfig::active(150, 1.5, 7.0, 0.7)
+    }
+
+    /// disabled 配置：首个高置信候选立即返回（回归：旧语义，不考虑长度）
+    #[tokio::test]
+    async fn disabled_config_returns_first_high_confidence_immediately() {
+        let c1 = ScriptedExtractor::ok("a", words(30), 0.9, None);
+        let c2 = ScriptedExtractor::ok("b", words(200), 0.85, None);
+        let facade = scripted_facade(
+            vec![Box::new(c1), Box::new(c2)],
+            QualityGateConfig::disabled(),
+            None,
+        );
+        let out = facade
+            .extract("<p>word</p>", "https://example.com/")
+            .await
+            .expect("ok");
+        assert_eq!(out.text, words(30), "disabled 必须返回首个 ≥0.7 候选");
+        assert!((out.confidence - 0.9).abs() < f32::EPSILON);
+    }
+
+    /// disabled 配置：全低置信时取首个成功结果（回归：旧语义）
+    #[tokio::test]
+    async fn disabled_config_keeps_first_low_confidence_candidate() {
+        let c1 = ScriptedExtractor::ok("a", words(30), 0.5, None);
+        let c2 = ScriptedExtractor::ok("b", words(500), 0.5, None);
+        let facade = scripted_facade(
+            vec![Box::new(c1), Box::new(c2)],
+            QualityGateConfig::disabled(),
+            None,
+        );
+        let out = facade
+            .extract("<p>word</p>", "https://example.com/")
+            .await
+            .expect("ok");
+        assert_eq!(out.text, words(30), "disabled 必须保留首个低置信结果");
+    }
+
+    /// 启用配置：高置信短结果（word_count=30 < 150）不短路，降级到下一通道
+    #[tokio::test]
+    async fn enabled_config_short_high_confidence_falls_through_to_next_channel() {
+        let c1 = ScriptedExtractor::ok("a", words(30), 0.9, None);
+        let c2 = ScriptedExtractor::ok("b", words(200), 0.85, None);
+        let facade = scripted_facade(vec![Box::new(c1), Box::new(c2)], enabled_cfg(), None);
+        let out = facade
+            .extract("<p>word</p>", "https://example.com/")
+            .await
+            .expect("ok");
+        assert_eq!(out.text, words(200), "短结果应降级，返回达标候选");
+        assert!((out.confidence - 0.85).abs() < f32::EPSILON);
+    }
+
+    /// 长度比裁决：候选比 best 长 1.4× 不替换（ratio=1.5 下侧），1.6× 替换（上侧）
+    #[tokio::test]
+    async fn enabled_config_length_ratio_adjudicates_replacement() {
+        // 100 词 → 499 chars；110 词 → 549 chars（1.10×，不替换）；160 词 → 799 chars（1.60×，替换）
+        let c1 = ScriptedExtractor::ok("a", words(100), 0.5, None);
+        let c2 = ScriptedExtractor::ok("b", words(110), 0.5, None);
+        let c3 = ScriptedExtractor::ok("c", words(160), 0.5, None);
+        let facade = scripted_facade(
+            vec![Box::new(c1), Box::new(c2), Box::new(c3)],
+            enabled_cfg(),
+            None,
+        );
+        let out = facade
+            .extract("<p>word</p>", "https://example.com/")
+            .await
+            .expect("ok");
+        assert_eq!(out.text, words(160), "1.6× ≥ 1.5 应替换为更长候选");
+    }
+
+    /// 长度比裁决：候选 word_count 更大但长度不足 ratio 时保留 best
+    #[tokio::test]
+    async fn enabled_config_keeps_best_when_candidate_below_ratio() {
+        let c1 = ScriptedExtractor::ok("a", words(100), 0.5, None);
+        let c2 = ScriptedExtractor::ok("b", words(110), 0.5, None);
+        let facade = scripted_facade(vec![Box::new(c1), Box::new(c2)], enabled_cfg(), None);
+        let out = facade
+            .extract("<p>word</p>", "https://example.com/")
+            .await
+            .expect("ok");
+        assert_eq!(out.text, words(100), "1.10× < 1.5 不应替换");
+    }
+
+    /// 全链短结果：链尽返回 word_count 最大的候选（而非首个）
+    #[tokio::test]
+    async fn enabled_config_chain_exhausted_returns_max_word_count_candidate() {
+        let c1 = ScriptedExtractor::ok("a", words(50), 0.5, None);
+        let c2 = ScriptedExtractor::ok("b", words(80), 0.5, None); // 1.60× 长于 c1 → 替换
+        let c3 = ScriptedExtractor::ok("c", words(60), 0.5, None); // word_count < best(80) → 不替换
+        let facade = scripted_facade(
+            vec![Box::new(c1), Box::new(c2), Box::new(c3)],
+            enabled_cfg(),
+            None,
+        );
+        let out = facade
+            .extract("<p>word</p>", "https://example.com/")
+            .await
+            .expect("ok");
+        assert_eq!(out.text, words(80), "链尽应返回词数最大的候选");
+    }
+
+    /// prose 硬门槛：纯链接导航页（link_density ≈ 1.0）判 hard fail 触发 LLM 回退
+    #[tokio::test]
+    async fn enabled_config_nav_page_hard_fail_triggers_llm_fallback() {
+        let nav_html = r#"<html><body>
+            <a href="/a">home link one</a>
+            <a href="/b">about link two</a>
+        </body></html>"#;
+        let nav = ScriptedExtractor::ok("a", words(200), 0.9, Some(nav_html.to_string()));
+        let (llm, call_count) =
+            MockLLMService::new_with_response(json!({"text": "llm extracted prose"}));
+        let facade = scripted_facade(vec![Box::new(nav)], enabled_cfg(), Some(Arc::new(llm)));
+        let out = facade
+            .extract(
+                "<html><body><a href=\"/a\">x</a></body></html>",
+                "https://example.com/",
+            )
+            .await
+            .expect("ok");
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "hard fail 必须触发 LLM 回退"
+        );
+        assert_eq!(out.text, "llm extracted prose");
+        assert!((out.confidence - LLM_FALLBACK_CONFIDENCE).abs() < f32::EPSILON);
+    }
+
+    /// word_count < min_word_count 时触发 LLM 回退（与 confidence<0.7 析取）
+    #[tokio::test]
+    async fn enabled_config_short_result_triggers_llm_fallback() {
+        let short = ScriptedExtractor::ok("a", words(30), 0.9, None);
+        let (llm, call_count) =
+            MockLLMService::new_with_response(json!({"text": "llm recovered prose"}));
+        let facade = scripted_facade(vec![Box::new(short)], enabled_cfg(), Some(Arc::new(llm)));
+        let out = facade
+            .extract("<p>word</p>", "https://example.com/")
+            .await
+            .expect("ok");
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "短结果应触发 LLM 回退"
+        );
+        assert_eq!(out.text, "llm recovered prose");
+    }
+
+    /// disabled 配置：低置信候选仍按旧语义触发 LLM 回退（confidence < 0.7）
+    #[tokio::test]
+    async fn disabled_config_low_confidence_still_triggers_llm_fallback() {
+        let low = ScriptedExtractor::ok("a", words(30), 0.5, None);
+        let (llm, call_count) =
+            MockLLMService::new_with_response(json!({"text": "llm fallback text"}));
+        let facade = scripted_facade(
+            vec![Box::new(low)],
+            QualityGateConfig::disabled(),
+            Some(Arc::new(llm)),
+        );
+        let out = facade
+            .extract("<p>word</p>", "https://example.com/")
+            .await
+            .expect("ok");
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(out.text, "llm fallback text");
+    }
+
+    /// 启用配置：LLM 不可用时低置信结果仍返回（现有兜底语义不丢）
+    #[tokio::test]
+    async fn enabled_config_returns_low_confidence_when_llm_unavailable() {
+        let low = ScriptedExtractor::ok("a", words(200), 0.5, None);
+        let facade = scripted_facade(vec![Box::new(low)], enabled_cfg(), None);
+        let out = facade
+            .extract("<p>word</p>", "https://example.com/")
+            .await
+            .expect("ok");
+        assert_eq!(out.text, words(200));
+        assert!((out.confidence - 0.5).abs() < f32::EPSILON);
+    }
+
+    /// 启用配置：达标的 prose 候选走快路径，不触发 LLM（call_count = 0）
+    #[tokio::test]
+    async fn enabled_config_fast_path_skips_llm_for_qualified_candidate() {
+        let good = ScriptedExtractor::ok("a", words(200), 0.9, None);
+        let (llm, call_count) =
+            MockLLMService::new_with_response(json!({"text": "should not be used"}));
+        let facade = scripted_facade(vec![Box::new(good)], enabled_cfg(), Some(Arc::new(llm)));
+        let out = facade
+            .extract("<p>word</p>", "https://example.com/")
+            .await
+            .expect("ok");
+        assert_eq!(call_count.load(Ordering::SeqCst), 0, "达标候选必须走快路径");
+        assert_eq!(out.text, words(200));
+    }
+
+    /// 全链错误：启用配置下仍返回全部 extractor 错误（不吞错）
+    #[tokio::test]
+    async fn enabled_config_all_extractors_failed_returns_errors() {
+        let a = ScriptedExtractor {
+            name: "a",
+            content: None,
+        };
+        let b = ScriptedExtractor {
+            name: "b",
+            content: None,
+        };
+        let facade = scripted_facade(vec![Box::new(a), Box::new(b)], enabled_cfg(), None);
+        let out = facade.extract("<p>word</p>", "https://example.com/").await;
+        let err = out.expect_err("all failed should error");
+        let msg = format!("{err}");
+        assert!(msg.contains("[a]"), "错误应含 extractor 名: {msg}");
+        assert!(msg.contains("[b]"), "错误应含 extractor 名: {msg}");
     }
 }

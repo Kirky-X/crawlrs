@@ -79,6 +79,7 @@ impl ExtractedContent {
     /// 是否应触发 LLM 回退（confidence < 0.7）
     ///
     /// 由 `ContentExtractionFacade` 调用，`LLMService` 可用时升级提取。
+    /// 质量门启用时 facade 在此基础上追加词数门槛 / prose 硬失败条件（析取）。
     pub fn should_fallback_to_llm(&self) -> bool {
         self.confidence < 0.7
     }

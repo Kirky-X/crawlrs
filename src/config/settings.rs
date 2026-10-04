@@ -20,7 +20,7 @@ pub use super::engines::{
     EngineSettings, FlareSolverrCdpSettings, FlareSolverrSettings, FlareSolverrTlsSettings,
     PlaywrightEngineSettings,
 };
-pub use super::llm::LLMSettings;
+pub use super::llm::{LLMSettings, LlmChunkingSettings};
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 pub use super::rag::RagSettings;
 pub use super::search::{
@@ -145,6 +145,13 @@ pub struct Settings {
 
     /// 国际化配置（i18n）
     pub i18n: I18nSettings,
+
+    /// 提取降级重试阶梯质量门配置（F7）
+    ///
+    /// `serde(default)` 兼容旧 config 文件缺 `[content_extraction]` 节
+    /// （同 `sitemap` / `crawl` 节先例）。
+    #[serde(default)]
+    pub content_extraction: ContentExtractionSettings,
 }
 
 // =============================================================================
@@ -1054,6 +1061,61 @@ pub fn validate_i18n(settings: &I18nSettings) -> Result<(), sdforge::validator::
 }
 
 // =============================================================================
+// 提取降级重试阶梯质量门配置
+// =============================================================================
+
+/// 提取降级重试阶梯质量门配置（吸收点 F7；消费方 `ContentExtractionFacade`）
+///
+/// 键值语义与 `config/default.toml` `[content_extraction]` 节一一对应：
+/// - `min_word_count`：正文词数低于该值时继续尝试下一通道（否则按 confidence 短路）
+/// - `replacement_length_ratio`：候选替换裁决，新结果字符数 ≥ 当前 × 该比例才采纳
+/// - `prose_min_sentence_words`：prose 硬门槛，句子平均词数下限
+/// - `prose_max_link_density`：prose 硬门槛，链接密度上限
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__CONTENT_EXTRACTION__")]
+pub struct ContentExtractionSettings {
+    /// 短结果升级阈值（词数）
+    #[serde(default = "default_content_extraction_min_word_count")]
+    #[config(default = 150)]
+    pub min_word_count: usize,
+
+    /// 候选替换裁决长度比（trafilatura 同款）
+    #[serde(default = "default_content_extraction_replacement_length_ratio")]
+    #[config(default = 1.5)]
+    pub replacement_length_ratio: f64,
+
+    /// prose 硬门槛（defuddle）：句子平均词数下限
+    #[serde(default = "default_content_extraction_prose_min_sentence_words")]
+    #[config(default = 7.0)]
+    pub prose_min_sentence_words: f64,
+
+    /// prose 硬门槛：链接密度上限
+    #[serde(default = "default_content_extraction_prose_max_link_density")]
+    #[config(default = 0.7)]
+    pub prose_max_link_density: f64,
+}
+
+/// serde 默认值：短结果升级阈值（与 `#[config(default = 150)]` 保持一致）
+fn default_content_extraction_min_word_count() -> usize {
+    150
+}
+
+/// serde 默认值：替换裁决长度比（与 `#[config(default = 1.5)]` 保持一致）
+fn default_content_extraction_replacement_length_ratio() -> f64 {
+    1.5
+}
+
+/// serde 默认值：句均词数下限（与 `#[config(default = 7.0)]` 保持一致）
+fn default_content_extraction_prose_min_sentence_words() -> f64 {
+    7.0
+}
+
+/// serde 默认值：链接密度上限（与 `#[config(default = 0.7)]` 保持一致）
+fn default_content_extraction_prose_max_link_density() -> f64 {
+    0.7
+}
+
+// =============================================================================
 // 自定义验证函数已拆分到子模块：`config::security::validate_security`、
 // `config::validation::validate_values`。
 // =============================================================================
@@ -1096,6 +1158,7 @@ mod tests {
             i18n: I18nSettings::default(),
             politeness: PolitenessSettings::default(),
             session: SessionSettings::default(),
+            content_extraction: ContentExtractionSettings::default(),
         };
 
         assert_eq!(settings.server.port, 8899);
@@ -1142,6 +1205,42 @@ mod tests {
         assert_eq!(s.max_uses, 200);
         assert_eq!(s.max_age_secs, 3600);
         assert_eq!(s.cookie_cache_max_bytes, 32768);
+    }
+
+    /// ContentExtractionSettings 默认值与 config/default.toml `[content_extraction]`
+    /// 节及蓝图 configKeys 一一对应（F7）
+    #[test]
+    fn test_content_extraction_settings_defaults_match_spec() {
+        let s = ContentExtractionSettings::default();
+        assert_eq!(s.min_word_count, 150, "短结果升级阈值");
+        assert!(
+            (s.replacement_length_ratio - 1.5).abs() < f64::EPSILON,
+            "替换裁决长度比"
+        );
+        assert!(
+            (s.prose_min_sentence_words - 7.0).abs() < f64::EPSILON,
+            "句均词数下限"
+        );
+        assert!(
+            (s.prose_max_link_density - 0.7).abs() < f64::EPSILON,
+            "链接密度上限"
+        );
+    }
+
+    /// ContentExtractionSettings 从 toml 全键反序列化
+    #[test]
+    fn test_content_extraction_settings_toml_parses_all_keys() {
+        let toml = r#"
+            min_word_count = 200
+            replacement_length_ratio = 1.8
+            prose_min_sentence_words = 9
+            prose_max_link_density = 0.5
+        "#;
+        let s: ContentExtractionSettings = toml::from_str(toml).expect("deserialize");
+        assert_eq!(s.min_word_count, 200);
+        assert!((s.replacement_length_ratio - 1.8).abs() < f64::EPSILON);
+        assert!((s.prose_min_sentence_words - 9.0).abs() < f64::EPSILON);
+        assert!((s.prose_max_link_density - 0.5).abs() < f64::EPSILON);
     }
 
     /// PolitenessSettings 默认值与 config/default.toml `[politeness]` 节及

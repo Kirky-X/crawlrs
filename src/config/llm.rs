@@ -7,6 +7,88 @@
 
 use serde::{Deserialize, Serialize};
 
+/// LLM 提取 token 窗口分块配置（吸收点 F8；消费方 `llm::chunker::ChunkingConfig`）
+///
+/// 键值语义与 `config/default.toml` `[llm.chunking]` 节一一对应。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__LLM__CHUNKING__")]
+pub struct LlmChunkingSettings {
+    /// 总开关：false 时长文仍单 prompt 直发（现状，向后兼容）
+    #[serde(default)]
+    #[config(default = false)]
+    pub enabled: bool,
+
+    /// 模型上下文窗口（token）；查不到专用窗口时用此值兜底
+    #[serde(default = "default_chunking_model_context_tokens")]
+    #[config(default = 8192)]
+    pub model_context_tokens: u32,
+
+    /// 单次回答预留输出 token
+    #[serde(default = "default_chunking_max_output_tokens")]
+    #[config(default = 2048)]
+    pub max_output_tokens: u32,
+
+    /// prompt 模板/边界标记等注入开销预留 token
+    #[serde(default = "default_chunking_prompt_overhead_tokens")]
+    #[config(default = 1024)]
+    pub prompt_overhead_tokens: u32,
+
+    /// token→字符保守换算（1 token ≈ N 字符）；÷2 余量在分块预算内固定
+    #[serde(default = "default_chunking_chars_per_token")]
+    #[config(default = 4.0)]
+    pub chars_per_token: f64,
+
+    /// 分块提取并发度（tokio JoinSet 并行上限）
+    #[serde(default = "default_chunking_max_parallel")]
+    #[config(default = 4)]
+    pub max_parallel: usize,
+
+    /// 分块结果单次 merge prompt 综合（false 时逐块结果直接按字段拼接）
+    #[serde(default = "default_chunking_merge_enabled")]
+    #[config(default = true)]
+    pub merge_enabled: bool,
+
+    /// 术语预检：schema 字段名拆词（停用词过滤后）均不在文本中时告警并短路（省 token）
+    #[serde(default = "default_chunking_term_precheck_enabled")]
+    #[config(default = true)]
+    pub term_precheck_enabled: bool,
+}
+
+/// serde 默认值：模型窗口兜底（与 `#[config(default = 8192)]` 保持一致）
+fn default_chunking_model_context_tokens() -> u32 {
+    8192
+}
+
+/// serde 默认值：回答预留（与 `#[config(default = 2048)]` 保持一致）
+fn default_chunking_max_output_tokens() -> u32 {
+    2048
+}
+
+/// serde 默认值：模板注入开销预留（与 `#[config(default = 1024)]` 保持一致）
+fn default_chunking_prompt_overhead_tokens() -> u32 {
+    1024
+}
+
+/// serde 默认值：token→字符换算（与 `#[config(default = 4.0)]` 保持一致）
+fn default_chunking_chars_per_token() -> f64 {
+    4.0
+}
+
+/// serde 默认值：并行上限（与 `#[config(default = 4)]` 保持一致）
+fn default_chunking_max_parallel() -> usize {
+    4
+}
+
+/// serde 默认值：merge 开关（与 `#[config(default = true)]` 保持一致）
+fn default_chunking_merge_enabled() -> bool {
+    true
+}
+
+/// serde 默认值：术语预检开关（与 `#[config(default = true)]` 保持一致）
+fn default_chunking_term_precheck_enabled() -> bool {
+    true
+}
+
 /// LLM 配置设置
 ///
 /// 配置 LLM（大语言模型）服务的参数
@@ -37,6 +119,13 @@ pub struct LLMSettings {
     /// LLM API 基础 URL
     #[config(default = Some("https://api.openai.com/v1".to_string()))]
     pub api_base_url: Option<String>,
+
+    /// LLM 提取 token 窗口分块配置（F8）
+    ///
+    /// `serde(default)` 兼容旧 config 文件缺 `[llm.chunking]` 节
+    /// （同 `sitemap` / `crawl` 节先例）。
+    #[serde(default)]
+    pub chunking: LlmChunkingSettings,
 }
 
 impl std::fmt::Debug for LLMSettings {
@@ -65,6 +154,56 @@ impl LLMSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// LlmChunkingSettings 默认值与 config/default.toml `[llm.chunking]`
+    /// 节及蓝图 configKeys 一一对应（F8）
+    #[test]
+    fn test_llm_chunking_settings_defaults_match_spec() {
+        let s = LlmChunkingSettings::default();
+        assert!(!s.enabled, "默认关：长文单 prompt 直发（现状）");
+        assert_eq!(s.model_context_tokens, 8192, "模型窗口兜底值");
+        assert_eq!(s.max_output_tokens, 2048, "回答预留");
+        assert_eq!(s.prompt_overhead_tokens, 1024, "模板注入开销预留");
+        assert!((s.chars_per_token - 4.0).abs() < f64::EPSILON, "保守换算");
+        assert_eq!(s.max_parallel, 4, "JoinSet 并行上限");
+        assert!(s.merge_enabled, "单次 merge prompt 综合");
+        assert!(s.term_precheck_enabled, "零成本术语预检短路");
+    }
+
+    /// LlmChunkingSettings 从 toml 全键反序列化
+    #[test]
+    fn test_llm_chunking_settings_toml_parses_all_keys() {
+        let toml = r#"
+            enabled = true
+            model_context_tokens = 32768
+            max_output_tokens = 4096
+            prompt_overhead_tokens = 512
+            chars_per_token = 1.5
+            max_parallel = 8
+            merge_enabled = false
+            term_precheck_enabled = false
+        "#;
+        let s: LlmChunkingSettings = toml::from_str(toml).expect("deserialize");
+        assert!(s.enabled);
+        assert_eq!(s.model_context_tokens, 32768);
+        assert_eq!(s.max_output_tokens, 4096);
+        assert_eq!(s.prompt_overhead_tokens, 512);
+        assert!((s.chars_per_token - 1.5).abs() < f64::EPSILON);
+        assert_eq!(s.max_parallel, 8);
+        assert!(!s.merge_enabled);
+        assert!(!s.term_precheck_enabled);
+    }
+
+    /// 旧配置缺 `[llm.chunking]` 节时 serde 默认兜底（向后兼容）
+    #[test]
+    fn test_llm_settings_without_chunking_section_defaults() {
+        let toml = r#"
+            provider = "openai"
+        "#;
+        let s: LLMSettings = toml::from_str(toml).expect("deserialize");
+        assert!(!s.chunking.enabled);
+        assert_eq!(s.chunking.model_context_tokens, 8192);
+    }
 
     #[test]
     fn test_llm_default_api_key_is_none() {
@@ -111,6 +250,7 @@ mod tests {
             api_key: Some("sk-secret-key".to_string()),
             model: Some("gpt-4".to_string()),
             api_base_url: Some("https://api.openai.com/v1".to_string()),
+            chunking: LlmChunkingSettings::default(),
         };
         assert_eq!(settings.api_key(), Some("sk-secret-key"));
     }
@@ -122,6 +262,7 @@ mod tests {
             api_key: None,
             model: None,
             api_base_url: None,
+            chunking: LlmChunkingSettings::default(),
         };
         assert!(settings.api_key().is_none());
     }
@@ -133,6 +274,7 @@ mod tests {
             api_key: Some("key-abc".to_string()),
             model: Some("claude-3".to_string()),
             api_base_url: Some("https://api.anthropic.com".to_string()),
+            chunking: LlmChunkingSettings::default(),
         };
         let json = serde_json::to_string(&settings).expect("serialize");
         let back: LLMSettings = serde_json::from_str(&json).expect("deserialize");
@@ -166,6 +308,7 @@ mod tests {
             api_key: Some("cloned-key".to_string()),
             model: Some("llama2".to_string()),
             api_base_url: Some("http://localhost:11434".to_string()),
+            chunking: LlmChunkingSettings::default(),
         };
         let cloned = settings.clone();
         assert_eq!(cloned.provider, settings.provider);
@@ -181,6 +324,7 @@ mod tests {
             api_key: Some("debug-key".to_string()),
             model: Some("gpt-4".to_string()),
             api_base_url: Some("https://api.openai.com/v1".to_string()),
+            chunking: LlmChunkingSettings::default(),
         };
         let debug = format!("{:?}", settings);
         assert!(

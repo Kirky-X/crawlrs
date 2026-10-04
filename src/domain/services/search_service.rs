@@ -1944,6 +1944,7 @@ mod tests {
             i18n: I18nSettings::default(),
             politeness: PolitenessSettings::default(),
             session: SessionSettings::default(),
+            content_extraction: ContentExtractionSettings::default(),
         }
     }
 

@@ -21,8 +21,9 @@ use crate::infrastructure::auth::{
 };
 // garrison prelude 提供 GarrisonDao / GarrisonInterface / GarrisonManager trait 与类型。
 use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
-// ContentExtractionFacade 用于正文提取（Trafilatura→DomSmoothie→CssRule + LLM 回退）
+// ContentExtractionFacade 用于正文提取（Trafilatura→DomSmoothie→CssRule + 质量门裁决 + LLM 回退）
 use crate::domain::services::content_extractor::ContentExtractionFacade;
+use crate::domain::services::content_extractor::QualityGateConfig;
 use crate::domain::services::extraction_service::{ExtractionService, ExtractionServiceTrait};
 #[cfg(feature = "auth")]
 use dbnexus::DbPool;
@@ -999,9 +1000,19 @@ pub async fn init_services(
 
     // Initialize content extraction facade
     //
-    // 装配 ContentExtractionFacade，注入 llm_service 用于低置信度回退（confidence < 0.7 时触发）。
+    // 装配 ContentExtractionFacade，注入 llm_service 用于低置信度回退（confidence < 0.7
+    // 时触发）。质量门按 settings.content_extraction 四键启用：word_count 短结果升级 +
+    // 长度比裁决 + prose 硬失败（sentence_avg/link_density）门槛。
     // Facade 内部按 cfg 编译期决定 extractor 链（Trafilatura→DomSmoothie→CssRule）。
-    let content_extractor = Arc::new(ContentExtractionFacade::new(Some(llm_service.clone())));
+    let content_extractor = Arc::new(ContentExtractionFacade::with_quality_config(
+        Some(llm_service.clone()),
+        QualityGateConfig::active(
+            settings.content_extraction.min_word_count,
+            settings.content_extraction.replacement_length_ratio,
+            settings.content_extraction.prose_min_sentence_words,
+            settings.content_extraction.prose_max_link_density,
+        ),
+    ));
 
     // Initialize WebhookWorker（仅 webhook-on 时构造）
     // webhook-off：不构造 WebhookWorker，ServicesComponents.webhook_worker 字段不编译

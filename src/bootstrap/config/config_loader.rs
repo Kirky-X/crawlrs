@@ -141,6 +141,31 @@ mod tests {
     }
 
     #[test]
+    fn test_load_settings_has_content_extraction_config() {
+        // `[content_extraction]` 配置段（F7 提取降级阶梯质量门）应从 default.toml 正确解析
+        let settings = load_settings().expect("Failed to load settings");
+        assert_eq!(settings.content_extraction.min_word_count, 150);
+        assert!((settings.content_extraction.replacement_length_ratio - 1.5).abs() < f64::EPSILON);
+        assert!((settings.content_extraction.prose_min_sentence_words - 7.0).abs() < f64::EPSILON);
+        assert!((settings.content_extraction.prose_max_link_density - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_load_settings_has_llm_chunking_config() {
+        // `[llm.chunking]` 配置段（F8 LLM token 窗口分块）应从 default.toml 正确解析
+        let settings = load_settings().expect("Failed to load settings");
+        let chunking = &settings.llm.chunking;
+        assert!(!chunking.enabled, "默认关：长文单 prompt 直发（现状）");
+        assert_eq!(chunking.model_context_tokens, 8192);
+        assert_eq!(chunking.max_output_tokens, 2048);
+        assert_eq!(chunking.prompt_overhead_tokens, 1024);
+        assert!((chunking.chars_per_token - 4.0).abs() < f64::EPSILON);
+        assert_eq!(chunking.max_parallel, 4);
+        assert!(chunking.merge_enabled);
+        assert!(chunking.term_precheck_enabled);
+    }
+
+    #[test]
     fn test_load_settings_returns_consistent_host() {
         let settings1 = load_settings().expect("Failed to load settings");
         let settings2 = load_settings().expect("Failed to load settings");

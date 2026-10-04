@@ -4,11 +4,15 @@
 //! LLMService - LLM provider interaction handling
 //!
 //! 核心调度层：组合 `prompt_builder`（模板 + prompt 构造）与
-//! `provider_adapter`（HTTP 请求发送）完成 LLM 数据提取。
+//! `provider_adapter`（HTTP 请求发送）完成 LLM 数据提取；
+//! 长文经 `chunker`（F8）按模型窗口分块并行提取。
 
+pub mod chunker; // token 窗口分块 + 并行提问 + merge（F8）
 pub mod prompt_builder;
 pub mod provider_adapter;
 pub mod vision_adapter; // 视觉模型适配器（MLLM 引擎依赖）
+
+use chunker::ChunkingConfig;
 
 #[cfg(test)]
 use prompt_builder::TemplateLoaderTrait;
@@ -29,7 +33,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Token usage tracking for LLM calls
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
@@ -44,6 +48,19 @@ pub trait LLMServiceTrait: Send + Sync {
         schema: &Value,
         format: &str,
     ) -> Result<(Value, TokenUsage), anyhow::Error>;
+
+    /// 分块提取：长文按模型窗口切块 → 并行提问 → merge 综合（F8）
+    ///
+    /// 默认实现等价 [`LLMServiceTrait::extract_data`]（未接入分块的实现方零改动）；
+    /// `LLMService` 覆盖实现，`[llm.chunking].enabled = false` 时同样直走单发路径。
+    async fn extract_data_chunked(
+        &self,
+        text: &str,
+        schema: &Value,
+        format: &str,
+    ) -> Result<(Value, TokenUsage), anyhow::Error> {
+        self.extract_data(text, schema, format).await
+    }
 }
 
 /// LLM服务 - 处理与LLM提供商的交互
@@ -63,6 +80,8 @@ pub struct LLMService {
     api_key: Option<String>,
     /// 提示模板（缓存）
     templates: HashMap<String, String>,
+    /// token 窗口分块配置（F8；来自 `[llm.chunking]`，未接线构造为禁用）
+    chunking: ChunkingConfig,
 }
 
 impl LLMService {
@@ -82,6 +101,7 @@ impl LLMService {
             .unwrap_or_else(|| "gpt-3.5-turbo".to_string());
         let api_base_url = settings.llm.api_base_url.clone();
         let api_key = settings.llm.api_key.clone();
+        let chunking = ChunkingConfig::from_settings(&settings.llm.chunking);
 
         Self {
             engine_client,
@@ -92,6 +112,7 @@ impl LLMService {
             api_base_url,
             api_key,
             templates,
+            chunking,
         }
     }
 
@@ -124,6 +145,7 @@ impl LLMService {
             api_base_url: Some(api_base_url),
             api_key: Some(_api_key),
             templates,
+            chunking: ChunkingConfig::default(),
         }
     }
 
@@ -148,6 +170,7 @@ impl LLMService {
             api_base_url: Some(api_base_url),
             api_key: Some(_api_key),
             templates,
+            chunking: ChunkingConfig::default(),
         }
     }
 }
@@ -161,6 +184,49 @@ impl LLMServiceTrait for LLMService {
         format: &str,
     ) -> Result<(Value, TokenUsage)> {
         self.extract_data_internal(text, schema, format).await
+    }
+
+    /// 分块提取（F8）：`[llm.chunking].enabled = false` 时直走单发路径（现状语义）；
+    /// 启用后由 [`chunker::extract_chunked`] 编排（预检 → 切块 → 并行 → merge）。
+    async fn extract_data_chunked(
+        &self,
+        text: &str,
+        schema: &Value,
+        format: &str,
+    ) -> Result<(Value, TokenUsage)> {
+        if !self.chunking.enabled {
+            return self.extract_data(text, schema, format).await;
+        }
+
+        let extract_one = {
+            let service = self.clone();
+            let schema = schema.clone();
+            let format = format.to_string();
+            move |chunk: String| {
+                let service = service.clone();
+                let schema = schema.clone();
+                let format = format.clone();
+                async move { service.extract_data(&chunk, &schema, &format).await }
+            }
+        };
+        let merge_call = {
+            let service = self.clone();
+            let schema = schema.clone();
+            let format = format.to_string();
+            move |payload: String| {
+                let service = service.clone();
+                let schema = schema.clone();
+                let format = format.clone();
+                // merge payload 内嵌指令与块结果 JSON 数组，复用同一模板/解析链路
+                async move {
+                    service
+                        .extract_data_internal(&payload, &schema, &format)
+                        .await
+                }
+            }
+        };
+
+        chunker::extract_chunked(text, schema, &self.chunking, extract_one, merge_call).await
     }
 }
 
@@ -206,6 +272,7 @@ impl LLMService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
     // ===== TokenUsage tests =====
@@ -369,6 +436,43 @@ json = 'json only'
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // ===== extract_data_chunked（F8）=====
+
+    /// trait 默认实现：mock 只实现 extract_data 时，extract_data_chunked 行为等价
+    /// extract_data（mock 零改动编译通过）
+    #[tokio::test]
+    async fn test_extract_data_chunked_default_impl_delegates_to_extract_data() {
+        struct ChunklessMock {
+            calls: Arc<AtomicU32>,
+        }
+
+        #[async_trait]
+        impl LLMServiceTrait for ChunklessMock {
+            async fn extract_data(
+                &self,
+                text: &str,
+                _schema: &Value,
+                _format: &str,
+            ) -> Result<(Value, TokenUsage)> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok((serde_json::json!({"echo": text}), TokenUsage::default()))
+            }
+        }
+
+        let calls = Arc::new(AtomicU32::new(0));
+        let mock = ChunklessMock {
+            calls: calls.clone(),
+        };
+        let schema = serde_json::json!({"type": "object"});
+        let (value, usage) = mock
+            .extract_data_chunked("some text", &schema, "json")
+            .await
+            .expect("chunked call ok");
+        assert_eq!(value, serde_json::json!({"echo": "some text"}));
+        assert_eq!(usage, TokenUsage::default());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
     // ===== LLMService constructor tests =====
 
     #[test]
@@ -437,6 +541,7 @@ json = 'json only'
             api_key: Some("test-key".to_string()),
             model: Some("gpt-3.5-turbo".to_string()),
             api_base_url: None,
+            chunking: crate::config::settings::LlmChunkingSettings::default(),
         }
     }
 
