@@ -26,6 +26,8 @@ use crate::engines::provider::ProxyProvider;
 use crate::engines::proxy_pool::ProxyPool;
 use crate::engines::router::EngineRouter;
 use crate::engines::session::SessionManager;
+#[cfg(feature = "engine-playwright")]
+use crate::engines::xhr_capture::XhrCaptureConfig;
 use crate::utils::host_discipline::HostDiscipline;
 use crate::utils::ua_pool::UaPool;
 use std::sync::Arc;
@@ -110,9 +112,27 @@ pub fn init_engines(
         )],
     };
 
-    // PlaywrightEngine 注入 cdp_seconds 作为 MRT
+    // PlaywrightEngine 注入 cdp_seconds 作为 MRT + XHR/Fetch 捕获配置（F6）
+    // capture_xhr=false 时保持 None，引擎全程无 Network 监听（零开销）
     #[cfg(feature = "engine-playwright")]
-    engines.push(Arc::new(PlaywrightEngine::with_mrt(cdp_mrt)));
+    {
+        let mut playwright_engine = PlaywrightEngine::with_mrt(cdp_mrt);
+        if engine_config.playwright.capture_xhr {
+            let s = &engine_config.playwright;
+            log::info!(
+                "Playwright XHR/Fetch capture enabled (patterns={}, max_bytes={}, max_responses={})",
+                s.capture_xhr_url_patterns.len(),
+                s.capture_xhr_max_bytes,
+                s.capture_xhr_max_responses
+            );
+            playwright_engine = playwright_engine.with_xhr_capture(XhrCaptureConfig {
+                url_patterns: s.capture_xhr_url_patterns.clone(),
+                max_bytes: s.capture_xhr_max_bytes,
+                max_responses: s.capture_xhr_max_responses as usize,
+            });
+        }
+        engines.push(Arc::new(playwright_engine));
+    }
 
     // FlareSolverrEngine 按模式注入对应 MRT
     // - Tls 模式 → tls_seconds

@@ -24,6 +24,7 @@ pub use app::ServerSettings;
 
 pub use engines::{
     EngineSettings, FlareSolverrCdpSettings, FlareSolverrSettings, FlareSolverrTlsSettings,
+    PlaywrightEngineSettings,
 };
 
 pub use logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};

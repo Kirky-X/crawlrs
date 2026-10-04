@@ -4,8 +4,8 @@
 use crate::engines::browser_downloader::{BrowserDownloadConfig, BrowserDownloadManager};
 use crate::engines::client::playwright_pool::{get_global_pool, BrowserPool, BrowserPoolConfig};
 use crate::engines::engine_client::{
-    EngineError, InternalPageAction, InternalScrapeRequest, InternalScrapeResponse,
-    InternalScreenshotConfig, ScraperEngine,
+    EngineError, InternalCapturedResponse, InternalPageAction, InternalScrapeRequest,
+    InternalScrapeResponse, InternalScreenshotConfig, ScraperEngine,
 };
 use crate::engines::intercept::{InterceptController, ResourceKind, BLOCK_REASON};
 use crate::engines::validators;
@@ -18,12 +18,21 @@ use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverridePar
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
 };
+use chromiumoxide::cdp::browser_protocol::network::{
+    DisableParams as NetworkDisableParams, EnableParams as NetworkEnableParams,
+    EventLoadingFinished, EventResponseReceived, GetResponseBodyParams, ResourceType,
+};
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
 use chromiumoxide::{Browser, BrowserConfig};
 use futures::StreamExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use crate::engines::xhr_capture::{
+    process_body, url_matches_capture_patterns, BodyOutcome, PendingXhr, RecordOutcome,
+    XhrCaptureBuffer, XhrCaptureConfig,
+};
 
 /// PlaywrightEngine 默认 MRT（30 秒，对应 `EngineTimeoutSettings::cdp_seconds`）。
 ///
@@ -399,6 +408,11 @@ pub struct PlaywrightEngine {
     /// router 顺序 fallback 路径用 `min(remaining, mrt)` 包裹单引擎调用，
     /// 超 MRT 即切下一引擎。注入自 `Settings.timeouts.engines.cdp_seconds`（默认 30 秒）。
     mrt: Duration,
+    /// XHR/Fetch 后台响应捕获配置（F6）。
+    ///
+    /// `None` = 不捕获：整条 Network 监听代码不执行（零开销）。
+    /// bootstrap 从 `PlaywrightEngineSettings.capture_xhr*` 映射注入。
+    xhr_capture: Option<XhrCaptureConfig>,
 }
 
 impl PlaywrightEngine {
@@ -416,6 +430,7 @@ impl PlaywrightEngine {
             pool: None,
             ua_pool: UaPool::default(),
             mrt,
+            xhr_capture: None,
         }
     }
 
@@ -433,7 +448,24 @@ impl PlaywrightEngine {
             pool: Some(pool),
             ua_pool: UaPool::default(),
             mrt,
+            xhr_capture: None,
         }
+    }
+
+    /// 启用 XHR/Fetch 后台响应捕获（F6）。
+    ///
+    /// bootstrap 从 `PlaywrightEngineSettings` 映射 [`XhrCaptureConfig`] 注入；
+    /// 未调用时保持 `None`，scrape 全程无 Network 监听（零开销）。
+    #[must_use]
+    pub fn with_xhr_capture(mut self, config: XhrCaptureConfig) -> Self {
+        self.xhr_capture = Some(config);
+        self
+    }
+
+    /// 获取 XHR 捕获配置引用（用于测试验证）
+    #[must_use]
+    pub fn xhr_capture_config(&self) -> Option<&XhrCaptureConfig> {
+        self.xhr_capture.as_ref()
     }
 
     /// 获取 UA 池引用（用于测试验证）
@@ -654,6 +686,15 @@ impl ScraperEngine for PlaywrightEngine {
                 intercept_guard.set(intercept_handle);
             }
 
+            // F6：XHR/Fetch 后台响应捕获会话（导航前启动，详见 XhrCaptureSession）。
+            // 捕获与上方 Fetch 拦截并存互不干扰：被 FailRequest 的请求不会产生
+            // ResponseReceived 事件，自然不出现在捕获中。capture_xhr=false 时不创建
+            // 会话，全程零 Network 监听开销。
+            let xhr_session = match &self.xhr_capture {
+                Some(config) => XhrCaptureSession::start(&page, config).await,
+                None => None,
+            };
+
             // Navigate and wait for load
             // goto waits for the load event by default
             page.goto(&request.url).await
@@ -748,6 +789,14 @@ impl ScraperEngine for PlaywrightEngine {
             let wait_strategy = request.wait_for.clone().unwrap_or_default();
             let wait_timeout = request.timeout.min(WAIT_TIMEOUT_CAP);
             wait_strategy.wait(&page, wait_timeout).await?;
+
+            // F6：页面等待完成后统一取体（wait 之后、page 释放之前）。
+            // NetworkIdle 等待退出时可能已 best-effort Network.disable（见 wait.rs），
+            // 取体前重新 enable（幂等）；完成后 disable，防止 tab 池复用期事件常开。
+            let captured_responses = match &xhr_session {
+                Some(session) => session.collect(&page).await,
+                None => Vec::new(),
+            };
 
             // Get final URL after navigation (handles redirects)
             let final_url: String = page
@@ -850,6 +899,7 @@ impl ScraperEngine for PlaywrightEngine {
                 response_time_ms: start.elapsed().as_millis() as u64,
                 // 传递页面导航后的最终 URL（不再丢弃），修复 final_url 全链路失效
                 final_url: Some(final_url),
+                captured_responses,
             })
         })
             .await
@@ -899,10 +949,203 @@ impl ScraperEngine for PlaywrightEngine {
     }
 }
 
+/// F6 XHR/Fetch 捕获会话：单次 scrape 生命周期的捕获状态
+///
+/// [`XhrCaptureSession::start`] 在导航前启用 Network domain 并启动事件监听
+/// task（类型 ∈ {XHR, Fetch} + URL glob 过滤 + max_responses 上限，命中记入
+/// 共享缓冲）；页面导航/等待完成后调用 [`XhrCaptureSession::collect`] 逐条
+/// 取体。会话 drop 时 abort 监听 task（复用 [`InterceptGuard`] 语义），防止
+/// task 残留在归还池的复用页面上。
+struct XhrCaptureSession {
+    buffer: Arc<Mutex<XhrCaptureBuffer>>,
+    _guard: InterceptGuard,
+}
+
+impl XhrCaptureSession {
+    /// 启动捕获会话（导航前调用）
+    ///
+    /// 设置失败返回 `None`（fail-open：捕获为增强功能，不阻断抓取）。
+    async fn start(page: &chromiumoxide::page::Page, config: &XhrCaptureConfig) -> Option<Self> {
+        let setup = async {
+            page.execute(NetworkEnableParams::default()).await?;
+            let responses = page.event_listener::<EventResponseReceived>().await?;
+            let finished = page.event_listener::<EventLoadingFinished>().await?;
+            Ok::<_, chromiumoxide::error::CdpError>((responses, finished))
+        };
+        let (mut responses, mut finished) = match setup.await {
+            Ok(streams) => streams,
+            Err(e) => {
+                // 对齐 wait.rs 复查 L2：enable 成功而订阅失败时关闭 domain，
+                // 防止页面存活期事件常开分发
+                let _ = page.execute(NetworkDisableParams::default()).await;
+                log::warn!(
+                    "XHR capture: Network setup failed ({}); capture disabled for this page",
+                    e
+                );
+                return None;
+            }
+        };
+
+        let buffer = Arc::new(Mutex::new(XhrCaptureBuffer::new(config.max_responses)));
+        let patterns = config.url_patterns.clone();
+        let max_bytes = config.max_bytes;
+        let buf_clone = Arc::clone(&buffer);
+        let page_clone = page.clone();
+        let handle = tokio::spawn(async move {
+            // 单任务 select! 消费双事件流，保证 ResponseReceived 与
+            // LoadingFinished 的配对无跨流乱序竞态（早到事件经
+            // finished_early 集合补偿）。取体必须在 LoadingFinished 到达时
+            // 立即执行：NetworkIdle 等待退出会 Network.disable，届时浏览器
+            // 已丢弃缓冲资源（getResponseBody 报 No resource with given
+            // identifier found）。
+            loop {
+                tokio::select! {
+                    Some(event) = responses.next() => {
+                        if !matches!(event.r#type, ResourceType::Xhr | ResourceType::Fetch) {
+                            continue;
+                        }
+                        let url = event.response.url.clone();
+                        if !url_matches_capture_patterns(&url, &patterns) {
+                            continue;
+                        }
+                        // SSRF 防护：页面 JS 可指路本机/内网/链路本地地址（如
+                        // 169.254.169.254 元数据端点），命中即丢弃——捕获通道
+                        // 不得成为页面发起的内网数据回传出口
+                        if crate::engines::validators::is_internal_url(&url) {
+                            log::debug!("XHR capture: internal URL {} blocked (SSRF)", url);
+                            continue;
+                        }
+                        let entry = PendingXhr {
+                            request_id: event.request_id.as_ref().to_string(),
+                            url,
+                            status: u16::try_from(event.response.status).unwrap_or(0),
+                            mime_type: event.response.mime_type.clone(),
+                        };
+                        let early_entry = entry.clone();
+                        let outcome = buf_clone
+                            .lock()
+                            .expect("xhr capture buffer poisoned")
+                            .record(entry);
+                        if outcome == RecordOutcome::AlreadyFinished {
+                            // LoadingFinished 早到：立即取体
+                            fetch_and_store(&page_clone, &buf_clone, &early_entry, max_bytes)
+                                .await;
+                        }
+                    }
+                    Some(event) = finished.next() => {
+                        let request_id = event.request_id.as_ref().to_string();
+                        let pending = {
+                            let mut buf = buf_clone.lock().expect("xhr capture buffer poisoned");
+                            match buf.take_pending(&request_id) {
+                                Some(entry) => Some(entry),
+                                None => {
+                                    buf.mark_finished_early(&request_id);
+                                    None
+                                }
+                            }
+                        };
+                        if let Some(entry) = pending {
+                            fetch_and_store(&page_clone, &buf_clone, &entry, max_bytes).await;
+                        }
+                    }
+                    else => break,
+                }
+            }
+        });
+        let mut guard = InterceptGuard::new();
+        guard.set(handle);
+        Some(Self {
+            buffer,
+            _guard: guard,
+        })
+    }
+
+    /// 页面等待完成后收集捕获结果（wait 之后、page 释放之前）
+    async fn collect(&self, page: &chromiumoxide::page::Page) -> Vec<InternalCapturedResponse> {
+        let (captured, stats, pending_left) = {
+            let mut buf = self.buffer.lock().expect("xhr capture buffer poisoned");
+            (buf.drain_captured(), buf.stats(), buf.pending_len())
+        };
+        if pending_left > 0 {
+            log::debug!(
+                "XHR capture: {} XHR(s) unfinished at collect, dropped",
+                pending_left
+            );
+        }
+        if stats.overflow_skipped > 0
+            || stats.oversized_dropped > 0
+            || stats.decode_failed > 0
+            || stats.fetch_failed > 0
+        {
+            log::warn!(
+                "XHR capture dropped: oversize={}, decode_failed={}, fetch_failed={}, overflow={}",
+                stats.oversized_dropped,
+                stats.decode_failed,
+                stats.fetch_failed,
+                stats.overflow_skipped
+            );
+        }
+        // 收尾关闭 Network domain（Selector/DomStable 等待路径不会 disable；
+        // NetworkIdle 已 disable 时此调用为无害 no-op）
+        let _ = page.execute(NetworkDisableParams::default()).await;
+        captured
+    }
+}
+
+/// LoadingFinished 后立即取体并入完成区（Network domain 存活期内，body 未被丢弃）
+///
+/// 单条 CDP 失败仅 debug 记录并计数，不中断抓取（best-effort）。
+/// 锁在 CDP 调用返回后才获取，不跨 await 持有。
+async fn fetch_and_store(
+    page: &chromiumoxide::page::Page,
+    buffer: &Mutex<XhrCaptureBuffer>,
+    entry: &PendingXhr,
+    max_bytes: u64,
+) {
+    let result = page
+        .execute(GetResponseBodyParams::new(entry.request_id.clone()))
+        .await;
+    let mut buf = buffer.lock().expect("xhr capture buffer poisoned");
+    match result {
+        Ok(resp) => {
+            let returns = resp.result;
+            match process_body(returns.body, returns.base64_encoded, max_bytes) {
+                BodyOutcome::Kept(body) => {
+                    buf.push_captured(InternalCapturedResponse {
+                        url: entry.url.clone(),
+                        status: entry.status,
+                        mime_type: entry.mime_type.clone(),
+                        body,
+                    });
+                }
+                BodyOutcome::Oversize => {
+                    log::debug!(
+                        "XHR capture: body of {} exceeds max_bytes, dropped",
+                        entry.url
+                    );
+                    buf.note_oversize();
+                }
+                BodyOutcome::DecodeFailed => {
+                    log::debug!("XHR capture: body of {} base64 decode failed", entry.url);
+                    buf.note_decode_failed();
+                }
+            }
+        }
+        Err(e) => {
+            log::debug!(
+                "XHR capture: getResponseBody failed for {}: {}",
+                entry.url,
+                e
+            );
+            buf.note_fetch_failed();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::engine_client::InternalScrapeRequest;
+    use crate::engines::engine_client::{InternalScrapeRequest, WaitFor};
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -1126,5 +1369,317 @@ mod tests {
             p1.viewport, p2.viewport,
             "same seed must return same viewport"
         );
+    }
+
+    // === XHR/Fetch 捕获配置（F6） ===
+
+    #[test]
+    fn test_playwright_engine_xhr_capture_disabled_by_default() {
+        // 默认不捕获（零开销），全部构造路径一致
+        assert!(PlaywrightEngine::new().xhr_capture_config().is_none());
+        assert!(PlaywrightEngine::default().xhr_capture_config().is_none());
+    }
+
+    #[test]
+    fn test_playwright_engine_xhr_capture_builder() {
+        let engine = PlaywrightEngine::new().with_xhr_capture(XhrCaptureConfig {
+            url_patterns: vec!["*/api/*".to_string()],
+            max_bytes: 1024,
+            max_responses: 7,
+        });
+        let config = engine
+            .xhr_capture_config()
+            .expect("capture config must be set");
+        assert_eq!(config.url_patterns, vec!["*/api/*".to_string()]);
+        assert_eq!(config.max_bytes, 1024);
+        assert_eq!(config.max_responses, 7);
+    }
+
+    // === F6 XHR/Fetch 捕获 e2e（需本机 Chrome，`#[ignore]` 门控） ===
+    //
+    // scrape() 入口强制 SSRF 校验（loopback 被拒，属安全设计不可削弱），无法直达
+    // 本地 mock 服务器；因此 e2e 直接驱动 scrape() 内部的 XhrCaptureSession（同一
+    // 份捕获代码）+ 真实 Chromium 页面，验证 CDP Network 事件流捕获全链路。
+    //
+    // 运行: cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1
+
+    /// 本地 mock 服务器，返回绑定的 base URL
+    ///
+    /// 路由：
+    /// - GET /page        页面内 `fetch('/api/data')`
+    /// - GET /page_multi  页面内依次 `fetch('/api/data?i=1..3')`
+    /// - GET /page_mixed  页面内 `fetch('/api/blocked')` + `fetch('/api/data')`
+    /// - GET /api/data    JSON `{"ok":true,"msg":"hello xhr"}`
+    /// - 其余路径         JSON `{"blocked":true}`（供 Fetch 拦截 FailRequest 用）
+    fn spawn_mock_xhr_server() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock server");
+        let addr = listener.local_addr().expect("local addr");
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let req = String::from_utf8_lossy(&buf);
+                let (content_type, body): (&str, String) = if req.starts_with("GET /page_multi") {
+                    (
+                        "text/html; charset=utf-8",
+                        "<html><head><title>mock</title></head><body><script>\
+                         [1,2,3].forEach(function (i) { fetch('/api/data?i=' + i); });\
+                         </script></body></html>"
+                            .to_string(),
+                    )
+                } else if req.starts_with("GET /page_mixed") {
+                    (
+                        "text/html; charset=utf-8",
+                        "<html><head><title>mock</title></head><body><script>\
+                         fetch('/api/blocked'); fetch('/api/data');\
+                         </script></body></html>"
+                            .to_string(),
+                    )
+                } else if req.starts_with("GET /page") {
+                    (
+                        "text/html; charset=utf-8",
+                        "<html><head><title>mock</title></head><body><script>\
+                         fetch('/api/data').then(function (r) { return r.json(); }).then(function (d) { document.title = 'loaded'; });\
+                         </script></body></html>"
+                            .to_string(),
+                    )
+                } else if req.starts_with("GET /api/data") {
+                    (
+                        "application/json",
+                        "{\"ok\":true,\"msg\":\"hello xhr\"}".to_string(),
+                    )
+                } else {
+                    ("application/json", "{\"blocked\":true}".to_string())
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    content_type,
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    /// 启动独立浏览器并打开空白页
+    async fn launch_test_page() -> (chromiumoxide::Browser, chromiumoxide::page::Page) {
+        let config = chromiumoxide::BrowserConfig::builder()
+            .no_sandbox()
+            .arg("--disable-gpu")
+            .arg("--disable-dev-shm-usage")
+            .request_timeout(Duration::from_secs(30))
+            .build()
+            .expect("browser config");
+        let (browser, mut handler) = chromiumoxide::Browser::launch(config)
+            .await
+            .expect("browser launch");
+        tokio::spawn(async move {
+            while let Some(h) = handler.next().await {
+                if let Err(e) = h {
+                    log::debug!("browser handler event error (continuing): {:?}", e);
+                }
+            }
+        });
+        let page = browser.new_page("about:blank").await.expect("new page");
+        (browser, page)
+    }
+
+    #[tokio::test]
+    #[ignore = "需要本机 Chrome：cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1"]
+    async fn xhr_capture_e2e_captures_fetch_response() {
+        let base = spawn_mock_xhr_server();
+        let (mut browser, page) = launch_test_page().await;
+        let config = XhrCaptureConfig {
+            url_patterns: vec![],
+            max_bytes: 262_144,
+            max_responses: 50,
+        };
+        let session = XhrCaptureSession::start(&page, &config)
+            .await
+            .expect("capture session must start");
+        page.goto(&format!("{}/page", base)).await.expect("goto");
+        WaitFor::default()
+            .wait(&page, Duration::from_secs(10))
+            .await
+            .expect("network idle wait");
+        let captured = session.collect(&page).await;
+
+        assert!(
+            !captured.is_empty(),
+            "capture_xhr=true must produce captured responses"
+        );
+        let data = captured
+            .iter()
+            .find(|c| c.url.ends_with("/api/data"))
+            .expect("/api/data must be captured");
+        assert_eq!(data.status, 200);
+        assert_eq!(data.mime_type, "application/json");
+        assert_eq!(data.body, "{\"ok\":true,\"msg\":\"hello xhr\"}");
+        // 文档本身不是 XHR/Fetch，不得混入捕获
+        assert!(
+            captured.iter().all(|c| !c.url.ends_with("/page")),
+            "document must not be captured as XHR, got: {:?}",
+            captured
+        );
+        browser.close().await.ok();
+    }
+
+    #[tokio::test]
+    #[ignore = "需要本机 Chrome：cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1"]
+    async fn xhr_capture_e2e_url_glob_filter_excludes_non_matching() {
+        let base = spawn_mock_xhr_server();
+        let (mut browser, page) = launch_test_page().await;
+        let config = XhrCaptureConfig {
+            url_patterns: vec!["*/nomatch*".to_string()],
+            max_bytes: 262_144,
+            max_responses: 50,
+        };
+        let session = XhrCaptureSession::start(&page, &config)
+            .await
+            .expect("capture session must start");
+        page.goto(&format!("{}/page", base)).await.expect("goto");
+        WaitFor::default()
+            .wait(&page, Duration::from_secs(10))
+            .await
+            .expect("network idle wait");
+        let captured = session.collect(&page).await;
+        assert!(
+            captured.is_empty(),
+            "non-matching XHR must not be captured, got: {:?}",
+            captured
+        );
+        browser.close().await.ok();
+    }
+
+    #[tokio::test]
+    #[ignore = "需要本机 Chrome：cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1"]
+    async fn xhr_capture_e2e_max_responses_caps_collection() {
+        let base = spawn_mock_xhr_server();
+        let (mut browser, page) = launch_test_page().await;
+        let config = XhrCaptureConfig {
+            url_patterns: vec![],
+            max_bytes: 262_144,
+            max_responses: 2,
+        };
+        let session = XhrCaptureSession::start(&page, &config)
+            .await
+            .expect("capture session must start");
+        page.goto(&format!("{}/page_multi", base))
+            .await
+            .expect("goto");
+        WaitFor::default()
+            .wait(&page, Duration::from_secs(10))
+            .await
+            .expect("network idle wait");
+        let captured = session.collect(&page).await;
+        assert_eq!(
+            captured.len(),
+            2,
+            "max_responses=2 must cap captures at 2, got: {:?}",
+            captured
+        );
+        // 第 N+1 条起不捕获：3 个请求只出现 i=1、i=2
+        assert!(captured.iter().all(|c| c.url.contains("/api/data?i=")));
+        browser.close().await.ok();
+    }
+
+    #[tokio::test]
+    #[ignore = "需要本机 Chrome：cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1"]
+    async fn xhr_capture_e2e_max_bytes_drops_oversize_body() {
+        let base = spawn_mock_xhr_server();
+        let (mut browser, page) = launch_test_page().await;
+        // /api/data 响应体 26 字节，上限 4 字节 → 整体丢弃
+        let config = XhrCaptureConfig {
+            url_patterns: vec![],
+            max_bytes: 4,
+            max_responses: 50,
+        };
+        let session = XhrCaptureSession::start(&page, &config)
+            .await
+            .expect("capture session must start");
+        page.goto(&format!("{}/page", base)).await.expect("goto");
+        WaitFor::default()
+            .wait(&page, Duration::from_secs(10))
+            .await
+            .expect("network idle wait");
+        let captured = session.collect(&page).await;
+        assert!(
+            captured.is_empty(),
+            "oversize body must be dropped, got: {:?}",
+            captured
+        );
+        browser.close().await.ok();
+    }
+
+    #[tokio::test]
+    #[ignore = "需要本机 Chrome：cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1"]
+    async fn xhr_capture_e2e_coexists_with_fetch_interception() {
+        let base = spawn_mock_xhr_server();
+        let (mut browser, page) = launch_test_page().await;
+
+        // 启用 Fetch 拦截（与 scrape() 的 block_ads/block_media 同款机制）：
+        // 命中 /api/blocked 的请求 FailRequest，其余 ContinueRequest 放行
+        page.execute(EnableParams::default())
+            .await
+            .expect("enable fetch");
+        let mut paused = page
+            .event_listener::<EventRequestPaused>()
+            .await
+            .expect("subscribe EventRequestPaused");
+        let intercept_page = page.clone();
+        let intercept_handle = tokio::spawn(async move {
+            while let Some(event) = paused.next().await {
+                let url = event.request.url.clone();
+                let request_id = event.request_id.clone();
+                if url.contains("/api/blocked") {
+                    let _ = intercept_page
+                        .execute(FailRequestParams::new(request_id, BLOCK_REASON))
+                        .await;
+                } else {
+                    let _ = intercept_page
+                        .execute(ContinueRequestParams::new(request_id))
+                        .await;
+                }
+            }
+        });
+
+        let config = XhrCaptureConfig {
+            url_patterns: vec![],
+            max_bytes: 262_144,
+            max_responses: 50,
+        };
+        let session = XhrCaptureSession::start(&page, &config)
+            .await
+            .expect("capture session must start");
+        page.goto(&format!("{}/page_mixed", base))
+            .await
+            .expect("goto");
+        WaitFor::default()
+            .wait(&page, Duration::from_secs(10))
+            .await
+            .expect("network idle wait");
+        let captured = session.collect(&page).await;
+
+        // 放行的 XHR 正常捕获；被 FailRequest 的请求无响应，不出现在捕获中
+        assert!(
+            captured.iter().any(|c| c.url.ends_with("/api/data")),
+            "continued XHR must be captured, got: {:?}",
+            captured
+        );
+        assert!(
+            captured.iter().all(|c| !c.url.contains("/api/blocked")),
+            "failed request must not appear in capture, got: {:?}",
+            captured
+        );
+        intercept_handle.abort();
+        browser.close().await.ok();
     }
 }

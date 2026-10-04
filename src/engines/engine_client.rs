@@ -9,10 +9,10 @@
 
 // ARC-002: DTO 类型已拆分至 `types.rs`，此处 re-export 保持向后兼容。
 pub use crate::engines::types::{
-    validate_session_id, HttpMethod, InternalPageAction, InternalScrapeRequest,
-    InternalScrapeResponse, InternalScreenshotConfig, PageAction, ScrapeOptions,
-    ScrapeOptionsBuilder, ScrapeRequest, ScrapeResponse, ScreenshotConfig, ScrollDirection,
-    WaitFor, MAX_SESSION_ID_LEN,
+    validate_session_id, CapturedResponse, HttpMethod, InternalCapturedResponse,
+    InternalPageAction, InternalScrapeRequest, InternalScrapeResponse, InternalScreenshotConfig,
+    PageAction, ScrapeOptions, ScrapeOptionsBuilder, ScrapeRequest, ScrapeResponse,
+    ScreenshotConfig, ScrollDirection, WaitFor, MAX_SESSION_ID_LEN,
 };
 
 use crate::engines::health_monitor::{AggregateHealthStatus, EngineHealthMonitor};

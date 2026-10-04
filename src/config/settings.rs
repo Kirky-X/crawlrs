@@ -18,6 +18,7 @@ pub use super::app::{
 };
 pub use super::engines::{
     EngineSettings, FlareSolverrCdpSettings, FlareSolverrSettings, FlareSolverrTlsSettings,
+    PlaywrightEngineSettings,
 };
 pub use super::llm::LLMSettings;
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
@@ -1707,6 +1708,38 @@ mod tests {
         assert_eq!(settings.retry.max_backoff_seconds, 60);
         assert_eq!(settings.cache.default_ttl_seconds, 600);
         assert_eq!(settings.cache.memory_ttl_seconds, 600);
+    }
+
+    // ========== PlaywrightEngineSettings tests ==========
+
+    #[test]
+    fn test_playwright_engine_settings_default_capture_off() {
+        // F6：XHR 捕获默认关，防止存量部署行为变化与内存放大
+        let settings = PlaywrightEngineSettings::default();
+        assert!(!settings.capture_xhr);
+        assert!(settings.capture_xhr_url_patterns.is_empty());
+        assert_eq!(settings.capture_xhr_max_bytes, 262_144);
+        assert_eq!(settings.capture_xhr_max_responses, 50);
+    }
+
+    #[test]
+    fn test_playwright_engine_settings_toml_deserialize() {
+        // 与 config/default.toml [engines.playwright] 的键名对齐
+        let toml = r#"
+capture_xhr = true
+capture_xhr_url_patterns = ["*/api/*"]
+capture_xhr_max_bytes = 1024
+capture_xhr_max_responses = 5
+"#;
+        let settings: PlaywrightEngineSettings =
+            toml::from_str(toml).expect("valid playwright engine toml");
+        assert!(settings.capture_xhr);
+        assert_eq!(
+            settings.capture_xhr_url_patterns,
+            vec!["*/api/*".to_string()]
+        );
+        assert_eq!(settings.capture_xhr_max_bytes, 1024);
+        assert_eq!(settings.capture_xhr_max_responses, 5);
     }
 
     #[test]

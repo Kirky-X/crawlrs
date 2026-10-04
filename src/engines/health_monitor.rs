@@ -379,6 +379,7 @@ mod tests {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: self.status_code,
                 content: "ok".to_string(),
                 screenshot: None,
@@ -1034,6 +1035,7 @@ mod tests {
                     Err(EngineError::RequestFailed("temporary".to_string()))
                 } else {
                     Ok(InternalScrapeResponse {
+                        captured_responses: Vec::new(),
                         status_code: 200,
                         content: "recovered".to_string(),
                         screenshot: None,

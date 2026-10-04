@@ -65,6 +65,7 @@ impl ScraperEngine for TestScraperEngineImpl {
                 return Err(EngineError::Timeout(Duration::from_secs(30)));
             }
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: self.response_content.clone(),
                 screenshot: None,
@@ -75,6 +76,7 @@ impl ScraperEngine for TestScraperEngineImpl {
             })
         } else {
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "Default Result".to_string(),
                 screenshot: None,
@@ -102,6 +104,7 @@ async fn test_aggregate_concurrent_search() {
         vec!["example.com".to_string()],
         1,
         Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "Result 1".to_string(),
             screenshot: None,
@@ -118,6 +121,7 @@ async fn test_aggregate_concurrent_search() {
         vec!["example.com".to_string()],
         1,
         Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "Result 2".to_string(),
             screenshot: None,
@@ -175,6 +179,7 @@ async fn test_aggregate_partial_failure() {
         vec!["example.com".to_string()],
         1,
         Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "Result 2".to_string(),
             screenshot: None,
@@ -272,6 +277,7 @@ async fn test_t013_antibot_cloudflare_forces_needs_js_for_next_attempt() {
         name: "http-reqwest",
         recorded_needs_js: http_record.clone(),
         response: InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: cloudflare_body.to_string(),
             screenshot: None,
@@ -289,6 +295,7 @@ async fn test_t013_antibot_cloudflare_forces_needs_js_for_next_attempt() {
         name: "browser-playwright",
         recorded_needs_js: browser_record.clone(),
         response: InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "<html><body>This is the real rendered content from the browser \
                            engine after JavaScript execution completed successfully.</body></html>"
@@ -407,6 +414,7 @@ async fn test_t013_normal_response_does_not_trigger_force_needs_js() {
         name: "http-reqwest",
         recorded_needs_js: http_record.clone(),
         response: InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "<html><body>Normal page with sufficient visible text content \
                            to pass tier3 structural checks.</body></html>"
@@ -425,6 +433,7 @@ async fn test_t013_normal_response_does_not_trigger_force_needs_js() {
         name: "browser-playwright",
         recorded_needs_js: browser_record.clone(),
         response: InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "browser content".to_string(),
             screenshot: None,
@@ -538,6 +547,7 @@ async fn test_t015_spa_shell_triggers_js_upgrade_re_dispatch() {
         name: "http-reqwest",
         recorded_needs_js: http_record.clone(),
         response: InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: spa_shell.to_string(),
             screenshot: None,
@@ -554,6 +564,7 @@ async fn test_t015_spa_shell_triggers_js_upgrade_re_dispatch() {
         name: "browser-playwright",
         recorded_needs_js: browser_record.clone(),
         response: InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "<html><body>This is the fully rendered content from the browser \
                            engine after JavaScript execution completed successfully.</body></html>"
@@ -673,6 +684,7 @@ async fn test_t015_non_spa_response_does_not_trigger_re_dispatch() {
             name: "http-reqwest",
             recorded_needs_js: http_record.clone(),
             response: InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "<html><body>This is a static page with sufficient visible text content \
                            to pass all antibot and probe checks. No SPA framework signals here.</body></html>"
@@ -690,6 +702,7 @@ async fn test_t015_non_spa_response_does_not_trigger_re_dispatch() {
         name: "browser-playwright",
         recorded_needs_js: browser_record.clone(),
         response: InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "browser content".to_string(),
             screenshot: None,
@@ -818,6 +831,7 @@ async fn test_t028_ua_rotated_across_transient_retries() {
             recorded_ua: record,
             error_msg: None,
             response: Some(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "<html><body>success content with enough visible text to pass \
                               any antibot or probe checks along the retry path</body></html>"
@@ -999,6 +1013,7 @@ async fn test_c1_fingerprint_headers_rotated_together() {
             recorded: rec,
             error_msg: None,
             response: Some(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "<html><body>success content with enough visible text to pass \
                               any antibot or probe checks along the retry path</body></html>"
@@ -1255,6 +1270,7 @@ async fn test_race_mode_discards_antibot_challenge_winner() {
         vec!["example.com".to_string()],
         100,
         Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: cloudflare_body.to_string(),
             screenshot: None,
@@ -1272,6 +1288,7 @@ async fn test_race_mode_discards_antibot_challenge_winner() {
         vec!["example.com".to_string()],
         100,
         Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "<html><body>This is the clean rendered content that must survive \
                       the race even when the challenge engine finishes first.</body></html>"
@@ -1341,6 +1358,7 @@ async fn test_race_mode_all_challenge_candidates_returns_error() {
         vec!["example.com".to_string()],
         100,
         Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: cloudflare_body.to_string(),
             screenshot: None,
@@ -1356,6 +1374,7 @@ async fn test_race_mode_all_challenge_candidates_returns_error() {
         vec!["example.com".to_string()],
         100,
         Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: cloudflare_body.to_string(),
             screenshot: None,

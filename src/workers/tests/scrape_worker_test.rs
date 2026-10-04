@@ -1368,6 +1368,7 @@ struct MockCreateScrapeUseCase;
 impl CreateScrapeUseCaseTrait for MockCreateScrapeUseCase {
     async fn execute(&self, _request_dto: ScrapeRequestDto) -> Result<ScrapeResponse, DomainError> {
         Ok(ScrapeResponse {
+            captured_responses: Vec::new(),
             content: String::new(),
             status_code: 200,
             screenshot: None,
@@ -1928,6 +1929,7 @@ async fn test_mock_save_result_basic() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({"url": "https://example.com"}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html>test</html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -1946,6 +1948,7 @@ async fn test_mock_save_result_with_extra_data() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({"url": "https://example.com"}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html>test</html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -1965,6 +1968,7 @@ async fn test_mock_save_result_with_screenshot() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({"url": "https://example.com"}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html>test</html>".to_string(),
         status_code: 200,
         screenshot: Some("base64data".to_string()),
@@ -1985,6 +1989,7 @@ async fn test_mock_process_text_encoding_basic() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({"url": "https://example.com"}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body>Hello</body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2099,6 +2104,7 @@ async fn test_mock_handle_rules_extraction() {
     let worker = build_mock_worker().await;
     let mut task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body><h1>Hello</h1></body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2134,6 +2140,7 @@ async fn test_mock_handle_prompt_extraction() {
     let worker = build_mock_worker().await;
     let mut task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body>Hello world</body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2162,6 +2169,7 @@ async fn test_mock_handle_schema_extraction() {
     let worker = build_mock_worker().await;
     let mut task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body>Data</body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2186,6 +2194,7 @@ async fn test_mock_save_extract_result_with_data() {
     let worker = build_mock_worker().await;
     let mut task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "test content".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2212,6 +2221,7 @@ async fn test_mock_save_extract_result_without_data() {
     let worker = build_mock_worker().await;
     let mut task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "raw content".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2241,6 +2251,7 @@ async fn test_mock_extract_and_queue_links_html_with_links() {
             <a href="mailto:test@example.com">Email</a>
         </body></html>"#;
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: html.to_string(),
         status_code: 200,
         screenshot: None,
@@ -2262,6 +2273,7 @@ async fn test_mock_extract_and_queue_links_non_html_skipped() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "{\"key\": \"value\"}".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2288,6 +2300,7 @@ async fn test_mock_extract_and_queue_links_with_include_filter() {
             <a href="https://other.com/page2">Page 2</a>
         </body></html>"#;
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: html.to_string(),
         status_code: 200,
         screenshot: None,
@@ -2458,6 +2471,7 @@ async fn test_mock_handle_scrape_success_no_extraction_rules() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body>Hello</body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2491,6 +2505,7 @@ async fn test_mock_handle_scrape_success_with_extraction_rules() {
         }
     }));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body><h1>Title</h1></body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2638,6 +2653,7 @@ async fn test_handle_scrape_success_returns_false_when_guard_lost() {
         }
     }));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body><h1>Title</h1></body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2674,6 +2690,7 @@ async fn test_handle_scrape_success_with_markdown_format_generates_markdown() {
         "formats": ["markdown"],
     }));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: r#"<html><body><h1>Title</h1><p>Paragraph text</p></body></html>"#.to_string(),
         status_code: 200,
         screenshot: None,
@@ -2722,6 +2739,7 @@ async fn test_handle_scrape_success_without_markdown_format_no_markdown() {
         "formats": ["html"],
     }));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: r#"<html><body><h1>Title</h1></body></html>"#.to_string(),
         status_code: 200,
         screenshot: None,
@@ -2758,6 +2776,7 @@ async fn test_handle_scrape_success_no_formats_field_no_markdown() {
         "url": "https://example.com",
     }));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: r#"<html><body><h1>Title</h1></body></html>"#.to_string(),
         status_code: 200,
         screenshot: None,
@@ -2791,6 +2810,7 @@ async fn test_save_result_merges_markdown_into_existing_meta_data() {
     let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
     let task = make_task(json!({"url": "https://example.com"}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body>Hello</body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2829,6 +2849,7 @@ async fn test_save_result_with_markdown_only_creates_markdown_object() {
     let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
     let task = make_task(json!({"url": "https://example.com"}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body>Hello</body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2868,6 +2889,7 @@ async fn test_save_result_without_markdown_does_not_modify_meta_data() {
     let (worker, capturing_repo) = build_mock_worker_with_capturing_repo().await;
     let task = make_task(json!({"url": "https://example.com"}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body>Hello</body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -2905,6 +2927,7 @@ async fn test_mock_handle_crawl_success_with_link_extraction() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: r#"<html><body><a href="/page1">Link</a></body></html>"#.to_string(),
         status_code: 200,
         screenshot: None,
@@ -2927,6 +2950,7 @@ async fn test_mock_handle_crawl_success_max_depth_no_link_extraction() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: r#"<html><body><a href="/page1">Link</a></body></html>"#.to_string(),
         status_code: 200,
         screenshot: None,
@@ -3873,6 +3897,7 @@ async fn test_mock_handle_crawl_success_with_extraction_rules() {
     let worker = build_mock_worker_with_tokens().await;
     let task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body><h1>Title</h1></body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -3934,6 +3959,7 @@ async fn test_mock_handle_scrape_success_with_token_usage() {
         }
     }));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body><h1>Title</h1></body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -4021,6 +4047,7 @@ async fn test_mock_extract_and_queue_links_dfs_strategy() {
             <a href="https://example.com/page2">Page 2</a>
         </body></html>"#;
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: html.to_string(),
         status_code: 200,
         screenshot: None,
@@ -4065,6 +4092,7 @@ async fn test_mock_extract_and_queue_links_filters_self_and_non_http() {
             <a href="https://other.com/page">Other</a>
         </body></html>"#;
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: html.to_string(),
         status_code: 200,
         screenshot: None,
@@ -4156,6 +4184,7 @@ async fn test_mock_handle_rules_extraction_with_tokens() {
     let worker = build_mock_worker_with_tokens().await;
     let mut task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body><h1>Hello</h1></body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -4189,6 +4218,7 @@ async fn test_mock_handle_prompt_extraction_with_tokens() {
     let worker = build_mock_worker_with_tokens().await;
     let mut task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body>Hello world</body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -4215,6 +4245,7 @@ async fn test_mock_handle_schema_extraction_with_tokens() {
     let worker = build_mock_worker_with_tokens().await;
     let mut task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body>Data</body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -4271,6 +4302,7 @@ async fn test_mock_handle_crawl_success_with_screenshot() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: r#"<html><body><a href="/page1">Link</a></body></html>"#.to_string(),
         status_code: 200,
         screenshot: Some("base64screenshot".to_string()),
@@ -4295,6 +4327,7 @@ async fn test_mock_process_text_encoding_json_content() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({"url": "https://example.com"}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: r#"{"key": "value"}"#.to_string(),
         status_code: 200,
         screenshot: None,
@@ -4317,6 +4350,7 @@ async fn test_mock_process_text_encoding_empty_content() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({"url": "https://example.com"}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: String::new(),
         status_code: 200,
         screenshot: None,
@@ -4342,6 +4376,7 @@ async fn test_mock_save_result_large_content() {
     // Content > 1MB threshold
     let large_content = "x".repeat(1024 * 1024 + 1);
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: large_content,
         status_code: 200,
         screenshot: None,
@@ -5761,6 +5796,7 @@ async fn test_save_extract_result_failing_result_repo_returns_error() {
 
     let mut task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "test content".to_string(),
         status_code: 200,
         screenshot: None,
@@ -5905,6 +5941,7 @@ async fn test_handle_crawl_success_save_result_failure_propagates_error() {
 
     let task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: r#"<html><body><a href="/page1">Link</a></body></html>"#.to_string(),
         status_code: 200,
         screenshot: None,
@@ -5963,6 +6000,7 @@ async fn test_handle_crawl_success_increment_completed_error_does_not_propagate(
 
     let task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: r#"<html><body>Hello</body></html>"#.to_string(),
         status_code: 200,
         screenshot: None,
@@ -6413,6 +6451,7 @@ async fn test_extract_and_queue_links_find_existing_urls_failure_returns_err() {
             <a href="https://example.com/page2">Page 2</a>
         </body></html>"#;
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: html.to_string(),
         status_code: 200,
         screenshot: None,
@@ -6465,6 +6504,7 @@ async fn test_handle_scrape_success_extraction_failure_continues_and_marks_compl
         }
     }));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body><h1>Title</h1></body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -6597,6 +6637,7 @@ async fn test_extract_data_with_rules_failure_returns_none_and_logs() {
 
     let task = make_task(json!({}));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body><h1>Title</h1></body></html>".to_string(),
         status_code: 200,
         screenshot: None,
@@ -6899,6 +6940,7 @@ async fn test_extract_and_queue_links_skips_existing_urls() {
             <a href="/page2">Page 2</a>
         </body></html>"#;
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: html.to_string(),
         status_code: 200,
         screenshot: None,
@@ -6945,6 +6987,7 @@ async fn test_extract_and_queue_links_bloom_miss_directly_enqueues() {
             <a href="/page3">Page 3</a>
         </body></html>"#;
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: html.to_string(),
         status_code: 200,
         screenshot: None,
@@ -7001,6 +7044,7 @@ async fn test_handle_scrape_success_token_deduct_failure_logs_error() {
         }
     }));
     let response = ScrapeResponse {
+        captured_responses: Vec::new(),
         content: "<html><body><h1>Title</h1></body></html>".to_string(),
         status_code: 200,
         screenshot: None,

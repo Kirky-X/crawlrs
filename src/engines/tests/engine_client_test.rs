@@ -393,6 +393,7 @@ fn test_to_internal_page_actions() {
 #[test]
 fn test_internal_response_to_public() {
     let internal = InternalScrapeResponse {
+        captured_responses: Vec::new(),
         status_code: 200,
         content: "body".to_string(),
         screenshot: Some("base64data".to_string()),
@@ -418,6 +419,73 @@ fn test_internal_response_to_public() {
         public.final_url,
         Some("https://example.com/page".to_string())
     );
+}
+
+#[test]
+fn test_internal_response_to_public_captures_passthrough() {
+    // F6：捕获结果经 to_public 透传到公共响应
+    let internal = InternalScrapeResponse {
+        captured_responses: vec![InternalCapturedResponse {
+            url: "https://example.com/api/data".to_string(),
+            status: 200,
+            mime_type: "application/json".to_string(),
+            body: "{\"ok\":true}".to_string(),
+        }],
+        status_code: 200,
+        content: "body".to_string(),
+        screenshot: None,
+        content_type: "text/html".to_string(),
+        headers: HashMap::new(),
+        response_time_ms: 42,
+        final_url: None,
+    };
+
+    let public = internal.to_public("https://example.com/");
+    assert_eq!(public.captured_responses.len(), 1);
+    assert_eq!(
+        public.captured_responses[0].url,
+        "https://example.com/api/data"
+    );
+    assert_eq!(public.captured_responses[0].status, 200);
+    assert_eq!(public.captured_responses[0].mime_type, "application/json");
+    assert_eq!(public.captured_responses[0].body, "{\"ok\":true}");
+}
+
+#[test]
+fn test_internal_response_default_captures_empty() {
+    // 其余引擎（Default 构造）捕获为空，to_public 透传空 Vec
+    let public = InternalScrapeResponse::default().to_public("https://example.com/");
+    assert!(public.captured_responses.is_empty());
+}
+
+#[test]
+fn test_scrape_response_captures_serde() {
+    // F6：空 Vec 不出现在 JSON（skip_serializing_if），旧 JSON（无字段）可反序列化
+    let response = ScrapeResponse::new(200, "x", "text/html");
+    let json = serde_json::to_string(&response).unwrap();
+    assert!(
+        !json.contains("captured_responses"),
+        "empty captures must be absent from JSON, got: {json}"
+    );
+    let restored: ScrapeResponse = serde_json::from_str(&json).unwrap();
+    assert!(restored.captured_responses.is_empty());
+
+    // 非空时字段完整
+    let mut with_capture = ScrapeResponse::new(200, "x", "text/html");
+    with_capture.captured_responses = vec![CapturedResponse {
+        url: "https://example.com/api/data".to_string(),
+        status: 200,
+        mime_type: "application/json".to_string(),
+        body: "{\"ok\":true}".to_string(),
+    }];
+    let json2 = serde_json::to_string(&with_capture).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json2).unwrap();
+    let captures = parsed["captured_responses"].as_array().unwrap();
+    assert_eq!(captures.len(), 1);
+    assert_eq!(captures[0]["url"], "https://example.com/api/data");
+    assert_eq!(captures[0]["status"], 200);
+    assert_eq!(captures[0]["mime_type"], "application/json");
+    assert_eq!(captures[0]["body"], "{\"ok\":true}");
 }
 
 // === EngineError tests ===
@@ -830,6 +898,7 @@ fn test_feature_toggle_distinct_from_other_reasons() {
 #[test]
 fn test_to_public_basic_fields() {
     let internal = InternalScrapeResponse {
+        captured_responses: Vec::new(),
         status_code: 200,
         content: "hello".to_string(),
         screenshot: None,
@@ -853,6 +922,7 @@ fn test_to_public_with_screenshot_and_headers() {
     let mut headers = std::collections::HashMap::new();
     headers.insert("X-Custom".to_string(), "value".to_string());
     let internal = InternalScrapeResponse {
+        captured_responses: Vec::new(),
         status_code: 404,
         content: "not found".to_string(),
         screenshot: Some("base64data".to_string()),
@@ -874,6 +944,7 @@ fn test_to_public_with_screenshot_and_headers() {
 #[test]
 fn test_to_public_empty_content() {
     let internal = InternalScrapeResponse {
+        captured_responses: Vec::new(),
         status_code: 204,
         content: String::new(),
         screenshot: None,
@@ -924,6 +995,7 @@ impl MockEngineRouter {
     fn new_success() -> Self {
         Self {
             result: MockRouteResult::Success(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "test content".to_string(),
                 screenshot: None,
@@ -1069,6 +1141,7 @@ fn test_engine_client_with_engines() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
                 screenshot: None,
@@ -1246,6 +1319,7 @@ fn test_scraper_engine_default_supports_tls_fingerprint_returns_false() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
                 screenshot: None,
@@ -1291,6 +1365,7 @@ impl ScraperEngine for HealthyMockEngine {
         _request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
         Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "ok".to_string(),
             screenshot: None,

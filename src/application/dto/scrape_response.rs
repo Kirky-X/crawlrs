@@ -28,6 +28,28 @@ pub struct ScrapeResponseDto {
     /// 消耗的积分
     #[serde(default)]
     pub credits_used: u32,
+    /// XHR/Fetch 后台响应捕获结果（F6）
+    ///
+    /// 当前 API 语义：POST /v1/scrape 的入队/同步等待响应恒 `None`（任务尚未
+    /// 执行或数据不回传）。`capture_xhr=true` 的捕获数据随任务结果持久化——
+    /// 经 GET 结果的 `meta_data.captured_responses` 读取；直接消费 EngineClient
+    /// 的调用方则经 `ScrapeResponse.captured_responses` 同步获得。
+    /// `None` 不出现在 JSON。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_responses: Option<Vec<CapturedResponseDto>>,
+}
+
+/// Playwright 捕获的 XHR/Fetch 后台响应条目 DTO（F6）
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CapturedResponseDto {
+    /// 触发响应的请求 URL
+    pub url: String,
+    /// 响应 HTTP 状态码
+    pub status: u16,
+    /// 响应 MIME 类型
+    pub mime_type: String,
+    /// 响应体（base64 已解码）
+    pub body: String,
 }
 
 /// 爬取结果数据传输对象

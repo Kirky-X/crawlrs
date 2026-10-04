@@ -38,6 +38,7 @@ async fn test_route_respects_max_engine_attempts() {
             self.calls.fetch_add(1, Ordering::SeqCst);
             if self.ok {
                 Ok(InternalScrapeResponse {
+                    captured_responses: Vec::new(),
                     status_code: 200,
                     content: "ok".to_string(),
                     screenshot: None,
@@ -144,6 +145,7 @@ impl ScraperEngine for MockEngine {
         _request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
         Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
                 status_code: 200,
                 // 内容需 ≥200 字节且可见文本 ≥50 字符，
                 // 否则被 antibot::classify Step 5 误判为 near-empty structural block。
@@ -1017,6 +1019,7 @@ async fn test_route_race_mode_success() {
             // race 胜出响应会过 antibot 分类，夹具内容须像真实渲染页
             // （过短会命中 Tier3 近空页 StructuralBlock 被作废）
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: format!(
                     "<html><body><p>from-{} with plenty of realistic rendered \
@@ -1076,6 +1079,7 @@ async fn test_route_race_mode_records_hedge_latency() {
             // race 胜出响应会过 antibot 分类，夹具内容须像真实渲染页
             // （过短会命中 Tier3 近空页 StructuralBlock 被作废）
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: format!(
                     "<html><body><p>from-{} with plenty of realistic rendered \
@@ -1187,6 +1191,7 @@ async fn test_aggregate_no_candidates() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
                 screenshot: None,
@@ -1295,6 +1300,7 @@ async fn test_route_support_score_zero_filtered() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
                 screenshot: None,
@@ -1336,6 +1342,7 @@ async fn test_trait_aggregate_delegates_to_impl() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                     status_code: 200,
                     // 同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
                     content: "<html><body><h1>OK</h1><p>Succeeding engine response for testing trait delegation. It has enough visible text to pass the antibot classifier near-empty check.</p></body></html>".to_string(),
@@ -1373,6 +1380,7 @@ async fn test_trait_route_delegates_to_impl() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                     status_code: 200,
                     // 同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
                     content: "<html><body><h1>OK</h1><p>Succeeding engine response for testing trait delegation. It has enough visible text to pass the antibot classifier near-empty check.</p></body></html>".to_string(),
@@ -1411,6 +1419,7 @@ async fn test_feature_filter_excludes_low_score_engine_for_screenshot() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
                 screenshot: None,
@@ -1486,6 +1495,7 @@ async fn test_route_skips_engine_when_circuit_breaker_open() {
         ) -> Result<InternalScrapeResponse, EngineError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
                 screenshot: None,
@@ -1631,6 +1641,7 @@ async fn test_route_mrt_waterfall_first_engine_exceeds_mrt_falls_to_second() {
             // 模拟引擎处理耗时超过 MRT
             tokio::time::sleep(self.sleep_dur).await;
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                     status_code: 200,
                     content: "<html><body><h1>Slow Engine Response</h1><p>This is the slow engine response with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
                     screenshot: None,
@@ -1663,6 +1674,7 @@ async fn test_route_mrt_waterfall_first_engine_exceeds_mrt_falls_to_second() {
         ) -> Result<InternalScrapeResponse, EngineError> {
             self.called.store(true, Ordering::SeqCst);
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                     status_code: 200,
                     content: "<html><body><h1>Fast Engine Response</h1><p>This is the fast engine response with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
                     screenshot: None,
@@ -1755,6 +1767,7 @@ async fn test_route_mrt_engine_within_mrt_succeeds_normally() {
             self.called.store(true, Ordering::SeqCst);
             tokio::time::sleep(self.sleep_dur).await;
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                     status_code: 200,
                     content: "<html><body><h1>Real Content Page</h1><p>This is a real page with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
                     screenshot: None,
@@ -1822,6 +1835,7 @@ async fn test_route_mrt_uses_min_remaining_when_remaining_less_than_mrt() {
             self.calls.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(self.sleep_dur).await;
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "should-not-reach-here".to_string(),
                 screenshot: None,
@@ -1985,6 +1999,7 @@ async fn test_route_race_mode_returns_timeout_on_select_all_timeout() {
             // select_all never resolves in time.
             tokio::time::sleep(Duration::from_secs(5)).await;
             Ok(InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
                 screenshot: None,
@@ -2220,6 +2235,7 @@ impl ScraperEngine for CallCountEngine {
     ) -> Result<InternalScrapeResponse, EngineError> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: self.content.clone(),
             screenshot: None,
@@ -2332,4 +2348,287 @@ async fn test_host_browser_hint_expiry_restores_http_candidates() {
         resp.content
     );
     assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+// =============================================================================
+// F2 Session 身份三件套：route 层集成测试
+// =============================================================================
+
+use crate::config::settings::SessionSettings;
+use crate::engines::provider::ProxyProvider;
+use crate::engines::proxy_pool::ProxyPool;
+use crate::engines::session::SessionManager;
+use crate::utils::host_discipline::{ObserveOutcome, PolitenessOptions};
+use crate::utils::ua_pool::UaPool;
+
+/// 每次引擎调用的观测快照（route 实际下发的三件套 header + 代理）
+#[derive(Debug, Clone)]
+struct SessionObservedAttempt {
+    user_agent: Option<String>,
+    accept_language: Option<String>,
+    cookie: Option<String>,
+    proxy: Option<String>,
+}
+
+/// 可控状态码 + Set-Cookie 的探测引擎（真实 trait impl，记录每次 attempt 请求）
+struct SessionProbeEngine {
+    calls: std::sync::Mutex<Vec<SessionObservedAttempt>>,
+    status: u16,
+    set_cookie: Option<String>,
+}
+
+impl SessionProbeEngine {
+    fn new(status: u16, set_cookie: Option<&str>) -> Self {
+        Self {
+            calls: std::sync::Mutex::new(Vec::new()),
+            status,
+            set_cookie: set_cookie.map(str::to_string),
+        }
+    }
+
+    fn observations(&self) -> Vec<SessionObservedAttempt> {
+        self.calls.lock().expect("probe calls lock").clone()
+    }
+}
+
+#[async_trait]
+impl ScraperEngine for SessionProbeEngine {
+    async fn scrape(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        self.calls
+            .lock()
+            .expect("probe calls lock")
+            .push(SessionObservedAttempt {
+                user_agent: request.headers.get("User-Agent").cloned(),
+                accept_language: request.headers.get("Accept-Language").cloned(),
+                cookie: request.headers.get("Cookie").cloned(),
+                proxy: request.proxy.clone(),
+            });
+        let mut headers = HashMap::new();
+        if let Some(sc) = &self.set_cookie {
+            headers.insert("set-cookie".to_string(), sc.clone());
+        }
+        Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
+            status_code: self.status,
+            // 足量正文，避免 content feature 的 JS 空壳探测误判为 SPA shell
+            content: "<html><head><title>probe</title></head><body><p>session probe page \
+                      with enough visible text for structural checks.</p></body></html>"
+                .to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers,
+            response_time_ms: 1,
+            final_url: None,
+        })
+    }
+
+    fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+        100
+    }
+
+    fn name(&self) -> &'static str {
+        "session-probe"
+    }
+}
+
+/// session 探测请求（host 固定 1.1.1.1，与既有 router 测试同源）
+fn session_probe_request(session_id: &str) -> InternalScrapeRequest {
+    InternalScrapeRequest {
+        url: "http://1.1.1.1/probe".to_string(),
+        method: crate::engines::engine_client::HttpMethod::Get,
+        headers: HashMap::new(),
+        timeout: Duration::from_secs(10),
+        needs_js: false,
+        needs_screenshot: false,
+        screenshot_config: None,
+        mobile: false,
+        proxy: None,
+        skip_tls_verification: false,
+        needs_tls_fingerprint: false,
+        use_fire_engine: false,
+        actions: Vec::new(),
+        body: None,
+        sync_wait_ms: 0,
+        block_ads: false,
+        block_media: false,
+        session_id: Some(session_id.to_string()),
+        wait_for: None,
+        needs_mllm: false,
+    }
+}
+
+/// 双代理提供者（RR 取号：不同 sticky 键必得不同 URL）
+fn make_two_proxy_provider() -> Arc<dyn ProxyProvider> {
+    Arc::new(ProxyPool::from_urls(
+        vec![
+            "http://proxy-a:8080".to_string(),
+            "http://proxy-b:8080".to_string(),
+        ],
+        Duration::from_secs(60),
+        Duration::from_secs(30),
+    ))
+}
+
+/// session 启用的 SessionManager（其余字段对齐 spec 默认）
+fn make_enabled_session(
+    max_error_score: f64,
+    provider: Option<Arc<dyn ProxyProvider>>,
+) -> SessionManager {
+    SessionManager::from_settings(
+        &SessionSettings {
+            enabled: true,
+            max_sessions: 16,
+            max_error_score,
+            max_uses: 1000,
+            max_age_secs: 1800,
+            cookie_cache_max_bytes: 4096,
+        },
+        Arc::new(UaPool::new()),
+        provider,
+    )
+}
+
+/// 401 记分退休：mock 引擎返回 401（max_error_score=1.0）→ 同 session 下次
+/// 请求代理/UA 已换。
+/// 选 401 而非 403/429：content feature 下 403/429 会被 antibot 分类拦截为
+/// 挑战页（route 走 AntiBotDetected 失败路径，mark_bad 在挑战页分支触发）；
+/// 401 直通最终状态观测点（mark_bad 的非挑战页点位）。
+#[tokio::test]
+async fn test_session_identity_rotates_after_error_score_threshold() {
+    let engine = Arc::new(SessionProbeEngine::new(401, None));
+    let session = make_enabled_session(1.0, Some(make_two_proxy_provider()));
+    let router = EngineRouter::with_discipline_and_session(
+        vec![engine.clone() as Arc<dyn ScraperEngine>],
+        HostDiscipline::new(Duration::from_millis(1), Duration::from_secs(60), 3),
+        session,
+    );
+
+    let req = session_probe_request("sess-401");
+    router.route(&req).await.expect("第一次 route");
+    router.route(&req).await.expect("第二次 route");
+
+    let obs = engine.observations();
+    assert_eq!(obs.len(), 2, "各一次 attempt");
+    assert_ne!(
+        obs[0].user_agent, obs[1].user_agent,
+        "身份退休后 UA 必须更换"
+    );
+    assert_ne!(obs[0].proxy, obs[1].proxy, "身份退休后代理必须更换");
+}
+
+/// A 簇停滞（连续 RateLimited 置 stalled）→ 同 host 身份被强制更换
+#[tokio::test]
+async fn test_stalled_host_forces_session_identity_rotation() {
+    let engine = Arc::new(SessionProbeEngine::new(200, None));
+    let session = make_enabled_session(100.0, None); // score 阈值调高，隔离 stalled 维度
+    let router = EngineRouter::with_discipline_and_session(
+        vec![engine.clone() as Arc<dyn ScraperEngine>],
+        // 冷却兜底归零：429 记忆不产生 gate 等待；stalled_threshold=3
+        HostDiscipline::with_options(PolitenessOptions {
+            min_interval: Duration::from_millis(1),
+            cooldown_default: Duration::ZERO,
+            backoff_base: Duration::ZERO,
+            stalled_threshold: 3,
+            ..PolitenessOptions::default()
+        }),
+        session,
+    );
+
+    let req = session_probe_request("sess-stall");
+    router.route(&req).await.expect("停滞前 route");
+    // A 簇停滞置位（连续 3 次 RateLimited 记忆，经 router 持有的纪律组件注入）
+    for _ in 0..3 {
+        router
+            .host_discipline
+            .observe("1.1.1.1", ObserveOutcome::RateLimited { retry_after: None });
+    }
+    router.route(&req).await.expect("停滞中 route");
+
+    let obs = engine.observations();
+    assert_eq!(obs.len(), 2);
+    assert_ne!(
+        obs[0].user_agent, obs[1].user_agent,
+        "stalled host 必须强制换身份（UA 更换）"
+    );
+    // 三件 header 一致性：每次 attempt 的 UA/Accept-Language 必须来自同一
+    // 内置 profile（UA 与 TLS 档绑定一致，不允许拼装矛盾指纹）
+    let pool = UaPool::new();
+    for (i, o) in obs.iter().enumerate() {
+        let ua = o.user_agent.as_deref().unwrap_or_default();
+        let profile = pool
+            .desktop
+            .iter()
+            .find(|p| p.ua == ua)
+            .unwrap_or_else(|| panic!("attempt #{i} 的 UA 必须来自内置 profile：{ua}"));
+        assert_eq!(
+            o.accept_language.as_deref(),
+            Some(profile.accept_language),
+            "attempt #{i} 的 Accept-Language 必须与 UA 同 profile 绑定"
+        );
+    }
+}
+
+/// session.enabled=false（默认）：请求代理原样透传、无 Cookie 注入、
+/// 首次 attempt 无 UA 盲轮换（pick_seeded 分支回归）
+#[tokio::test]
+async fn test_session_disabled_keeps_request_passthrough() {
+    let engine = Arc::new(SessionProbeEngine::new(200, Some("sid=server1")));
+    let router = EngineRouter::with_host_discipline(
+        vec![engine.clone() as Arc<dyn ScraperEngine>],
+        HostDiscipline::new(Duration::from_millis(1), Duration::from_secs(60), 3),
+    );
+
+    let mut req = session_probe_request("sess-off");
+    req.proxy = Some("http://request-proxy:9090".to_string());
+    router.route(&req).await.expect("第一次 route");
+    router.route(&req).await.expect("第二次 route");
+
+    let obs = engine.observations();
+    assert_eq!(obs.len(), 2);
+    for o in &obs {
+        assert_eq!(
+            o.proxy.as_deref(),
+            Some("http://request-proxy:9090"),
+            "禁用时请求代理必须原样透传"
+        );
+        assert!(o.cookie.is_none(), "禁用时不得注入 Cookie 通道");
+        assert!(
+            o.user_agent.is_none(),
+            "禁用时首次 attempt 无 rotate_ua 指令，不得注入 UA"
+        );
+    }
+}
+
+/// Set-Cookie 捕获注入：首个响应带 Set-Cookie → 同身份第二请求 headers 含
+/// Cookie；2xx 后同 session 保持同一身份（不轮换）
+#[tokio::test]
+async fn test_session_cookie_captured_then_injected() {
+    let engine = Arc::new(SessionProbeEngine::new(200, Some("sid=abc123; Path=/")));
+    let session = make_enabled_session(3.0, Some(make_two_proxy_provider()));
+    let router = EngineRouter::with_discipline_and_session(
+        vec![engine.clone() as Arc<dyn ScraperEngine>],
+        HostDiscipline::new(Duration::from_millis(1), Duration::from_secs(60), 3),
+        session,
+    );
+
+    let req = session_probe_request("sess-cookie");
+    router.route(&req).await.expect("第一次 route");
+    router.route(&req).await.expect("第二次 route");
+
+    let obs = engine.observations();
+    assert_eq!(obs.len(), 2);
+    assert_eq!(obs[0].cookie, None, "首次请求无 Cookie 缓存");
+    assert_eq!(
+        obs[1].cookie.as_deref(),
+        Some("sid=abc123"),
+        "同身份第二请求必须注入捕获的 Cookie"
+    );
+    assert_eq!(
+        obs[0].user_agent, obs[1].user_agent,
+        "2xx 成功后同 session 保持同一身份（不轮换）"
+    );
+    assert_eq!(obs[0].proxy, obs[1].proxy, "2xx 成功后代理粘性保持");
 }

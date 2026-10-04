@@ -264,6 +264,7 @@ impl ScraperEngine for MllmEngine {
                 headers: HashMap::new(),
                 response_time_ms: start.elapsed().as_millis() as u64,
                 final_url: None,
+                captured_responses: Vec::new(),
             })
         })
         .await

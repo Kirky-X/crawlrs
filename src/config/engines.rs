@@ -139,6 +139,36 @@ pub struct MllmEngineSettings {
     pub mrt_seconds: u64,
 }
 
+/// Playwright 引擎配置
+///
+/// 配置 Playwright（CDP 浏览器）引擎的扩展行为。
+///
+/// # 字段说明
+///
+/// * `capture_xhr` - 是否捕获 XHR/Fetch 后台响应（默认关）
+/// * `capture_xhr_url_patterns` - 捕获 URL glob 白名单（空 = 全部）
+/// * `capture_xhr_max_bytes` - 单响应体上限（字节）
+/// * `capture_xhr_max_responses` - 单页面最大捕获响应数
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ENGINES__PLAYWRIGHT__")]
+pub struct PlaywrightEngineSettings {
+    /// 是否捕获 XHR/Fetch 后台响应（false 时无 Network 监听开销）
+    #[config(default = false)]
+    pub capture_xhr: bool,
+
+    /// 捕获 URL 匹配模式（glob，支持 `*` 与 `?`；空列表 = 捕获全部）
+    #[config(default = Vec::<String>::new())]
+    pub capture_xhr_url_patterns: Vec<String>,
+
+    /// 单响应体捕获上限（字节），超出截断丢弃
+    #[config(default = 262144)]
+    pub capture_xhr_max_bytes: u64,
+
+    /// 单页面最大捕获响应数（防内存/带宽放大）
+    #[config(default = 50)]
+    pub capture_xhr_max_responses: u32,
+}
+
 /// 引擎配置集合
 ///
 /// 包含所有抓取引擎的配置
@@ -163,4 +193,7 @@ pub struct EngineSettings {
 
     /// MLLM 自主导航引擎配置
     pub mllm: MllmEngineSettings,
+
+    /// Playwright 引擎配置（XHR/Fetch 后台响应捕获等）
+    pub playwright: PlaywrightEngineSettings,
 }

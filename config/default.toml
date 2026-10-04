@@ -181,6 +181,19 @@ max_retries = 3
 # 响应体大小上限（字节）：超出中断抓取，防止超大/恶意页面 OOM
 max_response_body_bytes = 10485760
 
+# Playwright 引擎 XHR/Fetch 后台响应捕获（吸收点 F6）
+[engines.playwright]
+# false 时维持现状（只做广告/媒体拦截，不读响应体）；true 后捕获 XHR/Fetch 响应体
+capture_xhr = false
+# 捕获 URL 匹配模式（glob；空列表 = 捕获全部 XHR/Fetch）。
+# 指向本机/内网/链路本地地址的 XHR 一律丢弃（SSRF 防护），不进捕获通道；
+# 生产建议配置白名单以降低页面指路第三方地址的数据外带面
+capture_xhr_url_patterns = []
+# 单个响应体捕获上限（字节），超出截断丢弃
+capture_xhr_max_bytes = 262144
+# 单页面最大捕获响应数（防内存放大）
+capture_xhr_max_responses = 50
+
 [browser]
 # Browser auto-download settings
 auto_download = true

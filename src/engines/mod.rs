@@ -48,6 +48,7 @@ pub mod shared;
 // New unified EngineClient API
 pub mod engine_client;
 pub mod types; // ARC-002: 引擎层 DTO 类型
+pub mod xhr_capture; // F6: XHR/Fetch 后台响应捕获纯逻辑（无 CDP 依赖）
 
 pub use engine_client::{
     EngineClient, EngineError, EngineHealthStatus, PageAction, ScrapeOptions, ScrapeRequest,

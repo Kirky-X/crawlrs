@@ -12,7 +12,8 @@ mod tests {
     use super::*;
     use crate::application::dto::scrape_request::{ScrapeActionDto, ScrapeRequestDto};
     use crate::application::dto::scrape_response::{
-        CancelScrapeResponseDto, ScrapeResponseDto, ScrapeResultDto, ScrapeStatusResponseDto,
+        CancelScrapeResponseDto, CapturedResponseDto, ScrapeResponseDto, ScrapeResultDto,
+        ScrapeStatusResponseDto,
     };
     use crate::common::constants::crawl_task::MAX_SYNC_WAIT_MS;
     use crate::config::settings::Settings;
@@ -143,12 +144,58 @@ mod tests {
             id: task_id,
             url: "https://example.com".to_string(),
             credits_used: 1,
+            captured_responses: None,
         };
         let json = serde_json::to_string(&dto).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["id"], task_id.to_string());
         assert_eq!(parsed["url"], "https://example.com");
         assert_eq!(parsed["credits_used"], 1);
+    }
+
+    #[test]
+    fn test_scrape_response_dto_empty_capture_absent_in_json() {
+        // F6：空捕获不出现在 JSON（skip_serializing_if）
+        let dto = ScrapeResponseDto {
+            id: Uuid::new_v4(),
+            url: "https://example.com".to_string(),
+            credits_used: 1,
+            captured_responses: None,
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(
+            !json.contains("captured_responses"),
+            "None captures must be absent from JSON, got: {json}"
+        );
+        // 旧客户端 JSON（无该字段）反序列化兼容
+        let parsed: ScrapeResponseDto =
+            serde_json::from_str(&format!(r#"{{"id":"{}","url":"https://x.com"}}"#, dto.id))
+                .unwrap();
+        assert!(parsed.captured_responses.is_none());
+    }
+
+    #[test]
+    fn test_scrape_response_dto_non_empty_capture_complete_in_json() {
+        // F6：非空捕获时字段完整
+        let dto = ScrapeResponseDto {
+            id: Uuid::new_v4(),
+            url: "https://example.com".to_string(),
+            credits_used: 1,
+            captured_responses: Some(vec![CapturedResponseDto {
+                url: "https://example.com/api/data".to_string(),
+                status: 200,
+                mime_type: "application/json".to_string(),
+                body: r#"{"ok":true}"#.to_string(),
+            }]),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let captures = parsed["captured_responses"].as_array().unwrap();
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0]["url"], "https://example.com/api/data");
+        assert_eq!(captures[0]["status"], 200);
+        assert_eq!(captures[0]["mime_type"], "application/json");
+        assert_eq!(captures[0]["body"], r#"{"ok":true}"#);
     }
 
     #[test]
@@ -841,6 +888,7 @@ mod tests {
             id: Uuid::new_v4(),
             url: "https://roundtrip.com".to_string(),
             credits_used: 3,
+            captured_responses: None,
         };
         let json = serde_json::to_string(&dto).unwrap();
         let deserialized: ScrapeResponseDto = serde_json::from_str(&json).unwrap();

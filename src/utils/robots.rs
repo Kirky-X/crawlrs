@@ -1188,6 +1188,7 @@ Crawl-delay: 8
         fn with_response(status_code: u16, content: &str) -> Self {
             Self {
                 response: Some(InternalScrapeResponse {
+                    captured_responses: Vec::new(),
                     status_code,
                     content: content.to_string(),
                     screenshot: None,

@@ -690,6 +690,7 @@ impl ScraperEngine for WreqEngine {
             headers: response_headers,
             response_time_ms: start.elapsed().as_millis() as u64,
             final_url: None,
+            captured_responses: Vec::new(),
         })
     }
 

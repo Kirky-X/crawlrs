@@ -683,6 +683,7 @@ mod snapshot_failure_tests {
 
     fn sample_response() -> InternalScrapeResponse {
         InternalScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 403,
             content: "<html>challenge</html>".to_string(),
             screenshot: None,

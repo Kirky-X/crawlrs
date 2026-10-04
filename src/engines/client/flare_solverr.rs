@@ -853,6 +853,7 @@ impl ScraperEngine for FlareSolverrEngine {
             headers,
             response_time_ms,
             final_url: None,
+            captured_responses: Vec::new(),
         };
 
         info!(

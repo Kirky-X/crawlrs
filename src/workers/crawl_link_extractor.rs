@@ -668,6 +668,7 @@ mod tests {
 
     fn make_response(content_type: &str, content: &str) -> ScrapeResponse {
         ScrapeResponse {
+            captured_responses: Vec::new(),
             content: content.to_string(),
             status_code: 200,
             content_type: content_type.to_string(),

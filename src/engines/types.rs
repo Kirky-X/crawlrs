@@ -486,6 +486,22 @@ impl Default for ScreenshotConfig {
     }
 }
 
+/// Playwright 捕获的 XHR/Fetch 后台响应（公共输出形态）
+///
+/// 仅当 Playwright 引擎启用 `capture_xhr` 时非空；随 `ScrapeResponse`
+/// 序列化输出（空 Vec 不出现在 JSON）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapturedResponse {
+    /// 触发响应的请求 URL
+    pub url: String,
+    /// 响应 HTTP 状态码
+    pub status: u16,
+    /// 响应 MIME 类型（CDP `Response.mimeType`，如 `application/json`）
+    pub mime_type: String,
+    /// 响应体（base64 已解码；二进制按 UTF-8 lossy 转换）
+    pub body: String,
+}
+
 /// Unified response structure for scraping operations.
 ///
 /// This is the canonical response type returned by EngineClient.
@@ -514,6 +530,13 @@ pub struct ScrapeResponse {
     /// 仅当请求 `formats` 含 `"markdown"` 且 `markdown` 特性启用时由
     /// `scrape_worker` 填充；其余情况为 `None`，对老调用方透明。
     pub markdown: Option<String>,
+    /// XHR/Fetch 后台响应捕获结果
+    ///
+    /// 仅 Playwright 引擎在 `capture_xhr` 启用时非空；其余引擎为空。
+    /// `default` + `skip_serializing_if` 保证空捕获不出现在 JSON，
+    /// 且旧缓存条目（无此字段）可正常反序列化。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub captured_responses: Vec<CapturedResponse>,
 }
 
 impl ScrapeResponse {
@@ -532,6 +555,7 @@ impl ScrapeResponse {
             response_time_ms: 0,
             final_url: None,
             markdown: None,
+            captured_responses: Vec::new(),
         }
     }
 
@@ -599,7 +623,7 @@ pub enum InternalPageAction {
 }
 
 /// Internal response type for engine operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InternalScrapeResponse {
     pub status_code: u16,
     pub content: String,
@@ -610,6 +634,20 @@ pub struct InternalScrapeResponse {
     /// 引擎实际得到的最终 URL（重定向 / 浏览器页面导航后）。
     /// `None` 表示引擎未提供，`to_public` 回退为原始请求 URL。
     pub final_url: Option<String>,
+    /// XHR/Fetch 后台响应捕获结果
+    ///
+    /// 仅 PlaywrightEngine 在 `capture_xhr` 启用时填充；其余引擎为空
+    /// （`Default` 派生使构造点可零改动透传空值）。
+    pub captured_responses: Vec<InternalCapturedResponse>,
+}
+
+/// Internal captured XHR/Fetch response
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InternalCapturedResponse {
+    pub url: String,
+    pub status: u16,
+    pub mime_type: String,
+    pub body: String,
 }
 
 /// Convert from public ScrapeRequest to internal format
@@ -718,6 +756,16 @@ impl InternalScrapeResponse {
                     .unwrap_or_else(|| original_url.to_string()),
             ),
             markdown: None,
+            captured_responses: self
+                .captured_responses
+                .iter()
+                .map(|c| CapturedResponse {
+                    url: c.url.clone(),
+                    status: c.status,
+                    mime_type: c.mime_type.clone(),
+                    body: c.body.clone(),
+                })
+                .collect(),
         }
     }
 }

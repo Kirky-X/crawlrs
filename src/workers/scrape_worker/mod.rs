@@ -994,6 +994,7 @@ impl ScrapeWorker {
             response_time_ms: response.response_time_ms,
             final_url: response.final_url,
             markdown: generated_markdown.or(response.markdown),
+            captured_responses: response.captured_responses,
         };
 
         // 解析 ScrapeRequest 以检查是否有提取规则
@@ -1503,6 +1504,8 @@ fn not_modified_response(
         response_time_ms: response.response_time_ms,
         final_url: response.final_url.clone(),
         markdown: None,
+        // 304 合成响应无 XHR 捕获语义（历史结果不含捕获数据）
+        captured_responses: Vec::new(),
     }
 }
 
@@ -1550,6 +1553,7 @@ mod incremental_scrape_tests {
             created_at: chrono::Utc::now(),
         };
         let not_modified = ScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 304,
             content: String::new(),
             content_type: String::new(),

@@ -19,7 +19,7 @@ use serde::{Serialize, Serializer};
 use url::Url;
 
 use crate::common::CacheContext;
-use crate::engines::engine_client::{ScrapeOptions, ScrapeResponse};
+use crate::engines::engine_client::{CapturedResponse, ScrapeOptions, ScrapeResponse};
 
 // =============================================================================
 // cache key 生成
@@ -233,6 +233,10 @@ pub struct SanitizedScrapeResponse<'a> {
     pub response_time_ms: u64,
     pub final_url: Option<&'a String>,
     pub markdown: Option<&'a String>,
+    /// XHR/Fetch 后台响应捕获（F6）；空时不写入缓存 JSON，
+    /// 与 `ScrapeResponse` 的 skip_serializing_if 对齐，保证缓存读写对称
+    #[serde(skip_serializing_if = "<[CapturedResponse]>::is_empty")]
+    pub captured_responses: &'a [CapturedResponse],
 }
 
 /// 借用 `ScrapeResponse` 构造 `SanitizedScrapeResponse`，零克隆
@@ -255,6 +259,7 @@ impl<'a> SanitizedScrapeResponse<'a> {
             response_time_ms: response.response_time_ms,
             final_url: response.final_url.as_ref(),
             markdown: response.markdown.as_ref(),
+            captured_responses: &response.captured_responses,
         }
     }
 }
@@ -515,6 +520,7 @@ mod tests {
         headers.insert("Content-Type".to_string(), "text/html".to_string());
 
         let response = ScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "<html></html>".to_string(),
             screenshot: None,
@@ -545,6 +551,7 @@ mod tests {
         headers.insert("X-Trace-Id".to_string(), "abc-123".to_string());
 
         let response = ScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "hello".to_string(),
             screenshot: Some("base64data".to_string()),
@@ -570,6 +577,40 @@ mod tests {
         );
         assert_eq!(restored.response_time_ms, 100);
         assert_eq!(restored.markdown.as_deref(), Some("# Title"));
+        assert!(restored.captured_responses.is_empty());
+    }
+
+    #[test]
+    fn test_sanitized_roundtrip_preserves_captured_responses() {
+        // F6：非空捕获经缓存写读后完整还原
+        let response = ScrapeResponse {
+            captured_responses: vec![CapturedResponse {
+                url: "https://example.com/api/data".to_string(),
+                status: 200,
+                mime_type: "application/json".to_string(),
+                body: "{\"ok\":true}".to_string(),
+            }],
+            status_code: 200,
+            content: "hello".to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 10,
+            final_url: None,
+            markdown: None,
+        };
+
+        let sanitized = SanitizedScrapeResponse::from_response(&response);
+        let json = serde_json::to_string(&sanitized).unwrap();
+        let restored: ScrapeResponse = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.captured_responses.len(), 1);
+        assert_eq!(
+            restored.captured_responses[0].url,
+            "https://example.com/api/data"
+        );
+        assert_eq!(restored.captured_responses[0].status, 200);
+        assert_eq!(restored.captured_responses[0].body, "{\"ok\":true}");
     }
 
     #[test]
@@ -579,6 +620,7 @@ mod tests {
         headers.insert("Set-Cookie".to_string(), "secret".to_string());
 
         let response = ScrapeResponse {
+            captured_responses: Vec::new(),
             status_code: 200,
             content: "test".to_string(),
             screenshot: None,

@@ -178,6 +178,28 @@ pub async fn save_result(
         }
     }
 
+    // F6 捕获数据持久化（API 出口：GET 结果的 meta_data.captured_responses）；
+    // 入队响应不携带（任务尚未执行），直接消费 EngineClient 的路径另经
+    // ScrapeResponse.captured_responses 同步获得
+    if !response.captured_responses.is_empty() {
+        let captured = serde_json::to_value(&response.captured_responses).unwrap_or(Value::Null);
+        match &mut meta_data {
+            Value::Null => {
+                meta_data = serde_json::json!({ "captured_responses": captured });
+            }
+            Value::Object(map) => {
+                map.insert("captured_responses".to_string(), captured);
+            }
+            _ => {
+                let original = std::mem::replace(&mut meta_data, Value::Null);
+                meta_data = serde_json::json!({
+                    "extracted": original,
+                    "captured_responses": captured,
+                });
+            }
+        }
+    }
+
     let content_to_store = response.content.clone();
 
     let result = ScrapeResult {
@@ -305,6 +327,7 @@ mod tests {
     use crate::common::CacheMode;
     use crate::domain::models::{TaskStatus, TaskType};
     use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
+    use crate::engines::types::CapturedResponse;
     use crate::infrastructure::oxcache::CacheService;
     use chrono::Utc;
     use serde_json::json;
@@ -441,6 +464,7 @@ mod tests {
 
     fn make_response(content: &str) -> ScrapeResponse {
         ScrapeResponse {
+            captured_responses: Vec::new(),
             content: content.to_string(),
             status_code: 200,
             content_type: "text/html".to_string(),
@@ -457,12 +481,15 @@ mod tests {
     #[derive(Default)]
     struct MockResultRepo {
         save_count: AtomicU32,
+        /// 保存的完整结果（meta_data 结构断言用）
+        saved: std::sync::Mutex<Vec<ScrapeResult>>,
     }
 
     #[async_trait::async_trait]
     impl ScrapeResultRepository for MockResultRepo {
-        async fn save(&self, _result: ScrapeResult) -> Result<()> {
+        async fn save(&self, result: ScrapeResult) -> Result<()> {
             self.save_count.fetch_add(1, Ordering::SeqCst);
+            self.saved.lock().expect("repo lock").push(result);
             Ok(())
         }
         async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<ScrapeResult>> {
@@ -580,6 +607,87 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(repo.save_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn save_result_persists_captured_responses_into_meta_data() {
+        let task = make_task("https://example.com");
+        let mut response = make_response("content");
+        response.captured_responses = vec![CapturedResponse {
+            url: "https://api.example.com/data".to_string(),
+            status: 200,
+            mime_type: "application/json".to_string(),
+            body: "{\"ok\":true}".to_string(),
+        }];
+        let repo = MockResultRepo::default();
+
+        save_result(&task, &response, None, &repo).await.unwrap();
+
+        let saved = repo.saved.lock().expect("repo lock");
+        assert_eq!(saved.len(), 1);
+        // 仅捕获无 extra/markdown：meta_data 从 Null 构造为单键对象
+        assert_eq!(
+            saved[0].meta_data,
+            json!({"captured_responses": [{
+                "url": "https://api.example.com/data",
+                "status": 200,
+                "mime_type": "application/json",
+                "body": "{\"ok\":true}",
+            }]}),
+            "captured_responses 必须持久化进 meta_data（API 经 GET 结果透出）"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_result_captured_coexists_with_markdown_and_extracted() {
+        let task = make_task("https://example.com");
+        let mut response = make_response("content");
+        response.markdown = Some("# MD".to_string());
+        response.captured_responses = vec![CapturedResponse {
+            url: "https://api.example.com/x".to_string(),
+            status: 204,
+            mime_type: "text/plain".to_string(),
+            body: "x".to_string(),
+        }];
+        let repo = MockResultRepo::default();
+        let extra = json!({"author": "a"});
+
+        save_result(&task, &response, Some(extra), &repo)
+            .await
+            .unwrap();
+
+        let saved = repo.saved.lock().expect("repo lock");
+        let meta = &saved[0].meta_data;
+        // 三路共存：对象型 extra 按既有语义键合并（extracted 包装仅用于非对象
+        // extra，见 test_save_result_with_markdown_and_object_extra_data）
+        assert_eq!(meta["author"], "a");
+        assert_eq!(meta["markdown"], "# MD");
+        assert_eq!(meta["captured_responses"][0]["status"], 204);
+        assert_eq!(
+            meta["captured_responses"][0]["url"],
+            "https://api.example.com/x"
+        );
+        assert!(
+            meta.get("extracted").is_none(),
+            "对象型 extra 不得再包 extracted 层"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_result_without_captured_keeps_meta_data_free_of_key() {
+        let task = make_task("https://example.com");
+        // make_response 的 captured_responses 为空 Vec
+        let response = make_response("content");
+        let repo = MockResultRepo::default();
+
+        save_result(&task, &response, None, &repo).await.unwrap();
+
+        let saved = repo.saved.lock().expect("repo lock");
+        assert_eq!(
+            saved[0].meta_data,
+            Value::Null,
+            "空捕获不得引入 captured_responses 键"
+        );
     }
 
     #[tokio::test]
