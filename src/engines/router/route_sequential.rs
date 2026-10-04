@@ -34,6 +34,21 @@ fn is_known_waf(tech: crate::engines::antibot::AntiBotTech) -> bool {
     )
 }
 
+/// 解析 Retry-After 头（delta-seconds 或 HTTP 日期），供纯 429 直通观测使用。
+///
+/// 与 `antibot::parse_retry_after` 共用 [`crate::utils::retry_after`] 单实现
+/// （含 600s 钳制），仅头部容器不同；不依赖 `content` feature——antibot
+/// 分类关闭时 429 仍能携带 Retry-After 进入 host 纪律。
+fn parse_retry_after_header(
+    headers: &std::collections::HashMap<String, String>,
+) -> Option<Duration> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("retry-after"))
+        .and_then(|(_, v)| crate::utils::retry_after::parse_retry_after_value(v))
+        .map(Duration::from_secs)
+}
+
 impl EngineRouter {
     /// Internal route implementation without timeout
     #[allow(unused_variables)]
@@ -152,7 +167,7 @@ impl EngineRouter {
             // - 首次尝试（total_attempts=1）用 default（无升级）
             // - 第 N 次重试（total_attempts=N+1, N>=1）基于上次失败 reason 升级
             //   directive_attempt = total_attempts - 2（0-indexed：0=首次重试、1=第二次重试...）
-            let directive = if total_attempts == 1 {
+            let mut directive = if total_attempts == 1 {
                 RetryDirective::default()
             } else {
                 let directive_attempt = (total_attempts - 2) as u32;
@@ -162,7 +177,20 @@ impl EngineRouter {
                 )
             };
 
-            // 按 directive.rotate_ua 轮换 UA（同步轮换所有指纹相关 header）
+            // F5 停滞检测：连续 RateLimited 达阈值的 host，本次 attempt 强制
+            // 轮换代理（沿用 RetryDirective 身份升级模式）。仅置位指令并上报，
+            // 代理的实际切换由引擎/代理层消费该字段；Session 退休由 F2 接入。
+            if let Some(host) = &host {
+                if self.host_discipline.is_stalled(host) && !directive.rotate_proxy {
+                    warn!(
+                        "host {} stalled by consecutive rate limits, forcing proxy rotation \
+                         (attempt {})",
+                        host, total_attempts
+                    );
+                    directive.rotate_proxy = true;
+                }
+            }
+
             //
             // 问题：原实现仅覆盖 User-Agent，未同步轮换 Accept-Language 与 sec-ch-ua，
             //          导致重试时 UA 与 Accept-Language/sec-ch-ua 不一致（指纹矛盾），
@@ -375,10 +403,21 @@ impl EngineRouter {
                         start_time.elapsed()
                     );
 
-                    // host 纪律观测：最终 2xx 成功 → 清除该 host 的冷却与连击记忆
-                    if (200..300).contains(&response.status_code) {
-                        if let Some(host) = &host {
-                            self.host_discipline.observe(host, ObserveOutcome::Success);
+                    // host 纪律观测：最终 2xx 成功 → 清除冷却/连击记忆并按
+                    // 引擎耗时收敛 AutoThrottle 间隔（F1）；纯 429 若未被上面的
+                    // antibot 分类拦截（content feature 关闭或指纹不匹配），
+                    // 直通进入 host 纪律（F5）——限速响应必须触发冷却。
+                    if let Some(host) = &host {
+                        if (200..300).contains(&response.status_code) {
+                            self.host_discipline
+                                .observe_success_with_latency(host, response_time);
+                        } else if response.status_code == 429 {
+                            self.host_discipline.observe(
+                                host,
+                                ObserveOutcome::RateLimited {
+                                    retry_after: parse_retry_after_header(&response.headers),
+                                },
+                            );
                         }
                     }
 

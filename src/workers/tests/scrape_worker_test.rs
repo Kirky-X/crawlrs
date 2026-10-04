@@ -3447,6 +3447,7 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
         // 注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
         &settings.timeouts.engines,
         settings.engines.max_response_body_bytes as usize,
+        &settings.politeness,
     );
     let services = init_services(
         &infra,
@@ -3626,6 +3627,7 @@ async fn tc_scrape_worker_builder_builds_full_worker() {
         // 注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
         &settings.timeouts.engines,
         settings.engines.max_response_body_bytes as usize,
+        &settings.politeness,
     );
     let services = init_services(
         &infra,

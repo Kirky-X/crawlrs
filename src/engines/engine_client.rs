@@ -378,6 +378,15 @@ impl EngineClient {
     pub fn registered_engines(&self) -> Vec<String> {
         self.router.registered_engines()
     }
+
+    /// 注入 robots.txt 解析出的 Crawl-delay（F5：联动 per-host 限速时钟）。
+    ///
+    /// 首值生效不回退；对未经过纪律门的 host 惰性建档。
+    /// 委托给 [`EngineRouterTrait::set_crawl_delay`]，与 `scrape` 同走
+    /// 唯一公共入口模式。
+    pub fn set_crawl_delay(&self, host: &str, delay: Duration) {
+        self.router.set_crawl_delay(host, delay);
+    }
 }
 
 impl Default for EngineClient {

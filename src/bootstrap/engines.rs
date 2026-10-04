@@ -4,7 +4,7 @@
 //! Scraper engines initialization and configuration.
 
 use crate::config::engines::EngineSettings;
-use crate::config::settings::{EngineTimeoutSettings, ProxyStrategy};
+use crate::config::settings::{EngineTimeoutSettings, PolitenessSettings, ProxyStrategy};
 #[cfg(feature = "engine-mllm")]
 use crate::domain::services::llm::vision_adapter::GenaiVisionAdapter;
 #[cfg(feature = "engine-flaresolverr")]
@@ -22,6 +22,7 @@ use crate::engines::provider::ProxyProvider;
 #[cfg(test)]
 use crate::engines::proxy_pool::ProxyPool;
 use crate::engines::router::EngineRouter;
+use crate::utils::host_discipline::HostDiscipline;
 use std::sync::Arc;
 
 /// All engine-related components.
@@ -232,10 +233,14 @@ pub fn init_engines(
 /// * `engine_config` - Engine-specific configuration
 /// * `engine_timeouts` - 引擎超时配置（包含 `default_timeout_seconds` + 三个 MRT 字段）。
 ///   从此注入超时与 MRT，避免硬编码。
+/// * `politeness` - Per-host 礼貌爬取与 AutoThrottle 配置（F1/F5）
 ///
 /// # Returns
 ///
 /// Returns all engine components.
+// politeness / session / observability 参数为 F1/F5/F2/F4 配置面注入；此处拒绝引入参数对象
+//（既有调用点已是位置传参惯例），沿用 extract_handler 等处的 allow 惯例。
+#[allow(clippy::too_many_arguments)]
 pub fn init_engine_components(
     http_client: Arc<reqwest::Client>,
     proxy_provider: Option<Arc<dyn ProxyProvider>>,
@@ -244,6 +249,7 @@ pub fn init_engine_components(
     _engine_config: &EngineSettings,
     engine_timeouts: &EngineTimeoutSettings,
     max_response_body_bytes: usize,
+    politeness: &PolitenessSettings,
 ) -> EngineComponents {
     let engines = init_engines(
         http_client.clone(),
@@ -254,7 +260,11 @@ pub fn init_engine_components(
         engine_timeouts,
         max_response_body_bytes,
     );
-    let router = Arc::new(EngineRouter::new(engines.clone()));
+    // F1/F5：host 纪律参数从 [politeness] 配置注入（此前硬编码 with_defaults）
+    let router = Arc::new(EngineRouter::with_host_discipline(
+        engines.clone(),
+        HostDiscipline::from_politeness(politeness),
+    ));
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 
     EngineComponents {
@@ -449,6 +459,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            &PolitenessSettings::default(),
         );
         assert!(
             !components.engines.is_empty(),
@@ -471,6 +482,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            &PolitenessSettings::default(),
         );
         assert!(
             !components.engines.is_empty(),
@@ -490,6 +502,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            &PolitenessSettings::default(),
         );
         // The router should have registered engines matching the engines vec
         let registered = components.router.registered_engines();
@@ -511,6 +524,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            &PolitenessSettings::default(),
         );
         // EngineClient should report at least 1 engine
         assert!(
@@ -531,6 +545,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            &PolitenessSettings::default(),
         );
         // EngineComponents derives Clone; verify clone produces equivalent field counts
         let cloned = components.clone();

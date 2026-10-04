@@ -95,6 +95,10 @@ pub struct Settings {
     #[validate(nested)]
     pub robots: RobotsSettings,
 
+    /// Per-host 礼貌爬取与 AutoThrottle 配置（驱动 EngineRouter::host_discipline）
+    #[validate(nested)]
+    pub politeness: PolitenessSettings,
+
     /// 日志配置
     pub logging: LoggingSettings,
 
@@ -170,6 +174,70 @@ pub struct RobotsSettings {
     /// 重试最大退避（秒）
     #[config(default = 10)]
     pub fetch_max_backoff_secs: u64,
+}
+
+/// Per-host 礼貌爬取与 AutoThrottle 配置（吸收点 F1/F5）
+///
+/// 驱动 `EngineRouter::host_discipline`（此前硬编码 `with_defaults`，无配置面）。
+/// 键值语义与 `config/default.toml` `[politeness]` 节一一对应：
+/// - `autothrottle_enabled = false`（默认）：per-host 间隔恒定 `min_interval_ms`，
+///   行为与引入 AutoThrottle 之前一致（对齐 Scrapy AUTOTHROTTLE_ENABLED 默认关）
+/// - `backoff_base_secs`/`backoff_max_secs`：429 指数退避
+///   `min(base × 2^连击数, max)`；`base = 0` 退回固定 `cooldown_default_secs` 冷却
+/// - `stalled_threshold`：连续 RateLimited 达阈值置 stalled，触发身份/代理切换
+#[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
+#[validate(crate = "sdforge::validator")]
+#[config(env_prefix = "CRAWLRS__POLITENESS__")]
+pub struct PolitenessSettings {
+    /// 相邻同 host 请求最小间隔（毫秒）——AutoThrottle 收敛下界
+    #[config(default = 1000)]
+    #[validate(range(min = 0, max = 3_600_000))]
+    pub min_interval_ms: u64,
+
+    /// AutoThrottle 收敛上界（毫秒）
+    #[config(default = 60_000)]
+    #[validate(range(min = 1, max = 3_600_000))]
+    pub max_interval_ms: u64,
+
+    /// 429 无 Retry-After 时的兜底冷却（秒；legacy 固定冷却模式）
+    #[config(default = 60)]
+    #[validate(range(min = 0, max = 86_400))]
+    pub cooldown_default_secs: u64,
+
+    /// 裸 403 连击阈值（达到后置 tls_suspect 升级 TLS 指纹）
+    #[config(default = 3)]
+    #[validate(range(min = 1, max = 100))]
+    pub bare403_threshold: u32,
+
+    /// AutoThrottle 开关：false 时 min_interval 恒定（现状行为）；
+    /// true 后按观测延迟 EMA 收敛 per-host 间隔
+    #[config(default = false)]
+    pub autothrottle_enabled: bool,
+
+    /// 延迟收敛目标并发度：target_interval = 观测延迟 / target_concurrency
+    #[config(default = 8)]
+    #[validate(range(min = 1, max = 1024))]
+    pub target_concurrency: u32,
+
+    /// 429 指数连击底值（秒）；0 = 关闭指数退避（退回固定冷却）
+    #[config(default = 2)]
+    #[validate(range(min = 0, max = 3600))]
+    pub backoff_base_secs: u64,
+
+    /// 429 指数连击封顶（秒）
+    #[config(default = 60)]
+    #[validate(range(min = 1, max = 86_400))]
+    pub backoff_max_secs: u64,
+
+    /// 停滞检测：连续 RateLimited 达该次数置 stalled；0 = 关闭
+    #[config(default = 3)]
+    #[validate(range(min = 0, max = 100))]
+    pub stalled_threshold: u32,
+
+    /// 放行时刻抖动比例（0.0-1.0）：实际放行在预约槽位上 ±ratio×interval
+    /// 随机化，打散请求指纹规律；0 = 确定性时刻表（现状）
+    #[config(default = 0.0)]
+    pub jitter_ratio: f64,
 }
 
 /// CORS 配置设置
@@ -795,6 +863,7 @@ pub fn validate_i18n(settings: &I18nSettings) -> Result<(), sdforge::validator::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_settings_structure() {
@@ -820,6 +889,7 @@ mod tests {
             trusted_proxies: TrustedProxySettings::default(),
             auth: AuthSettings::default(),
             i18n: I18nSettings::default(),
+            politeness: PolitenessSettings::default(),
         };
 
         assert_eq!(settings.server.port, 8899);
@@ -830,6 +900,86 @@ mod tests {
         assert_eq!(settings.robots.user_agent, "crawlrs-bot/1.0");
         assert!(!settings.robots.scrape_respect_robots);
         assert!(!settings.robots.fail_closed);
+        assert_eq!(settings.politeness.min_interval_ms, 1000);
+        assert!(!settings.politeness.autothrottle_enabled);
+    }
+
+    /// PolitenessSettings 默认值与 config/default.toml `[politeness]` 节及
+    /// 蓝图 configKeys 一一对应（F1/F5）
+    #[test]
+    fn test_politeness_settings_defaults_match_spec() {
+        let p = PolitenessSettings::default();
+        assert_eq!(p.min_interval_ms, 1000, "收敛下界对齐 DEFAULT_MIN_INTERVAL");
+        assert_eq!(p.max_interval_ms, 60_000, "收敛上界");
+        assert_eq!(p.cooldown_default_secs, 60, "对齐 DEFAULT_COOLDOWN");
+        assert_eq!(p.bare403_threshold, 3, "对齐 DEFAULT_BARE403_THRESHOLD");
+        assert!(!p.autothrottle_enabled, "默认关，保持现网行为不变");
+        assert_eq!(p.target_concurrency, 8);
+        assert_eq!(p.backoff_base_secs, 2, "429 指数退避底值");
+        assert_eq!(p.backoff_max_secs, 60, "指数封顶");
+        assert_eq!(p.stalled_threshold, 3);
+        assert_eq!(p.jitter_ratio, 0.0, "0=确定性时刻表（现状）");
+    }
+
+    /// PolitenessSettings 从 toml 全键反序列化
+    #[test]
+    fn test_politeness_settings_toml_parses_all_keys() {
+        let toml = r#"
+            min_interval_ms = 500
+            max_interval_ms = 30000
+            cooldown_default_secs = 30
+            bare403_threshold = 5
+            autothrottle_enabled = true
+            target_concurrency = 4
+            backoff_base_secs = 1
+            backoff_max_secs = 120
+            stalled_threshold = 2
+            jitter_ratio = 0.25
+        "#;
+        let p: PolitenessSettings = toml::from_str(toml).expect("deserialize");
+        assert_eq!(p.min_interval_ms, 500);
+        assert_eq!(p.max_interval_ms, 30_000);
+        assert_eq!(p.cooldown_default_secs, 30);
+        assert_eq!(p.bare403_threshold, 5);
+        assert!(p.autothrottle_enabled);
+        assert_eq!(p.target_concurrency, 4);
+        assert_eq!(p.backoff_base_secs, 1);
+        assert_eq!(p.backoff_max_secs, 120);
+        assert_eq!(p.stalled_threshold, 2);
+        assert!((p.jitter_ratio - 0.25).abs() < f64::EPSILON);
+    }
+
+    /// PolitenessSettings → HostDiscipline 参数换算：注入后的纪律组件
+    /// 按 min_interval_ms 配置运转（行为断言，不触私有状态；jitter 置 0
+    /// 以获得确定性间隔——抖动语义由 host_discipline 专项测试覆盖）
+    #[tokio::test]
+    async fn test_politeness_settings_to_host_discipline() {
+        use crate::utils::host_discipline::HostDiscipline;
+        let p = PolitenessSettings {
+            min_interval_ms: 250,
+            max_interval_ms: 5000,
+            cooldown_default_secs: 45,
+            bare403_threshold: 2,
+            autothrottle_enabled: true,
+            target_concurrency: 4,
+            backoff_base_secs: 3,
+            backoff_max_secs: 90,
+            stalled_threshold: 4,
+            jitter_ratio: 0.0,
+        };
+        let d = HostDiscipline::from_politeness(&p);
+        d.gate("wire.example.com").await;
+        let start = std::time::Instant::now();
+        d.gate("wire.example.com").await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(230),
+            "from_politeness must honor min_interval_ms=250, took {elapsed:?}"
+        );
+        assert!(
+            elapsed <= Duration::from_millis(400),
+            "gate gap must stay at min_interval, took {elapsed:?}"
+        );
     }
 
     /// RobotsSettings 新增 fail_closed 字段使用 serde(default) 兼容旧 config 文件。

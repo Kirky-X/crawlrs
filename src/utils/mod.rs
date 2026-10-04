@@ -42,6 +42,8 @@ pub mod port_sniffer;
 pub mod proxy;
 pub mod regex_cache;
 pub mod retry;
+/// Retry-After 头解析（antibot 分类器与顺序路由共用单实现）
+pub mod retry_after;
 pub mod retry_policy;
 pub mod robots;
 pub mod search_test;

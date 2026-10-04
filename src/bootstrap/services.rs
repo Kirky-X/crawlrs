@@ -1055,6 +1055,7 @@ mod tests {
         QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
     };
     use crate::engines::router::EngineRouter;
+    use crate::utils::host_discipline::HostDiscipline;
 
     fn make_http_client() -> Arc<reqwest::Client> {
         Arc::new(reqwest::Client::new())
@@ -1442,7 +1443,10 @@ mod tests {
             &settings.timeouts.engines,
             settings.engines.max_response_body_bytes as usize,
         );
-        let engine_router = Arc::new(EngineRouter::new(engines.clone()));
+        let engine_router = Arc::new(EngineRouter::with_host_discipline(
+            engines.clone(),
+            HostDiscipline::from_politeness(&settings.politeness),
+        ));
         let engine_client = Arc::new(EngineClient::with_router(engine_router.clone()));
 
         let services =

@@ -17,7 +17,7 @@ use crate::engines::engine_client::{ScrapeRequest, ScrapeResponse};
 use crate::infrastructure::security::ssrf::is_internal_url;
 use crate::workers::crawl::adaptive::{CrawlStats, StopCondition};
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use uuid::Uuid;
 
 // 提取到独立模块的函数导入
@@ -50,6 +50,29 @@ impl ScrapeWorker {
                 .mark_failed(task.id, Some(self.worker_id))
                 .await?;
             return Ok(());
+        }
+
+        // 2.2 F5：robots Crawl-delay 联动 per-host 限速时钟（首值生效不回退）。
+        // check_robots_txt 刚取过 robots 内容（内存缓存命中），此处仅读取解析；
+        // 获取失败沿用 robots 路径的 fail-open 语义（跳过注入，不打断任务）。
+        match self
+            .robots_checker
+            .get_crawl_delay(&task.url, self.settings.robots.user_agent.as_str())
+            .await
+        {
+            Ok(Some(delay)) => {
+                if let Ok(u) = url::Url::parse(&task.url) {
+                    if let Some(host) = u.host_str() {
+                        self.engine_client.set_crawl_delay(host, delay);
+                        debug!(
+                            "crawl-delay {:?} applied for host {} (task {})",
+                            delay, host, task.id
+                        );
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => debug!("crawl-delay lookup skipped for task {}: {e}", task.id),
         }
 
         // 2.5 SSRF 防护 (CWE-918)

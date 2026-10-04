@@ -54,6 +54,11 @@ pub trait EngineRouterTrait: Send + Sync {
 
     /// Get list of registered engine names
     fn registered_engines(&self) -> Vec<String>;
+
+    /// 注入 robots.txt 解析出的 Crawl-delay（F5：联动 per-host 限速时钟）。
+    ///
+    /// 默认 no-op：测试替身不持有 host 纪律状态，无需实现。
+    fn set_crawl_delay(&self, _host: &str, _delay: Duration) {}
 }
 
 /// 负载均衡策略
@@ -133,7 +138,6 @@ impl EngineRouter {
         for engine in &engines {
             engine_stats.insert(engine.name().to_string(), EngineStats::default());
         }
-
         Self {
             engines,
             circuit_breaker: Arc::new(CircuitBreaker::new()),
@@ -144,12 +148,44 @@ impl EngineRouter {
             strategy: LoadBalancingStrategy::SmartHybrid,
             metrics: Arc::new(RouterMetrics::new()),
             max_engine_attempts: 3,
-            max_retries: 5,                                     // 默认最大重试次数
-            feature_filter_enabled: true,                       // 默认启用特征检测过滤
-            race_mode_enabled: false,                           // 默认禁用并发竞速模式
-            dynamic_threshold_factor: 1.0,                      // 默认动态阈值因子
-            ua_pool: Arc::new(UaPool::new()),                   // 构造一次共享
-            hedge_controller: HedgeController::with_defaults(), // 默认参数
+            max_retries: 5,
+            feature_filter_enabled: true,
+            race_mode_enabled: false,
+            dynamic_threshold_factor: 1.0,
+            ua_pool: Arc::new(UaPool::new()),
+            hedge_controller: HedgeController::with_defaults(),
+        }
+    }
+
+    /// 使用给定 per-host 纪律组件创建路由器（F1/F5：平台侧从
+    /// `PolitenessSettings` 构造 `HostDiscipline` 后注入）。
+    ///
+    /// Session 走 disabled 默认（现状盲轮换）；库内自建 router
+    /// （robots/geolocation/search 等）不走此构造器，维持 `new` 的默认。
+    pub fn with_host_discipline(
+        engines: Vec<Arc<dyn ScraperEngine>>,
+        host_discipline: HostDiscipline,
+    ) -> Self {
+        let engine_stats = DashMap::with_capacity(8);
+        for engine in &engines {
+            engine_stats.insert(engine.name().to_string(), EngineStats::default());
+        }
+        Self {
+            engines,
+            circuit_breaker: Arc::new(CircuitBreaker::new()),
+            engine_stats: Arc::new(engine_stats),
+            host_browser_hint: DashMap::new(),
+            host_discipline,
+            round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
+            strategy: LoadBalancingStrategy::SmartHybrid,
+            metrics: Arc::new(RouterMetrics::new()),
+            max_engine_attempts: 3,
+            max_retries: 5,
+            feature_filter_enabled: true,
+            race_mode_enabled: false,
+            dynamic_threshold_factor: 1.0,
+            ua_pool: Arc::new(UaPool::new()),
+            hedge_controller: HedgeController::with_defaults(),
         }
     }
 
@@ -509,6 +545,10 @@ impl EngineRouterTrait for EngineRouter {
 
     fn registered_engines(&self) -> Vec<String> {
         self._registered_engines_impl()
+    }
+
+    fn set_crawl_delay(&self, host: &str, delay: Duration) {
+        self.host_discipline.set_crawl_delay(host, delay);
     }
 }
 

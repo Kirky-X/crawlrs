@@ -80,30 +80,16 @@ fn looks_like_data(body: &str, headers: &HeaderMap) -> bool {
     false
 }
 
-/// Retry-After 解析结果的钳制上限（秒）：
-/// 冷却是礼貌信号而非硬门禁，超长等待由调用方的有界 gate 钳制
-const RETRY_AFTER_MAX_SECS: u64 = 600;
-
 /// 解析 429 响应的 Retry-After 头
 ///
 /// 支持 RFC 7231 规定的两种形式：纯数字秒（`30`）与 HTTP 日期
-/// （`Wed, 21 Oct 2015 07:28:00 GMT`）。日期形式的等待量按当前时刻折算，
-/// 过去的日期视为 0；数字溢出按"等待极长"处理钳到上限。
-/// 头缺失、非 UTF-8 或两种形式均不可解析时返回 `None`。
+/// （`Wed, 21 Oct 2015 07:28:00 GMT`）。共用 [`crate::utils::retry_after`]
+/// 单实现（600s 钳制、过去日期视为 0）；头缺失、非 UTF-8 或两种形式均
+/// 不可解析时返回 `None`。
 fn parse_retry_after(headers: &HeaderMap) -> Option<u64> {
-    let raw = headers
-        .get(reqwest::header::RETRY_AFTER)?
-        .to_str()
-        .ok()?
-        .trim();
-    let secs = if !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit()) {
-        raw.parse::<u64>().unwrap_or(u64::MAX)
-    } else {
-        let deadline = chrono::DateTime::parse_from_rfc2822(raw).ok()?;
-        let delta = deadline.with_timezone(&chrono::Utc) - chrono::Utc::now();
-        u64::try_from(delta.num_seconds()).unwrap_or(0)
-    };
-    Some(secs.min(RETRY_AFTER_MAX_SECS))
+    crate::utils::retry_after::parse_retry_after_value(
+        headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?,
+    )
 }
 
 /// `<style>` 块正则（与 `TIER3_SCRIPT_BLOCK` 配套，用于大页 strip）

@@ -78,6 +78,8 @@ impl AsyncAutoBuilder for EngineModule {
                 // 注入完整 EngineTimeoutSettings（含 default_timeout_seconds + 三个 MRT 字段）
                 &settings.timeouts.engines,
                 settings.engines.max_response_body_bytes as usize,
+                // F1/F5：[politeness] 配置注入 per-host 纪律（AutoThrottle/退避/抖动）
+                &settings.politeness,
             );
             Ok(engines)
         })
