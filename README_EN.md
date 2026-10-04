@@ -60,19 +60,19 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 <table style="width:100%; border-collapse: collapse">
 <tr>
 <td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>Unified Search</b><br><span style="color:#64748B">Aggregated results from Google, Bing, Baidu and Sogou with automatic deduplication, a unified output format and A/B testing support</span></td>
-<td width="50%" style="vertical-align:top; padding: 12px">🎯 <b>Single-Page Scraping</b><br><span style="color:#64748B">Uniform scraping of static HTML and JS-rendered pages, with screenshots, form interactions, custom headers and sync-wait</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🎯 <b>Single-Page Scraping</b><br><span style="color:#64748B">Uniform scraping of static HTML and JS-rendered pages, with screenshots, form interactions, custom headers and sync-wait; the Playwright engine can capture background XHR/Fetch responses</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🕷️ <b>Deep Crawling</b><br><span style="color:#64748B">URL filter chains + composite scorers + priority queues + adaptive stop conditions, with robots.txt compliance</span></td>
-<td width="50%" style="vertical-align:top; padding: 12px">📊 <b>Data Extraction</b><br><span style="color:#64748B">Multiple extraction modes: CSS rules, content extractors (Trafilatura / DomSmoothie), LLM and RAG-augmented extraction</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🕷️ <b>Deep Crawling</b><br><span style="color:#64748B">URL filter chains + composite scorers + priority queues + adaptive stop conditions, with robots.txt compliance (dual-clock Crawl-delay); streaming sitemap request source, soft-404 fingerprinting, resume-crawl seen warm-up</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">📊 <b>Data Extraction</b><br><span style="color:#64748B">Multiple extraction modes: CSS rules, content extractors (Trafilatura / DomSmoothie), LLM and RAG-augmented extraction; degradation-ladder quality gate, LLM long-text chunking, character-level extraction provenance</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🚂 <b>Five-Engine Smart Routing</b><br><span style="color:#64748B">Reqwest / Playwright / FlareSolverr / Wreq (TLS fingerprint) / MLLM (vision-LLM navigation), with SmartHybrid, race and sequential-fallback routing strategies</span></td>
-<td width="50%" style="vertical-align:top; padding: 12px">🛡️ <b>Anti-Bot Countermeasures</b><br><span style="color:#64748B">Three-tier anti-bot detection, SPA shell probe &amp; upgrade, consistent UA pool masking, smart retry, proxy rotation, request coalescing</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🚂 <b>Five-Engine Smart Routing</b><br><span style="color:#64748B">Reqwest / Playwright / FlareSolverr / Wreq (TLS fingerprint) / MLLM (vision-LLM navigation + hybrid AX-tree snapshot), with SmartHybrid, race and sequential-fallback routing strategies</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🛡️ <b>Anti-Bot Countermeasures</b><br><span style="color:#64748B">Three-tier anti-bot detection, SPA shell probe &amp; upgrade, consistent UA pool masking, smart retry, proxy rotation, request coalescing; session identity trio with score-based retirement, AutoThrottle adaptive rate limiting, 429 exponential backoff</span></td>
 </tr>
 <tr>
 <td width="50%" style="vertical-align:top; padding: 12px">🏢 <b>Enterprise Platform</b><br><span style="color:#64748B">Multi-tenant isolation, garrison authentication (RBAC + JWT + brute-force protection), limiteron rate limiting &amp; circuit breaking, webhook event notifications</span></td>
-<td width="50%" style="vertical-align:top; padding: 12px">📈 <b>Observability</b><br><span style="color:#64748B">Prometheus metrics export (queue depth, engine success rate, cache hits, etc.), inklog structured logging, audit logs</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">📈 <b>Observability</b><br><span style="color:#64748B">Prometheus metrics export (queue depth, engine success rate, cache hits, etc.), inklog structured logging, audit logs, failure snapshots (signature-deduplicated archives)</span></td>
 </tr>
 <tr>
 <td width="50%" style="vertical-align:top; padding: 12px">🧠 <b>Intelligent Enhancements</b><br><span style="color:#64748B">RAG-augmented extraction, knowledge-graph coverage-aware crawling, DRL adaptive policy (ONNX inference with heuristic fallback)</span></td>
@@ -81,6 +81,25 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 </table>
 
 Beyond the core capabilities above, crawlrs also provides site mapping, an async task queue (worker mode), multi-level caching and proxy support; for the design and code locations of the engine-level enhancement modules (anti-bot countermeasures, intelligent enhancements, etc.), see the [🏗️ Architecture Document · Crawl Capability Enhancement Modules](docs/ARCHITECTURE.md).
+
+### 🆕 Feature Absorption Round (F1–F12)
+
+The following 12 capabilities come from a feature-absorption survey of 41 open-source crawling/extraction/anti-bot projects (see the [survey report](docs/crawlrs-feature-absorption-report.md), in Chinese). All of them are default-off or behavior-preserving and can be enabled gradually via configuration; full key semantics live in the `config/default.toml` comments and `.env.example`:
+
+| # | Capability | Config key (default) | Notes |
+|---|------------|----------------------|-------|
+| F1 | AutoThrottle adaptive rate limiting | `politeness.autothrottle_enabled` (false) | Per-host request interval converges via latency EMA within `[min_interval_ms, max_interval_ms]` |
+| F2 | Session identity trio | `session.enabled` (false) | Proxy + UA/TLS profile + cookies bound into one identity, retired by error score (mark_bad +1.0 / mark_good −0.5) |
+| F3 | Resume-crawl seen warm-up delta | `workers.dedup_warmup_include_results` (false) | Start-up warm-up additionally loads distinct URLs from the results table |
+| F4 | Failure snapshots | `observability.failure_snapshot_dir` (empty = off) | Deduplicated archives (HTML + metadata + screenshot) on anti-bot/rate-limit detection |
+| F5 | 429 exponential backoff & stall detection | `politeness.backoff_base_secs` (2) | Cooldown `min(base × 2^streak, max)`, honors Retry-After; consecutive limits mark the host stalled and rotate proxy/identity |
+| F6 | XHR/Fetch background response capture | `engines.playwright.capture_xhr` (false) | Playwright engine captures background responses by glob whitelist, returned as `captured_responses` |
+| F7 | Extraction degradation quality gate | `content_extraction.min_word_count` (150) | Short-result upgrade, length-ratio adjudication, prose hard gates (avg sentence words / link density) |
+| F8 | LLM long-text chunking | `llm.chunking.enabled` (false) | Token-window chunked parallel extraction + merge synthesis (term pre-check saves tokens) |
+| F9 | Character-level extraction provenance | `llm.provenance_enabled` (false) | String fields aligned back to source char ranges, producing a `_provenance` map (dual-gate filtered) |
+| F10 | AIMD memory-pressure coupling | with `concurrency.adaptive_enabled` | Memory Pressure freezes AIMD increases; Critical immediately halves the target |
+| F11 | Streaming sitemap source + soft 404 | `sitemap.enabled` / `crawl.soft404_enabled` | Sitemaps streamed into the crawl queue (`POST /v1/map` + `sitemap_seed`); shell-page fingerprint removal |
+| F12 | MLLM hybrid AX-tree snapshot | `engines.mllm.ax_tree_enabled` (false) | Adds a `[id] role: name` accessibility outline alongside the screenshot; the model references elements via `[id]` |
 
 ---
 
@@ -373,7 +392,7 @@ For the full version history see the [📋 Changelog](docs/CHANGELOG.md) (follow
 
 | Version | Date | Highlights |
 |------|------|------|
-| Unreleased | - | TLS fingerprint engine (WreqEngine), MLLM vision-navigation engine, RAG-augmented extraction, knowledge-graph coverage awareness, DRL adaptive policy, 5 new Prometheus metrics |
+| Unreleased | - | TLS fingerprint engine (WreqEngine), MLLM vision-navigation engine, RAG-augmented extraction, knowledge-graph coverage awareness, DRL adaptive policy, 5 new Prometheus metrics; feature absorption F1–F12 (AutoThrottle, session identity, failure snapshots, sitemap request source, XHR capture, extraction quality gate, LLM chunking & provenance, AIMD memory coupling, soft 404, AX-tree snapshot) |
 | 0.2.0 | 2026-07-29 | garrison RBAC authentication integration, bootstrap admin key, `DELETE /v1/crawl/{id}`, brute-force protection hardening |
 | 0.1.0 | 2026-07-22 | First public release: five-capability APIs, DDD four-layer architecture, multi-tenancy & rate limiting, unified search |
 

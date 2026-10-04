@@ -1166,6 +1166,34 @@ Expires: 0
 
 ---
 
+## 🎭 Session Identity & Cookie Semantics
+
+When `[session].enabled = true` (default: `false`), the engine router binds consecutive
+requests to a session identity (proxy + UA/TLS profile + cookie cache).
+
+- **Cookie scope**: response `Set-Cookie` values are captured per target host and only
+  replayed to requests targeting the **same host**. Cookies captured from site A are never
+  injected into requests to site B, even when requests share one `session_id` across hosts.
+- **Known limitations of the manual cookie channel**: no `expiry`/`path` attribute handling
+  (short-lived cookies may be replayed past expiration; only the first `name=value` pair of
+  each `Set-Cookie` is kept). Disable `[session].enabled` if the target site relies on
+  strict cookie semantics. Browser engines (Playwright/MLLM) manage cookies in their own
+  context and do not use this channel.
+
+### XHR Capture (`capture_xhr`)
+
+When `CRAWLRS__ENGINES__PLAYWRIGHT__CAPTURE_XHR=true`, the Playwright engine can capture
+background XHR/Fetch responses:
+
+- Captured data is persisted with the task result under `meta_data.captured_responses`
+  (read it via the task result endpoint). The `POST /v1/scrape` enqueue response itself
+  does not carry capture data (`captured_responses` is always `null` there).
+- XHR/Fetch URLs pointing to loopback/private/link-local addresses are discarded (SSRF
+  protection). Configure `capture_xhr_url_patterns` as a whitelist to limit what gets
+  captured.
+
+---
+
 ## ⏱️ Rate Limiting
 
 > **Conditional Behavior (R-rl-003):** Rate limiting is only active when the `rate-limit` feature is enabled (default). When disabled, `NoopRateLimitingService` is injected: `check_rate_limit` returns `Allowed`, `check_and_deduct_quota` returns `Ok(())`, `get_quota_balance` returns `Ok(i64::MAX)`. All requests are allowed without limit, and quota deductions are no-ops. The `X-RateLimit-*` headers are not populated.
