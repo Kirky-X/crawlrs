@@ -424,6 +424,40 @@ impl TeamSemaphore {
         handle.record_failure()
     }
 
+    /// 内存压力信号广播（F10：AIMD 与 MemoryScheduler 三态机联动）
+    ///
+    /// 内存水位是进程级信号（MemoryScheduler 三态机），广播到**所有**团队：
+    /// - **Fixed 条目**：无操作（无 AIMD 可调，编译层即 no-op）
+    /// - **Adaptive 条目**：委托 `AIMDController::on_memory_pressure`，
+    ///   并经 `AdaptiveSemaphore::set_target` 推入新 target
+    ///
+    /// - `critical=false`（Pressure）：冻结 additive-increase（不改当前 limit），
+    ///   消除「门控在暂停派发、AIMD 却在加并发」的矛盾
+    /// - `critical=true`（Critical）：CAS 半减 clamp min（复用 `record_failure` 不变式）
+    ///
+    /// 调用时机：scrape_worker 在 `memory_scheduler.update_state()` 之后、
+    /// `admit()` 之前，Pressure/Critical 状态下每次任务准入续发信号；
+    /// Normal 状态不发信号，AIMD 自然恢复 +1（无粘滞）。
+    ///
+    /// # 返回值
+    ///
+    /// 收到信号的 Adaptive 团队数（Fixed 条目不计入）。
+    pub fn on_memory_pressure(&self, critical: bool) -> usize {
+        let mut adaptive_teams = 0usize;
+        for entry in self.semaphores.iter() {
+            if let TeamEntry::Adaptive {
+                adaptive,
+                controller,
+            } = entry.value()
+            {
+                let new_target = controller.on_memory_pressure(critical);
+                adaptive.set_target(new_target);
+                adaptive_teams += 1;
+            }
+        }
+        adaptive_teams
+    }
+
     /// 获取某队当前 target（测试与监控用，无副作用）
     ///
     /// - **Fixed 模式**：返回 `available_permits`（随 acquire 动态变化）
@@ -1126,5 +1160,112 @@ mod tests {
 
         assert_eq!(sem.semaphores.len(), 1);
         assert!(sem.semaphores.contains_key(&team_id));
+    }
+
+    // ========== 内存压力联动（F10） ==========
+
+    /// Fixed 模式 on_memory_pressure 为 no-op（无 panic，许可不变）
+    #[tokio::test]
+    async fn test_fixed_mode_memory_pressure_is_noop() {
+        let sem = TeamSemaphore::new(5);
+        let team_id = Uuid::new_v4();
+        let _permit = sem.acquire(team_id).await.expect("acquire");
+
+        assert_eq!(sem.on_memory_pressure(false), 0, "no adaptive teams");
+        assert_eq!(sem.on_memory_pressure(true), 0);
+        // available_permits 不受影响（5 - 1 持有 = 4）
+        assert_eq!(sem.current_target(team_id), 4);
+    }
+
+    /// Adaptive 模式 Pressure 信号（准入续发）冻结 additive-increase
+    #[tokio::test]
+    async fn test_adaptive_memory_pressure_freezes_increase() {
+        let sem = TeamSemaphore::with_adaptive(AdaptiveParams {
+            initial: 10,
+            min_limit: 1,
+            max_limit: 100,
+            increase_threshold: 3,
+        });
+        let team_id = Uuid::new_v4();
+        let _permit = sem.acquire(team_id).await.expect("acquire");
+
+        for _ in 0..10 {
+            sem.on_memory_pressure(false);
+            sem.record_success(team_id);
+            sem.record_success(team_id);
+        }
+        assert_eq!(
+            sem.current_target(team_id),
+            10,
+            "renewed pressure must freeze +1 via set_target path"
+        );
+    }
+
+    /// Adaptive 模式 Critical 信号半减并推入 AdaptiveSemaphore
+    #[tokio::test]
+    async fn test_adaptive_memory_critical_halves_target() {
+        let sem = TeamSemaphore::with_adaptive(AdaptiveParams {
+            initial: 16,
+            min_limit: 1,
+            max_limit: 100,
+            increase_threshold: 10,
+        });
+        let team_id = Uuid::new_v4();
+        let _permit = sem.acquire(team_id).await.expect("acquire");
+
+        assert_eq!(
+            sem.on_memory_pressure(true),
+            1,
+            "one adaptive team signaled"
+        );
+        assert_eq!(sem.current_target(team_id), 8, "16/2 via controller");
+    }
+
+    /// 广播语义：多个 Adaptive 团队同时收到信号
+    #[tokio::test]
+    async fn test_memory_pressure_broadcasts_to_all_teams() {
+        let sem = TeamSemaphore::with_adaptive(AdaptiveParams {
+            initial: 10,
+            min_limit: 1,
+            max_limit: 100,
+            increase_threshold: 10,
+        });
+        let team_a = Uuid::new_v4();
+        let team_b = Uuid::new_v4();
+        let _pa = sem.acquire(team_a).await.expect("a");
+        let _pb = sem.acquire(team_b).await.expect("b");
+
+        assert_eq!(sem.on_memory_pressure(true), 2, "both adaptive teams");
+        assert_eq!(sem.current_target(team_a), 5);
+        assert_eq!(sem.current_target(team_b), 5);
+    }
+
+    /// Fixed 与 Adaptive 混合团队：广播只影响 Adaptive 条目，无死锁
+    #[test]
+    fn test_memory_pressure_mixed_modes_no_deadlock() {
+        let fixed = TeamSemaphore::new(5);
+        let adaptive = TeamSemaphore::with_adaptive(AdaptiveParams::default());
+        let t = Uuid::new_v4();
+        assert!(fixed.try_acquire(t).is_some());
+        assert!(adaptive.try_acquire(t).is_some());
+
+        // 并发交织冒烟：无死锁、无 panic
+        let fx = Arc::new(fixed);
+        let ad = Arc::new(adaptive);
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let (fx, ad) = (fx.clone(), ad.clone());
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        fx.on_memory_pressure(i % 2 == 0);
+                        ad.on_memory_pressure(i % 2 == 1);
+                        ad.record_success(t);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
     }
 }

@@ -119,6 +119,13 @@ pub struct Settings {
     /// 可信代理配置
     pub trusted_proxies: TrustedProxySettings,
 
+    /// 可观测性配置（失败现场快照等）
+    ///
+    /// `serde(default)` 兼容旧 config 文件缺 `[observability]` 节
+    /// （同 `fail_closed` / MRT 字段先例）。
+    #[serde(default)]
+    pub observability: ObservabilitySettings,
+
     /// 认证配置（garrison JWT 密钥等）
     pub auth: AuthSettings,
 
@@ -825,6 +832,38 @@ impl TrustedProxySettings {
 }
 
 // =============================================================================
+// 可观测性配置
+// =============================================================================
+
+/// 可观测性配置设置（吸收点 F4，参考 Crawlee ErrorSnapshotter）
+///
+/// 失败现场快照：错误签名键去重存档（HTML + 响应元数据 + 可选截图）。
+/// 键值语义与 `config/default.toml` `[observability]` 节一一对应：
+/// - `failure_snapshot_dir`：快照落盘目录；空字符串 = 禁用（默认，不影响现状）
+/// - `failure_snapshot_max_total`：全目录快照文件总数上限（超出仅计数不落盘）
+///
+/// 敏感信息提示：快照响应体可能含目标页敏感内容，目录访问权限与保留期
+/// 由运维侧治理（对齐 retention 机制后续扩展）。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__OBSERVABILITY__")]
+pub struct ObservabilitySettings {
+    /// 快照落盘目录；空字符串 = 禁用（默认）
+    #[serde(default)]
+    #[config(default = "".to_string())]
+    pub failure_snapshot_dir: String,
+
+    /// 全目录快照文件总数上限（超出丢弃并仅计数）
+    #[serde(default = "default_failure_snapshot_max_total")]
+    #[config(default = 200)]
+    pub failure_snapshot_max_total: usize,
+}
+
+/// serde 默认值：快照文件总数上限（与 `#[config(default = 200)]` 保持一致）
+fn default_failure_snapshot_max_total() -> usize {
+    200
+}
+
+// =============================================================================
 // 国际化配置（i18n）
 // =============================================================================
 
@@ -936,6 +975,7 @@ mod tests {
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
+            observability: ObservabilitySettings::default(),
             auth: AuthSettings::default(),
             i18n: I18nSettings::default(),
             politeness: PolitenessSettings::default(),
@@ -1122,6 +1162,36 @@ mod tests {
             debug_output.contains("***REDACTED***"),
             "Debug output should contain '***REDACTED***' placeholder, got: {debug_output}"
         );
+    }
+
+    /// ObservabilitySettings 默认值与 config/default.toml `[observability]` 节
+    /// 一一对应（F4）：目录空串 = 禁用，护栏 200 个文件
+    #[test]
+    fn test_observability_settings_defaults_match_spec() {
+        let o = ObservabilitySettings::default();
+        assert_eq!(o.failure_snapshot_dir, "", "默认空串 = 禁用，不影响现状");
+        assert_eq!(o.failure_snapshot_max_total, 200, "文件总数护栏默认 200");
+    }
+
+    /// ObservabilitySettings 从 toml 全键反序列化
+    #[test]
+    fn test_observability_settings_toml_parses_all_keys() {
+        let toml = r#"
+            failure_snapshot_dir = "data/failure_snapshots"
+            failure_snapshot_max_total = 500
+        "#;
+        let o: ObservabilitySettings = toml::from_str(toml).expect("deserialize");
+        assert_eq!(o.failure_snapshot_dir, "data/failure_snapshots");
+        assert_eq!(o.failure_snapshot_max_total, 500);
+    }
+
+    /// ObservabilitySettings 缺键兼容：空 toml（模拟旧 config 无键）时
+    /// serde(default) 回退默认值（禁用 + 200 护栏），不报错
+    #[test]
+    fn test_observability_settings_missing_section_falls_back_to_defaults() {
+        let o: ObservabilitySettings = toml::from_str("").expect("empty toml with serde defaults");
+        assert_eq!(o.failure_snapshot_dir, "");
+        assert_eq!(o.failure_snapshot_max_total, 200);
     }
 
     #[test]

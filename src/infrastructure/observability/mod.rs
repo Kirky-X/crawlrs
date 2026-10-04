@@ -8,3 +8,9 @@
 #[cfg(feature = "metrics")]
 pub mod metrics;
 // pub mod telemetry;
+
+/// 失败现场快照（F4）：错误签名键去重存档（HTML + 响应元数据 + 可选截图）。
+///
+/// 不挂 metrics 门控：std::fs + sha2 + dashmap 均为核心依赖；
+/// Prometheus 计数经 `metrics_shim`（关闭时编译为 noop）。
+pub mod failure_snapshot;

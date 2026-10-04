@@ -90,6 +90,29 @@ critical_timeout_seconds = 30
 #       AIMDController::record_*，动态 target 推入 AdaptiveSemaphore::set_target
 adaptive_enabled = false
 
+# Per-host 礼貌爬取与 AutoThrottle（吸收点 F1/F5）
+# [politeness] 驱动 EngineRouter::host_discipline（此前硬编码 with_defaults，无配置面）
+[politeness]
+# 相邻同 host 请求最小间隔（毫秒）——AutoThrottle 收敛下界
+min_interval_ms = 1000
+# AutoThrottle 收敛上界（毫秒）
+max_interval_ms = 60000
+# 429 无 Retry-After 时的兜底冷却（秒）
+cooldown_default_secs = 60
+# 裸 403 连击阈值（达到后置 tls_suspect 升级 TLS 指纹）
+bare403_threshold = 3
+# AutoThrottle 开关：false 时 min_interval 恒定（现状行为）；true 后按观测延迟 EMA 收敛
+autothrottle_enabled = false
+# 延迟收敛目标并发度：target_interval = 观测延迟 / target_concurrency
+target_concurrency = 8
+# 429 指数连击：冷却 = min(base × 2^连击数, max)（秒）；同窗多 429 只推进一次
+backoff_base_secs = 2
+backoff_max_secs = 60
+# 停滞检测：连续 RateLimited 达该次数置 stalled，触发身份/代理切换（F2/F5 联动）
+stalled_threshold = 3
+# 放行时刻抖动比例（0.0-1.0）：release_at ± ratio×min_interval 随机化，打散请求指纹规律；0=关闭
+jitter_ratio = 0.0
+
 # Data Retention Configuration
 # expiration-worker 每小时运行一次，清理超过保留期的数据
 [retention]
@@ -255,6 +278,21 @@ sticky_ttl_seconds = 60
 # Failed proxy cooldown (seconds): proxies marked failed are not selected during cooldown
 cooldown_seconds = 30
 
+# Session 身份三件套（吸收点 F2；参考 Crawlee SessionPool）
+# 代理 + UA/TLS 档 + Cookie 绑成单一身份按 error_score 记分退休；false 时维持现状盲轮换
+[session]
+enabled = false
+# 池内最大身份数
+max_sessions = 16
+# error_score ≥ 阈值退休（mark_bad +1.0 / mark_good -0.5，下限 0）
+max_error_score = 3.0
+# 单身份最大使用次数
+max_uses = 100
+# 身份最长寿命（秒）
+max_age_secs = 1800
+# 每身份 Cookie 头缓存上限（字节；手动 Set-Cookie 累积，超出即丢弃最旧条目）
+cookie_cache_max_bytes = 16384
+
 # Engine Configuration
 # Configure scraping engines (FlareSolverr variants)
 [engines.flaresolverr]
@@ -368,6 +406,16 @@ enabled = false
 path = "logs/crawlrs.log"
 max_file_size_mb = 100
 file_count = 10
+
+# 失败现场快照（吸收点 F4；参考 Crawlee ErrorSnapshotter）
+# 错误签名键 = sha256(url|status|reason)[:30]+消毒 reason[:30]，同签名只存档一次（DashMap 计数）
+# 快照含目标站响应原文与响应头（可能含敏感内容）：文件以 0600 权限落盘，
+# 达上限后按最旧优先滚动删除；保留期与目录访问权限由运维治理。
+[observability]
+# 快照落盘目录；空字符串 = 禁用（默认，不影响现状）
+failure_snapshot_dir = ""
+# 全目录快照文件总数上限（超出后最旧优先滚动删除腾位，目录文件数有界）
+failure_snapshot_max_total = 200
 
 # Trusted Proxy Configuration
 # 可信代理配置，用于安全地提取客户端真实 IP 地址

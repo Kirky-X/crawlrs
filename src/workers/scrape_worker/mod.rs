@@ -60,7 +60,7 @@ use crate::utils::robots::RobotsCheckerTrait;
 // 内存感知调度器接入 scrape_worker
 // MemoryScheduler 依赖 SystemMonitorTrait（metrics 特性门控），故整块接入由 metrics 门控
 #[cfg(feature = "metrics")]
-use crate::workers::scheduler::memory_scheduler::{Admission, MemoryScheduler};
+use crate::workers::scheduler::memory_scheduler::{Admission, MemoryScheduler, MemoryState};
 
 // 提取到独立模块的函数导入
 pub(super) use super::crawl_link_extractor::{
@@ -332,9 +332,24 @@ impl ScrapeWorker {
         // 采样策略：每次 process_task 调用 `update_state()` 读取最新内存使用率。
         // 这与 `MemoryScheduler::spawn_monitor` 的后台 1s 采样互补——后台采样驱动
         // 优雅关闭信号，此处 per-task 采样保证 admit() 返回最新决策。
+        //
+        // F10 AIMD 内存联动：update_state 之后、admit 之前把水位广播给
+        // TeamSemaphore（Pressure 冻结 additive-increase / Critical CAS 半减），
+        // 消除「门控在暂停派发、AIMD 却在加并发」的矛盾。放在 admit match 之前
+        // 以覆盖全部状态；Normal 不发信号，AIMD 自然恢复 +1（无粘滞）。
+        // Defer/Reschedule 分支在 requeue 前不 acquire，信号先行不影响回队。
         #[cfg(feature = "metrics")]
         {
             self.memory_scheduler.update_state();
+            match self.memory_scheduler.state() {
+                MemoryState::Pressure => {
+                    self.team_semaphore.on_memory_pressure(false);
+                }
+                MemoryState::Critical => {
+                    self.team_semaphore.on_memory_pressure(true);
+                }
+                MemoryState::Normal => {}
+            }
             match self.memory_scheduler.admit().await {
                 Admission::Proceed => {}
                 Admission::Defer => {

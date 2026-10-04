@@ -5,7 +5,8 @@
 
 use crate::config::engines::EngineSettings;
 use crate::config::settings::{
-    EngineTimeoutSettings, PolitenessSettings, ProxyStrategy, SessionSettings,
+    EngineTimeoutSettings, ObservabilitySettings, PolitenessSettings, ProxyStrategy,
+    SessionSettings,
 };
 #[cfg(feature = "engine-mllm")]
 use crate::domain::services::llm::vision_adapter::GenaiVisionAdapter;
@@ -241,6 +242,9 @@ pub fn init_engines(
 /// * `session` - Session 身份三件套配置（F2）：`enabled=true` 时 router 持有
 ///   配置好的 SessionManager（代理 + UA/TLS 档 + Cookie 绑定与记分退休）；
 ///   默认 `false` 走现状盲轮换。
+/// * `observability` - 可观测性配置（F4）：`failure_snapshot_dir` 非空时
+///   router 持有失败现场快照器（antibot/限速检出时存档响应现场）；
+///   空串（默认）时为 `None`，全链路零成本。
 ///
 /// # Returns
 ///
@@ -258,6 +262,7 @@ pub fn init_engine_components(
     max_response_body_bytes: usize,
     politeness: &PolitenessSettings,
     session: &SessionSettings,
+    observability: &ObservabilitySettings,
 ) -> EngineComponents {
     // F2：SessionManager 与引擎层共享同一 ProxyProvider（Arc 克隆，
     // init_engines 下方按值消费原 Arc）
@@ -276,10 +281,16 @@ pub fn init_engine_components(
     // router 经 with_discipline_and_session 与 session 共享同一实例）
     let session_manager =
         SessionManager::from_settings(session, Arc::new(UaPool::new()), session_proxy_provider);
-    let router = EngineRouter::with_discipline_and_session(
+    let mut router = EngineRouter::with_discipline_and_session(
         engines.clone(),
         HostDiscipline::from_politeness(politeness),
         session_manager,
+    );
+    // F4：失败现场快照器从 [observability] 配置注入（目录空串 = None = 零成本）
+    router.set_failure_snapshotter(
+        crate::infrastructure::observability::failure_snapshot::FailureSnapshotter::from_config(
+            observability,
+        ),
     );
     let router = Arc::new(router);
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
@@ -478,6 +489,7 @@ mod tests {
             engine_config.max_response_body_bytes as usize,
             &PolitenessSettings::default(),
             &SessionSettings::default(),
+            &ObservabilitySettings::default(),
         );
         assert!(
             !components.engines.is_empty(),
@@ -502,6 +514,7 @@ mod tests {
             engine_config.max_response_body_bytes as usize,
             &PolitenessSettings::default(),
             &SessionSettings::default(),
+            &ObservabilitySettings::default(),
         );
         assert!(
             !components.engines.is_empty(),
@@ -523,6 +536,7 @@ mod tests {
             engine_config.max_response_body_bytes as usize,
             &PolitenessSettings::default(),
             &SessionSettings::default(),
+            &ObservabilitySettings::default(),
         );
         // The router should have registered engines matching the engines vec
         let registered = components.router.registered_engines();
@@ -546,6 +560,7 @@ mod tests {
             engine_config.max_response_body_bytes as usize,
             &PolitenessSettings::default(),
             &SessionSettings::default(),
+            &ObservabilitySettings::default(),
         );
         // EngineClient should report at least 1 engine
         assert!(
@@ -568,6 +583,7 @@ mod tests {
             engine_config.max_response_body_bytes as usize,
             &PolitenessSettings::default(),
             &SessionSettings::default(),
+            &ObservabilitySettings::default(),
         );
         // EngineComponents derives Clone; verify clone produces equivalent field counts
         let cloned = components.clone();

@@ -121,6 +121,10 @@ pub struct EngineRouter {
     /// 记分退休。`enabled=false`（默认）时 route_sequential 不经 session
     /// 路径，维持 pick_seeded 盲轮换现状。
     session: SessionManager,
+    /// 失败现场快照器（F4）：antibot/限速检出时按签名键存档响应现场。
+    /// `None`（默认，`failure_snapshot_dir` 未配置）时调用点零成本短路。
+    failure_snapshot:
+        Option<Arc<crate::infrastructure::observability::failure_snapshot::FailureSnapshotter>>,
     /// Hedge 控制器
     ///
     /// 记录 race 胜出引擎延迟，估算 P84 阈值，供未来顺序路径决策是否发送副本请求。
@@ -189,6 +193,7 @@ impl EngineRouter {
             // Session 与路由共用同一 UA 池实例（身份 profile 下标同源）
             ua_pool: session.ua_pool().clone(),
             session,
+            failure_snapshot: None, // F4：默认未配置（failure_snapshot_dir 空串）
             hedge_controller: HedgeController::with_defaults(), // 默认参数
         }
     }
@@ -230,12 +235,26 @@ impl EngineRouter {
             dynamic_threshold_factor: 1.0,
             ua_pool: Arc::new(UaPool::new()),    // 构造一次共享
             session: SessionManager::disabled(), // F2：默认不启用（现状盲轮换）
+            failure_snapshot: None,              // F4：默认未配置（failure_snapshot_dir 空串）
             hedge_controller: HedgeController::with_defaults(), // 默认参数
         }
     }
 
     pub fn set_max_engine_attempts(&mut self, attempts: usize) {
         self.max_engine_attempts = attempts.max(1);
+    }
+
+    /// 注入失败现场快照器（F4）
+    ///
+    /// 由 bootstrap 侧在 `Arc::new` 之前从 `[observability]` 配置构造注入；
+    /// `None`（默认未配置）时 route_sequential 调用点零成本短路。
+    pub fn set_failure_snapshotter(
+        &mut self,
+        snapshotter: Option<
+            Arc<crate::infrastructure::observability::failure_snapshot::FailureSnapshotter>,
+        >,
+    ) {
+        self.failure_snapshot = snapshotter;
     }
 
     /// 设置最大重试次数 (用于限制总请求时间)

@@ -1937,9 +1937,11 @@ mod tests {
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
+            observability: ObservabilitySettings::default(),
             auth: AuthSettings::default(),
             i18n: I18nSettings::default(),
             politeness: PolitenessSettings::default(),
+            session: SessionSettings::default(),
         }
     }
 

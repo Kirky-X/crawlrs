@@ -158,6 +158,33 @@ impl AIMDController {
     /// 同 [`record_success`](Self::record_success)，全 `Relaxed` 即可。
     pub fn record_failure(&self) -> usize {
         self.consecutive_successes.store(0, Ordering::Relaxed);
+        self.halve_limit()
+    }
+
+    /// 内存压力信号入口（F10：AIMD 与 MemoryScheduler 三态机联动）
+    ///
+    /// 消除「门控在暂停派发、AIMD 却在加并发」的矛盾：
+    /// - `critical=false`（Pressure）：归零连续成功计数，**冻结 additive-increase**，
+    ///   不改当前 limit（Defer 门控下派发量骤减，继续 +1 会虚高）
+    /// - `critical=true`（Critical）：同 [`record_failure`](Self::record_failure)
+    ///   的 CAS 半减逻辑（`halve_limit` 复用，clamp `min_limit`）并归零计数
+    ///
+    /// 返回更新后的 target。内存序与 `record_*` 一致（全 `Relaxed`，算法自校正）。
+    pub fn on_memory_pressure(&self, critical: bool) -> usize {
+        self.consecutive_successes.store(0, Ordering::Relaxed);
+        if critical {
+            self.halve_limit()
+        } else {
+            self.current_limit.load(Ordering::Relaxed)
+        }
+    }
+
+    /// 乘性减少（CAS 半减，clamp `min_limit`）
+    ///
+    /// [`record_failure`](Self::record_failure) 与
+    /// [`on_memory_pressure`](Self::on_memory_pressure) 共用的私有实现，
+    /// CAS 语义不变式由既有 `record_failure` 测试锚定。
+    fn halve_limit(&self) -> usize {
         loop {
             let current = self.current_limit.load(Ordering::Relaxed);
             let new = (current / 2).max(self.min_limit);
@@ -529,6 +556,113 @@ mod tests {
             h.join().expect("thread panicked");
         }
         assert!(c.current_limit() >= 1);
+    }
+
+    // ========== 内存压力联动（F10） ==========
+
+    /// Pressure 信号冻结 additive-increase：信号存续期（每任务准入续发）成功不累积
+    #[test]
+    fn memory_pressure_freezes_additive_increase() {
+        let c = AIMDController::with_params(10, 1, 100, 3);
+        // 模拟 Pressure 期：每次准入续发信号（计数被清零），随后完成的任务
+        // 计不满 increase_threshold，limit 不得 +1
+        for _ in 0..10 {
+            c.on_memory_pressure(false);
+            c.record_success();
+            c.record_success();
+        }
+        assert_eq!(
+            c.current_limit(),
+            10,
+            "renewed pressure signals must freeze additive increase"
+        );
+        assert_eq!(
+            c.on_memory_pressure(false),
+            10,
+            "pressure keeps current limit"
+        );
+    }
+
+    /// 解除 Pressure（不再发信号）后恢复 +1（无粘滞）
+    #[test]
+    fn memory_pressure_recovers_after_signal_stops() {
+        let c = AIMDController::with_params(10, 1, 100, 3);
+        c.on_memory_pressure(false);
+        c.record_success();
+        c.record_success();
+        assert_eq!(c.current_limit(), 10, "frozen below threshold");
+
+        // 停止发信号：计数从冻结窗口剩余值继续累积，达阈值照常 +1
+        c.record_success();
+        assert_eq!(
+            c.current_limit(),
+            11,
+            "increase must resume (no stickiness)"
+        );
+    }
+
+    /// Critical 信号触发半减（复用 record_failure 不变式：clamp min_limit、计数归零）
+    #[test]
+    fn memory_critical_halves_limit_clamped_to_min() {
+        let c = AIMDController::new(16);
+        assert_eq!(c.on_memory_pressure(true), 8);
+        assert_eq!(c.on_memory_pressure(true), 4);
+        assert_eq!(c.on_memory_pressure(true), 2);
+        assert_eq!(c.on_memory_pressure(true), 1);
+        // 已在 min_limit：不再减少
+        assert_eq!(c.on_memory_pressure(true), 1);
+        assert_eq!(c.current_limit(), 1);
+    }
+
+    /// Critical 信号归零连续成功计数（与 record_failure 同语义）
+    #[test]
+    fn memory_critical_resets_success_counter() {
+        let c = AIMDController::with_params(10, 1, 100, 2);
+        c.record_success();
+        c.on_memory_pressure(true);
+        // 计数已归零：单次成功不触发 +1
+        c.record_success();
+        assert_eq!(c.current_limit(), 5, "10/2=5, counter reset blocks +1");
+    }
+
+    /// Pressure 不改当前 limit（只冻结增长）
+    #[test]
+    fn memory_pressure_keeps_current_limit() {
+        let c = AIMDController::new(10);
+        assert_eq!(c.on_memory_pressure(false), 10);
+        assert_eq!(c.current_limit(), 10);
+    }
+
+    /// 与内存门控并发冒烟：on_memory_pressure 与 record_success/failure
+    /// 并发交织无死锁、无 panic、limit 恒在 [min, max]
+    #[test]
+    fn concurrent_memory_pressure_with_record_is_safe() {
+        use std::sync::Arc;
+        use std::thread;
+        let c = Arc::new(AIMDController::with_params(50, 1, 100, 1));
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let c = c.clone();
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        if i % 2 == 0 {
+                            c.record_success();
+                        } else {
+                            c.record_failure();
+                        }
+                        c.on_memory_pressure(i % 4 == 3);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+        let limit = c.current_limit();
+        assert!(
+            (1..=100).contains(&limit),
+            "limit must stay in bounds: {limit}"
+        );
     }
 
     // ========== AdaptiveSemaphore tests ==========

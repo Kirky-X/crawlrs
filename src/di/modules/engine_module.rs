@@ -83,6 +83,8 @@ impl AsyncAutoBuilder for EngineModule {
                 // F2：[session] 配置注入 Session 身份三件套（代理 + UA/TLS 档
                 // + Cookie 绑定与记分退休；enabled=false 走现状盲轮换）
                 &settings.session,
+                // F4：[observability] 配置注入失败现场快照器（目录空串 = 零成本）
+                &settings.observability,
             );
             Ok(engines)
         })

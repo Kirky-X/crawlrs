@@ -3448,6 +3448,8 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
         &settings.timeouts.engines,
         settings.engines.max_response_body_bytes as usize,
         &settings.politeness,
+        &settings.session,
+        &settings.observability,
     );
     let services = init_services(
         &infra,
@@ -3628,6 +3630,8 @@ async fn tc_scrape_worker_builder_builds_full_worker() {
         &settings.timeouts.engines,
         settings.engines.max_response_body_bytes as usize,
         &settings.politeness,
+        &settings.session,
+        &settings.observability,
     );
     let services = init_services(
         &infra,
@@ -5173,6 +5177,105 @@ async fn test_process_task_memory_critical_defers_task() {
     }
 }
 
+/// F10 AIMD 内存联动与 admit 门控并存：Critical 时 AIMD 先半减再 requeue，无死锁
+///
+/// 验证 process_task 在 update_state 之后、admit 之前把 Critical 信号广播给
+/// Adaptive TeamSemaphore：团队 target 减半（10 → 5），且既有 requeue 门控
+/// 照常触发（update_count=1），process_task 正常返回 Ok（无死锁）。
+#[cfg(feature = "metrics")]
+#[tokio::test]
+async fn test_process_task_memory_critical_halves_aimd_before_requeue() {
+    use crate::domain::services::team_semaphore::AdaptiveParams;
+    use crate::infrastructure::observability::metrics::SystemMonitorTrait;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct CriticalMockMonitor {
+        bits: AtomicU64,
+    }
+    impl SystemMonitorTrait for CriticalMockMonitor {
+        fn cpu_usage(&self) -> f64 {
+            0.0
+        }
+        fn memory_usage(&self) -> f64 {
+            f64::from_bits(self.bits.load(Ordering::Relaxed))
+        }
+        fn is_metrics_stale(&self) -> bool {
+            false
+        }
+    }
+
+    let memory_scheduler: Arc<MemoryScheduler> = Arc::new(MemoryScheduler::new(
+        Arc::new(CriticalMockMonitor {
+            bits: AtomicU64::new(0.95f64.to_bits()),
+        }),
+        0.8,
+        0.9,
+        Duration::from_secs(30),
+    ));
+
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let settings = crate::bootstrap::config::load_settings()
+        .expect("Failed to load settings for aimd critical test");
+    // Adaptive 模式团队信号量：AIMD 联动的注入点
+    let team_semaphore = Arc::new(TeamSemaphore::with_adaptive(AdaptiveParams {
+        initial: 10,
+        min_limit: 1,
+        max_limit: 100,
+        increase_threshold: 10,
+    }));
+    let result_repo: Arc<dyn ScrapeResultRepository> = Arc::new(MockScrapeResultRepository);
+    let coalesce_coordinator = make_coalesce_coordinator(
+        task_repo.clone() as Arc<dyn TaskRepository>,
+        result_repo.clone(),
+    );
+
+    let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+        repository: task_repo.clone() as Arc<dyn TaskRepository>,
+        result_repository: result_repo,
+        crawl_repository: Arc::new(MockCrawlRepository) as Arc<dyn CrawlRepository>,
+        webhook_service: Arc::new(MockWebhookService) as Arc<dyn WebhookService>,
+        credits_repository: Arc::new(MockCreditsRepo::default()) as Arc<dyn CreditsRepository>,
+        engine_client: Arc::new(EngineClient::new()),
+        create_scrape_use_case: Arc::new(MockCreateScrapeUseCase)
+            as Arc<dyn CreateScrapeUseCaseTrait>,
+        team_semaphore: team_semaphore.clone(),
+        coalesce_coordinator,
+        robots_checker: Arc::new(MockRobotsChecker) as Arc<dyn RobotsCheckerTrait>,
+        settings: Arc::new(settings),
+        default_concurrency_limit: 10,
+        extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
+        memory_scheduler,
+    });
+
+    let task = make_task(json!({"url": "https://example.com"}));
+    let team_id = task.team_id;
+    // 激活团队条目（生产中团队抓取前必先 acquire）：AIMD controller 随首次
+    // acquire 创建；无条目的团队无 AIMD 状态可调，广播自然不触达
+    let _warm = team_semaphore.try_acquire(team_id).expect("warm permit");
+    drop(_warm);
+    assert_eq!(team_semaphore.current_target(team_id), 10, "initial target");
+
+    let result = worker.process_task(task).await;
+    // 无死锁：process_task 正常完成（Critical 先半减 AIMD 再 requeue）
+    assert!(
+        result.is_ok(),
+        "process_task must complete without deadlock"
+    );
+    // F10：Critical 信号已广播 → AIMD target 减半
+    assert_eq!(
+        team_semaphore.current_target(team_id),
+        5,
+        "critical signal must halve AIMD target before requeue"
+    );
+    // 既有 admit 门控照常：任务被 requeue 到 backlog
+    assert_eq!(
+        task_repo.update_count(),
+        1,
+        "existing admit gate must still requeue the task"
+    );
+}
+
 /// 构造 Pressure 状态的 MemoryScheduler，验证 process_task 延后任务
 #[cfg(feature = "metrics")]
 #[tokio::test]
@@ -5996,6 +6099,7 @@ impl SuccessEngineRouter {
         use crate::engines::engine_client::InternalScrapeResponse;
         Self {
             response: InternalScrapeResponse {
+                captured_responses: Vec::new(),
                 status_code: 200,
                 content: "<html><body><h1>Hello</h1></body></html>".to_string(),
                 screenshot: None,

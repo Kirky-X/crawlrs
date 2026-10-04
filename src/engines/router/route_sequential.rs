@@ -52,6 +52,36 @@ fn parse_retry_after_header(
 }
 
 impl EngineRouter {
+    /// F4：失败现场快照（旁路观测，永不失败）
+    ///
+    /// 快照器未配置（`failure_snapshot_dir` 空串）时 `Option` 短路零成本；
+    /// 内部 IO 失败已在 [`FailureSnapshotter::snapshot`](crate::infrastructure::observability::failure_snapshot::FailureSnapshotter::snapshot)
+    /// 内 `log::debug` 静默降级，绝不影响抓取主流程。
+    /// 仅透传引擎已产出的 screenshot（不额外触发截图）。
+    #[cfg(feature = "content")]
+    pub(super) async fn snapshot_failure(
+        &self,
+        url: &str,
+        status_code: u16,
+        reason: &str,
+        response: &InternalScrapeResponse,
+    ) {
+        if let Some(snapshotter) = &self.failure_snapshot {
+            snapshotter
+                .snapshot(
+                    crate::infrastructure::observability::failure_snapshot::SnapshotInput {
+                        url,
+                        status_code,
+                        reason,
+                        content: &response.content,
+                        headers: &response.headers,
+                        screenshot: response.screenshot.as_deref(),
+                    },
+                )
+                .await;
+        }
+    }
+
     /// Internal route implementation without timeout
     #[allow(unused_variables)]
     pub(super) async fn route_internal(
@@ -370,6 +400,15 @@ impl EngineRouter {
                                 }
                                 self.metrics
                                     .record_engine_failure(engine_name, &detection.reason);
+                                // F4：失败现场快照（签名键去重存档，旁路观测；
+                                // 内部 spawn_blocking 落盘，不阻塞 worker 线程）
+                                self.snapshot_failure(
+                                    &request.url,
+                                    response.status_code,
+                                    &detection.reason,
+                                    &response,
+                                )
+                                .await;
                                 warn!(
                                     "Engine {} returned anti-bot challenge ({:?}): {}, \
                                      forcing needs_js for subsequent attempts",
@@ -633,5 +672,56 @@ impl EngineRouter {
         self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
         Err(last_error
             .unwrap_or_else(|| EngineError::AllEnginesFailed("All engines failed".to_string())))
+    }
+}
+
+#[cfg(all(test, feature = "content"))]
+mod snapshot_failure_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::fs;
+
+    fn sample_response() -> InternalScrapeResponse {
+        InternalScrapeResponse {
+            status_code: 403,
+            content: "<html>challenge</html>".to_string(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: 42,
+            final_url: None,
+        }
+    }
+
+    fn dir_file_count(dir: &std::path::Path) -> usize {
+        fs::read_dir(dir).expect("read_dir").count()
+    }
+
+    /// 快照器为 None（默认未配置）时调用点零开销短路（不 panic、无落盘）
+    #[tokio::test]
+    async fn snapshot_failure_none_short_circuits_without_panic() {
+        let router = EngineRouter::new(Vec::new());
+        assert!(router.failure_snapshot.is_none(), "default must be None");
+        router
+            .snapshot_failure("https://x.com/a", 403, "waf", &sample_response())
+            .await;
+    }
+
+    /// 注入快照器后 snapshot_failure 落盘 .html + .meta.json
+    #[tokio::test]
+    async fn snapshot_failure_with_snapshotter_writes_archive() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("snapshots");
+        let mut router = EngineRouter::new(Vec::new());
+        router.set_failure_snapshotter(Some(Arc::new(
+            crate::infrastructure::observability::failure_snapshot::FailureSnapshotter::new(
+                dir.clone(),
+                200,
+            ),
+        )));
+        router
+            .snapshot_failure("https://x.com/a", 403, "waf", &sample_response())
+            .await;
+        assert_eq!(dir_file_count(&dir), 2, "html + meta.json");
     }
 }
