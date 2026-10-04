@@ -11,6 +11,7 @@ use crate::engines::circuit_breaker::CircuitBreaker;
 use crate::engines::engine_client::{
     EngineError, InternalScrapeRequest, InternalScrapeResponse, ScraperEngine,
 };
+use crate::engines::session::SessionManager;
 use crate::engines::validators::validate_url;
 use crate::utils::hedge::HedgeController;
 use crate::utils::host_discipline::HostDiscipline;
@@ -116,6 +117,10 @@ pub struct EngineRouter {
     /// UaPool 内部全 `&'static str`，构造后只读，可安全跨线程共享（Send+Sync 自动派生）。
     /// 用 `Arc` 是因为 `EngineRouter` 本身可能被 Clone 共享。
     ua_pool: Arc<UaPool>,
+    /// Session 身份管理器（F2）：代理 + UA/TLS 档 + Cookie 三件套绑定与
+    /// 记分退休。`enabled=false`（默认）时 route_sequential 不经 session
+    /// 路径，维持 pick_seeded 盲轮换现状。
+    session: SessionManager,
     /// Hedge 控制器
     ///
     /// 记录 race 胜出引擎延迟，估算 P84 阈值，供未来顺序路径决策是否发送副本请求。
@@ -134,42 +139,39 @@ impl EngineRouter {
     ///
     /// 返回新的引擎路由器实例
     pub fn new(engines: Vec<Arc<dyn ScraperEngine>>) -> Self {
-        let engine_stats = DashMap::with_capacity(8);
-        for engine in &engines {
-            engine_stats.insert(engine.name().to_string(), EngineStats::default());
-        }
-        Self {
-            engines,
-            circuit_breaker: Arc::new(CircuitBreaker::new()),
-            engine_stats: Arc::new(engine_stats),
-            host_browser_hint: DashMap::new(),
-            host_discipline: HostDiscipline::with_defaults(),
-            round_robin_index: Arc::new(parking_lot::Mutex::new(0)),
-            strategy: LoadBalancingStrategy::SmartHybrid,
-            metrics: Arc::new(RouterMetrics::new()),
-            max_engine_attempts: 3,
-            max_retries: 5,
-            feature_filter_enabled: true,
-            race_mode_enabled: false,
-            dynamic_threshold_factor: 1.0,
-            ua_pool: Arc::new(UaPool::new()),
-            hedge_controller: HedgeController::with_defaults(),
-        }
+        Self::with_host_discipline(engines, HostDiscipline::with_defaults())
     }
 
     /// 使用给定 per-host 纪律组件创建路由器（F1/F5：平台侧从
     /// `PolitenessSettings` 构造 `HostDiscipline` 后注入）。
     ///
-    /// Session 走 disabled 默认（现状盲轮换）；库内自建 router
-    /// （robots/geolocation/search 等）不走此构造器，维持 `new` 的默认。
+    /// Session 走 disabled 默认（现状盲轮换）；需启用请用
+    /// [`with_discipline_and_session`](Self::with_discipline_and_session)。
+    ///
+    /// 库内自建 router（robots/geolocation/search 等）不走此构造器，
+    /// 维持 `new` 的 `with_defaults` 默认。
     pub fn with_host_discipline(
         engines: Vec<Arc<dyn ScraperEngine>>,
         host_discipline: HostDiscipline,
+    ) -> Self {
+        Self::with_discipline_and_session(engines, host_discipline, SessionManager::disabled())
+    }
+
+    /// 使用给定 per-host 纪律组件与 Session 身份管理器创建路由器（F2）
+    ///
+    /// `session` 持有的 UA 池与路由层共享同一实例（身份 profile 下标同源）；
+    /// `session` 为 `SessionManager::disabled()` 时行为与
+    /// [`with_host_discipline`](Self::with_host_discipline) 完全一致。
+    pub fn with_discipline_and_session(
+        engines: Vec<Arc<dyn ScraperEngine>>,
+        host_discipline: HostDiscipline,
+        session: SessionManager,
     ) -> Self {
         let engine_stats = DashMap::with_capacity(8);
         for engine in &engines {
             engine_stats.insert(engine.name().to_string(), EngineStats::default());
         }
+
         Self {
             engines,
             circuit_breaker: Arc::new(CircuitBreaker::new()),
@@ -180,12 +182,14 @@ impl EngineRouter {
             strategy: LoadBalancingStrategy::SmartHybrid,
             metrics: Arc::new(RouterMetrics::new()),
             max_engine_attempts: 3,
-            max_retries: 5,
-            feature_filter_enabled: true,
-            race_mode_enabled: false,
-            dynamic_threshold_factor: 1.0,
-            ua_pool: Arc::new(UaPool::new()),
-            hedge_controller: HedgeController::with_defaults(),
+            max_retries: 5,                // 默认最大重试次数
+            feature_filter_enabled: true,  // 默认启用特征检测过滤
+            race_mode_enabled: false,      // 默认禁用并发竞速模式
+            dynamic_threshold_factor: 1.0, // 默认动态阈值因子
+            // Session 与路由共用同一 UA 池实例（身份 profile 下标同源）
+            ua_pool: session.ua_pool().clone(),
+            session,
+            hedge_controller: HedgeController::with_defaults(), // 默认参数
         }
     }
 
@@ -224,7 +228,8 @@ impl EngineRouter {
             feature_filter_enabled: true,
             race_mode_enabled: false,
             dynamic_threshold_factor: 1.0,
-            ua_pool: Arc::new(UaPool::new()), // 构造一次共享
+            ua_pool: Arc::new(UaPool::new()),    // 构造一次共享
+            session: SessionManager::disabled(), // F2：默认不启用（现状盲轮换）
             hedge_controller: HedgeController::with_defaults(), // 默认参数
         }
     }

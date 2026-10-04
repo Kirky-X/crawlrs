@@ -99,6 +99,10 @@ pub struct Settings {
     #[validate(nested)]
     pub politeness: PolitenessSettings,
 
+    /// Session 身份三件套配置（驱动 EngineRouter::session）
+    #[validate(nested)]
+    pub session: SessionSettings,
+
     /// 日志配置
     pub logging: LoggingSettings,
 
@@ -238,6 +242,51 @@ pub struct PolitenessSettings {
     /// 随机化，打散请求指纹规律；0 = 确定性时刻表（现状）
     #[config(default = 0.0)]
     pub jitter_ratio: f64,
+}
+
+/// Session 身份三件套配置（吸收点 F2）
+///
+/// 将代理 + UA/TLS 档 + Cookie 绑定为单一会话身份，按 error_score 记分退休
+/// （驱动 `EngineRouter::session`）。键值语义与 `config/default.toml`
+/// `[session]` 节一一对应：
+/// - `enabled = false`（默认）：保持现状盲轮换（`pick_seeded`），灰度开启
+/// - `max_sessions`：身份池容量上限（内存护栏；超限降级为临时身份）
+/// - `max_error_score`：error_score ≥ 阈值退休（mark_bad +1.0 / mark_good -0.5，
+///   下限 0）
+/// - `max_uses` / `max_age_secs`：单身份使用次数 / 寿命上限
+/// - `cookie_cache_max_bytes`：每身份 Cookie 头缓存上限（超出丢最旧条目）
+#[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
+#[validate(crate = "sdforge::validator")]
+#[config(env_prefix = "CRAWLRS__SESSION__")]
+pub struct SessionSettings {
+    /// 默认关：保持现状盲轮换，灰度开启
+    #[config(default = false)]
+    pub enabled: bool,
+
+    /// 池内最大身份数（内存护栏）
+    #[config(default = 16)]
+    #[validate(range(min = 1, max = 10_000))]
+    pub max_sessions: usize,
+
+    /// error_score ≥ 阈值退休（mark_bad +1.0 / mark_good -0.5，下限 0）
+    #[config(default = 3.0)]
+    #[validate(range(min = 0.0, max = 1_000_000.0))]
+    pub max_error_score: f64,
+
+    /// 单身份最大使用次数
+    #[config(default = 100)]
+    #[validate(range(min = 1, max = 1_000_000))]
+    pub max_uses: u64,
+
+    /// 身份最长寿命（秒）
+    #[config(default = 1800)]
+    #[validate(range(min = 0, max = 86_400))]
+    pub max_age_secs: u64,
+
+    /// 每身份 Cookie 头缓存上限（字节；手动 Set-Cookie 累积，超出丢最旧条目）
+    #[config(default = 16384)]
+    #[validate(range(min = 64, max = 1_048_576))]
+    pub cookie_cache_max_bytes: usize,
 }
 
 /// CORS 配置设置
@@ -890,6 +939,7 @@ mod tests {
             auth: AuthSettings::default(),
             i18n: I18nSettings::default(),
             politeness: PolitenessSettings::default(),
+            session: SessionSettings::default(),
         };
 
         assert_eq!(settings.server.port, 8899);
@@ -902,6 +952,40 @@ mod tests {
         assert!(!settings.robots.fail_closed);
         assert_eq!(settings.politeness.min_interval_ms, 1000);
         assert!(!settings.politeness.autothrottle_enabled);
+        assert!(!settings.session.enabled);
+    }
+
+    /// SessionSettings 默认值与 config/default.toml `[session]` 节及
+    /// 蓝图 configKeys 一一对应（F2）
+    #[test]
+    fn test_session_settings_defaults_match_spec() {
+        let s = SessionSettings::default();
+        assert!(!s.enabled, "默认关：保持现状盲轮换，灰度开启");
+        assert_eq!(s.max_sessions, 16, "池容量上限（内存护栏）");
+        assert_eq!(s.max_error_score, 3.0, "退休分数阈值");
+        assert_eq!(s.max_uses, 100, "单身份使用上限");
+        assert_eq!(s.max_age_secs, 1800, "身份最长寿命");
+        assert_eq!(s.cookie_cache_max_bytes, 16384, "Cookie 缓存上限");
+    }
+
+    /// SessionSettings 从 toml 全键反序列化
+    #[test]
+    fn test_session_settings_toml_parses_all_keys() {
+        let toml = r#"
+            enabled = true
+            max_sessions = 32
+            max_error_score = 5.0
+            max_uses = 200
+            max_age_secs = 3600
+            cookie_cache_max_bytes = 32768
+        "#;
+        let s: SessionSettings = toml::from_str(toml).expect("deserialize");
+        assert!(s.enabled);
+        assert_eq!(s.max_sessions, 32);
+        assert_eq!(s.max_error_score, 5.0);
+        assert_eq!(s.max_uses, 200);
+        assert_eq!(s.max_age_secs, 3600);
+        assert_eq!(s.cookie_cache_max_bytes, 32768);
     }
 
     /// PolitenessSettings 默认值与 config/default.toml `[politeness]` 节及

@@ -10,10 +10,12 @@ use super::check_antibot_response;
 use super::{check_js_upgrade_probe, EngineRouter, LoadBalancingStrategy};
 use crate::common::metrics_shim::{counter, histogram};
 use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse};
+use crate::engines::session::SessionIdentity;
 use crate::utils::host_discipline::ObserveOutcome;
 use crate::utils::retry::{RetryDirective, RetryReason, RetryTracker};
 use log::{debug, info, warn};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// 已知 WAF 变体：403 命中任一即为带 challenge 的拦截页，
@@ -191,18 +193,67 @@ impl EngineRouter {
                 }
             }
 
+            // F2 Session 身份三件套 / 现状盲轮换二选一：
             //
-            // 问题：原实现仅覆盖 User-Agent，未同步轮换 Accept-Language 与 sec-ch-ua，
-            //          导致重试时 UA 与 Accept-Language/sec-ch-ua 不一致（指纹矛盾），
-            //          反爬服务可识别为「指纹不一致的爬虫」。
+            // - session.enabled=true：按 (host, session_id) 亲和 acquire 身份，
+            //   三件指纹 header 从身份 UA profile 取（profile 内部 UA 与
+            //   Accept-Language/sec-ch-ua/tls_emulation 绑定一致），代理 =
+            //   身份代理（请求显式代理兜底），Cookie 手动通道注入。
+            //   directive.rotate_ua 与 A 簇 is_stalled 的「身份升级」语义
+            //   改为退休当前身份 → 本次 acquire 直接换新（取代按 attempt 的
+            //   pick_seeded 盲轮换）。
+            // - session.enabled=false（默认）：走 pick_seeded 盲轮换分支，
+            //   行为与引入 F2 之前完全一致。
             //
-            // 将 profile 的所有指纹相关 header 一次性写入：
-            //   - User-Agent：所有 profile 必设
-            //   - Accept-Language：所有 profile 必设
-            //   - sec-ch-ua：仅 Chromium-based 浏览器非空时设置；为空时移除原值，
+            // 三件 header 一次性同步写入（两路径同规则）：
+            //   - User-Agent / Accept-Language：所有 profile 必设
+            //   - sec-ch-ua：仅 Chromium-based 非空时设置；为空时移除原值，
             //     避免残留 Firefox/Safari UA 但保留 Chromium sec-ch-ua 的矛盾。
             let mut headers = request.headers.clone();
-            if directive.rotate_ua {
+            let mut attempt_proxy = request.proxy.clone();
+            let session_identity: Option<Arc<SessionIdentity>> = if self.session.is_enabled() {
+                let host_key = host.as_deref().unwrap_or("");
+                if directive.rotate_ua || self.host_discipline.is_stalled(host_key) {
+                    // 身份升级：强制退休当前亲和身份，本次 acquire 换新
+                    self.session.retire(host_key, request.session_id.as_deref());
+                }
+                let identity =
+                    self.session
+                        .acquire(host_key, request.session_id.as_deref(), request.mobile);
+                let profile = identity.ua_profile(self.session.ua_pool());
+                headers.insert("User-Agent".to_string(), profile.ua.to_string());
+                headers.insert(
+                    "Accept-Language".to_string(),
+                    profile.accept_language.to_string(),
+                );
+                if profile.sec_ch_ua.is_empty() {
+                    headers.remove("sec-ch-ua");
+                } else {
+                    headers.insert("sec-ch-ua".to_string(), profile.sec_ch_ua.to_string());
+                }
+                if let Some(cookie) = self.session.cookie_header(&identity, host_key) {
+                    headers.insert("Cookie".to_string(), cookie);
+                }
+                attempt_proxy = identity.proxy_url.clone().or(request.proxy.clone());
+                debug!(
+                    "Attempt {}: session identity #{} (proxy={}, ua={}, AL={}, sec-ch-ua={})",
+                    total_attempts,
+                    identity.id,
+                    identity
+                        .proxy_url
+                        .as_deref()
+                        .map(crate::utils::proxy::redact_proxy_url)
+                        .unwrap_or_else(|| "<none>".to_string()),
+                    profile.ua,
+                    profile.accept_language,
+                    if profile.sec_ch_ua.is_empty() {
+                        "<none>"
+                    } else {
+                        profile.sec_ch_ua
+                    }
+                );
+                Some(identity)
+            } else if directive.rotate_ua {
                 let profile = ua_pool.pick_seeded((total_attempts - 1) as u64, request.mobile);
                 headers.insert("User-Agent".to_string(), profile.ua.to_string());
                 headers.insert(
@@ -227,7 +278,10 @@ impl EngineRouter {
                         profile.sec_ch_ua
                     }
                 );
-            }
+                None
+            } else {
+                None
+            };
 
             let attempt_request = InternalScrapeRequest {
                 url: request.url.clone(),
@@ -239,7 +293,8 @@ impl EngineRouter {
                 needs_screenshot: request.needs_screenshot,
                 screenshot_config: request.screenshot_config.clone(),
                 mobile: request.mobile,
-                proxy: request.proxy.clone(),
+                // F2：session 启用时为身份代理（请求显式代理兜底）；禁用时原样透传
+                proxy: attempt_proxy,
                 skip_tls_verification: request.skip_tls_verification,
                 needs_tls_fingerprint: request.needs_tls_fingerprint,
                 use_fire_engine: request.use_fire_engine,
@@ -309,6 +364,10 @@ impl EngineRouter {
                                     }
                                 }
                                 self.update_engine_stats(engine_name, false, response_time);
+                                // F2：挑战页 = 身份可疑证据，同址 mark_bad
+                                if let Some(identity) = &session_identity {
+                                    self.session.mark_bad(identity);
+                                }
                                 self.metrics
                                     .record_engine_failure(engine_name, &detection.reason);
                                 warn!(
@@ -419,6 +478,24 @@ impl EngineRouter {
                                 },
                             );
                         }
+                    }
+
+                    // F2 Session 记分与 Cookie 捕获（与 host 纪律观测同址）：
+                    // 2xx → mark_good；401/403/429 → mark_bad（记分退休点位，
+                    // 429 若未被上面 antibot 分类拦截也在此记分）；
+                    // Set-Cookie 累积进身份 Cookie 通道（按目标 host 分桶，
+                    // 跨站凭据隔离）供后续同 host 请求注入。
+                    if let Some(identity) = &session_identity {
+                        if (200..300).contains(&response.status_code) {
+                            self.session.mark_good(identity);
+                        } else if matches!(response.status_code, 401 | 403 | 429) {
+                            self.session.mark_bad(identity);
+                        }
+                        self.session.capture_cookies(
+                            identity,
+                            host.as_deref().unwrap_or(""),
+                            &response.headers,
+                        );
                     }
 
                     return Ok(response);

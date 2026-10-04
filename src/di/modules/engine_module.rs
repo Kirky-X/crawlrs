@@ -80,6 +80,9 @@ impl AsyncAutoBuilder for EngineModule {
                 settings.engines.max_response_body_bytes as usize,
                 // F1/F5：[politeness] 配置注入 per-host 纪律（AutoThrottle/退避/抖动）
                 &settings.politeness,
+                // F2：[session] 配置注入 Session 身份三件套（代理 + UA/TLS 档
+                // + Cookie 绑定与记分退休；enabled=false 走现状盲轮换）
+                &settings.session,
             );
             Ok(engines)
         })
