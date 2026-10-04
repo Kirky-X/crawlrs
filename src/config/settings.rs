@@ -109,6 +109,19 @@ pub struct Settings {
     /// Worker 配置
     pub workers: WorkerSettings,
 
+    /// Sitemap 流式请求源配置（F11；消费方由 feature `sitemap` 门控）
+    ///
+    /// `serde(default)` 兼容旧 config 文件缺 `[sitemap]` 节
+    /// （同 `observability` 节先例）。
+    #[serde(default)]
+    pub sitemap: SitemapSettings,
+
+    /// Crawl 级行为配置（软 404 指纹等，F11）
+    ///
+    /// `serde(default)` 兼容旧 config 文件缺 `[crawl]` 节。
+    #[serde(default)]
+    pub crawl: CrawlSettings,
+
     /// 超时配置
     #[validate(nested)]
     pub timeouts: TimeoutSettings,
@@ -517,6 +530,15 @@ pub struct WorkerSettings {
     /// 最大时长；超时后强制退出并回滚未完成任务。默认 30 秒。
     #[config(default = 30)]
     pub graceful_shutdown_seconds: u64,
+    /// 断点续爬 seen 预热补充（F3 差量）：true 时 `warmup_deduplicator` 在
+    /// tasks 表之后追加灌入 scrape_results 表 distinct URL（覆盖 tasks.url
+    /// 之外的重定向 final_url）。默认 false：结果表含保留期内全部抓取
+    /// URL，量大，按站点需要显式开启。
+    ///
+    /// `serde(default)` 兼容旧 config 文件缺键（同 `fail_closed` 字段先例）。
+    #[serde(default)]
+    #[config(default = false)]
+    pub dedup_warmup_include_results: bool,
 }
 
 /// Worker数量配置
@@ -549,6 +571,97 @@ impl WorkerCount {
             _ => 5,
         }
     }
+}
+
+// =============================================================================
+// Sitemap 与 Crawl 配置（F11）
+// =============================================================================
+
+/// Sitemap 流式请求源配置（吸收点 F11）
+///
+/// 键值语义与 `config/default.toml` `[sitemap]` 节一一对应：
+/// - `enabled`：流式请求源（frontier 喂入）开关；`/v1/map` 端点本身不受此键控制
+/// - `max_urls`：单次 map 任务最多消费的 URL 数（防无限站点图）
+/// - `max_concurrent_sub_sitemaps`：子 sitemap 并发展开上限
+/// - `channel_capacity`：mpsc 背压边界（解析端在通道满时暂停）
+/// - `fetch_timeout_secs`：单个 sitemap 文档拉取超时
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__SITEMAP__")]
+pub struct SitemapSettings {
+    /// 流式请求源开关（frontier 喂入）；map 端点不受此键控制
+    #[serde(default)]
+    #[config(default = false)]
+    pub enabled: bool,
+
+    /// 单次 map 任务最多消费的 URL 数
+    #[serde(default = "default_sitemap_max_urls")]
+    #[config(default = 50_000)]
+    pub max_urls: usize,
+
+    /// 子 sitemap 并发展开上限
+    #[serde(default = "default_sitemap_max_concurrent_sub_sitemaps")]
+    #[config(default = 4)]
+    pub max_concurrent_sub_sitemaps: usize,
+
+    /// 流式通道容量（背压边界）
+    #[serde(default = "default_sitemap_channel_capacity")]
+    #[config(default = 4096)]
+    pub channel_capacity: usize,
+
+    /// 单个 sitemap 文档拉取超时（秒）
+    #[serde(default = "default_sitemap_fetch_timeout_secs")]
+    #[config(default = 30)]
+    pub fetch_timeout_secs: u64,
+}
+
+/// serde 默认值：单次 map 消费上限（与 `#[config(default = 50_000)]` 保持一致）
+fn default_sitemap_max_urls() -> usize {
+    50_000
+}
+
+/// serde 默认值：子 sitemap 并发上限（与 `#[config(default = 4)]` 保持一致）
+fn default_sitemap_max_concurrent_sub_sitemaps() -> usize {
+    4
+}
+
+/// serde 默认值：流式通道容量（与 `#[config(default = 4096)]` 保持一致）
+fn default_sitemap_channel_capacity() -> usize {
+    4096
+}
+
+/// serde 默认值：sitemap 拉取超时（与 `#[config(default = 30)]` 保持一致）
+fn default_sitemap_fetch_timeout_secs() -> u64 {
+    30
+}
+
+/// Crawl 级行为配置（吸收点 F11：软 404 指纹）
+///
+/// 键值语义与 `config/default.toml` `[crawl]` 节一一对应：
+/// - `soft404_enabled`：软 404 学习/命中开关
+/// - `soft404_max_fingerprints`：指纹库容量（超出按插入序淘汰最旧）
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__CRAWL__")]
+pub struct CrawlSettings {
+    /// 软 404 学习/命中开关：true 时从 404/410 响应学习空壳指纹，
+    /// 命中同指纹的 200 SPA 壳按软 404 处理（不落结果）
+    #[serde(default = "default_soft404_enabled")]
+    #[config(default = true)]
+    pub soft404_enabled: bool,
+
+    /// 指纹库容量上限
+    #[serde(default = "default_soft404_max_fingerprints")]
+    #[config(default = 10_000)]
+    pub soft404_max_fingerprints: usize,
+}
+
+/// serde 默认值：软 404 开关（与 `#[config(default = true)]` 保持一致）
+fn default_soft404_enabled() -> bool {
+    true
+}
+
+/// serde 默认值：指纹库容量（与 `#[config(default = 10_000)]` 保持一致）
+fn default_soft404_max_fingerprints() -> usize {
+    10_000
 }
 
 // =============================================================================
@@ -972,6 +1085,8 @@ mod tests {
             robots: RobotsSettings::default(),
             logging: LoggingSettings::default(),
             workers: WorkerSettings::default(),
+            sitemap: SitemapSettings::default(),
+            crawl: CrawlSettings::default(),
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
@@ -1474,8 +1589,108 @@ mod tests {
         let settings = WorkerSettings {
             count: WorkerCount::Fixed(16),
             graceful_shutdown_seconds: 30,
+            dedup_warmup_include_results: false,
         };
         assert_eq!(settings.count.resolve(), 16);
+    }
+
+    /// WorkerSettings.dedup_warmup_include_results 默认 false（F3 差量：默认
+    /// 不灌结果表，量大需显式开启）
+    #[test]
+    fn test_worker_settings_dedup_warmup_include_results_default_false() {
+        assert!(!WorkerSettings::default().dedup_warmup_include_results);
+    }
+
+    /// WorkerSettings 新增 dedup_warmup_include_results 使用 serde(default)
+    /// 兼容旧 config 文件：缺键回退 false，显式 true 生效
+    #[test]
+    fn test_worker_settings_dedup_warmup_include_results_toml() {
+        let old_toml = r#"
+            count = 5
+            graceful_shutdown_seconds = 30
+        "#;
+        let s: WorkerSettings = toml::from_str(old_toml).expect("deserialize old config");
+        assert!(!s.dedup_warmup_include_results, "缺键回退 false");
+
+        let enabled: WorkerSettings = toml::from_str(
+            r#"
+            count = 5
+            graceful_shutdown_seconds = 30
+            dedup_warmup_include_results = true
+        "#,
+        )
+        .expect("deserialize override");
+        assert!(enabled.dedup_warmup_include_results, "显式 true 生效");
+    }
+
+    // ========== SitemapSettings tests（F11） ==========
+
+    /// SitemapSettings 默认值与 config/default.toml `[sitemap]` 节及
+    /// 蓝图 configKeys 一一对应
+    #[test]
+    fn test_sitemap_settings_defaults_match_spec() {
+        let s = SitemapSettings::default();
+        assert!(!s.enabled, "流式请求源默认关");
+        assert_eq!(s.max_urls, 50_000, "单次 map 消费上限");
+        assert_eq!(s.max_concurrent_sub_sitemaps, 4, "子 sitemap 并发");
+        assert_eq!(s.channel_capacity, 4096, "mpsc 背压边界");
+        assert_eq!(s.fetch_timeout_secs, 30, "单文档拉取超时");
+    }
+
+    /// SitemapSettings 从 toml 全键反序列化
+    #[test]
+    fn test_sitemap_settings_toml_parses_all_keys() {
+        let toml = r#"
+            enabled = true
+            max_urls = 1000
+            max_concurrent_sub_sitemaps = 2
+            channel_capacity = 128
+            fetch_timeout_secs = 10
+        "#;
+        let s: SitemapSettings = toml::from_str(toml).expect("deserialize");
+        assert!(s.enabled);
+        assert_eq!(s.max_urls, 1000);
+        assert_eq!(s.max_concurrent_sub_sitemaps, 2);
+        assert_eq!(s.channel_capacity, 128);
+        assert_eq!(s.fetch_timeout_secs, 10);
+    }
+
+    /// SitemapSettings 缺键兼容：空 toml（模拟旧 config 无 `[sitemap]` 节）
+    /// 时 serde(default) 回退默认值，不报错
+    #[test]
+    fn test_sitemap_settings_missing_section_falls_back_to_defaults() {
+        let s: SitemapSettings = toml::from_str("").expect("empty toml with serde defaults");
+        assert!(!s.enabled);
+        assert_eq!(s.max_urls, 50_000);
+    }
+
+    // ========== CrawlSettings tests（F11） ==========
+
+    /// CrawlSettings 默认值与 config/default.toml `[crawl]` 节及
+    /// 蓝图 configKeys 一一对应
+    #[test]
+    fn test_crawl_settings_defaults_match_spec() {
+        let c = CrawlSettings::default();
+        assert!(c.soft404_enabled, "软 404 默认开");
+        assert_eq!(c.soft404_max_fingerprints, 10_000, "指纹库容量");
+    }
+
+    /// CrawlSettings 从 toml 全键反序列化 + 缺节兼容
+    #[test]
+    fn test_crawl_settings_toml_parses_and_falls_back() {
+        let c: CrawlSettings = toml::from_str(
+            r#"
+            soft404_enabled = false
+            soft404_max_fingerprints = 100
+        "#,
+        )
+        .expect("deserialize");
+        assert!(!c.soft404_enabled);
+        assert_eq!(c.soft404_max_fingerprints, 100);
+
+        let fallback: CrawlSettings = toml::from_str("").expect("empty toml with serde defaults");
+        assert!(fallback.soft404_enabled);
+        assert_eq!(fallback.soft404_max_fingerprints, 10_000);
     }
 
     // ========== TimeoutSettings tests ==========

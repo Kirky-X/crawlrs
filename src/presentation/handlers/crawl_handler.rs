@@ -375,6 +375,8 @@ mod tests {
             },
             sync_wait_ms: Some(5000),
             expires_at: None,
+            sitemap_seed: None,
+            sitemap_url: None,
         };
         assert!(dto.validate().is_ok());
     }
@@ -404,6 +406,8 @@ mod tests {
             },
             sync_wait_ms: None,
             expires_at: None,
+            sitemap_seed: None,
+            sitemap_url: None,
         };
         assert!(dto.validate().is_err());
     }
@@ -433,6 +437,8 @@ mod tests {
             },
             sync_wait_ms: Some(30001),
             expires_at: None,
+            sitemap_seed: None,
+            sitemap_url: None,
         };
         assert!(dto.validate().is_err());
     }
@@ -462,6 +468,8 @@ mod tests {
             },
             sync_wait_ms: Some(0),
             expires_at: None,
+            sitemap_seed: None,
+            sitemap_url: None,
         };
         assert!(dto.validate().is_ok());
     }
@@ -959,6 +967,8 @@ mod tests {
             },
             sync_wait_ms: Some(5000),
             expires_at: None,
+            sitemap_seed: None,
+            sitemap_url: None,
         };
         let json = serde_json::to_string(&dto).unwrap();
         // Note: validated_url has #[serde(skip)] so it won't appear in JSON
@@ -994,6 +1004,8 @@ mod tests {
             },
             sync_wait_ms: None,
             expires_at: None,
+            sitemap_seed: None,
+            sitemap_url: None,
         };
         let json = serde_json::to_string(&dto).unwrap();
         assert!(!json.contains("validated_url"));
@@ -1673,7 +1685,21 @@ mod tests {
             },
             sync_wait_ms,
             expires_at: None,
+            sitemap_seed: None,
+            sitemap_url: None,
         }
+    }
+
+    /// 测试用 Settings（默认主开关关闭；sitemap 主开关用例用
+    /// `test_settings_with_sitemap`）
+    fn test_settings() -> Arc<crate::config::settings::Settings> {
+        Arc::new(crate::config::settings::Settings::default())
+    }
+
+    fn test_settings_with_sitemap(enabled: bool) -> Arc<crate::config::settings::Settings> {
+        let mut settings = crate::config::settings::Settings::default();
+        settings.sitemap.enabled = enabled;
+        Arc::new(settings)
     }
 
     /// Build a CrawlHandlerState from configurable mock dependencies.
@@ -1722,6 +1748,86 @@ mod tests {
 
     // ========== create_crawl tests ==========
 
+    /// F11：主开关关闭（默认）时 sitemap_seed=true 必须显式拒绝（422），
+    /// 禁止静默忽略降级为普通 crawl
+    #[tokio::test]
+    async fn test_create_crawl_rejects_sitemap_seed_when_master_switch_disabled() {
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
+        let state = build_handler_state(
+            MockCrawlRepository::new(),
+            MockTaskRepository::new(),
+            MockScrapeResultRepository::new(),
+            MockRateLimitingService::new_allowed(),
+        );
+        let auth = make_auth_state();
+        let mut payload = make_crawl_request_dto("https://example.com", 2, Some(0), None);
+        payload.sitemap_seed = Some(true);
+
+        let response = create_crawl(
+            Extension(state),
+            Extension(test_settings()), // Settings::default() → sitemap.enabled=false
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            ConnectInfo(make_socket_addr()),
+            Ok(Json(payload)),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "sitemap_seed must be rejected when master switch is off"
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("CRAWLRS__SITEMAP__ENABLED"),
+            "rejection must name the master switch env var, got: {text}"
+        );
+    }
+
+    /// F11：主开关开启时 sitemap_seed=true 正常接受（显式 sitemap_url 过 SSRF）
+    #[tokio::test]
+    async fn test_create_crawl_accepts_sitemap_seed_when_master_switch_enabled() {
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
+        let state = build_handler_state(
+            MockCrawlRepository::new(),
+            MockTaskRepository::new(),
+            MockScrapeResultRepository::new(),
+            MockRateLimitingService::new_allowed(),
+        );
+        let auth = make_auth_state();
+        let mut payload = make_crawl_request_dto("https://example.com", 2, Some(0), None);
+        payload.sitemap_seed = Some(true);
+        payload.sitemap_url = Some("https://example.com/sitemap.xml".to_string());
+
+        let response = create_crawl(
+            Extension(state),
+            Extension(test_settings_with_sitemap(true)),
+            Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
+            ConnectInfo(make_socket_addr()),
+            Ok(Json(payload)),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::CREATED,
+            "sitemap_seed must be accepted when master switch is on"
+        );
+    }
+
     #[tokio::test]
     async fn test_create_crawl_success_no_sync_wait() {
         if crate::common::test_helpers::skip_if_no_test_db() {
@@ -1738,6 +1844,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1766,6 +1873,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1798,6 +1906,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1830,6 +1939,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1859,6 +1969,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1888,6 +1999,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1917,6 +2029,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1945,6 +2058,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -1973,6 +2087,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -2002,6 +2117,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
@@ -2030,6 +2146,7 @@ mod tests {
 
         let response = create_crawl(
             Extension(state),
+            Extension(test_settings()),
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),

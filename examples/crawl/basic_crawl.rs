@@ -66,6 +66,8 @@ async fn main() {
         config,
         sync_wait_ms: Some(5000),
         expires_at: None,
+        sitemap_seed: None,
+        sitemap_url: None,
     };
 
     info!("📝 爬取请求:");

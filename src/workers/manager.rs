@@ -178,36 +178,81 @@ impl WorkerManager {
         }
     }
 
-    /// 从 DB 分页预热去重器（P10）
+    /// 从 DB 分页预热去重器（P10 + F3 差量）
     ///
     /// 重启后进程内布隆/HashSet 全空，所有链接会走 `DefinitelyNew` 快路径
     /// 绕过 DB 校验 → 全站重爬。启动时把 tasks 表的 distinct URL 灌回
-    /// Deduplicator（幂等：重复灌入只影响布隆位图，HashSet 自动去重）。
+    /// Deduplicator（幂等：重复灌入只影响布隆位图，HashSet 自动去重）；
+    /// `workers.dedup_warmup_include_results = true` 时追加灌入
+    /// scrape_results 表 distinct URL（覆盖 tasks.url 之外的重定向
+    /// final_url）。
     ///
-    /// 失败显性化：任一页失败打 error 日志（含后果说明）并中止预热，
-    /// 进程以空去重状态继续运行（预热是优化，不阻塞可用性）。
+    /// 失败显性化：任一页失败打 error 日志（含后果说明）并中止对应阶段。
+    /// tasks 阶段失败 → 以空去重状态继续运行（预热是优化，不阻塞可用性）；
+    /// results 阶段失败 → 保留 tasks 阶段已灌入的状态，不回滚不 panic。
     async fn warmup_deduplicator(&self) {
         const PAGE_SIZE: u32 = 5000;
-        // keyset 分页（url > 上一页末条）：每页 O(PAGE_SIZE)，
-        // 避免 OFFSET 在大库上的 O(n²) 扫描压制 DB
+
+        // tasks 表阶段（恒定执行）
+        match self
+            .warmup_dedup_from(|after| self.repository.list_distinct_urls(PAGE_SIZE, after))
+            .await
+        {
+            Ok(total) if total > 0 => {
+                info!("Deduplicator warmed up with {total} distinct URLs from previous runs");
+            }
+            Ok(_) => {}
+            Err((after_url, e)) => {
+                error!(
+                    "Deduplicator warmup failed at cursor {after_url:?}: {e}; \
+                     continuing with EMPTY dedup state — already-crawled URLs \
+                     will be re-crawled this run"
+                );
+                return;
+            }
+        }
+
+        // scrape_results 表阶段（F3 差量，默认关：结果表含保留期内全部
+        // 抓取 URL，量大；显式开启后覆盖重定向 final_url）
+        if !self.settings.workers.dedup_warmup_include_results {
+            return;
+        }
+        match self
+            .warmup_dedup_from(|after| self.result_repository.list_distinct_urls(PAGE_SIZE, after))
+            .await
+        {
+            Ok(total) if total > 0 => {
+                info!(
+                    "Deduplicator warmup: +{total} distinct URLs from scrape_results \
+                     (redirect targets included)"
+                );
+            }
+            Ok(_) => {}
+            Err((after_url, e)) => {
+                error!(
+                    "Deduplicator warmup failed on scrape_results phase at cursor \
+                     {after_url:?}: {e}; keeping URLs already warmed from tasks — \
+                     redirect final_urls may be re-crawled this run"
+                );
+            }
+        }
+    }
+
+    /// keyset 分页灌入单一仓库的 distinct URL（`url > 上一页末条`），
+    /// 返回灌入总数；失败时携带失败时刻的游标（供日志定位）。
+    async fn warmup_dedup_from<F, Fut, E>(&self, mut fetch: F) -> Result<usize, (Option<String>, E)>
+    where
+        F: FnMut(Option<String>) -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<String>, E>>,
+    {
+        const PAGE_SIZE: u32 = 5000;
         let mut after_url: Option<String> = None;
         let mut total: usize = 0;
 
         loop {
-            let urls = match self
-                .repository
-                .list_distinct_urls(PAGE_SIZE, after_url.clone())
-                .await
-            {
+            let urls = match fetch(after_url.clone()).await {
                 Ok(urls) => urls,
-                Err(e) => {
-                    error!(
-                        "Deduplicator warmup failed at cursor {after_url:?}: {e}; \
-                         continuing with EMPTY dedup state — already-crawled URLs \
-                         will be re-crawled this run"
-                    );
-                    return;
-                }
+                Err(e) => return Err((after_url, e)),
             };
 
             let page_len = urls.len();
@@ -222,9 +267,7 @@ impl WorkerManager {
             }
         }
 
-        if total > 0 {
-            info!("Deduplicator warmed up with {total} distinct URLs from previous runs");
-        }
+        Ok(total)
     }
 
     /// 启动工作进程
@@ -897,7 +940,16 @@ mod tests {
         }
     }
 
-    struct MockScrapeResultRepository;
+    /// 可注入预热 URL / 注入失败的 结果仓库 mock
+    ///
+    /// `warmup_urls` 非空时 `list_distinct_urls` 返回它们（一页内，循环终止），
+    /// 空（Default）时返回空页；`fail_list_distinct` 为 true 时返回错误
+    /// （F3 results 阶段失败语义验证用）。
+    #[derive(Default)]
+    struct MockScrapeResultRepository {
+        warmup_urls: Vec<String>,
+        fail_list_distinct: bool,
+    }
 
     #[async_trait]
     impl ScrapeResultRepository for MockScrapeResultRepository {
@@ -916,6 +968,17 @@ mod tests {
 
         async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
             Ok(0)
+        }
+
+        async fn list_distinct_urls(
+            &self,
+            _limit: u32,
+            _after_url: Option<String>,
+        ) -> anyhow::Result<Vec<String>> {
+            if self.fail_list_distinct {
+                return Err(anyhow::anyhow!("mock results list_distinct_urls failure"));
+            }
+            Ok(self.warmup_urls.clone())
         }
     }
 
@@ -1091,7 +1154,7 @@ mod tests {
         WorkerManagerDeps {
             queue: Arc::new(MockTaskQueue),
             repository: Arc::new(MockTaskRepository::default()),
-            result_repository: Arc::new(MockScrapeResultRepository),
+            result_repository: Arc::new(MockScrapeResultRepository::default()),
             crawl_repository: Arc::new(MockCrawlRepository),
             webhook_service: Arc::new(MockWebhookService),
             credits_repository: Arc::new(MockCreditsRepository),
@@ -1198,6 +1261,147 @@ mod tests {
                 crate::utils::dedup::DedupResult::MaybeExisting { .. }
             ),
             "warmed-up URL must be MaybeExisting, got {result:?}"
+        );
+    }
+
+    /// F3 差量：include_results=true 时 tasks+results 并集灌入
+    /// （重叠 URL 由 Deduplicator 的 HashSet 自动去重）
+    #[tokio::test]
+    async fn test_warmup_include_results_adds_result_urls() {
+        let repo = Arc::new(MockTaskRepository {
+            warmup_urls: vec![
+                "https://example.com/task-a".to_string(),
+                "https://example.com/shared".to_string(),
+            ],
+        });
+        let result_repo = Arc::new(MockScrapeResultRepository {
+            warmup_urls: vec![
+                "https://example.com/shared".to_string(), // 与 tasks 重叠
+                "https://redirect.example.com/final-1".to_string(),
+                "https://redirect.example.com/final-2".to_string(),
+            ],
+            fail_list_distinct: false,
+        });
+        let mut deps = make_deps();
+        deps.repository = repo;
+        deps.result_repository = result_repo;
+        let settings = Settings {
+            workers: crate::config::settings::WorkerSettings {
+                dedup_warmup_include_results: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let manager = WorkerManager::new(
+            deps,
+            WorkerManagerConfig {
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+            },
+        );
+
+        assert_eq!(manager.deduplicator.read().len(), 0);
+        manager.warmup_deduplicator().await;
+
+        let dedup = manager.deduplicator.read();
+        assert_eq!(
+            dedup.len(),
+            4,
+            "warmup must cover the tasks∪results union (shared URL counted once)"
+        );
+        // 重定向 final_url（仅存于结果表）必须进入去重状态
+        let result = dedup.check("https://redirect.example.com/final-1").unwrap();
+        assert!(
+            matches!(
+                result,
+                crate::utils::dedup::DedupResult::MaybeExisting { .. }
+            ),
+            "result-table URL must be warmed, got {result:?}"
+        );
+    }
+
+    /// F3 差量：默认（include_results=false）仅灌 tasks URL——
+    /// 回归 P10 快照语义，结果表 URL 不进预热
+    #[tokio::test]
+    async fn test_warmup_default_excludes_results() {
+        let repo = Arc::new(MockTaskRepository {
+            warmup_urls: vec![
+                "https://example.com/task-a".to_string(),
+                "https://example.com/task-b".to_string(),
+            ],
+        });
+        let result_repo = Arc::new(MockScrapeResultRepository {
+            warmup_urls: vec![
+                "https://redirect.example.com/final-1".to_string(),
+                "https://redirect.example.com/final-2".to_string(),
+                "https://redirect.example.com/final-3".to_string(),
+            ],
+            fail_list_distinct: false,
+        });
+        let mut deps = make_deps();
+        deps.repository = repo;
+        deps.result_repository = result_repo;
+        // make_config() 的 Settings::default() → dedup_warmup_include_results=false
+        let manager = WorkerManager::new(deps, make_config());
+
+        manager.warmup_deduplicator().await;
+
+        let dedup = manager.deduplicator.read();
+        assert_eq!(
+            dedup.len(),
+            2,
+            "default must warm tasks URLs only (results table excluded)"
+        );
+        let result = dedup.check("https://redirect.example.com/final-1").unwrap();
+        assert!(
+            matches!(
+                result,
+                crate::utils::dedup::DedupResult::DefinitelyNew { .. }
+            ),
+            "result-table URL must NOT be warmed by default, got {result:?}"
+        );
+    }
+
+    /// F3 差量：results 阶段查询失败 → error 日志显性化，tasks 已灌入的
+    /// 状态保留（不回滚不 panic）
+    #[tokio::test]
+    async fn test_warmup_results_failure_keeps_tasks_state() {
+        let repo = Arc::new(MockTaskRepository {
+            warmup_urls: vec![
+                "https://example.com/task-a".to_string(),
+                "https://example.com/task-b".to_string(),
+            ],
+        });
+        let result_repo = Arc::new(MockScrapeResultRepository {
+            warmup_urls: vec![],
+            fail_list_distinct: true,
+        });
+        let mut deps = make_deps();
+        deps.repository = repo;
+        deps.result_repository = result_repo;
+        let settings = Settings {
+            workers: crate::config::settings::WorkerSettings {
+                dedup_warmup_include_results: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let manager = WorkerManager::new(
+            deps,
+            WorkerManagerConfig {
+                settings: Arc::new(settings),
+                default_concurrency_limit: 10,
+            },
+        );
+
+        // 失败不得 panic：tasks 状态保留
+        manager.warmup_deduplicator().await;
+
+        let dedup = manager.deduplicator.read();
+        assert_eq!(
+            dedup.len(),
+            2,
+            "tasks-phase state must be retained when results phase fails"
         );
     }
 

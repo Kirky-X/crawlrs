@@ -978,6 +978,8 @@ mod tests {
             },
             sync_wait_ms: None,
             expires_at: None,
+            sitemap_seed: None,
+            sitemap_url: None,
         }
     }
 

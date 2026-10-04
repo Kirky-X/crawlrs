@@ -40,6 +40,9 @@ use crate::domain::auth::ApiKeyScope;
 use crate::bootstrap::route_groups::{
     crawl_routes, management_routes, scrape_routes, search_routes,
 };
+// map 路由组（F11 sitemap 流式站点图）：sitemap-off 时不编译不注册
+#[cfg(feature = "sitemap")]
+use crate::bootstrap::route_groups::map_routes;
 
 /// 创建 CORS 中间件层
 ///
@@ -229,6 +232,10 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .merge(management_routes::register_teams_routes())
         .merge(management_routes::register_audit_routes())
         .merge(management_routes::register_admin_routes());
+    // F11：/v1/map（sitemap 流式站点图）与其他 v1 保护路由同批装配，
+    // 共享下方 auth 中间件层（漏挂即成未鉴权写接口）
+    #[cfg(feature = "sitemap")]
+    let app = app.merge(map_routes::register_map_routes());
 
     // 认证中间件层（条件编译）
     //
@@ -308,7 +315,8 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .layer(Extension(webhook_event_repo))
         .layer(Extension(webhook_repo_impl));
 
-    app.layer(Extension(team_semaphore))
+    let app = app
+        .layer(Extension(team_semaphore))
         .layer(Extension(queue))
         .layer(Extension(task_repo))
         .layer(Extension(result_repo))
@@ -319,7 +327,13 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .layer(Extension(search_engine_service))
         .layer(Extension(state.search_service.clone()))
         .layer(Extension(crawl_handler_state)) // CrawlHandlerState for crawl handlers
-        .layer(Extension(credits_repo))
+        .layer(Extension(credits_repo));
+
+    // F11：map 用例 Extension（sitemap-off 时不装配）
+    #[cfg(feature = "sitemap")]
+    let app = app.layer(Extension(state.map_use_case.clone()));
+
+    app
 }
 
 /// Create v2 task routes using CrawlRsState.

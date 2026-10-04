@@ -44,7 +44,9 @@ pub fn build_initial_crawl_task(
             "crawl_id": crawl_id,
             "depth": 0,
             "config": dto.config,
-            "domain_blacklist": domain_blacklist
+            "domain_blacklist": domain_blacklist,
+            "sitemap_seed": dto.sitemap_seed,
+            "sitemap_url": dto.sitemap_url,
         }),
         retry_count: 0,
         attempt_count: 0,
@@ -121,6 +123,8 @@ mod tests {
             },
             sync_wait_ms: None,
             expires_at: None,
+            sitemap_seed: None,
+            sitemap_url: None,
         }
     }
 
@@ -149,6 +153,30 @@ mod tests {
         assert_eq!(task.url, "https://example.com");
         assert_eq!(task.payload["crawl_id"], crawl_id.to_string());
         assert_eq!(task.payload["depth"], 0);
+    }
+
+    /// F11：sitemap_seed / sitemap_url 透传进种子任务 payload
+    /// （执行侧喂入路径从 payload 读取；缺省为 null）
+    #[test]
+    fn test_build_initial_crawl_task_transfers_sitemap_source_fields() {
+        let mut dto = make_dto();
+        dto.sitemap_seed = Some(true);
+        dto.sitemap_url = Some("https://cdn.b.com/sitemap-index.xml".to_string());
+
+        let task = build_initial_crawl_task(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            &dto,
+            vec![],
+            Utc::now(),
+        );
+
+        assert_eq!(task.payload["sitemap_seed"], true);
+        assert_eq!(
+            task.payload["sitemap_url"],
+            "https://cdn.b.com/sitemap-index.xml"
+        );
     }
 
     #[test]

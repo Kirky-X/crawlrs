@@ -345,6 +345,8 @@ fn test_crawl_request_dto_validate_success() {
         },
         sync_wait_ms: Some(5000),
         expires_at: None,
+        sitemap_seed: None,
+        sitemap_url: None,
     };
     assert!(dto.validate().is_ok());
 }
@@ -371,6 +373,8 @@ fn test_crawl_request_dto_validate_empty_url_fails() {
         },
         sync_wait_ms: None,
         expires_at: None,
+        sitemap_seed: None,
+        sitemap_url: None,
     };
     assert!(dto.validate().is_err());
 }
@@ -397,6 +401,8 @@ fn test_crawl_request_dto_validate_sync_wait_ms_exceeds_max_fails() {
         },
         sync_wait_ms: Some(30001),
         expires_at: None,
+        sitemap_seed: None,
+        sitemap_url: None,
     };
     assert!(dto.validate().is_err());
 }
@@ -423,6 +429,8 @@ fn test_crawl_request_dto_validate_sync_wait_ms_zero_passes() {
         },
         sync_wait_ms: Some(0),
         expires_at: None,
+        sitemap_seed: None,
+        sitemap_url: None,
     };
     assert!(dto.validate().is_ok());
 }
@@ -449,6 +457,8 @@ fn test_crawl_request_dto_serialization_roundtrip() {
         },
         sync_wait_ms: Some(5000),
         expires_at: None,
+        sitemap_seed: None,
+        sitemap_url: None,
     };
     let json = serde_json::to_string(&dto).unwrap();
     let deserialized: CrawlRequestDto = serde_json::from_str(&json).unwrap();
@@ -480,6 +490,8 @@ fn test_crawl_request_dto_validated_url_skipped_in_serialization() {
         },
         sync_wait_ms: None,
         expires_at: None,
+        sitemap_seed: None,
+        sitemap_url: None,
     };
     let json = serde_json::to_string(&dto).unwrap();
     assert!(!json.contains("validated_url"));

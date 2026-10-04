@@ -26,6 +26,12 @@ pub mod frontier;
 /// 结构空洞检测指导 URL 优先级。
 pub mod knowledge_graph;
 pub mod scorers;
+/// sitemap 流式请求源（F11）：sitemap loc 经 FilterChain+去重入队为 crawl 任务，
+/// 每批持久化进度指针支持重启续喂
+#[cfg(feature = "sitemap")]
+pub mod sitemap_source;
+/// 软 404 指纹检测（吸收点 F11）：从 404/410 学习空壳指纹，命中同指纹的 200 壳不落结果
+pub mod soft404;
 
 use std::sync::Arc;
 

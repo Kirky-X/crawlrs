@@ -648,6 +648,8 @@ mod tests {
             engines: EngineSettings::default(),
             logging: LoggingSettings::default(),
             workers: WorkerSettings::default(),
+            sitemap: SitemapSettings::default(),
+            crawl: CrawlSettings::default(),
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),

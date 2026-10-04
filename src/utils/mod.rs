@@ -21,6 +21,8 @@ pub mod crawl_text_integration;
 /// Bloom 阴性 → 绝对新（无假阴性）；Bloom 阳性 → 回落 DB 校验。
 pub mod dedup;
 pub mod error_helpers;
+/// 统一 `*`/`?` 通配匹配（迭代双指针，O(n×m)；map/xhr 捕获共用）
+pub mod glob;
 /// Hedge 请求副本控制器
 ///
 /// EMA + 方差估 P84 延迟阈值，超阈值时建议发送副本请求降尾延迟。

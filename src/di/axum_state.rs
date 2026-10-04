@@ -182,6 +182,11 @@ pub struct CrawlRsState {
     /// 基于 `tokio::sync::broadcast` 的进程内事件发布/订阅，
     /// 解耦模块间通信（任务完成/失败、爬取完成/失败等）。
     pub event_bus: Arc<dyn EventBus>,
+    /// Map 用例（F11 sitemap 流式站点图）
+    ///
+    /// sitemap feature 关闭时不编译此字段（handler/路由同门控）。
+    #[cfg(feature = "sitemap")]
+    pub map_use_case: Arc<crate::application::use_cases::map_use_case::MapUseCase>,
 }
 
 impl CrawlRsState {
@@ -281,6 +286,8 @@ impl CrawlRsState {
             geo_restriction_repo: infra.repositories.geo_restriction_repo.clone(),
             i18n_bundle,
             event_bus: Arc::new(BroadcastEventBus::new(1024)),
+            #[cfg(feature = "sitemap")]
+            map_use_case: services.map_use_case.clone(),
         })
     }
 }

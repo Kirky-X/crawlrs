@@ -17,6 +17,7 @@ use crate::application::dto::crawl_request::CrawlRequestDto;
 use crate::application::use_cases::crawl_use_case::CrawlUseCaseError;
 use crate::common::constants::crawl_task::CRAWL_TASK_CREDITS_COST;
 use crate::common::constants::crawl_task::DEFAULT_TIMEOUT_MS;
+use crate::config::settings::Settings;
 use crate::i18n::{I18nBundle, Locale};
 use crate::presentation::handlers::response_builder::errors;
 use crate::presentation::handlers::response_builder::{
@@ -30,11 +31,43 @@ use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::presentation::state::CrawlHandlerState;
 use log::error;
 
+/// F11：sitemap 流式请求源主开关校验
+///
+/// 请求携带 `sitemap_seed=true` 而能力不可用时必须**显式拒绝**（禁止静默
+/// 忽略降级为普通 crawl）：
+/// - sitemap feature 未编译：能力不存在（需 `--features sitemap` 重新构建）
+/// - 主开关关闭（`CRAWLRS__SITEMAP__ENABLED=false`，默认）
+///
+/// 返回 `Some(原因)` 表示拒绝，`None` 表示放行（或请求未启用 sitemap 源）。
+fn sitemap_seed_rejection(payload: &CrawlRequestDto, settings: &Settings) -> Option<String> {
+    if payload.sitemap_seed != Some(true) {
+        return None;
+    }
+    #[cfg(not(feature = "sitemap"))]
+    let disabled_reason: Option<String> = Some(
+        "sitemap request source requires the `sitemap` feature \
+         (rebuild with --features sitemap)"
+            .to_string(),
+    );
+    #[cfg(feature = "sitemap")]
+    let disabled_reason: Option<String> = if settings.sitemap.enabled {
+        None
+    } else {
+        Some(
+            "sitemap request source is disabled (CRAWLRS__SITEMAP__ENABLED=false); \
+             set CRAWLRS__SITEMAP__ENABLED=true to accept sitemap_seed"
+                .to_string(),
+        )
+    };
+    disabled_reason
+}
+
 /// Create a new crawl task.
 ///
 /// # Arguments
 ///
 /// * `state` - Shared crawl handler state (use-case factory).
+/// * `settings` - Application settings（sitemap 请求源主开关）.
 /// * `auth_state` - Authenticated caller state.
 /// * `locale` / `bundle` - i18n resources for error messages.
 /// * `addr` - Client socket address (logging).
@@ -46,6 +79,7 @@ use log::error;
 /// 500 for internal errors.
 pub async fn create_crawl(
     Extension(state): Extension<Arc<CrawlHandlerState>>,
+    Extension(settings): Extension<Arc<Settings>>,
     Extension(auth_state): Extension<AuthState>,
     Extension(locale): Extension<Locale>,
     Extension(bundle): Extension<Arc<I18nBundle>>,
@@ -63,6 +97,11 @@ pub async fn create_crawl(
     // 验证 config 字段
     if payload.config.max_depth > 5 {
         return errors::unprocessable_entity("max_depth must be between 0 and 5");
+    }
+
+    // F11：sitemap 请求源主开关校验（能力不可用时显式拒绝，禁止静默忽略）
+    if let Some(reason) = sitemap_seed_rejection(&payload, &settings) {
+        return errors::unprocessable_entity(reason);
     }
 
     // 1. 检查限流（架构限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
@@ -84,6 +123,14 @@ pub async fn create_crawl(
     // 2.5 SSRF 防护 (CWE-918)：验证 config.proxy 不指向内部网络
     if let Some(ref proxy_url) = payload.config.proxy {
         if let Some(response) = check_ssrf_url(proxy_url, team_id, auth_state.api_key_id).await {
+            return response;
+        }
+    }
+
+    // 2.6 SSRF 防护 (CWE-918)：显式 sitemap_url 是 worker 侧的拉取目标，
+    // 与种子 URL 同级验证（纵深防御；引擎 router 侧另有执行前校验）
+    if let Some(ref sitemap_url) = payload.sitemap_url {
+        if let Some(response) = check_ssrf_url(sitemap_url, team_id, auth_state.api_key_id).await {
             return response;
         }
     }

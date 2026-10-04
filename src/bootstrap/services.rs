@@ -154,6 +154,11 @@ pub struct ServicesComponents {
     pub backlog_worker: Arc<crate::workers::backlog_worker::BacklogWorker>,
     /// Expiration worker
     pub expiration_worker: Arc<crate::workers::expiration_worker::ExpirationWorker>,
+    /// Map 用例（F11 sitemap 流式站点图请求源）
+    ///
+    /// sitemap feature 关闭时不编译此字段（handler/路由同门控）。
+    #[cfg(feature = "sitemap")]
+    pub map_use_case: Arc<crate::application::use_cases::map_use_case::MapUseCase>,
 }
 
 /// Initialize rate limit middleware.
@@ -791,6 +796,9 @@ pub async fn init_services(
 ) -> ServicesComponents {
     let repositories = &infrastructure.repositories;
 
+    // F11：按配置初始化软 404 指纹检测器（进程级共享；crawl 路径消费）
+    crate::workers::crawl::soft404::init_shared(settings.crawl.soft404_max_fingerprints);
+
     // Initialize team semaphore
     // 根据 concurrency.adaptive_enabled 选择 Fixed/Adaptive 模式
     let team_semaphore = init_team_semaphore(settings);
@@ -816,6 +824,18 @@ pub async fn init_services(
     // Initialize create scrape use case
     let create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait> =
         Arc::new(CreateScrapeUseCase::new(engine_client.clone()));
+
+    // F11：/v1/map 用例（sitemap 流式站点图；sitemap feature 关闭时不编译）。
+    // 拉取超时来自 settings.sitemap.fetch_timeout_secs（对齐引擎 MRT 语义）。
+    #[cfg(feature = "sitemap")]
+    let map_use_case = Arc::new(
+        crate::application::use_cases::map_use_case::MapUseCase::new(Arc::new(
+            crate::application::use_cases::map_use_case::EngineSitemapFetcher::new(
+                engine_client.clone(),
+                std::time::Duration::from_secs(settings.sitemap.fetch_timeout_secs),
+            ),
+        )),
+    );
 
     // webhook 相关服务在 webhook-off 时不初始化
     // webhook-on：装配 WebhookServiceImpl（含 WebhookSenderImpl + 签名密钥 + 事件仓库）
@@ -1035,6 +1055,8 @@ pub async fn init_services(
         webhook_worker,
         backlog_worker,
         expiration_worker,
+        #[cfg(feature = "sitemap")]
+        map_use_case,
     }
 }
 

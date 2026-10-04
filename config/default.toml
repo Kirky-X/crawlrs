@@ -363,6 +363,29 @@ count = "auto"
 # after SIGTERM/SIGINT, workers stop accepting new tasks and wait up to this
 # long for in-flight tasks to finish before forced exit + rollback.
 graceful_shutdown_seconds = 30
+# 断点续爬 seen 预热补充（吸收点 F3 差量）：true 时 warmup_deduplicator 额外灌入
+# scrape_results 表 distinct URL（覆盖 tasks.url 之外的重定向 final_url）；默认 false
+dedup_warmup_include_results = false
+
+# Sitemap 流式请求源（吸收点 F11；feature `sitemap`）
+# 站点映射 URL 作为一等请求源：流式解析→有界通道背压→经去重/过滤链入 crawl 队列
+[sitemap]
+enabled = false
+# 单次 map 任务最多消费的 URL 数（防无限站点图）
+max_urls = 50000
+# 子 sitemap 并发展开上限
+max_concurrent_sub_sitemaps = 4
+# 流式通道容量（背压边界；解析端在通道满时暂停）
+channel_capacity = 4096
+# 单个 sitemap 文档拉取超时（秒）
+fetch_timeout_secs = 30
+
+# 软 404 指纹（吸收点 F11；crawl4ai Soft404Fingerprint）
+[crawl]
+# true 时从真实 404/410 响应学习空壳指纹 {status, title, content_length, body_hash}，
+# 命中同指纹的 200 SPA 壳按软 404 处理，不污染爬取配额
+soft404_enabled = true
+soft404_max_fingerprints = 10000
 
 # Timeout Configuration
 # Configure operation timeouts

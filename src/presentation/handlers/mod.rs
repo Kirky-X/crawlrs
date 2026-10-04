@@ -14,6 +14,9 @@ pub mod crawl_commands;
 pub mod crawl_handler;
 pub mod crawl_queries;
 pub mod extract_handler;
+// map handler（F11 sitemap 流式站点图）：sitemap-off 时不编译
+#[cfg(feature = "sitemap")]
+pub mod map_handler;
 pub mod metrics_handler;
 pub mod response_builder;
 pub mod scrape_commands;

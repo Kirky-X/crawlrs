@@ -27,4 +27,21 @@ pub trait ScrapeResultRepository: Send + Sync {
     /// 删除 `created_at` 早于 `now - retention_days` 的结果行，返回删除的行数。
     /// `retention_days <= 0` 表示禁用清理，实现必须直接返回 `Ok(0)`，不得删除任何数据。
     async fn cleanup_expired(&self, retention_days: i64) -> Result<u64>;
+    /// 分页列出结果表 distinct URL（断点续爬 seen 预热补充，F3）
+    ///
+    /// keyset 分页语义与 [`crate::domain::repositories::task_repository::TaskRepository::list_distinct_urls`]
+    /// 对齐：`after_url` 传入时仅返回严格大于它的 URL（`url > ?` ORDER BY url LIMIT ?）。
+    /// 覆盖 tasks.url 之外的重定向 final_url（仅存于结果表）。
+    ///
+    /// 默认实现返回错误（失败显性化：未实现该能力的仓库在预热路径报错，
+    /// 而非静默返回空集被当成"无历史 URL"）。
+    async fn list_distinct_urls(
+        &self,
+        _limit: u32,
+        _after_url: Option<String>,
+    ) -> Result<Vec<String>> {
+        Err(anyhow::anyhow!(
+            "list_distinct_urls not implemented by this repository (dedup warmup unavailable)"
+        ))
+    }
 }

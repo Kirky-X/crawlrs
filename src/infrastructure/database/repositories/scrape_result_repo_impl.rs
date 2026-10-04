@@ -9,7 +9,7 @@ use crate::infrastructure::database::entities::scrape_result as db_entity;
 use async_trait::async_trait;
 use dbnexus::sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
-    QueryResult, Set, Statement,
+    QueryOrder, QueryResult, QuerySelect, Set, Statement,
 };
 use dbnexus::DbPool;
 use std::sync::Arc;
@@ -202,6 +202,41 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
             .map_err(|e| anyhow::anyhow!("Failed to cleanup expired results: {}", e))?;
 
         Ok(result.rows_affected)
+    }
+
+    async fn list_distinct_urls(
+        &self,
+        limit: u32,
+        after_url: Option<String>,
+    ) -> anyhow::Result<Vec<String>> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
+
+        let conn = session
+            .connection()
+            .map_err(|e| anyhow::anyhow!("Failed to get connection: {}", e))?;
+
+        // keyset 分页（url > after_url）：每页 O(limit)，配合 url 升序稳定
+        // 翻页。语义对齐 TaskRepository::list_distinct_urls（seen 预热路径）。
+        let mut query = db_entity::Entity::find()
+            .select_only()
+            .column(db_entity::Column::Url)
+            .distinct()
+            .order_by_asc(db_entity::Column::Url)
+            .limit(u64::from(limit));
+        if let Some(after) = after_url {
+            query = query.filter(db_entity::Column::Url.gt(after));
+        }
+        let urls = query
+            .into_tuple::<String>()
+            .all(conn)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to list distinct urls: {}", e))?;
+
+        Ok(urls)
     }
 }
 
@@ -542,6 +577,73 @@ mod tests {
         let result = repo.get_team_avg_response_time(Uuid::nil()).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0.0);
+    }
+
+    // ========== list_distinct_urls（F3 seen 预热 keyset 分页） ==========
+
+    /// 保存一批结果并返回其 URL 列表
+    async fn save_results_with_urls(repo: &ScrapeResultRepositoryImpl, urls: &[&str]) {
+        for url in urls {
+            let mut result = sample_scrape_result();
+            result.id = Uuid::new_v4();
+            result.task_id = Uuid::new_v4();
+            result.url = url.to_string();
+            repo.save(result).await.expect("save failed");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_list_distinct_urls_returns_distinct_sorted() {
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
+        let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
+        let prefix = format!("https://listdistinct-{}.example.com", Uuid::new_v4());
+        let a = format!("{prefix}/a");
+        let b = format!("{prefix}/b");
+        // 同 URL 两行 → distinct 只出一个
+        save_results_with_urls(&repo, &[&b, &a, &b]).await;
+
+        let urls = repo
+            .list_distinct_urls(100, None)
+            .await
+            .expect("list_distinct_urls failed");
+        let own: Vec<String> = urls
+            .into_iter()
+            .filter(|u| u.starts_with(&prefix))
+            .collect();
+        assert_eq!(own, vec![a, b], "distinct + url 升序");
+    }
+
+    #[tokio::test]
+    async fn test_list_distinct_urls_keyset_strictly_greater_than_after() {
+        if crate::common::test_helpers::skip_if_no_test_db() {
+            return;
+        }
+        let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
+        let prefix = format!("https://keyset-{}.example.com", Uuid::new_v4());
+        let a = format!("{prefix}/a");
+        let b = format!("{prefix}/b");
+        let c = format!("{prefix}/c");
+        save_results_with_urls(&repo, &[&a, &b, &c]).await;
+
+        // after_url = b → 只返回严格大于 b 的记录（c），不含 b 本身
+        let urls = repo
+            .list_distinct_urls(100, Some(b.clone()))
+            .await
+            .expect("keyset page failed");
+        let own: Vec<String> = urls
+            .into_iter()
+            .filter(|u| u.starts_with(&prefix))
+            .collect();
+        assert_eq!(own, vec![c], "after_url 语义必须为严格大于");
+
+        // limit 截断生效
+        let urls = repo
+            .list_distinct_urls(1, None)
+            .await
+            .expect("limit page failed");
+        assert_eq!(urls.len(), 1, "limit=1 必须只返回一页一条");
     }
 
     // ========== cleanup_expired ==========

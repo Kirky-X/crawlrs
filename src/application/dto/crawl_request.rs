@@ -63,6 +63,17 @@ pub struct CrawlRequestDto {
     pub sync_wait_ms: Option<u32>,
     /// 任务过期时间
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// sitemap 流式请求源（F11）：true 时该 crawl 以 sitemap 作为 URL 发现源
+    /// （受 `CRAWLRS__SITEMAP__ENABLED` 主开关门控，关闭时请求被显式拒绝）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sitemap_seed: Option<bool>,
+    /// 显式 sitemap 地址；缺省从种子 URL 派生 `scheme://host[:port]/sitemap.xml`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[validate(custom(
+        function = "is_http_url",
+        message = "sitemap_url must start with http:// or https://"
+    ))]
+    pub sitemap_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Validate)]

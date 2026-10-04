@@ -8,6 +8,7 @@
 pub mod crawl_request;
 pub mod extract_request;
 pub mod geo_restriction_request;
+pub mod map_request;
 pub mod scrape_request;
 pub mod scrape_response;
 pub mod search_request;
