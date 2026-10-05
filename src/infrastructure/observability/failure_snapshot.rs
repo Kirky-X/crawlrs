@@ -394,6 +394,53 @@ mod tests {
         serde_json::from_str(&raw).expect("meta json parse")
     }
 
+    // ========== 滚动淘汰（F4 护栏验收） ==========
+
+    /// 滚动淘汰：目录文件数达 max_total 后最旧优先删除，新签名仍可观测。
+    #[tokio::test]
+    async fn rolling_eviction_keeps_dir_bounded_and_newest_observable() {
+        let dir = std::env::temp_dir().join(format!("crawlrs-snap-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let snap = FailureSnapshotter::new(&dir, 6); // 6 文件 = 3 个签名（html+meta 各一）
+        let headers = HashMap::new();
+
+        // 写 8 个不同签名（16 文件）→ 滚动后仅保留最新 3 个签名的文件
+        for i in 0..8 {
+            let url = format!("https://x.com/err/{i}");
+            let reason = format!("rate limited {i}");
+            snap.snapshot(SnapshotInput {
+                url: &url,
+                status_code: 429,
+                reason: &reason,
+                content: "429",
+                headers: &headers,
+                screenshot: None,
+            })
+            .await;
+        }
+
+        let file_count = std::fs::read_dir(&dir).unwrap().count();
+        assert!(
+            file_count <= 6,
+            "目录文件数应 ≤ max_total=6，实际 {file_count}"
+        );
+        // 最旧的签名（err/0）已被淘汰
+        let oldest_key =
+            FailureSnapshotter::signature_key("https://x.com/err/0", 429, "rate limited 0");
+        assert!(
+            !dir.join(format!("{oldest_key}.meta.json")).exists(),
+            "最旧签名的 meta 应被滚动删除"
+        );
+        // 最新的签名（err/7）仍可观测
+        let newest_key =
+            FailureSnapshotter::signature_key("https://x.com/err/7", 429, "rate limited 7");
+        assert!(
+            dir.join(format!("{newest_key}.meta.json")).exists(),
+            "最新签名的 meta 应保留"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     // ========== 签名键 ==========
 
     /// 不同 reason 生成不同签名键（URL+status 相同）
