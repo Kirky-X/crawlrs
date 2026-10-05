@@ -620,13 +620,11 @@ Search using various search engines.
 **Request Body:**
 ```json
 {
-  "engine": "google",
+  "engine": "smart",
   "query": "Rust web scraping",
-  "num_results": 10,
-  "language": "en",
-  "region": "us",
-  "safe_search": false,
-  "webhook": "https://your-webhook.com/callback",
+  "limit": 10,
+  "lang": "en",
+  "country": "us",
   "sync_wait_ms": 5000
 }
 ```
@@ -637,14 +635,13 @@ Search using various search engines.
 |-----------|-------|----------|-------------|
 | `engine` | string | No | Search engine: `smart`（默认，多引擎 fan-out + RRF 聚合）、`bing`、`baidu`、`sogou`。未提供或 `smart` 时并发查询多个引擎并做融合排序与去重；显式引擎名走单引擎路径；未知引擎名返回 400 参数错误（不会静默替换）。`exa`/`tavily` 保留枚举值，需对应引擎注册才可用，未注册时返回 `NoEngineAvailable` |
 | `query` | string | Yes | Search query |
+| `sources` | array | No | `engine` 的别名（multi-source 写法） |
 | `limit` | integer | No | Number of results (default: 10, max: 100) |
-| `lang` | string | No | Search language (default: `en`) |
+| `lang` | string | No | Search language (default: `en`)；与 `country` 同时提供时驱动 Bing mkt/Accept-Language（baidu/sogou 忽略） |
 | `country` | string | No | Search region (default: `us`) |
-| `safe_search` | boolean | No | Enable safe search (default: false) |
-| `lang` | string | No | 与 `country` 同时提供时驱动 Bing mkt/Accept-Language（baidu/sogou 忽略） |
-| `offset` | integer | No | 分页偏移：bing `first=`、baidu/sogou 按页推导 |
-| `webhook` | string | No | Webhook URL for notifications |
-| `sync_wait_ms` | integer | No | Wait time for synchronous response |
+| `sync_wait_ms` | integer | No | 同步等待时长（毫秒，默认 5000，最大 30000） |
+| `crawl_results` | boolean | No | 为 true 时对每条搜索结果创建爬取任务 |
+| `crawl_config` | object | No | 搜索结果异步爬取的配置（结构同爬取任务配置） |
 
 > **0.2.0 行为变更**：`engine` 省略时从"单引擎 bing"改为 smart 聚合（fan-out + RRF + 跨来源去重）；
 > 显式指定 `engine: "bing"` 等仍为单引擎路径。
@@ -660,7 +657,7 @@ Search using various search engines.
         "title": "Web Scraping with Rust",
         "url": "https://example.com/rust-scraping",
         "description": "Learn how to scrape websites using Rust",
-        "engine": "google"
+        "engine": "bing"
       }
     ],
     "crawl_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -1263,8 +1260,7 @@ SDK endpoints provide simplified interfaces for common operations, wrapping the 
 ```json
 {
   "query": "Rust web scraping",
-  "engine": "google",
-  "num_results": 10
+  "limit": 10
 }
 ```
 

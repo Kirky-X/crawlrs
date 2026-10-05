@@ -59,7 +59,7 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 
 <table style="width:100%; border-collapse: collapse">
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>Unified Search</b><br><span style="color:#64748B">Aggregated results from Google, Bing, Baidu and Sogou with automatic deduplication, a unified output format and A/B testing support</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>Unified Search</b><br><span style="color:#64748B">Aggregated results from Bing, Baidu and Sogou with RRF fusion ranking and SimHash cross-engine deduplication; Exa / Tavily register automatically when credentials are configured</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🎯 <b>Single-Page Scraping</b><br><span style="color:#64748B">Uniform scraping of static HTML and JS-rendered pages, with screenshots, form interactions, custom headers and sync-wait; the Playwright engine can capture background XHR/Fetch responses</span></td>
 </tr>
 <tr>

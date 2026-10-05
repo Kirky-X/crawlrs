@@ -40,7 +40,7 @@ Welcome to **crawlrs**, a high-performance self-hosted web scraping platform bui
 
 - **Scrape** - Extract content from single web pages
 - **Crawl** - Automatically discover and scrape multiple pages
-- **Search** - Query Google, Bing, Baidu, and Sogou
+- **Search** - Query Bing, Baidu, Sogou, or aggregated Smart search (Exa / Tavily available with credentials)
 - **Extract** - Parse and structure data from HTML
 
 ### Key Concepts
@@ -790,14 +790,14 @@ curl -X DELETE http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-4466554400
 
 ### Basic Search
 
-Search using Google:
+Search using Bing:
 
 ```bash
 curl -X POST http://localhost:8899/v1/search \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "engine": "google",
+    "engine": "bing",
     "query": "Rust web scraping tutorial"
   }'
 ```
@@ -807,9 +807,20 @@ curl -X POST http://localhost:8899/v1/search \
 ```json
 {
   "success": true,
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "engine": "google",
-  "query": "Rust web scraping tutorial"
+  "data": {
+    "query": "Rust web scraping tutorial",
+    "results": [
+      {
+        "title": "Rust Web Scraping Tutorial",
+        "url": "https://example.com/rust-scraping",
+        "description": "Learn to scrape the web with Rust...",
+        "engine": "bing"
+      }
+    ],
+    "crawl_id": null,
+    "credits_used": 1
+  },
+  "timestamp": "2026-10-06T12:00:00+00:00"
 }
 ```
 
@@ -819,10 +830,12 @@ Available search engines:
 
 | Engine | Code | Best For |
 |--------|-------|-----------|
-| Google | `google` | General web search |
-| Bing | `bing` | Microsoft ecosystem |
+| Bing | `bing` | General web search |
 | Baidu | `baidu` | Chinese content |
 | Sogou | `sogou` | Chinese content |
+| Smart | `smart` | Aggregated multi-engine search with RRF fusion |
+| Exa | `exa` | AI-powered search (requires API key) |
+| Tavily | `tavily` | AI-powered search (requires API key) |
 
 ### Search Options
 
@@ -833,12 +846,11 @@ curl -X POST http://localhost:8899/v1/search \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "engine": "google",
+    "engine": "bing",
     "query": "Rust programming",
-    "num_results": 20,
-    "language": "en",
-    "region": "us",
-    "safe_search": false,
+    "limit": 20,
+    "lang": "en",
+    "country": "us",
     "sync_wait_ms": 5000
   }'
 ```
@@ -868,7 +880,7 @@ curl -X POST http://localhost:8899/v1/search \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "engine": "google",
+    "engine": "bing",
     "query": "Rust tutorial",
     "sync_wait_ms": 5000
   }'
@@ -879,14 +891,20 @@ curl -X POST http://localhost:8899/v1/search \
 ```json
 {
   "success": true,
-  "results": [
-    {
-      "title": "Rust Programming Tutorial",
-      "url": "https://example.com/rust-tutorial",
-      "snippet": "Learn Rust programming...",
-      "engine": "google"
-    }
-  ]
+  "data": {
+    "query": "Rust tutorial",
+    "results": [
+      {
+        "title": "Rust Programming Tutorial",
+        "url": "https://example.com/rust-tutorial",
+        "description": "Learn Rust programming...",
+        "engine": "bing"
+      }
+    ],
+    "crawl_id": null,
+    "credits_used": 1
+  },
+  "timestamp": "2026-10-06T12:00:00+00:00"
 }
 ```
 

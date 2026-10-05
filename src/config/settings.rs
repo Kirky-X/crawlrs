@@ -75,7 +75,7 @@ pub struct Settings {
     /// Bing Search API 配置
     pub bing_search: BingSearchSettings,
 
-    /// 搜索配置 (包含 A/B 测试)
+    /// 搜索配置（引擎注册、超时与重试）
     pub search: SearchSettings,
 
     /// LLM 配置

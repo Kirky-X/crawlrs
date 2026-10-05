@@ -1063,7 +1063,7 @@ All three modes share the same FlareSolverr API client implementation, differing
 - Cloudflare-protected sites
 - Anti-bot protected sites
 - High-anonymity requirements
-- Google search CAPTCHA bypass
+- Search engine CAPTCHA bypass
 
 **Features (by mode):**
 - Full: JS rendering, session management, CAPTCHA detection
@@ -1078,15 +1078,8 @@ All three modes share the same FlareSolverr API client implementation, differing
 
 **职责分层：**
 
-- **smart 层** (`src/search/smart/mod.rs`)：URL 构建、速率限制、超时/重试控制、scoring、验证码前置检查、测试数据加载
-- **client 层** (`src/search/client/{google,bing,baidu,sogou}.rs`)：HTML 解析、URL 提取、XSS 防护、CSS 选择器管理
-
-**委托关系**：smart 端 `parse_google/bing/baidu/sogou_results` 委托 client 端 `parse_results`/`parse_search_results` 实现，消除 Stage 0 前的平行解析实现。smart 端补 score 由 `apply_scoring` 统一处理。
-
-**性能优化**：
-- smart 端用 `OnceCell` 缓存 4 个 client 引擎实例，避免每次解析都 `new` 一个 client 引擎
-- client 端 `HtmlParser` 改为 `once_cell::sync::Lazy` 全局单例，`baidu.rs`/`bing.rs` 不再持有 `parser` 字段
-- `google.rs` 的 `GoogleParseContext` 改为 `Lazy` 全局单例，避免重复编译 15 个 CSS 选择器
+- **smart 层** (`src/search/smart/mod.rs`)：`SmartSearchEngine` 并发聚合——`tokio::join!` 同时查询 Baidu/Bing/Sogou 三引擎，经 SimHash 去重（`ResultDeduplicator`）→ RRF 融合（`RRFFuser`，k=60）→ `RelevanceScorer`（TF-IDF + 新鲜度）评分排序；单引擎 fan-out 超时按失败降级（部分结果容忍），出站 per-engine 最小间隔 gate 防止触发搜索引擎封禁
+- **client 层** (`src/search/client/{baidu,bing,exa,sogou,tavily}.rs`)：各引擎实现（HTML 解析、URL 提取、XSS 防护、CSS 选择器管理），`html_parser.rs` 提供共享的 Google 风格 `HtmlParser`（`once_cell::sync::Lazy` 全局单例，避免重复编译 CSS 选择器）
 
 ---
 

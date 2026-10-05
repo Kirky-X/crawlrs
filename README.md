@@ -59,7 +59,7 @@
 
 <table style="width:100%; border-collapse: collapse">
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>统一搜索</b><br><span style="color:#64748B">Google、Bing、百度、搜狗多引擎聚合，自动去重、结果统一格式、支持 A/B 测试</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>统一搜索</b><br><span style="color:#64748B">Bing、百度、搜狗多引擎聚合，RRF 融合排序 + SimHash 跨引擎去重，Exa / Tavily 按凭据自动注册，结果统一格式</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🎯 <b>单页抓取</b><br><span style="color:#64748B">静态 HTML 与 JS 渲染页面统一抓取，支持截图、表单交互、自定义请求头与同步等待；Playwright 引擎可捕获页面 XHR/Fetch 后台响应</span></td>
 </tr>
 <tr>
