@@ -96,9 +96,13 @@ pub struct LLMService {
     api_key: Option<String>,
     /// 提示模板（缓存）
     templates: HashMap<String, String>,
-    /// token 窗口分块配置（F8；来自 `[llm.chunking]`，未接线构造为禁用）
+    /// token 窗口分块配置（F8；来自 `[llm.chunking]`，经 extract_data_with_provenance 接线）
     chunking: ChunkingConfig,
-    /// 溯源对齐配置（F9；来自 `[llm]` 的 `provenance_*` 两键，未接线构造为禁用）
+    /// 直调单次回答 token 上限（取 `[llm.chunking] max_output_tokens`；封顶生成时长防挂死）
+    direct_max_output_tokens: Option<u64>,
+    /// 直调单请求超时秒数（`[llm] request_timeout_secs`）
+    request_timeout_secs: u64,
+    /// 溯源对齐配置（F9；来自 `[llm]` 的 `provenance_*` 两键，同上入口接线）
     provenance: provenance::ProvenanceConfig,
 }
 
@@ -120,6 +124,8 @@ impl LLMService {
         let api_key = settings.llm.api_key.clone();
         let chunking = ChunkingConfig::from_settings(&settings.llm.chunking);
         let provenance = provenance::ProvenanceConfig::from_settings(&settings.llm);
+        let direct_max_output_tokens = Some(u64::from(chunking.max_output_tokens));
+        let request_timeout_secs = settings.llm.request_timeout_secs;
 
         Self {
             http_client,
@@ -131,6 +137,8 @@ impl LLMService {
             api_key,
             templates,
             chunking,
+            direct_max_output_tokens,
+            request_timeout_secs,
             provenance,
         }
     }
@@ -153,6 +161,7 @@ impl LLMService {
         template_loader: TemplateLoader,
     ) -> Self {
         let templates = template_loader.load_templates().unwrap_or_default();
+        let chunking = ChunkingConfig::default();
 
         Self {
             http_client: http_client.clone(),
@@ -163,7 +172,9 @@ impl LLMService {
             api_base_url: Some(api_base_url),
             api_key: Some(_api_key),
             templates,
-            chunking: ChunkingConfig::default(),
+            direct_max_output_tokens: Some(u64::from(chunking.max_output_tokens)),
+            request_timeout_secs: 120,
+            chunking,
             provenance: provenance::ProvenanceConfig::default(),
         }
     }
@@ -178,6 +189,7 @@ impl LLMService {
         let template_loader: TemplateLoader =
             Arc::new(InMemoryTemplateLoader::new().with_default_templates());
         let templates = template_loader.load_templates().unwrap_or_default();
+        let chunking = ChunkingConfig::default();
 
         Self {
             http_client: http_client.clone(),
@@ -188,7 +200,9 @@ impl LLMService {
             api_base_url: Some(api_base_url),
             api_key: Some(_api_key),
             templates,
-            chunking: ChunkingConfig::default(),
+            direct_max_output_tokens: Some(u64::from(chunking.max_output_tokens)),
+            request_timeout_secs: 120,
+            chunking,
             provenance: provenance::ProvenanceConfig::default(),
         }
     }
@@ -248,8 +262,8 @@ impl LLMServiceTrait for LLMService {
         chunker::extract_chunked(text, schema, &self.chunking, extract_one, merge_call).await
     }
 
-    /// 溯源提取（F9）：`provenance_enabled = false` 短路等价 extract_data；
-    /// 启用时提取（分块开启则走 [`Self::extract_data_chunked`]）后对 merge 后
+    /// 溯源提取（F9）：`provenance_enabled = false` 时仅按 chunking 开关决定是否
+    /// 分块；启用时提取（分块开启则走 [`Self::extract_data_chunked`]）后对 merge 后
     /// 结果做全文对齐——merge 后字段值仍出自原文各块切片，全文对齐即可还原
     /// 全局 char 区间（chunker::extract_chunked 不暴露逐块偏移，故不做逐块换算）。
     async fn extract_data_with_provenance(
@@ -258,11 +272,14 @@ impl LLMServiceTrait for LLMService {
         schema: &Value,
         format: &str,
     ) -> Result<(Value, Option<Value>, TokenUsage)> {
+        let (value, usage) = if self.chunking.enabled {
+            self.extract_data_chunked(text, schema, format).await?
+        } else {
+            self.extract_data(text, schema, format).await?
+        };
         if !self.provenance.enabled {
-            let (value, usage) = self.extract_data(text, schema, format).await?;
             return Ok((value, None, usage));
         }
-        let (value, usage) = self.extract_data_chunked(text, schema, format).await?;
         let (value, prov) = provenance::apply_provenance(text, value, &self.provenance);
         Ok((value, prov, usage))
     }
@@ -292,6 +309,8 @@ impl LLMService {
                 &self.model,
                 &prompt,
                 self.api_key.as_deref(),
+                self.direct_max_output_tokens,
+                self.request_timeout_secs,
             )
             .await?;
             (response.content, response.usage)
@@ -648,6 +667,7 @@ json = 'json only'
             chunking: crate::config::settings::LlmChunkingSettings::default(),
             provenance_enabled: false,
             provenance_min_coverage: 0.75,
+            request_timeout_secs: 120,
         }
     }
 

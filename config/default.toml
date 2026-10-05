@@ -231,6 +231,9 @@ batch_size = 1000
 api_key = ""
 model = "qwen3:1.7b"
 api_base_url = "http://localhost:11434/v1"
+# 直调单请求超时秒数：须覆盖自托管端点的模型冷加载与长生成
+# （实测 Ollama 模型重载可达 ~50s，30s 会掐掉全部直调）
+request_timeout_secs = 120
 
 # LLM 提取结果字符级溯源对齐（langextract 三层对齐 + 覆盖率/密度双门；
 # 不依赖 --features llm，该 feature 仅门控 genai provider 路径）

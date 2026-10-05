@@ -94,6 +94,10 @@ fn default_provenance_min_coverage() -> f64 {
     0.75
 }
 
+fn default_request_timeout_secs() -> u64 {
+    120
+}
+
 /// LLM 配置设置
 ///
 /// 配置 LLM（大语言模型）服务的参数
@@ -131,6 +135,14 @@ pub struct LLMSettings {
     /// （同 `sitemap` / `crawl` 节先例）。
     #[serde(default)]
     pub chunking: LlmChunkingSettings,
+
+    /// 直调单请求超时秒数
+    ///
+    /// 覆盖本地/自托管端点的冷加载与长生成（实测 Ollama 模型重载可达 ~50s，
+    /// 30s 硬编码会导致全部直调超时）。`serde(default)` 兼容旧配置缺键。
+    #[serde(default = "default_request_timeout_secs")]
+    #[config(default = 120)]
+    pub request_timeout_secs: u64,
 
     /// 提取结果字符级溯源对齐开关（F9）
     ///
@@ -308,6 +320,7 @@ mod tests {
             api_base_url: Some("https://api.openai.com/v1".to_string()),
             chunking: LlmChunkingSettings::default(),
             provenance_enabled: false,
+            request_timeout_secs: 120,
             provenance_min_coverage: 0.75,
         };
         assert_eq!(settings.api_key(), Some("sk-secret-key"));
@@ -322,6 +335,7 @@ mod tests {
             api_base_url: None,
             chunking: LlmChunkingSettings::default(),
             provenance_enabled: false,
+            request_timeout_secs: 120,
             provenance_min_coverage: 0.75,
         };
         assert!(settings.api_key().is_none());
@@ -336,6 +350,7 @@ mod tests {
             api_base_url: Some("https://api.anthropic.com".to_string()),
             chunking: LlmChunkingSettings::default(),
             provenance_enabled: false,
+            request_timeout_secs: 120,
             provenance_min_coverage: 0.75,
         };
         let json = serde_json::to_string(&settings).expect("serialize");
@@ -372,6 +387,7 @@ mod tests {
             api_base_url: Some("http://localhost:11434".to_string()),
             chunking: LlmChunkingSettings::default(),
             provenance_enabled: false,
+            request_timeout_secs: 120,
             provenance_min_coverage: 0.75,
         };
         let cloned = settings.clone();
@@ -390,6 +406,7 @@ mod tests {
             api_base_url: Some("https://api.openai.com/v1".to_string()),
             chunking: LlmChunkingSettings::default(),
             provenance_enabled: false,
+            request_timeout_secs: 120,
             provenance_min_coverage: 0.75,
         };
         let debug = format!("{:?}", settings);

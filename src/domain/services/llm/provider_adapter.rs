@@ -73,20 +73,27 @@ pub fn build_request_headers(api_key: Option<&str>) -> HashMap<String, String> {
 /// * `model` - 模型名称
 /// * `prompt` - 完整 prompt 文本
 /// * `api_key` - 可选 API 密钥
+/// * `max_tokens` - 可选单次回答 token 上限（确定性封顶生成时长，防无界生成挂死任务）
+/// * `timeout_secs` - 单请求超时秒数（须覆盖自托管端点冷加载与长生成）
 pub async fn send_direct_request(
     http_client: &reqwest::Client,
     url: &str,
     model: &str,
     prompt: &str,
     api_key: Option<&str>,
+    max_tokens: Option<u64>,
+    timeout_secs: u64,
 ) -> Result<LlmResponse> {
     use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
-    let body = json!({
+    let mut body = json!({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0
     });
+    if let Some(cap) = max_tokens {
+        body["max_tokens"] = json!(cap);
+    }
 
     let mut headers = HeaderMap::new();
     for (k, v) in build_request_headers(api_key) {
@@ -98,10 +105,9 @@ pub async fn send_direct_request(
         }
     }
 
-    // 超时与原 EngineClient 路径的 ScrapeOptions 默认值（30s）保持一致
     let resp = http_client
         .post(url)
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .headers(headers)
         .body(body.to_string())
         .send()

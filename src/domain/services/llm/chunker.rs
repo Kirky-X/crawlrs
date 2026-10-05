@@ -419,6 +419,13 @@ where
 
     let ranges = plan_chunks(text, cfg);
     let total = ranges.len();
+    log::info!(
+        "llm_chunking: text_len={} chars, chunks={}, max_parallel={}, merge_enabled={}",
+        text.chars().count(),
+        total,
+        cfg.max_parallel,
+        cfg.merge_enabled
+    );
     let chunk_texts: Vec<String> = ranges
         .iter()
         .enumerate()

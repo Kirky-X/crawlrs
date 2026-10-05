@@ -107,6 +107,16 @@ pub struct ExtractionService {
     rag_runtime: Option<Arc<RagExtractionRuntime>>,
 }
 
+/// 挂载溯源映射：`_provenance` 与结果顶层并列（仅对象结果可挂载；数组/标量原样返回）。
+fn attach_provenance(mut val: Value, prov: Option<Value>) -> Value {
+    if let Some(prov) = prov {
+        if let Value::Object(val_map) = &mut val {
+            val_map.insert("_provenance".to_string(), prov);
+        }
+    }
+    val
+}
+
 #[async_trait::async_trait]
 impl ExtractionServiceTrait for ExtractionService {
     async fn extract(
@@ -126,10 +136,12 @@ impl ExtractionServiceTrait for ExtractionService {
         // 1. Noise removal
         let clean_text = Self::get_clean_text(html_content);
 
-        // 2. LLM Interaction
-        self.llm_service
-            .extract_data(&clean_text, schema, "json")
-            .await
+        // 2. LLM Interaction（经 with_provenance 入口：按开关接入 F8 分块与 F9 溯源）
+        let (val, prov, usage) = self
+            .llm_service
+            .extract_data_with_provenance(&clean_text, schema, "json")
+            .await?;
+        Ok((attach_provenance(val, prov), usage))
     }
 
     fn extract_with_selectors(
@@ -155,10 +167,11 @@ impl ExtractionServiceTrait for ExtractionService {
             log::warn!("RAG retrieval returned empty context for query: {}", query);
             // 退化到全页提取
             let clean_text = Self::get_clean_text(html_content);
-            return self
+            let (val, prov, usage) = self
                 .llm_service
-                .extract_data(&clean_text, schema, "json")
-                .await;
+                .extract_data_with_provenance(&clean_text, schema, "json")
+                .await?;
+            return Ok((attach_provenance(val, prov), usage));
         }
 
         // 2. 构造增强 prompt：context + 提取指令
@@ -168,9 +181,11 @@ impl ExtractionServiceTrait for ExtractionService {
         );
 
         // 3. LLM 精确提取
-        self.llm_service
-            .extract_data(&enhanced_text, schema, "json")
-            .await
+        let (val, prov, usage) = self
+            .llm_service
+            .extract_data_with_provenance(&enhanced_text, schema, "json")
+            .await?;
+        Ok((attach_provenance(val, prov), usage))
     }
 
     async fn extract_with_rag_auto(
@@ -395,14 +410,15 @@ impl ExtractionService {
                     Self::get_clean_text(html_content)
                 };
 
-                // 2. LLM Interaction
+                // 2. LLM Interaction（经 with_provenance 入口：按各自开关接入 F8 分块
+                //    与 F9 溯源；双开关关闭时等价原 extract_data 单发路径）
                 match self
                     .llm_service
-                    .extract_data(&content_to_process, &schema, format)
+                    .extract_data_with_provenance(&content_to_process, &schema, format)
                     .await
                 {
-                    Ok((val, usage)) => {
-                        result.insert(key.clone(), val);
+                    Ok((val, prov, usage)) => {
+                        result.insert(key.clone(), attach_provenance(val, prov));
                         total_usage.prompt_tokens += usage.prompt_tokens;
                         total_usage.completion_tokens += usage.completion_tokens;
                         total_usage.total_tokens += usage.total_tokens;
@@ -523,6 +539,7 @@ mod tests {
     /// Mock LLM service for testing ExtractionService without real HTTP calls.
     struct MockLLMService {
         response: Mutex<Option<Result<(Value, TokenUsage), String>>>,
+        provenance: Mutex<Option<Value>>,
         call_count: Arc<AtomicU64>,
         last_text: Mutex<Option<String>>,
         last_schema: Mutex<Option<Value>>,
@@ -533,6 +550,7 @@ mod tests {
         fn new_success(value: Value, usage: TokenUsage) -> Self {
             Self {
                 response: Mutex::new(Some(Ok((value, usage)))),
+                provenance: Mutex::new(None),
                 call_count: Arc::new(AtomicU64::new(0)),
                 last_text: Mutex::new(None),
                 last_schema: Mutex::new(None),
@@ -543,11 +561,16 @@ mod tests {
         fn new_error(msg: &str) -> Self {
             Self {
                 response: Mutex::new(Some(Err(msg.to_string()))),
+                provenance: Mutex::new(None),
                 call_count: Arc::new(AtomicU64::new(0)),
                 last_text: Mutex::new(None),
                 last_schema: Mutex::new(None),
                 last_format: Mutex::new(None),
             }
+        }
+
+        fn set_provenance(&self, v: Value) {
+            *self.provenance.lock().unwrap() = Some(v);
         }
 
         #[allow(dead_code)]
@@ -583,6 +606,18 @@ mod tests {
                 Some(Err(msg)) => Err(anyhow::anyhow!("{}", msg)),
                 None => Err(anyhow::anyhow!("No response configured")),
             }
+        }
+
+        async fn extract_data_with_provenance(
+            &self,
+            text: &str,
+            schema: &Value,
+            format: &str,
+        ) -> Result<(Value, Option<Value>, TokenUsage), anyhow::Error> {
+            let (value, usage) =
+                <Self as LLMServiceTrait>::extract_data(self, text, schema, format).await?;
+            let prov = self.provenance.lock().unwrap().clone();
+            Ok((value, prov, usage))
         }
     }
 
@@ -1014,6 +1049,39 @@ mod tests {
         assert_eq!(usage.prompt_tokens, 10);
         assert_eq!(usage.completion_tokens, 5);
         assert_eq!(usage.total_tokens, 15);
+    }
+
+    /// 接线回归：extract_data_with_provenance 返回的溯源映射必须挂载进结果
+    /// `_provenance` 键（F9 活体路径曾被断线——LLM 调用只走 extract_data）。
+    #[tokio::test]
+    async fn test_extract_mounts_provenance_into_result() {
+        let html = r#"<html><body>Product costs $100</body></html>"#;
+        let mut rules = HashMap::new();
+        rules.insert(
+            "product".to_string(),
+            llm_rule(None, Some("Extract product info"), false),
+        );
+
+        let mock = MockLLMService::new_success(
+            json!({"name": "Product", "price": 100}),
+            TokenUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            },
+        );
+        mock.set_provenance(json!({
+            "name": { "start": 6, "end": 13, "coverage": 1.0 }
+        }));
+        let (service, _count) = make_service(mock);
+        let (result, _usage) = service
+            .extract(html, &rules, None)
+            .await
+            .expect("extract should succeed");
+
+        assert_eq!(result["product"]["name"], "Product");
+        assert_eq!(result["product"]["_provenance"]["name"]["start"], 6);
+        assert_eq!(result["product"]["_provenance"]["name"]["end"], 13);
     }
 
     #[tokio::test]
