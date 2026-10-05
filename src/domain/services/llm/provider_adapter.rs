@@ -4,16 +4,15 @@
 //! Provider Adapter — LLM 提供商的请求适配与响应解析。
 //!
 //! 封装两种 LLM 调用路径：
-//! 1. **直接 HTTP**（显式 `api_base_url` 时）：通过 `EngineClient` 发送 OpenAI 兼容请求
+//! 1. **直接 HTTP**（显式 `api_base_url` 时）：经共享 reqwest 客户端直连
+//!    OpenAI 兼容端点（运维自配地址，不走用户输入的 SSRF 校验）
 //! 2. **genai crate**（无显式地址时）：通过 genai 库的 provider 适配器
 //!
 //! `LlmRequest` / `LlmResponse` 为中间表示，解耦 prompt 构造与实际发送。
 
-use crate::engines::engine_client::{EngineClient, HttpMethod, ScrapeOptions, ScrapeRequest};
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use super::TokenUsage;
 
@@ -60,48 +59,66 @@ pub fn build_request_headers(api_key: Option<&str>) -> HashMap<String, String> {
     headers
 }
 
-/// 通过 `EngineClient` 发送直接 HTTP 请求到 LLM 提供商。
+/// 向 LLM 提供商发送直接 HTTP 请求（POST，OpenAI 兼容格式）。
+///
+/// 使用共享 `reqwest::Client` 直连而非 `EngineClient`：`[llm] api_base_url`
+/// 是运维自配的服务端端点（默认 `http://localhost:11434/v1` Ollama），不属于
+/// 用户抓取输入，不经过面向用户输入的 SSRF 校验——否则本机 LLM 开箱即被拦
+/// （"Hostname 'localhost' is blocked"）。
 ///
 /// # Arguments
 ///
-/// * `engine_client` - HTTP 引擎客户端
+/// * `http_client` - 共享 HTTP 客户端
 /// * `url` - 请求 URL
 /// * `model` - 模型名称
 /// * `prompt` - 完整 prompt 文本
 /// * `api_key` - 可选 API 密钥
 pub async fn send_direct_request(
-    engine_client: &Arc<EngineClient>,
+    http_client: &reqwest::Client,
     url: &str,
     model: &str,
     prompt: &str,
     api_key: Option<&str>,
 ) -> Result<LlmResponse> {
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
     let body = json!({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0
     });
 
-    let headers = build_request_headers(api_key);
+    let mut headers = HeaderMap::new();
+    for (k, v) in build_request_headers(api_key) {
+        if let (Ok(header_name), Ok(header_value)) = (
+            HeaderName::from_bytes(k.as_bytes()),
+            HeaderValue::from_str(&v),
+        ) {
+            headers.insert(header_name, header_value);
+        }
+    }
 
-    let request = ScrapeRequest::new(url).with_options(
-        ScrapeOptions::builder()
-            .method(HttpMethod::Post)
-            .headers(headers)
-            .body(body.to_string())
-            .build(),
-    );
-
-    let res = engine_client
-        .scrape(&request)
+    // 超时与原 EngineClient 路径的 ScrapeOptions 默认值（30s）保持一致
+    let resp = http_client
+        .post(url)
+        .timeout(std::time::Duration::from_secs(30))
+        .headers(headers)
+        .body(body.to_string())
+        .send()
         .await
-        .map_err(|e| anyhow::anyhow!("Direct LLM call failed: {}", e))?;
-    if !res.is_success() {
-        return Err(anyhow::anyhow!("LLM returned error: {}", res.content));
+        .context("Direct LLM call failed")?;
+
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .context("Failed to read LLM response body")?;
+    if !status.is_success() {
+        return Err(anyhow::anyhow!("LLM returned error: {}", text));
     }
 
     let res_json: Value =
-        serde_json::from_str(&res.content).context("Failed to parse LLM JSON response")?;
+        serde_json::from_str(&text).context("Failed to parse LLM JSON response")?;
 
     let content = res_json["choices"][0]["message"]["content"]
         .as_str()
@@ -159,17 +176,6 @@ pub async fn send_genai_request(provider: &str, model: &str, prompt: &str) -> Re
              Please rebuild with --features llm"
         ))
     }
-}
-
-/// 创建 EngineClient（从 reqwest::Client）。
-pub fn create_engine_client(http_client: Arc<reqwest::Client>) -> Arc<EngineClient> {
-    use crate::engines::client::reqwest::ReqwestEngine;
-    use crate::engines::router::{EngineRouter, EngineRouterTrait};
-
-    let reqwest_engine = ReqwestEngine::new(http_client);
-    let router: Arc<dyn EngineRouterTrait> =
-        Arc::new(EngineRouter::new(vec![Arc::new(reqwest_engine)]));
-    Arc::new(EngineClient::with_router(router))
 }
 
 /// 从 Settings 解析 provider，应用 OllamaStrategy 规则。

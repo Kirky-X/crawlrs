@@ -20,10 +20,9 @@ use prompt_builder::TemplateLoaderTrait;
 use prompt_builder::{
     build_prompt, parse_llm_response, FileTemplateLoader, InMemoryTemplateLoader, TemplateLoader,
 };
-use provider_adapter::{create_engine_client, resolve_provider};
+use provider_adapter::resolve_provider;
 
 use crate::config::settings::Settings;
-use crate::engines::engine_client::EngineClient;
 use anyhow::Result;
 use async_trait::async_trait;
 #[cfg(feature = "llm")]
@@ -83,7 +82,7 @@ pub trait LLMServiceTrait: Send + Sync {
 /// LLM服务 - 处理与LLM提供商的交互
 #[derive(Clone)]
 pub struct LLMService {
-    engine_client: Arc<EngineClient>,
+    http_client: Arc<reqwest::Client>,
     /// LLM 客户端
     #[cfg(feature = "llm")]
     _client: Client,
@@ -111,7 +110,6 @@ impl LLMService {
         template_loader: TemplateLoader,
     ) -> Self {
         let templates = template_loader.load_templates().unwrap_or_default();
-        let engine_client = create_engine_client(http_client);
         let provider = resolve_provider(settings);
         let model = settings
             .llm
@@ -124,7 +122,7 @@ impl LLMService {
         let provenance = provenance::ProvenanceConfig::from_settings(&settings.llm);
 
         Self {
-            engine_client,
+            http_client,
             #[cfg(feature = "llm")]
             _client: Client::default(),
             model,
@@ -155,10 +153,9 @@ impl LLMService {
         template_loader: TemplateLoader,
     ) -> Self {
         let templates = template_loader.load_templates().unwrap_or_default();
-        let engine_client = create_engine_client(http_client);
 
         Self {
-            engine_client,
+            http_client: http_client.clone(),
             #[cfg(feature = "llm")]
             _client: Client::default(),
             model,
@@ -181,10 +178,9 @@ impl LLMService {
         let template_loader: TemplateLoader =
             Arc::new(InMemoryTemplateLoader::new().with_default_templates());
         let templates = template_loader.load_templates().unwrap_or_default();
-        let engine_client = create_engine_client(http_client);
 
         Self {
-            engine_client,
+            http_client: http_client.clone(),
             #[cfg(feature = "llm")]
             _client: Client::default(),
             model,
@@ -291,7 +287,7 @@ impl LLMService {
         let (content, usage) = if let Some(base_url) = &self.api_base_url {
             let url = provider_adapter::build_request_url(base_url);
             let response = provider_adapter::send_direct_request(
-                &self.engine_client,
+                &self.http_client,
                 &url,
                 &self.model,
                 &prompt,
