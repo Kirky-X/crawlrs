@@ -403,7 +403,9 @@ impl TeamSemaphore {
     /// 返回更新后的 target（Fixed 模式为 available_permits；Adaptive 为 controller.current_limit）
     pub fn record_success(&self, team_id: Uuid) -> usize {
         let handle = self.get_or_create(team_id);
-        handle.record_success()
+        let target = handle.record_success();
+        emit_aimd_gauge(team_id, target);
+        target
     }
 
     /// 记录某团队一次抓取失败
@@ -421,7 +423,9 @@ impl TeamSemaphore {
     /// 返回更新后的 target（Fixed 模式为 available_permits；Adaptive 为 controller.current_limit）
     pub fn record_failure(&self, team_id: Uuid) -> usize {
         let handle = self.get_or_create(team_id);
-        handle.record_failure()
+        let target = handle.record_failure();
+        emit_aimd_gauge(team_id, target);
+        target
     }
 
     /// 内存压力信号广播（F10：AIMD 与 MemoryScheduler 三态机联动）
@@ -452,6 +456,7 @@ impl TeamSemaphore {
             {
                 let new_target = controller.on_memory_pressure(critical);
                 adaptive.set_target(new_target);
+                emit_aimd_gauge(*entry.key(), new_target);
                 adaptive_teams += 1;
             }
         }
@@ -1268,4 +1273,13 @@ mod tests {
             h.join().expect("thread panicked");
         }
     }
+}
+
+/// F10 可观测性：AIMD 动态 target 的团队维度 gauge（Fixed 模式不产生 AIMD 信号）。
+fn emit_aimd_gauge(team_id: Uuid, target: usize) {
+    metrics::describe_gauge!(
+        "crawlrs_aimd_limit",
+        "Adaptive AIMD concurrency target per team"
+    );
+    metrics::gauge!("crawlrs_aimd_limit", "team" => team_id.to_string()).set(target as f64);
 }

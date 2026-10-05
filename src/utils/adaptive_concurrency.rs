@@ -140,7 +140,10 @@ impl AIMDController {
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                 ) {
-                    Ok(_) => return new,
+                    Ok(_) => {
+                        log::debug!("AIMD limit increased: {} -> {}", current, new);
+                        return new;
+                    }
                     Err(_) => continue, // CAS 失败：其他线程修改了，重试
                 }
             }
@@ -197,6 +200,7 @@ impl AIMDController {
                 .compare_exchange(current, new, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
             {
+                log::debug!("AIMD limit halved: {} -> {}", current, new);
                 return new;
             }
             // CAS 失败：其他线程修改了，重试
@@ -288,6 +292,7 @@ impl AdaptiveSemaphore {
         }
 
         self.target.store(new_target, Ordering::Relaxed);
+        log::debug!("AIMD semaphore target: {} -> {}", current, new_target);
 
         if new_target > current {
             // 增加：直接 add_permits
