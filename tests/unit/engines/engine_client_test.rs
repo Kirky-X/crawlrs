@@ -130,6 +130,7 @@ mod engine_client_tests {
             headers: HashMap::new(),
             response_time_ms: 100,
             final_url: None,
+            captured_responses: Vec::new(),
         }
     }
 
@@ -611,6 +612,7 @@ mod engine_client_tests {
             headers: HashMap::new(),
             response_time_ms: 50,
             final_url: None,
+            captured_responses: Vec::new(),
         };
         let router: Arc<dyn EngineRouterTrait> =
             Arc::new(MockEngineRouter::with_success_response(response_data));

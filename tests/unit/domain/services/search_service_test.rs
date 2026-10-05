@@ -11,7 +11,9 @@ mod tests {
     fn test_search_service_configuration_structure() {
         // Test that the search configuration structure exists and has expected fields
         // Note: This test validates the configuration structure without loading actual files
-        use crawlrs::config::search::{SearchFallbackConfig, SearchSettings};
+        use crawlrs::config::search::{
+            ExaEngineSettings, SearchFallbackConfig, SearchSettings, TavilyEngineSettings,
+        };
 
         let settings = SearchSettings {
             timeout_seconds: 30,
@@ -20,6 +22,8 @@ mod tests {
             max_retries: 3,
             retry_delay_ms: 1000,
             max_results: 50,
+            exa: ExaEngineSettings::default(),
+            tavily: TavilyEngineSettings::default(),
             fallback: SearchFallbackConfig::default(),
         };
 

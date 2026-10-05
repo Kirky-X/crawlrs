@@ -1896,20 +1896,27 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "test semantics invalid after permission feature removal"]
-    async fn test_fetch_scrape_results_non_empty_no_db() {
+    async fn test_fetch_scrape_results_non_empty_tasks_returns_result_map() {
+        // 非空 tasks 走真实查询路径（空 tasks 的提前返回由
+        // test_fetch_scrape_results_empty_tasks 覆盖）。原 no_db 变体依赖
+        // "环境无 DB"前提且 dbnexus DbPool::with_config 构建期即建连
+        // （不可构造"连不上的池"），语义已被仓库标记失效，故改为
+        // 验证真实库下非空任务 id 的结果映射行为。
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // With a lazy (non-connecting) pool, calling find_by_task_ids on
-        // non-empty task IDs should fail because the pool cannot connect.
         let repo = make_test_scrape_result_repo();
         let task_id = Uuid::new_v4();
         let tasks = vec![make_test_task(task_id, TaskStatus::Completed)];
 
         let result = fetch_scrape_results(repo.as_ref(), &tasks).await;
 
-        assert!(result.is_err(), "should fail without a real DB connection");
+        let map = result.expect("fetch_scrape_results should succeed against a real DB");
+        let map = map.expect("non-empty tasks should produce a result map");
+        assert!(
+            !map.contains_key(&task_id),
+            "freshly generated task id must have no stored results"
+        );
     }
 
     // ========== Additional edge case tests ==========

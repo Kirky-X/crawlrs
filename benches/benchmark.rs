@@ -361,6 +361,7 @@ impl ScraperEngine for BenchMockEngine {
             headers: std::collections::HashMap::new(),
             response_time_ms: 10,
             final_url: None,
+            captured_responses: Vec::new(),
         })
     }
 

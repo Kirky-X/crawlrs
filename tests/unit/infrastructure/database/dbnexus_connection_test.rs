@@ -507,16 +507,18 @@ async fn test_database_pool_get_system_session_with_real_pool_succeeds() {
     );
 }
 
+/// 无权限配置时 dbnexus 安全默认策略仅放行 admin/system（`validate_role_name`
+/// 白名单），"readonly" 角色被拒；crawlrs 适配层（dbnexus_connection
+/// `get_session`）把该 Permission 错误统一掩码为 ConnectionClosed。
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL"]
-async fn test_database_pool_get_readonly_session_with_real_pool_succeeds() {
+async fn test_database_pool_get_readonly_session_rejected_without_permission_config() {
     let pool = create_test_pool_or_panic();
     let db_pool: DatabasePool = pool.into();
     let session = db_pool.get_readonly_session().await;
     assert!(
-        session.is_ok(),
-        "get_readonly_session on real pool should succeed, got: {:?}",
-        session.err()
+        session.is_err(),
+        "readonly role should be rejected without permission config"
     );
 }
 

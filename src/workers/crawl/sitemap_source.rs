@@ -668,6 +668,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn feed(
         fetcher: StaticSitemapFetcher,
         sitemap_url: &str,

@@ -810,9 +810,11 @@ mod tests {
 
     #[test]
     fn provenance_config_from_settings_maps_both_keys() {
-        let mut settings = crate::config::settings::LLMSettings::default();
-        settings.provenance_enabled = true;
-        settings.provenance_min_coverage = 0.6;
+        let settings = crate::config::settings::LLMSettings {
+            provenance_enabled: true,
+            provenance_min_coverage: 0.6,
+            ..Default::default()
+        };
         let cfg = ProvenanceConfig::from_settings(&settings);
         assert!(cfg.enabled);
         assert!((cfg.min_coverage - 0.6).abs() < f64::EPSILON);

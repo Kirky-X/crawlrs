@@ -42,6 +42,7 @@ impl MockScraperEngine {
                 headers: HashMap::new(),
                 response_time_ms: 0,
                 final_url: None,
+                captured_responses: Vec::new(),
             }),
             error: None,
             mrt: Duration::from_secs(30),
