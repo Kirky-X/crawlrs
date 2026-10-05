@@ -279,6 +279,9 @@ impl SessionManager {
     /// `name=value` 对（首个 `;` 前）；单条超限丢弃该条（warn），累积超限
     /// 丢最旧条目。headers 为引擎返回的 `HashMap<String,String>`，同名头会
     /// 折叠（HashMap 语义），能捕获多少捕获多少。
+    ///
+    /// F2：reqwest 引擎把重定向链各跳 + 最终响应的 Cookie 以 `'\n'` 连接进
+    /// 单一 set-cookie 值，本方法按行拆分逐条捕获。
     pub fn capture_cookies(
         &self,
         identity: &SessionIdentity,
@@ -291,35 +294,37 @@ impl SessionManager {
             if !name.eq_ignore_ascii_case("set-cookie") {
                 continue;
             }
-            // 手动通道：只取 "name=value" 对（首个 ';' 前），属性全忽略
-            let pair = value.split(';').next().unwrap_or("").trim();
-            if pair.is_empty() {
-                continue;
-            }
-            let pair_len = pair.len() + if blob.is_empty() { 0 } else { 2 };
-            if pair_len > self.cookie_cache_max_bytes {
-                log::warn!(
-                    "session: dropping set-cookie pair ({} bytes) exceeding cache cap {} \
-                     for identity #{}",
-                    pair.len(),
-                    self.cookie_cache_max_bytes,
-                    identity.id
-                );
-                continue;
-            }
-            if !blob.is_empty() {
-                blob.push_str("; ");
-            }
-            blob.push_str(pair);
-            // 容量护栏：超出上限丢最旧条目（分号分隔的首段）
-            while blob.len() > self.cookie_cache_max_bytes {
-                match blob.find("; ") {
-                    Some(pos) => {
-                        blob.drain(..pos + 2);
-                    }
-                    None => {
-                        blob.clear();
-                        break;
+            for cookie_str in value.split('\n') {
+                // 手动通道：只取 "name=value" 对（首个 ';' 前），属性全忽略
+                let pair = cookie_str.split(';').next().unwrap_or("").trim();
+                if pair.is_empty() {
+                    continue;
+                }
+                let pair_len = pair.len() + if blob.is_empty() { 0 } else { 2 };
+                if pair_len > self.cookie_cache_max_bytes {
+                    log::warn!(
+                        "session: dropping set-cookie pair ({} bytes) exceeding cache cap {} \
+                         for identity #{}",
+                        pair.len(),
+                        self.cookie_cache_max_bytes,
+                        identity.id
+                    );
+                    continue;
+                }
+                if !blob.is_empty() {
+                    blob.push_str("; ");
+                }
+                blob.push_str(pair);
+                // 容量护栏：超出上限丢最旧条目（分号分隔的首段）
+                while blob.len() > self.cookie_cache_max_bytes {
+                    match blob.find("; ") {
+                        Some(pos) => {
+                            blob.drain(..pos + 2);
+                        }
+                        None => {
+                            blob.clear();
+                            break;
+                        }
                     }
                 }
             }

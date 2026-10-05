@@ -510,10 +510,16 @@ impl ScraperEngine for ReqwestEngine {
         // SSRF DNS pin: build client with resolve override from scratch.
         // Keeps the original hostname for TLS SNI and HTTP virtual host routing,
         // while connecting to SSRF-validated IPs.
+        //
+        // F2：请求级 cookie Jar——reqwest 中间跳（302 等）响应不外显，其
+        // Set-Cookie 只进 client cookie store；共享 handle.client 的 store
+        // 无法读取，故本路径改挂可读的 `cookie::Jar`，响应后统一回取
+        // （含重定向链各跳），供 session 身份 Cookie 通道累积。
+        let request_cookie_jar = Arc::new(reqwest::cookie::Jar::default());
         let ssrf_client = if !host.is_empty() && !host.parse::<std::net::IpAddr>().is_ok() {
             let mut b = reqwest::Client::builder()
                 .timeout(Duration::from_secs(self.timeout_seconds))
-                .cookie_store(true)
+                .cookie_provider(Arc::clone(&request_cookie_jar))
                 .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
                 .dns_resolver(crate::infrastructure::dns::create_ipv4_only_resolver())
                 .resolve_to_addrs(&host, &resolve_addrs)
@@ -546,7 +552,7 @@ impl ScraperEngine for ReqwestEngine {
                 if need_tls_bypass {
                     let mut b = reqwest::Client::builder()
                         .timeout(Duration::from_secs(self.timeout_seconds))
-                        .cookie_store(true)
+                        .cookie_provider(Arc::clone(&request_cookie_jar))
                         .redirect(crate::utils::http_client::create_ssrf_safe_redirect_policy(
                             5,
                         ))
@@ -684,6 +690,20 @@ impl ScraperEngine for ReqwestEngine {
         for (k, v) in response.headers() {
             if let Ok(v_str) = v.to_str() {
                 response_headers.insert(k.as_str().to_string(), v_str.to_string());
+            }
+        }
+
+        // F2：从请求级 cookie Jar 回取重定向链各跳 + 最终响应的 Cookie（按
+        // 最终 URL 匹配）。多条以 '\n' 连接进单一 set-cookie 值，
+        // `Session::capture_cookies` 按行拆分——中间 302 的 Set-Cookie 不再
+        // 丢失。IP 字面量直连走共享 handle.client（无 Jar），维持原行为。
+        let final_url = response.url().clone();
+        use reqwest::cookie::CookieStore as _;
+        if let Some(jar_cookies) = request_cookie_jar.cookies(&final_url) {
+            if let Ok(pairs) = jar_cookies.to_str() {
+                if !pairs.is_empty() {
+                    response_headers.insert("set-cookie".to_string(), pairs.to_string());
+                }
             }
         }
 
