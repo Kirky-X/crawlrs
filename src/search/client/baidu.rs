@@ -223,9 +223,12 @@ impl SearchEngine for BaiduSearchEngine {
 
         let content = scrape_response.content;
 
-        // 反爬检测：Baidu captcha 重定向目标（参考 searxng wappass 检测）
+        // 反爬检测：Baidu captcha 重定向目标（参考 searxng wappass 检测）。
+        // HTTP 客户端跟随 302 后拿到的是验证页本体，正文只有“百度安全验证”
+        // 标题，不含 wappass 重定向 URL 字符串，故需并列检测。
         if content.contains("wappass.baidu.com/static/captcha")
             || content.contains("verify your access")
+            || content.contains("百度安全验证")
         {
             return Err(SearchError::Captcha("Baidu".to_string()));
         }
