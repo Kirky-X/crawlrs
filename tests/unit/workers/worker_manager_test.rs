@@ -505,6 +505,9 @@ fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> 
         robots_checker: Arc::new(MockRobotsChecker),
         http_client: Arc::new(reqwest::Client::new()),
         extraction_service: Arc::new(MockExtractionService),
+        content_extractor: Arc::new(
+            crawlrs::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService) as Arc<dyn CacheService>,
         shutdown_coordinator: Arc::new(crawlrs::workers::shutdown::ShutdownCoordinator::default()),
     }
