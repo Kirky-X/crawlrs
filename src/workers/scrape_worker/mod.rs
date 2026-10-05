@@ -47,12 +47,9 @@ use crate::workers::shutdown::ShutdownCoordinator;
 // cache key 生成、URL 脱敏
 use crate::workers::cache_utils::{self, redact_url_for_log};
 // Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
+use crate::utils::retry_policy::RetryPolicy;
 #[cfg(feature = "content")]
 use crate::workers::markdown_post_processor::MarkdownPostProcessor;
-// 正文提取门面（与 markdown 特性配合，only_main_content 前置提取）
-#[cfg(feature = "content")]
-use crate::domain::services::content_extractor::ContentExtractionFacade;
-use crate::utils::retry_policy::RetryPolicy;
 // 重试指令与分类器（消费 RetryTracker + RetryDirective）
 use crate::utils::retry::{RetryDirective, RetryTracker};
 // 自适应爬取停止条件
@@ -176,7 +173,9 @@ impl ScrapeWorker {
             #[cfg(feature = "content")]
             markdown_post_processor: MarkdownPostProcessor::new(
                 Arc::new(crate::domain::services::markdown_service::HtmdMarkdownService::new()),
-                Some(Arc::new(ContentExtractionFacade::new(None))),
+                // bootstrap 注入的带质量门 Facade（[content_extraction] 四键 +
+                // llm_service 回退）；不再本地 new(None) 另立 disabled 实例
+                Some(Arc::clone(&deps.content_extractor)),
             ),
             token_usage: Arc::new(DashMap::new()),
             robots_checker: deps.robots_checker,

@@ -155,6 +155,7 @@ mod app {
             robots_checker: app_state.robots_checker.clone(),
             http_client,
             extraction_service: app_state.extraction_service(),
+            content_extractor: app_state.content_extractor(),
             cache_service: app_state.cache_service(),
             shutdown_coordinator: coordinator.clone(),
         };

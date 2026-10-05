@@ -59,6 +59,9 @@ pub struct WorkerManager {
     handles: Vec<JoinHandle<()>>,
     extraction_service:
         Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
+    /// 带质量门的内容提取 Facade（所有 worker 共享同一实例）
+    #[cfg(feature = "content")]
+    content_extractor: Arc<crate::domain::services::content_extractor::ContentExtractionFacade>,
     /// 内存感知调度器
     ///
     /// 由 `WorkerManager::new` 从 `shared_system_monitor()` + `ConcurrencySettings`
@@ -105,6 +108,9 @@ pub struct WorkerManagerDeps {
     pub http_client: Arc<reqwest::Client>,
     pub extraction_service:
         Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
+    /// 带质量门的内容提取 Facade（bootstrap 按 [content_extraction] 装配）
+    #[cfg(feature = "content")]
+    pub content_extractor: Arc<crate::domain::services::content_extractor::ContentExtractionFacade>,
     /// 高级缓存服务
     pub cache_service: Arc<dyn CacheService>,
     /// 优雅退出协调器
@@ -163,6 +169,8 @@ impl WorkerManager {
             default_concurrency_limit: config.default_concurrency_limit,
             handles: Vec::new(),
             extraction_service: deps.extraction_service,
+            #[cfg(feature = "content")]
+            content_extractor: deps.content_extractor,
             #[cfg(feature = "metrics")]
             memory_scheduler,
             // 所有 worker 共享 Deduplicator 实例
@@ -333,6 +341,8 @@ impl WorkerManager {
                 settings: self.settings.clone(),
                 default_concurrency_limit: self.default_concurrency_limit,
                 extraction_service: self.extraction_service.clone(),
+                #[cfg(feature = "content")]
+                content_extractor: self.content_extractor.clone(),
                 cache_service: self.cache_service.clone(),
                 #[cfg(feature = "metrics")]
                 memory_scheduler: self.memory_scheduler.clone(),
@@ -1165,6 +1175,10 @@ mod tests {
             robots_checker: Arc::new(MockRobotsChecker),
             http_client: Arc::new(reqwest::Client::new()),
             extraction_service: Arc::new(MockExtractionService),
+            #[cfg(feature = "content")]
+            content_extractor: Arc::new(
+                crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+            ),
             cache_service: Arc::new(NoopCacheService) as Arc<dyn CacheService>,
             shutdown_coordinator: Arc::new(ShutdownCoordinator::default()),
         }

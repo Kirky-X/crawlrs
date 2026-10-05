@@ -12,6 +12,8 @@ use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
+#[cfg(feature = "content")]
+use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::domain::services::webhook_service::WebhookService;
@@ -41,6 +43,13 @@ pub struct ScrapeWorkerDeps {
     pub settings: Arc<Settings>,
     pub default_concurrency_limit: usize,
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
+    /// 带质量门的内容提取 Facade
+    ///
+    /// bootstrap 按 `[content_extraction]` 四键 + llm_service 装配
+    /// （`ServicesComponents.content_extractor`），worker 的 Markdown 路径
+    /// 质量门与 LLM 回退均经此实例生效。
+    #[cfg(feature = "content")]
+    pub content_extractor: Arc<ContentExtractionFacade>,
     pub cache_service: Arc<dyn CacheService>,
     /// 内存感知调度器（仅 metrics 特性启用时存在）
     #[cfg(feature = "metrics")]

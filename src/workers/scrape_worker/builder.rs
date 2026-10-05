@@ -44,6 +44,13 @@ pub struct ScrapeWorkerBuilder {
     settings: Option<Arc<Settings>>,
     default_concurrency_limit: usize,
     extraction_service: Option<Arc<dyn ExtractionServiceTrait>>,
+    /// 带质量门的内容提取 Facade（可选）
+    ///
+    /// 不设置时退化为 `ContentExtractionFacade::new(None)`（质量门关闭），
+    /// 生产路径经 `WorkerManager` 注入 bootstrap 装配的实例。
+    #[cfg(feature = "content")]
+    content_extractor:
+        Option<Arc<crate::domain::services::content_extractor::ContentExtractionFacade>>,
     /// 内存感知调度器，仅 metrics 特性启用时存在
     #[cfg(feature = "metrics")]
     memory_scheduler: Option<Arc<MemoryScheduler>>,
@@ -76,6 +83,8 @@ impl Default for ScrapeWorkerBuilder {
             settings: None,
             default_concurrency_limit: 10,
             extraction_service: None,
+            #[cfg(feature = "content")]
+            content_extractor: None,
             #[cfg(feature = "metrics")]
             memory_scheduler: None,
             deduplicator: None,
@@ -180,6 +189,18 @@ impl ScrapeWorkerBuilder {
         self
     }
 
+    /// 注入带质量门的内容提取 Facade（可选）
+    ///
+    /// 不注入时 build() 退化为质量门关闭的默认 Facade。
+    #[cfg(feature = "content")]
+    pub fn with_content_extractor(
+        mut self,
+        content_extractor: Arc<crate::domain::services::content_extractor::ContentExtractionFacade>,
+    ) -> Self {
+        self.content_extractor = Some(content_extractor);
+        self
+    }
+
     /// 设置高级缓存服务（必需）
     ///
     /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
@@ -244,6 +265,10 @@ impl ScrapeWorkerBuilder {
             .extraction_service
             .ok_or("extraction_service is required")?;
         let cache_service = self.cache_service.ok_or("cache_service is required")?;
+        #[cfg(feature = "content")]
+        let content_extractor = self.content_extractor.unwrap_or_else(|| {
+            Arc::new(crate::domain::services::content_extractor::ContentExtractionFacade::new(None))
+        });
         #[cfg(feature = "metrics")]
         let memory_scheduler = self
             .memory_scheduler
@@ -274,6 +299,8 @@ impl ScrapeWorkerBuilder {
             settings,
             default_concurrency_limit: self.default_concurrency_limit,
             extraction_service,
+            #[cfg(feature = "content")]
+            content_extractor,
             cache_service,
             #[cfg(feature = "metrics")]
             memory_scheduler,

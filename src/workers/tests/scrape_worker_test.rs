@@ -1463,6 +1463,10 @@ async fn build_mock_worker() -> ScrapeWorker {
         settings: settings_arc,
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -1498,6 +1502,10 @@ async fn build_mock_worker_with_cache(cache: Arc<MockCacheService>) -> ScrapeWor
         settings: settings_arc,
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: cache as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -1536,6 +1544,10 @@ async fn build_mock_worker_with_capturing_repo(
         settings: settings_arc,
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -2634,6 +2646,10 @@ async fn test_handle_scrape_success_returns_false_when_guard_lost() {
         settings: settings_arc,
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -3506,6 +3522,8 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
         settings: settings_arc,
         default_concurrency_limit: settings.concurrency.default_team_limit as usize,
         extraction_service: services.extraction_service.clone(),
+        #[cfg(feature = "content")]
+        content_extractor: services.content_extractor.clone(),
         cache_service: infra.cache_service.clone(),
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -3860,6 +3878,10 @@ async fn build_mock_worker_with_tokens() -> ScrapeWorker {
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionServiceWithTokens)
             as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -4953,6 +4975,10 @@ async fn build_configurable_worker(
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -4987,6 +5013,10 @@ async fn build_worker_with_failing_deps(
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -5079,6 +5109,10 @@ async fn test_process_task_concurrency_limit_exceeded_reschedules() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -5156,6 +5190,10 @@ async fn test_process_task_memory_critical_defers_task() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         memory_scheduler,
     });
@@ -5279,6 +5317,10 @@ async fn test_process_task_memory_critical_halves_aimd_before_requeue() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         memory_scheduler,
     });
@@ -5368,6 +5410,10 @@ async fn test_process_task_memory_pressure_defers_task() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         memory_scheduler,
     });
@@ -5934,6 +5980,10 @@ async fn test_handle_crawl_success_save_result_failure_propagates_error() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -5993,6 +6043,10 @@ async fn test_handle_crawl_success_increment_completed_error_does_not_propagate(
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -6050,6 +6104,10 @@ async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -6100,6 +6158,10 @@ async fn test_process_crawl_task_robots_denied_marks_failed() {
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -6248,6 +6310,10 @@ async fn build_worker_for_success_tests(
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
@@ -6355,6 +6421,10 @@ async fn test_process_scrape_task_success_handle_scrape_failure_calls_handle_fai
         settings: Arc::new(settings),
         default_concurrency_limit: 10,
         extraction_service: Arc::new(MockExtractionService) as Arc<dyn ExtractionServiceTrait>,
+        #[cfg(feature = "content")]
+        content_extractor: Arc::new(
+            crate::domain::services::content_extractor::ContentExtractionFacade::new(None),
+        ),
         cache_service: Arc::new(MockCacheService::new()) as Arc<dyn CacheService>,
         #[cfg(feature = "metrics")]
         memory_scheduler: make_test_memory_scheduler(),
