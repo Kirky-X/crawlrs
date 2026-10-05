@@ -170,6 +170,20 @@ impl SsrfValidator {
             url: url_str.to_string(),
         })?;
 
+        // 开关旁路（仅开发/测试）：跳过主机黑名单与内网 IP 判定，仍解析 DNS
+        // 以维持 ValidatedUrl / 引擎 DNS-pin 的形状。必须在 Step 5 主机黑名单
+        // 之前——localhost 恰是本开关要放行的首要目标。
+        if ssrf_protection_disabled() {
+            let port = url.port_or_known_default().unwrap_or(80);
+            let resolved_ips = self.resolve_host_permissive(host, port).await?;
+            return Ok(ValidatedUrl {
+                url: url_str.to_string(),
+                parsed_url: url,
+                resolved_ips,
+                port,
+            });
+        }
+
         // Step 5: Static hostname check (before DNS resolution)
         if is_blocked_hostname(host) {
             return Err(SsrfError::BlockedHostname {
@@ -188,6 +202,25 @@ impl SsrfValidator {
             resolved_ips,
             port,
         })
+    }
+
+    /// 仅解析 DNS 不做任何内网判定（`ssrf_protection_disabled` 旁路专用）。
+    async fn resolve_host_permissive(
+        &self,
+        hostname: &str,
+        port: u16,
+    ) -> Result<Vec<IpAddr>, SsrfError> {
+        if let Some(cache) = &self.dns_cache {
+            cache
+                .lookup_host(hostname, port)
+                .await
+                .map_err(|e| SsrfError::DnsResolutionFailed {
+                    hostname: hostname.to_string(),
+                    reason: e.to_string(),
+                })
+        } else {
+            resolve_dns_direct(hostname, port).await
+        }
     }
 
     /// Resolve DNS and validate all returned IP addresses.
@@ -296,6 +329,29 @@ impl SsrfValidator {
 pub async fn validate_url(url_str: &str) -> Result<ValidatedUrl, SsrfError> {
     let validator = SsrfValidator::new();
     validator.validate(url_str).await
+}
+
+/// SSRF 防护禁用开关（`CRAWLRS_DISABLE_SSRF_PROTECTION`）。
+///
+/// 仅供开发/测试环境调试本机依赖（如本机 LLM 端点）使用；置位后
+/// [`SsrfValidator::validate`] 跳过主机黑名单与内网 IP 判定，重定向策略
+/// 同步降级为普通跟随（`utils::http_client`）。进程内只告警一次；
+/// 非 test/development 环境的启动期显著告警由 config_validator 负责。
+pub(crate) fn ssrf_protection_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        let disabled =
+            std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok();
+        if disabled {
+            log::warn!(
+                "SSRF protection DISABLED via {} — internal/private network targets are \
+                 reachable; for development/testing only",
+                crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION
+            );
+        }
+        disabled
+    })
 }
 
 /// Validate a domain against a blacklist.

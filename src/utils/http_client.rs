@@ -123,6 +123,11 @@ fn create_client(timeout_secs: u64, max_redirects: u8) -> Client {
 ///
 /// A `reqwest::redirect::Policy` that validates redirect URLs
 pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect::Policy {
+    // SSRF 禁用开关（仅开发/测试）：降级为普通重定向跟随
+    if crate::infrastructure::security::ssrf::ssrf_protection_disabled() {
+        return reqwest::redirect::Policy::limited(max_redirects as usize);
+    }
+
     use crate::engines::shared::is_private_ip;
     use crate::infrastructure::security::ssrf::is_internal_url;
     use std::net::ToSocketAddrs;
