@@ -2,5 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod db_pool;
+pub mod garrison_lock;
 pub mod response_helpers;
 pub mod wait_helpers;

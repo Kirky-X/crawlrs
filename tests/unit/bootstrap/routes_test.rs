@@ -33,6 +33,7 @@ use testcontainers_modules::postgres::Postgres;
 use tokio::sync::OnceCell;
 use tower::ServiceExt;
 
+use crate::common::helpers::garrison_lock::GARRISON_GLOBAL_LOCK;
 use crawlrs::bootstrap::config::load_settings;
 use crawlrs::bootstrap::routes::{
     build_api_app_with_state, create_protected_routes_with_state, create_public_routes,
@@ -43,6 +44,7 @@ use crawlrs::di::modules::{
     ServiceModule, SettingsModule,
 };
 use crawlrs::di::{CrawlRsState, CrawlRsStateExt};
+use crawlrs::infrastructure::auth::reset_garrison_global_state_for_integration_test;
 use trait_kit::AsyncKit;
 
 // =============================================================================
@@ -196,6 +198,12 @@ async fn get_or_init_state() -> Option<(
                     return None;
                 }
             };
+            // auth_garrison E2E 用例会 reset+init 同一进程全局 garrison DAO
+            // （双方持有同一把共享锁）；此处持锁 reset 后再构建，保证
+            // init_services 的单例注入不与 E2E 的 reset+init 交错，否则
+            // set_garrison_dao 报 "global DAO already injected"。
+            let _guard = GARRISON_GLOBAL_LOCK.lock().await;
+            reset_garrison_global_state_for_integration_test();
             match build_app_state(&pg.url).await {
                 Ok((state, settings)) => Some((state, settings, pg)),
                 Err(e) => {

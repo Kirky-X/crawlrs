@@ -1619,6 +1619,12 @@ mod tests {
             }
             let pool = create_test_db_pool();
 
+            // init_garrison_auth 会注入进程级 DAO 单例：必须持 garrison 全局锁
+            // 并先 reset，否则与并发构建全量 state 的测试（bootstrap::routes
+            // tests、workers scrape_worker tests）互相触发
+            // "set_garrison_dao failed: global DAO already injected"。
+            let _garrison_guard =
+                crate::common::test_helpers::acquire_garrison_global_state().await;
             let result = init_garrison_auth(&settings, pool).await;
             assert!(
                 result.is_ok(),

@@ -301,16 +301,35 @@ mod tests {
     /// 2. 测试数据：login_id=`test-admin` 的用户被分配 `admin` 角色
     /// 3. `admin` 角色已被分配 `crawlrs:admin` 权限
     ///
-    /// **标记 `#[ignore]`**：完整端到端测试在 (`tests/integration/auth_garrison_test.rs`) 进行。
-    /// 阶段保留此测试骨架作为占位，避免伪装成有效测试（测试要验证有意义属性）。
+    /// 完整端到端测试在 (`tests/integration/auth_garrison_test.rs`) 进行；
+    /// 此处校验 RBAC 仓储链路的权限映射。RBAC 表（app_*）由 garrison 迁移
+    /// 创建、crawlrs migrations 不含，缺表环境经探针 loudly skip（与
+    /// `skip_if_no_test_db` 同一约定）。
     #[tokio::test]
-    #[ignore = "集成测试覆盖：需真实 DB + garrison migrations + 预置 admin 角色数据"]
     async fn test_admin_role_returns_crawlrs_admin_permission() {
         if skip_if_no_test_db() {
             return;
         }
         let pool = create_test_db_pool();
         let interface = CrawlrsGarrisonInterface::new((*pool).clone());
+
+        // 前置条件探测：缺 RBAC 表时 skip，有表环境执行真实断言。
+        let session = pool.get_session("admin").await.expect("db session");
+        let conn = session.connection().expect("db connection");
+        use dbnexus::database::ConnectionTrait;
+        let has_rbac = conn
+            .query_one_raw(dbnexus::sea_orm::Statement::from_string(
+                dbnexus::sea_orm::DbBackend::Postgres,
+                "SELECT 1 FROM app_permission LIMIT 1".to_string(),
+            ))
+            .await
+            .is_ok();
+        if !has_rbac {
+            eprintln!(
+                "[skip] garrison RBAC schema missing (app_permission) — 预置 garrison migrations 后重跑"
+            );
+            return;
+        }
 
         // 使用 with_default_tenant 提供 tenant_id=0 上下文
         let result =

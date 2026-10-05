@@ -39,11 +39,13 @@ use axum::{
 };
 use chrono::Utc;
 use dbnexus::sea_orm::{ActiveValue, EntityTrait};
-use once_cell::sync::Lazy;
-use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+// 本文件同时编译进 `main`（crate::integration 下）与 `integration_tests`
+// （crate 根下）两个目标，`garrison_lock` 均挂在本文件的父模块，`super::`
+// 对两者等价。
+use super::garrison_lock::GARRISON_GLOBAL_LOCK as GARRISON_TEST_LOCK;
 use crawlrs::bootstrap::services::init_garrison_auth;
 use crawlrs::common::time_utils;
 use crawlrs::infrastructure::auth::get_garrison_dao;
@@ -52,9 +54,6 @@ use crawlrs::infrastructure::database::entities::api_key::Entity as ApiKeyEntity
 use crawlrs::infrastructure::database::entities::team::ActiveModel as TeamActiveModel;
 use crawlrs::infrastructure::database::entities::team::Entity as TeamEntity;
 use crawlrs::presentation::middleware::auth_middleware::auth_middleware_inner;
-
-/// 串行化所有 garrison 单例相关测试，避免并行污染。
-static GARRISON_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// 测试用 garrison namespace（与 `api_key_handler::GARRISON_NAMESPACE` 一致）。
 const GARRISON_NAMESPACE: &str = "crawlrs";
