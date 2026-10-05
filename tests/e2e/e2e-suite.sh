@@ -340,10 +340,10 @@ stage_liveapi() {
     STAGE_STATUS["liveapi"]="FAIL"; FAILED_STAGES+=("liveapi")
     return
   fi
-  if ./tests/e2e/live-api-e2e.sh 2>&1 | tee test-results/stage6-liveapi.log \
-      | grep -E '\[(INFO|✓|✗)\]|总计|失败|语义|产物'; then
-    :  # grep 命中不代表通过，以下PIPESTATUS判定
-  fi
+  # PIPESTATUS 必须紧跟管道取用：夹在任何 if 语句后会被其复合状态覆盖，
+  # 导致 live-api-e2e.sh 的非零退出被吞、失败阶段误记 PASS。
+  ./tests/e2e/live-api-e2e.sh 2>&1 | tee test-results/stage6-liveapi.log \
+    | grep -E '\[(INFO|✓|✗)\]|总计|失败|语义|产物'
   record liveapi "${PIPESTATUS[0]}"
 }
 

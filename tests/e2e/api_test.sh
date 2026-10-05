@@ -91,9 +91,10 @@ run_test_timeout() {
 
 
 # 搜索端点容错断言：200（引擎可用）与 500（网络受限下引擎显式失败）均为合法态，
-# 仅拒绝其余非预期状态（防静默失败：500 时响应须含 error 包封）
+# 仅拒绝其余非预期状态（防静默失败：500 时响应须含 error 包封）。
+# 可选第 4 参数：额外放行的显式报错状态码（如 400 = 未知引擎的校验错误）。
 run_search_tolerant() {
-    local name="$1" body="$2" timeout_sec="$3"
+    local name="$1" body="$2" timeout_sec="$3" extra_ok="${4:-}"
     TOTAL=$((TOTAL + 1))
     local response http_code body_out
     response=$(curl -s -w "\n%{http_code}" --max-time "$timeout_sec" -X POST "${BASE_URL}/v1/search" \
@@ -106,9 +107,12 @@ run_search_tolerant() {
     elif [[ "$http_code" == "500" ]] && echo "$body_out" | grep -q '"success"[[:space:]]*:[[:space:]]*false'; then
         PASS=$((PASS + 1))
         echo -e "  ${GREEN}✓${NC} [$http_code] $name (网络受限显式失败包封)"
+    elif [ -n "$extra_ok" ] && [[ "$http_code" == "$extra_ok" ]] && echo "$body_out" | grep -q '"success"[[:space:]]*:[[:space:]]*false'; then
+        PASS=$((PASS + 1))
+        echo -e "  ${GREEN}✓${NC} [$http_code] $name (显式校验错误包封)"
     else
         FAIL=$((FAIL + 1))
-        echo -e "  ${RED}✗${NC} [$http_code ≠ 200|500] $name"
+        echo -e "  ${RED}✗${NC} [$http_code ≠ 200|500${extra_ok:+|$extra_ok}] $name"
         echo -e "    ${CYAN}Response:${NC} $(echo "$body_out" | head -c 300)"
     fi
 }
@@ -268,7 +272,7 @@ run_search_tolerant "Search sync_wait_ms" '{"query":"Rust","limit":3,"sync_wait_
 # Search 错误输入
 run_test "Search 空 query (422)"             400 POST "/v1/search"  '{"query":""}' "auth"
 run_test "Search 空 body (422)"              400 POST "/v1/search"  '' "auth"
-run_search_tolerant "Search 无效 engine (回落或报错)" '{"query":"test","engine":"nonexistent"}' 30
+run_search_tolerant "Search 无效 engine (回落或报错)" '{"query":"test","engine":"nonexistent"}' 30 400
 
 # ════════════════════════════════════════════════════════════════════════════
 # 6. Extract 端点 — 真实网站
