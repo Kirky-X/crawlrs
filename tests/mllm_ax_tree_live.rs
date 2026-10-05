@@ -28,7 +28,10 @@ use crawlrs::engines::mllm::config::MllmEngineConfig;
 use crawlrs::engines::types::InternalScrapeRequest;
 use crawlrs::infrastructure::services::config_service::BrowserConfigComponent;
 
-const VISION_MODEL: &str = "ollama:moondream";
+/// 视觉模型可用环境变量覆盖（如 CRAWLRS_TEST_VISION_MODEL=ollama:gemma4:e4b）
+fn vision_model() -> String {
+    std::env::var("CRAWLRS_TEST_VISION_MODEL").unwrap_or_else(|_| "ollama:moondream".to_string())
+}
 
 fn test_page_html() -> String {
     "<html><head><title>Aurora Dynamics — Corporate History</title></head><body>\
@@ -94,7 +97,7 @@ async fn mllm_engine_end_to_end_with_ax_tree() {
     );
 
     let config = MllmEngineConfig {
-        vision_model: VISION_MODEL.to_string(),
+        vision_model: vision_model(),
         max_iterations: 2,
         screenshot_quality: 60,
         max_token_budget: 2048,
