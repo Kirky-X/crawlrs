@@ -176,11 +176,26 @@ impl CoalesceCoordinator {
                         // leader 正常完成：按 leader task_id 查询落库结果
                         // （结果落在 leader 名下，非等待方自身 task_id）。
                         match self.result_repository.find_by_task_id(leader_task_id).await {
-                            Ok(Some(_)) => {
+                            Ok(Some(mut leader_result)) => {
                                 debug!(
                                     "Coalesced task {} resolved from leader {} result, marking completed",
                                     task.id, leader_task_id
                                 );
+                                // 结果须为等待方复制一份：等待方完成后 API 按
+                                // 自身 task_id 查结果，缺失即 completed 任务
+                                // content 空、status_code 缺失（静默失败）。
+                                // 重复投递时等待方可能已有结果，幂等跳过。
+                                if self
+                                    .result_repository
+                                    .find_by_task_id(task.id)
+                                    .await?
+                                    .is_none()
+                                {
+                                    leader_result.id = Uuid::new_v4();
+                                    leader_result.task_id = task.id;
+                                    leader_result.created_at = Utc::now();
+                                    self.result_repository.save(leader_result).await?;
+                                }
                                 self.repository
                                     .mark_completed(task.id, Some(worker_id))
                                     .await?;
@@ -390,6 +405,15 @@ mod tests {
         /// 记录最近一次 find_by_task_id 查询的 task_id，
         /// 用于断言等待方按 leader task_id（而非自身）查询。
         last_query_task_id: Mutex<Option<Uuid>>,
+        /// 首次查询的 task_id（复制源必须为 leader 结果）。
+        first_query_task_id: Mutex<Option<Uuid>>,
+        /// save 调用次数与最近一次落库结果的 task_id
+        /// （结果须复制并改挂到等待方 task_id 名下）。
+        save_calls: AtomicU32,
+        last_saved_task_id: Mutex<Option<Uuid>>,
+        /// 设定时 find_by_task_id 仅对该 task_id 返回 Some
+        /// （模拟真实语义：结果只落在 leader 名下）。
+        some_only_for: Mutex<Option<Uuid>>,
     }
 
     impl ConfigurableResultRepo {
@@ -398,13 +422,32 @@ mod tests {
                 find_calls: AtomicU32::new(0),
                 return_some: Mutex::new(return_some),
                 last_query_task_id: Mutex::new(None),
+                first_query_task_id: Mutex::new(None),
+                save_calls: AtomicU32::new(0),
+                last_saved_task_id: Mutex::new(None),
+                some_only_for: Mutex::new(None),
+            }
+        }
+
+        /// 模拟"结果只落在 leader 名下"：仅 leader 的 task_id 查询返回 Some
+        fn new_with_result_only_for(leader_id: Uuid) -> Self {
+            Self {
+                find_calls: AtomicU32::new(0),
+                return_some: Mutex::new(true),
+                last_query_task_id: Mutex::new(None),
+                first_query_task_id: Mutex::new(None),
+                save_calls: AtomicU32::new(0),
+                last_saved_task_id: Mutex::new(None),
+                some_only_for: Mutex::new(Some(leader_id)),
             }
         }
     }
 
     #[async_trait]
     impl ScrapeResultRepository for ConfigurableResultRepo {
-        async fn save(&self, _result: crate::domain::models::ScrapeResult) -> Result<()> {
+        async fn save(&self, result: crate::domain::models::ScrapeResult) -> Result<()> {
+            self.save_calls.fetch_add(1, Ordering::SeqCst);
+            *self.last_saved_task_id.lock().unwrap() = Some(result.task_id);
             Ok(())
         }
         async fn find_by_task_id(
@@ -412,8 +455,20 @@ mod tests {
             task_id: Uuid,
         ) -> Result<Option<crate::domain::models::ScrapeResult>> {
             self.find_calls.fetch_add(1, Ordering::SeqCst);
+            let mut first = self.first_query_task_id.lock().unwrap();
+            if first.is_none() {
+                *first = Some(task_id);
+            }
+            drop(first);
             *self.last_query_task_id.lock().unwrap() = Some(task_id);
-            if *self.return_some.lock().unwrap() {
+            let hit = {
+                let only_for = self.some_only_for.lock().unwrap();
+                match &*only_for {
+                    Some(lid) => task_id == *lid,
+                    None => *self.return_some.lock().unwrap(),
+                }
+            };
+            if hit {
                 Ok(Some(crate::domain::models::ScrapeResult {
                     id: uuid::Uuid::new_v4(),
                     task_id: uuid::Uuid::new_v4(),
@@ -862,13 +917,14 @@ mod tests {
     async fn try_coalesce_queries_result_by_leader_task_id() {
         let worker_id = Uuid::new_v4();
         let task_repo = Arc::new(CountingTaskRepo::new());
-        let result_repo = Arc::new(ConfigurableResultRepo::new(true));
+        // leader_id 先行：mock 需模拟"结果只落在 leader 名下"
+        let leader_id = Uuid::new_v4();
+        let result_repo = Arc::new(ConfigurableResultRepo::new_with_result_only_for(leader_id));
         let coalescer = Arc::new(RequestCoalescer::new());
         let coord =
             CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         // leader 用已知 task_id 占位；等待方 task.id 与 leader_id 不同
-        let leader_id = Uuid::new_v4();
         let waiter_task = make_task();
         assert_ne!(
             leader_id, waiter_task.id,
@@ -895,14 +951,30 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
 
-        // 关键断言：结果查询使用 leader task_id，而非等待方自身 task.id
-        let queried = *result_repo.last_query_task_id.lock().unwrap();
+        // 关键断言 1：复制源查询使用 leader task_id，而非等待方自身 task.id
+        let first_queried = *result_repo.first_query_task_id.lock().unwrap();
         assert_eq!(
-            queried,
+            first_queried,
             Some(leader_id),
-            "waiter must query result by leader task_id"
+            "waiter must query copy source by leader task_id"
         );
-        assert_ne!(queried, Some(waiter_task.id));
+        // 关键断言 2：leader 结果复制为等待方名下的结果后 mark_completed
+        // （否则 completed 任务按自身 task_id 查结果为空——静默失败）
+        assert_eq!(
+            result_repo.save_calls.load(Ordering::SeqCst),
+            1,
+            "leader result must be copied once under the waiter task"
+        );
+        assert_eq!(
+            *result_repo.last_saved_task_id.lock().unwrap(),
+            Some(waiter_task.id),
+            "copied result must be re-attributed to the waiter task_id"
+        );
+        assert_eq!(
+            *result_repo.last_query_task_id.lock().unwrap(),
+            Some(waiter_task.id),
+            "copy must be idempotent-guarded by a waiter-side result lookup"
+        );
         // 命中后 mark_completed 等待方自身任务
         assert_eq!(task_repo.mark_completed_calls.load(Ordering::SeqCst), 1);
     }
