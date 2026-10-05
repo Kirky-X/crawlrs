@@ -82,25 +82,6 @@
 
 除上述核心能力外，crawlrs 还提供站点映射、异步任务队列（Worker 模式）、多层缓存与代理支持等能力；引擎级增强模块（反爬对抗、智能增强等）的设计与代码位置详见 [🏗️ 架构文档 · 爬取能力增强模块](docs/ARCHITECTURE.md)。
 
-### 🆕 本轮功能吸收（F1–F12）
-
-以下 12 项能力源自对 41 个开源采集/抽取/反爬项目的功能吸收调研（详见 [调研报告](docs/crawlrs-feature-absorption-report.md)），全部默认关闭或行为保持现状，按配置灰度启用；配置键的完整语义见 `config/default.toml` 内注释与 `.env.example`：
-
-| # | 能力 | 配置键（默认） | 说明 |
-|---|------|----------------|------|
-| F1 | AutoThrottle 自适应限速 | `politeness.autothrottle_enabled`（false） | per-host 请求间隔按观测延迟 EMA 收敛，区间 `[min_interval_ms, max_interval_ms]` |
-| F2 | Session 身份三件套 | `session.enabled`（false） | 代理 + UA/TLS 档 + Cookie 绑定单一身份，按 error_score 记分退休（mark_bad +1.0 / mark_good −0.5） |
-| F3 | 断点续爬 seen 预热差量 | `workers.dedup_warmup_include_results`（false） | 启动预热在 tasks 表之外追加灌入结果表 distinct URL |
-| F4 | 失败现场快照 | `observability.failure_snapshot_dir`（空 = 禁用） | antibot/限速检出时按错误签名去重存档 HTML + 元数据 + 截图 |
-| F5 | 429 指数退避与停滞检测 | `politeness.backoff_base_secs`（2） | 冷却 `min(base × 2^连击, max)`，尊重 Retry-After；连续限速置 stalled 触发代理/身份切换 |
-| F6 | XHR/Fetch 后台响应捕获 | `engines.playwright.capture_xhr`（false） | Playwright 引擎按 glob 白名单捕获后台响应，随任务结果返回 `captured_responses` |
-| F7 | 提取降级阶梯质量门 | `content_extraction.min_word_count`（150） | 短结果升级、长度比裁决、prose 硬门槛（句均词数/链接密度） |
-| F8 | LLM 长文分块 | `llm.chunking.enabled`（false） | 按模型 token 窗口切块并行提取 + merge 综合（术语预检省 token） |
-| F9 | 提取结果字符级溯源 | `llm.provenance_enabled`（false） | 结果字符串字段对齐回原文 char 区间，产出 `_provenance` 映射（双门过滤） |
-| F10 | AIMD 内存压力联动 | 随 `concurrency.adaptive_enabled` | 内存 Pressure 冻结 AIMD 加并发、Critical 立即半减 target |
-| F11 | sitemap 流式请求源 + 软 404 | `sitemap.enabled` / `crawl.soft404_enabled` | 站点图流式解析为 crawl 队列输入（`POST /v1/map` + `sitemap_seed`），空壳页指纹剔除 |
-| F12 | MLLM 混合 AX 树快照 | `engines.mllm.ax_tree_enabled`（false） | 视觉截图之外追加 `[id] role: name` 可访问性大纲，模型以 `[id]` 引用元素 |
-
 ---
 
 ## 🚀 快速开始

@@ -82,25 +82,6 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 
 Beyond the core capabilities above, crawlrs also provides site mapping, an async task queue (worker mode), multi-level caching and proxy support; for the design and code locations of the engine-level enhancement modules (anti-bot countermeasures, intelligent enhancements, etc.), see the [🏗️ Architecture Document · Crawl Capability Enhancement Modules](docs/ARCHITECTURE.md).
 
-### 🆕 Feature Absorption Round (F1–F12)
-
-The following 12 capabilities come from a feature-absorption survey of 41 open-source crawling/extraction/anti-bot projects (see the [survey report](docs/crawlrs-feature-absorption-report.md), in Chinese). All of them are default-off or behavior-preserving and can be enabled gradually via configuration; full key semantics live in the `config/default.toml` comments and `.env.example`:
-
-| # | Capability | Config key (default) | Notes |
-|---|------------|----------------------|-------|
-| F1 | AutoThrottle adaptive rate limiting | `politeness.autothrottle_enabled` (false) | Per-host request interval converges via latency EMA within `[min_interval_ms, max_interval_ms]` |
-| F2 | Session identity trio | `session.enabled` (false) | Proxy + UA/TLS profile + cookies bound into one identity, retired by error score (mark_bad +1.0 / mark_good −0.5) |
-| F3 | Resume-crawl seen warm-up delta | `workers.dedup_warmup_include_results` (false) | Start-up warm-up additionally loads distinct URLs from the results table |
-| F4 | Failure snapshots | `observability.failure_snapshot_dir` (empty = off) | Deduplicated archives (HTML + metadata + screenshot) on anti-bot/rate-limit detection |
-| F5 | 429 exponential backoff & stall detection | `politeness.backoff_base_secs` (2) | Cooldown `min(base × 2^streak, max)`, honors Retry-After; consecutive limits mark the host stalled and rotate proxy/identity |
-| F6 | XHR/Fetch background response capture | `engines.playwright.capture_xhr` (false) | Playwright engine captures background responses by glob whitelist, returned as `captured_responses` |
-| F7 | Extraction degradation quality gate | `content_extraction.min_word_count` (150) | Short-result upgrade, length-ratio adjudication, prose hard gates (avg sentence words / link density) |
-| F8 | LLM long-text chunking | `llm.chunking.enabled` (false) | Token-window chunked parallel extraction + merge synthesis (term pre-check saves tokens) |
-| F9 | Character-level extraction provenance | `llm.provenance_enabled` (false) | String fields aligned back to source char ranges, producing a `_provenance` map (dual-gate filtered) |
-| F10 | AIMD memory-pressure coupling | with `concurrency.adaptive_enabled` | Memory Pressure freezes AIMD increases; Critical immediately halves the target |
-| F11 | Streaming sitemap source + soft 404 | `sitemap.enabled` / `crawl.soft404_enabled` | Sitemaps streamed into the crawl queue (`POST /v1/map` + `sitemap_seed`); shell-page fingerprint removal |
-| F12 | MLLM hybrid AX-tree snapshot | `engines.mllm.ax_tree_enabled` (false) | Adds a `[id] role: name` accessibility outline alongside the screenshot; the model references elements via `[id]` |
-
 ---
 
 ## 🚀 Quick Start
