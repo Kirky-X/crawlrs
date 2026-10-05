@@ -197,16 +197,20 @@ pub fn classify(status: u16, body: &str, headers: &HeaderMap, _url: &str) -> Opt
     // 后续若将 classify 改为 Send 上下文（OnceCell<String> 是 Sync）。
     let stripped_cache: OnceCell<String> = OnceCell::new();
 
-    // Step 0：data-HTML（JSON/XML）直接跳过避免误报
-    if looks_like_data(body, headers) {
-        return None;
-    }
-
-    // Step 1：429 → RateLimited（needs_browser=true）
+    // Step 0：429 → RateLimited（needs_browser=true）
+    //
+    // 429 与响应体格式无关（JSON API 的 `{"status":429}` 限流响应同样命中），
+    // 必须先于 data-JSON 短路，否则 API 抓取场景的 429 被判成功、
+    // 退避/mark_bad/失败快照全部失效。
     if status == 429 {
         let mut detection = Detection::new(AntiBotTech::RateLimited, "HTTP 429 rate limited", true);
         detection.retry_after_secs = parse_retry_after(headers);
         return Some(detection);
+    }
+
+    // Step 1：data-HTML（JSON/XML）直接跳过避免误报
+    if looks_like_data(body, headers) {
+        return None;
     }
 
     // Step 2：Tier1 命中（任意状态码，含大页 strip 深扫）
@@ -401,13 +405,26 @@ mod tests {
         assert_eq!(det.retry_after_secs, None);
     }
 
-    // -------- Step 0：JSON 响应返回 None --------
+    // -------- Step 1：JSON 响应返回 None --------
 
     #[test]
     fn classify_json_response_returns_none() {
         let body = r#"{"error":"blocked","reason":"captcha"}"#;
-        let det = classify(429, body, &json_headers(), "https://api.example.com/v1");
+        let det = classify(200, body, &json_headers(), "https://api.example.com/v1");
         assert!(det.is_none(), "JSON response should not be flagged");
+    }
+
+    // -------- Step 0 优先级：429 与响应体格式无关 --------
+
+    #[test]
+    fn classify_429_json_body_returns_rate_limited() {
+        // JSON API 的 429 限流（如 postman-echo /status/429 的 {"status":429}）
+        // 不得被 data-JSON 短路吞掉，否则退避/mark_bad 全部失效
+        let body = r#"{"status":429}"#;
+        let det = classify(429, body, &json_headers(), "https://api.example.com/v1")
+            .expect("429 JSON body should still classify as rate limited");
+        assert_eq!(det.tech, AntiBotTech::RateLimited);
+        assert!(det.needs_browser, "rate limited should need browser");
     }
 
     #[test]
