@@ -1466,15 +1466,43 @@ mod tests {
                 let _ = stream.flush();
             }
         });
-        format!("http://{addr}")
+        // host 用横线编码的 sslip.io 域名（公网 DNS → 127.0.0.1，Chrome 仍连
+        // 本机 mock）：捕获管线含 SSRF 守卫，点分回环 "127." 前缀会被
+        // is_localhost 判为 internal 而丢弃全部捕获，e2e 永远拿不到事件。
+        format!("http://127-0-0-1.sslip.io:{}", addr.port())
     }
 
+    /// 序列化本模块 e2e 用例的浏览器生命周期（launch→close）。
+    ///
+    /// chromiumoxide 默认共享 profile 目录（/tmp/chromiumoxide-runner），
+    /// 并发启动触发 Chrome ProcessSingleton 冲突（SingletonLock File exists）
+    /// 直接 abort。此锁等价实现各用例 ignore 注明的 `--test-threads=1` 契约，
+    /// 不再依赖测试运行方式。
+    static CHROME_E2E_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
+
     /// 启动独立浏览器并打开空白页
+    ///
+    /// F6 同款修复：每测试唯一临时 profile 目录——chromiumoxide 默认共享
+    /// `/tmp/chromiumoxide-runner`，任何一次异常退出的浏览器残留
+    /// SingletonLock 都会让后续所有测试启动失败且无法自愈。
     async fn launch_test_page() -> (chromiumoxide::Browser, chromiumoxide::page::Page) {
+        static PROFILE_COUNTER: std::sync::OnceLock<std::sync::atomic::AtomicU64> =
+            std::sync::OnceLock::new();
+        let profile_dir = std::env::temp_dir().join(format!(
+            "crawlrs-chromium-e2e-{}-{}",
+            std::process::id(),
+            PROFILE_COUNTER
+                .get_or_init(std::sync::atomic::AtomicU64::default)
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&profile_dir).expect("create e2e profile dir");
+
         let config = chromiumoxide::BrowserConfig::builder()
             .no_sandbox()
             .arg("--disable-gpu")
             .arg("--disable-dev-shm-usage")
+            .user_data_dir(&profile_dir)
             .request_timeout(Duration::from_secs(30))
             .build()
             .expect("browser config");
@@ -1496,6 +1524,10 @@ mod tests {
     #[ignore = "需要本机 Chrome：cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1"]
     async fn xhr_capture_e2e_captures_fetch_response() {
         let base = spawn_mock_xhr_server();
+        let _chrome_guard = CHROME_E2E_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
         let (mut browser, page) = launch_test_page().await;
         let config = XhrCaptureConfig {
             url_patterns: vec![],
@@ -1536,6 +1568,10 @@ mod tests {
     #[ignore = "需要本机 Chrome：cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1"]
     async fn xhr_capture_e2e_url_glob_filter_excludes_non_matching() {
         let base = spawn_mock_xhr_server();
+        let _chrome_guard = CHROME_E2E_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
         let (mut browser, page) = launch_test_page().await;
         let config = XhrCaptureConfig {
             url_patterns: vec!["*/nomatch*".to_string()],
@@ -1563,6 +1599,10 @@ mod tests {
     #[ignore = "需要本机 Chrome：cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1"]
     async fn xhr_capture_e2e_max_responses_caps_collection() {
         let base = spawn_mock_xhr_server();
+        let _chrome_guard = CHROME_E2E_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
         let (mut browser, page) = launch_test_page().await;
         let config = XhrCaptureConfig {
             url_patterns: vec![],
@@ -1595,6 +1635,10 @@ mod tests {
     #[ignore = "需要本机 Chrome：cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1"]
     async fn xhr_capture_e2e_max_bytes_drops_oversize_body() {
         let base = spawn_mock_xhr_server();
+        let _chrome_guard = CHROME_E2E_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
         let (mut browser, page) = launch_test_page().await;
         // /api/data 响应体 26 字节，上限 4 字节 → 整体丢弃
         let config = XhrCaptureConfig {
@@ -1623,6 +1667,10 @@ mod tests {
     #[ignore = "需要本机 Chrome：cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1"]
     async fn xhr_capture_e2e_coexists_with_fetch_interception() {
         let base = spawn_mock_xhr_server();
+        let _chrome_guard = CHROME_E2E_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
         let (mut browser, page) = launch_test_page().await;
 
         // 启用 Fetch 拦截（与 scrape() 的 block_ads/block_media 同款机制）：

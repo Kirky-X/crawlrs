@@ -252,6 +252,10 @@ struct BrowserPoolState {
     shutdown: AtomicBool,
     /// 浏览器路径缓存（PERF-010: OnceCell 替代 RwLock<Option>，无锁读路径）
     browser_path: OnceCell<PathBuf>,
+    /// F6：per-instance 临时 profile 目录计数器
+    profile_dir_counter: AtomicU64,
+    /// F6：已创建 profile 目录登记（shutdown_all 时 best-effort 清理）
+    profile_dirs: std::sync::Mutex<Vec<std::path::PathBuf>>,
 }
 
 /// P08：池路径的代理 URL 校验（argv 注入防护）
@@ -288,7 +292,17 @@ impl BrowserPoolState {
             return_receiver: Mutex::new(Some(return_rx)),
             shutdown: AtomicBool::new(false),
             browser_path: OnceCell::new(),
+            profile_dir_counter: AtomicU64::new(0),
+            profile_dirs: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// F6：登记 per-instance profile 目录（shutdown_all 清理用）
+    fn register_profile_dir(&self, dir: std::path::PathBuf) {
+        self.profile_dirs
+            .lock()
+            .expect("profile_dirs poisoned")
+            .push(dir);
     }
 
     async fn acquire(&self) -> Result<(u64, Arc<Browser>), EngineError> {
@@ -494,6 +508,26 @@ impl BrowserPoolState {
                 .no_sandbox()
                 .request_timeout(Duration::from_secs(30));
 
+            // F6：每实例独立临时 profile 目录。chromiumoxide 默认共享
+            // /tmp/chromiumoxide-runner，持有 Chrome SingletonLock——并发启动
+            // 第二实例即崩（File exists）、kill -9 worker 的孤儿 chrome 继续
+            // 占锁且新实例无法自愈。独立目录让实例间互不影响；目录注册进
+            // 池，shutdown_all 时 best-effort 清理。
+            let profile_dir = std::env::temp_dir().join(format!(
+                "crawlrs-chromium-{}-{}",
+                std::process::id(),
+                self.profile_dir_counter.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&profile_dir).map_err(|e| {
+                EngineError::Other(format!(
+                    "Failed to create browser profile dir {:?}: {}",
+                    profile_dir, e
+                ))
+            })?;
+            self.register_profile_dir(profile_dir.clone());
+            info!("Using per-instance browser profile dir: {:?}", profile_dir);
+            builder = builder.user_data_dir(&profile_dir);
+
             // 设置浏览器路径
             if let Some(ref path) = browser_path {
                 info!("Using browser at: {:?}", path);
@@ -667,6 +701,20 @@ impl BrowserPoolState {
         in_use.clear();
 
         self.total_instances.store(0, Ordering::Relaxed);
+
+        // F6：best-effort 清理 per-instance profile 目录（浏览器进程此刻已随
+        // Browser drop 终止；个别文件仍被占用时删除失败仅 debug 记录）
+        let dirs = self
+            .profile_dirs
+            .lock()
+            .expect("profile_dirs poisoned")
+            .drain(..)
+            .collect::<Vec<_>>();
+        for dir in dirs {
+            if let Err(e) = std::fs::remove_dir_all(&dir) {
+                debug!("Failed to remove browser profile dir {:?}: {}", dir, e);
+            }
+        }
 
         info!("All browser instances shut down");
     }
@@ -951,6 +999,35 @@ impl Drop for PooledPage {
 /// 空闲实例清理和健康检查。
 pub struct BrowserPool {
     state: Arc<BrowserPoolState>,
+}
+
+impl Drop for BrowserPool {
+    /// F6：池销毁时回收浏览器实例与 chrome 子进程。
+    ///
+    /// worker 进程优雅退出路径没有显式调用 `shutdown_all` 的接线，此处
+    /// 兜底：runtime 仍存活时 spawn 异步清理（关闭全部实例 → chrome 随
+    /// Browser drop 终止，profile 目录一并清理）。runtime 已不存在（如
+    /// kill -9）时无从回收——per-instance 独立 profile 目录保证重启后的
+    /// 新实例不受孤儿锁影响。
+    fn drop(&mut self) {
+        if self.state.shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                let state = Arc::clone(&self.state);
+                handle.spawn(async move {
+                    state.shutdown_all().await;
+                });
+            }
+            Err(_) => {
+                log::warn!(
+                    "No tokio runtime on BrowserPool drop; browser instances and \
+                     profile dirs are not cleaned up"
+                );
+            }
+        }
+    }
 }
 
 impl BrowserPool {
