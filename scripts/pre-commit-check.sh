@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# DB Nexus Pre-commit Check Script
+# crawlrs Pre-commit Check Script
 # =============================================================================
 # 此脚本在 git commit 时运行，进行代码质量和格式检查
 #
@@ -698,7 +698,7 @@ run_all_checks() {
 
 show_help() {
     cat << EOF
-DB Nexus Pre-commit 检查脚本
+crawlrs Pre-commit 检查脚本
 
 用法: $(basename "$0") <check_type> [选项]
 

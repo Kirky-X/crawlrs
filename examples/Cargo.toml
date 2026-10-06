@@ -249,6 +249,10 @@ name = "custom_headers"
 path = "scrape/custom_headers.rs"
 
 [[bin]]
+name = "extraction_prompt"
+path = "scrape/extraction_prompt.rs"
+
+[[bin]]
 name = "extraction_rules"
 path = "scrape/extraction_rules.rs"
 

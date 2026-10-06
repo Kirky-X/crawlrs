@@ -20,10 +20,10 @@
 #   Stage 7  report       汇总 test-results/e2e-report.txt
 #
 # 使用方法:
-#   ./scripts/e2e-suite.sh                  # 全量
-#   ./scripts/e2e-suite.sh static unit      # 只跑指定阶段
-#   ./scripts/e2e-suite.sh --skip matrix    # 跳过指定阶段
-#   ./scripts/e2e-suite.sh --quick          # 快速矩阵（关键组合）
+#   ./tests/e2e/e2e-suite.sh                  # 全量
+#   ./tests/e2e/e2e-suite.sh static unit      # 只跑指定阶段
+#   ./tests/e2e/e2e-suite.sh --skip matrix    # 跳过指定阶段
+#   ./tests/e2e/e2e-suite.sh --quick          # 快速矩阵（关键组合）
 #
 # 中间件：
 #   - 集成测试仅需 PostgreSQL 16。缺省由 testcontainers 动态拉起并自动清理；

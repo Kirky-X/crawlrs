@@ -108,7 +108,7 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 
 ### CI 检查项（PR 必过）
 
-`ci.yml` 包含 9 个 job：check-default、check-full、feature-matrix（7 组合 + garrison 门控断言 + RSA 前提校验）、fmt、clippy（standard/full）、test（Rust 1.95/stable 矩阵）、doc（`cargo doc --features "full" --no-deps`，零警告）、deny、integration-test、coverage（行覆盖 ≥ 80%）。
+`ci.yml` 包含 9 个 job：check-default、check-full、feature-matrix（7 组合 + garrison 门控断言 + RSA 前提校验）、fmt、clippy（standard/full）、test（Rust 1.97/stable 矩阵）、doc（`cargo doc --features "full" --no-deps`，零警告）、deny、integration-test、coverage（行覆盖 ≥ 80%）。
 
 ---
 

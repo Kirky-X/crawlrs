@@ -1086,4 +1086,39 @@ mod tests {
             result.err()
         );
     }
+
+    /// CWE-798 回归：历史硬编码默认值 `default-webhook-secret` 被原样配进生产
+    /// 同样视为未设置，必须阻断启动（此前仅测空串/非空，未覆盖该分支）。
+    #[test]
+    #[cfg(feature = "webhook")]
+    fn test_webhook_secret_hardcoded_default_in_production_errors() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_env = std::env::var("CRAWLRS_ENV").ok();
+        let saved_test_mode = std::env::var("CRAWLRS__TEST_MODE").ok();
+        std::env::set_var("CRAWLRS_ENV", "production");
+        std::env::remove_var("CRAWLRS__TEST_MODE");
+
+        let result = validate_webhook_secret_fail_fast(true, "default-webhook-secret");
+
+        match saved_env {
+            Some(v) => std::env::set_var("CRAWLRS_ENV", v),
+            None => std::env::remove_var("CRAWLRS_ENV"),
+        }
+        match saved_test_mode {
+            Some(v) => std::env::set_var("CRAWLRS__TEST_MODE", v),
+            None => std::env::remove_var("CRAWLRS__TEST_MODE"),
+        }
+
+        assert!(
+            result.is_err(),
+            "hardcoded default webhook secret in production must fail, got: {:?}",
+            result
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("hardcoded default"),
+            "error should mention hardcoded default, got: {}",
+            err_msg
+        );
+    }
 }

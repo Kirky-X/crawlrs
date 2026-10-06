@@ -6,8 +6,8 @@
 
 在开始之前，请确保已安装以下软件：
 
-- **Rust 1.70+**：`rustc --version`
-- **PostgreSQL 14+** 或 **SQLite 3.35+**
+- **Rust 1.97+**：`rustc --version`（与主项目 `Cargo.toml` 的 `rust-version` 一致）
+- **PostgreSQL 16+** 或 **SQLite 3.35+**
 
 安装依赖：
 
@@ -130,20 +130,22 @@ let result = scrape("https://example.com")
 
 ## 步骤5：运行项目示例
 
-项目包含丰富的示例代码：
+项目包含丰富的示例代码（示例为独立 workspace，需在 `examples/` 目录下以 `--bin` 运行）：
 
 ```bash
-# 运行基本爬取示例
-cargo run --example basic_scrape
+cd examples
 
-# 运行搜索示例
-cargo run --example test_google
+# 运行基本抓取示例
+cargo run --bin basic_scrape
+
+# 运行搜索示例（需真实搜索引擎 / API Key）
+cargo run --bin test_unified_search
 
 # 运行浏览器示例
-cargo run --example test_playwright_basic
+cargo run --bin test_playwright_basic
 
-# 运行所有示例（需要full特性）
-cargo run --features full --examples
+# 编译所有示例目标
+cargo build --all-targets
 ```
 
 ## 常见问题
