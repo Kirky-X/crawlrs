@@ -71,19 +71,26 @@ pub async fn create_test_app_no_worker() -> TestApp {
         .expect("Failed to get db session");
     let conn = session.connection().expect("Failed to get db connection");
 
-    // 先在 teams 表中创建团队（因为 tasks 表有 foreign key 约束）
+    // 先在 teams 表中创建团队（因为 tasks 表有 foreign key 约束）。
+    // id 必须经 `.to_uuid_v8()` 绑定（对齐生产 mapper 惯例）：测试期 `Id::generate()`
+    // 回退到 `test_new()` 的小整数，其 Display 为十进制串，直插 UUID 列会报
+    // `invalid input syntax for type uuid`；而 `to_uuid_v8()` 渲染为合法 36 位 UUID。
     let _ = conn
         .execute_unprepared(&format!(
             "INSERT INTO teams (id, name) VALUES ('{}', 'Test Team {}') ON CONFLICT (id) DO NOTHING",
-            team_id, team_id
+            team_id.to_uuid_v8(),
+            team_id
         ))
         .await;
 
-    // 创建 API key（因为 tasks 表有外键约束）
+    // 创建 API key（因为 tasks 表有外键约束）；id/team_id 同样经 `.to_uuid_v8()`。
     let _ = conn
         .execute_unprepared(&format!(
             "INSERT INTO api_keys (id, key, key_hash, team_id) VALUES ('{}', 'test-api-key-{}', 'hash-{}', '{}') ON CONFLICT (id) DO NOTHING",
-            api_key_id, api_key_id, api_key_id, team_id
+            api_key_id.to_uuid_v8(),
+            api_key_id,
+            api_key_id,
+            team_id.to_uuid_v8()
         ))
         .await;
 

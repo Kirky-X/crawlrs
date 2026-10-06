@@ -413,7 +413,8 @@ async fn tc_get_balance_multiple_teams_independent() {
         conn,
         &format!(
             "INSERT INTO teams (id, name) VALUES ('{}', 'Test Team 2 {}') ON CONFLICT (id) DO NOTHING",
-            team2_id, team2_id
+            team2_id.to_uuid_v8(),
+            team2_id
         ),
     )
     .await
@@ -446,7 +447,7 @@ async fn tc_get_balance_multiple_teams_independent() {
         .await;
     dbnexus::sea_orm::ConnectionTrait::execute_unprepared(
         conn,
-        &format!("DELETE FROM teams WHERE id = '{}'", team2_id),
+        &format!("DELETE FROM teams WHERE id = '{}'", team2_id.to_uuid_v8()),
     )
     .await
     .ok();

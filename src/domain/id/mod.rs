@@ -127,10 +127,17 @@ impl Id {
 
     /// 测试专用：返回进程内全局唯一的非零 ID（原子计数器），用于需要互不
     /// 重复的测试夹具（替代测试中的 `Uuid::new_v4()`，无需依赖生成器）。
+    ///
+    /// 计数器以**进程随机基址**起始而非 1：`cargo test --tests` 下多个测试二进制
+    /// 共享同一 PostgreSQL，若各自都从 1 起，则 `to_uuid_v8` 后与其他二进制已插入
+    /// 行主键碰撞（PK violation，或“未知 team”读到他人行），破坏 new_v4 原有的
+    /// 跨进程唯一语义。随机基址 + 递增恢复该唯一性。
     pub fn test_new() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(1);
-        Id(COUNTER.fetch_add(1, Ordering::Relaxed) as u128)
+        use std::sync::OnceLock;
+        static COUNTER: OnceLock<AtomicU64> = OnceLock::new();
+        let counter = COUNTER.get_or_init(|| AtomicU64::new(rand::random::<u64>() | 1));
+        Id(counter.fetch_add(1, Ordering::Relaxed) as u128)
     }
 
     /// 借出底层 NebulaId `Id`（供需要直接调用 NebulaId API 的场景）。
@@ -348,5 +355,55 @@ mod tests {
     #[test]
     fn test_ordering() {
         assert!(Id::for_test(1) < Id::for_test(2));
+    }
+
+    /// 覆盖 `to_uuid`/`from_uuid` 语义别名与 `to_uuid_v8`/`from_uuid_v8` 一致。
+    #[test]
+    fn test_uuid_aliases_equivalence() {
+        let uuid = Uuid::new_v4();
+        let id = Id::from_uuid(uuid);
+        assert_eq!(id.to_uuid(), id.to_uuid_v8());
+        assert_eq!(id.to_uuid(), uuid);
+        assert_eq!(Id::from_uuid(id.to_uuid()), id);
+    }
+
+    /// 覆盖 i64 边界转换（Snowflake 备选路径）与 `for_test` 确定性。
+    #[test]
+    fn test_i64_and_for_test_conversions() {
+        let id = Id::from_i64(42);
+        assert_eq!(id.to_i64(), 42);
+        assert_eq!(id.as_u128(), 42u128);
+        // for_test 确定性：同种子同值、非零。
+        let a = Id::for_test(7);
+        let b = Id::for_test(7);
+        assert_eq!(a, b);
+        assert!(!a.is_nil());
+    }
+
+    /// 覆盖 `test_new` 的进程内唯一、非零语义（跨二进制碰撞回归）。
+    #[test]
+    fn test_new_is_unique_and_nonzero() {
+        let a = Id::test_new();
+        let b = Id::test_new();
+        assert!(!a.is_nil() && !b.is_nil(), "test_new 必须非 nil");
+        assert_ne!(a, b, "同进程连续两次 test_new 必须唯一");
+    }
+
+    /// 覆盖 `as_nebulaid` 借出与 `From<Id> for nebulaid::core::Id`/`From<Id> for Uuid`
+    /// 双向转换，以及 `PartialEq<Uuid>` 跨类型比较。
+    #[test]
+    fn test_nebulaid_and_uuid_cross_conversions() {
+        let id = Id::from_u128(0x0000_0000_0000_0000_0000_0000_0000_002a_u128); // 42
+                                                                                // as_nebulaid 原值一致。
+        assert_eq!(id.as_nebulaid().as_u128(), 42u128);
+        // From<Id> for nebulaid::core::Id
+        let neb: nebulaid::core::Id = id.into();
+        assert_eq!(neb.as_u128(), 42u128);
+        // From<Id> for Uuid 与 to_uuid_v8 一致。
+        let as_uuid: Uuid = id.into();
+        assert_eq!(as_uuid, id.to_uuid_v8());
+        // PartialEq<Uuid> 跨类型比较（按 u128 原值）。
+        assert!(id == as_uuid);
+        assert!(id != Uuid::nil());
     }
 }

@@ -584,13 +584,13 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
         let _ = conn
             .execute_unprepared(&format!(
                 "INSERT INTO teams (id, name) VALUES ('{}', 'Other Team') ON CONFLICT (id) DO NOTHING",
-                other_team_id
+                other_team_id.to_uuid_v8()
             ))
             .await;
         let _ = conn
             .execute_unprepared(&format!(
                 "INSERT INTO api_keys (id, key, key_hash, team_id) VALUES ('{}', 'other-key-{}', 'other-hash-{}', '{}') ON CONFLICT (id) DO NOTHING",
-                other_api_key_id, other_api_key_id, other_api_key_id, other_team_id
+                other_api_key_id.to_uuid_v8(), other_api_key_id, other_api_key_id, other_team_id.to_uuid_v8()
             ))
             .await;
     }
@@ -652,11 +652,14 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
     let _ = conn
         .execute_unprepared(&format!(
             "DELETE FROM api_keys WHERE id = '{}'",
-            other_api_key_id
+            other_api_key_id.to_uuid_v8()
         ))
         .await;
     let _ = conn
-        .execute_unprepared(&format!("DELETE FROM teams WHERE id = '{}'", other_team_id))
+        .execute_unprepared(&format!(
+            "DELETE FROM teams WHERE id = '{}'",
+            other_team_id.to_uuid_v8()
+        ))
         .await;
 }
 

@@ -189,7 +189,7 @@ async fn test_cleanup_old_logs() {
         conn,
         &format!(
             "UPDATE audit_logs SET created_at = NOW() - INTERVAL '10 days' WHERE id = '{}'",
-            entry.id
+            entry.id.to_uuid_v8()
         ),
     )
     .await
