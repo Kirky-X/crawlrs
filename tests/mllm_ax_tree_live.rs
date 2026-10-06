@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crawlrs::domain::services::llm::vision_adapter::{GenaiVisionAdapter, VisionAdapterTrait};
+use crawlrs::domain::services::llm::vision_adapter::GenaiVisionAdapter;
 use crawlrs::engines::client::mllm::MllmEngine;
 use crawlrs::engines::client::playwright_pool::{init_global_pool, BrowserPoolConfig};
 use crawlrs::engines::engine_client::{HttpMethod, ScraperEngine};
@@ -33,21 +33,22 @@ fn vision_model() -> String {
     std::env::var("CRAWLRS_TEST_VISION_MODEL").unwrap_or_else(|_| "ollama:moondream".to_string())
 }
 
-fn test_page_html() -> String {
-    "<html><head><title>Aurora Dynamics — Corporate History</title></head><body>\
-     <h1>Aurora Dynamics</h1>\
-     <p id='intro'>Aurora Dynamics was founded in 1958 in Zurich.</p>\
-     <a href='#about' id='about-link'>About us</a>\
-     <button id='go'>Go</button>\
-     </body></html>"
-        .to_string()
-}
+/// F12 验收目标页：引擎 SSRF 校验仅放行 http/https，故用公网稳定页
+const TARGET_URL: &str = "https://example.com/";
 
 async fn launch_page() -> (chromiumoxide::Browser, chromiumoxide::Page) {
+    // 独立临时 profile：避免并发/残留实例的 SingletonLock 冲突
+    let profile_dir = std::env::temp_dir().join(format!(
+        "crawlrs-mllm-live-{}-{}",
+        std::process::id(),
+        chrono_min_stamp()
+    ));
+    std::fs::create_dir_all(&profile_dir).expect("create profile dir");
     let config = chromiumoxide::BrowserConfig::builder()
         .no_sandbox()
         .arg("--disable-gpu")
         .arg("--disable-dev-shm-usage")
+        .user_data_dir(&profile_dir)
         .request_timeout(Duration::from_secs(30))
         .build()
         .expect("browser config");
@@ -65,13 +66,20 @@ async fn launch_page() -> (chromiumoxide::Browser, chromiumoxide::Page) {
     (browser, page)
 }
 
+fn chrono_min_stamp() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_millis()
+}
+
 /// F12 核心通道一：AX 树快照在真实页面上产出含页面语义的大纲。
 #[tokio::test]
 #[ignore = "需要本机 Chromium 与 Ollama 视觉模型（ollama pull moondream）"]
 async fn ax_tree_capture_produces_outline() {
     let (mut browser, page) = launch_page().await;
-    let url = format!("data:text/html,{}", test_page_html());
-    page.goto(url.as_str()).await.expect("goto");
+    page.goto(TARGET_URL).await.expect("goto");
     tokio::time::sleep(Duration::from_millis(800)).await;
 
     let nodes = crawlrs::engines::mllm::ax_tree::capture(&page)
@@ -81,7 +89,7 @@ async fn ax_tree_capture_produces_outline() {
     println!("=== AX outline ===\n{outline}");
     assert!(!outline.is_empty(), "AX 大纲不应为空");
     assert!(
-        outline.contains("Aurora Dynamics") || outline.contains("heading"),
+        outline.contains("Example Domain") || outline.contains("heading"),
         "大纲应包含页面标题或 heading 角色"
     );
     browser.close().await.ok();
@@ -107,7 +115,7 @@ async fn mllm_engine_end_to_end_with_ax_tree() {
     };
     let engine = MllmEngine::new(Arc::new(GenaiVisionAdapter::new()), config);
 
-    let url = format!("data:text/html,{}", test_page_html());
+    let url = TARGET_URL.to_string();
     let request = InternalScrapeRequest {
         url,
         method: HttpMethod::Get,

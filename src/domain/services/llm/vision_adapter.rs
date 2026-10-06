@@ -10,6 +10,25 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
+/// 解析视觉调用的自定义 OpenAI 兼容端点（F12 运维要领）
+///
+/// 模型带 `openai:` 前缀且 `CRAWLRS__MLLM__VISION_API_BASE_URL` 非空时，
+/// 返回 `Some((base_url, api_key))`——视觉调用改指自托管/第三方网关
+/// （如企业 OpenAI 兼容聚合端点）；否则 `None` 走 provider 原生路由
+/// （gemini/ollama 等按各自默认端点与密钥环境变量）。
+#[cfg(feature = "llm")]
+fn custom_vision_endpoint(model: &str) -> Option<(String, String)> {
+    if !model.starts_with("openai:") {
+        return None;
+    }
+    let base = std::env::var("CRAWLRS__MLLM__VISION_API_BASE_URL").ok()?;
+    if base.is_empty() {
+        return None;
+    }
+    let key = std::env::var("CRAWLRS__MLLM__VISION_API_KEY").unwrap_or_default();
+    Some((base, key))
+}
+
 /// 视觉模型适配 trait — 抽象视觉请求的发送与响应
 ///
 /// 允许 MllmEngine 在测试中替换为 mock 实现。
@@ -87,7 +106,35 @@ impl VisionAdapterTrait for GenaiVisionAdapter {
             let system_message = ChatMessage::system(system_prompt.to_string());
             let chat_req = ChatRequest::new(vec![system_message, user_message]);
 
-            let client = genai::Client::default();
+            // 自定义 OpenAI 兼容端点：模型带 openai: 前缀且配置了
+            // CRAWLRS__MLLM__VISION_API_BASE_URL/API_KEY 时，绑定 OpenAI 适配器
+            // 并以 ServiceTargetResolver 全权接管端点与鉴权。绑定 adapter_kind
+            // 是必须的——否则 genai 对未识别模型名回退嗅探为 Ollama（POST
+            // /api/chat 打到网关必然 404）
+            let client = match custom_vision_endpoint(model) {
+                Some((base, key)) => genai::Client::builder()
+                    .with_adapter_kind(genai::adapter::AdapterKind::OpenAI)
+                    .with_service_target_resolver(
+                        genai::resolver::ServiceTargetResolver::from_resolver_fn(
+                            move |mut target: genai::ServiceTarget| {
+                                target.endpoint =
+                                    genai::resolver::Endpoint::from_owned(base.clone());
+                                target.auth = genai::resolver::AuthData::from_single(key.clone());
+                                // 剥掉 openai: 前缀，保留裸模型名
+                                let name = target.model.model_name.as_str();
+                                let bare = name.strip_prefix("openai:").unwrap_or(name);
+                                target.model = genai::ModelIden::new(
+                                    genai::adapter::AdapterKind::OpenAI,
+                                    bare,
+                                );
+                                Ok(target)
+                            },
+                        ),
+                    )
+                    .build(),
+                None => genai::Client::default(),
+            };
+
             let chat_res = client.exec_chat(model, chat_req, None).await.map_err(|e| {
                 anyhow::anyhow!("Vision LLM call failed for model {}: {:?}", model, e)
             })?;
@@ -113,6 +160,36 @@ impl VisionAdapterTrait for GenaiVisionAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 自定义端点解析：openai: 前缀 + 非空 base_url 才命中；空 base 视为未配置
+    #[test]
+    #[cfg(feature = "llm")]
+    fn custom_vision_endpoint_requires_prefix_and_base() {
+        std::env::remove_var("CRAWLRS__MLLM__VISION_API_BASE_URL");
+        std::env::remove_var("CRAWLRS__MLLM__VISION_API_KEY");
+        // 未配置环境变量：任何模型都走 provider 原生路由
+        assert!(custom_vision_endpoint("openai:gateway-model").is_none());
+        assert!(custom_vision_endpoint("gemini:gemini-2.0-flash").is_none());
+
+        std::env::set_var(
+            "CRAWLRS__MLLM__VISION_API_BASE_URL",
+            "https://gw.example.com/v1",
+        );
+        std::env::set_var("CRAWLRS__MLLM__VISION_API_KEY", "sk-test");
+        // 非 openai 前缀：即使配置了端点也不走自定义路由（原生 provider 语义不变）
+        assert!(custom_vision_endpoint("gemini:gemini-2.0-flash").is_none());
+        let (base, key) =
+            custom_vision_endpoint("openai:gateway-model").expect("openai 前缀应命中");
+        assert_eq!(base, "https://gw.example.com/v1");
+        assert_eq!(key, "sk-test");
+
+        // 空 base_url 视为未配置
+        std::env::set_var("CRAWLRS__MLLM__VISION_API_BASE_URL", "");
+        assert!(custom_vision_endpoint("openai:gateway-model").is_none());
+
+        std::env::remove_var("CRAWLRS__MLLM__VISION_API_BASE_URL");
+        std::env::remove_var("CRAWLRS__MLLM__VISION_API_KEY");
+    }
     use std::sync::Arc;
 
     /// Mock 视觉适配器 — 返回预设响应
