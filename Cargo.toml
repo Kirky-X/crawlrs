@@ -281,6 +281,14 @@ rig-core = { version = "0.42", optional = true, default-features = false, featur
 
 # Dependency Injection
 trait-kit = { version = "0.5.0-rc.6", features = ["async", "confers", "shutdown"] }
+# NebulaId（同作者自研分布式 ID 引擎，../NebulaId 本地路径，不在 crates.io）：
+# crawlrs 全量 ID 生成/处理迁移的目标库。default-features=false 剥离 http/grpc/
+# garrison-auth/postgresql 服务面，仅留 sdk（纯算法 uuid_v8 零 DB/零号段）。其内部
+# dbnexus/sea-orm/uuid/chrono/serde 版本与本仓库 pin 一致，feature 经依赖图并集复用
+# 版本与 dbnexus/oxcache/trait-kit/confers/inklog/sdforge/limiteron 同作者对齐。
+# 本地 sibling 仓库（../NebulaId）未发布到 registry，直接声明为 path 依赖（不走
+# [workspace.dependencies] 间接，避开 cargo-deny 对非成员路径 workspace 依赖的解析限制）。
+nebulaid = { path = "../NebulaId", version = "0.3.0-rc.1", default-features = false, features = ["sdk"] }
 # feature 裁剪（hygiene）：macros/batch/bloom 在 crawlrs 源码中零使用（已 grep 验证），
 # 仅保留 memory（L1 缓存）+ serialization（类型化存取）+ metrics（命中统计）。
 oxcache = { version = "0.5.0-rc.5", default-features = false, features = ["memory", "serialization", "metrics"] }
