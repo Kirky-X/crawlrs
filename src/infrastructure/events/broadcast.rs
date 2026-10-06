@@ -46,14 +46,13 @@ impl EventBus for BroadcastEventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
     #[tokio::test]
     async fn test_publish_with_no_subscribers_returns_ok() {
         let bus = BroadcastEventBus::new(16);
         let event = DomainEvent::TaskCompleted {
-            task_id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            task_id: crate::domain::id::Id::generate(),
+            team_id: crate::domain::id::Id::generate(),
         };
         let result = bus.publish(event);
         assert!(
@@ -67,8 +66,8 @@ mod tests {
         let bus = BroadcastEventBus::new(16);
         let mut receiver = bus.subscribe();
 
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let event = DomainEvent::TaskCompleted { task_id, team_id };
 
         bus.publish(event).unwrap();
@@ -92,8 +91,8 @@ mod tests {
         let mut receiver1 = bus.subscribe();
         let mut receiver2 = bus.subscribe();
 
-        let scrape_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let scrape_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let event = DomainEvent::ScrapeCompleted { scrape_id, team_id };
 
         bus.publish(event).unwrap();
@@ -129,9 +128,9 @@ mod tests {
         let bus = BroadcastEventBus::new(16);
         let mut receiver = bus.subscribe();
 
-        let task_id1 = Uuid::new_v4();
-        let task_id2 = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id1 = crate::domain::id::Id::generate();
+        let task_id2 = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
 
         bus.publish(DomainEvent::TaskCompleted {
             task_id: task_id1,

@@ -566,3 +566,13 @@ default_locale = "en-US"
 supported_locales = ["en-US", "zh-CN"]
 # 翻译文件根目录路径（相对于工作目录）
 locales_dir = "locales"
+
+# ID Generation (NebulaId)
+# ID 生成配置——全项目 ID 生成/处理经 NebulaId（../NebulaId）落地。
+[id]
+# 算法：uuid_v8（默认，生成 UUID 兼容值 → DB UUID 列与 API JSON 契约零改动）；
+# 可选 snowflake（数值/时间有序，需额外 DB schema 迁移，非默认路径）。
+algorithm = "uuid_v8"
+# 生成 ID 时传入的默认 workspace / group 标识（biz_tag 由各业务域在生成点传入）。
+workspace = "crawlrs"
+group = "default"

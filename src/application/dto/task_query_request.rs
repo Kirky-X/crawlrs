@@ -6,14 +6,13 @@ use chrono::{DateTime, FixedOffset};
 use sdforge::validator::Validate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
 
 /// 任务查询请求DTO
 #[derive(Debug, Deserialize, Serialize, Validate)]
 #[validate(crate = "sdforge::validator")]
 pub struct TaskQueryRequestDto {
     /// 任务ID列表（批量查询）
-    pub task_ids: Option<Vec<Uuid>>,
+    pub task_ids: Option<Vec<crate::domain::id::Id>>,
 
     /// 任务类型过滤
     pub task_types: Option<Vec<TaskType>>,
@@ -28,7 +27,7 @@ pub struct TaskQueryRequestDto {
     pub created_before: Option<DateTime<FixedOffset>>,
 
     /// 爬取任务ID过滤（获取特定爬取任务的所有子任务）
-    pub crawl_id: Option<Uuid>,
+    pub crawl_id: Option<crate::domain::id::Id>,
 
     /// 结果包含控制
     #[validate(range(min = 1, max = 1000))]
@@ -77,7 +76,7 @@ pub struct TaskQueryDataDto {
 #[derive(Debug, Serialize)]
 pub struct TaskInfoDto {
     /// 任务ID
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// 任务类型
     pub task_type: TaskType,
     /// 任务状态
@@ -97,7 +96,7 @@ pub struct TaskInfoDto {
     /// 完成时间
     pub completed_at: Option<DateTime<FixedOffset>>,
     /// 爬取任务ID
-    pub crawl_id: Option<Uuid>,
+    pub crawl_id: Option<crate::domain::id::Id>,
     /// 结果数据
     pub result: Option<ScrapeResultInfoDto>,
 }
@@ -106,7 +105,7 @@ pub struct TaskInfoDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeResultInfoDto {
     /// 结果ID
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// HTTP状态码
     pub status_code: u16,
     /// 内容
@@ -120,7 +119,7 @@ pub struct ScrapeResultInfoDto {
 #[validate(crate = "sdforge::validator")]
 pub struct TaskCancelRequestDto {
     /// 任务ID列表（批量取消）
-    pub task_ids: Vec<Uuid>,
+    pub task_ids: Vec<crate::domain::id::Id>,
 
     /// 是否强制取消（即使任务正在执行中）
     pub force: Option<bool>,
@@ -147,7 +146,7 @@ pub struct TaskCancelDataDto {
 #[derive(Debug, Serialize)]
 pub struct CancelledTaskInfoDto {
     /// 任务ID
-    pub task_id: Uuid,
+    pub task_id: crate::domain::id::Id,
     /// 状态
     pub status: String,
     /// 取消时间
@@ -158,7 +157,7 @@ pub struct CancelledTaskInfoDto {
 #[derive(Debug, Serialize)]
 pub struct FailedTaskInfoDto {
     /// 任务ID
-    pub task_id: Uuid,
+    pub task_id: crate::domain::id::Id,
     /// 失败原因
     pub reason: String,
 }
@@ -187,8 +186,8 @@ mod tests {
 
     #[test]
     fn test_task_query_request_serde_roundtrip_full() {
-        let task_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let after = FixedOffset::east_opt(8 * 3600)
             .unwrap()
             .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
@@ -293,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_task_cancel_request_serde_and_validation() {
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let dto = TaskCancelRequestDto {
             task_ids: vec![task_id],
             force: Some(true),
@@ -313,7 +312,7 @@ mod tests {
     #[test]
     fn test_task_cancel_request_validation_sync_wait_ms_out_of_range() {
         let dto = TaskCancelRequestDto {
-            task_ids: vec![Uuid::new_v4()],
+            task_ids: vec![crate::domain::id::Id::generate()],
             force: None,
             sync_wait_ms: Some(30001),
         };
@@ -324,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_task_query_data_dto_serialization() {
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let created = FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2025, 1, 1, 12, 0, 0)
@@ -372,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_task_info_dto_with_result_serialization() {
-        let result_id = Uuid::new_v4();
+        let result_id = crate::domain::id::Id::generate();
         let created = FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2025, 1, 1, 12, 0, 0)
@@ -386,7 +385,7 @@ mod tests {
         };
 
         let info = TaskInfoDto {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Crawl,
             status: TaskStatus::Active,
             priority: 10,
@@ -396,7 +395,7 @@ mod tests {
             created_at: created,
             started_at: None,
             completed_at: None,
-            crawl_id: Some(Uuid::new_v4()),
+            crawl_id: Some(crate::domain::id::Id::generate()),
             result: Some(result),
         };
 
@@ -412,7 +411,7 @@ mod tests {
     #[test]
     fn test_scrape_result_info_dto_roundtrip() {
         let dto = ScrapeResultInfoDto {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             status_code: 404,
             content: "not found".to_string(),
             metadata: None,
@@ -430,7 +429,7 @@ mod tests {
     #[test]
     fn test_scrape_result_info_dto_clone() {
         let dto = ScrapeResultInfoDto {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             status_code: 500,
             content: "error".to_string(),
             metadata: Some(serde_json::json!({"err": true})),
@@ -445,8 +444,8 @@ mod tests {
 
     #[test]
     fn test_task_cancel_data_dto_serialization() {
-        let task_id = Uuid::new_v4();
-        let failed_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let failed_id = crate::domain::id::Id::generate();
         let cancelled_at = FixedOffset::east_opt(0)
             .unwrap()
             .with_ymd_and_hms(2025, 7, 9, 10, 30, 0)

@@ -7,6 +7,7 @@
 /// 包括数据库连接池和实体定义
 pub mod dbnexus_connection;
 pub mod entities;
+pub mod id_sea_orm;
 pub mod query_monitor;
 pub mod repositories;
 pub mod transaction;

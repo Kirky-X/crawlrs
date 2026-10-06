@@ -1521,4 +1521,49 @@ mod tests {
         assert_eq!(json["error"]["code"], "SERVICE_UNAVAILABLE");
         assert_eq!(json["error"]["status"], 503);
     }
+
+    /// 遍历全部 CrawlRsError 变体，锁定 `user_message_locale`（17 个 match 臂）均产出非空
+    /// 本地化文案且 Display 非空（此前仅少量变体被覆盖）。
+    #[cfg(feature = "platform")]
+    #[test]
+    fn test_user_message_locale_across_all_variants() {
+        use crate::i18n::{I18nBundle, Locale};
+        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap();
+        let en: Locale = "en-US".parse().unwrap();
+        let zh: Locale = "zh-CN".parse().unwrap();
+        let variants = vec![
+            make_db_error("db"),
+            CrawlRsError::Network("n".into()),
+            CrawlRsError::Config("c".into()),
+            CrawlRsError::Validation("v".into()),
+            CrawlRsError::Unprocessable("u".into()),
+            CrawlRsError::NotFound("nf".into()),
+            CrawlRsError::Authentication("a".into()),
+            CrawlRsError::PermissionDenied("pd".into()),
+            CrawlRsError::ServiceUnavailable("su".into()),
+            CrawlRsError::Timeout("t".into()),
+            CrawlRsError::Io(std::io::Error::other("io")),
+            CrawlRsError::Json(
+                serde_json::from_str::<serde_json::Value>("not-json")
+                    .expect_err("invalid json must produce serde error"),
+            ),
+            CrawlRsError::Engine("e".into()),
+            CrawlRsError::Cache("ca".into()),
+            CrawlRsError::Task("tk".into()),
+            CrawlRsError::RateLimit("rl".into()),
+            CrawlRsError::Other("o".into()),
+        ];
+        for v in &variants {
+            assert!(
+                !v.user_message_locale(&en, &bundle).is_empty(),
+                "en empty: {v}"
+            );
+            assert!(
+                !v.user_message_locale(&zh, &bundle).is_empty(),
+                "zh empty: {v}"
+            );
+            assert!(!v.to_string().is_empty());
+        }
+    }
 }

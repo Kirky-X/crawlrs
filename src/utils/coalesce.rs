@@ -23,7 +23,6 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
-use uuid::Uuid;
 
 /// 僵死条目超时（秒）
 pub const STALE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -48,7 +47,7 @@ struct InFlightEntry {
     started_at: Instant,
     /// leader（首个获得执行权的 worker）的任务 ID。
     /// 等待方按此 ID 查询落库结果——结果落在 leader 名下，非等待方自身 task_id。
-    leader_task_id: Uuid,
+    leader_task_id: crate::domain::id::Id,
     sender: broadcast::Sender<CoalesceSignal>,
 }
 
@@ -59,7 +58,7 @@ pub enum CoalesceResult {
     Proceed(CoalesceGuard),
     /// 已有同 URL 请求在执行，调用方应等待广播信号后按 leader task_id 读取结果。
     /// 元组第二项为 leader（首个执行方）的 task_id，等待方据此查询落库结果。
-    Wait(broadcast::Receiver<CoalesceSignal>, Uuid),
+    Wait(broadcast::Receiver<CoalesceSignal>, crate::domain::id::Id),
 }
 
 /// RAII guard：持有期间该 URL 被标记为 in-flight
@@ -145,7 +144,7 @@ impl RequestCoalescer {
     ///
     /// `broadcast::channel(1)` 仅在 `Vacant` 分支（Proceed 路径）构造，
     /// 避免在 `Occupied`（Wait 路径）做无谓分配。
-    pub fn try_start(&self, url: &str, leader_task_id: Uuid) -> CoalesceResult {
+    pub fn try_start(&self, url: &str, leader_task_id: crate::domain::id::Id) -> CoalesceResult {
         use dashmap::mapref::entry::Entry;
 
         match self.in_flight.entry(url.to_string()) {
@@ -233,7 +232,10 @@ mod tests {
     #[test]
     fn try_start_first_call_returns_proceed() {
         let coalescer = RequestCoalescer::new();
-        let result = coalescer.try_start("https://example.com/page1", Uuid::new_v4());
+        let result = coalescer.try_start(
+            "https://example.com/page1",
+            crate::domain::id::Id::generate(),
+        );
         assert!(matches!(result, CoalesceResult::Proceed(_)));
         assert!(coalescer.is_in_flight("https://example.com/page1"));
     }
@@ -242,8 +244,14 @@ mod tests {
     #[test]
     fn try_start_second_call_same_url_returns_wait() {
         let coalescer = RequestCoalescer::new();
-        let _guard = coalescer.try_start("https://example.com/page2", Uuid::new_v4());
-        let result = coalescer.try_start("https://example.com/page2", Uuid::new_v4());
+        let _guard = coalescer.try_start(
+            "https://example.com/page2",
+            crate::domain::id::Id::generate(),
+        );
+        let result = coalescer.try_start(
+            "https://example.com/page2",
+            crate::domain::id::Id::generate(),
+        );
         assert!(matches!(result, CoalesceResult::Wait(..)));
     }
 
@@ -251,8 +259,8 @@ mod tests {
     #[test]
     fn try_start_different_urls_both_proceed() {
         let coalescer = RequestCoalescer::new();
-        let _g1 = coalescer.try_start("https://a.com", Uuid::new_v4());
-        let _g2 = coalescer.try_start("https://b.com", Uuid::new_v4());
+        let _g1 = coalescer.try_start("https://a.com", crate::domain::id::Id::generate());
+        let _g2 = coalescer.try_start("https://b.com", crate::domain::id::Id::generate());
         assert_eq!(coalescer.in_flight_count(), 2);
     }
 
@@ -261,13 +269,19 @@ mod tests {
     fn guard_drop_removes_entry_and_allows_retry() {
         let coalescer = RequestCoalescer::new();
         {
-            let _guard = coalescer.try_start("https://example.com/temp", Uuid::new_v4());
+            let _guard = coalescer.try_start(
+                "https://example.com/temp",
+                crate::domain::id::Id::generate(),
+            );
             assert!(coalescer.is_in_flight("https://example.com/temp"));
         }
         // guard 已 Drop
         assert!(!coalescer.is_in_flight("https://example.com/temp"));
         // 可再次获取
-        let result = coalescer.try_start("https://example.com/temp", Uuid::new_v4());
+        let result = coalescer.try_start(
+            "https://example.com/temp",
+            crate::domain::id::Id::generate(),
+        );
         assert!(matches!(result, CoalesceResult::Proceed(_)));
     }
 
@@ -275,8 +289,14 @@ mod tests {
     #[test]
     fn guard_drop_notifies_waiters() {
         let coalescer = RequestCoalescer::new();
-        let _guard = coalescer.try_start("https://example.com/notify", Uuid::new_v4());
-        let rx = match coalescer.try_start("https://example.com/notify", Uuid::new_v4()) {
+        let _guard = coalescer.try_start(
+            "https://example.com/notify",
+            crate::domain::id::Id::generate(),
+        );
+        let rx = match coalescer.try_start(
+            "https://example.com/notify",
+            crate::domain::id::Id::generate(),
+        ) {
             CoalesceResult::Wait(rx, _) => rx,
             _ => panic!("expected Wait"),
         };
@@ -284,11 +304,13 @@ mod tests {
         // 在另一线程 Drop guard
         let coalescer_clone = coalescer.clone();
         thread::spawn(move || {
-            let guard =
-                match coalescer_clone.try_start("https://example.com/notify-2", Uuid::new_v4()) {
-                    CoalesceResult::Proceed(g) => g,
-                    _ => panic!("expected Proceed"),
-                };
+            let guard = match coalescer_clone.try_start(
+                "https://example.com/notify-2",
+                crate::domain::id::Id::generate(),
+            ) {
+                CoalesceResult::Proceed(g) => g,
+                _ => panic!("expected Proceed"),
+            };
             drop(guard);
         })
         .join()
@@ -304,7 +326,10 @@ mod tests {
     #[test]
     fn release_is_equivalent_to_drop() {
         let coalescer = RequestCoalescer::new();
-        let guard = match coalescer.try_start("https://example.com/release", Uuid::new_v4()) {
+        let guard = match coalescer.try_start(
+            "https://example.com/release",
+            crate::domain::id::Id::generate(),
+        ) {
             CoalesceResult::Proceed(g) => g,
             _ => panic!("expected Proceed"),
         };
@@ -317,7 +342,10 @@ mod tests {
     #[test]
     fn guard_url_returns_correct_url() {
         let coalescer = RequestCoalescer::new();
-        let guard = match coalescer.try_start("https://example.com/url-test", Uuid::new_v4()) {
+        let guard = match coalescer.try_start(
+            "https://example.com/url-test",
+            crate::domain::id::Id::generate(),
+        ) {
             CoalesceResult::Proceed(g) => g,
             _ => panic!("expected Proceed"),
         };
@@ -334,12 +362,15 @@ mod tests {
             "https://example.com/stale".to_string(),
             InFlightEntry {
                 started_at: Instant::now() - Duration::from_secs(200),
-                leader_task_id: Uuid::new_v4(),
+                leader_task_id: crate::domain::id::Id::generate(),
                 sender: tx,
             },
         );
         // 还插入一个未过时的
-        let guard = match coalescer.try_start("https://example.com/fresh", Uuid::new_v4()) {
+        let guard = match coalescer.try_start(
+            "https://example.com/fresh",
+            crate::domain::id::Id::generate(),
+        ) {
             CoalesceResult::Proceed(g) => g,
             _ => panic!("expected Proceed"),
         };
@@ -358,7 +389,10 @@ mod tests {
     #[test]
     fn purge_stale_returns_zero_when_no_stale() {
         let coalescer = RequestCoalescer::new();
-        let _guard = coalescer.try_start("https://example.com/active", Uuid::new_v4());
+        let _guard = coalescer.try_start(
+            "https://example.com/active",
+            crate::domain::id::Id::generate(),
+        );
         assert_eq!(coalescer.purge_stale(), 0);
         assert!(coalescer.is_in_flight("https://example.com/active"));
     }
@@ -396,7 +430,7 @@ mod tests {
                 thread::spawn(move || {
                     // 等待所有线程就绪后同时调用 try_start
                     b.wait();
-                    let result = c.try_start(url, Uuid::new_v4());
+                    let result = c.try_start(url, crate::domain::id::Id::generate());
                     match result {
                         CoalesceResult::Proceed(guard) => {
                             g.lock().unwrap().push(guard);
@@ -431,7 +465,10 @@ mod tests {
     fn clone_shares_in_flight_state() {
         let a = RequestCoalescer::new();
         let b = a.clone();
-        let _guard = a.try_start("https://example.com/shared", Uuid::new_v4());
+        let _guard = a.try_start(
+            "https://example.com/shared",
+            crate::domain::id::Id::generate(),
+        );
         // b 也能看到
         assert!(b.is_in_flight("https://example.com/shared"));
         assert_eq!(b.in_flight_count(), 1);
@@ -443,12 +480,12 @@ mod tests {
         let coalescer = Arc::new(RequestCoalescer::new());
         let url = "https://example.com/async-wait";
 
-        let guard = match coalescer.try_start(url, Uuid::new_v4()) {
+        let guard = match coalescer.try_start(url, crate::domain::id::Id::generate()) {
             CoalesceResult::Proceed(g) => g,
             _ => panic!("expected Proceed"),
         };
 
-        let mut rx = match coalescer.try_start(url, Uuid::new_v4()) {
+        let mut rx = match coalescer.try_start(url, crate::domain::id::Id::generate()) {
             CoalesceResult::Wait(rx, _) => rx,
             _ => panic!("expected Wait"),
         };
@@ -477,12 +514,15 @@ mod tests {
             "https://example.com/stale-signal".to_string(),
             InFlightEntry {
                 started_at: Instant::now() - Duration::from_secs(200),
-                leader_task_id: Uuid::new_v4(),
+                leader_task_id: crate::domain::id::Id::generate(),
                 sender: tx,
             },
         );
         // 等待方在 purge 前订阅
-        let mut rx = match coalescer.try_start("https://example.com/stale-signal", Uuid::new_v4()) {
+        let mut rx = match coalescer.try_start(
+            "https://example.com/stale-signal",
+            crate::domain::id::Id::generate(),
+        ) {
             CoalesceResult::Wait(rx, _) => rx,
             _ => panic!("expected Wait"),
         };
@@ -497,14 +537,14 @@ mod tests {
     #[test]
     fn wait_carries_leader_task_id() {
         let coalescer = RequestCoalescer::new();
-        let leader_id = Uuid::new_v4();
+        let leader_id = crate::domain::id::Id::generate();
         let url = "https://example.com/leader-id";
         let _guard = match coalescer.try_start(url, leader_id) {
             CoalesceResult::Proceed(g) => g,
             _ => panic!("expected Proceed"),
         };
         // 等待方应读到 leader 的 task_id（而非自己的）
-        let waiter_id = Uuid::new_v4();
+        let waiter_id = crate::domain::id::Id::generate();
         match coalescer.try_start(url, waiter_id) {
             CoalesceResult::Wait(_rx, got_leader_id) => {
                 assert_eq!(got_leader_id, leader_id, "waiter should see leader task_id");
@@ -519,11 +559,11 @@ mod tests {
     async fn purge_url_broadcasts_purged_regardless_of_age() {
         let coalescer = RequestCoalescer::new();
         let url = "https://example.com/force-purge";
-        let _guard = match coalescer.try_start(url, Uuid::new_v4()) {
+        let _guard = match coalescer.try_start(url, crate::domain::id::Id::generate()) {
             CoalesceResult::Proceed(g) => g,
             _ => panic!("expected Proceed"),
         };
-        let mut rx = match coalescer.try_start(url, Uuid::new_v4()) {
+        let mut rx = match coalescer.try_start(url, crate::domain::id::Id::generate()) {
             CoalesceResult::Wait(rx, _) => rx,
             _ => panic!("expected Wait"),
         };
@@ -539,11 +579,11 @@ mod tests {
     async fn drop_entry_silently_causes_closed() {
         let coalescer = RequestCoalescer::new();
         let url = "https://example.com/silent";
-        let _guard = match coalescer.try_start(url, Uuid::new_v4()) {
+        let _guard = match coalescer.try_start(url, crate::domain::id::Id::generate()) {
             CoalesceResult::Proceed(g) => g,
             _ => panic!("expected Proceed"),
         };
-        let mut rx = match coalescer.try_start(url, Uuid::new_v4()) {
+        let mut rx = match coalescer.try_start(url, crate::domain::id::Id::generate()) {
             CoalesceResult::Wait(rx, _) => rx,
             _ => panic!("expected Wait"),
         };

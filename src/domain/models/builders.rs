@@ -12,7 +12,6 @@
 //! - [`TaskBuilder`] — constructs [`Task`] instances with sensible defaults.
 
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
 
 use super::task_domain::{TaskStatus, TaskType};
 use super::task_model::Task;
@@ -33,12 +32,12 @@ use super::task_model::Task;
 /// ```
 #[derive(Debug, Clone)]
 pub struct TaskBuilder {
-    id: Uuid,
+    id: crate::domain::id::Id,
     task_type: TaskType,
     status: TaskStatus,
     priority: i32,
-    team_id: Uuid,
-    api_key_id: Uuid,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
     url: String,
     payload: serde_json::Value,
     retry_count: i32,
@@ -49,9 +48,9 @@ pub struct TaskBuilder {
     created_at: DateTime<Utc>,
     started_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
-    crawl_id: Option<Uuid>,
+    crawl_id: Option<crate::domain::id::Id>,
     updated_at: DateTime<Utc>,
-    lock_token: Option<Uuid>,
+    lock_token: Option<crate::domain::id::Id>,
     lock_expires_at: Option<DateTime<Utc>>,
 }
 
@@ -73,12 +72,12 @@ impl TaskBuilder {
     pub fn new() -> Self {
         let now = Utc::now();
         Self {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 0,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::Value::Null,
             retry_count: 0,
@@ -96,7 +95,7 @@ impl TaskBuilder {
         }
     }
 
-    pub fn id(mut self, id: Uuid) -> Self {
+    pub fn id(mut self, id: crate::domain::id::Id) -> Self {
         self.id = id;
         self
     }
@@ -116,12 +115,12 @@ impl TaskBuilder {
         self
     }
 
-    pub fn team_id(mut self, team_id: Uuid) -> Self {
+    pub fn team_id(mut self, team_id: crate::domain::id::Id) -> Self {
         self.team_id = team_id;
         self
     }
 
-    pub fn api_key_id(mut self, api_key_id: Uuid) -> Self {
+    pub fn api_key_id(mut self, api_key_id: crate::domain::id::Id) -> Self {
         self.api_key_id = api_key_id;
         self
     }
@@ -176,7 +175,7 @@ impl TaskBuilder {
         self
     }
 
-    pub fn crawl_id(mut self, crawl_id: Option<Uuid>) -> Self {
+    pub fn crawl_id(mut self, crawl_id: Option<crate::domain::id::Id>) -> Self {
         self.crawl_id = crawl_id;
         self
     }
@@ -186,7 +185,7 @@ impl TaskBuilder {
         self
     }
 
-    pub fn lock_token(mut self, lock_token: Option<Uuid>) -> Self {
+    pub fn lock_token(mut self, lock_token: Option<crate::domain::id::Id>) -> Self {
         self.lock_token = lock_token;
         self
     }
@@ -255,8 +254,8 @@ mod tests {
 
     #[test]
     fn test_task_builder_with_required_fields() {
-        let team_id = Uuid::new_v4();
-        let api_key_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let api_key_id = crate::domain::id::Id::generate();
         let task = TaskBuilder::new()
             .team_id(team_id)
             .api_key_id(api_key_id)
@@ -269,11 +268,11 @@ mod tests {
 
     #[test]
     fn test_task_builder_with_all_fields() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
-        let api_key_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
-        let lock_token = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
+        let api_key_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
+        let lock_token = crate::domain::id::Id::generate();
         let now = Utc::now();
 
         let task = TaskBuilder::new()

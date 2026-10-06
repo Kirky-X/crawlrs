@@ -15,7 +15,6 @@ use crawlrs::domain::services::team_service::TeamGeoRestrictions;
 use crawlrs::infrastructure::database::entities::geo_restriction_log;
 use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use uuid::Uuid;
 
 // ==================== DatabaseGeoRestrictionRepository 测试 ====================
 
@@ -25,7 +24,7 @@ async fn tc_database_get_unknown_team_returns_team_not_found() {
     let app = create_test_app_no_worker().await;
     let repo = DatabaseGeoRestrictionRepository::new(app.db_pool.clone());
 
-    let unknown_team = Uuid::new_v4();
+    let unknown_team = crawlrs::domain::id::Id::generate();
     let result = repo.get_team_restrictions(unknown_team).await;
 
     match result {
@@ -46,7 +45,7 @@ async fn tc_database_update_unknown_team_returns_team_not_found() {
     let app = create_test_app_no_worker().await;
     let repo = DatabaseGeoRestrictionRepository::new(app.db_pool.clone());
 
-    let unknown_team = Uuid::new_v4();
+    let unknown_team = crawlrs::domain::id::Id::generate();
     let restrictions = TeamGeoRestrictions {
         enable_geo_restrictions: true,
         allowed_countries: Some(vec!["US".to_string()]),
@@ -172,7 +171,7 @@ async fn tc_database_log_geo_restriction_action_persists() {
         "at least one log entry should be persisted"
     );
     let log = &logs[0];
-    assert_eq!(log.team_id, team_id);
+    assert_eq!(team_id, log.team_id);
     assert_eq!(log.ip_address, "203.0.113.50");
     assert_eq!(log.country_code.as_ref().unwrap(), "US");
     assert_eq!(log.restriction_type, "allowed");

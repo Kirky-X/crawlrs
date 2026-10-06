@@ -13,7 +13,6 @@
 use axum::{response::Response, Extension};
 use sdforge::prelude::*;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::i18n::{I18nBundle, Locale};
 use crate::presentation::forge_api::route_metadata;
@@ -79,7 +78,7 @@ submit!(RouteRegistration::new(
 async fn crawl_results_route(
     // 显式 kind=path：GET 端点参数默认会被推断为 Query（sdforge lib.rs:556），
     // 缺注解会让 {id} 路径段被当 query 反序列化 → 恒 400 "missing field crawl_id"
-    #[param(kind = "path")] crawl_id: Uuid,
+    #[param(kind = "path")] crawl_id: crate::domain::id::Id,
     #[state] state: Arc<CrawlHandlerState>,
     #[state] auth_state: AuthState,
     #[state] locale: Locale,

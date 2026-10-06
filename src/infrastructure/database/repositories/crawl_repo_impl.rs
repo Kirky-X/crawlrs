@@ -15,7 +15,6 @@ use dbnexus::sea_orm::{
 };
 use dbnexus::DbPool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Crawl repository implementation using Sea-ORM
 pub struct CrawlRepositoryImpl {
@@ -59,7 +58,10 @@ impl CrawlRepository for CrawlRepositoryImpl {
         Ok(crawl.clone())
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<Crawl>, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -99,7 +101,10 @@ impl CrawlRepository for CrawlRepositoryImpl {
         Ok(crawl.clone())
     }
 
-    async fn increment_completed_tasks(&self, id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_completed_tasks(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -131,7 +136,10 @@ impl CrawlRepository for CrawlRepositoryImpl {
         Ok(())
     }
 
-    async fn increment_failed_tasks(&self, id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_failed_tasks(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -160,7 +168,11 @@ impl CrawlRepository for CrawlRepositoryImpl {
         Ok(())
     }
 
-    async fn update_status(&self, id: Uuid, status: CrawlStatus) -> Result<(), RepositoryError> {
+    async fn update_status(
+        &self,
+        id: crate::domain::id::Id,
+        status: CrawlStatus,
+    ) -> Result<(), RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -191,7 +203,10 @@ impl CrawlRepository for CrawlRepositoryImpl {
         Ok(())
     }
 
-    async fn increment_total_tasks(&self, id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_total_tasks(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -222,7 +237,7 @@ impl CrawlRepository for CrawlRepositoryImpl {
 
     async fn find_by_team_id_paginated(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<Crawl>, RepositoryError> {
@@ -248,7 +263,10 @@ impl CrawlRepository for CrawlRepositoryImpl {
         Ok(CrawlMapper::to_domain_list(entities))
     }
 
-    async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -281,8 +299,8 @@ mod tests {
     /// Each call produces fresh UUIDs for id/team_id so tests are isolated.
     fn make_test_crawl() -> Crawl {
         Crawl::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "test crawl".to_string(),
             "http://example.com".to_string(),
             "http://example.com".to_string(),
@@ -343,7 +361,7 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_id(Uuid::new_v4()).await;
+        let result = repo.find_by_id(crate::domain::id::Id::generate()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
         assert!(result.unwrap().is_none(), "unknown UUID should return None");
     }
@@ -358,9 +376,12 @@ mod tests {
         // create first
         repo.create(&crawl).await.expect("create failed");
         // modify public fields and update
-        crawl.name = format!("updated crawl {}", Uuid::new_v4());
-        crawl.url = format!("http://updated.com/{}", Uuid::new_v4());
-        crawl.root_url = format!("http://root-updated.com/{}", Uuid::new_v4());
+        crawl.name = format!("updated crawl {}", crate::domain::id::Id::generate());
+        crawl.url = format!("http://updated.com/{}", crate::domain::id::Id::generate());
+        crawl.root_url = format!(
+            "http://root-updated.com/{}",
+            crate::domain::id::Id::generate()
+        );
         let result = repo.update(&crawl).await;
         assert!(result.is_ok(), "update failed: {:?}", result.err());
 
@@ -477,7 +498,9 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 10, 0).await;
+        let result = repo
+            .find_by_team_id_paginated(crate::domain::id::Id::generate(), 10, 0)
+            .await;
         assert!(
             result.is_ok(),
             "find_by_team_id_paginated failed: {:?}",
@@ -495,7 +518,9 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo.count_by_team_id(Uuid::new_v4()).await;
+        let result = repo
+            .count_by_team_id(crate::domain::id::Id::generate())
+            .await;
         assert!(
             result.is_ok(),
             "count_by_team_id failed: {:?}",
@@ -510,7 +535,7 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let mut crawl1 = make_test_crawl();
         crawl1.team_id = team_id;
         let mut crawl2 = make_test_crawl();
@@ -526,7 +551,7 @@ mod tests {
         assert!(result.is_ok(), "find_by_team_id_paginated failed");
         let crawls = result.unwrap();
         assert_eq!(crawls.len(), 2, "should find 2 crawls for team_id");
-        let ids: HashSet<Uuid> = crawls.iter().map(|c| c.id).collect();
+        let ids: HashSet<crate::domain::id::Id> = crawls.iter().map(|c| c.id).collect();
         assert!(ids.contains(&crawl1.id));
         assert!(ids.contains(&crawl2.id));
         assert!(!ids.contains(&unrelated.id));
@@ -538,7 +563,7 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let mut crawl1 = make_test_crawl();
         crawl1.team_id = team_id;
         let mut crawl2 = make_test_crawl();
@@ -726,7 +751,9 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 0, 0).await;
+        let result = repo
+            .find_by_team_id_paginated(crate::domain::id::Id::generate(), 0, 0)
+            .await;
         assert!(
             result.is_ok(),
             "find_by_team_id_paginated failed: {:?}",
@@ -745,7 +772,7 @@ mod tests {
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .find_by_team_id_paginated(Uuid::new_v4(), 10, u32::MAX)
+            .find_by_team_id_paginated(crate::domain::id::Id::generate(), 10, u32::MAX)
             .await;
         assert!(
             result.is_ok(),
@@ -765,7 +792,7 @@ mod tests {
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .find_by_team_id_paginated(Uuid::new_v4(), u32::MAX, 0)
+            .find_by_team_id_paginated(crate::domain::id::Id::generate(), u32::MAX, 0)
             .await;
         assert!(
             result.is_ok(),
@@ -784,7 +811,9 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_team_id_paginated(Uuid::nil(), 10, 0).await;
+        let result = repo
+            .find_by_team_id_paginated(crate::domain::id::Id::nil(), 10, 0)
+            .await;
         assert!(
             result.is_ok(),
             "find_by_team_id_paginated failed: {:?}",
@@ -804,7 +833,7 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_id(Uuid::nil()).await;
+        let result = repo.find_by_id(crate::domain::id::Id::nil()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
         // Nil UUID is unlikely to match any crawl (we generate v4 UUIDs in tests).
         let _found = result.unwrap();
@@ -816,7 +845,7 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo.count_by_team_id(Uuid::nil()).await;
+        let result = repo.count_by_team_id(crate::domain::id::Id::nil()).await;
         assert!(
             result.is_ok(),
             "count_by_team_id failed: {:?}",
@@ -834,7 +863,9 @@ mod tests {
         // increment_completed_tasks silently returns Ok(()) when the crawl is
         // not found (this is the current implementation behavior).
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo.increment_completed_tasks(Uuid::nil()).await;
+        let result = repo
+            .increment_completed_tasks(crate::domain::id::Id::nil())
+            .await;
         assert!(
             result.is_ok(),
             "increment_completed_tasks failed: {:?}",
@@ -848,7 +879,9 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo.increment_failed_tasks(Uuid::nil()).await;
+        let result = repo
+            .increment_failed_tasks(crate::domain::id::Id::nil())
+            .await;
         assert!(
             result.is_ok(),
             "increment_failed_tasks failed: {:?}",
@@ -862,7 +895,9 @@ mod tests {
             return;
         }
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
-        let result = repo.increment_total_tasks(Uuid::nil()).await;
+        let result = repo
+            .increment_total_tasks(crate::domain::id::Id::nil())
+            .await;
         assert!(
             result.is_ok(),
             "increment_total_tasks failed: {:?}",

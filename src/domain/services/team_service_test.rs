@@ -12,7 +12,6 @@ use crate::domain::services::team_service::{
 use async_trait::async_trait;
 use std::net::IpAddr;
 use std::sync::Arc;
-use uuid::Uuid;
 
 fn mock_geo_location(country_code: String) -> GeoLocation {
     GeoLocation {
@@ -48,14 +47,14 @@ struct MockGeoRestrictionRepository;
 impl GeoRestrictionRepository for MockGeoRestrictionRepository {
     async fn get_team_restrictions(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
     ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
         Ok(TeamGeoRestrictions::default())
     }
 
     async fn update_team_restrictions(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _restrictions: &TeamGeoRestrictions,
     ) -> Result<(), GeoRestrictionRepositoryError> {
         Ok(())
@@ -63,7 +62,7 @@ impl GeoRestrictionRepository for MockGeoRestrictionRepository {
 
     async fn log_geo_restriction_action(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _ip_address: &str,
         _country_code: &str,
         _action: &str,
@@ -85,7 +84,11 @@ async fn test_geo_restrictions_disabled_returns_allowed() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
 
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
@@ -103,7 +106,11 @@ async fn test_invalid_ip_format_returns_denied() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "not-an-ip", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "not-an-ip",
+            &restrictions,
+        )
         .await;
 
     match result {
@@ -127,7 +134,11 @@ async fn test_ip_whitelist_cidr_allows() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "192.168.1.50", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "192.168.1.50",
+            &restrictions,
+        )
         .await;
 
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
@@ -146,7 +157,11 @@ async fn test_non_whitelisted_ip_blocks() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "192.168.1.1", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "192.168.1.1",
+            &restrictions,
+        )
         .await;
 
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
@@ -166,7 +181,11 @@ async fn test_allowed_countries_allows() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
 
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
@@ -186,7 +205,11 @@ async fn test_blocked_countries_denies() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
 
     match result {
@@ -211,7 +234,11 @@ async fn test_blocked_takes_precedence_over_allowed() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
 
     match result {
@@ -240,7 +267,11 @@ async fn test_case_insensitive_country_matching() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
 
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
@@ -325,7 +356,7 @@ struct FailingGeoRestrictionRepository;
 impl GeoRestrictionRepository for FailingGeoRestrictionRepository {
     async fn get_team_restrictions(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
     ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
         Err(GeoRestrictionRepositoryError::Database(
             "db down".to_string(),
@@ -334,7 +365,7 @@ impl GeoRestrictionRepository for FailingGeoRestrictionRepository {
 
     async fn update_team_restrictions(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _restrictions: &TeamGeoRestrictions,
     ) -> Result<(), GeoRestrictionRepositoryError> {
         Err(GeoRestrictionRepositoryError::Database(
@@ -344,7 +375,7 @@ impl GeoRestrictionRepository for FailingGeoRestrictionRepository {
 
     async fn log_geo_restriction_action(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _ip_address: &str,
         _country_code: &str,
         _action: &str,
@@ -372,14 +403,14 @@ impl ConfigurableGeoRestrictionRepository {
 impl GeoRestrictionRepository for ConfigurableGeoRestrictionRepository {
     async fn get_team_restrictions(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
     ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
         Ok(self.restrictions.clone())
     }
 
     async fn update_team_restrictions(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _restrictions: &TeamGeoRestrictions,
     ) -> Result<(), GeoRestrictionRepositoryError> {
         Ok(())
@@ -387,7 +418,7 @@ impl GeoRestrictionRepository for ConfigurableGeoRestrictionRepository {
 
     async fn log_geo_restriction_action(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _ip_address: &str,
         _country_code: &str,
         _action: &str,
@@ -418,7 +449,9 @@ async fn test_get_team_geo_restrictions_success_returns_config() {
     ));
     let service = make_service(Arc::new(MockGeoService::new("US".to_string())), geo_repo);
 
-    let result = service.get_team_geo_restrictions(Uuid::new_v4()).await;
+    let result = service
+        .get_team_geo_restrictions(crate::domain::id::Id::generate())
+        .await;
     assert!(result.enable_geo_restrictions);
     assert_eq!(result.allowed_countries, Some(vec!["US".to_string()]));
 }
@@ -428,7 +461,9 @@ async fn test_get_team_geo_restrictions_failure_falls_back_to_deny_all() {
     let geo_repo: Arc<dyn GeoRestrictionRepository> = Arc::new(FailingGeoRestrictionRepository);
     let service = make_service(Arc::new(MockGeoService::new("US".to_string())), geo_repo);
 
-    let result = service.get_team_geo_restrictions(Uuid::new_v4()).await;
+    let result = service
+        .get_team_geo_restrictions(crate::domain::id::Id::generate())
+        .await;
     // fail-closed：仓储故障回落"启用限制 + 空 allowed 名单"的 deny-all 配置，
     // 绝不回落无限制默认值
     assert!(result.enable_geo_restrictions);
@@ -439,7 +474,7 @@ async fn test_get_team_geo_restrictions_failure_falls_back_to_deny_all() {
 
     // deny-all 配置经校验路径必须拒绝任意国家
     let verdict = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &result)
+        .validate_geographic_restriction(crate::domain::id::Id::generate(), "8.8.8.8", &result)
         .await;
     assert!(matches!(verdict, Ok(GeoRestrictionResult::Denied(_))));
 }
@@ -458,7 +493,11 @@ async fn test_validate_geographic_restriction_country_not_in_allowed_denies() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
 
     match result {
@@ -487,7 +526,11 @@ async fn test_validate_geographic_restriction_geo_service_error_propagates() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
 
     assert!(result.is_err(), "geo service error should propagate");
@@ -515,7 +558,11 @@ async fn test_ip_whitelist_no_match_then_country_allows() {
 
     // IP not in whitelist (192.168.x), but country (US) is allowed
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "192.168.1.1", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "192.168.1.1",
+            &restrictions,
+        )
         .await;
 
     assert!(
@@ -539,7 +586,11 @@ async fn test_ip_whitelist_no_match_then_country_blocks() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "192.168.1.1", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "192.168.1.1",
+            &restrictions,
+        )
         .await;
 
     match result {
@@ -566,7 +617,11 @@ async fn test_both_allowed_and_blocked_countries_allowed_wins_for_unblocked() {
 
     // US is in allowed and not in blocked -> allowed
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
 }
@@ -587,7 +642,11 @@ async fn test_both_allowed_and_blocked_blocked_wins_for_blocked_country() {
     // Actually looking at the code: allowed is checked first, so CN passes the allowed check,
     // then blocked is checked and CN is blocked.
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
     match result {
         Ok(GeoRestrictionResult::Denied(msg)) => {
@@ -611,7 +670,11 @@ async fn test_ipv6_address_allowed_by_country() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "2001:db8::1", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "2001:db8::1",
+            &restrictions,
+        )
         .await;
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
 }
@@ -628,7 +691,11 @@ async fn test_ipv6_address_allowed_by_whitelist() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "2001:db8::1", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "2001:db8::1",
+            &restrictions,
+        )
         .await;
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
 }
@@ -646,7 +713,11 @@ async fn test_ipv6_address_not_in_whitelist_blocked_by_country() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "2001:db8::1", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "2001:db8::1",
+            &restrictions,
+        )
         .await;
     match result {
         Ok(GeoRestrictionResult::Denied(msg)) => {
@@ -835,7 +906,11 @@ async fn test_invalid_cidr_in_whitelist_falls_through_to_country_check() {
     };
 
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
     // Invalid CIDR doesn't match, but US is in allowed countries -> allowed
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
@@ -855,7 +930,11 @@ async fn test_no_restrictions_configured_allows_all() {
 
     // No whitelist, no allowed/blocked countries -> should be allowed
     let result = service
-        .validate_geographic_restriction(Uuid::new_v4(), "8.8.8.8", &restrictions)
+        .validate_geographic_restriction(
+            crate::domain::id::Id::generate(),
+            "8.8.8.8",
+            &restrictions,
+        )
         .await;
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
 }

@@ -29,7 +29,6 @@ mod tests {
     use sdforge::validator::Validate;
     use std::net::SocketAddr;
     use std::sync::Arc;
-    use uuid::Uuid;
 
     // ========== From<CrawlUseCaseError> mapping tests ==========
 
@@ -1112,7 +1111,10 @@ mod tests {
             Ok(crawl.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Crawl>, RepositoryError> {
             if self.find_should_fail {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "find_by_id failed"
@@ -1128,31 +1130,43 @@ mod tests {
             Ok(crawl.clone())
         }
 
-        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_completed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_failed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn update_status(
             &self,
-            _id: Uuid,
+            _id: crate::domain::id::Id,
             _status: crate::domain::models::CrawlStatus,
         ) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_total_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn find_by_team_id_paginated(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u32,
             _offset: u32,
         ) -> Result<Vec<Crawl>, RepositoryError> {
             Ok(vec![])
         }
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn count_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
     }
@@ -1194,7 +1208,10 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(self.tasks.iter().find(|t| t.id == id).cloned())
         }
 
@@ -1202,27 +1219,30 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
@@ -1244,7 +1264,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -1252,7 +1275,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             if self.find_by_crawl_should_fail {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "find_by_crawl_id failed"
@@ -1280,17 +1306,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -1308,10 +1340,16 @@ mod tests {
         async fn create(&self, webhook: &Webhook) -> Result<Webhook, RepositoryError> {
             Ok(webhook.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Webhook>, RepositoryError> {
             Ok(None)
         }
-        async fn find_by_team_id(&self, _team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+        async fn find_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<Vec<Webhook>, RepositoryError> {
             Ok(vec![])
         }
     }
@@ -1345,11 +1383,17 @@ mod tests {
             Ok(())
         }
 
-        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+        async fn find_by_task_id(
+            &self,
+            _task_id: crate::domain::id::Id,
+        ) -> anyhow::Result<Option<ScrapeResult>> {
             Ok(None)
         }
 
-        async fn find_by_task_ids(&self, task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(
+            &self,
+            task_ids: &[crate::domain::id::Id],
+        ) -> anyhow::Result<Vec<ScrapeResult>> {
             if self.find_should_fail {
                 return Err(anyhow::anyhow!("find_by_task_ids failed"));
             }
@@ -1361,7 +1405,10 @@ mod tests {
                 .collect())
         }
 
-        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+        async fn get_team_avg_response_time(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> anyhow::Result<f64> {
             Ok(0.0)
         }
 
@@ -1394,7 +1441,7 @@ mod tests {
     impl GeoRestrictionRepository for MockGeoRestrictionRepository {
         async fn get_team_restrictions(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
             if self.get_should_fail {
                 return Err(GeoRestrictionRepositoryError::Database(
@@ -1406,7 +1453,7 @@ mod tests {
 
         async fn update_team_restrictions(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _restrictions: &TeamGeoRestrictions,
         ) -> Result<(), GeoRestrictionRepositoryError> {
             Ok(())
@@ -1414,7 +1461,7 @@ mod tests {
 
         async fn log_geo_restriction_action(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _ip_address: &str,
             _country_code: &str,
             _action: &str,
@@ -1481,14 +1528,14 @@ mod tests {
 
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<RateLimitConfig, RateLimitingError> {
             Ok(RateLimitConfig::default())
         }
 
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1503,37 +1550,37 @@ mod tests {
     impl ConcurrencyControlService for MockRateLimitingService {
         async fn check_team_concurrency(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             Ok(ConcurrencyResult::Allowed)
         }
 
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
         async fn get_team_current_concurrency(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
 
         async fn get_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
             Ok(ConcurrencyConfig::default())
         }
 
         async fn update_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1542,7 +1589,10 @@ mod tests {
 
     #[async_trait]
     impl BacklogService for MockRateLimitingService {
-        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+        async fn process_backlog_tasks(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
     }
@@ -1551,11 +1601,11 @@ mod tests {
     impl QuotaService for MockRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: crate::domain::models::CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             if self.quota_should_fail {
                 return Err(RateLimitingError::CreditsError);
@@ -1563,16 +1613,19 @@ mod tests {
             Ok(())
         }
 
-        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(1000)
         }
 
         async fn refund_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
@@ -1586,17 +1639,17 @@ mod tests {
     fn make_auth_state() -> AuthState {
         AuthState::new(
             create_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         )
     }
 
-    fn make_auth_state_with_team(team_id: Uuid) -> AuthState {
+    fn make_auth_state_with_team(team_id: crate::domain::id::Id) -> AuthState {
         AuthState::new(
             create_test_db_pool(),
             team_id,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         )
     }
@@ -1614,10 +1667,10 @@ mod tests {
         "203.0.113.1:8080".parse().expect("valid SocketAddr")
     }
 
-    fn make_crawl(team_id: Uuid, status: CrawlStatus) -> Crawl {
+    fn make_crawl(team_id: crate::domain::id::Id, status: CrawlStatus) -> Crawl {
         let now = chrono::Utc::now();
         Crawl::with_all_fields(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             team_id,
             "Test Crawl".to_string(),
             "https://example.com".to_string(),
@@ -1633,15 +1686,19 @@ mod tests {
         )
     }
 
-    fn make_task(crawl_id: Uuid, team_id: Uuid, status: TaskStatus) -> Task {
+    fn make_task(
+        crawl_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+        status: TaskStatus,
+    ) -> Task {
         let now = chrono::Utc::now();
         Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Crawl,
             status,
             priority: 100,
             team_id,
-            api_key_id: Uuid::new_v4(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({"crawl_id": crawl_id, "depth": 0}),
             retry_count: 0,
@@ -1892,8 +1949,12 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
-        let task = make_task(Uuid::new_v4(), team_id, TaskStatus::Completed);
+        let team_id = crate::domain::id::Id::generate();
+        let task = make_task(
+            crate::domain::id::Id::generate(),
+            team_id,
+            TaskStatus::Completed,
+        );
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::with_tasks(vec![task]),
@@ -1925,9 +1986,13 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         // Queued tasks never complete → polling loops until sync_wait_ms elapses
-        let task = make_task(Uuid::new_v4(), team_id, TaskStatus::Queued);
+        let task = make_task(
+            crate::domain::id::Id::generate(),
+            team_id,
+            TaskStatus::Queued,
+        );
         let state = build_handler_state(
             MockCrawlRepository::new(),
             MockTaskRepository::with_tasks(vec![task]),
@@ -2166,7 +2231,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(team_id, CrawlStatus::Queued);
         let crawl_id = crawl.id;
         let state = build_handler_state(
@@ -2208,7 +2273,7 @@ mod tests {
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
-            Path(Uuid::new_v4()),
+            Path(crate::domain::id::Id::generate()),
         )
         .await
         .into_response();
@@ -2221,7 +2286,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let crawl = make_crawl(Uuid::new_v4(), CrawlStatus::Queued);
+        let crawl = make_crawl(crate::domain::id::Id::generate(), CrawlStatus::Queued);
         let crawl_id = crawl.id;
         let state = build_handler_state(
             MockCrawlRepository::with_crawl(crawl),
@@ -2230,7 +2295,7 @@ mod tests {
             MockRateLimitingService::new_allowed(),
         );
         // Different team_id → use_case returns Ok(None) → 404
-        let auth = make_auth_state_with_team(Uuid::new_v4());
+        let auth = make_auth_state_with_team(crate::domain::id::Id::generate());
 
         let response = get_crawl(
             Extension(state),
@@ -2263,7 +2328,7 @@ mod tests {
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
-            Path(Uuid::new_v4()),
+            Path(crate::domain::id::Id::generate()),
         )
         .await
         .into_response();
@@ -2278,7 +2343,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(team_id, CrawlStatus::Completed);
         let crawl_id = crawl.id;
         let task = make_task(crawl_id, team_id, TaskStatus::Completed);
@@ -2321,7 +2386,7 @@ mod tests {
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
-            Path(Uuid::new_v4()),
+            Path(crate::domain::id::Id::generate()),
         )
         .await
         .into_response();
@@ -2334,7 +2399,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(team_id, CrawlStatus::Completed);
         let crawl_id = crawl.id;
         let task = make_task(crawl_id, team_id, TaskStatus::Completed);
@@ -2366,7 +2431,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(team_id, CrawlStatus::Queued);
         let crawl_id = crawl.id;
         let state = build_handler_state(
@@ -2408,7 +2473,7 @@ mod tests {
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
-            Path(Uuid::new_v4()),
+            Path(crate::domain::id::Id::generate()),
         )
         .await
         .into_response();
@@ -2421,7 +2486,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let crawl = make_crawl(Uuid::new_v4(), CrawlStatus::Queued);
+        let crawl = make_crawl(crate::domain::id::Id::generate(), CrawlStatus::Queued);
         let crawl_id = crawl.id;
         let state = build_handler_state(
             MockCrawlRepository::with_crawl(crawl),
@@ -2429,7 +2494,7 @@ mod tests {
             MockScrapeResultRepository::new(),
             MockRateLimitingService::new_allowed(),
         );
-        let auth = make_auth_state_with_team(Uuid::new_v4());
+        let auth = make_auth_state_with_team(crate::domain::id::Id::generate());
 
         let response = cancel_crawl(
             Extension(state),
@@ -2449,7 +2514,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(team_id, CrawlStatus::Completed);
         let crawl_id = crawl.id;
         let state = build_handler_state(
@@ -2492,7 +2557,7 @@ mod tests {
             Extension(auth),
             Extension(test_locale()),
             Extension(test_bundle()),
-            Path(Uuid::new_v4()),
+            Path(crate::domain::id::Id::generate()),
         )
         .await
         .into_response();
@@ -2505,7 +2570,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(team_id, CrawlStatus::Queued);
         let crawl_id = crawl.id;
         let state = build_handler_state(

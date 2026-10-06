@@ -92,7 +92,6 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
-    use uuid::Uuid;
 
     /// Mock TaskRepository that returns configurable results for expire_tasks
     struct MockTaskRepository {
@@ -132,7 +131,10 @@ mod tests {
             Ok(_task.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -140,27 +142,30 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
@@ -182,7 +187,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -194,7 +202,10 @@ mod tests {
             Ok(self.expired_count.load(Ordering::SeqCst))
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
 
@@ -207,17 +218,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -268,15 +285,24 @@ mod tests {
             Ok(())
         }
 
-        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+        async fn find_by_task_id(
+            &self,
+            _task_id: crate::domain::id::Id,
+        ) -> anyhow::Result<Option<ScrapeResult>> {
             Ok(None)
         }
 
-        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(
+            &self,
+            _task_ids: &[crate::domain::id::Id],
+        ) -> anyhow::Result<Vec<ScrapeResult>> {
             Ok(vec![])
         }
 
-        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+        async fn get_team_avg_response_time(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> anyhow::Result<f64> {
             Ok(0.0)
         }
 

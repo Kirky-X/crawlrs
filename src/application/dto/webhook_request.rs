@@ -4,7 +4,6 @@
 //! Webhook request and response DTOs
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// 创建 Webhook 的请求 DTO
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -18,9 +17,9 @@ pub struct CreateWebhookRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct WebhookResponse {
     /// Webhook ID
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// 团队 ID
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// Webhook 回调 URL
     pub url: String,
     /// 创建时间
@@ -34,8 +33,8 @@ pub struct WebhookResponse {
 /// Webhook 列表条目（不含密钥，防止列表接口泄露 secret）
 #[derive(Debug, Clone, Serialize)]
 pub struct WebhookListEntry {
-    pub id: Uuid,
-    pub team_id: Uuid,
+    pub id: crate::domain::id::Id,
+    pub team_id: crate::domain::id::Id,
     pub url: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub is_active: bool,

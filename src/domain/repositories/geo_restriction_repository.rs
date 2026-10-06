@@ -3,7 +3,6 @@
 
 use crate::domain::services::team_service::TeamGeoRestrictions;
 use thiserror::Error;
-use uuid::Uuid;
 
 /// 地理限制仓库错误类型
 #[derive(Error, Debug)]
@@ -14,7 +13,7 @@ pub enum GeoRestrictionRepositoryError {
 
     /// 团队未找到
     #[error("Team not found: {0}")]
-    TeamNotFound(Uuid),
+    TeamNotFound(crate::domain::id::Id),
 
     /// 其他错误
     #[error("Other error: {0}")]
@@ -38,7 +37,7 @@ pub trait GeoRestrictionRepository: Send + Sync {
     /// * `Err(GeoRestrictionRepositoryError)` - 获取失败时返回错误
     async fn get_team_restrictions(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
     ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError>;
 
     /// 更新团队的地理限制配置
@@ -54,7 +53,7 @@ pub trait GeoRestrictionRepository: Send + Sync {
     /// * `Err(GeoRestrictionRepositoryError)` - 更新失败时返回错误
     async fn update_team_restrictions(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         restrictions: &TeamGeoRestrictions,
     ) -> Result<(), GeoRestrictionRepositoryError>;
 
@@ -74,7 +73,7 @@ pub trait GeoRestrictionRepository: Send + Sync {
     /// * `Err(GeoRestrictionRepositoryError)` - 记录失败时返回错误
     async fn log_geo_restriction_action(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         ip_address: &str,
         country_code: &str,
         action: &str,

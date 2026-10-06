@@ -57,7 +57,6 @@ mod tests {
     use super::*;
     use crate::domain::models::task_domain::TaskType;
     use crate::domain::models::Task;
-    use uuid::Uuid;
 
     // 以下测试钉住 Noop 放行契约。
 
@@ -65,10 +64,10 @@ mod tests {
     async fn test_noop_trigger_completion_returns_ok() {
         let svc = NoopWebhookService::new();
         let task = Task::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             TaskType::Scrape,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "https://example.com".to_string(),
             serde_json::json!({}),
         );
@@ -83,10 +82,10 @@ mod tests {
     async fn test_noop_trigger_failure_returns_ok() {
         let svc = NoopWebhookService::new();
         let task = Task::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             TaskType::Crawl,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "https://example.com".to_string(),
             serde_json::json!({}),
         );

@@ -7,8 +7,6 @@
 //! ExtractRequestDto, ExtractResultDto), constants validation, and the
 //! ExtractResponseDto wrapper struct exported by the handler module.
 
-use uuid::Uuid;
-
 use crawlrs::application::dto::extract_request::{
     ExtractRequestDto, ExtractResponseDto, ExtractResultDto,
 };
@@ -187,7 +185,7 @@ fn tc_extract_result_dto_with_error() {
 #[test]
 fn tc_handler_extract_response_dto_serialization() {
     let dto = HandlerExtractResponseDto {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         status: "queued".to_string(),
     };
     let json = serde_json::to_string(&dto).expect("must serialize");
@@ -198,7 +196,7 @@ fn tc_handler_extract_response_dto_serialization() {
 
 #[test]
 fn tc_handler_extract_response_dto_deserialization() {
-    let id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
     let json = format!(r#"{{"id":"{}","status":"completed"}}"#, id);
     let dto: HandlerExtractResponseDto = serde_json::from_str(&json).expect("must deserialize");
     assert_eq!(dto.id, id);
@@ -208,7 +206,7 @@ fn tc_handler_extract_response_dto_deserialization() {
 #[test]
 fn tc_handler_extract_response_dto_clone_preserves_fields() {
     let dto = HandlerExtractResponseDto {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         status: "failed".to_string(),
     };
     let cloned = dto.clone();
@@ -219,7 +217,7 @@ fn tc_handler_extract_response_dto_clone_preserves_fields() {
 #[test]
 fn tc_handler_extract_response_dto_debug_format() {
     let dto = HandlerExtractResponseDto {
-        id: Uuid::nil(),
+        id: crawlrs::domain::id::Id::nil(),
         status: "queued".to_string(),
     };
     let debug = format!("{:?}", dto);

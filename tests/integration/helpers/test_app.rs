@@ -7,14 +7,13 @@
 use dbnexus::sea_orm::ConnectionTrait;
 use dbnexus::{CacheConfig, DbConfig, DbPool, PoolConfig};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Minimal TestApp struct for testing
 #[allow(dead_code)]
 pub struct TestApp {
     pub db_pool: Arc<DbPool>,
-    pub team_id: Uuid,
-    pub api_key_id: Uuid,
+    pub team_id: crawlrs::domain::id::Id,
+    pub api_key_id: crawlrs::domain::id::Id,
 }
 
 /// Create the dbnexus DbPool connecting to the test PostgreSQL instance.
@@ -62,8 +61,8 @@ pub async fn create_test_app_no_worker() -> TestApp {
     let db_pool = create_db_pool().await;
 
     // 生成唯一的 team_id 和 api_key_id
-    let team_id = Uuid::new_v4();
-    let api_key_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let api_key_id = crawlrs::domain::id::Id::generate();
 
     // 通过 admin session 获取 sea_orm 连接执行 SQL
     let session = db_pool

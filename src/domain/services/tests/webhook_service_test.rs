@@ -11,7 +11,6 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Repository mock that always succeeds and tracks created events
 #[derive(Default)]
@@ -26,7 +25,10 @@ impl WebhookEventRepository for MockWebhookEventRepository {
         Ok(event.clone())
     }
 
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<Option<WebhookEvent>, RepositoryError> {
         Ok(None)
     }
 
@@ -36,14 +38,17 @@ impl WebhookEventRepository for MockWebhookEventRepository {
 
     async fn find_by_team_id_paginated(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _limit: u32,
         _offset: u32,
     ) -> Result<Vec<WebhookEvent>, RepositoryError> {
         Ok(vec![])
     }
 
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 
@@ -65,7 +70,10 @@ impl WebhookEventRepository for FailingWebhookEventRepository {
         Err(RepositoryError::Database(anyhow::anyhow!("repo down")))
     }
 
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<Option<WebhookEvent>, RepositoryError> {
         Ok(None)
     }
 
@@ -75,14 +83,17 @@ impl WebhookEventRepository for FailingWebhookEventRepository {
 
     async fn find_by_team_id_paginated(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _limit: u32,
         _offset: u32,
     ) -> Result<Vec<WebhookEvent>, RepositoryError> {
         Ok(vec![])
     }
 
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 
@@ -151,9 +162,9 @@ impl WebhookSender for FailingWebhookSender {
 fn create_test_task() -> Task {
     let now = Utc::now();
     Task {
-        id: Uuid::new_v4(),
-        team_id: Uuid::new_v4(),
-        api_key_id: Uuid::new_v4(),
+        id: crate::domain::id::Id::generate(),
+        team_id: crate::domain::id::Id::generate(),
+        api_key_id: crate::domain::id::Id::generate(),
         url: "http://example.com".to_string(),
         task_type: crate::domain::models::TaskType::Scrape,
         status: crate::domain::models::TaskStatus::Completed,
@@ -179,9 +190,9 @@ fn create_test_task() -> Task {
 
 fn create_test_event() -> WebhookEvent {
     WebhookEvent::new(
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        Uuid::nil(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::nil(),
         WebhookEventType::ScrapeCompleted,
         serde_json::json!({"task_id": "abc"}),
         "https://example.com/webhook".to_string(),
@@ -1002,7 +1013,7 @@ fn test_verify_webhook_signature_from_parts_wrong_payload() {
 #[tokio::test]
 async fn test_mock_webhook_event_repo_remaining_methods_return_defaults() {
     let repo = MockWebhookEventRepository::default();
-    let id = Uuid::new_v4();
+    let id = crate::domain::id::Id::generate();
     assert!(repo.find_by_id(id).await.unwrap().is_none());
     assert!(repo.find_pending(10).await.unwrap().is_empty());
     assert!(repo
@@ -1016,7 +1027,7 @@ async fn test_mock_webhook_event_repo_remaining_methods_return_defaults() {
 #[tokio::test]
 async fn test_failing_webhook_event_repo_remaining_methods_return_defaults() {
     let repo = FailingWebhookEventRepository;
-    let id = Uuid::new_v4();
+    let id = crate::domain::id::Id::generate();
     assert!(repo.find_by_id(id).await.unwrap().is_none());
     assert!(repo.find_pending(10).await.unwrap().is_empty());
     assert!(repo
@@ -1072,12 +1083,18 @@ impl WebhookRepository for MockWebhookRepository {
         Ok(webhook.clone())
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<Webhook>, RepositoryError> {
         let wh = self.webhooks.lock().unwrap();
         Ok(wh.iter().find(|w| w.id == id).cloned())
     }
 
-    async fn find_by_team_id(&self, team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+    async fn find_by_team_id(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<Vec<Webhook>, RepositoryError> {
         let wh = self.webhooks.lock().unwrap();
         Ok(wh
             .iter()
@@ -1098,13 +1115,19 @@ impl WebhookRepository for FailingWebhookRepository {
         )))
     }
 
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<Option<Webhook>, RepositoryError> {
         Err(RepositoryError::Database(anyhow::anyhow!(
             "webhook repo down"
         )))
     }
 
-    async fn find_by_team_id(&self, _team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+    async fn find_by_team_id(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<Vec<Webhook>, RepositoryError> {
         Err(RepositoryError::Database(anyhow::anyhow!(
             "webhook repo down"
         )))
@@ -1155,7 +1178,10 @@ impl WebhookEventRepository for ConfigurableWebhookEventRepository {
         Ok(event.clone())
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<WebhookEvent>, RepositoryError> {
         Ok(self
             .events
             .lock()
@@ -1171,14 +1197,17 @@ impl WebhookEventRepository for ConfigurableWebhookEventRepository {
 
     async fn find_by_team_id_paginated(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _limit: u32,
         _offset: u32,
     ) -> Result<Vec<WebhookEvent>, RepositoryError> {
         Ok(vec![])
     }
 
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 
@@ -1212,7 +1241,10 @@ impl WebhookEventRepository for FindPendingFailingEventRepository {
         Ok(event.clone())
     }
 
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<Option<WebhookEvent>, RepositoryError> {
         Ok(None)
     }
 
@@ -1224,14 +1256,17 @@ impl WebhookEventRepository for FindPendingFailingEventRepository {
 
     async fn find_by_team_id_paginated(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _limit: u32,
         _offset: u32,
     ) -> Result<Vec<WebhookEvent>, RepositoryError> {
         Ok(vec![])
     }
 
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 
@@ -1252,8 +1287,8 @@ fn make_management_service(
     WebhookManagementServiceImpl::new(webhook_repo, event_repo, webhook_service)
 }
 
-fn make_test_webhook(team_id: Uuid, url: &str) -> Webhook {
-    Webhook::new(Uuid::new_v4(), team_id, url.to_string())
+fn make_test_webhook(team_id: crate::domain::id::Id, url: &str) -> Webhook {
+    Webhook::new(crate::domain::id::Id::generate(), team_id, url.to_string())
 }
 
 // ---- register_webhook ----
@@ -1265,7 +1300,7 @@ async fn test_register_webhook_success_returns_webhook() {
     let webhook_service = Arc::new(MockWebhookService::default());
     let service = make_management_service(webhook_repo, event_repo, webhook_service);
 
-    let team_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
     let result = service
         .register_webhook(team_id, "https://example.com/hook".to_string())
         .await;
@@ -1285,7 +1320,7 @@ async fn test_register_webhook_invalid_url_empty_returns_error() {
     let service = make_management_service(webhook_repo, event_repo, webhook_service);
 
     let result = service
-        .register_webhook(Uuid::new_v4(), String::new())
+        .register_webhook(crate::domain::id::Id::generate(), String::new())
         .await;
 
     assert!(result.is_err());
@@ -1305,7 +1340,10 @@ async fn test_register_webhook_invalid_scheme_returns_error() {
     let service = make_management_service(webhook_repo, event_repo, webhook_service);
 
     let result = service
-        .register_webhook(Uuid::new_v4(), "ftp://example.com/hook".to_string())
+        .register_webhook(
+            crate::domain::id::Id::generate(),
+            "ftp://example.com/hook".to_string(),
+        )
         .await;
 
     assert!(result.is_err());
@@ -1321,7 +1359,10 @@ async fn test_register_webhook_repo_failure_propagates() {
     let service = make_management_service(webhook_repo, event_repo, webhook_service);
 
     let result = service
-        .register_webhook(Uuid::new_v4(), "https://example.com/hook".to_string())
+        .register_webhook(
+            crate::domain::id::Id::generate(),
+            "https://example.com/hook".to_string(),
+        )
         .await;
 
     assert!(result.is_err());
@@ -1337,7 +1378,7 @@ async fn test_register_webhook_repo_failure_propagates() {
 
 #[tokio::test]
 async fn test_trigger_webhook_success_sends_event() {
-    let team_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
     let webhook = make_test_webhook(team_id, "https://example.com/hook");
     let webhook_repo = Arc::new(MockWebhookRepository::with_webhooks(vec![webhook.clone()]));
     let event_repo = Arc::new(ConfigurableWebhookEventRepository::default());
@@ -1374,7 +1415,11 @@ async fn test_trigger_webhook_not_found_returns_error() {
     let service = make_management_service(webhook_repo, event_repo, webhook_service);
 
     let result = service
-        .trigger_webhook(Uuid::new_v4(), WebhookEventType::ScrapeCompleted, json!({}))
+        .trigger_webhook(
+            crate::domain::id::Id::generate(),
+            WebhookEventType::ScrapeCompleted,
+            json!({}),
+        )
         .await;
 
     assert!(result.is_err());
@@ -1388,7 +1433,7 @@ async fn test_trigger_webhook_not_found_returns_error() {
 
 #[tokio::test]
 async fn test_trigger_webhook_send_failure_propagates() {
-    let team_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
     let webhook = make_test_webhook(team_id, "https://example.com/hook");
     let webhook_repo = Arc::new(MockWebhookRepository::with_webhooks(vec![webhook.clone()]));
     let event_repo = Arc::new(ConfigurableWebhookEventRepository::default());
@@ -1415,7 +1460,7 @@ async fn test_trigger_webhook_send_failure_propagates() {
 
 #[tokio::test]
 async fn test_trigger_webhook_writeback_fails_once_then_retry_succeeds() {
-    let team_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
     let webhook = make_test_webhook(team_id, "https://example.com/hook");
     let webhook_repo = Arc::new(MockWebhookRepository::with_webhooks(vec![webhook.clone()]));
     // 首次状态回写失败，重试（第 2 次）成功
@@ -1447,7 +1492,7 @@ async fn test_trigger_webhook_writeback_fails_once_then_retry_succeeds() {
 
 #[tokio::test]
 async fn test_trigger_webhook_writeback_failure_exhausts_retry_returns_err() {
-    let team_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
     let webhook = make_test_webhook(team_id, "https://example.com/hook");
     let webhook_repo = Arc::new(MockWebhookRepository::with_webhooks(vec![webhook.clone()]));
     // 状态回写始终失败（首次 + 重试均失败）
@@ -1486,7 +1531,7 @@ async fn test_trigger_webhook_writeback_failure_exhausts_retry_returns_err() {
 
 #[tokio::test]
 async fn test_trigger_webhook_event_create_failure_propagates() {
-    let team_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
     let webhook = make_test_webhook(team_id, "https://example.com/hook");
     let webhook_repo = Arc::new(MockWebhookRepository::with_webhooks(vec![webhook.clone()]));
     let event_repo: Arc<dyn WebhookEventRepository> = Arc::new(FailingWebhookEventRepository);
@@ -1666,7 +1711,9 @@ async fn test_list_webhooks_empty_returns_empty_vec() {
     let webhook_service = Arc::new(MockWebhookService::default());
     let service = make_management_service(webhook_repo, event_repo, webhook_service);
 
-    let result = service.list_webhooks(Uuid::new_v4()).await;
+    let result = service
+        .list_webhooks(crate::domain::id::Id::generate())
+        .await;
 
     assert!(result.is_ok());
     let webhooks = result.unwrap();
@@ -1675,8 +1722,8 @@ async fn test_list_webhooks_empty_returns_empty_vec() {
 
 #[tokio::test]
 async fn test_list_webhooks_returns_only_team_webhooks() {
-    let team_a = Uuid::new_v4();
-    let team_b = Uuid::new_v4();
+    let team_a = crate::domain::id::Id::generate();
+    let team_b = crate::domain::id::Id::generate();
     let wh_a1 = make_test_webhook(team_a, "https://a1.example.com");
     let wh_a2 = make_test_webhook(team_a, "https://a2.example.com");
     let wh_b1 = make_test_webhook(team_b, "https://b1.example.com");
@@ -1705,7 +1752,9 @@ async fn test_list_webhooks_repo_failure_propagates() {
     let webhook_service = Arc::new(MockWebhookService::default());
     let service = make_management_service(webhook_repo, event_repo, webhook_service);
 
-    let result = service.list_webhooks(Uuid::new_v4()).await;
+    let result = service
+        .list_webhooks(crate::domain::id::Id::generate())
+        .await;
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();

@@ -14,7 +14,6 @@ use dbnexus::sea_orm::{
 };
 use dbnexus::DbPool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::domain::repositories::task_repository::RepositoryError;
 use crate::domain::repositories::tasks_backlog_repository::{
@@ -39,9 +38,9 @@ impl TasksBacklogRepositoryImpl {
 impl From<tasks_backlog::Model> for TasksBacklog {
     fn from(model: tasks_backlog::Model) -> Self {
         Self {
-            id: model.id,
-            task_id: model.task_id,
-            team_id: model.team_id,
+            id: model.id.into(),
+            task_id: model.task_id.into(),
+            team_id: model.team_id.into(),
             task_type: model.task_type,
             priority: model.priority,
             payload: model.payload,
@@ -81,9 +80,9 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
         let active_model = tasks_backlog::ActiveModel {
-            id: Set(backlog.id),
-            task_id: Set(backlog.task_id),
-            team_id: Set(backlog.team_id),
+            id: Set(backlog.id.into()),
+            task_id: Set(backlog.task_id.into()),
+            team_id: Set(backlog.team_id.into()),
             task_type: Set(backlog.task_type.clone()),
             priority: Set(backlog.priority),
             payload: Set(backlog.payload.clone()),
@@ -101,7 +100,10 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
         Ok(TasksBacklog::from(result))
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<TasksBacklog>, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -118,7 +120,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
 
     async fn find_by_task_id(
         &self,
-        task_id: Uuid,
+        task_id: crate::domain::id::Id,
     ) -> Result<Option<TasksBacklog>, RepositoryError> {
         let session = self
             .pool
@@ -149,9 +151,9 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
         let active_model = tasks_backlog::ActiveModel {
-            id: Set(backlog.id),
-            task_id: Set(backlog.task_id),
-            team_id: Set(backlog.team_id),
+            id: Set(backlog.id.into()),
+            task_id: Set(backlog.task_id.into()),
+            team_id: Set(backlog.team_id.into()),
             task_type: Set(backlog.task_type.clone()),
             priority: Set(backlog.priority),
             payload: Set(backlog.payload.clone()),
@@ -169,7 +171,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
         Ok(TasksBacklog::from(result))
     }
 
-    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError> {
+    async fn delete(&self, id: crate::domain::id::Id) -> Result<(), RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -186,7 +188,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
 
     async fn get_pending_tasks(
         &self,
-        team_id: Option<Uuid>,
+        team_id: Option<crate::domain::id::Id>,
         limit: Option<u64>,
     ) -> Result<Vec<TasksBacklog>, RepositoryError> {
         let session = self
@@ -247,7 +249,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
 
     async fn count_by_status(
         &self,
-        team_id: Option<Uuid>,
+        team_id: Option<crate::domain::id::Id>,
         status: TasksBacklogStatus,
     ) -> Result<i64, RepositoryError> {
         let session = self
@@ -273,7 +275,7 @@ impl TasksBacklogRepository for TasksBacklogRepositoryImpl {
 
     async fn update_status_batch(
         &self,
-        ids: &[Uuid],
+        ids: &[crate::domain::id::Id],
         status: TasksBacklogStatus,
     ) -> Result<u64, RepositoryError> {
         let session = self
@@ -309,8 +311,8 @@ mod tests {
 
     fn sample_tasks_backlog() -> TasksBacklog {
         TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "scrape".to_string(),
             5,
             serde_json::json!({"url": "https://example.com"}),
@@ -379,7 +381,7 @@ mod tests {
             return;
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_id(Uuid::new_v4()).await;
+        let result = repo.find_by_id(crate::domain::id::Id::generate()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
         assert!(result.unwrap().is_none(), "unknown id should return None");
     }
@@ -390,7 +392,9 @@ mod tests {
             return;
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_task_id(Uuid::new_v4()).await;
+        let result = repo
+            .find_by_task_id(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
         assert!(
             result.unwrap().is_none(),
@@ -455,7 +459,9 @@ mod tests {
             return;
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.get_pending_tasks(Some(Uuid::new_v4()), Some(10)).await;
+        let result = repo
+            .get_pending_tasks(Some(crate::domain::id::Id::generate().into()), Some(10))
+            .await;
         assert!(
             result.is_ok(),
             "get_pending_tasks failed: {:?}",
@@ -473,7 +479,9 @@ mod tests {
             return;
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.get_pending_tasks(Some(Uuid::new_v4()), None).await;
+        let result = repo
+            .get_pending_tasks(Some(crate::domain::id::Id::generate().into()), None)
+            .await;
         assert!(
             result.is_ok(),
             "get_pending_tasks failed: {:?}",
@@ -510,7 +518,10 @@ mod tests {
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .count_by_status(Some(Uuid::new_v4()), TasksBacklogStatus::Pending)
+            .count_by_status(
+                Some(crate::domain::id::Id::generate().into()),
+                TasksBacklogStatus::Pending,
+            )
             .await;
         assert!(result.is_ok(), "count_by_status failed: {:?}", result.err());
         assert_eq!(result.unwrap(), 0, "unknown team should return 0 count");
@@ -523,7 +534,10 @@ mod tests {
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .update_status_batch(&[Uuid::new_v4()], TasksBacklogStatus::Processing)
+            .update_status_batch(
+                &[crate::domain::id::Id::generate()],
+                TasksBacklogStatus::Processing,
+            )
             .await;
         assert!(
             result.is_ok(),
@@ -830,9 +844,9 @@ mod tests {
         let processed = fixed_offset_dt(1_700_000_300);
 
         let model = tasks_backlog::Model {
-            id: Uuid::new_v4(),
-            task_id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
+            task_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate().into(),
             task_type: "scrape".to_string(),
             priority: 7,
             payload: serde_json::json!({"url": "https://example.com"}),
@@ -868,9 +882,9 @@ mod tests {
         }
         let now = fixed_offset_dt(1_700_000_000);
         let model = tasks_backlog::Model {
-            id: Uuid::new_v4(),
-            task_id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
+            task_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate().into(),
             task_type: "scrape".to_string(),
             priority: 1,
             payload: serde_json::json!({}),
@@ -896,9 +910,9 @@ mod tests {
         }
         let now = fixed_offset_dt(1_700_000_000);
         let model = tasks_backlog::Model {
-            id: Uuid::new_v4(),
-            task_id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
+            task_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate().into(),
             task_type: "scrape".to_string(),
             priority: 1,
             payload: serde_json::json!({}),
@@ -1160,7 +1174,7 @@ mod tests {
             return;
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_id(Uuid::nil()).await;
+        let result = repo.find_by_id(crate::domain::id::Id::nil()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
         // Nil UUID is unlikely to match any backlog (we generate v4 UUIDs).
         let _found = result.unwrap();
@@ -1172,7 +1186,7 @@ mod tests {
             return;
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_task_id(Uuid::nil()).await;
+        let result = repo.find_by_task_id(crate::domain::id::Id::nil()).await;
         assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
         let _found = result.unwrap();
     }
@@ -1184,7 +1198,7 @@ mod tests {
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         // delete_by_id is idempotent: returns Ok(()) even when no row matches.
-        let result = repo.delete(Uuid::nil()).await;
+        let result = repo.delete(crate::domain::id::Id::nil()).await;
         assert!(result.is_ok(), "delete failed: {:?}", result.err());
     }
 
@@ -1194,7 +1208,9 @@ mod tests {
             return;
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.get_pending_tasks(Some(Uuid::nil()), Some(5)).await;
+        let result = repo
+            .get_pending_tasks(Some(crate::domain::id::Id::nil()), Some(5))
+            .await;
         assert!(
             result.is_ok(),
             "get_pending_tasks failed: {:?}",
@@ -1242,7 +1258,10 @@ mod tests {
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .count_by_status(Some(Uuid::new_v4()), TasksBacklogStatus::Processing)
+            .count_by_status(
+                Some(crate::domain::id::Id::generate().into()),
+                TasksBacklogStatus::Processing,
+            )
             .await;
         assert!(result.is_ok(), "count_by_status failed: {:?}", result.err());
         assert_eq!(result.unwrap(), 0, "unknown team should return 0 count");
@@ -1255,7 +1274,10 @@ mod tests {
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .count_by_status(Some(Uuid::nil()), TasksBacklogStatus::Completed)
+            .count_by_status(
+                Some(crate::domain::id::Id::nil()),
+                TasksBacklogStatus::Completed,
+            )
             .await;
         assert!(result.is_ok(), "count_by_status failed: {:?}", result.err());
         // Nil team_id may match other tests' backlogs; we only verify Ok.
@@ -1276,7 +1298,9 @@ mod tests {
             TasksBacklogStatus::Failed,
             TasksBacklogStatus::Expired,
         ] {
-            let result = repo.count_by_status(Some(Uuid::new_v4()), status).await;
+            let result = repo
+                .count_by_status(Some(crate::domain::id::Id::generate().into()), status)
+                .await;
             assert!(result.is_ok(), "count_by_status failed for {:?}", status);
             assert_eq!(result.unwrap(), 0, "expected 0 count for {:?}", status);
         }
@@ -1288,7 +1312,11 @@ mod tests {
             return;
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        let ids = vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+        let ids = vec![
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+        ];
         let result = repo
             .update_status_batch(&ids, TasksBacklogStatus::Failed)
             .await;
@@ -1308,7 +1336,10 @@ mod tests {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         // Nil UUID is unlikely to match any backlog id (we generate v4 UUIDs).
         let result = repo
-            .update_status_batch(&[Uuid::nil()], TasksBacklogStatus::Completed)
+            .update_status_batch(
+                &[crate::domain::id::Id::nil()],
+                TasksBacklogStatus::Completed,
+            )
             .await;
         assert!(
             result.is_ok(),
@@ -1331,7 +1362,9 @@ mod tests {
             TasksBacklogStatus::Failed,
             TasksBacklogStatus::Expired,
         ] {
-            let result = repo.update_status_batch(&[Uuid::new_v4()], status).await;
+            let result = repo
+                .update_status_batch(&[crate::domain::id::Id::generate()], status)
+                .await;
             assert!(
                 result.is_ok(),
                 "update_status_batch failed for {:?}",
@@ -1355,8 +1388,8 @@ mod tests {
         // Use new_v4 for all UUIDs to ensure isolation under concurrent runs.
         // (Original test used nil UUIDs which collide on PRIMARY KEY.)
         let backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "scrape".to_string(),
             1,
             serde_json::json!({}),

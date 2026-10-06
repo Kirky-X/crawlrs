@@ -145,7 +145,9 @@ async fn run_migrations(pool: &DbPool, migrations_dir: &str) -> Result<u32, dbne
 ///
 /// 当 auto_migrate=true 且 migrations_dir 设置时，
 /// DbPool::with_config 会在连接池初始化时自动应用未执行的迁移。
-#[allow(dead_code)]
+// `..Default::default()` 兜底 dbnexus feature 门控字段；feature 全关时字面量
+// 已穷举 → clippy 报 needless_update，按双关组合局部允许。
+#[allow(dead_code, clippy::needless_update)]
 fn build_config_with_auto_migrate(url: &str) -> dbnexus::DbConfig {
     dbnexus::DbConfig {
         url: url.to_string(),
@@ -163,8 +165,9 @@ fn build_config_with_auto_migrate(url: &str) -> dbnexus::DbConfig {
         warmup_timeout: 30,
         warmup_retries: 3,
         cache_config: dbnexus::CacheConfig::default(),
-        retry_policy: None,
-        failover_config: None,
-        replica_config: None,
+        // retry_policy / failover_config / replica_config 由 dbnexus 的
+        // retry/failover/replica-routing feature 门控；examples 未启用，
+        // 用 `..Default::default()` 兜底。
+        ..Default::default()
     }
 }

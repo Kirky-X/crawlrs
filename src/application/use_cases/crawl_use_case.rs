@@ -26,7 +26,6 @@ use chrono::Utc;
 use log::error;
 use std::sync::Arc;
 use thiserror::Error;
-use uuid::Uuid;
 
 /// 爬取用例错误类型
 ///
@@ -133,8 +132,8 @@ impl CrawlUseCase {
     /// 此方法验证爬取任务是否属于请求的团队，防止未授权访问
     pub async fn get_crawl_results(
         &self,
-        crawl_id: Uuid,
-        team_id: Uuid,
+        crawl_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
     ) -> Result<Vec<ScrapeResult>, CrawlUseCaseError> {
         // 首先验证爬取任务是否存在且属于该团队
         match self.crawl_repo.find_by_id(crawl_id).await? {
@@ -149,7 +148,7 @@ impl CrawlUseCase {
 
         let tasks = self.task_repo.find_by_crawl_id(crawl_id).await?;
 
-        let task_ids: Vec<Uuid> = tasks.iter().map(|t| t.id).collect();
+        let task_ids: Vec<crate::domain::id::Id> = tasks.iter().map(|t| t.id).collect();
 
         let results = self.scrape_result_repo.find_by_task_ids(&task_ids).await?;
 
@@ -179,8 +178,8 @@ impl CrawlUseCase {
     /// - 数据库操作失败（RepositoryError）
     pub async fn create_crawl(
         &self,
-        team_id: Uuid,
-        api_key_id: Uuid,
+        team_id: crate::domain::id::Id,
+        api_key_id: crate::domain::id::Id,
         dto: CrawlRequestDto,
         client_ip: &str,
     ) -> Result<Crawl, CrawlUseCaseError> {
@@ -294,7 +293,7 @@ impl CrawlUseCase {
         }
 
         // 3. 生成新的爬取任务 ID
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         let now = Utc::now();
 
         // 3. 创建爬取任务实体
@@ -338,8 +337,8 @@ impl CrawlUseCase {
     /// 此方法验证爬取任务是否属于请求的团队，防止未授权访问
     pub async fn get_crawl(
         &self,
-        crawl_id: Uuid,
-        team_id: Uuid,
+        crawl_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
     ) -> Result<Option<Crawl>, CrawlUseCaseError> {
         match self.crawl_repo.find_by_id(crawl_id).await? {
             Some(crawl) => {
@@ -373,7 +372,11 @@ impl CrawlUseCase {
     /// - 爬取任务不存在（NotFound）
     /// - 爬取任务不属于指定团队（NotFound）
     /// - 数据库更新失败（RepositoryError）
-    pub async fn cancel_crawl(&self, id: Uuid, team_id: Uuid) -> Result<(), CrawlUseCaseError> {
+    pub async fn cancel_crawl(
+        &self,
+        id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+    ) -> Result<(), CrawlUseCaseError> {
         let crawl = self.crawl_repo.find_by_id(id).await?;
 
         match crawl {
@@ -504,7 +507,10 @@ mod tests {
             Ok(crawl.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Crawl>, RepositoryError> {
             if self.should_fail_find {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "crawl repo find down"
@@ -523,36 +529,48 @@ mod tests {
             Ok(crawl.clone())
         }
 
-        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_completed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
 
-        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_failed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
 
         async fn update_status(
             &self,
-            _id: Uuid,
+            _id: crate::domain::id::Id,
             _status: CrawlStatus,
         ) -> Result<(), RepositoryError> {
             Ok(())
         }
 
-        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_total_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
 
         async fn find_by_team_id_paginated(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u32,
             _offset: u32,
         ) -> Result<Vec<Crawl>, RepositoryError> {
             Ok(vec![])
         }
 
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn count_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
     }
@@ -631,7 +649,10 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -639,27 +660,30 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
@@ -681,7 +705,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             if self.should_fail_cancel {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "cancel tasks down"
@@ -694,7 +721,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             if self.should_fail_find_by_crawl {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "find_by_crawl_id down"
@@ -712,17 +742,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -749,14 +785,14 @@ mod tests {
 
         async fn find_by_id(
             &self,
-            _id: Uuid,
+            _id: crate::domain::id::Id,
         ) -> Result<Option<crate::domain::models::Webhook>, RepositoryError> {
             Ok(None)
         }
 
         async fn find_by_team_id(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<Vec<crate::domain::models::Webhook>, RepositoryError> {
             Ok(vec![])
         }
@@ -798,18 +834,27 @@ mod tests {
             Ok(())
         }
 
-        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+        async fn find_by_task_id(
+            &self,
+            _task_id: crate::domain::id::Id,
+        ) -> anyhow::Result<Option<ScrapeResult>> {
             Ok(None)
         }
 
-        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(
+            &self,
+            _task_ids: &[crate::domain::id::Id],
+        ) -> anyhow::Result<Vec<ScrapeResult>> {
             if self.should_fail {
                 return Err(anyhow::anyhow!("scrape result repo down"));
             }
             Ok(self.stored_results.lock().unwrap().clone())
         }
 
-        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+        async fn get_team_avg_response_time(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> anyhow::Result<f64> {
             Ok(0.0)
         }
 
@@ -866,7 +911,7 @@ mod tests {
     impl GeoRestrictionRepository for MockGeoRestrictionRepository {
         async fn get_team_restrictions(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
             if self.get_should_fail {
                 return Err(GeoRestrictionRepositoryError::Database(
@@ -878,7 +923,7 @@ mod tests {
 
         async fn update_team_restrictions(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _restrictions: &TeamGeoRestrictions,
         ) -> Result<(), GeoRestrictionRepositoryError> {
             Ok(())
@@ -886,7 +931,7 @@ mod tests {
 
         async fn log_geo_restriction_action(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _ip_address: &str,
             _country_code: &str,
             _action: &str,
@@ -939,7 +984,11 @@ mod tests {
 
     // ============ Helpers ============
 
-    fn make_crawl(id: Uuid, team_id: Uuid, status: CrawlStatus) -> Crawl {
+    fn make_crawl(
+        id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+        status: CrawlStatus,
+    ) -> Crawl {
         Crawl::with_all_fields(
             id,
             team_id,
@@ -983,9 +1032,9 @@ mod tests {
         }
     }
 
-    fn make_scrape_result(task_id: Uuid) -> ScrapeResult {
+    fn make_scrape_result(task_id: crate::domain::id::Id) -> ScrapeResult {
         ScrapeResult {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_id,
             url: "https://example.com".to_string(),
             status_code: 200,
@@ -1065,15 +1114,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_results_success() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Completed);
         let task = Task::new(
             task_id,
             TaskType::Crawl,
             team_id,
-            Uuid::nil(),
+            crate::domain::id::Id::nil(),
             "https://example.com".to_string(),
             json!({}),
         );
@@ -1102,15 +1151,22 @@ mod tests {
         );
 
         let result = use_case
-            .get_crawl_results(Uuid::new_v4(), Uuid::new_v4())
+            .get_crawl_results(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            )
             .await;
         assert!(matches!(result, Err(CrawlUseCaseError::NotFound)));
     }
 
     #[tokio::test]
     async fn test_get_crawl_results_wrong_team_returns_not_found() {
-        let crawl_id = Uuid::new_v4();
-        let crawl = make_crawl(crawl_id, Uuid::new_v4(), CrawlStatus::Completed);
+        let crawl_id = crate::domain::id::Id::generate();
+        let crawl = make_crawl(
+            crawl_id,
+            crate::domain::id::Id::generate(),
+            CrawlStatus::Completed,
+        );
 
         let use_case = build_use_case_allowed_geo(
             Arc::new(MockCrawlRepository::with_crawl(crawl)),
@@ -1118,7 +1174,9 @@ mod tests {
             Arc::new(MockScrapeResultRepository::empty()),
         );
 
-        let result = use_case.get_crawl_results(crawl_id, Uuid::new_v4()).await;
+        let result = use_case
+            .get_crawl_results(crawl_id, crate::domain::id::Id::generate())
+            .await;
         assert!(
             matches!(result, Err(CrawlUseCaseError::NotFound)),
             "wrong team should return NotFound"
@@ -1134,7 +1192,10 @@ mod tests {
         );
 
         let result = use_case
-            .get_crawl_results(Uuid::new_v4(), Uuid::new_v4())
+            .get_crawl_results(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            )
             .await;
         let err = match result {
             Err(CrawlUseCaseError::Repository(e)) => e,
@@ -1145,8 +1206,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_results_task_repo_error_propagates() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Completed);
 
         let use_case = build_use_case_allowed_geo(
@@ -1165,15 +1226,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_results_scrape_result_repo_error_propagates() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Completed);
         let task = Task::new(
             task_id,
             TaskType::Crawl,
             team_id,
-            Uuid::nil(),
+            crate::domain::id::Id::nil(),
             "https://example.com".to_string(),
             json!({}),
         );
@@ -1193,8 +1254,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_results_empty_results_when_no_tasks() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Completed);
 
         let use_case = build_use_case_allowed_geo(
@@ -1214,8 +1275,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_success() {
-        let team_id = Uuid::new_v4();
-        let api_key_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let api_key_id = crate::domain::id::Id::generate();
         let dto = make_crawl_dto();
 
         let crawl_repo = Arc::new(MockCrawlRepository::empty());
@@ -1241,7 +1302,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_crawl_name_none_uses_default() {
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let mut dto = make_crawl_dto();
         dto.name = None;
 
@@ -1252,7 +1313,7 @@ mod tests {
         );
 
         let crawl = use_case
-            .create_crawl(team_id, Uuid::new_v4(), dto, "1.2.3.4")
+            .create_crawl(team_id, crate::domain::id::Id::generate(), dto, "1.2.3.4")
             .await
             .expect("should succeed");
         assert_eq!(crawl.name, "Untitled Crawl");
@@ -1270,7 +1331,12 @@ mod tests {
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4")
+            .create_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                dto,
+                "1.2.3.4",
+            )
             .await;
         let err = match result {
             Err(CrawlUseCaseError::ValidationError(msg)) => msg,
@@ -1291,7 +1357,12 @@ mod tests {
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4")
+            .create_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                dto,
+                "1.2.3.4",
+            )
             .await;
         assert!(result.is_ok(), "max_depth=5 should be allowed");
     }
@@ -1308,7 +1379,12 @@ mod tests {
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4")
+            .create_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                dto,
+                "1.2.3.4",
+            )
             .await;
         let err = match result {
             Err(CrawlUseCaseError::ValidationError(msg)) => msg,
@@ -1329,7 +1405,12 @@ mod tests {
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), dto, "1.2.3.4")
+            .create_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                dto,
+                "1.2.3.4",
+            )
             .await;
         assert!(result.is_ok(), "max_concurrency=100 should be allowed");
     }
@@ -1355,8 +1436,8 @@ mod tests {
 
         let result = use_case
             .create_crawl(
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 make_crawl_dto(),
                 "not-an-ip",
             )
@@ -1392,7 +1473,12 @@ mod tests {
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), make_crawl_dto(), "8.8.8.8")
+            .create_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                make_crawl_dto(),
+                "8.8.8.8",
+            )
             .await;
         let err = match result {
             Err(CrawlUseCaseError::Anyhow(msg)) => msg.to_string(),
@@ -1417,7 +1503,12 @@ mod tests {
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), make_crawl_dto(), "1.2.3.4")
+            .create_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                make_crawl_dto(),
+                "1.2.3.4",
+            )
             .await;
         let err = match result {
             Err(CrawlUseCaseError::Anyhow(msg)) => msg.to_string(),
@@ -1447,7 +1538,12 @@ mod tests {
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), make_crawl_dto(), "1.2.3.4")
+            .create_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                make_crawl_dto(),
+                "1.2.3.4",
+            )
             .await;
         assert!(
             result.is_ok(),
@@ -1464,7 +1560,12 @@ mod tests {
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), make_crawl_dto(), "1.2.3.4")
+            .create_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                make_crawl_dto(),
+                "1.2.3.4",
+            )
             .await;
         let err = match result {
             Err(CrawlUseCaseError::Repository(e)) => e,
@@ -1482,7 +1583,12 @@ mod tests {
         );
 
         let result = use_case
-            .create_crawl(Uuid::new_v4(), Uuid::new_v4(), make_crawl_dto(), "1.2.3.4")
+            .create_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                make_crawl_dto(),
+                "1.2.3.4",
+            )
             .await;
         let err = match result {
             Err(CrawlUseCaseError::Repository(e)) => e,
@@ -1495,8 +1601,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_found() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Queued);
 
         let use_case = build_use_case_allowed_geo(
@@ -1523,7 +1629,10 @@ mod tests {
         );
 
         let result = use_case
-            .get_crawl(Uuid::new_v4(), Uuid::new_v4())
+            .get_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            )
             .await
             .expect("should succeed");
         assert!(result.is_none(), "non-existent crawl should return None");
@@ -1531,8 +1640,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_crawl_wrong_team_returns_none() {
-        let crawl_id = Uuid::new_v4();
-        let crawl = make_crawl(crawl_id, Uuid::new_v4(), CrawlStatus::Queued);
+        let crawl_id = crate::domain::id::Id::generate();
+        let crawl = make_crawl(
+            crawl_id,
+            crate::domain::id::Id::generate(),
+            CrawlStatus::Queued,
+        );
 
         let use_case = build_use_case_allowed_geo(
             Arc::new(MockCrawlRepository::with_crawl(crawl)),
@@ -1541,7 +1654,7 @@ mod tests {
         );
 
         let result = use_case
-            .get_crawl(crawl_id, Uuid::new_v4())
+            .get_crawl(crawl_id, crate::domain::id::Id::generate())
             .await
             .expect("should succeed");
         assert!(
@@ -1558,7 +1671,12 @@ mod tests {
             Arc::new(MockScrapeResultRepository::empty()),
         );
 
-        let result = use_case.get_crawl(Uuid::new_v4(), Uuid::new_v4()).await;
+        let result = use_case
+            .get_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            )
+            .await;
         assert!(
             matches!(result, Err(CrawlUseCaseError::Repository(_))),
             "repo error should propagate"
@@ -1569,8 +1687,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_success() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Queued);
         let crawl_repo = Arc::new(MockCrawlRepository::with_crawl(crawl));
         let task_repo = Arc::new(MockTaskRepository::empty());
@@ -1601,14 +1719,23 @@ mod tests {
             Arc::new(MockScrapeResultRepository::empty()),
         );
 
-        let result = use_case.cancel_crawl(Uuid::new_v4(), Uuid::new_v4()).await;
+        let result = use_case
+            .cancel_crawl(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            )
+            .await;
         assert!(matches!(result, Err(CrawlUseCaseError::NotFound)));
     }
 
     #[tokio::test]
     async fn test_cancel_crawl_wrong_team_returns_not_found() {
-        let crawl_id = Uuid::new_v4();
-        let crawl = make_crawl(crawl_id, Uuid::new_v4(), CrawlStatus::Queued);
+        let crawl_id = crate::domain::id::Id::generate();
+        let crawl = make_crawl(
+            crawl_id,
+            crate::domain::id::Id::generate(),
+            CrawlStatus::Queued,
+        );
 
         let use_case = build_use_case_allowed_geo(
             Arc::new(MockCrawlRepository::with_crawl(crawl)),
@@ -1616,14 +1743,16 @@ mod tests {
             Arc::new(MockScrapeResultRepository::empty()),
         );
 
-        let result = use_case.cancel_crawl(crawl_id, Uuid::new_v4()).await;
+        let result = use_case
+            .cancel_crawl(crawl_id, crate::domain::id::Id::generate())
+            .await;
         assert!(matches!(result, Err(CrawlUseCaseError::NotFound)));
     }
 
     #[tokio::test]
     async fn test_cancel_crawl_already_completed_is_noop() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Completed);
         let crawl_repo = Arc::new(MockCrawlRepository::with_crawl(crawl));
 
@@ -1645,8 +1774,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_already_failed_is_noop() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Failed);
 
         let use_case = build_use_case_allowed_geo(
@@ -1663,8 +1792,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_already_cancelled_is_noop() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Cancelled);
 
         let use_case = build_use_case_allowed_geo(
@@ -1681,8 +1810,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_processing_status_gets_cancelled() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Processing);
         let crawl_repo = Arc::new(MockCrawlRepository::with_crawl(crawl));
 
@@ -1704,8 +1833,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_update_error_propagates() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Queued);
 
         let use_case = build_use_case_allowed_geo(
@@ -1724,8 +1853,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_crawl_cancel_tasks_error_propagates() {
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let crawl = make_crawl(crawl_id, team_id, CrawlStatus::Queued);
 
         let use_case = build_use_case_allowed_geo(
@@ -1762,8 +1891,8 @@ mod tests {
 
         let result = use_case
             .create_crawl(
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 make_crawl_dto(),
                 "not-an-ip",
             )
@@ -1784,7 +1913,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_crawl_repo_remaining_methods_return_defaults() {
         let repo = MockCrawlRepository::empty();
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         // Counter/status stubs are no-ops returning Ok
         repo.increment_completed_tasks(id).await.unwrap();
         repo.increment_failed_tasks(id).await.unwrap();
@@ -1805,10 +1934,10 @@ mod tests {
     async fn test_mock_task_repo_remaining_methods_return_defaults() {
         let repo = MockTaskRepository::empty();
         let task = Task::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             TaskType::Crawl,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "https://example.com".to_string(),
             json!({}),
         );
@@ -1818,7 +1947,11 @@ mod tests {
         let updated = repo.update(&task).await.unwrap();
         assert_eq!(updated.id, task.id);
         // acquire_next returns None
-        assert!(repo.acquire_next(Uuid::new_v4()).await.unwrap().is_none());
+        assert!(repo
+            .acquire_next(crate::domain::id::Id::generate())
+            .await
+            .unwrap()
+            .is_none());
         // State-transition stubs are no-ops
         repo.mark_completed(task.id, None).await.unwrap();
         repo.mark_failed(task.id, None).await.unwrap();
@@ -1849,7 +1982,11 @@ mod tests {
         assert_eq!(count, 0);
         // batch_cancel returns empty tuples
         let (cancelled, failed) = repo
-            .batch_cancel(vec![Uuid::new_v4()], Uuid::new_v4(), false)
+            .batch_cancel(
+                vec![crate::domain::id::Id::generate()],
+                crate::domain::id::Id::generate(),
+                false,
+            )
             .await
             .unwrap();
         assert!(cancelled.is_empty());
@@ -1860,7 +1997,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_webhook_repo_remaining_methods_return_defaults() {
         let repo = MockWebhookRepository;
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         assert!(repo.find_by_id(id).await.unwrap().is_none());
         assert!(repo.find_by_team_id(id).await.unwrap().is_empty());
     }
@@ -1868,14 +2005,14 @@ mod tests {
     #[tokio::test]
     async fn test_mock_scrape_result_repo_remaining_methods_return_defaults() {
         let repo = MockScrapeResultRepository::empty();
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         // save is a no-op
         repo.save(make_scrape_result(task_id)).await.unwrap();
         // find_by_task_id returns None
         assert!(repo.find_by_task_id(task_id).await.unwrap().is_none());
         // get_team_avg_response_time returns 0.0
         assert_eq!(
-            repo.get_team_avg_response_time(Uuid::new_v4())
+            repo.get_team_avg_response_time(crate::domain::id::Id::generate())
                 .await
                 .unwrap(),
             0.0
@@ -1887,7 +2024,10 @@ mod tests {
     async fn test_mock_geo_restriction_repo_update_team_restrictions_succeeds() {
         let repo = MockGeoRestrictionRepository::with_restrictions(TeamGeoRestrictions::default());
         let result = repo
-            .update_team_restrictions(Uuid::new_v4(), &TeamGeoRestrictions::default())
+            .update_team_restrictions(
+                crate::domain::id::Id::generate(),
+                &TeamGeoRestrictions::default(),
+            )
             .await;
         assert!(result.is_ok(), "update_team_restrictions should succeed");
     }

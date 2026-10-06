@@ -15,7 +15,6 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 use crawlrs::domain::models::{Task, TaskStatus, TaskType, Webhook, WebhookEvent, WebhookEventType};
 use crawlrs::domain::repositories::task_repository::RepositoryError;
@@ -163,7 +162,7 @@ impl WebhookEventRepository for MockWebhookEventRepository {
         Ok(event.clone())
     }
 
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
+    async fn find_by_id(&self, _id: crawlrs::domain::id::Id) -> Result<Option<WebhookEvent>, RepositoryError> {
         Ok(None)
     }
 
@@ -174,14 +173,14 @@ impl WebhookEventRepository for MockWebhookEventRepository {
 
     async fn find_by_team_id_paginated(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _limit: u32,
         _offset: u32,
     ) -> Result<Vec<WebhookEvent>, RepositoryError> {
         Ok(vec![])
     }
 
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(&self, _team_id: crawlrs::domain::id::Id) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 
@@ -239,7 +238,7 @@ impl WebhookRepository for MockWebhookRepository {
         Ok(webhook.clone())
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+    async fn find_by_id(&self, id: crawlrs::domain::id::Id) -> Result<Option<Webhook>, RepositoryError> {
         if self.should_fail {
             return Err(RepositoryError::Database(anyhow::anyhow!("repo down")));
         }
@@ -247,7 +246,7 @@ impl WebhookRepository for MockWebhookRepository {
         Ok(webhooks.iter().find(|w| w.id == id).cloned())
     }
 
-    async fn find_by_team_id(&self, team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+    async fn find_by_team_id(&self, team_id: crawlrs::domain::id::Id) -> Result<Vec<Webhook>, RepositoryError> {
         if self.should_fail {
             return Err(RepositoryError::Database(anyhow::anyhow!("repo down")));
         }
@@ -263,9 +262,9 @@ impl WebhookRepository for MockWebhookRepository {
 fn create_test_task() -> Task {
     let now = Utc::now();
     Task {
-        id: Uuid::new_v4(),
-        team_id: Uuid::new_v4(),
-        api_key_id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
+        api_key_id: crawlrs::domain::id::Id::generate().into(),
         url: "http://example.com".to_string(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Completed,
@@ -291,9 +290,9 @@ fn create_test_task() -> Task {
 
 fn create_test_event() -> WebhookEvent {
     WebhookEvent::new(
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        Uuid::nil(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::nil(),
         WebhookEventType::ScrapeCompleted,
         json!({"task_id": "abc"}),
         "https://example.com/webhook".to_string(),
@@ -438,7 +437,7 @@ async fn test_register_webhook_success() {
         webhook_service,
     );
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let result = mgmt
         .register_webhook(team_id, "https://example.com/hook".to_string())
         .await;
@@ -460,7 +459,7 @@ async fn test_register_webhook_invalid_url_returns_error() {
     let mgmt = make_management_service(webhook_repo, event_repo, webhook_service);
 
     let result = mgmt
-        .register_webhook(Uuid::new_v4(), "ftp://bad-scheme.com".to_string())
+        .register_webhook(crawlrs::domain::id::Id::generate(), "ftp://bad-scheme.com".to_string())
         .await;
 
     assert!(result.is_err());
@@ -478,7 +477,7 @@ async fn test_register_webhook_empty_url_returns_error() {
 
     let mgmt = make_management_service(webhook_repo, event_repo, webhook_service);
 
-    let result = mgmt.register_webhook(Uuid::new_v4(), "".to_string()).await;
+    let result = mgmt.register_webhook(crawlrs::domain::id::Id::generate(), "".to_string()).await;
     assert!(result.is_err());
 }
 
@@ -493,7 +492,7 @@ async fn test_register_webhook_repo_failure_propagates() {
     let mgmt = make_management_service(webhook_repo, event_repo, webhook_service);
 
     let result = mgmt
-        .register_webhook(Uuid::new_v4(), "https://example.com/hook".to_string())
+        .register_webhook(crawlrs::domain::id::Id::generate(), "https://example.com/hook".to_string())
         .await;
 
     assert!(result.is_err());
@@ -503,9 +502,9 @@ async fn test_register_webhook_repo_failure_propagates() {
 
 #[tokio::test]
 async fn test_trigger_webhook_success() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let webhook = Webhook::new(
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
         team_id,
         "https://example.com/hook".to_string(),
     );
@@ -548,7 +547,7 @@ async fn test_trigger_webhook_not_found_returns_error() {
 
     let result = mgmt
         .trigger_webhook(
-            Uuid::new_v4(),
+            crawlrs::domain::id::Id::generate(),
             WebhookEventType::ScrapeCompleted,
             json!({}),
         )
@@ -561,9 +560,9 @@ async fn test_trigger_webhook_not_found_returns_error() {
 
 #[tokio::test]
 async fn test_trigger_webhook_sender_failure_propagates() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let webhook = Webhook::new(
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
         team_id,
         "https://example.com/hook".to_string(),
     );
@@ -621,11 +620,11 @@ async fn test_retry_failed_with_pending_events() {
 
 #[tokio::test]
 async fn test_list_webhooks_returns_team_webhooks() {
-    let team_id = Uuid::new_v4();
-    let webhook1 = Webhook::new(Uuid::new_v4(), team_id, "https://example.com/1".to_string());
-    let webhook2 = Webhook::new(Uuid::new_v4(), team_id, "https://example.com/2".to_string());
+    let team_id = crawlrs::domain::id::Id::generate();
+    let webhook1 = Webhook::new(crawlrs::domain::id::Id::generate(), team_id, "https://example.com/1".to_string());
+    let webhook2 = Webhook::new(crawlrs::domain::id::Id::generate(), team_id, "https://example.com/2".to_string());
     let other_team_webhook =
-        Webhook::new(Uuid::new_v4(), Uuid::new_v4(), "https://example.com/3".to_string());
+        Webhook::new(crawlrs::domain::id::Id::generate(), crawlrs::domain::id::Id::generate(), "https://example.com/3".to_string());
 
     let webhook_repo = Arc::new(MockWebhookRepository::with_webhooks(vec![
         webhook1,
@@ -658,7 +657,7 @@ async fn test_list_webhooks_repo_failure_propagates() {
 
     let mgmt = make_management_service(webhook_repo, event_repo, webhook_service);
 
-    let result = mgmt.list_webhooks(Uuid::new_v4()).await;
+    let result = mgmt.list_webhooks(crawlrs::domain::id::Id::generate()).await;
     assert!(result.is_err());
 }
 
@@ -673,7 +672,7 @@ async fn test_list_webhooks_empty_team_returns_empty() {
     let mgmt = make_management_service(webhook_repo, event_repo, webhook_service);
 
     let webhooks = mgmt
-        .list_webhooks(Uuid::new_v4())
+        .list_webhooks(crawlrs::domain::id::Id::generate())
         .await
         .expect("should succeed");
     assert!(webhooks.is_empty());
@@ -777,8 +776,8 @@ fn test_verify_signature_different_length_signature_returns_false() {
 
 #[test]
 fn test_webhook_new_sets_fields() {
-    let id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
     let url = "https://example.com/hook".to_string();
 
     let webhook = Webhook::new(id, team_id, url.clone());
@@ -792,8 +791,8 @@ fn test_webhook_new_sets_fields() {
 #[test]
 fn test_webhook_validate_url_valid_https() {
     let webhook = Webhook::new(
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
         "https://example.com/hook".to_string(),
     );
     assert!(webhook.validate_url().is_ok());
@@ -802,8 +801,8 @@ fn test_webhook_validate_url_valid_https() {
 #[test]
 fn test_webhook_validate_url_valid_http() {
     let webhook = Webhook::new(
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
         "http://example.com/hook".to_string(),
     );
     assert!(webhook.validate_url().is_ok());
@@ -811,15 +810,15 @@ fn test_webhook_validate_url_valid_http() {
 
 #[test]
 fn test_webhook_validate_url_empty_returns_error() {
-    let webhook = Webhook::new(Uuid::new_v4(), Uuid::new_v4(), "".to_string());
+    let webhook = Webhook::new(crawlrs::domain::id::Id::generate(), crawlrs::domain::id::Id::generate(), "".to_string());
     assert!(webhook.validate_url().is_err());
 }
 
 #[test]
 fn test_webhook_validate_url_invalid_scheme_returns_error() {
     let webhook = Webhook::new(
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
         "ftp://example.com/hook".to_string(),
     );
     assert!(webhook.validate_url().is_err());

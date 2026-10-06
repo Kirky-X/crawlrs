@@ -40,6 +40,7 @@ pub mod content_extractor;
 pub mod extraction_service;
 pub mod extraction_utils;
 pub mod geo_location;
+pub mod id_service;
 pub mod llm;
 pub mod llm_provider_strategy;
 /// Markdown 转换服务（content-processing R1）

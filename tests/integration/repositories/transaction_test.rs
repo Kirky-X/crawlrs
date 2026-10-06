@@ -32,7 +32,6 @@ use crawlrs::infrastructure::database::transaction::{
     TransactionAccess, TransactionConfig, TransactionError, TransactionGuard, TransactionIsolation,
     TransactionManager,
 };
-use uuid::Uuid;
 
 // ============================================================
 // Helpers
@@ -40,7 +39,10 @@ use uuid::Uuid;
 
 /// 生成唯一的 savepoint 名称（仅 alphanumeric + underscore，符合校验规则）
 fn unique_sp_name() -> String {
-    format!("sp_{}", Uuid::new_v4().as_simple())
+    format!(
+        "sp_{}",
+        crawlrs::domain::id::Id::generate().to_uuid_v8().as_simple()
+    )
 }
 
 /// 默认 admin role 配置，与 test_app.rs 中 admin_role 一致

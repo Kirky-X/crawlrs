@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::json;
-use uuid::Uuid;
 
 use crate::application::dto::crawl_request::CrawlConfigDto;
 use crate::application::dto::extract_request::ExtractRequestDto;
@@ -26,10 +25,10 @@ use crate::engines::engine_client::{ScrapeOptions, ScrapeRequest};
 ///
 /// # Errors
 /// * payload 缺少 `crawl_id` 或 JSON 解析失败时返回错误
-pub fn parse_crawl_payload(task: &Task) -> Result<(Uuid, u32, CrawlConfigDto)> {
+pub fn parse_crawl_payload(task: &Task) -> Result<(crate::domain::id::Id, u32, CrawlConfigDto)> {
     let payload = &task.payload;
     let crawl_id = match payload.get("crawl_id").and_then(|v| v.as_str()) {
-        Some(id) => Uuid::parse_str(id).unwrap_or_default(),
+        Some(id) => (id).parse::<crate::domain::id::Id>().unwrap_or_default(),
         None => {
             return Err(anyhow::anyhow!("Missing crawl_id in task payload"));
         }
@@ -142,12 +141,12 @@ mod tests {
 
     fn make_task(payload: serde_json::Value) -> Task {
         Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 0,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload,
             retry_count: 0,
@@ -169,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_parse_crawl_payload_valid() {
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         let payload = json!({
             "crawl_id": crawl_id.to_string(),
             "depth": 2,
@@ -191,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_parse_crawl_payload_defaults() {
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         let payload = json!({
             "crawl_id": crawl_id.to_string(),
             "config": { "max_depth": 5 }

@@ -4,7 +4,6 @@ use crate::domain::retention_policy::RetentionBatchPolicy;
 use crate::infrastructure::database::entities::geo_restriction_log;
 use chrono::Duration;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
-use uuid::Uuid;
 
 /// 序列化清理测试：共享 testcontainers 容器下，两个清理用例并行时
 /// 会互相删除对方刚插入的数据（retention 覆盖全部行）。
@@ -16,14 +15,14 @@ fn restriction_lock() -> &'static tokio::sync::Mutex<()> {
 
 /// 直接插入带自定义 created_at 的日志行（repo 的 log 方法固定 NOW，
 /// 无法构造历史行），返回日志 id。
-async fn insert_log_with_age(days_ago: i64) -> Uuid {
+async fn insert_log_with_age(days_ago: i64) -> crate::domain::id::Id {
     let pool = create_test_db_pool();
     let session = pool.get_session("admin").await.expect("get session");
     let conn = session.connection().expect("get connection");
-    let id = Uuid::new_v4();
+    let id = crate::domain::id::Id::generate();
     let model = geo_restriction_log::ActiveModel {
-        id: Set(id),
-        team_id: Set(Uuid::new_v4()),
+        id: Set(id.into()),
+        team_id: Set(crate::domain::id::Id::generate().into()),
         ip_address: Set("192.168.1.1".to_string()),
         country_code: Set(Some("US".to_string())),
         restriction_type: Set("country_block".to_string()),
@@ -35,7 +34,7 @@ async fn insert_log_with_age(days_ago: i64) -> Uuid {
     id
 }
 
-async fn row_exists(id: Uuid) -> bool {
+async fn row_exists(id: crate::domain::id::Id) -> bool {
     let pool = create_test_db_pool();
     let session = pool.get_session("admin").await.expect("session");
     let conn = session.connection().expect("connection");

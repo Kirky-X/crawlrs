@@ -14,10 +14,13 @@ use crawlrs::domain::repositories::tasks_backlog_repository::{
 use crawlrs::infrastructure::database::entities::tasks_backlog;
 use crawlrs::infrastructure::repositories::tasks_backlog_repo_impl::TasksBacklogRepositoryImpl;
 use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use uuid::Uuid;
 
 /// 创建测试用的 TasksBacklog（辅助函数）
-fn make_backlog(team_id: Uuid, task_id: Uuid, priority: i32) -> TasksBacklog {
+fn make_backlog(
+    team_id: crawlrs::domain::id::Id,
+    task_id: crawlrs::domain::id::Id,
+    priority: i32,
+) -> TasksBacklog {
     TasksBacklog::new(
         task_id,
         team_id,
@@ -34,7 +37,7 @@ async fn test_create_and_find_by_id() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
 
     let backlog = make_backlog(team_id, task_id, 1);
     let created = repo
@@ -63,7 +66,7 @@ async fn test_find_by_task_id() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
 
     let backlog = make_backlog(team_id, task_id, 2);
     repo.create(&backlog)
@@ -87,7 +90,7 @@ async fn test_find_by_task_id_returns_none_for_unknown() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
 
-    let unknown_task_id = Uuid::new_v4();
+    let unknown_task_id = crawlrs::domain::id::Id::generate();
     let result = repo
         .find_by_task_id(unknown_task_id)
         .await
@@ -101,7 +104,7 @@ async fn test_update_backlog() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
 
     let mut backlog = make_backlog(team_id, task_id, 1);
     repo.create(&backlog)
@@ -132,7 +135,7 @@ async fn test_delete_backlog() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
 
     let backlog = make_backlog(team_id, task_id, 1);
     repo.create(&backlog)
@@ -158,8 +161,8 @@ async fn test_get_pending_tasks_filtered_by_team() {
     let team_id = app.team_id;
 
     // 创建两个 pending 任务，优先级不同
-    let b1 = make_backlog(team_id, Uuid::new_v4(), 5);
-    let b2 = make_backlog(team_id, Uuid::new_v4(), 1);
+    let b1 = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 5);
+    let b2 = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
     repo.create(&b1).await.expect("Failed to create b1");
     repo.create(&b2).await.expect("Failed to create b2");
 
@@ -198,7 +201,7 @@ async fn test_get_pending_tasks_with_limit() {
     let team_id = app.team_id;
 
     for _ in 0..5 {
-        let b = make_backlog(team_id, Uuid::new_v4(), 1);
+        let b = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
         repo.create(&b).await.expect("Failed to create backlog");
     }
 
@@ -223,7 +226,7 @@ async fn test_get_expired_tasks() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
 
     // 创建一个已过期的 backlog（expires_at 在过去）
     let mut backlog = make_backlog(team_id, task_id, 1);
@@ -257,8 +260,8 @@ async fn test_count_by_status() {
         .await
         .expect("Failed to count before insert");
 
-    let b1 = make_backlog(team_id, Uuid::new_v4(), 1);
-    let b2 = make_backlog(team_id, Uuid::new_v4(), 2);
+    let b1 = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
+    let b2 = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 2);
     repo.create(&b1).await.expect("Failed to create b1");
     repo.create(&b2).await.expect("Failed to create b2");
 
@@ -283,8 +286,8 @@ async fn test_update_status_batch() {
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let b1 = make_backlog(team_id, Uuid::new_v4(), 1);
-    let b2 = make_backlog(team_id, Uuid::new_v4(), 2);
+    let b1 = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
+    let b2 = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 2);
     repo.create(&b1).await.expect("Failed to create b1");
     repo.create(&b2).await.expect("Failed to create b2");
 
@@ -334,7 +337,7 @@ async fn tc_find_by_id_returns_none_for_unknown() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
 
-    let unknown_id = Uuid::new_v4();
+    let unknown_id = crawlrs::domain::id::Id::generate();
     let result = repo
         .find_by_id(unknown_id)
         .await
@@ -352,7 +355,7 @@ async fn tc_get_pending_tasks_no_team_no_limit() {
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let b = make_backlog(team_id, Uuid::new_v4(), 1);
+    let b = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
     repo.create(&b).await.expect("Failed to create backlog");
 
     // 不带 team_id 和 limit 查询：应返回所有 pending（包含我们的）
@@ -376,7 +379,7 @@ async fn tc_count_by_status_no_team() {
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let b = make_backlog(team_id, Uuid::new_v4(), 1);
+    let b = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
     repo.create(&b).await.expect("Failed to create backlog");
 
     // 不带 team_id 统计 pending 数量
@@ -403,7 +406,7 @@ async fn tc_get_expired_tasks_with_limit() {
 
     // 创建 3 个过期任务
     for _ in 0..3 {
-        let mut backlog = make_backlog(team_id, Uuid::new_v4(), 1);
+        let mut backlog = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
         backlog.expires_at = Some(chrono::Utc::now() - chrono::Duration::hours(1));
         repo.create(&backlog)
             .await
@@ -431,7 +434,7 @@ async fn tc_delete_nonexistent_is_noop() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
 
-    let unknown_id = Uuid::new_v4();
+    let unknown_id = crawlrs::domain::id::Id::generate();
     repo.delete(unknown_id)
         .await
         .expect("Deleting non-existent backlog should not error");
@@ -444,11 +447,11 @@ async fn tc_update_status_batch_with_nonexistent() {
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let b = make_backlog(team_id, Uuid::new_v4(), 1);
+    let b = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
     repo.create(&b).await.expect("Failed to create backlog");
 
     // 包含一个存在和一个不存在的 ID
-    let unknown_id = Uuid::new_v4();
+    let unknown_id = crawlrs::domain::id::Id::generate();
     let affected = repo
         .update_status_batch(&[b.id, unknown_id], TasksBacklogStatus::Processing)
         .await
@@ -472,7 +475,7 @@ async fn tc_create_with_all_optional_fields_set() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
 
     let mut backlog = make_backlog(team_id, task_id, 1);
     let now = chrono::Utc::now();
@@ -533,7 +536,7 @@ async fn tc_update_with_all_optional_fields_set() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
 
     let mut backlog = make_backlog(team_id, task_id, 1);
     let now = chrono::Utc::now();
@@ -616,7 +619,7 @@ async fn tc_update_status_to_failed_via_update() {
     let app = create_test_app_no_worker().await;
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
 
     let mut backlog = make_backlog(team_id, task_id, 1);
     repo.create(&backlog).await.expect("create backlog failed");
@@ -664,7 +667,7 @@ async fn tc_get_pending_tasks_with_team_and_limit() {
 
     // 创建 3 个 pending 任务
     for _ in 0..3 {
-        let b = make_backlog(team_id, Uuid::new_v4(), 1);
+        let b = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
         repo.create(&b).await.expect("create backlog failed");
     }
 
@@ -689,7 +692,10 @@ async fn tc_get_pending_tasks_with_team_and_limit() {
 }
 
 /// 辅助函数：清理指定 team_id 的 tasks_backlog
-async fn cleanup_backlogs(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
+async fn cleanup_backlogs(
+    app: &super::super::helpers::test_app::TestApp,
+    team_id: crawlrs::domain::id::Id,
+) {
     let session = app
         .db_pool
         .get_session("admin")

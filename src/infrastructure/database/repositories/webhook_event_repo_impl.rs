@@ -16,7 +16,6 @@ use dbnexus::sea_orm::{
 };
 use dbnexus::DbPool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Webhook event repository implementation using Sea-ORM
 #[derive(Clone)]
@@ -56,7 +55,10 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
         Ok(event.clone())
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<WebhookEvent>, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -180,7 +182,7 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
 
     async fn find_by_team_id_paginated(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<WebhookEvent>, RepositoryError> {
@@ -209,7 +211,10 @@ impl WebhookEventRepository for WebhookEventRepoImpl {
         Ok(WebhookEventMapper::to_domain_list(entities))
     }
 
-    async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -238,9 +243,9 @@ mod tests {
 
     fn sample_webhook_event() -> WebhookEvent {
         WebhookEvent::with_all_fields(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             WebhookEventType::CrawlCompleted,
             serde_json::json!({"crawl_id": "c-1"}),
             "https://example.com/hook".to_string(),
@@ -300,7 +305,7 @@ mod tests {
             return;
         }
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
-        let result = repo.find_by_id(Uuid::new_v4()).await;
+        let result = repo.find_by_id(crate::domain::id::Id::generate()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
         assert!(result.unwrap().is_none(), "unknown id should return None");
     }
@@ -346,7 +351,9 @@ mod tests {
             return;
         }
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
-        let result = repo.find_by_team_id_paginated(Uuid::new_v4(), 10, 0).await;
+        let result = repo
+            .find_by_team_id_paginated(crate::domain::id::Id::generate(), 10, 0)
+            .await;
         assert!(
             result.is_ok(),
             "find_by_team_id_paginated failed: {:?}",
@@ -364,7 +371,9 @@ mod tests {
             return;
         }
         let repo = WebhookEventRepoImpl::new(create_test_db_pool());
-        let result = repo.count_by_team_id(Uuid::new_v4()).await;
+        let result = repo
+            .count_by_team_id(crate::domain::id::Id::generate())
+            .await;
         assert!(
             result.is_ok(),
             "count_by_team_id failed: {:?}",

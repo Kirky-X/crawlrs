@@ -556,7 +556,7 @@ mod tests {
     // Imports for the route-builder tests below (uses TEST_DATABASE_URL).
     use crate::common::test_support::testcontainers_fixtures as tcf;
     use crate::di::modules::{
-        CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule,
+        CacheModule, DatabaseModule, EngineModule, HttpModule, IdModule, InfrastructureModule,
         RepositoryModule, ServiceModule, SettingsModule,
     };
     use trait_kit::AsyncKit;
@@ -1341,6 +1341,8 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
         kit.register::<ServiceModule>()
             .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
+        kit.register::<IdModule>()
+            .map_err(|e| anyhow::anyhow!("register IdModule: {e}"))?;
 
         let kit = kit
             .build()

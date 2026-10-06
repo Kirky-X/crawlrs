@@ -18,12 +18,11 @@
 //! - 团队积分配额
 
 use log::{info, warn};
-use uuid::Uuid;
 
 // 模拟团队结构（实际使用时请通过依赖注入获取真实服务）
 #[derive(Debug, Clone)]
 struct Team {
-    pub id: Uuid,
+    pub id: crawlrs::domain::id::Id,
     pub name: String,
     pub api_keys: Vec<String>,
     pub credits: i64,
@@ -34,7 +33,7 @@ struct Team {
 impl Team {
     pub fn new(name: &str, credits: i64) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: crawlrs::domain::id::Id::generate(),
             name: name.to_string(),
             api_keys: Vec::new(),
             credits,

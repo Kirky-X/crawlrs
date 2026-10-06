@@ -24,6 +24,9 @@ use crate::domain::services::audit_service::AuditServiceTrait;
 #[cfg(feature = "auth")]
 use crate::infrastructure::database::entities::api_key;
 #[cfg(feature = "auth")]
+// Re-export 共享类型（决策 3：从 auth_types 导入，避免循环依赖）
+pub use crate::presentation::middleware::auth_types::{AuthError, AuthState};
+#[cfg(feature = "auth")]
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
 use axum::extract::State;
 #[cfg(feature = "auth")]
@@ -53,11 +56,6 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 #[cfg(feature = "auth")]
 use std::time::{Duration, Instant};
-#[cfg(feature = "auth")]
-use uuid::Uuid;
-
-// Re-export 共享类型（决策 3：从 auth_types 导入，避免循环依赖）
-pub use crate::presentation::middleware::auth_types::{AuthError, AuthState};
 
 /// Team ID 缓存容量（决策 4：4096 条目覆盖典型多租户规模）。
 #[cfg(feature = "auth")]
@@ -72,7 +70,7 @@ const TEAM_ID_CACHE_TTL: Duration = Duration::from_secs(60);
 /// ## 设计
 ///
 /// - 容量 4096（`TEAM_ID_CACHE_CAPACITY`），TTL 60s（`TEAM_ID_CACHE_TTL`）
-/// - Key: `api_key_id` (Uuid)，Value: `(team_id, cached_at)`
+/// - Key: `api_key_id` (crate::domain::id::Id)，Value: `(team_id, cached_at)`
 /// - 命中时检查 TTL，过期则 evict 并回查 DB
 /// - 使用 `parking_lot::RwLock` 同步锁（不跨 await，避免死锁）
 ///
@@ -82,7 +80,9 @@ const TEAM_ID_CACHE_TTL: Duration = Duration::from_secs(60);
 /// garrison 吊销 key 后 crawlrs DB 行可能被删除，此时缓存 TTL 过期后
 /// 回查返回 `None` → `AuthError::KeyNotFound`，拒绝访问。
 #[cfg(feature = "auth")]
-static TEAM_ID_CACHE: LazyLock<ParkRwLock<LruCache<Uuid, (Uuid, Instant)>>> = LazyLock::new(|| {
+static TEAM_ID_CACHE: LazyLock<
+    ParkRwLock<LruCache<crate::domain::id::Id, (crate::domain::id::Id, Instant)>>,
+> = LazyLock::new(|| {
     ParkRwLock::new(LruCache::new(
         NonZeroUsize::new(TEAM_ID_CACHE_CAPACITY).expect("TEAM_ID_CACHE_CAPACITY must be > 0"),
     ))
@@ -115,7 +115,7 @@ pub fn reset_team_id_cache() {
 /// ## 参数
 ///
 /// * `pool` - crawlrs 数据库连接池
-/// * `api_key_id` - 从 garrison `login_id` 解析得到的 API Key Uuid
+/// * `api_key_id` - 从 garrison `login_id` 解析得到的 API Key crate::domain::id::Id
 ///
 /// ## 返回
 ///
@@ -131,8 +131,8 @@ pub fn reset_team_id_cache() {
 #[cfg_attr(not(feature = "teams"), allow(dead_code))]
 async fn fetch_team_id_by_api_key_id(
     pool: &Arc<DbPool>,
-    api_key_id: Uuid,
-) -> Result<Option<Uuid>, AuthError> {
+    api_key_id: crate::domain::id::Id,
+) -> Result<Option<crate::domain::id::Id>, AuthError> {
     // 1. 查缓存。 `LruCache::get` 需 `&mut self` 更新 LRU 访问顺序，
     // 故必须用 write 锁（非读锁）。debug! 已移到锁外，避免锁内 I/O。
     // 长期优化建议：换用 `moka::Cache`（concurrent LRU，无锁读路径）。
@@ -166,11 +166,13 @@ async fn fetch_team_id_by_api_key_id(
     let conn = session
         .connection()
         .map_err(|e| AuthError::InternalError(format!("db conn: {}", e)))?;
-    let result = api_key::Entity::find_by_id(api_key_id).one(conn).await?;
+    let result = api_key::Entity::find_by_id(api_key_id.to_uuid_v8())
+        .one(conn)
+        .await?;
 
     // 3. 填充缓存（仅当找到映射时）。 debug! 移到锁外。
     if let Some(ref model) = result {
-        let team_id = model.team_id;
+        let team_id: crate::domain::id::Id = model.team_id.into();
         {
             let mut cache = TEAM_ID_CACHE.write();
             cache.push(api_key_id, (team_id, Instant::now()));
@@ -181,7 +183,7 @@ async fn fetch_team_id_by_api_key_id(
         );
     }
 
-    Ok(result.map(|m| m.team_id))
+    Ok(result.map(|m| m.team_id.into()))
 }
 
 /// 计算 token 的 SHA-256 hash（hex 编码，带 `sha256:` 前缀）。
@@ -204,8 +206,8 @@ fn hash_token(token: &str) -> String {
 /// 下游 `limiteron_rate_limit_middleware` 的 `Extension<String>` 提取器拿到的是 hash，
 /// 不会在限速日志中泄露明文 token。
 fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash: &str) {
-    // 注意：`team_id` 和 `api_key_id` 均为 `Uuid` 类型，若同时 `insert` 会发生类型冲突
-    // （后者覆盖前者）。生产代码通过 `Extension<AuthState>` 读取，无需裸 `Uuid` 扩展。
+    // 注意：`team_id` 和 `api_key_id` 均为 `crate::domain::id::Id` 类型，若同时 `insert` 会发生类型冲突
+    // （后者覆盖前者）。生产代码通过 `Extension<AuthState>` 读取，无需裸 `crate::domain::id::Id` 扩展。
     // 此处仅注入 `AuthState`（包含 team_id/api_key_id/scope）+ `token_hash`（限速器消费）。
     req.extensions_mut().insert(auth_state);
     req.extensions_mut().insert(token_hash.to_string());
@@ -218,7 +220,7 @@ fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash:
 /// 1. 提取 Bearer token（`extract_bearer`，来自 `auth_bridge`）
 /// 2. 在 `with_current_token` 作用域内调用 garrison `GarrisonUtil::check_api_key` 校验
 ///    API Key（含 CWE-916 哈希、CWE-307 IP 限速），并提取 `login_id` / `perms`
-/// 3. 解析 `login_id` → `api_key_id` (Uuid)（约定）
+/// 3. 解析 `login_id` → `api_key_id` (crate::domain::id::Id)（约定）
 /// 4. 反查 crawlrs `api_keys` 表获取 `team_id`（garrison 不持有此映射，带 LRU 缓存）
 /// 5. 桥接为 `AuthState`（`bridge_to_auth_state`，来自 `auth_bridge`）
 /// 6. 复用 `inject_auth_state` 注入 extensions（token_hash 用 SHA-256 hash，CWE-532）
@@ -231,7 +233,7 @@ fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash:
 /// | 公开端点 | `next.run(req)`（跳过） | 200 |
 /// | `extract_bearer` 失败 | `AuthError::InvalidKey` | 401 |
 /// | garrison 校验失败 | `AuthError::from_garrison(...)` | 401/403/429/500 |
-/// | `login_id` 非 Uuid | `AuthError::InvalidLoginId` | 400 |
+/// | `login_id` 非 crate::domain::id::Id | `AuthError::InvalidLoginId` | 400 |
 /// | `api_key_id` 反查未命中 | `AuthError::KeyNotFound` | 400 |
 /// | DB 查询失败 | `AuthError::DatabaseError` | 500 |
 /// | 桥接失败 | 透传 `AuthError` | 400 |
@@ -240,7 +242,7 @@ fn inject_auth_state(req: &mut Request<Body>, auth_state: AuthState, token_hash:
 ///
 /// - garrison `check_api_key` 负责 CWE-916 哈希校验和 CWE-307 IP 限速
 /// - token 不记录到日志（CWE-532）；注入 extensions 的是 SHA-256 hash
-/// - `login_id` 解析失败不静默回退 `Uuid::nil()`（避免越权）
+/// - `login_id` 解析失败不静默回退 `crate::domain::id::Id::nil()`（避免越权）
 ///
 /// 将客户端 IP 注入 garrison task-local（`garrison::stp::with_current_ip`）。
 ///
@@ -375,8 +377,8 @@ pub async fn auth_middleware_inner(
         (info.login_id, info.scopes)
     };
 
-    // 4. 解析 login_id → api_key_id (Uuid)
-    let api_key_id = match Uuid::parse_str(&login_id) {
+    // 4. 解析 login_id → api_key_id (crate::domain::id::Id)
+    let api_key_id = match login_id.parse::<crate::domain::id::Id>() {
         Ok(u) => u,
         Err(_) => return AuthError::InvalidLoginId(login_id).into_response(),
     };
@@ -394,7 +396,7 @@ pub async fn auth_middleware_inner(
     #[cfg(not(feature = "teams"))]
     let team_id = crate::common::constants::default_identity::DEFAULT_TEAM_ID;
 
-    // 6. 桥接为 AuthState（传 api_key_id 而非 login_id，消除重复 Uuid 解析）
+    // 6. 桥接为 AuthState（传 api_key_id 而非 login_id，消除重复 crate::domain::id::Id 解析）
     let auth_state = match bridge_to_auth_state(pool.clone(), api_key_id, &perms, team_id).await {
         Ok(s) => s,
         Err(e) => return e.into_response(),
@@ -512,7 +514,11 @@ fn determine_required_scope(path: &str, method: &str) -> Option<ScopePermission>
 
 /// Create an auth state for testing purposes.
 #[cfg(all(test, feature = "auth"))]
-pub fn test_auth_state(db: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid) -> AuthState {
+pub fn test_auth_state(
+    db: Arc<DbPool>,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
+) -> AuthState {
     AuthState::new(db, team_id, api_key_id, ApiKeyScope::default())
 }
 

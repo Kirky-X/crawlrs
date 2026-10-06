@@ -21,7 +21,6 @@
 use log::info;
 use sdforge::prelude::*;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 // ============================================================================
 // DTO — 请求与响应类型
@@ -40,7 +39,7 @@ struct CreateUserRequest {
 #[derive(Debug, Serialize)]
 struct UserResponse {
     /// 用户 ID
-    id: Uuid,
+    id: crawlrs::domain::id::Id,
     /// 用户名
     name: String,
     /// 邮箱
@@ -104,7 +103,7 @@ async fn create_user(req: CreateUserRequest) -> Result<UserResponse, ApiError> {
     }
 
     Ok(UserResponse {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate(),
         name: req.name,
         email: req.email,
         created_at: chrono::Utc::now().to_rfc3339(),
@@ -141,11 +140,13 @@ async fn list_users(query: ListUsersQuery) -> Result<ListUsersResponse, ApiError
     description = "Get user by ID"
 )]
 async fn get_user(id: String) -> Result<UserResponse, ApiError> {
-    let user_id = Uuid::parse_str(&id).map_err(|_| ApiError::InvalidInput {
-        message: format!("invalid UUID: {}", id),
-        field: Some("id".to_string()),
-        value: Some(serde_json::json!(id)),
-    })?;
+    let user_id = id
+        .parse::<crawlrs::domain::id::Id>()
+        .map_err(|_| ApiError::InvalidInput {
+            message: format!("invalid UUID: {}", id),
+            field: Some("id".to_string()),
+            value: Some(serde_json::json!(id)),
+        })?;
 
     // 模拟未找到的情况
     Err(ApiError::NotFound {

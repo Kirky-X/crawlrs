@@ -21,7 +21,6 @@ use tokio::sync::Notify;
 use crate::domain::repositories::task_repository::TaskRepository;
 use log::{error, info};
 use trait_kit::kit::shutdown::AsyncShutdownCoordinator;
-use uuid::Uuid;
 
 /// 分阶段停机阶段（re-export 自研 trait-kit `shutdown` kit）：
 /// StopRequests → DrainQueue → CloseConnections。
@@ -204,7 +203,7 @@ pub async fn listen_unix_signals(coordinator: Arc<ShutdownCoordinator>) -> std::
 pub async fn rollback_pending_tasks(
     repository: &Arc<dyn TaskRepository>,
     graceful_period: Duration,
-    worker_ids: &[Uuid],
+    worker_ids: &[crate::domain::id::Id],
 ) {
     match tokio::time::timeout(
         graceful_period,
@@ -406,7 +405,6 @@ mod tests {
         RepositoryError, TaskQueryParams, TaskRepository,
     };
     use std::collections::HashSet;
-    use uuid::Uuid;
 
     /// 极简 mock：仅记录 `reset_stuck_tasks` 调用次数与最近一次 timeout。
     struct RecordingTaskRepository {
@@ -436,30 +434,36 @@ mod tests {
         async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
             Err(RepositoryError::NotFound)
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> {
             Err(RepositoryError::NotFound)
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -480,13 +484,19 @@ mod tests {
             *self.last_timeout.lock() = Some(timeout);
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(Vec::new())
         }
         async fn query_tasks(
@@ -497,17 +507,23 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((Vec::new(), Vec::new()))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -571,30 +587,36 @@ mod tests {
         async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
             Err(RepositoryError::NotFound)
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Err(RepositoryError::NotFound)
         }
         async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> {
             Err(RepositoryError::NotFound)
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Err(RepositoryError::NotFound)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -614,13 +636,19 @@ mod tests {
                 "db connection lost"
             )))
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -631,17 +659,23 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -654,45 +688,51 @@ mod tests {
     impl TaskRepository for SlowTaskRepository {
         async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
             Ok(Task::new(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 TaskType::Scrape,
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 String::new(),
                 serde_json::json!({}),
             ))
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> {
             Ok(Task::new(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 TaskType::Scrape,
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 String::new(),
                 serde_json::json!({}),
             ))
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -712,13 +752,19 @@ mod tests {
             tokio::time::sleep(Duration::from_secs(10)).await;
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -729,17 +775,23 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)

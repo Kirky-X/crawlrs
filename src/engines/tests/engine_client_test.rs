@@ -1095,12 +1095,18 @@ async fn test_engine_client_scrape_ssrf_rejected() {
 
 // === EngineClient::scrape router error propagation ===
 
+/// 走 `client.scrape` 且需**通过 SSRF 校验**抵达 mock router 的用例统一使用该公网 IP
+/// 字面量：SSRF 对 IP 直判公网、免 DNS 解析，避免 `example.com` 依赖活体 DNS 造成的
+/// 间歇性假失败（覆盖率门禁要求测试确定性）。
+const SSRF_SAFE_PUBLIC_URL: &str = "https://93.184.216.34";
+
 #[tokio::test]
 async fn test_engine_client_scrape_router_error() {
     let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::new_timeout());
     let client = EngineClient::with_router(router);
 
-    let request = ScrapeRequest::new("https://example.com");
+    // 公网 IP 字面量过 SSRF（免 DNS），确保稳定抵达 mock router 的 Timeout 分支。
+    let request = ScrapeRequest::new(SSRF_SAFE_PUBLIC_URL);
     let result = client.scrape(&request).await;
 
     assert!(result.is_err());
@@ -1119,7 +1125,8 @@ async fn test_engine_client_scrape_no_engines_error() {
     ));
     let client = EngineClient::with_router(router);
 
-    let request = ScrapeRequest::new("https://example.com");
+    // 公网 IP 字面量过 SSRF（免 DNS），确保稳定抵达 mock router 的 NoEnginesAvailable 分支。
+    let request = ScrapeRequest::new(SSRF_SAFE_PUBLIC_URL);
     let result = client.scrape(&request).await;
 
     assert!(result.is_err());
@@ -1172,7 +1179,8 @@ async fn test_engine_client_trait_scrape_success() {
     let router: Arc<dyn EngineRouterTrait> = Arc::new(MockEngineRouter::new_success());
     let client: Arc<dyn EngineClientTrait> = Arc::new(EngineClient::with_router(router));
 
-    let request = ScrapeRequest::new("https://example.com");
+    // 公网 IP 字面量过 SSRF（免 DNS），确保稳定抵达 mock router 的成功分支。
+    let request = ScrapeRequest::new(SSRF_SAFE_PUBLIC_URL);
     let result = client.scrape(&request).await;
     assert!(result.is_ok());
     let response = result.unwrap();

@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TeamGeoRestrictions {
@@ -43,7 +42,7 @@ impl TeamService {
 
     pub async fn validate_geographic_restriction(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         ip_address: &str,
         restrictions: &TeamGeoRestrictions,
     ) -> Result<GeoRestrictionResult> {
@@ -128,7 +127,7 @@ impl TeamService {
 
     async fn get_country_code(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         ip_address: &str,
         ip: &IpAddr,
     ) -> Result<String> {
@@ -182,7 +181,10 @@ impl TeamService {
         Ok(GeoRestrictionResult::Allowed)
     }
 
-    pub async fn get_team_geo_restrictions(&self, team_id: Uuid) -> TeamGeoRestrictions {
+    pub async fn get_team_geo_restrictions(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> TeamGeoRestrictions {
         match self
             .geo_restriction_repo
             .get_team_restrictions(team_id)

@@ -17,7 +17,6 @@ use std::sync::Arc;
 use axum::Extension;
 use axum_test::TestServer;
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 use common::helpers::db_pool::create_test_pool_or_panic;
 
@@ -40,8 +39,12 @@ use crawlrs::queue::task_queue::TaskQueue;
 /// 固定 en-US bundle，断言不受宿主系统语言影响（与
 /// `src/presentation/sdk/tests.rs::make_test_i18n` 同模式）。
 fn make_server() -> TestServer {
-    let team_id = Uuid::parse_str(TEAM_ID).expect("valid TEAM_ID uuid");
-    let api_key_id = Uuid::parse_str(API_KEY_ID).expect("valid API_KEY_ID uuid");
+    let team_id = (TEAM_ID)
+        .parse::<crawlrs::domain::id::Id>()
+        .expect("valid TEAM_ID uuid");
+    let api_key_id = (API_KEY_ID)
+        .parse::<crawlrs::domain::id::Id>()
+        .expect("valid API_KEY_ID uuid");
     let pool = create_test_pool_or_panic();
     let auth_state = AuthState::new(pool, team_id, api_key_id, ApiKeyScope::default());
 

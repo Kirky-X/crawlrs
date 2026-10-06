@@ -15,7 +15,6 @@ use crawlrs::infrastructure::database::entities::auth::audit_log::{
 };
 use crawlrs::infrastructure::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
 use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use uuid::Uuid;
 
 /// 测试创建审计日志并通过 API Key ID 查询
 #[tokio::test]
@@ -228,7 +227,7 @@ async fn tc_find_by_team_id_returns_empty_for_unknown_team() {
     let app = create_test_app_no_worker().await;
     let repo = AuditLogRepositoryImpl::new(app.db_pool.clone());
 
-    let unknown_team_id = Uuid::new_v4();
+    let unknown_team_id = crawlrs::domain::id::Id::generate();
     let logs = repo
         .find_by_team_id(unknown_team_id, 10, 0)
         .await
@@ -365,7 +364,10 @@ async fn tc_cleanup_old_logs_returns_zero_when_nothing_to_delete() {
 }
 
 /// 辅助函数：清理指定 team_id 的审计日志
-async fn cleanup_audit_logs(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
+async fn cleanup_audit_logs(
+    app: &super::super::helpers::test_app::TestApp,
+    team_id: crawlrs::domain::id::Id,
+) {
     let session = app
         .db_pool
         .get_session("admin")

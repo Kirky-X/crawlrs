@@ -7,7 +7,6 @@
 //! 具体实现由基础设施层提供。
 
 use async_trait::async_trait;
-use uuid::Uuid;
 
 use crate::domain::auth::AuditLogEntry;
 
@@ -35,7 +34,7 @@ pub trait AuditLogRepository: Send + Sync {
     /// 根据 API Key ID 查询审计日志
     async fn find_by_api_key_id(
         &self,
-        api_key_id: Uuid,
+        api_key_id: crate::domain::id::Id,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError>;
@@ -43,7 +42,7 @@ pub trait AuditLogRepository: Send + Sync {
     /// 根据团队 ID 查询审计日志
     async fn find_by_team_id(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError>;
@@ -51,7 +50,7 @@ pub trait AuditLogRepository: Send + Sync {
     /// 查询被拒绝的请求
     async fn find_denied_for_key(
         &self,
-        api_key_id: Uuid,
+        api_key_id: crate::domain::id::Id,
         limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError>;
 

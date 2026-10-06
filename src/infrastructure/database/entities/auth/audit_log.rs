@@ -33,9 +33,9 @@ impl ActiveModelBehavior for ActiveModel {}
 impl From<Model> for crate::domain::auth::AuditLogEntry {
     fn from(model: Model) -> crate::domain::auth::AuditLogEntry {
         crate::domain::auth::AuditLogEntry {
-            id: model.id,
-            api_key_id: model.api_key_id,
-            team_id: model.team_id,
+            id: model.id.into(),
+            api_key_id: model.api_key_id.map(Into::into),
+            team_id: model.team_id.map(Into::into),
             requested_action: model.requested_action,
             decision: match model.decision.as_str() {
                 "ALLOW" => crate::domain::auth::AuditDecision::Allow,
@@ -49,7 +49,7 @@ impl From<Model> for crate::domain::auth::AuditLogEntry {
                 ip.parse()
                     .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
             }),
-            trace_id: model.trace_id,
+            trace_id: model.trace_id.map(Into::into),
             user_agent: model.user_agent,
             request_path: model.request_path,
             request_method: model.request_method,

@@ -209,7 +209,6 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
     use std::time::Duration;
-    use uuid::Uuid;
 
     /// Mock WebhookEventRepository with configurable pending events and update tracking
     struct MockWebhookRepo {
@@ -250,7 +249,10 @@ mod tests {
             Ok(event.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<WebhookEvent>, RepositoryError> {
             Ok(None)
         }
 
@@ -269,14 +271,17 @@ mod tests {
 
         async fn find_by_team_id_paginated(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u32,
             _offset: u32,
         ) -> Result<Vec<WebhookEvent>, RepositoryError> {
             Ok(vec![])
         }
 
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn count_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -354,9 +359,9 @@ mod tests {
 
     fn make_test_event(attempt_count: i32) -> WebhookEvent {
         let mut event = WebhookEvent::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::nil(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::nil(),
             WebhookEventType::ScrapeCompleted,
             serde_json::json!({"task_id": "abc"}),
             "https://example.com/webhook".to_string(),

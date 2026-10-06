@@ -14,8 +14,8 @@ impl CrawlMapper {
     /// Convert database entity to domain model
     pub fn to_domain(entity: crawl::Model) -> Crawl {
         Crawl::with_all_fields(
-            entity.id,
-            entity.team_id,
+            entity.id.into(),
+            entity.team_id.into(),
             entity.name,
             entity.root_url,
             entity.url,
@@ -33,8 +33,8 @@ impl CrawlMapper {
     /// Convert domain model to database entity
     pub fn to_entity(domain: &Crawl) -> crawl::Model {
         crawl::Model {
-            id: domain.id,
-            team_id: domain.team_id,
+            id: domain.id.into(),
+            team_id: domain.team_id.into(),
             name: domain.name.clone(),
             root_url: domain.root_url.clone(),
             url: domain.url.clone(),
@@ -87,14 +87,13 @@ impl CrawlMapper {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use uuid::Uuid;
 
     #[test]
     fn test_crawl_mapper_roundtrip() {
         let now = Utc::now();
         let domain = Crawl::with_all_fields(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "Test Crawl".to_string(),
             "https://example.com".to_string(),
             "https://example.com/page1".to_string(),
@@ -122,8 +121,8 @@ mod tests {
         let now_naive = Utc::now().naive_utc();
         let entities = vec![
             crawl::Model {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: crate::domain::id::Id::generate().into(),
                 name: "Crawl A".to_string(),
                 root_url: "https://a.com".to_string(),
                 url: "https://a.com/page".to_string(),
@@ -137,8 +136,8 @@ mod tests {
                 completed_at: None,
             },
             crawl::Model {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: crate::domain::id::Id::generate().into(),
                 name: "Crawl B".to_string(),
                 root_url: "https://b.com".to_string(),
                 url: "https://b.com/page".to_string(),
@@ -172,8 +171,8 @@ mod tests {
     fn test_crawl_mapper_invalid_status_falls_back_to_default() {
         let now_naive = Utc::now().naive_utc();
         let entity = crawl::Model {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate().into(),
             name: "Bad Status".to_string(),
             root_url: "https://example.com".to_string(),
             url: "https://example.com/page".to_string(),
@@ -205,8 +204,8 @@ mod tests {
 
         for status in statuses {
             let domain = Crawl::with_all_fields(
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 "Test".to_string(),
                 "https://example.com".to_string(),
                 "https://example.com/page".to_string(),
@@ -230,8 +229,8 @@ mod tests {
     fn test_crawl_mapper_with_completed_at() {
         let now = Utc::now();
         let domain = Crawl::with_all_fields(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "Completed Crawl".to_string(),
             "https://example.com".to_string(),
             "https://example.com/page".to_string(),
@@ -256,8 +255,8 @@ mod tests {
     fn test_crawl_mapper_preserves_all_fields() {
         let now = Utc::now();
         let domain = Crawl::with_all_fields(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "Full Crawl".to_string(),
             "https://root.example.com".to_string(),
             "https://example.com/start".to_string(),
@@ -292,8 +291,8 @@ mod tests {
     fn test_crawl_mapper_cancelled_status() {
         let now_naive = Utc::now().naive_utc();
         let entity = crawl::Model {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate().into(),
             name: "Cancelled".to_string(),
             root_url: "https://example.com".to_string(),
             url: "https://example.com/page".to_string(),

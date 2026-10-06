@@ -20,7 +20,6 @@ use axum::Extension;
 use axum_test::TestServer;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use uuid::Uuid;
 
 // `mocks` 模块定义在 `src/presentation/sdk/mocks.rs`，由 `mod.rs` 通过
 // `#[cfg(any(test, feature = "test-mocks"))] pub mod mocks;` 暴露。
@@ -43,8 +42,8 @@ fn skip_if_no_db() -> bool {
 fn make_auth_state() -> AuthState {
     AuthState::new(
         create_test_db_pool(),
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         ApiKeyScope::default(),
     )
 }

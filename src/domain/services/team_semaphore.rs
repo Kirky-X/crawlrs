@@ -4,7 +4,6 @@
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use uuid::Uuid;
 
 use crate::utils::adaptive_concurrency::{AIMDController, AdaptiveSemaphore};
 
@@ -191,7 +190,7 @@ impl TeamHandle {
 #[derive(Clone, Debug)]
 pub struct TeamSemaphore {
     /// 存储每队的信号量条目
-    semaphores: Arc<DashMap<Uuid, TeamEntry>>,
+    semaphores: Arc<DashMap<crate::domain::id::Id, TeamEntry>>,
     /// 默认并发数（Fixed 模式即每队 permits；Adaptive 模式作为 initial）
     default_permits: usize,
     /// 信号量模式参数
@@ -311,7 +310,7 @@ impl TeamSemaphore {
         }
 
         // 扫描一遍，找一个空闲团队驱逐
-        let mut evicted_team: Option<Uuid> = None;
+        let mut evicted_team: Option<crate::domain::id::Id> = None;
         for entry in self.semaphores.iter() {
             let is_idle = match entry.value() {
                 TeamEntry::Fixed(sem) => sem.available_permits() >= self.default_permits,
@@ -366,7 +365,7 @@ impl TeamSemaphore {
     /// 返回一个信号量许可
     pub async fn acquire(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
     ) -> Result<OwnedSemaphorePermit, tokio::sync::AcquireError> {
         let handle = self.get_or_create(team_id);
         handle.acquire_owned().await
@@ -383,7 +382,7 @@ impl TeamSemaphore {
     /// # 返回值
     ///
     /// 返回 `Some(permit)` 如果成功获取许可，否则返回 `None`
-    pub fn try_acquire(&self, team_id: Uuid) -> Option<OwnedSemaphorePermit> {
+    pub fn try_acquire(&self, team_id: crate::domain::id::Id) -> Option<OwnedSemaphorePermit> {
         let handle = self.get_or_create(team_id);
         handle.try_acquire_owned()
     }
@@ -401,7 +400,7 @@ impl TeamSemaphore {
     /// # 返回值
     ///
     /// 返回更新后的 target（Fixed 模式为 available_permits；Adaptive 为 controller.current_limit）
-    pub fn record_success(&self, team_id: Uuid) -> usize {
+    pub fn record_success(&self, team_id: crate::domain::id::Id) -> usize {
         let handle = self.get_or_create(team_id);
         let target = handle.record_success();
         emit_aimd_gauge(team_id, target);
@@ -421,7 +420,7 @@ impl TeamSemaphore {
     /// # 返回值
     ///
     /// 返回更新后的 target（Fixed 模式为 available_permits；Adaptive 为 controller.current_limit）
-    pub fn record_failure(&self, team_id: Uuid) -> usize {
+    pub fn record_failure(&self, team_id: crate::domain::id::Id) -> usize {
         let handle = self.get_or_create(team_id);
         let target = handle.record_failure();
         emit_aimd_gauge(team_id, target);
@@ -468,7 +467,7 @@ impl TeamSemaphore {
     /// - **Fixed 模式**：返回 `available_permits`（随 acquire 动态变化）
     /// - **Adaptive 模式**：返回 `controller.current_limit`（动态 target）
     /// - **未存在 team**：返回 `default_permits`（不创建条目）
-    pub fn current_target(&self, team_id: Uuid) -> usize {
+    pub fn current_target(&self, team_id: crate::domain::id::Id) -> usize {
         match self.lookup(team_id) {
             Some(handle) => handle.current_target(),
             None => self.default_permits,
@@ -478,7 +477,7 @@ impl TeamSemaphore {
     /// 判断某队是否为 Adaptive 模式（测试用，无副作用）
     ///
     /// - **未存在 team**：返回当前模式标志（Fixed 返回 false，Adaptive 返回 true）
-    pub fn is_team_adaptive(&self, team_id: Uuid) -> bool {
+    pub fn is_team_adaptive(&self, team_id: crate::domain::id::Id) -> bool {
         match self.lookup(team_id) {
             Some(handle) => handle.is_adaptive(),
             None => matches!(self.mode, SemaphoreMode::Adaptive(_)),
@@ -488,7 +487,7 @@ impl TeamSemaphore {
     /// 只读查询某队的信号量句柄（不创建条目）
     ///
     /// 用于 `current_target`/`is_team_adaptive` 等无副作用查询。
-    fn lookup(&self, team_id: Uuid) -> Option<TeamHandle> {
+    fn lookup(&self, team_id: crate::domain::id::Id) -> Option<TeamHandle> {
         let entry = self.semaphores.get(&team_id)?;
         let handle = match entry.value() {
             TeamEntry::Fixed(sem) => TeamHandle::Fixed(Arc::clone(sem)),
@@ -512,7 +511,7 @@ impl TeamSemaphore {
     /// # 参数
     ///
     /// * `team_id` - 团队的唯一标识符
-    fn get_or_create(&self, team_id: Uuid) -> TeamHandle {
+    fn get_or_create(&self, team_id: crate::domain::id::Id) -> TeamHandle {
         use dashmap::mapref::entry::Entry;
 
         // 先检查是否已存在（fast path，避免不必要的 evict 调用）
@@ -587,6 +586,21 @@ impl TeamSemaphore {
     }
 }
 
+/// F10 可观测性：AIMD 动态 target 的团队维度 gauge（Fixed 模式不产生 AIMD 信号）。
+/// `metrics` 特性关闭时（如 agent-lib 构建面）退化为 no-op，避免链接未启用的 `metrics` crate。
+fn emit_aimd_gauge(team_id: crate::domain::id::Id, target: usize) {
+    #[cfg(feature = "metrics")]
+    {
+        metrics::describe_gauge!(
+            "crawlrs_aimd_limit",
+            "Adaptive AIMD concurrency target per team"
+        );
+        metrics::gauge!("crawlrs_aimd_limit", "team" => team_id.to_string()).set(target as f64);
+    }
+    #[cfg(not(feature = "metrics"))]
+    let _ = (team_id, target);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,9 +617,9 @@ mod tests {
     #[test]
     fn test_with_max_teams_evicts_idle_teams() {
         let sem = TeamSemaphore::new(2).with_max_teams(2);
-        let team_a = Uuid::new_v4();
-        let team_b = Uuid::new_v4();
-        let team_c = Uuid::new_v4();
+        let team_a = crate::domain::id::Id::generate();
+        let team_b = crate::domain::id::Id::generate();
+        let team_c = crate::domain::id::Id::generate();
 
         // 创建 3 个团队，但全部空闲（无 permit 持有）
         let _handle_a = sem.get_or_create(team_a);
@@ -629,9 +643,9 @@ mod tests {
     #[test]
     fn test_with_max_teams_keeps_busy_teams() {
         let sem = TeamSemaphore::new(1).with_max_teams(2);
-        let team_a = Uuid::new_v4();
-        let team_b = Uuid::new_v4();
-        let team_c = Uuid::new_v4();
+        let team_a = crate::domain::id::Id::generate();
+        let team_b = crate::domain::id::Id::generate();
+        let team_c = crate::domain::id::Id::generate();
 
         // team_a 持有 permit，team_b 空闲
         let _permit_a = sem.try_acquire(team_a).expect("first acquire");
@@ -655,14 +669,14 @@ mod tests {
     #[test]
     fn test_new_starts_with_empty_map() {
         let sem = TeamSemaphore::new(3);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         assert!(!sem.semaphores.contains_key(&team_id));
     }
 
     #[test]
     fn test_get_or_create_creates_new_semaphore_fixed() {
         let sem = TeamSemaphore::new(4);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let handle = sem.get_or_create(team_id);
         // Fixed 模式：entry 应为 Fixed
         assert!(!handle.is_adaptive());
@@ -675,7 +689,7 @@ mod tests {
     #[test]
     fn test_get_or_create_reuses_existing_semaphore() {
         let sem = TeamSemaphore::new(1);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let first = sem.get_or_create(team_id);
         // 提取 Arc<Semaphore> 用于 ptr_eq 比较
         let first_ptr = match &first {
@@ -696,8 +710,8 @@ mod tests {
     #[test]
     fn test_get_or_create_isolates_different_teams() {
         let sem = TeamSemaphore::new(2);
-        let team_a = Uuid::new_v4();
-        let team_b = Uuid::new_v4();
+        let team_a = crate::domain::id::Id::generate();
+        let team_b = crate::domain::id::Id::generate();
         let handle_a = sem.get_or_create(team_a);
         let handle_b = sem.get_or_create(team_b);
         // Different teams must get distinct entries
@@ -716,7 +730,7 @@ mod tests {
     #[tokio::test]
     async fn test_acquire_returns_permit() {
         let sem = TeamSemaphore::new(3);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let permit = sem.acquire(team_id).await;
         assert!(permit.is_ok());
         assert!(sem.semaphores.contains_key(&team_id));
@@ -725,7 +739,7 @@ mod tests {
     #[tokio::test]
     async fn test_acquire_within_limit_succeeds() {
         let sem = TeamSemaphore::new(2);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let p1 = sem
             .acquire(team_id)
             .await
@@ -740,7 +754,7 @@ mod tests {
     #[tokio::test]
     async fn test_acquire_over_limit_blocks_until_timeout() {
         let sem = TeamSemaphore::new(1);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _held_permit = sem
             .acquire(team_id)
             .await
@@ -755,7 +769,7 @@ mod tests {
     #[tokio::test]
     async fn test_acquire_permit_release_allows_next() {
         let sem = TeamSemaphore::new(1);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         {
             let _permit = sem
                 .acquire(team_id)
@@ -773,8 +787,8 @@ mod tests {
     #[tokio::test]
     async fn test_acquire_isolates_concurrency_per_team() {
         let sem = TeamSemaphore::new(1);
-        let team_a = Uuid::new_v4();
-        let team_b = Uuid::new_v4();
+        let team_a = crate::domain::id::Id::generate();
+        let team_b = crate::domain::id::Id::generate();
         let _held_a = sem
             .acquire(team_a)
             .await
@@ -790,7 +804,7 @@ mod tests {
     #[test]
     fn test_clone_shares_underlying_state() {
         let sem = TeamSemaphore::new(2);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _handle = sem.get_or_create(team_id);
         let cloned = sem.clone();
         assert!(cloned.semaphores.contains_key(&team_id));
@@ -889,7 +903,7 @@ mod tests {
             initial: 5,
             ..Default::default()
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire should succeed");
         assert!(sem.is_team_adaptive(team_id));
     }
@@ -903,7 +917,7 @@ mod tests {
             max_limit: 100,
             increase_threshold: 5,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire");
         assert_eq!(sem.current_target(team_id), 10);
     }
@@ -917,7 +931,7 @@ mod tests {
             max_limit: 100,
             increase_threshold: 3,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire");
 
         sem.record_success(team_id);
@@ -936,7 +950,7 @@ mod tests {
             max_limit: 100,
             increase_threshold: 10,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire");
 
         let target = sem.record_failure(team_id);
@@ -953,7 +967,7 @@ mod tests {
             max_limit: 100,
             increase_threshold: 10,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire");
 
         // 4 -> 2 -> 1 -> 1
@@ -971,7 +985,7 @@ mod tests {
             max_limit: 10,
             increase_threshold: 1,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire");
 
         // 1 次成功即 +1（threshold=1）
@@ -989,7 +1003,7 @@ mod tests {
             max_limit: 10,
             increase_threshold: 1,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         // 占用 2 个许可
         let p1 = sem.acquire(team_id).await.expect("p1");
         let p2 = sem.acquire(team_id).await.expect("p2");
@@ -1018,7 +1032,7 @@ mod tests {
             max_limit: 100,
             increase_threshold: 1,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire");
 
         // 成功 → 11
@@ -1037,7 +1051,7 @@ mod tests {
     #[tokio::test]
     async fn test_fixed_mode_record_success_failure_are_noops() {
         let sem = TeamSemaphore::new(5);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire");
 
         // Fixed 模式：record_success/failure 不改变任何状态
@@ -1058,8 +1072,8 @@ mod tests {
             max_limit: 100,
             increase_threshold: 1,
         });
-        let team_a = Uuid::new_v4();
-        let team_b = Uuid::new_v4();
+        let team_a = crate::domain::id::Id::generate();
+        let team_b = crate::domain::id::Id::generate();
         let _pa = sem.acquire(team_a).await.expect("a");
         let _pb = sem.acquire(team_b).await.expect("b");
 
@@ -1080,7 +1094,7 @@ mod tests {
             max_limit: 5,
             increase_threshold: 1,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _p1 = sem.acquire(team_id).await.expect("p1");
         assert!(sem.try_acquire(team_id).is_none());
 
@@ -1102,7 +1116,7 @@ mod tests {
             max_limit: 100,
             increase_threshold: 1,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let target = sem.record_success(team_id);
         assert_eq!(target, 6);
         assert_eq!(sem.current_target(team_id), 6);
@@ -1117,7 +1131,7 @@ mod tests {
             max_limit: 100,
             increase_threshold: 10,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let target = sem.record_failure(team_id);
         assert_eq!(target, 5);
     }
@@ -1126,7 +1140,7 @@ mod tests {
     #[test]
     fn test_current_target_unknown_team_returns_default() {
         let sem = TeamSemaphore::new(7);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         assert_eq!(sem.current_target(team_id), 7);
     }
 
@@ -1135,7 +1149,7 @@ mod tests {
     fn test_is_team_adaptive_unknown_team_returns_mode_flag() {
         let fixed_sem = TeamSemaphore::new(5);
         let adaptive_sem = TeamSemaphore::with_adaptive(AdaptiveParams::default());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         assert!(!fixed_sem.is_team_adaptive(team_id));
         assert!(adaptive_sem.is_team_adaptive(team_id));
     }
@@ -1145,7 +1159,7 @@ mod tests {
     fn test_concurrent_get_or_create_no_duplicates() {
         use std::sync::Barrier;
         let sem = Arc::new(TeamSemaphore::new(5));
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let barrier = Arc::new(Barrier::new(8));
 
         let handles: Vec<_> = (0..8)
@@ -1173,7 +1187,7 @@ mod tests {
     #[tokio::test]
     async fn test_fixed_mode_memory_pressure_is_noop() {
         let sem = TeamSemaphore::new(5);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire");
 
         assert_eq!(sem.on_memory_pressure(false), 0, "no adaptive teams");
@@ -1191,7 +1205,7 @@ mod tests {
             max_limit: 100,
             increase_threshold: 3,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire");
 
         for _ in 0..10 {
@@ -1215,7 +1229,7 @@ mod tests {
             max_limit: 100,
             increase_threshold: 10,
         });
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let _permit = sem.acquire(team_id).await.expect("acquire");
 
         assert_eq!(
@@ -1235,8 +1249,8 @@ mod tests {
             max_limit: 100,
             increase_threshold: 10,
         });
-        let team_a = Uuid::new_v4();
-        let team_b = Uuid::new_v4();
+        let team_a = crate::domain::id::Id::generate();
+        let team_b = crate::domain::id::Id::generate();
         let _pa = sem.acquire(team_a).await.expect("a");
         let _pb = sem.acquire(team_b).await.expect("b");
 
@@ -1250,7 +1264,7 @@ mod tests {
     fn test_memory_pressure_mixed_modes_no_deadlock() {
         let fixed = TeamSemaphore::new(5);
         let adaptive = TeamSemaphore::with_adaptive(AdaptiveParams::default());
-        let t = Uuid::new_v4();
+        let t = crate::domain::id::Id::generate();
         assert!(fixed.try_acquire(t).is_some());
         assert!(adaptive.try_acquire(t).is_some());
 
@@ -1273,13 +1287,4 @@ mod tests {
             h.join().expect("thread panicked");
         }
     }
-}
-
-/// F10 可观测性：AIMD 动态 target 的团队维度 gauge（Fixed 模式不产生 AIMD 信号）。
-fn emit_aimd_gauge(team_id: Uuid, target: usize) {
-    metrics::describe_gauge!(
-        "crawlrs_aimd_limit",
-        "Adaptive AIMD concurrency target per team"
-    );
-    metrics::gauge!("crawlrs_aimd_limit", "team" => team_id.to_string()).set(target as f64);
 }

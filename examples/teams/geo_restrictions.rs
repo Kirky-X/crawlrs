@@ -19,7 +19,6 @@
 
 use log::info;
 use std::net::IpAddr;
-use uuid::Uuid;
 
 // 模拟地理限制配置
 #[derive(Debug, Clone)]
@@ -89,7 +88,7 @@ async fn main() {
 
     info!("=== 地理限制管理示例 ===\n");
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let restrictions = TeamGeoRestrictions::default();
 
     info!("Team ID: {}", team_id);

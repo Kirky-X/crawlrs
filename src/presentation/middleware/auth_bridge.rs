@@ -28,7 +28,6 @@ use axum::body::Body;
 use axum::http::{header, Request};
 use dbnexus::DbPool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// garrison 权限串：read。
 const PERM_READ: &str = "crawlrs:read";
@@ -210,7 +209,7 @@ pub fn extract_bearer(req: &Request<Body>) -> Result<String, AuthError> {
 /// ## 参数
 ///
 /// * `pool` - crawlrs 数据库连接池（`Arc<DbPool>`，`DbPool` 内部 `Arc`，clone 廉价）
-/// * `api_key_id` - 已从 garrison `login_id` 解析的 API Key Uuid（调用方负责解析）
+/// * `api_key_id` - 已从 garrison `login_id` 解析的 API Key crate::domain::id::Id（调用方负责解析）
 /// * `perms` - garrison `GarrisonUtil::get_permission_list` 返回的权限串切片（借用）
 /// * `team_id` - 由中间件反查 crawlrs `api_keys` 表获取的 team_id（步骤 4）
 ///
@@ -220,13 +219,13 @@ pub fn extract_bearer(req: &Request<Body>) -> Result<String, AuthError> {
 ///
 /// ## 设计说明
 ///
-/// 签名改为接收 `api_key_id: Uuid` 而非 `login_id: String`，
-/// 消除调用方与函数内部的重复 Uuid 解析；`perms` 改为 `&[String]` 借用而非 owned。
+/// 签名改为接收 `api_key_id: crate::domain::id::Id` 而非 `login_id: String`，
+/// 消除调用方与函数内部的重复 crate::domain::id::Id 解析；`perms` 改为 `&[String]` 借用而非 owned。
 pub async fn bridge_to_auth_state(
     pool: Arc<DbPool>,
-    api_key_id: Uuid,
+    api_key_id: crate::domain::id::Id,
     perms: &[String],
-    team_id: Uuid,
+    team_id: crate::domain::id::Id,
 ) -> Result<AuthState, AuthError> {
     // 权限映射（确定性查找表）
     let scope = map_perms_to_scope(perms);
@@ -485,9 +484,9 @@ mod tests {
                 return;
             }
         };
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let perms = vec!["crawlrs:admin".to_string()];
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
 
         let auth_state = bridge_to_auth_state(pool, api_key_id, &perms, team_id)
             .await
@@ -513,9 +512,9 @@ mod tests {
                 return;
             }
         };
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let perms = vec!["crawlrs:read".to_string()];
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
 
         let auth_state = bridge_to_auth_state(pool, api_key_id, &perms, team_id)
             .await
@@ -540,9 +539,9 @@ mod tests {
                 return;
             }
         };
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let perms: Vec<String> = vec![];
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
 
         let auth_state = bridge_to_auth_state(pool, api_key_id, &perms, team_id)
             .await
@@ -568,9 +567,9 @@ mod tests {
                 return;
             }
         };
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let perms = vec!["otherapp:admin".to_string(), "foo:read".to_string()];
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
 
         let auth_state = bridge_to_auth_state(pool, api_key_id, &perms, team_id)
             .await

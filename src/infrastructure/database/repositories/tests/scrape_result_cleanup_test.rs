@@ -16,8 +16,8 @@ fn retention_lock() -> &'static tokio::sync::Mutex<()> {
 /// Fresh UUIDs per call so tests are isolated.
 fn sample_result_with_age(days_ago: i64) -> ScrapeResult {
     ScrapeResult {
-        id: Uuid::new_v4(),
-        task_id: Uuid::new_v4(),
+        id: crate::domain::id::Id::generate(),
+        task_id: crate::domain::id::Id::generate(),
         url: "https://example.com/retention".to_string(),
         status_code: 200,
         content: "<html>retention test</html>".to_string(),

@@ -11,7 +11,6 @@
 use crate::domain::models::{Task, WebhookEvent, WebhookEventType};
 use chrono::Utc;
 use serde_json::json;
-use uuid::Uuid;
 
 /// Webhook 事件构造器
 ///
@@ -57,7 +56,7 @@ impl WebhookEventBuilder {
     ///
     /// # Returns
     ///
-    /// 新的 `WebhookEvent`（webhook_id 为 `Uuid::nil()`，表示来自任务通知而非注册端点）
+    /// 新的 `WebhookEvent`（webhook_id 为 `crate::domain::id::Id::nil()`，表示来自任务通知而非注册端点）
     pub fn build_task_event(
         task: &Task,
         event_type: WebhookEventType,
@@ -65,9 +64,9 @@ impl WebhookEventBuilder {
         webhook_url: String,
     ) -> WebhookEvent {
         WebhookEvent::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             task.team_id,
-            Uuid::nil(),
+            crate::domain::id::Id::nil(),
             event_type,
             payload,
             webhook_url,
@@ -88,14 +87,14 @@ impl WebhookEventBuilder {
     ///
     /// 新的 `WebhookEvent`
     pub fn build_triggered_event(
-        team_id: Uuid,
-        webhook_id: Uuid,
+        team_id: crate::domain::id::Id,
+        webhook_id: crate::domain::id::Id,
         event_type: WebhookEventType,
         payload: serde_json::Value,
         webhook_url: String,
     ) -> WebhookEvent {
         WebhookEvent::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             team_id,
             webhook_id,
             event_type,
@@ -115,9 +114,9 @@ mod tests {
     fn create_test_task() -> Task {
         let now = Utc::now();
         Task {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "http://example.com".to_string(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Completed,
@@ -171,15 +170,15 @@ mod tests {
         );
 
         assert_eq!(event.team_id, task.team_id);
-        assert_eq!(event.webhook_id, Uuid::nil());
+        assert_eq!(event.webhook_id, crate::domain::id::Id::nil());
         assert_eq!(event.event_type, WebhookEventType::ScrapeCompleted);
         assert_eq!(event.webhook_url, "https://hook.example.com");
     }
 
     #[test]
     fn test_build_triggered_event() {
-        let team_id = Uuid::new_v4();
-        let webhook_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let webhook_id = crate::domain::id::Id::generate();
         let payload = json!({"test": true});
         let event = WebhookEventBuilder::build_triggered_event(
             team_id,

@@ -15,7 +15,6 @@
 use std::collections::HashMap;
 
 use axum::http::StatusCode;
-use uuid::Uuid;
 
 use crawlrs::application::dto::crawl_request::{CrawlConfigDto, CrawlRequestDto};
 use crawlrs::application::use_cases::crawl_use_case::CrawlUseCaseError;
@@ -31,23 +30,23 @@ use sdforge::validator::Validate;
 // Helper: construct a Task with sensible defaults
 // ============================================================================
 
-fn make_task(id: Uuid) -> Task {
+fn make_task(id: crawlrs::domain::id::Id) -> Task {
     Task::new(
         id,
         TaskType::Scrape,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
         "https://example.com".to_string(),
         serde_json::json!({}),
     )
 }
 
-fn make_task_with_type(id: Uuid, task_type: TaskType) -> Task {
+fn make_task_with_type(id: crawlrs::domain::id::Id, task_type: TaskType) -> Task {
     Task::new(
         id,
         task_type,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
         "https://example.com".to_string(),
         serde_json::json!({}),
     )
@@ -66,7 +65,7 @@ fn test_extract_task_ids_empty_slice() {
 
 #[test]
 fn test_extract_task_ids_single_task() {
-    let id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
     let task = make_task(id);
     let ids = extract_task_ids(&[task]);
     assert_eq!(ids, vec![id]);
@@ -74,9 +73,9 @@ fn test_extract_task_ids_single_task() {
 
 #[test]
 fn test_extract_task_ids_multiple_tasks() {
-    let id1 = Uuid::new_v4();
-    let id2 = Uuid::new_v4();
-    let id3 = Uuid::new_v4();
+    let id1 = crawlrs::domain::id::Id::generate();
+    let id2 = crawlrs::domain::id::Id::generate();
+    let id3 = crawlrs::domain::id::Id::generate();
     let tasks = vec![make_task(id1), make_task(id2), make_task(id3)];
     let ids = extract_task_ids(&tasks);
     assert_eq!(ids, vec![id1, id2, id3]);
@@ -84,9 +83,9 @@ fn test_extract_task_ids_multiple_tasks() {
 
 #[test]
 fn test_extract_task_ids_preserves_order() {
-    let id1 = Uuid::new_v4();
-    let id2 = Uuid::new_v4();
-    let id3 = Uuid::new_v4();
+    let id1 = crawlrs::domain::id::Id::generate();
+    let id2 = crawlrs::domain::id::Id::generate();
+    let id3 = crawlrs::domain::id::Id::generate();
     let tasks = vec![make_task(id1), make_task(id2), make_task(id3)];
     let ids = extract_task_ids(&tasks);
     assert_eq!(ids[0], id1);
@@ -97,7 +96,7 @@ fn test_extract_task_ids_preserves_order() {
 #[test]
 fn test_extract_task_ids_duplicate_ids_not_deduplicated() {
     // extract_task_ids does NOT deduplicate — it maps 1:1
-    let id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
     let tasks = vec![make_task(id), make_task(id), make_task(id)];
     let ids = extract_task_ids(&tasks);
     assert_eq!(ids.len(), 3);
@@ -106,8 +105,8 @@ fn test_extract_task_ids_duplicate_ids_not_deduplicated() {
 
 #[test]
 fn test_extract_task_ids_does_not_consume_input() {
-    let id1 = Uuid::new_v4();
-    let id2 = Uuid::new_v4();
+    let id1 = crawlrs::domain::id::Id::generate();
+    let id2 = crawlrs::domain::id::Id::generate();
     let tasks = vec![make_task(id1), make_task(id2)];
     let ids = extract_task_ids(&tasks);
     assert_eq!(ids.len(), 2);
@@ -118,9 +117,9 @@ fn test_extract_task_ids_does_not_consume_input() {
 
 #[test]
 fn test_extract_task_ids_with_different_task_types() {
-    let id1 = Uuid::new_v4();
-    let id2 = Uuid::new_v4();
-    let id3 = Uuid::new_v4();
+    let id1 = crawlrs::domain::id::Id::generate();
+    let id2 = crawlrs::domain::id::Id::generate();
+    let id3 = crawlrs::domain::id::Id::generate();
     let tasks = vec![
         make_task_with_type(id1, TaskType::Scrape),
         make_task_with_type(id2, TaskType::Crawl),
@@ -143,7 +142,7 @@ fn test_tasks_to_id_map_empty_vec() {
 
 #[test]
 fn test_tasks_to_id_map_single_task() {
-    let id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
     let task = make_task(id);
     let map = tasks_to_id_map(vec![task]);
     assert_eq!(map.len(), 1);
@@ -152,9 +151,9 @@ fn test_tasks_to_id_map_single_task() {
 
 #[test]
 fn test_tasks_to_id_map_multiple_tasks() {
-    let id1 = Uuid::new_v4();
-    let id2 = Uuid::new_v4();
-    let id3 = Uuid::new_v4();
+    let id1 = crawlrs::domain::id::Id::generate();
+    let id2 = crawlrs::domain::id::Id::generate();
+    let id3 = crawlrs::domain::id::Id::generate();
     let tasks = vec![make_task(id1), make_task(id2), make_task(id3)];
     let map = tasks_to_id_map(tasks);
     assert_eq!(map.len(), 3);
@@ -166,7 +165,7 @@ fn test_tasks_to_id_map_multiple_tasks() {
 #[test]
 fn test_tasks_to_id_map_duplicate_ids_last_wins() {
     // HashMap::insert overwrites — last task with same ID wins
-    let id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
     let task1 = make_task_with_type(id, TaskType::Scrape);
     let task2 = make_task_with_type(id, TaskType::Crawl);
     let task3 = make_task_with_type(id, TaskType::Extract);
@@ -177,8 +176,8 @@ fn test_tasks_to_id_map_duplicate_ids_last_wins() {
 
 #[test]
 fn test_tasks_to_id_map_consumes_input() {
-    let id1 = Uuid::new_v4();
-    let id2 = Uuid::new_v4();
+    let id1 = crawlrs::domain::id::Id::generate();
+    let id2 = crawlrs::domain::id::Id::generate();
     let tasks = vec![make_task(id1), make_task(id2)];
     let map = tasks_to_id_map(tasks);
     assert_eq!(map.len(), 2);
@@ -187,8 +186,8 @@ fn test_tasks_to_id_map_consumes_input() {
 
 #[test]
 fn test_tasks_to_id_map_lookup_by_id() {
-    let id1 = Uuid::new_v4();
-    let id2 = Uuid::new_v4();
+    let id1 = crawlrs::domain::id::Id::generate();
+    let id2 = crawlrs::domain::id::Id::generate();
     let task1 = make_task_with_type(id1, TaskType::Scrape);
     let task2 = make_task_with_type(id2, TaskType::Crawl);
     let map = tasks_to_id_map(vec![task1, task2]);
@@ -771,8 +770,8 @@ fn test_crawl_use_case_error_anyhow_display() {
 
 #[test]
 fn test_tasks_to_id_map_returns_hashmap_type() {
-    let tasks = vec![make_task(Uuid::new_v4())];
-    let map: HashMap<Uuid, Task> = tasks_to_id_map(tasks);
+    let tasks = vec![make_task(crawlrs::domain::id::Id::generate())];
+    let map: HashMap<crawlrs::domain::id::Id, Task> = tasks_to_id_map(tasks);
     // Verify it's a HashMap — can call HashMap methods
     assert_eq!(map.keys().count(), map.len());
 }

@@ -3,7 +3,6 @@
 
 use chrono::{DateTime, FixedOffset, Utc};
 use std::time::Instant;
-use uuid::Uuid;
 
 use chrono::Duration;
 use crawlrs::domain::models::task_model::Task;
@@ -15,7 +14,7 @@ use crawlrs::infrastructure::migrations::MigratorTrait;
 use dbnexus::sea_orm::Database;
 use std::sync::Arc;
 
-fn create_test_task(id: Uuid, team_id: Uuid, status: TaskStatus) -> Task {
+fn create_test_task(id: crawlrs::domain::id::Id, team_id: crawlrs::domain::id::Id, status: TaskStatus) -> Task {
     let now = Utc::now();
     let fixed_now = DateTime::<FixedOffset>::from(now);
 
@@ -61,8 +60,8 @@ async fn test_sync_wait_returns_result_immediately_with_real_repo() {
         Duration::seconds(10),
     ));
 
-    let task_id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
 
     // 创建一个已完成的任务
     let completed_task = create_test_task(task_id, team_id, TaskStatus::Completed);
@@ -105,8 +104,8 @@ async fn test_sync_wait_timeout_with_uncompleted_tasks_real_repo() {
         Duration::seconds(10),
     ));
 
-    let task_id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
 
     // 创建一个未完成的任务
     let active_task = create_test_task(task_id, team_id, TaskStatus::Active);
@@ -160,8 +159,8 @@ async fn test_sync_wait_multiple_tasks_real_repo() {
         Duration::seconds(10),
     ));
 
-    let task_ids = vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
-    let team_id = Uuid::new_v4();
+    let task_ids = vec![crawlrs::domain::id::Id::generate(), crawlrs::domain::id::Id::generate(), crawlrs::domain::id::Id::generate()];
+    let team_id = crawlrs::domain::id::Id::generate();
 
     // 创建多个已完成的任务
     for &task_id in &task_ids {
@@ -199,7 +198,7 @@ async fn test_sync_wait_empty_task_list_real_repo() {
         Duration::seconds(10),
     ));
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
 
     // When: 调用同步等待函数，传入空任务列表
     let result = wait_for_tasks_completion(task_repo.as_ref(), &[], team_id, 5000, 1000).await;

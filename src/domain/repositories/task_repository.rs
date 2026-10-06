@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use thiserror::Error;
-use uuid::Uuid;
 
 /// 仓库错误类型（纯领域定义，不依赖具体存储技术）
 #[derive(Error, Debug)]
@@ -22,19 +21,19 @@ pub enum RepositoryError {
 /// 任务查询参数
 #[derive(Debug, Default, Clone)]
 pub struct TaskQueryParams {
-    pub team_id: Uuid,
-    pub task_ids: Option<Vec<Uuid>>,
+    pub team_id: crate::domain::id::Id,
+    pub task_ids: Option<Vec<crate::domain::id::Id>>,
     pub task_types: Option<Vec<TaskType>>,
     pub statuses: Option<Vec<TaskStatus>>,
     pub created_after: Option<DateTime<Utc>>,
     pub created_before: Option<DateTime<Utc>>,
-    pub crawl_id: Option<Uuid>,
+    pub crawl_id: Option<crate::domain::id::Id>,
     pub limit: u32,
     pub offset: u32,
     /// 游标分页：基于创建时间
     pub cursor: Option<DateTime<Utc>>,
     /// 游标分页：基于任务ID（用于处理相同创建时间的记录）
-    pub cursor_id: Option<Uuid>,
+    pub cursor_id: Option<crate::domain::id::Id>,
 }
 
 /// 任务仓库特质
@@ -45,11 +44,14 @@ pub trait TaskRepository: Send + Sync {
     /// 创建新任务
     async fn create(&self, task: &Task) -> Result<Task, RepositoryError>;
     /// 根据ID查找任务
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError>;
+    async fn find_by_id(&self, id: crate::domain::id::Id) -> Result<Option<Task>, RepositoryError>;
     /// 更新任务
     async fn update(&self, task: &Task) -> Result<Task, RepositoryError>;
     /// 获取下一个待处理任务
-    async fn acquire_next(&self, worker_id: Uuid) -> Result<Option<Task>, RepositoryError>;
+    async fn acquire_next(
+        &self,
+        worker_id: crate::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError>;
     /// 标记任务已完成
     ///
     /// `lock_token` 为锁守卫：仅当任务当前锁与调用者身份一致（或任务无锁）时
@@ -57,16 +59,19 @@ pub trait TaskRepository: Send + Sync {
     /// 返回受影响行数；0 表示任务已被他人终结/认领。
     async fn mark_completed(
         &self,
-        id: Uuid,
-        lock_token: Option<Uuid>,
+        id: crate::domain::id::Id,
+        lock_token: Option<crate::domain::id::Id>,
     ) -> Result<u64, RepositoryError>;
     /// 标记任务已失败
     ///
     /// 锁守卫语义同 [`TaskRepository::mark_completed`]。
-    async fn mark_failed(&self, id: Uuid, lock_token: Option<Uuid>)
-        -> Result<u64, RepositoryError>;
+    async fn mark_failed(
+        &self,
+        id: crate::domain::id::Id,
+        lock_token: Option<crate::domain::id::Id>,
+    ) -> Result<u64, RepositoryError>;
     /// 标记任务已取消（管理路径，无锁身份）
-    async fn mark_cancelled(&self, id: Uuid) -> Result<u64, RepositoryError>;
+    async fn mark_cancelled(&self, id: crate::domain::id::Id) -> Result<u64, RepositoryError>;
     /// 条件回队：将任务置回 queued 并清空认领信息
     ///
     /// 锁守卫语义同 [`TaskRepository::mark_completed`]：仅当任务仍被 `lock_token`
@@ -79,8 +84,8 @@ pub trait TaskRepository: Send + Sync {
     /// 由具备条件更新能力的仓储实现覆盖。
     async fn requeue_task(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crate::domain::id::Id,
+        _lock_token: Option<crate::domain::id::Id>,
         _scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<bool, RepositoryError> {
         log::warn!(
@@ -118,8 +123,8 @@ pub trait TaskRepository: Send + Sync {
     /// 调用方应停止续期并以锁守卫拒绝后续终结请求。
     async fn renew_lock(
         &self,
-        task_id: Uuid,
-        worker_id: Uuid,
+        task_id: crate::domain::id::Id,
+        worker_id: crate::domain::id::Id,
         extend_seconds: i64,
     ) -> Result<bool, RepositoryError>;
     /// 检查URL是否存在
@@ -154,17 +159,23 @@ pub trait TaskRepository: Send + Sync {
     async fn reset_stuck_tasks_for_workers(
         &self,
         timeout: chrono::Duration,
-        worker_ids: &[Uuid],
+        worker_ids: &[crate::domain::id::Id],
     ) -> Result<u64, RepositoryError> {
         let _ = worker_ids;
         self.reset_stuck_tasks(timeout).await
     }
     /// 取消与特定 Crawl ID 相关的所有任务
-    async fn cancel_tasks_by_crawl_id(&self, crawl_id: Uuid) -> Result<u64, RepositoryError>;
+    async fn cancel_tasks_by_crawl_id(
+        &self,
+        crawl_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError>;
     /// 标记过期任务为失败
     async fn expire_tasks(&self) -> Result<u64, RepositoryError>;
     /// 根据 Crawl ID 查找所有任务
-    async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError>;
+    async fn find_by_crawl_id(
+        &self,
+        crawl_id: crate::domain::id::Id,
+    ) -> Result<Vec<Task>, RepositoryError>;
     /// 高级任务查询
     async fn query_tasks(
         &self,
@@ -173,8 +184,14 @@ pub trait TaskRepository: Send + Sync {
     /// 批量取消任务
     async fn batch_cancel(
         &self,
-        task_ids: Vec<Uuid>,
-        team_id: Uuid,
+        task_ids: Vec<crate::domain::id::Id>,
+        team_id: crate::domain::id::Id,
         force: bool,
-    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError>;
+    ) -> Result<
+        (
+            Vec<crate::domain::id::Id>,
+            Vec<(crate::domain::id::Id, String)>,
+        ),
+        RepositoryError,
+    >;
 }

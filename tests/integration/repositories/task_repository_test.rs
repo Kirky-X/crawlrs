@@ -10,7 +10,6 @@ use crawlrs::infrastructure::database::entities::task as task_entity;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// 串行化所有依赖共享 tasks 表全局队列语义的测试（acquire_next / reset_stuck /
 /// requeue 等）。这些用例彼此会扫走/重置对方的目标行，并行执行产生竞态
@@ -33,16 +32,16 @@ async fn test_concurrent_task_acquisition_and_timeout() {
         chrono::Duration::seconds(30),
     ));
     let team_id = app.team_id;
-    let worker1_id = Uuid::new_v4();
-    let worker2_id = Uuid::new_v4();
+    let worker1_id = crawlrs::domain::id::Id::generate();
+    let worker2_id = crawlrs::domain::id::Id::generate();
 
     // 使用唯一前缀避免数据冲突
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // Create a single task with a unique URL to avoid conflicts with leftover data
     let unique_url = format!("https://{}.text.npr.org/concurrent-test", unique_prefix);
     let task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -148,7 +147,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
 
         if let Ok(Some(task_model)) = task_model_opt {
             // 如果任务仍然属于当前team_id或任务处于Active状态，尝试更新
-            if task_model.team_id == team_id || task_model.status == TaskStatus::Active.to_string()
+            if team_id == task_model.team_id || task_model.status == TaskStatus::Active.to_string()
             {
                 let now = chrono::Utc::now();
                 let expired_time = now - chrono::Duration::seconds(1);
@@ -197,7 +196,7 @@ async fn test_repository_crud_operations() {
     let team_id = app.team_id;
 
     let new_task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -256,14 +255,14 @@ async fn test_repository_acquire_next_task() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
-    let worker_id = Uuid::new_v4();
+    let worker_id = crawlrs::domain::id::Id::generate();
 
     // 使用唯一前缀避免数据冲突
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // Create a couple of tasks with unique URLs
     let task1 = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 1,
@@ -285,7 +284,7 @@ async fn test_repository_acquire_next_task() {
         lock_expires_at: None,
     };
     let task2 = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -398,7 +397,7 @@ async fn test_task_status_transitions() {
 
     // Create a task
     let task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -435,7 +434,7 @@ async fn test_task_status_transitions() {
     assert!(completed_task.completed_at.is_some());
 
     // Test mark_failed
-    let failed_task_id = Uuid::new_v4();
+    let failed_task_id = crawlrs::domain::id::Id::generate();
     let mut failed_task = task.clone();
     failed_task.id = failed_task_id;
     failed_task.status = TaskStatus::Active;
@@ -454,7 +453,7 @@ async fn test_task_status_transitions() {
     assert_eq!(found_failed_task.status, TaskStatus::Failed);
 
     // Test mark_cancelled
-    let cancelled_task_id = Uuid::new_v4();
+    let cancelled_task_id = crawlrs::domain::id::Id::generate();
     let mut cancelled_task = task.clone();
     cancelled_task.id = cancelled_task_id;
     cancelled_task.status = TaskStatus::Queued;
@@ -482,7 +481,9 @@ async fn test_requeue_task_respects_lock_token_guard() {
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
 
-    let make_task = |id: Uuid, status: TaskStatus, token: Option<Uuid>| Task {
+    let make_task = |id: crawlrs::domain::id::Id,
+                     status: TaskStatus,
+                     token: Option<crawlrs::domain::id::Id>| Task {
         id,
         task_type: TaskType::Scrape,
         status,
@@ -506,9 +507,9 @@ async fn test_requeue_task_respects_lock_token_guard() {
     };
 
     // 场景 1：锁不匹配 → Ok(false)，任务保持原状
-    let mine = Uuid::new_v4();
-    let other = Uuid::new_v4();
-    let t1_id = Uuid::new_v4();
+    let mine = crawlrs::domain::id::Id::generate();
+    let other = crawlrs::domain::id::Id::generate();
+    let t1_id = crawlrs::domain::id::Id::generate();
     repo.create(&make_task(t1_id, TaskStatus::Active, Some(other)))
         .await
         .expect("Failed to create task");
@@ -551,9 +552,9 @@ async fn test_acquire_next_zombie_recovery_respects_max_retries() {
     let app = create_test_app().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
-    let worker = Uuid::new_v4();
+    let worker = crawlrs::domain::id::Id::generate();
 
-    let make_zombie = |id: Uuid, attempt_count: i32| Task {
+    let make_zombie = |id: crawlrs::domain::id::Id, attempt_count: i32| Task {
         id,
         task_type: TaskType::Scrape,
         status: TaskStatus::Active,
@@ -572,13 +573,13 @@ async fn test_acquire_next_zombie_recovery_respects_max_retries() {
         completed_at: None,
         crawl_id: None,
         updated_at: Utc::now(),
-        lock_token: Some(Uuid::new_v4()),
+        lock_token: Some(crawlrs::domain::id::Id::generate().into()),
         // 锁已过期（僵尸任务）
         lock_expires_at: Some(Utc::now() - chrono::Duration::minutes(5)),
     };
 
     // 场景 1：attempt_count=3 >= max_retries=3 → 不恢复
-    let poison_id = Uuid::new_v4();
+    let poison_id = crawlrs::domain::id::Id::generate();
     repo.create(&make_zombie(poison_id, 3))
         .await
         .expect("Failed to create poison task");
@@ -611,7 +612,7 @@ async fn test_acquire_next_zombie_recovery_respects_max_retries() {
 
     // 场景 2：attempt_count=1 < max_retries=3 → 恢复且 attempt_count 自增到 2。
     // 测试库共享，先循环取走其他用例遗留的 queued 任务，直到取到目标僵尸任务。
-    let recoverable_id = Uuid::new_v4();
+    let recoverable_id = crawlrs::domain::id::Id::generate();
     repo.create(&make_zombie(recoverable_id, 1))
         .await
         .expect("Failed to create recoverable task");
@@ -652,7 +653,7 @@ async fn test_exists_by_url() {
     let team_id = app.team_id;
 
     // 使用唯一前缀避免数据冲突
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
     let test_url = format!("https://{}.text.npr.org/exists-test", unique_prefix);
     let different_url = format!("https://{}.different-url.com", unique_prefix);
 
@@ -664,7 +665,7 @@ async fn test_exists_by_url() {
 
     // Create a task with the URL
     let task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -727,7 +728,7 @@ async fn test_reset_stuck_tasks() {
     let team_id = app.team_id;
 
     // 使用唯一前缀避免数据冲突
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // Use fixed reference time to avoid timing issues between multiple Utc::now() calls
     let now = Utc::now();
@@ -736,7 +737,7 @@ async fn test_reset_stuck_tasks() {
 
     // Create a stuck task (Active but old - started more than 30 minutes ago)
     let stuck_task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Active,
         priority: 0,
@@ -760,7 +761,7 @@ async fn test_reset_stuck_tasks() {
 
     // Create a recent active task (should not be reset - started just now)
     let recent_task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Active,
         priority: 0,
@@ -851,12 +852,12 @@ async fn test_cancel_tasks_by_crawl_id() {
     let app = create_test_app_no_worker().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crawlrs::domain::id::Id::generate();
 
     // Create tasks with the same crawl_id
     for i in 0..3 {
         let task = Task {
-            id: Uuid::new_v4(),
+            id: crawlrs::domain::id::Id::generate().into(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 0,
@@ -882,7 +883,7 @@ async fn test_cancel_tasks_by_crawl_id() {
 
     // Create a task with different crawl_id
     let different_crawl_task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -898,7 +899,7 @@ async fn test_cancel_tasks_by_crawl_id() {
         created_at: Utc::now(),
         started_at: None,
         completed_at: None,
-        crawl_id: Some(Uuid::new_v4()),
+        crawl_id: Some(crawlrs::domain::id::Id::generate().into()),
         updated_at: Utc::now(),
         lock_token: None,
         lock_expires_at: None,
@@ -967,7 +968,7 @@ async fn test_expire_tasks() {
 
     // Create an expired queued task (old created_at)
     let expired_queued_task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -991,7 +992,7 @@ async fn test_expire_tasks() {
 
     // Create an expired active task (old started_at)
     let expired_active_task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Active,
         priority: 0,
@@ -1015,7 +1016,7 @@ async fn test_expire_tasks() {
 
     // Create a recent queued task (should not be expired) - use "now" time
     let recent_queued_task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -1039,7 +1040,7 @@ async fn test_expire_tasks() {
 
     // Create a recent active task (should not be expired)
     let recent_active_task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Active,
         priority: 0,
@@ -1147,12 +1148,12 @@ async fn test_find_by_crawl_id() {
     let app = create_test_app().await;
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crawlrs::domain::id::Id::generate();
 
     // Create tasks with the same crawl_id
     let mut task_ids = Vec::new();
     for i in 0..3 {
-        let task_id = Uuid::new_v4();
+        let task_id = crawlrs::domain::id::Id::generate();
         task_ids.push(task_id);
         let task = Task {
             id: task_id,
@@ -1181,7 +1182,7 @@ async fn test_find_by_crawl_id() {
 
     // Create a task with different crawl_id
     let different_crawl_task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -1197,7 +1198,7 @@ async fn test_find_by_crawl_id() {
         created_at: Utc::now(),
         started_at: None,
         completed_at: None,
-        crawl_id: Some(Uuid::new_v4()),
+        crawl_id: Some(crawlrs::domain::id::Id::generate().into()),
         updated_at: Utc::now(),
         lock_token: None,
         lock_expires_at: None,
@@ -1221,7 +1222,7 @@ async fn test_find_by_crawl_id() {
 
     // Verify no tasks are found for non-existent crawl_id
     let no_tasks = repo
-        .find_by_crawl_id(Uuid::new_v4())
+        .find_by_crawl_id(crawlrs::domain::id::Id::generate())
         .await
         .expect("Failed to find tasks by crawl ID");
     assert!(no_tasks.is_empty());
@@ -1240,14 +1241,14 @@ async fn test_find_existing_urls_batch() {
     let team_id = app.team_id;
 
     // 使用唯一前缀避免数据冲突
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // 创建 10 个任务
     let mut created_urls = Vec::new();
     for i in 0..10 {
         let url = format!("https://{}.text.npr.org/batch/{}", unique_prefix, i);
         let task = Task {
-            id: Uuid::new_v4(),
+            id: crawlrs::domain::id::Id::generate().into(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 0,
@@ -1362,14 +1363,14 @@ async fn test_find_existing_urls_performance() {
     let team_id = app.team_id;
 
     // 使用唯一前缀避免数据冲突
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // 创建 50 个任务用于性能测试
     let mut created_urls = Vec::new();
     for i in 0..50 {
         let url = format!("https://{}.text.npr.org/perf/{}", unique_prefix, i);
         let task = Task {
-            id: Uuid::new_v4(),
+            id: crawlrs::domain::id::Id::generate().into(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 0,
@@ -1446,12 +1447,12 @@ async fn test_acquire_next_set_clause_mirrors_domain_methods() {
     let lock_duration = chrono::Duration::seconds(30);
     let repo = Arc::new(TaskRepositoryImpl::new(app.db_pool.clone(), lock_duration));
     let team_id = app.team_id;
-    let worker_id = Uuid::new_v4();
+    let worker_id = crawlrs::domain::id::Id::generate();
 
     // Ensure the queue is non-empty by creating a queued task.
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
     let task = Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -1538,11 +1539,11 @@ async fn test_acquire_next_prefers_queued_over_active_expired() {
         chrono::Duration::seconds(30),
     ));
     let team_id = app.team_id;
-    let worker_id = Uuid::new_v4();
-    let unique_prefix = Uuid::new_v4().to_string();
+    let worker_id = crawlrs::domain::id::Id::generate();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // Create an active + expired-lock task first (older created_at).
-    let stale_task_id = Uuid::new_v4();
+    let stale_task_id = crawlrs::domain::id::Id::generate();
     let stale_task = Task {
         id: stale_task_id,
         task_type: TaskType::Scrape,
@@ -1562,7 +1563,7 @@ async fn test_acquire_next_prefers_queued_over_active_expired() {
         completed_at: None,
         crawl_id: None,
         updated_at: Utc::now() - chrono::Duration::hours(2),
-        lock_token: Some(Uuid::new_v4()),
+        lock_token: Some(crawlrs::domain::id::Id::generate().into()),
         lock_expires_at: Some(Utc::now() - chrono::Duration::hours(1)), // expired
     };
     repo.create(&stale_task)
@@ -1571,7 +1572,7 @@ async fn test_acquire_next_prefers_queued_over_active_expired() {
 
     // Create a queued task slightly later.
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-    let queued_task_id = Uuid::new_v4();
+    let queued_task_id = crawlrs::domain::id::Id::generate();
     let queued_task = Task {
         id: queued_task_id,
         task_type: TaskType::Scrape,
@@ -1626,11 +1627,11 @@ async fn test_acquire_next_skips_active_unexpired() {
         chrono::Duration::seconds(30),
     ));
     let team_id = app.team_id;
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // Create an active task with a far-future lock expiry (should NOT be acquired).
-    let active_unexpired_id = Uuid::new_v4();
-    let original_lock_token = Uuid::new_v4();
+    let active_unexpired_id = crawlrs::domain::id::Id::generate();
+    let original_lock_token = crawlrs::domain::id::Id::generate();
     let original_lock_expiry = Utc::now() + chrono::Duration::hours(1);
     let active_task = Task {
         id: active_unexpired_id,
@@ -1661,7 +1662,7 @@ async fn test_acquire_next_skips_active_unexpired() {
     // Call acquire_next multiple times; it should never pick up our active-unexpired task.
     for _ in 0..3 {
         if let Some(acquired) = repo
-            .acquire_next(Uuid::new_v4())
+            .acquire_next(crawlrs::domain::id::Id::generate())
             .await
             .expect("acquire_next failed")
         {
@@ -1708,11 +1709,11 @@ async fn test_acquire_next_skips_active_with_null_lock_expires_at() {
         chrono::Duration::seconds(30),
     ));
     let team_id = app.team_id;
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // Create an active task with NULL lock_expires_at (data anomaly, should be skipped).
     // Note: Task.lock_expires_at is Option<DateTime>, so None maps to SQL NULL.
-    let active_null_id = Uuid::new_v4();
+    let active_null_id = crawlrs::domain::id::Id::generate();
     let active_task = Task {
         id: active_null_id,
         task_type: TaskType::Scrape,
@@ -1732,7 +1733,7 @@ async fn test_acquire_next_skips_active_with_null_lock_expires_at() {
         completed_at: None,
         crawl_id: None,
         updated_at: Utc::now(),
-        lock_token: Some(Uuid::new_v4()),
+        lock_token: Some(crawlrs::domain::id::Id::generate().into()),
         lock_expires_at: None, // NULL — should not be treated as recoverable
     };
     repo.create(&active_task)
@@ -1742,7 +1743,7 @@ async fn test_acquire_next_skips_active_with_null_lock_expires_at() {
     // Call acquire_next multiple times; it should never pick up our NULL-lock task.
     for _ in 0..3 {
         if let Some(acquired) = repo
-            .acquire_next(Uuid::new_v4())
+            .acquire_next(crawlrs::domain::id::Id::generate())
             .await
             .expect("acquire_next failed")
         {
@@ -1776,12 +1777,12 @@ async fn test_acquire_next_recovers_active_expired_task() {
         chrono::Duration::seconds(30),
     ));
     let team_id = app.team_id;
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // Create an active + expired-lock task with a unique high-priority marker
     // so we can identify it among other tasks.
-    let stale_task_id = Uuid::new_v4();
-    let original_worker_id = Uuid::new_v4();
+    let stale_task_id = crawlrs::domain::id::Id::generate();
+    let original_worker_id = crawlrs::domain::id::Id::generate();
     let stale_task = Task {
         id: stale_task_id,
         task_type: TaskType::Scrape,
@@ -1808,7 +1809,7 @@ async fn test_acquire_next_recovers_active_expired_task() {
         .await
         .expect("Failed to create stale task");
 
-    let new_worker_id = Uuid::new_v4();
+    let new_worker_id = crawlrs::domain::id::Id::generate();
     let acquired = repo
         .acquire_next(new_worker_id)
         .await

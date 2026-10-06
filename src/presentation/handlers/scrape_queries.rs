@@ -11,7 +11,6 @@ use axum::{
 };
 use log::error;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::{
     application::dto::scrape_response::{ScrapeResultDto, ScrapeStatusResponseDto},
@@ -38,7 +37,7 @@ use crate::{
 ///
 /// Returns 403 if the caller does not own the task, 404 if not found.
 pub async fn get_scrape_status(
-    Path(id): Path<Uuid>,
+    Path(id): Path<crate::domain::id::Id>,
     Extension(task_repository): Extension<Arc<dyn TaskRepository>>,
     Extension(result_repository): Extension<Arc<dyn ScrapeResultRepository>>,
     Extension(auth_state): Extension<AuthState>,

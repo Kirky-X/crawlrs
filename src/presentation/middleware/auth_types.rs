@@ -28,7 +28,6 @@ use crate::domain::auth::{ApiKeyScope, ScopePermission};
 use crate::presentation::handlers::response_builder::ApiResponse;
 use dbnexus::DbPool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// 认证错误类型。
 ///
@@ -62,12 +61,12 @@ pub enum AuthError {
     NilTeamId,
     #[error("API key has expired")]
     ExpiredKey,
-    /// garrison 返回的 `login_id` 无法解析为 `Uuid`（约定 login_id = api_key_id 的 Uuid 字符串）。
+    /// garrison 返回的 `login_id` 无法解析为 `crate::domain::id::Id`（约定 login_id = api_key_id 的 crate::domain::id::Id 字符串）。
     #[error("Invalid login_id from garrison: {0}")]
     InvalidLoginId(String),
     /// `api_key_id` 反查 crawlrs `api_keys` 表未命中（key 已被 garrison 吊销但 crawlrs 仍保留映射）。
     #[error("API key not found in crawlrs mapping: {0}")]
-    KeyNotFound(Uuid),
+    KeyNotFound(crate::domain::id::Id),
     /// garrison 触发限速（429，对应 `SmsRateLimitExceeded`）。
     #[error("Rate limited by garrison")]
     RateLimited,
@@ -167,7 +166,7 @@ impl axum::response::IntoResponse for AuthError {
     ///
     /// # 安全（CWE-209 信息泄露防护）
     ///
-    /// 不向客户端透传 garrison `error_code` / `error_message` / 内部 Uuid / DbErr 等敏感信息，
+    /// 不向客户端透传 garrison `error_code` / `error_message` / 内部 crate::domain::id::Id / DbErr 等敏感信息，
     /// 避免攻击者推断后端架构（"使用 garrison"、"DB 层错误"等）。仅返回状态码对应的通用消息。
     /// 详细错误已通过 `from_garrison` 的 `log::warn!` / `log::error!` 入日志。
     fn into_response(self) -> axum::response::Response {
@@ -240,16 +239,21 @@ pub struct AuthState {
     /// Database pool for additional queries
     pub pool: Arc<DbPool>,
     /// Team ID associated with the API key
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// API Key ID for audit logging and feature flags
-    pub api_key_id: Uuid,
+    pub api_key_id: crate::domain::id::Id,
     /// Scope permissions for the API key
     pub scope: ApiKeyScope,
 }
 
 impl AuthState {
     /// Create a new AuthState with required fields.
-    pub fn new(pool: Arc<DbPool>, team_id: Uuid, api_key_id: Uuid, scope: ApiKeyScope) -> Self {
+    pub fn new(
+        pool: Arc<DbPool>,
+        team_id: crate::domain::id::Id,
+        api_key_id: crate::domain::id::Id,
+        scope: ApiKeyScope,
+    ) -> Self {
         Self {
             pool,
             team_id,
@@ -284,8 +288,8 @@ mod tests {
             return;
         }
         let pool = crate::common::test_helpers::create_test_db_pool();
-        let team_id = Uuid::new_v4();
-        let api_key_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let api_key_id = crate::domain::id::Id::generate();
         let scope = ApiKeyScope::full_access();
 
         let state = AuthState::new(pool.clone(), team_id, api_key_id, scope.clone());
@@ -302,7 +306,12 @@ mod tests {
             return;
         }
         let pool = crate::common::test_helpers::create_test_db_pool();
-        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
+        let state = AuthState::new(
+            pool,
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            ApiKeyScope::default(),
+        );
         let cloned = state.clone();
         assert_eq!(state.team_id, cloned.team_id);
         assert_eq!(state.api_key_id, cloned.api_key_id);
@@ -316,7 +325,12 @@ mod tests {
             return;
         }
         let pool = crate::common::test_helpers::create_test_db_pool();
-        let state = AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default());
+        let state = AuthState::new(
+            pool,
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            ApiKeyScope::default(),
+        );
         let debug = format!("{:?}", state);
         assert!(debug.contains("AuthState"));
         assert!(debug.contains("team_id"));

@@ -22,7 +22,6 @@ use dbnexus::sea_orm::{
 use dbnexus::DbPool;
 use std::collections::HashSet;
 use std::sync::Arc;
-use uuid::Uuid;
 
 impl From<DbErr> for RepositoryError {
     fn from(err: DbErr) -> Self {
@@ -102,7 +101,7 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok(task.clone())
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn find_by_id(&self, id: crate::domain::id::Id) -> Result<Option<Task>, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -167,7 +166,10 @@ impl TaskRepository for TaskRepositoryImpl {
     /// `task_model.rs`. Changes to either side must be synchronized — see
     /// `test_acquire_next_set_clause_mirrors_domain_methods` for the
     /// regression guard.
-    async fn acquire_next(&self, worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn acquire_next(
+        &self,
+        worker_id: crate::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -281,7 +283,7 @@ impl TaskRepository for TaskRepositoryImpl {
                     .await
                     .map_err(|e| RepositoryError::Database(e.into()))?;
                 if let Some(dead_row) = dead {
-                    if let Ok(dead_id) = dead_row.try_get_by_index::<Uuid>(0) {
+                    if let Ok(dead_id) = dead_row.try_get_by_index::<uuid::Uuid>(0) {
                         log::warn!(
                             "Dead-lettered poison task {} (attempt_count >= max_retries, \
                              lock expired; will not be retried again)",
@@ -296,8 +298,8 @@ impl TaskRepository for TaskRepositoryImpl {
 
     async fn mark_completed(
         &self,
-        id: Uuid,
-        lock_token: Option<Uuid>,
+        id: crate::domain::id::Id,
+        lock_token: Option<crate::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         let session = self
             .pool
@@ -316,7 +318,10 @@ impl TaskRepository for TaskRepositoryImpl {
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
             .col_expr(task_entity::Column::CompletedAt, Expr::value(Utc::now()))
-            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockToken,
+                Expr::value(None::<uuid::Uuid>),
+            )
             .col_expr(
                 task_entity::Column::LockExpiresAt,
                 Expr::value(None::<chrono::DateTime<Utc>>),
@@ -340,8 +345,8 @@ impl TaskRepository for TaskRepositoryImpl {
 
     async fn mark_failed(
         &self,
-        id: Uuid,
-        lock_token: Option<Uuid>,
+        id: crate::domain::id::Id,
+        lock_token: Option<crate::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         let session = self
             .pool
@@ -360,7 +365,10 @@ impl TaskRepository for TaskRepositoryImpl {
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
             .col_expr(task_entity::Column::CompletedAt, Expr::value(Utc::now()))
-            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockToken,
+                Expr::value(None::<uuid::Uuid>),
+            )
             .col_expr(
                 task_entity::Column::LockExpiresAt,
                 Expr::value(None::<chrono::DateTime<Utc>>),
@@ -388,8 +396,8 @@ impl TaskRepository for TaskRepositoryImpl {
     /// 清空认领信息并应用重排时间；防止覆盖并发发生的取消/终结等状态迁移。
     async fn requeue_task(
         &self,
-        id: Uuid,
-        lock_token: Option<Uuid>,
+        id: crate::domain::id::Id,
+        lock_token: Option<crate::domain::id::Id>,
         scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<bool, RepositoryError> {
         let session = self
@@ -408,7 +416,10 @@ impl TaskRepository for TaskRepositoryImpl {
                 Expr::value(TaskStatus::Queued.to_string()),
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
-            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockToken,
+                Expr::value(None::<uuid::Uuid>),
+            )
             .col_expr(
                 task_entity::Column::LockExpiresAt,
                 Expr::value(None::<chrono::DateTime<Utc>>),
@@ -486,7 +497,10 @@ impl TaskRepository for TaskRepositoryImpl {
                 task_entity::Column::Payload,
                 Expr::value(task.payload.clone()),
             )
-            .col_expr(task_entity::Column::LockToken, Expr::value(task.lock_token))
+            .col_expr(
+                task_entity::Column::LockToken,
+                Expr::value(task.lock_token.map(uuid::Uuid::from)),
+            )
             .col_expr(
                 task_entity::Column::LockExpiresAt,
                 Expr::value(task.lock_expires_at),
@@ -514,7 +528,7 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok(result.rows_affected)
     }
 
-    async fn mark_cancelled(&self, id: Uuid) -> Result<u64, RepositoryError> {
+    async fn mark_cancelled(&self, id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -532,7 +546,10 @@ impl TaskRepository for TaskRepositoryImpl {
             )
             .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
             .col_expr(task_entity::Column::CompletedAt, Expr::value(Utc::now()))
-            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockToken,
+                Expr::value(None::<uuid::Uuid>),
+            )
             .col_expr(
                 task_entity::Column::LockExpiresAt,
                 Expr::value(None::<chrono::DateTime<Utc>>),
@@ -550,8 +567,8 @@ impl TaskRepository for TaskRepositoryImpl {
 
     async fn renew_lock(
         &self,
-        task_id: Uuid,
-        worker_id: Uuid,
+        task_id: crate::domain::id::Id,
+        worker_id: crate::domain::id::Id,
         extend_seconds: i64,
     ) -> Result<bool, RepositoryError> {
         let session = self
@@ -686,7 +703,10 @@ impl TaskRepository for TaskRepositoryImpl {
                 task_entity::Column::StartedAt,
                 Expr::value(None::<chrono::DateTime<Utc>>),
             )
-            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockToken,
+                Expr::value(None::<uuid::Uuid>),
+            )
             .col_expr(
                 task_entity::Column::LockExpiresAt,
                 Expr::value(None::<chrono::DateTime<Utc>>),
@@ -708,7 +728,7 @@ impl TaskRepository for TaskRepositoryImpl {
     async fn reset_stuck_tasks_for_workers(
         &self,
         timeout: Duration,
-        worker_ids: &[Uuid],
+        worker_ids: &[crate::domain::id::Id],
     ) -> Result<u64, RepositoryError> {
         if worker_ids.is_empty() {
             return Ok(0);
@@ -734,7 +754,10 @@ impl TaskRepository for TaskRepositoryImpl {
                 task_entity::Column::StartedAt,
                 Expr::value(None::<chrono::DateTime<Utc>>),
             )
-            .col_expr(task_entity::Column::LockToken, Expr::value(None::<Uuid>))
+            .col_expr(
+                task_entity::Column::LockToken,
+                Expr::value(None::<uuid::Uuid>),
+            )
             .col_expr(
                 task_entity::Column::LockExpiresAt,
                 Expr::value(None::<chrono::DateTime<Utc>>),
@@ -751,7 +774,10 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok(result.rows_affected)
     }
 
-    async fn cancel_tasks_by_crawl_id(&self, crawl_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn cancel_tasks_by_crawl_id(
+        &self,
+        crawl_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -835,7 +861,10 @@ impl TaskRepository for TaskRepositoryImpl {
         Ok(update_result.rows_affected)
     }
 
-    async fn find_by_crawl_id(&self, crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+    async fn find_by_crawl_id(
+        &self,
+        crawl_id: crate::domain::id::Id,
+    ) -> Result<Vec<Task>, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -914,10 +943,16 @@ impl TaskRepository for TaskRepositoryImpl {
 
     async fn batch_cancel(
         &self,
-        task_ids: Vec<Uuid>,
-        team_id: Uuid,
+        task_ids: Vec<crate::domain::id::Id>,
+        team_id: crate::domain::id::Id,
         _force: bool,
-    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+    ) -> Result<
+        (
+            Vec<crate::domain::id::Id>,
+            Vec<(crate::domain::id::Id, String)>,
+        ),
+        RepositoryError,
+    > {
         if task_ids.is_empty() {
             return Ok((Vec::new(), Vec::new()));
         }
@@ -944,13 +979,13 @@ impl TaskRepository for TaskRepositoryImpl {
         let mut errors = Vec::new();
 
         // 按团队所有权分组
-        let mut owned_ids = Vec::new();
+        let mut owned_ids: Vec<crate::domain::id::Id> = Vec::new();
         let mut not_found_ids = Vec::new();
 
         for id in &task_ids {
-            if let Some(entity) = entities.iter().find(|e| e.id == *id) {
-                if entity.team_id == team_id {
-                    owned_ids.push(entity.id);
+            if let Some(entity) = entities.iter().find(|e| e.id == id.to_uuid_v8()) {
+                if entity.team_id == team_id.to_uuid_v8() {
+                    owned_ids.push(entity.id.into());
                 } else {
                     errors.push((*id, "Team ID mismatch".to_string()));
                 }

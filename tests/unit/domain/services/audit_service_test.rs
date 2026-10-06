@@ -11,7 +11,6 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use uuid::Uuid;
 
 use crawlrs::domain::auth::{ApiKeyScope, AuditDecision, AuditLogEntry};
 use crawlrs::domain::repositories::audit_log_repository::{
@@ -101,7 +100,7 @@ impl AuditLogRepository for MockAuditLogRepository {
 
     async fn find_by_api_key_id(
         &self,
-        _api_key_id: Uuid,
+        _api_key_id: crawlrs::domain::id::Id,
         _limit: u64,
         _offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
@@ -115,7 +114,7 @@ impl AuditLogRepository for MockAuditLogRepository {
 
     async fn find_by_team_id(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _limit: u64,
         _offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
@@ -129,7 +128,7 @@ impl AuditLogRepository for MockAuditLogRepository {
 
     async fn find_denied_for_key(
         &self,
-        _api_key_id: Uuid,
+        _api_key_id: crawlrs::domain::id::Id,
         _limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         if self.fail_all {
@@ -156,8 +155,8 @@ impl AuditLogRepository for MockAuditLogRepository {
 
 fn sample_entry(action: &str, decision: AuditDecision) -> AuditLogEntry {
     AuditLogBuilder::new(action, decision)
-        .with_api_key_id(Uuid::new_v4())
-        .with_team_id(Uuid::new_v4())
+        .with_api_key_id(crawlrs::domain::id::Id::generate())
+        .with_team_id(crawlrs::domain::id::Id::generate())
         .build()
 }
 
@@ -191,8 +190,8 @@ async fn test_audit_service_log_success_records_entry() {
 #[tokio::test]
 async fn test_audit_service_log_allow_builds_entry_with_scope() {
     let (service, repo) = make_service();
-    let api_key_id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let api_key_id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
     let scope = ApiKeyScope::read_only();
 
     service
@@ -213,8 +212,8 @@ async fn test_audit_service_log_allow_builds_entry_with_scope() {
 #[tokio::test]
 async fn test_audit_service_log_deny_with_all_fields() {
     let (service, repo) = make_service();
-    let api_key_id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let api_key_id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
     let scope = ApiKeyScope::full_access();
 
     service
@@ -273,7 +272,7 @@ async fn test_audit_service_get_logs_for_key_returns_results() {
     let service = AuditService::new(repo);
 
     let results = service
-        .get_logs_for_key(Uuid::new_v4(), 10, 0)
+        .get_logs_for_key(crawlrs::domain::id::Id::generate(), 10, 0)
         .await
         .expect("get_logs_for_key should succeed");
     assert_eq!(results.len(), 2);
@@ -288,7 +287,7 @@ async fn test_audit_service_get_logs_for_team_returns_results() {
     let service = AuditService::new(repo);
 
     let results = service
-        .get_logs_for_team(Uuid::new_v4(), 50, 10)
+        .get_logs_for_team(crawlrs::domain::id::Id::generate(), 50, 10)
         .await
         .expect("get_logs_for_team should succeed");
     assert_eq!(results.len(), 1);
@@ -302,7 +301,7 @@ async fn test_audit_service_get_denied_requests_returns_results() {
     let service = AuditService::new(repo);
 
     let results = service
-        .get_denied_requests(Uuid::new_v4(), 100)
+        .get_denied_requests(crawlrs::domain::id::Id::generate(), 100)
         .await
         .expect("get_denied_requests should succeed");
     assert_eq!(results.len(), 1);
@@ -341,7 +340,12 @@ async fn test_audit_service_log_repository_error_propagates() {
 async fn test_audit_service_log_allow_repository_error() {
     let service = make_failing_service();
     let result = service
-        .log_allow("x", Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default())
+        .log_allow(
+            "x",
+            crawlrs::domain::id::Id::generate(),
+            crawlrs::domain::id::Id::generate(),
+            ApiKeyScope::default(),
+        )
         .await;
     assert!(result.is_err());
 }
@@ -358,21 +362,27 @@ async fn test_audit_service_log_deny_repository_error() {
 #[tokio::test]
 async fn test_audit_service_get_logs_for_key_repository_error() {
     let service = make_failing_service();
-    let result = service.get_logs_for_key(Uuid::new_v4(), 10, 0).await;
+    let result = service
+        .get_logs_for_key(crawlrs::domain::id::Id::generate(), 10, 0)
+        .await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_audit_service_get_logs_for_team_repository_error() {
     let service = make_failing_service();
-    let result = service.get_logs_for_team(Uuid::new_v4(), 50, 0).await;
+    let result = service
+        .get_logs_for_team(crawlrs::domain::id::Id::generate(), 50, 0)
+        .await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
 async fn test_audit_service_get_denied_requests_repository_error() {
     let service = make_failing_service();
-    let result = service.get_denied_requests(Uuid::new_v4(), 100).await;
+    let result = service
+        .get_denied_requests(crawlrs::domain::id::Id::generate(), 100)
+        .await;
     assert!(result.is_err());
 }
 
@@ -404,8 +414,8 @@ async fn test_trait_log_allow_success() {
     let result = AuditServiceTrait::log_allow(
         &service,
         "trait.allow".to_string(),
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
         ApiKeyScope::default(),
     )
     .await;
@@ -443,9 +453,10 @@ async fn test_trait_get_logs_for_key_success() {
     let repo = Arc::new(MockAuditLogRepository::with_find_results(vec![entry]));
     let service: AuditService<MockAuditLogRepository> = AuditService::new(repo);
 
-    let results = AuditServiceTrait::get_logs_for_key(&service, Uuid::new_v4(), 5, 0)
-        .await
-        .expect("trait get_logs_for_key should succeed");
+    let results =
+        AuditServiceTrait::get_logs_for_key(&service, crawlrs::domain::id::Id::generate(), 5, 0)
+            .await
+            .expect("trait get_logs_for_key should succeed");
     assert_eq!(results.len(), 1);
 }
 
@@ -454,9 +465,10 @@ async fn test_trait_get_logs_for_team_success() {
     let repo = Arc::new(MockAuditLogRepository::new());
     let service: AuditService<MockAuditLogRepository> = AuditService::new(repo);
 
-    let results = AuditServiceTrait::get_logs_for_team(&service, Uuid::new_v4(), 5, 0)
-        .await
-        .expect("trait get_logs_for_team should succeed");
+    let results =
+        AuditServiceTrait::get_logs_for_team(&service, crawlrs::domain::id::Id::generate(), 5, 0)
+            .await
+            .expect("trait get_logs_for_team should succeed");
     assert!(results.is_empty());
 }
 
@@ -465,9 +477,10 @@ async fn test_trait_get_denied_requests_success() {
     let repo = Arc::new(MockAuditLogRepository::new());
     let service: AuditService<MockAuditLogRepository> = AuditService::new(repo);
 
-    let results = AuditServiceTrait::get_denied_requests(&service, Uuid::new_v4(), 5)
-        .await
-        .expect("trait get_denied_requests should succeed");
+    let results =
+        AuditServiceTrait::get_denied_requests(&service, crawlrs::domain::id::Id::generate(), 5)
+            .await
+            .expect("trait get_denied_requests should succeed");
     assert!(results.is_empty());
 }
 
@@ -494,8 +507,8 @@ async fn test_trait_log_allow_error_propagates_repository_failure() {
     let result = AuditServiceTrait::log_allow(
         &service,
         "fail.allow".to_string(),
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
         ApiKeyScope::default(),
     )
     .await;
@@ -528,7 +541,9 @@ async fn test_trait_log_deny_error_propagates_repository_failure() {
 async fn test_trait_get_logs_for_key_error_propagates_repository_failure() {
     let service: AuditService<MockAuditLogRepository> = make_failing_service();
 
-    let result = AuditServiceTrait::get_logs_for_key(&service, Uuid::new_v4(), 10, 0).await;
+    let result =
+        AuditServiceTrait::get_logs_for_key(&service, crawlrs::domain::id::Id::generate(), 10, 0)
+            .await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AuditServiceError::RepositoryError(_) => {}
@@ -539,7 +554,9 @@ async fn test_trait_get_logs_for_key_error_propagates_repository_failure() {
 async fn test_trait_get_logs_for_team_error_propagates_repository_failure() {
     let service: AuditService<MockAuditLogRepository> = make_failing_service();
 
-    let result = AuditServiceTrait::get_logs_for_team(&service, Uuid::new_v4(), 50, 0).await;
+    let result =
+        AuditServiceTrait::get_logs_for_team(&service, crawlrs::domain::id::Id::generate(), 50, 0)
+            .await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AuditServiceError::RepositoryError(_) => {}
@@ -550,7 +567,9 @@ async fn test_trait_get_logs_for_team_error_propagates_repository_failure() {
 async fn test_trait_get_denied_requests_error_propagates_repository_failure() {
     let service: AuditService<MockAuditLogRepository> = make_failing_service();
 
-    let result = AuditServiceTrait::get_denied_requests(&service, Uuid::new_v4(), 100).await;
+    let result =
+        AuditServiceTrait::get_denied_requests(&service, crawlrs::domain::id::Id::generate(), 100)
+            .await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AuditServiceError::RepositoryError(_) => {}
@@ -571,7 +590,7 @@ fn test_builder_new_sets_action_and_decision() {
 
 #[test]
 fn test_builder_with_api_key_id_sets_field() {
-    let api_key_id = Uuid::new_v4();
+    let api_key_id = crawlrs::domain::id::Id::generate();
     let entry = AuditLogBuilder::new("a", AuditDecision::Allow)
         .with_api_key_id(api_key_id)
         .build();
@@ -580,7 +599,7 @@ fn test_builder_with_api_key_id_sets_field() {
 
 #[test]
 fn test_builder_with_team_id_sets_field() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let entry = AuditLogBuilder::new("a", AuditDecision::Allow)
         .with_team_id(team_id)
         .build();
@@ -628,9 +647,9 @@ fn test_builder_build_generates_unique_id_and_timestamp() {
 
 #[test]
 fn test_builder_chaining_all_methods() {
-    let api_key_id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
-    let trace_id = Uuid::new_v4();
+    let api_key_id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let trace_id = crawlrs::domain::id::Id::generate();
     let ip: std::net::IpAddr = std::net::Ipv4Addr::new(10, 0, 0, 1).into();
 
     let entry = AuditLogBuilder::new("chain", AuditDecision::Deny)
@@ -735,7 +754,7 @@ async fn test_get_logs_for_key_empty_returns_empty() {
     let service = AuditService::new(repo);
 
     let results = service
-        .get_logs_for_key(Uuid::new_v4(), 10, 0)
+        .get_logs_for_key(crawlrs::domain::id::Id::generate(), 10, 0)
         .await
         .expect("should succeed");
     assert!(results.is_empty());
@@ -747,7 +766,7 @@ async fn test_get_denied_requests_empty_returns_empty() {
     let service = AuditService::new(repo);
 
     let results = service
-        .get_denied_requests(Uuid::new_v4(), 100)
+        .get_denied_requests(crawlrs::domain::id::Id::generate(), 100)
         .await
         .expect("should succeed");
     assert!(results.is_empty());
@@ -767,12 +786,12 @@ async fn test_audit_workflow_log_allow_then_query() {
     let repo = Arc::new(MockAuditLogRepository::new());
     let service = AuditService::new(repo.clone());
 
-    let api_key_id = Uuid::new_v4();
+    let api_key_id = crawlrs::domain::id::Id::generate();
     service
         .log_allow(
             "scrape_request",
             api_key_id,
-            Uuid::new_v4(),
+            crawlrs::domain::id::Id::generate(),
             ApiKeyScope::read_only(),
         )
         .await

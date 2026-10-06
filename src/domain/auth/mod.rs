@@ -4,7 +4,6 @@
 //! Authentication domain models for API Key scopes
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 pub mod scope;
 
@@ -50,9 +49,9 @@ pub enum ScopePermission {
 /// 包含敏感的用户信息，仅对 crate 可见，外部模块应使用相应的 getter 方法访问。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditLogEntry {
-    pub id: Uuid,
-    pub api_key_id: Option<Uuid>,
-    pub team_id: Option<Uuid>,
+    pub id: crate::domain::id::Id,
+    pub api_key_id: Option<crate::domain::id::Id>,
+    pub team_id: Option<crate::domain::id::Id>,
     pub requested_action: String,
     pub decision: AuditDecision,
     pub denial_reason: Option<String>,
@@ -60,7 +59,7 @@ pub struct AuditLogEntry {
     /// IP 地址 (敏感信息)
     pub(crate) ip_address: Option<std::net::IpAddr>,
     /// 追踪 ID (敏感信息)
-    pub(crate) trace_id: Option<Uuid>,
+    pub(crate) trace_id: Option<crate::domain::id::Id>,
     /// 用户代理 (敏感信息)
     pub(crate) user_agent: Option<String>,
     /// 请求路径 (敏感信息)
@@ -83,7 +82,7 @@ impl AuditLogEntry {
     }
 
     /// 获取追踪 ID
-    pub fn trace_id(&self) -> Option<Uuid> {
+    pub fn trace_id(&self) -> Option<crate::domain::id::Id> {
         self.trace_id
     }
 

@@ -8,7 +8,6 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// Webhook domain model
 ///
@@ -17,9 +16,9 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Webhook {
     /// Unique identifier
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// Team ID for multi-tenancy
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// Webhook endpoint URL
     pub url: String,
     /// When the webhook was created
@@ -28,7 +27,7 @@ pub struct Webhook {
 
 impl Webhook {
     /// Create a new webhook
-    pub fn new(id: Uuid, team_id: Uuid, url: String) -> Self {
+    pub fn new(id: crate::domain::id::Id, team_id: crate::domain::id::Id, url: String) -> Self {
         Self {
             id,
             team_id,
@@ -61,11 +60,11 @@ impl Webhook {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WebhookEvent {
     /// Unique identifier
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// Team ID for multi-tenancy
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// Webhook ID this event belongs to
-    pub webhook_id: Uuid,
+    pub webhook_id: crate::domain::id::Id,
     /// Type of event
     pub event_type: WebhookEventType,
     /// Event payload as JSON
@@ -97,9 +96,9 @@ pub struct WebhookEvent {
 impl WebhookEvent {
     /// Create a new webhook event
     pub fn new(
-        id: Uuid,
-        team_id: Uuid,
-        webhook_id: Uuid,
+        id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+        webhook_id: crate::domain::id::Id,
         event_type: WebhookEventType,
         payload: serde_json::Value,
         webhook_url: String,
@@ -128,9 +127,9 @@ impl WebhookEvent {
     /// Create a webhook event with all fields (for mappers)
     #[allow(clippy::too_many_arguments)]
     pub fn with_all_fields(
-        id: Uuid,
-        team_id: Uuid,
-        webhook_id: Uuid,
+        id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+        webhook_id: crate::domain::id::Id,
         event_type: WebhookEventType,
         payload: serde_json::Value,
         webhook_url: String,
@@ -332,8 +331,8 @@ mod tests {
 
     #[test]
     fn test_webhook_new_sets_fields_and_timestamp() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let url = "https://example.com/webhook".to_string();
 
         let before = Utc::now();
@@ -352,8 +351,8 @@ mod tests {
     #[test]
     fn test_webhook_validate_url_https_passes() {
         let webhook = Webhook::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "https://example.com/webhook".to_string(),
         );
         assert!(webhook.validate_url().is_ok(), "https URL should be valid");
@@ -362,8 +361,8 @@ mod tests {
     #[test]
     fn test_webhook_validate_url_http_passes() {
         let webhook = Webhook::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "http://example.com/webhook".to_string(),
         );
         assert!(webhook.validate_url().is_ok(), "http URL should be valid");
@@ -371,7 +370,11 @@ mod tests {
 
     #[test]
     fn test_webhook_validate_url_empty_fails() {
-        let webhook = Webhook::new(Uuid::new_v4(), Uuid::new_v4(), String::new());
+        let webhook = Webhook::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            String::new(),
+        );
         let err = webhook
             .validate_url()
             .expect_err("empty URL should be invalid");
@@ -390,8 +393,8 @@ mod tests {
     #[test]
     fn test_webhook_validate_url_invalid_scheme_fails() {
         let webhook = Webhook::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "ftp://example.com/webhook".to_string(),
         );
         let err = webhook
@@ -413,9 +416,9 @@ mod tests {
 
     #[test]
     fn test_webhook_event_new_defaults() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
-        let webhook_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
+        let webhook_id = crate::domain::id::Id::generate();
         let payload = serde_json::json!({"event": "test"});
         let url = "https://example.com/hook".to_string();
 
@@ -462,9 +465,9 @@ mod tests {
 
     #[test]
     fn test_webhook_event_with_all_fields_sets_everything() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
-        let webhook_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
+        let webhook_id = crate::domain::id::Id::generate();
         let payload = serde_json::json!({"k": "v"});
         let url = "https://example.com/h".to_string();
         let created = Utc::now();
@@ -806,9 +809,9 @@ mod tests {
 
     fn make_event() -> WebhookEvent {
         WebhookEvent::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             WebhookEventType::CrawlCompleted,
             serde_json::json!({}),
             "https://example.com/hook".to_string(),

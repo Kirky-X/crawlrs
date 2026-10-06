@@ -16,12 +16,11 @@ use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::{extract::Extension, http::StatusCode, response::IntoResponse, Json};
 use log::error;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// 团队信息响应
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TeamInfoResponse {
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     pub name: String,
     pub credits_balance: i64,
     pub total_tasks: i64,
@@ -64,7 +63,7 @@ pub async fn get_team_info(
 /// 团队使用统计响应
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TeamUsageResponse {
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     pub period: String,
     pub total_requests: u64,
     pub successful_requests: u64,
@@ -347,7 +346,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let response = TeamInfoResponse {
             id: team_id,
             name: "Test Team".to_string(),
@@ -374,7 +373,7 @@ mod tests {
             return;
         }
         let response = TeamInfoResponse {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             name: "Debtor Team".to_string(),
             credits_balance: -100,
             total_tasks: 0,
@@ -394,7 +393,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let response = TeamUsageResponse {
             team_id,
             period: "30d".to_string(),
@@ -422,7 +421,7 @@ mod tests {
             return;
         }
         let response = TeamUsageResponse {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
             period: "7d".to_string(),
             total_requests: 0,
             successful_requests: 0,
@@ -443,7 +442,7 @@ mod tests {
         }
         let json = format!(
             r#"{{"id":"{}","name":"Test","credits_balance":100,"total_tasks":10,"completed_tasks":8,"failed_tasks":2,"created_at":"2025-01-01T00:00:00Z"}}"#,
-            Uuid::new_v4()
+            crate::domain::id::Id::generate()
         );
         let dto: TeamInfoResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(dto.name, "Test");
@@ -642,7 +641,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let response = TeamGeoRestrictionsResponse {
             team_id,
             enable_geo_restrictions: true,
@@ -667,7 +666,7 @@ mod tests {
             return;
         }
         let response = TeamGeoRestrictionsResponse {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
             enable_geo_restrictions: false,
             allowed_countries: None,
             blocked_countries: None,
@@ -784,7 +783,7 @@ mod tests {
             return;
         }
         let response = TeamInfoResponse {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             name: "Clone Test".to_string(),
             credits_balance: 500,
             total_tasks: 10,
@@ -805,7 +804,7 @@ mod tests {
             return;
         }
         let response = TeamInfoResponse {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             name: "Debug Test".to_string(),
             credits_balance: 0,
             total_tasks: 0,
@@ -826,7 +825,7 @@ mod tests {
             return;
         }
         let response = TeamUsageResponse {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
             period: "30d".to_string(),
             total_requests: 100,
             successful_requests: 90,
@@ -846,7 +845,7 @@ mod tests {
             return;
         }
         let response = TeamUsageResponse {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
             period: "7d".to_string(),
             total_requests: 0,
             successful_requests: 0,
@@ -866,7 +865,7 @@ mod tests {
         }
         let json = format!(
             r#"{{"team_id":"{}","period":"30d","total_requests":50,"successful_requests":45,"failed_requests":5,"credits_used":250,"avg_response_time_ms":99.9}}"#,
-            Uuid::new_v4()
+            crate::domain::id::Id::generate()
         );
         let response: TeamUsageResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(response.period, "30d");
@@ -882,7 +881,7 @@ mod tests {
             return;
         }
         let response = TeamInfoResponse {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             name: "Rich Team".to_string(),
             credits_balance: i64::MAX,
             total_tasks: 0,
@@ -901,7 +900,7 @@ mod tests {
             return;
         }
         let response = TeamInfoResponse {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             name: "Debt Team".to_string(),
             credits_balance: i64::MIN,
             total_tasks: 0,
@@ -1022,8 +1021,8 @@ mod tests {
     fn make_test_auth_state() -> AuthState {
         AuthState::new(
             make_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         )
     }
@@ -1064,7 +1063,10 @@ mod tests {
 
     #[async_trait]
     impl CreditsRepository for MockCreditsRepository {
-        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+        async fn get_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, CreditsRepositoryError> {
             if self.get_balance_fails {
                 return Err(CreditsRepositoryError::DatabaseError(
                     "mock get_balance failure".to_string(),
@@ -1075,29 +1077,29 @@ mod tests {
 
         async fn deduct_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), CreditsRepositoryError> {
             Ok(())
         }
 
         async fn add_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<i64, CreditsRepositoryError> {
             Ok(0)
         }
 
         async fn get_transaction_history(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: Option<u32>,
         ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
             Ok(vec![])
@@ -1105,7 +1107,7 @@ mod tests {
 
         async fn initialize_team_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _initial_balance: i64,
         ) -> Result<i64, CreditsRepositoryError> {
             Ok(0)
@@ -1138,7 +1140,10 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -1146,27 +1151,30 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
@@ -1188,7 +1196,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -1196,7 +1207,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             match self.find_by_crawl_id_result.lock().unwrap().take() {
                 Some(result) => result,
                 None => Ok(vec![]),
@@ -1212,17 +1226,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -1258,15 +1278,24 @@ mod tests {
             Ok(())
         }
 
-        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+        async fn find_by_task_id(
+            &self,
+            _task_id: crate::domain::id::Id,
+        ) -> anyhow::Result<Option<ScrapeResult>> {
             Ok(None)
         }
 
-        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(
+            &self,
+            _task_ids: &[crate::domain::id::Id],
+        ) -> anyhow::Result<Vec<ScrapeResult>> {
             Ok(vec![])
         }
 
-        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+        async fn get_team_avg_response_time(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> anyhow::Result<f64> {
             if self.should_fail {
                 return Err(anyhow::anyhow!("get_team_avg_response_time failed"));
             }
@@ -1314,7 +1343,7 @@ mod tests {
     impl GeoRestrictionRepository for MockGeoRestrictionRepository {
         async fn get_team_restrictions(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
             match self.get_result.lock().unwrap().take() {
                 Some(result) => result,
@@ -1330,7 +1359,7 @@ mod tests {
 
         async fn update_team_restrictions(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _restrictions: &TeamGeoRestrictions,
         ) -> Result<(), GeoRestrictionRepositoryError> {
             match self.update_result.lock().unwrap().take() {
@@ -1341,7 +1370,7 @@ mod tests {
 
         async fn log_geo_restriction_action(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _ip_address: &str,
             _country_code: &str,
             _action: &str,
@@ -1436,12 +1465,12 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let task = Task::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             TaskType::Scrape,
             team_id,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             "https://example.com".to_string(),
             serde_json::Value::Null,
         );
@@ -1628,7 +1657,7 @@ mod tests {
         }
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_get_result(Err(
-                GeoRestrictionRepositoryError::TeamNotFound(Uuid::new_v4()),
+                GeoRestrictionRepositoryError::TeamNotFound(crate::domain::id::Id::generate()),
             )));
         let auth = make_test_auth_state();
 
@@ -1836,7 +1865,7 @@ mod tests {
         }
         let repo: Arc<MockGeoRestrictionRepository> =
             Arc::new(MockGeoRestrictionRepository::with_update_result(Err(
-                GeoRestrictionRepositoryError::TeamNotFound(Uuid::new_v4()),
+                GeoRestrictionRepositoryError::TeamNotFound(crate::domain::id::Id::generate()),
             )));
         let auth = make_test_auth_state();
 

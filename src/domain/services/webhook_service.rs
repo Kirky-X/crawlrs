@@ -50,7 +50,6 @@ use log::{error, info};
 // Arc 仅 Impl 中使用，webhook-off 时不导入
 #[cfg(feature = "webhook")]
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Webhook服务接口（支持 DI）
 #[async_trait]
@@ -305,7 +304,11 @@ pub trait WebhookManagementService: Send + Sync {
     /// # 返回值
     /// * `Ok(Webhook)` - 注册成功
     /// * `Err` - URL 无效或持久化失败
-    async fn register_webhook(&self, team_id: Uuid, url: String) -> Result<Webhook>;
+    async fn register_webhook(
+        &self,
+        team_id: crate::domain::id::Id,
+        url: String,
+    ) -> Result<Webhook>;
 
     /// 触发指定 webhook 发送事件
     ///
@@ -319,7 +322,7 @@ pub trait WebhookManagementService: Send + Sync {
     /// * `Err` - webhook 不存在、事件持久化失败或发送失败
     async fn trigger_webhook(
         &self,
-        webhook_id: Uuid,
+        webhook_id: crate::domain::id::Id,
         event_type: WebhookEventType,
         payload: serde_json::Value,
     ) -> Result<()>;
@@ -345,7 +348,7 @@ pub trait WebhookManagementService: Send + Sync {
     /// # 返回值
     /// * `Ok(Vec<Webhook>)` - webhook 列表
     /// * `Err` - 查询失败
-    async fn list_webhooks(&self, team_id: Uuid) -> Result<Vec<Webhook>>;
+    async fn list_webhooks(&self, team_id: crate::domain::id::Id) -> Result<Vec<Webhook>>;
 }
 
 /// 统一的 webhook 认证失败错误消息

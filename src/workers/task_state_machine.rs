@@ -283,12 +283,12 @@ mod tests {
 
     fn create_test_task(status: TaskStatus) -> Task {
         Task {
-            id: uuid::Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: crate::domain::models::TaskType::Scrape,
             status,
             priority: 0,
-            team_id: uuid::Uuid::new_v4(),
-            api_key_id: uuid::Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,

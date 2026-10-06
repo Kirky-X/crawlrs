@@ -16,7 +16,6 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use uuid::Uuid;
 
 use crawlrs::common::constants::crawl_task;
 use crawlrs::domain::models::{Task, TaskStatus, TaskType};
@@ -64,30 +63,36 @@ impl TaskRepository for MockTaskRepository {
     async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
         Ok(task.clone())
     }
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
     async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
         Ok(task.clone())
     }
-    async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn acquire_next(
+        &self,
+        _worker_id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
     async fn mark_completed(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crawlrs::domain::id::Id,
+        _lock_token: Option<crawlrs::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         Ok(1)
     }
     async fn mark_failed(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crawlrs::domain::id::Id,
+        _lock_token: Option<crawlrs::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         Ok(1)
     }
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+    async fn mark_cancelled(&self, _id: crawlrs::domain::id::Id) -> Result<u64, RepositoryError> {
         Ok(1)
     }
     async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -102,13 +107,19 @@ impl TaskRepository for MockTaskRepository {
     async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> {
         Ok(0)
     }
-    async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn cancel_tasks_by_crawl_id(
+        &self,
+        _crawl_id: crawlrs::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
     async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
         Ok(0)
     }
-    async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+    async fn find_by_crawl_id(
+        &self,
+        _crawl_id: crawlrs::domain::id::Id,
+    ) -> Result<Vec<Task>, RepositoryError> {
         Ok(vec![])
     }
     async fn query_tasks(
@@ -124,24 +135,30 @@ impl TaskRepository for MockTaskRepository {
     }
     async fn batch_cancel(
         &self,
-        _task_ids: Vec<Uuid>,
-        _team_id: Uuid,
+        _task_ids: Vec<crawlrs::domain::id::Id>,
+        _team_id: crawlrs::domain::id::Id,
         _force: bool,
-    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+    ) -> Result<
+        (
+            Vec<crawlrs::domain::id::Id>,
+            Vec<(crawlrs::domain::id::Id, String)>,
+        ),
+        RepositoryError,
+    > {
         Ok((vec![], vec![]))
     }
 
     async fn renew_lock(
         &self,
-        _task_id: Uuid,
-        _worker_id: Uuid,
+        _task_id: crawlrs::domain::id::Id,
+        _worker_id: crawlrs::domain::id::Id,
         _extend_seconds: i64,
     ) -> Result<bool, RepositoryError> {
         Ok(true)
     }
 }
 
-fn make_completed_task(id: Uuid, team_id: Uuid) -> Task {
+fn make_completed_task(id: crawlrs::domain::id::Id, team_id: crawlrs::domain::id::Id) -> Task {
     let now = Utc::now();
     Task {
         id,
@@ -149,7 +166,7 @@ fn make_completed_task(id: Uuid, team_id: Uuid) -> Task {
         status: TaskStatus::Completed,
         priority: 0,
         team_id,
-        api_key_id: Uuid::new_v4(),
+        api_key_id: crawlrs::domain::id::Id::generate().into(),
         url: "https://example.com".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
@@ -167,7 +184,7 @@ fn make_completed_task(id: Uuid, team_id: Uuid) -> Task {
     }
 }
 
-fn make_queued_task(id: Uuid, team_id: Uuid) -> Task {
+fn make_queued_task(id: crawlrs::domain::id::Id, team_id: crawlrs::domain::id::Id) -> Task {
     let now = Utc::now();
     Task {
         id,
@@ -175,7 +192,7 @@ fn make_queued_task(id: Uuid, team_id: Uuid) -> Task {
         status: TaskStatus::Queued,
         priority: 0,
         team_id,
-        api_key_id: Uuid::new_v4(),
+        api_key_id: crawlrs::domain::id::Id::generate().into(),
         url: "https://example.com".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
@@ -281,8 +298,8 @@ fn tc_sync_wait_result_timeout_set() {
 async fn tc_handle_sync_wait_zero_ms_returns_immediately() {
     // sync_wait_ms == 0 → return immediately with no wait.
     let repo = MockTaskRepository::new(vec![]);
-    let task_ids = vec![Uuid::new_v4()];
-    let team_id = Uuid::new_v4();
+    let task_ids = vec![crawlrs::domain::id::Id::generate()];
+    let team_id = crawlrs::domain::id::Id::generate();
 
     let result =
         handle_sync_wait_and_get_status(&repo as &dyn TaskRepository, &task_ids, team_id, 0).await;
@@ -297,7 +314,7 @@ async fn tc_handle_sync_wait_zero_ms_returns_immediately() {
 async fn tc_handle_sync_wait_empty_task_ids_returns_immediately() {
     // Empty task_ids → return immediately with no wait.
     let repo = MockTaskRepository::new(vec![]);
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
 
     let result =
         handle_sync_wait_and_get_status(&repo as &dyn TaskRepository, &[], team_id, 5000).await;
@@ -311,8 +328,8 @@ async fn tc_handle_sync_wait_empty_task_ids_returns_immediately() {
 #[tokio::test]
 async fn tc_handle_sync_wait_all_completed_returns_quickly() {
     // Tasks already completed → first poll sees completion_rate == 1.0 → return.
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let task = make_completed_task(task_id, team_id);
     let repo = MockTaskRepository::new(vec![task]);
 
@@ -330,8 +347,8 @@ async fn tc_handle_sync_wait_all_completed_returns_quickly() {
 #[tokio::test]
 async fn tc_handle_sync_wait_queued_tasks_timeout() {
     // Tasks still queued → polls until sync_wait_ms elapses → is_timeout true.
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let task = make_queued_task(task_id, team_id);
     let repo = MockTaskRepository::new(vec![task]);
 
@@ -355,8 +372,8 @@ async fn tc_wait_for_tasks_completion_repo_error_propagates() {
     // Repository error → CrawlRsError returned to caller.
     let repo =
         MockTaskRepository::failing(RepositoryError::Database(anyhow::anyhow!("poll failure")));
-    let task_id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
 
     let result = wait_for_tasks_completion(
         &repo as &dyn TaskRepository,
@@ -385,7 +402,7 @@ async fn tc_wait_for_tasks_completion_repo_error_propagates() {
 async fn tc_wait_for_tasks_completion_empty_ids_returns_immediately() {
     // Empty task_ids → calculate_completion_rate returns 1.0 → Ok.
     let repo = MockTaskRepository::new(vec![]);
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
 
     let result = wait_for_tasks_completion(
         &repo as &dyn TaskRepository,
@@ -401,8 +418,8 @@ async fn tc_wait_for_tasks_completion_empty_ids_returns_immediately() {
 
 #[tokio::test]
 async fn tc_wait_for_tasks_completion_all_completed_returns() {
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let task = make_completed_task(task_id, team_id);
     let repo = MockTaskRepository::new(vec![task]);
 
@@ -421,8 +438,8 @@ async fn tc_wait_for_tasks_completion_all_completed_returns() {
 #[tokio::test]
 async fn tc_wait_for_tasks_completion_timeout_returns_ok() {
     // Tasks never complete → returns Ok after timeout (not an error, just done).
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let task = make_queued_task(task_id, team_id);
     let repo = MockTaskRepository::new(vec![task]);
 
@@ -442,8 +459,8 @@ async fn tc_wait_for_tasks_completion_timeout_returns_ok() {
 async fn tc_wait_for_tasks_completion_repo_error_returns_err() {
     let repo =
         MockTaskRepository::failing(RepositoryError::Database(anyhow::anyhow!("query failed")));
-    let task_id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
 
     let result = wait_for_tasks_completion(
         &repo as &dyn TaskRepository,
@@ -460,8 +477,8 @@ async fn tc_wait_for_tasks_completion_repo_error_returns_err() {
 #[tokio::test]
 async fn tc_wait_for_tasks_completion_failed_task_counts_as_done() {
     // Failed tasks count as "completed" for completion_rate purposes.
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let mut task = make_queued_task(task_id, team_id);
     task.status = TaskStatus::Failed;
     let repo = MockTaskRepository::new(vec![task]);
@@ -480,8 +497,8 @@ async fn tc_wait_for_tasks_completion_failed_task_counts_as_done() {
 
 #[tokio::test]
 async fn tc_wait_for_tasks_completion_cancelled_task_counts_as_done() {
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let mut task = make_queued_task(task_id, team_id);
     task.status = TaskStatus::Cancelled;
     let repo = MockTaskRepository::new(vec![task]);
@@ -501,9 +518,9 @@ async fn tc_wait_for_tasks_completion_cancelled_task_counts_as_done() {
 #[tokio::test]
 async fn tc_wait_for_tasks_completion_partial_completion_still_waits() {
     // One completed + one queued → completion_rate 0.5 → keeps polling.
-    let team_id = Uuid::new_v4();
-    let task_id_1 = Uuid::new_v4();
-    let task_id_2 = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id_1 = crawlrs::domain::id::Id::generate();
+    let task_id_2 = crawlrs::domain::id::Id::generate();
     let done = make_completed_task(task_id_1, team_id);
     let pending = make_queued_task(task_id_2, team_id);
     let repo = MockTaskRepository::new(vec![done, pending]);

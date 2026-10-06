@@ -17,7 +17,6 @@
 //! - 其余方法返回合理默认值（配置/计数器等）
 
 use async_trait::async_trait;
-use uuid::Uuid;
 
 use crate::domain::models::CreditsTransactionType;
 use crate::domain::services::rate_limiting_service::{
@@ -53,7 +52,7 @@ impl RateLimitService for NoopRateLimitingService {
     /// 获取团队的限流配置 → 返回默认配置
     async fn get_team_rate_limit_config(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
     ) -> Result<RateLimitConfig, RateLimitingError> {
         Ok(RateLimitConfig::default())
     }
@@ -61,7 +60,7 @@ impl RateLimitService for NoopRateLimitingService {
     /// 更新团队的限流配置 → 空操作成功
     async fn update_team_rate_limit_config(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _config: RateLimitConfig,
     ) -> Result<(), RateLimitingError> {
         Ok(())
@@ -78,8 +77,8 @@ impl ConcurrencyControlService for NoopRateLimitingService {
     /// 检查团队并发限制 → 始终放行
     async fn check_team_concurrency(
         &self,
-        _team_id: Uuid,
-        _task_id: Uuid,
+        _team_id: crate::domain::id::Id,
+        _task_id: crate::domain::id::Id,
     ) -> Result<ConcurrencyResult, RateLimitingError> {
         Ok(ConcurrencyResult::Allowed)
     }
@@ -87,21 +86,24 @@ impl ConcurrencyControlService for NoopRateLimitingService {
     /// 释放团队并发槽位 → 空操作成功
     async fn release_team_concurrency_slot(
         &self,
-        _team_id: Uuid,
-        _task_id: Uuid,
+        _team_id: crate::domain::id::Id,
+        _task_id: crate::domain::id::Id,
     ) -> Result<(), RateLimitingError> {
         Ok(())
     }
 
     /// 获取团队的当前并发数 → 返回 0
-    async fn get_team_current_concurrency(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+    async fn get_team_current_concurrency(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<u32, RateLimitingError> {
         Ok(0)
     }
 
     /// 获取团队的并发配置 → 返回默认配置
     async fn get_team_concurrency_config(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
     ) -> Result<ConcurrencyConfig, RateLimitingError> {
         Ok(ConcurrencyConfig::default())
     }
@@ -109,7 +111,7 @@ impl ConcurrencyControlService for NoopRateLimitingService {
     /// 更新团队的并发配置 → 空操作成功
     async fn update_team_concurrency_config(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _config: ConcurrencyConfig,
     ) -> Result<(), RateLimitingError> {
         Ok(())
@@ -122,7 +124,10 @@ impl BacklogService for NoopRateLimitingService {
     ///
     /// rate-limit 关闭时不门控 backlog_worker，
     /// backlog 处理走 Noop 返回 0，保证幂等空转不产生副作用。
-    async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+    async fn process_backlog_tasks(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<u32, RateLimitingError> {
         Ok(0)
     }
 }
@@ -132,11 +137,11 @@ impl QuotaService for NoopRateLimitingService {
     /// 检查并扣除团队配额 → 始终成功（不扣配额）
     async fn check_and_deduct_quota(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _amount: i64,
         _transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crate::domain::id::Id>,
     ) -> Result<(), RateLimitingError> {
         Ok(())
     }
@@ -144,16 +149,19 @@ impl QuotaService for NoopRateLimitingService {
     /// 退还配额积分 → 始终成功（Noop 模式无配额账本）
     async fn refund_quota(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _amount: i64,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crate::domain::id::Id>,
     ) -> Result<(), RateLimitingError> {
         Ok(())
     }
 
     /// 获取团队配额余额 → 返回 i64::MAX（无限配额）
-    async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+    async fn get_quota_balance(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<i64, RateLimitingError> {
         Ok(i64::MAX)
     }
 }
@@ -171,7 +179,6 @@ mod tests {
     use super::*;
     use crate::domain::models::CreditsTransactionType;
     use crate::domain::services::rate_limiting_service::RateLimitResult;
-    use uuid::Uuid;
 
     // 以下测试钉住 Noop 放行契约。
 
@@ -190,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn test_noop_get_quota_balance_returns_max() {
         let svc = NoopRateLimitingService::new();
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let result = svc.get_quota_balance(team_id).await;
         assert!(result.is_ok(), "get_quota_balance should always succeed");
         assert_eq!(
@@ -203,7 +210,7 @@ mod tests {
     #[tokio::test]
     async fn test_noop_check_and_deduct_quota_returns_ok() {
         let svc = NoopRateLimitingService::new();
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let result = svc
             .check_and_deduct_quota(
                 team_id,
@@ -228,7 +235,7 @@ mod tests {
     #[tokio::test]
     async fn test_noop_process_backlog_tasks_returns_zero() {
         let svc = NoopRateLimitingService::new();
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let result = svc.process_backlog_tasks(team_id).await;
         assert!(
             result.is_ok(),
@@ -248,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn test_noop_process_backlog_tasks_idempotent_across_calls() {
         let svc = NoopRateLimitingService::new();
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
 
         for i in 0..3 {
             let result = svc.process_backlog_tasks(team_id).await;

@@ -36,19 +36,18 @@ mod tests {
     use axum::{extract::Extension, Json};
     use dbnexus::DbPool;
     use std::sync::{Arc, Mutex};
-    use uuid::Uuid;
 
     // ========== Helper to create test Task ==========
 
-    fn make_test_task(id: Uuid, status: TaskStatus) -> Task {
+    fn make_test_task(id: crate::domain::id::Id, status: TaskStatus) -> Task {
         let now = chrono::Utc::now();
         Task {
             id,
             task_type: TaskType::Scrape,
             status,
             priority: 0,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,
@@ -117,7 +116,7 @@ mod tests {
             return;
         }
         let tasks = vec![];
-        let task_ids: Vec<Uuid> = vec![];
+        let task_ids: Vec<crate::domain::id::Id> = vec![];
         assert_eq!(calculate_completion_rate(&tasks, &task_ids), 1.0);
     }
 
@@ -126,8 +125,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
+        let id2 = crate::domain::id::Id::generate();
         let tasks = vec![
             make_test_task(id1, TaskStatus::Completed),
             make_test_task(id2, TaskStatus::Completed),
@@ -141,8 +140,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
+        let id2 = crate::domain::id::Id::generate();
         let tasks = vec![
             make_test_task(id1, TaskStatus::Queued),
             make_test_task(id2, TaskStatus::Active),
@@ -156,8 +155,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
+        let id2 = crate::domain::id::Id::generate();
         let tasks = vec![
             make_test_task(id1, TaskStatus::Completed),
             make_test_task(id2, TaskStatus::Active),
@@ -171,7 +170,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id1 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
         let tasks = vec![make_test_task(id1, TaskStatus::Failed)];
         let task_ids = vec![id1];
         assert_eq!(calculate_completion_rate(&tasks, &task_ids), 1.0);
@@ -182,7 +181,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id1 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
         let tasks = vec![make_test_task(id1, TaskStatus::Cancelled)];
         let task_ids = vec![id1];
         assert_eq!(calculate_completion_rate(&tasks, &task_ids), 1.0);
@@ -193,10 +192,10 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
-        let id3 = Uuid::new_v4();
-        let id4 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
+        let id2 = crate::domain::id::Id::generate();
+        let id3 = crate::domain::id::Id::generate();
+        let id4 = crate::domain::id::Id::generate();
         let tasks = vec![
             make_test_task(id1, TaskStatus::Completed),
             make_test_task(id2, TaskStatus::Failed),
@@ -357,7 +356,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let tasks = vec![make_test_task(id, TaskStatus::Completed)];
         let result = build_task_infos(&tasks, None);
         assert_eq!(result.len(), 1);
@@ -372,8 +371,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
+        let id2 = crate::domain::id::Id::generate();
         let tasks = vec![
             make_test_task(id1, TaskStatus::Queued),
             make_test_task(id2, TaskStatus::Failed),
@@ -389,7 +388,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let mut task = make_test_task(id, TaskStatus::Queued);
         task.task_type = TaskType::Crawl;
         let result = build_task_infos(&[task], None);
@@ -578,7 +577,7 @@ mod tests {
             }
             async fn find_by_id(
                 &self,
-                _id: Uuid,
+                _id: crate::domain::id::Id,
             ) -> Result<Option<Task>, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
@@ -592,30 +591,30 @@ mod tests {
             }
             async fn acquire_next(
                 &self,
-                _worker_id: Uuid,
+                _worker_id: crate::domain::id::Id,
             ) -> Result<Option<Task>, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
             async fn mark_completed(
                 &self,
-                _id: Uuid,
-                _lock_token: Option<Uuid>,
+                _id: crate::domain::id::Id,
+                _lock_token: Option<crate::domain::id::Id>,
             ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
             async fn mark_failed(
                 &self,
-                _id: Uuid,
-                _lock_token: Option<Uuid>,
+                _id: crate::domain::id::Id,
+                _lock_token: Option<crate::domain::id::Id>,
             ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
             async fn mark_cancelled(
                 &self,
-                _id: Uuid,
+                _id: crate::domain::id::Id,
             ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
@@ -645,7 +644,7 @@ mod tests {
             }
             async fn cancel_tasks_by_crawl_id(
                 &self,
-                _crawl_id: Uuid,
+                _crawl_id: crate::domain::id::Id,
             ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
@@ -658,7 +657,7 @@ mod tests {
             }
             async fn find_by_crawl_id(
                 &self,
-                _crawl_id: Uuid,
+                _crawl_id: crate::domain::id::Id,
             ) -> Result<Vec<Task>, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
@@ -674,11 +673,14 @@ mod tests {
             }
             async fn batch_cancel(
                 &self,
-                _task_ids: Vec<Uuid>,
-                _team_id: Uuid,
+                _task_ids: Vec<crate::domain::id::Id>,
+                _team_id: crate::domain::id::Id,
                 _force: bool,
             ) -> Result<
-                (Vec<Uuid>, Vec<(Uuid, String)>),
+                (
+                    Vec<crate::domain::id::Id>,
+                    Vec<(crate::domain::id::Id, String)>,
+                ),
                 crate::domain::repositories::task_repository::RepositoryError,
             > {
                 unreachable!("should not be called")
@@ -686,15 +688,16 @@ mod tests {
 
             async fn renew_lock(
                 &self,
-                _task_id: Uuid,
-                _worker_id: Uuid,
+                _task_id: crate::domain::id::Id,
+                _worker_id: crate::domain::id::Id,
                 _extend_seconds: i64,
             ) -> Result<bool, RepositoryError> {
                 Ok(true)
             }
         }
 
-        let result = handle_sync_wait_and_get_status(&DummyRepo, &[], Uuid::nil(), 0).await;
+        let result =
+            handle_sync_wait_and_get_status(&DummyRepo, &[], crate::domain::id::Id::nil(), 0).await;
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(result.waited_time_ms, 0);
@@ -719,7 +722,7 @@ mod tests {
             }
             async fn find_by_id(
                 &self,
-                _id: Uuid,
+                _id: crate::domain::id::Id,
             ) -> Result<Option<Task>, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
@@ -733,30 +736,30 @@ mod tests {
             }
             async fn acquire_next(
                 &self,
-                _worker_id: Uuid,
+                _worker_id: crate::domain::id::Id,
             ) -> Result<Option<Task>, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
             async fn mark_completed(
                 &self,
-                _id: Uuid,
-                _lock_token: Option<Uuid>,
+                _id: crate::domain::id::Id,
+                _lock_token: Option<crate::domain::id::Id>,
             ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
             async fn mark_failed(
                 &self,
-                _id: Uuid,
-                _lock_token: Option<Uuid>,
+                _id: crate::domain::id::Id,
+                _lock_token: Option<crate::domain::id::Id>,
             ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
             }
             async fn mark_cancelled(
                 &self,
-                _id: Uuid,
+                _id: crate::domain::id::Id,
             ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
@@ -786,7 +789,7 @@ mod tests {
             }
             async fn cancel_tasks_by_crawl_id(
                 &self,
-                _crawl_id: Uuid,
+                _crawl_id: crate::domain::id::Id,
             ) -> Result<u64, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
@@ -799,7 +802,7 @@ mod tests {
             }
             async fn find_by_crawl_id(
                 &self,
-                _crawl_id: Uuid,
+                _crawl_id: crate::domain::id::Id,
             ) -> Result<Vec<Task>, crate::domain::repositories::task_repository::RepositoryError>
             {
                 unreachable!("should not be called")
@@ -815,11 +818,14 @@ mod tests {
             }
             async fn batch_cancel(
                 &self,
-                _task_ids: Vec<Uuid>,
-                _team_id: Uuid,
+                _task_ids: Vec<crate::domain::id::Id>,
+                _team_id: crate::domain::id::Id,
                 _force: bool,
             ) -> Result<
-                (Vec<Uuid>, Vec<(Uuid, String)>),
+                (
+                    Vec<crate::domain::id::Id>,
+                    Vec<(crate::domain::id::Id, String)>,
+                ),
                 crate::domain::repositories::task_repository::RepositoryError,
             > {
                 unreachable!("should not be called")
@@ -827,15 +833,17 @@ mod tests {
 
             async fn renew_lock(
                 &self,
-                _task_id: Uuid,
-                _worker_id: Uuid,
+                _task_id: crate::domain::id::Id,
+                _worker_id: crate::domain::id::Id,
                 _extend_seconds: i64,
             ) -> Result<bool, RepositoryError> {
                 Ok(true)
             }
         }
 
-        let result = handle_sync_wait_and_get_status(&DummyRepo, &[], Uuid::nil(), 5000).await;
+        let result =
+            handle_sync_wait_and_get_status(&DummyRepo, &[], crate::domain::id::Id::nil(), 5000)
+                .await;
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(result.waited_time_ms, 0);
@@ -845,9 +853,11 @@ mod tests {
     // ========== build_scrape_result_json tests ==========
 
     // 构造测试用 ScrapeResult
-    fn make_test_scrape_result(task_id: Uuid) -> crate::domain::models::ScrapeResult {
+    fn make_test_scrape_result(
+        task_id: crate::domain::id::Id,
+    ) -> crate::domain::models::ScrapeResult {
         crate::domain::models::ScrapeResult {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_id,
             url: "https://example.com".to_string(),
             status_code: 200,
@@ -866,7 +876,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let result = make_test_scrape_result(task_id);
         let dto = build_scrape_result_json(&result);
 
@@ -885,7 +895,7 @@ mod tests {
             return;
         }
         // html_escape::encode_text 应转义 < > & ' "
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let mut result = make_test_scrape_result(task_id);
         result.content = "<script>alert('xss')</script>".to_string();
         let dto = build_scrape_result_json(&result);
@@ -899,7 +909,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let mut result = make_test_scrape_result(task_id);
         result.content = "Tom & Jerry".to_string();
         let dto = build_scrape_result_json(&result);
@@ -913,7 +923,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let result = make_test_scrape_result(task_id);
         let dto = build_scrape_result_json(&result);
 
@@ -927,7 +937,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let mut result = make_test_scrape_result(task_id);
         result.status_code = 404;
         let dto = build_scrape_result_json(&result);
@@ -940,7 +950,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let mut result = make_test_scrape_result(task_id);
         result.content = String::new();
         let dto = build_scrape_result_json(&result);
@@ -953,7 +963,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let mut result = make_test_scrape_result(task_id);
         result.meta_data = serde_json::Value::Null;
         let dto = build_scrape_result_json(&result);
@@ -969,7 +979,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let scrape_result = make_test_scrape_result(task_id);
         let mut results_map = std::collections::HashMap::new();
@@ -990,8 +1000,8 @@ mod tests {
             return;
         }
         // Task has no corresponding result in the map
-        let task_id = Uuid::new_v4();
-        let other_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let other_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let scrape_result = make_test_scrape_result(other_id);
         let mut results_map = std::collections::HashMap::new();
@@ -1008,8 +1018,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task1_id = Uuid::new_v4();
-        let task2_id = Uuid::new_v4();
+        let task1_id = crate::domain::id::Id::generate();
+        let task2_id = crate::domain::id::Id::generate();
         let tasks = vec![
             make_test_task(task1_id, TaskStatus::Completed),
             make_test_task(task2_id, TaskStatus::Queued),
@@ -1030,14 +1040,16 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task1_id = Uuid::new_v4();
-        let task2_id = Uuid::new_v4();
+        let task1_id = crate::domain::id::Id::generate();
+        let task2_id = crate::domain::id::Id::generate();
         let tasks = vec![
             make_test_task(task1_id, TaskStatus::Completed),
             make_test_task(task2_id, TaskStatus::Failed),
         ];
-        let results_map: std::collections::HashMap<Uuid, crate::domain::models::ScrapeResult> =
-            std::collections::HashMap::new();
+        let results_map: std::collections::HashMap<
+            crate::domain::id::Id,
+            crate::domain::models::ScrapeResult,
+        > = std::collections::HashMap::new();
 
         let infos = build_task_infos(&tasks, Some(&results_map));
 
@@ -1052,7 +1064,7 @@ mod tests {
             return;
         }
         // 验证 results_map 中的 content 经过 HTML 转义后出现在 TaskInfoDto 中
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let mut scrape_result = make_test_scrape_result(task_id);
         scrape_result.content = "<b>bold</b>".to_string();
@@ -1086,8 +1098,8 @@ mod tests {
     fn make_test_auth_state() -> AuthState {
         AuthState::new(
             make_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         )
     }
@@ -1109,8 +1121,17 @@ mod tests {
         query_error: Mutex<Option<RepositoryError>>,
         query_tasks_data: Mutex<Vec<Task>>,
         query_total: u64,
-        batch_cancel_result:
-            Mutex<Option<Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError>>>,
+        batch_cancel_result: Mutex<
+            Option<
+                Result<
+                    (
+                        Vec<crate::domain::id::Id>,
+                        Vec<(crate::domain::id::Id, String)>,
+                    ),
+                    RepositoryError,
+                >,
+            >,
+        >,
     }
 
     #[allow(clippy::type_complexity)]
@@ -1143,7 +1164,13 @@ mod tests {
         }
 
         fn with_batch_cancel_result(
-            result: Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError>,
+            result: Result<
+                (
+                    Vec<crate::domain::id::Id>,
+                    Vec<(crate::domain::id::Id, String)>,
+                ),
+                RepositoryError,
+            >,
         ) -> Self {
             Self {
                 query_error: Mutex::new(None),
@@ -1154,7 +1181,13 @@ mod tests {
         }
 
         fn with_batch_cancel_result_and_query_data(
-            result: Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError>,
+            result: Result<
+                (
+                    Vec<crate::domain::id::Id>,
+                    Vec<(crate::domain::id::Id, String)>,
+                ),
+                RepositoryError,
+            >,
             query_tasks: Vec<Task>,
         ) -> Self {
             Self {
@@ -1172,7 +1205,10 @@ mod tests {
             unreachable!("create not expected in task_handler tests")
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -1180,27 +1216,30 @@ mod tests {
             unreachable!("update not expected in task_handler tests")
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
@@ -1222,7 +1261,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -1230,7 +1272,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(Vec::new())
         }
 
@@ -1249,10 +1294,16 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             match self.batch_cancel_result.lock().unwrap().take() {
                 Some(result) => result,
                 None => Ok((Vec::new(), Vec::new())),
@@ -1261,8 +1312,8 @@ mod tests {
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -1276,7 +1327,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = Arc::new(MockTaskRepository::with_query_data(vec![task], 1));
         let auth = make_test_auth_state();
@@ -1345,8 +1396,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task1 = make_test_task(Uuid::new_v4(), TaskStatus::Completed);
-        let task2 = make_test_task(Uuid::new_v4(), TaskStatus::Completed);
+        let task1 = make_test_task(crate::domain::id::Id::generate(), TaskStatus::Completed);
+        let task2 = make_test_task(crate::domain::id::Id::generate(), TaskStatus::Completed);
         let repo = Arc::new(MockTaskRepository::with_query_data(vec![task1, task2], 10));
         let auth = make_test_auth_state();
         let scrape_repo = make_test_scrape_result_repo();
@@ -1463,7 +1514,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = Arc::new(MockTaskRepository::with_query_data(vec![task], 1));
         let auth = make_test_auth_state();
@@ -1501,7 +1552,7 @@ mod tests {
         // With include_results=true and a real DB pool, fetch_scrape_results
         // queries the DB for the random task_id (no match) and returns an
         // empty map, so the handler succeeds with empty results.
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = Arc::new(MockTaskRepository::with_query_data(vec![task], 1));
         let auth = make_test_auth_state();
@@ -1541,7 +1592,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
             vec![task_id],
             vec![],
@@ -1603,7 +1654,7 @@ mod tests {
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
-            task_ids: vec![Uuid::new_v4()],
+            task_ids: vec![crate::domain::id::Id::generate()],
             force: Some(false),
             sync_wait_ms: Some(30001),
         };
@@ -1625,7 +1676,7 @@ mod tests {
         )));
         let auth = make_test_auth_state();
         let request = TaskCancelRequestDto {
-            task_ids: vec![Uuid::new_v4()],
+            task_ids: vec![crate::domain::id::Id::generate()],
             force: Some(false),
             sync_wait_ms: Some(0),
         };
@@ -1642,8 +1693,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id1 = Uuid::new_v4();
-        let task_id2 = Uuid::new_v4();
+        let task_id1 = crate::domain::id::Id::generate();
+        let task_id2 = crate::domain::id::Id::generate();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
             vec![task_id1],
             vec![(task_id2, "Already completed".to_string())],
@@ -1676,7 +1727,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let cancelled_task = make_test_task(task_id, TaskStatus::Cancelled);
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result_and_query_data(
             Ok((vec![task_id], vec![])),
@@ -1709,11 +1760,13 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
 
-        let result = wait_for_tasks_completion(&repo, &[task_id], Uuid::nil(), 100, 500).await;
+        let result =
+            wait_for_tasks_completion(&repo, &[task_id], crate::domain::id::Id::nil(), 100, 500)
+                .await;
 
         assert!(
             result.is_ok(),
@@ -1726,11 +1779,13 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Active);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
 
-        let result = wait_for_tasks_completion(&repo, &[task_id], Uuid::nil(), 50, 500).await;
+        let result =
+            wait_for_tasks_completion(&repo, &[task_id], crate::domain::id::Id::nil(), 50, 500)
+                .await;
 
         assert!(result.is_ok(), "should return Ok on timeout");
     }
@@ -1740,12 +1795,14 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
             anyhow::anyhow!("poll query failed"),
         ));
 
-        let result = wait_for_tasks_completion(&repo, &[task_id], Uuid::nil(), 100, 500).await;
+        let result =
+            wait_for_tasks_completion(&repo, &[task_id], crate::domain::id::Id::nil(), 100, 500)
+                .await;
 
         assert!(result.is_err(), "query error should propagate");
     }
@@ -1757,11 +1814,13 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
 
-        let result = handle_sync_wait_and_get_status(&repo, &[task_id], Uuid::nil(), 200).await;
+        let result =
+            handle_sync_wait_and_get_status(&repo, &[task_id], crate::domain::id::Id::nil(), 200)
+                .await;
 
         assert!(result.is_ok());
         let sync_result = result.unwrap();
@@ -1775,12 +1834,14 @@ mod tests {
         }
         // Even when wait_for_tasks_completion returns an error,
         // handle_sync_wait_and_get_status catches it and returns Ok.
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
             anyhow::anyhow!("poll failed"),
         ));
 
-        let result = handle_sync_wait_and_get_status(&repo, &[task_id], Uuid::nil(), 200).await;
+        let result =
+            handle_sync_wait_and_get_status(&repo, &[task_id], crate::domain::id::Id::nil(), 200)
+                .await;
 
         assert!(result.is_ok(), "should return Ok even on wait error");
     }
@@ -1792,11 +1853,11 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
 
-        let result = query_tasks_for_poll(&repo, Uuid::nil(), &[task_id]).await;
+        let result = query_tasks_for_poll(&repo, crate::domain::id::Id::nil(), &[task_id]).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 1);
@@ -1807,12 +1868,12 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
             anyhow::anyhow!("poll failed"),
         ));
 
-        let result = query_tasks_for_poll(&repo, Uuid::nil(), &[task_id]).await;
+        let result = query_tasks_for_poll(&repo, crate::domain::id::Id::nil(), &[task_id]).await;
 
         assert!(result.is_err());
     }
@@ -1822,12 +1883,13 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
         let request = TaskQueryRequestDto::default();
 
-        let result = execute_task_query(&repo, Uuid::nil(), &request, 100, 0).await;
+        let result =
+            execute_task_query(&repo, crate::domain::id::Id::nil(), &request, 100, 0).await;
 
         assert!(result.is_ok());
         let (tasks, total) = result.unwrap();
@@ -1845,7 +1907,8 @@ mod tests {
         ));
         let request = TaskQueryRequestDto::default();
 
-        let result = execute_task_query(&repo, Uuid::nil(), &request, 100, 0).await;
+        let result =
+            execute_task_query(&repo, crate::domain::id::Id::nil(), &request, 100, 0).await;
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1859,11 +1922,11 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Completed);
         let repo = MockTaskRepository::with_query_data(vec![task.clone()], 1);
 
-        let result = handle_sync_wait(&repo, &[task], Uuid::nil(), 100).await;
+        let result = handle_sync_wait(&repo, &[task], crate::domain::id::Id::nil(), 100).await;
 
         assert!(result.is_ok());
         let waited = result.unwrap();
@@ -1906,7 +1969,7 @@ mod tests {
             return;
         }
         let repo = make_test_scrape_result_repo();
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let tasks = vec![make_test_task(task_id, TaskStatus::Completed)];
 
         let result = fetch_scrape_results(repo.as_ref(), &tasks).await;
@@ -1958,7 +2021,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
             vec![task_id],
             vec![],
@@ -1985,7 +2048,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let repo = Arc::new(MockTaskRepository::with_batch_cancel_result(Ok((
             vec![task_id],
             vec![],
@@ -2028,12 +2091,14 @@ mod tests {
         }
         ensure_debug_logger();
         // When wait_for_tasks_completion returns an error, log::error! should execute
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let repo = MockTaskRepository::with_query_error(RepositoryError::Database(
             anyhow::anyhow!("poll failed for logging test"),
         ));
 
-        let result = handle_sync_wait_and_get_status(&repo, &[task_id], Uuid::nil(), 200).await;
+        let result =
+            handle_sync_wait_and_get_status(&repo, &[task_id], crate::domain::id::Id::nil(), 200)
+                .await;
 
         assert!(result.is_ok(), "should return Ok even on wait error");
     }
@@ -2046,11 +2111,13 @@ mod tests {
         ensure_debug_logger();
         // Trigger poll_count_exceeded path (poll_count >= MAX_POLL_COUNT)
         // Use a very short timeout and active tasks to ensure polling occurs
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let task = make_test_task(task_id, TaskStatus::Active);
         let repo = MockTaskRepository::with_query_data(vec![task], 1);
 
-        let result = wait_for_tasks_completion(&repo, &[task_id], Uuid::nil(), 50, 500).await;
+        let result =
+            wait_for_tasks_completion(&repo, &[task_id], crate::domain::id::Id::nil(), 50, 500)
+                .await;
 
         assert!(result.is_ok(), "should return Ok on timeout");
     }

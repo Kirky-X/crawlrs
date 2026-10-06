@@ -9,7 +9,6 @@
 use super::task_repository::RepositoryError;
 use crate::domain::models::Team;
 use async_trait::async_trait;
-use uuid::Uuid;
 
 /// 团队仓库特质
 ///
@@ -37,5 +36,5 @@ pub trait TeamRepository: Send + Sync {
     /// * `Ok(Some(Team))` - 找到团队
     /// * `Ok(None)` - 团队不存在
     /// * `Err(RepositoryError)` - 查询失败
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Team>, RepositoryError>;
+    async fn find_by_id(&self, id: crate::domain::id::Id) -> Result<Option<Team>, RepositoryError>;
 }

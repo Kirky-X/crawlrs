@@ -11,7 +11,7 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
 use async_trait::async_trait;
-// 部分方法签名使用裸 `Uuid`（get_quota_balance/refund_quota），统一引入类型别名
+// 部分方法签名使用裸 `crawlrs::domain::id::Id`（get_quota_balance/refund_quota），统一引入类型别名
 use axum::{
     body::Body,
     extract::Request,
@@ -21,7 +21,6 @@ use axum::{
     routing::get,
 };
 use tower::ServiceExt;
-use uuid::Uuid;
 
 use crawlrs::domain::models::CreditsTransactionType;
 use crawlrs::domain::services::rate_limiting_service::{
@@ -93,13 +92,13 @@ impl RateLimitService for MockRateLimitingService {
     }
     async fn get_team_rate_limit_config(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crawlrs::domain::id::Id,
     ) -> Result<RateLimitConfig, RateLimitingError> {
         Ok(Default::default())
     }
     async fn update_team_rate_limit_config(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _config: RateLimitConfig,
     ) -> Result<(), RateLimitingError> {
         Ok(())
@@ -113,33 +112,33 @@ impl RateLimitService for MockRateLimitingService {
 impl ConcurrencyControlService for MockRateLimitingService {
     async fn check_team_concurrency(
         &self,
-        _team_id: uuid::Uuid,
-        _task_id: uuid::Uuid,
+        _team_id: crawlrs::domain::id::Id,
+        _task_id: crawlrs::domain::id::Id,
     ) -> Result<ConcurrencyResult, RateLimitingError> {
         Ok(ConcurrencyResult::Allowed)
     }
     async fn release_team_concurrency_slot(
         &self,
-        _team_id: uuid::Uuid,
-        _task_id: uuid::Uuid,
+        _team_id: crawlrs::domain::id::Id,
+        _task_id: crawlrs::domain::id::Id,
     ) -> Result<(), RateLimitingError> {
         Ok(())
     }
     async fn get_team_current_concurrency(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crawlrs::domain::id::Id,
     ) -> Result<u32, RateLimitingError> {
         Ok(0)
     }
     async fn get_team_concurrency_config(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crawlrs::domain::id::Id,
     ) -> Result<ConcurrencyConfig, RateLimitingError> {
         Ok(Default::default())
     }
     async fn update_team_concurrency_config(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _config: ConcurrencyConfig,
     ) -> Result<(), RateLimitingError> {
         Ok(())
@@ -148,7 +147,10 @@ impl ConcurrencyControlService for MockRateLimitingService {
 
 #[async_trait]
 impl BacklogService for MockRateLimitingService {
-    async fn process_backlog_tasks(&self, _team_id: uuid::Uuid) -> Result<u32, RateLimitingError> {
+    async fn process_backlog_tasks(
+        &self,
+        _team_id: crawlrs::domain::id::Id,
+    ) -> Result<u32, RateLimitingError> {
         Ok(0)
     }
 }
@@ -157,24 +159,27 @@ impl BacklogService for MockRateLimitingService {
 impl QuotaService for MockRateLimitingService {
     async fn check_and_deduct_quota(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _amount: i64,
         _transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<uuid::Uuid>,
+        _reference_id: Option<crawlrs::domain::id::Id>,
     ) -> Result<(), RateLimitingError> {
         Ok(())
     }
-    async fn get_quota_balance(&self, _team_id: uuid::Uuid) -> Result<i64, RateLimitingError> {
+    async fn get_quota_balance(
+        &self,
+        _team_id: crawlrs::domain::id::Id,
+    ) -> Result<i64, RateLimitingError> {
         Ok(1000)
     }
 
     async fn refund_quota(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _amount: i64,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crawlrs::domain::id::Id>,
     ) -> Result<(), RateLimitingError> {
         Ok(())
     }

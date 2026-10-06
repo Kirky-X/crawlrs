@@ -244,4 +244,104 @@ mod tests {
         let headers = build_request_headers(None);
         assert_eq!(headers.get("Authorization").unwrap(), "Bearer ollama");
     }
+
+    // ===== send_direct_request / resolve_provider =====
+
+    /// 启动返回固定 (status, body) 的 OpenAI 兼容 mock，路径 /chat。
+    async fn start_llm_mock(status: u16, body: String) -> String {
+        use axum::http::StatusCode;
+        use axum::routing::any;
+        use axum::Router;
+        use tokio::net::TcpListener;
+        let app = Router::new().route(
+            "/chat",
+            any(move || {
+                let b = body.clone();
+                async move { (StatusCode::from_u16(status).expect("status"), b) }
+            }),
+        );
+        let l = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = l.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(l, app).await;
+        });
+        format!("http://{}/chat", addr)
+    }
+
+    #[tokio::test]
+    async fn send_direct_request_success_parses_content_and_usage() {
+        let url = start_llm_mock(
+            200,
+            r#"{"choices":[{"message":{"content":"hi"}}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"#
+                .to_string(),
+        )
+        .await;
+        let resp = send_direct_request(
+            &reqwest::Client::new(),
+            &url,
+            "gpt-x",
+            "prompt",
+            Some("sk-test"),
+            Some(64),
+            10,
+        )
+        .await
+        .expect("success");
+        assert_eq!(resp.content, "hi");
+        assert_eq!(resp.usage.prompt_tokens, 5);
+        assert_eq!(resp.usage.completion_tokens, 2);
+        assert_eq!(resp.usage.total_tokens, 7);
+    }
+
+    #[tokio::test]
+    async fn send_direct_request_no_api_key_no_max_tokens() {
+        let url = start_llm_mock(
+            200,
+            r#"{"choices":[{"message":{"content":"ok"}}]}"#.to_string(),
+        )
+        .await;
+        let resp = send_direct_request(&reqwest::Client::new(), &url, "m", "p", None, None, 10)
+            .await
+            .expect("success (ollama default header)");
+        assert_eq!(resp.content, "ok");
+        // 无 usage 字段时归零
+        assert_eq!(resp.usage.total_tokens, 0);
+    }
+
+    #[tokio::test]
+    async fn send_direct_request_error_status_maps_to_err() {
+        let url = start_llm_mock(500, "boom".to_string()).await;
+        let err = send_direct_request(&reqwest::Client::new(), &url, "m", "p", None, None, 10)
+            .await
+            .err()
+            .expect("500 must err");
+        assert!(err.to_string().contains("LLM returned error"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn send_direct_request_invalid_json_maps_to_err() {
+        let url = start_llm_mock(200, "not-json".to_string()).await;
+        assert!(
+            send_direct_request(&reqwest::Client::new(), &url, "m", "p", None, None, 10,)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn send_direct_request_empty_choices_maps_to_err() {
+        let url = start_llm_mock(200, r#"{"choices":[]}"#.to_string()).await;
+        let err = send_direct_request(&reqwest::Client::new(), &url, "m", "p", None, None, 10)
+            .await
+            .err()
+            .expect("empty content must err");
+        assert!(err.to_string().contains("Empty content"), "got: {err}");
+    }
+
+    #[test]
+    fn resolve_provider_returns_non_empty_with_default_settings() {
+        let settings = crate::config::settings::Settings::default();
+        let provider = resolve_provider(&settings);
+        assert!(!provider.is_empty(), "provider should not be empty");
+    }
 }

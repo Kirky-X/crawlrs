@@ -15,7 +15,7 @@
 //! - garrison 管理哈希存储，crawlrs 的 `key_hash` 字段弃用（设为 `None`）
 //! - crawlrs 的 `key` 字段存储 garrison `key_id`（公开标识，可安全记录到日志）
 //! - 调用方必须持有 admin 权限（CWE-862 IDOR 防护）
-//! - login_id = api_key_id 的 Uuid 字符串形式（约定，供中间件反向解析）
+//! - login_id = api_key_id 的 crate::domain::id::Id 字符串形式（约定，供中间件反向解析）
 //!
 //! ## Spec
 //!
@@ -40,7 +40,6 @@ use chrono::Utc;
 use dbnexus::sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// garrison namespace，所有 crawlrs 签发的 API Key 都归属此 namespace。
 const GARRISON_NAMESPACE: &str = "crawlrs";
@@ -66,7 +65,7 @@ const PERM_PREFIX: &str = "crawlrs:";
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateApiKeyRequest {
     /// API Key 归属的 team_id（必填，不能为 nil UUID）。
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// 作用域列表（必填，非空；元素仅允许 `"read"`/`"write"`/`"admin"`）。
     pub scopes: Vec<String>,
     /// 过期时间（秒，可选；缺省 30 天；必须 > 0 且 <= 1 年）。
@@ -79,9 +78,9 @@ pub struct CreateApiKeyResponse {
     /// 明文 API Key（双段格式 `key_id.key_secret`，仅此一次返回）。
     pub api_key: String,
     /// crawlrs 内部 API Key ID（UUID，对应 `api_keys.id`）。
-    pub api_key_id: Uuid,
+    pub api_key_id: crate::domain::id::Id,
     /// 归属 team_id。
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// 作用域列表（与请求一致）。
     pub scopes: Vec<String>,
     /// 过期时间（RFC3339）。
@@ -143,7 +142,7 @@ pub async fn create_api_key(
     }
 
     // 4. 生成新 api_key_id（同时作为 garrison login_id 约定）
-    let api_key_id = Uuid::new_v4();
+    let api_key_id = crate::domain::id::Id::generate();
     let expires_in_secs = req.expires_in_secs.unwrap_or(DEFAULT_EXPIRES_IN_SECS);
     let now = Utc::now();
     let expires_at = now + chrono::Duration::seconds(expires_in_secs);
@@ -253,7 +252,7 @@ pub async fn create_api_key(
 ///   （CWE-208：拒绝超大 scopes 数组导致 garrison 调用耗时增加）
 /// - `expires_in_secs`（若提供）必须 > 0 且 <= 1 年（CWE-208：拒绝异常 TTL）
 fn validate_request(req: &CreateApiKeyRequest) -> Result<(), String> {
-    if req.team_id == Uuid::nil() {
+    if req.team_id == crate::domain::id::Id::nil() {
         return Err("team_id must not be nil UUID".to_string());
     }
     if req.scopes.is_empty() {
@@ -306,7 +305,7 @@ fn validate_request(req: &CreateApiKeyRequest) -> Result<(), String> {
 /// - `team_id` 不存在：返回 `Err(DbErr::RecordNotFound("team not found"))`（CWE-862 IDOR 防护）
 async fn check_team_exists(
     pool: &Arc<dbnexus::DbPool>,
-    team_id: Uuid,
+    team_id: crate::domain::id::Id,
 ) -> Result<(), dbnexus::sea_orm::DbErr> {
     let session = pool
         .get_session("admin")
@@ -354,8 +353,8 @@ fn map_scopes_to_garrison_perms(scopes: &[String]) -> Vec<String> {
 ///
 async fn insert_api_key_mapping(
     pool: &Arc<dbnexus::DbPool>,
-    api_key_id: Uuid,
-    team_id: Uuid,
+    api_key_id: crate::domain::id::Id,
+    team_id: crate::domain::id::Id,
     garrison_key_id: String,
 ) -> Result<(), dbnexus::sea_orm::DbErr> {
     let session = pool
@@ -367,8 +366,8 @@ async fn insert_api_key_mapping(
         .map_err(|e| dbnexus::sea_orm::DbErr::Custom(format!("db conn: {}", e)))?;
     let now = time_utils::to_db_datetime(Utc::now());
     let active = ActiveModel {
-        id: dbnexus::sea_orm::ActiveValue::Set(api_key_id),
-        team_id: dbnexus::sea_orm::ActiveValue::Set(team_id),
+        id: dbnexus::sea_orm::ActiveValue::Set(api_key_id.into()),
+        team_id: dbnexus::sea_orm::ActiveValue::Set(team_id.into()),
         key: dbnexus::sea_orm::ActiveValue::Set(garrison_key_id),
         // key_hash 弃用（garrison 自管 sha256(secret_hash)）
         created_at: dbnexus::sea_orm::ActiveValue::Set(now),
@@ -398,8 +397,8 @@ mod tests {
         let pool = create_test_db_pool();
         AuthState::new(
             pool,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::full_access(),
         )
     }
@@ -409,8 +408,8 @@ mod tests {
         let pool = create_test_db_pool();
         AuthState::new(
             pool,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::read_only(),
         )
     }
@@ -440,7 +439,7 @@ mod tests {
     /// # Panics
     ///
     /// DB 写入失败时 panic（测试环境异常，不应静默）。
-    async fn seed_team_in_db(pool: &Arc<dbnexus::DbPool>, team_id: Uuid) {
+    async fn seed_team_in_db(pool: &Arc<dbnexus::DbPool>, team_id: crate::domain::id::Id) {
         use crate::infrastructure::database::entities::team::ActiveModel as TeamActiveModel;
         use dbnexus::sea_orm::ActiveValue;
 
@@ -453,7 +452,7 @@ mod tests {
             .expect("connection failed in seed_team_in_db");
         let now = time_utils::to_db_datetime(Utc::now());
         let active = TeamActiveModel {
-            id: ActiveValue::Set(team_id),
+            id: ActiveValue::Set(team_id.into()),
             name: ActiveValue::Set(format!("test-team-{}", team_id)),
             allowed_countries: ActiveValue::Set(None),
             blocked_countries: ActiveValue::Set(None),
@@ -485,7 +484,7 @@ mod tests {
     #[test]
     fn test_validate_request_happy_path_minimal() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(3600),
         };
@@ -495,7 +494,7 @@ mod tests {
     #[test]
     fn test_validate_request_happy_path_all_scopes() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string(), "write".to_string(), "admin".to_string()],
             expires_in_secs: Some(86400),
         };
@@ -505,7 +504,7 @@ mod tests {
     #[test]
     fn test_validate_request_default_expires_ok() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["admin".to_string()],
             expires_in_secs: None,
         };
@@ -515,7 +514,7 @@ mod tests {
     #[test]
     fn test_validate_request_max_expires_ok() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(MAX_EXPIRES_IN_SECS),
         };
@@ -525,7 +524,7 @@ mod tests {
     #[test]
     fn test_validate_request_nil_team_id_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::nil(),
+            team_id: crate::domain::id::Id::nil(),
             scopes: vec!["read".to_string()],
             expires_in_secs: None,
         };
@@ -536,7 +535,7 @@ mod tests {
     #[test]
     fn test_validate_request_empty_scopes_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec![],
             expires_in_secs: None,
         };
@@ -547,7 +546,7 @@ mod tests {
     #[test]
     fn test_validate_request_invalid_scope_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["superuser".to_string()],
             expires_in_secs: None,
         };
@@ -559,7 +558,7 @@ mod tests {
     #[test]
     fn test_validate_request_mix_valid_invalid_scope_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string(), "delete".to_string()],
             expires_in_secs: None,
         };
@@ -570,7 +569,7 @@ mod tests {
     #[test]
     fn test_validate_request_zero_expires_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(0),
         };
@@ -581,7 +580,7 @@ mod tests {
     #[test]
     fn test_validate_request_negative_expires_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(-1),
         };
@@ -592,7 +591,7 @@ mod tests {
     #[test]
     fn test_validate_request_over_max_expires_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(MAX_EXPIRES_IN_SECS + 1),
         };
@@ -607,7 +606,7 @@ mod tests {
         let oversized_scopes: Vec<String> =
             std::iter::repeat_n("read".to_string(), MAX_SCOPES_LEN + 1).collect();
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: oversized_scopes,
             expires_in_secs: None,
         };
@@ -625,7 +624,7 @@ mod tests {
     fn test_validate_request_scopes_at_limit_ok() {
         let scopes: Vec<String> = std::iter::repeat_n("read".to_string(), MAX_SCOPES_LEN).collect();
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes,
             expires_in_secs: None,
         };
@@ -638,7 +637,7 @@ mod tests {
     #[test]
     fn test_validate_request_empty_string_scope_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["".to_string()],
             expires_in_secs: None,
         };
@@ -668,7 +667,7 @@ mod tests {
     #[test]
     fn test_validate_request_case_sensitive_scope_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["Read".to_string()],
             expires_in_secs: None,
         };
@@ -684,7 +683,7 @@ mod tests {
     fn test_validate_request_duplicate_scopes_ok() {
         // 重复 scope 不算错误（garrison 端去重，crawlrs 不强制唯一）
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string(), "read".to_string()],
             expires_in_secs: None,
         };
@@ -743,7 +742,7 @@ mod tests {
         }
         let auth_state = make_read_only_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: None,
         };
@@ -762,12 +761,12 @@ mod tests {
         }
         let auth_state = AuthState::new(
             create_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::denied(),
         );
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: None,
         };
@@ -786,7 +785,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: Uuid::nil(),
+            team_id: crate::domain::id::Id::nil(),
             scopes: vec!["read".to_string()],
             expires_in_secs: None,
         };
@@ -805,7 +804,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec![],
             expires_in_secs: None,
         };
@@ -824,7 +823,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["superuser".to_string()],
             expires_in_secs: None,
         };
@@ -843,7 +842,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(0),
         };
@@ -862,7 +861,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(-100),
         };
@@ -881,7 +880,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(MAX_EXPIRES_IN_SECS + 1),
         };
@@ -909,7 +908,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_in_secs: None,
         };
@@ -944,7 +943,7 @@ mod tests {
             return;
         }
         let auth_state = make_admin_auth_state();
-        let target_team_id = Uuid::new_v4();
+        let target_team_id = crate::domain::id::Id::generate();
         // handler 步骤 3 的 `check_team_exists` 要求 team 存在，
         // 必须在调用 create_api_key 前预置 team 记录，否则返回 500。
         seed_team_in_db(&auth_state.pool, target_team_id).await;
@@ -987,7 +986,7 @@ mod tests {
             .await
             .unwrap()
             .expect("api_key mapping must exist in DB after create");
-        assert_eq!(row.team_id, target_team_id);
+        assert_eq!(target_team_id, row.team_id);
         assert_eq!(row.key, data.api_key.split_once('.').unwrap().0);
 
         reset_garrison_dao_for_test();
@@ -1008,7 +1007,7 @@ mod tests {
             return;
         }
         let auth_state = make_admin_auth_state();
-        let target_team_id = Uuid::new_v4();
+        let target_team_id = crate::domain::id::Id::generate();
         seed_team_in_db(&auth_state.pool, target_team_id).await;
         let req = CreateApiKeyRequest {
             team_id: target_team_id,
@@ -1040,7 +1039,7 @@ mod tests {
             return;
         }
         let auth_state = make_admin_auth_state();
-        let target_team_id = Uuid::new_v4();
+        let target_team_id = crate::domain::id::Id::generate();
         seed_team_in_db(&auth_state.pool, target_team_id).await;
         let req = CreateApiKeyRequest {
             team_id: target_team_id,
@@ -1072,7 +1071,7 @@ mod tests {
             return;
         }
         let auth_state = make_admin_auth_state();
-        let target_team_id = Uuid::new_v4();
+        let target_team_id = crate::domain::id::Id::generate();
         seed_team_in_db(&auth_state.pool, target_team_id).await;
         let req = CreateApiKeyRequest {
             team_id: target_team_id,
@@ -1183,8 +1182,8 @@ mod tests {
     fn test_create_api_key_response_serialize() {
         let resp = CreateApiKeyResponse {
             api_key: "abc123.def456".to_string(),
-            api_key_id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            api_key_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate().into(),
             scopes: vec!["read".to_string()],
             expires_at: "2026-08-25T12:00:00Z".to_string(),
         };

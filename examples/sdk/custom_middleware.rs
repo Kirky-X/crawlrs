@@ -25,7 +25,6 @@ use log::info;
 use sdforge::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use uuid::Uuid;
 
 // ============================================================================
 // 认证状态 — 通过 Extension 注入到 handler
@@ -38,9 +37,9 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 struct AuthState {
     /// 团队 ID
-    team_id: Uuid,
+    team_id: crawlrs::domain::id::Id,
     /// API Key ID
-    api_key_id: Uuid,
+    api_key_id: crawlrs::domain::id::Id,
     /// 角色列表
     roles: Vec<String>,
 }
@@ -56,8 +55,8 @@ struct CreateTaskRequest {
 
 #[derive(Debug, Serialize)]
 struct CreateTaskResponse {
-    id: Uuid,
-    team_id: Uuid,
+    id: crawlrs::domain::id::Id,
+    team_id: crawlrs::domain::id::Id,
     url: String,
 }
 
@@ -101,7 +100,7 @@ async fn create_task_with_auth(
     }
 
     Ok(CreateTaskResponse {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate(),
         team_id: auth_state.team_id,
         url: req.url,
     })
@@ -148,8 +147,12 @@ async fn api_key_auth_middleware(mut req: Request<Body>, next: Next) -> Response
 
     // 构造认证状态并注入 Extension
     let auth_state = AuthState {
-        team_id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
-        api_key_id: Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
+        team_id: ("00000000-0000-0000-0000-000000000001")
+            .parse::<crawlrs::domain::id::Id>()
+            .unwrap(),
+        api_key_id: ("00000000-0000-0000-0000-000000000002")
+            .parse::<crawlrs::domain::id::Id>()
+            .unwrap(),
         roles: vec!["writer".to_string()],
     };
 

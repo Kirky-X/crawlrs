@@ -5,7 +5,6 @@ use crate::domain::models::Webhook;
 use crate::domain::repositories::task_repository::RepositoryError;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use std::sync::Arc;
-use uuid::Uuid;
 
 pub struct CreateWebhookUseCase<R: WebhookRepository> {
     repo: Arc<R>,
@@ -16,10 +15,14 @@ impl<R: WebhookRepository> CreateWebhookUseCase<R> {
         Self { repo }
     }
 
-    pub async fn execute(&self, team_id: Uuid, url: String) -> Result<Webhook, RepositoryError> {
+    pub async fn execute(
+        &self,
+        team_id: crate::domain::id::Id,
+        url: String,
+    ) -> Result<Webhook, RepositoryError> {
         let now = chrono::Utc::now();
         let webhook = Webhook {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             team_id,
             url,
             created_at: now,
@@ -48,11 +51,17 @@ mod tests {
             Ok(webhook.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Webhook>, RepositoryError> {
             Ok(None)
         }
 
-        async fn find_by_team_id(&self, _team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+        async fn find_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<Vec<Webhook>, RepositoryError> {
             Ok(vec![])
         }
     }
@@ -66,11 +75,17 @@ mod tests {
             Err(RepositoryError::Database(anyhow::anyhow!("repo down")))
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Webhook>, RepositoryError> {
             Ok(None)
         }
 
-        async fn find_by_team_id(&self, _team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+        async fn find_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<Vec<Webhook>, RepositoryError> {
             Ok(vec![])
         }
     }
@@ -92,7 +107,7 @@ mod tests {
         let repo = Arc::new(MockWebhookRepository::default());
         let use_case = CreateWebhookUseCase::new(repo.clone());
 
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let url = "https://example.com/webhook".to_string();
         let before = chrono::Utc::now();
 
@@ -118,7 +133,7 @@ mod tests {
         let repo = Arc::new(MockWebhookRepository::default());
         let use_case = CreateWebhookUseCase::new(repo);
 
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let w1 = use_case
             .execute(team_id, "https://a.com".to_string())
             .await
@@ -140,7 +155,10 @@ mod tests {
         let use_case = CreateWebhookUseCase::new(repo);
 
         let result = use_case
-            .execute(Uuid::new_v4(), "https://example.com".to_string())
+            .execute(
+                crate::domain::id::Id::generate(),
+                "https://example.com".to_string(),
+            )
             .await;
 
         assert!(result.is_err(), "should propagate repo error");
@@ -165,7 +183,7 @@ mod tests {
         let repo = Arc::new(MockWebhookRepository::default());
         let use_case = CreateWebhookUseCase::new(repo.clone());
 
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let result = use_case.execute(team_id, String::new()).await;
 
         assert!(result.is_ok(), "empty url should still create");
@@ -180,11 +198,14 @@ mod tests {
         let use_case = CreateWebhookUseCase::new(repo.clone());
 
         let result = use_case
-            .execute(Uuid::nil(), "https://example.com".to_string())
+            .execute(
+                crate::domain::id::Id::nil(),
+                "https://example.com".to_string(),
+            )
             .await;
 
         assert!(result.is_ok(), "nil team_id should still create");
-        assert_eq!(result.unwrap().team_id, Uuid::nil());
+        assert_eq!(result.unwrap().team_id, crate::domain::id::Id::nil());
         assert_eq!(repo.created_count.load(Ordering::SeqCst), 1);
     }
 }

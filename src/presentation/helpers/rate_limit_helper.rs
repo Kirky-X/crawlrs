@@ -23,7 +23,7 @@ use std::fmt::Display;
 /// This helper consolidates the rate limit check logic that was repeated
 /// across multiple handlers (crawl, scrape, search, webhook).
 ///
-/// 性能 `api_key` 参数接受 `impl Display`，handler 可直接传 `Uuid`。
+/// 性能 `api_key` 参数接受 `impl Display`，handler 可直接传 `crate::domain::id::Id`。
 /// **注意**：这并未消除 `String` 分配 — `helper` 内部仍调用 `api_key.to_string()`。
 /// 真正的变化是把分配从 handler 挪到 helper，handler 调用点更简洁（删除中间变量）。
 /// 若要真正消除分配，需要 `RateLimitingService::check_rate_limit` 接受 `&dyn Display`
@@ -37,7 +37,7 @@ use std::fmt::Display;
 /// # Arguments
 ///
 /// * `service` - The rate limiting service (implements RateLimitingService trait)
-/// * `api_key` - The API key to check (any `Display` type, e.g. `Uuid` or `&str`)
+/// * `api_key` - The API key to check (any `Display` type, e.g. `crate::domain::id::Id` or `&str`)
 /// * `endpoint` - The endpoint path being accessed
 ///
 /// # Returns
@@ -115,7 +115,7 @@ where
 /// # Arguments
 ///
 /// * `service` - The rate limiting service (implements RateLimitingService trait)
-/// * `api_key` - The API key to check (any `Display` type, e.g. `Uuid` or `&str`)
+/// * `api_key` - The API key to check (any `Display` type, e.g. `crate::domain::id::Id` or `&str`)
 /// * `endpoint` - The endpoint path being accessed
 ///
 /// # Returns
@@ -178,7 +178,6 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use uuid::Uuid;
 
     /// Which error variant the mock should return from `check_rate_limit`.
     #[derive(Clone, Copy)]
@@ -250,14 +249,14 @@ mod tests {
 
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<RateLimitConfig, RateLimitingError> {
             Ok(RateLimitConfig::default())
         }
 
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -272,37 +271,37 @@ mod tests {
     impl ConcurrencyControlService for MockRateLimitingService {
         async fn check_team_concurrency(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             Ok(ConcurrencyResult::Allowed)
         }
 
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
         async fn get_team_current_concurrency(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
 
         async fn get_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
             Ok(ConcurrencyConfig::default())
         }
 
         async fn update_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -311,7 +310,10 @@ mod tests {
 
     #[async_trait]
     impl BacklogService for MockRateLimitingService {
-        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+        async fn process_backlog_tasks(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
     }
@@ -320,25 +322,28 @@ mod tests {
     impl QuotaService for MockRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: crate::domain::models::CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
-        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(1000)
         }
 
         async fn refund_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }

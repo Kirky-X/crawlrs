@@ -22,7 +22,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use uuid::Uuid;
 
 use crawlrs::domain::models::credits_model::{CreditsTransaction, CreditsTransactionType};
 use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
@@ -47,7 +46,7 @@ use crawlrs::infrastructure::services::limiteron_service::{
 // === Mock Task Repository ===
 
 struct MockTaskRepository {
-    tasks: Arc<std::sync::Mutex<HashMap<Uuid, Task>>>,
+    tasks: Arc<std::sync::Mutex<HashMap<crawlrs::domain::id::Id, Task>>>,
     should_fail: Arc<AtomicBool>,
 }
 
@@ -80,7 +79,10 @@ impl TaskRepository for MockTaskRepository {
         Ok(task.clone())
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         if self.should_fail.load(Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!("mock error")));
         }
@@ -97,27 +99,30 @@ impl TaskRepository for MockTaskRepository {
         Ok(task.clone())
     }
 
-    async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn acquire_next(
+        &self,
+        _worker_id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
 
     async fn mark_completed(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crawlrs::domain::id::Id,
+        _lock_token: Option<crawlrs::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         Ok(1)
     }
 
     async fn mark_failed(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crawlrs::domain::id::Id,
+        _lock_token: Option<crawlrs::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         Ok(1)
     }
 
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+    async fn mark_cancelled(&self, _id: crawlrs::domain::id::Id) -> Result<u64, RepositoryError> {
         Ok(1)
     }
 
@@ -136,7 +141,10 @@ impl TaskRepository for MockTaskRepository {
         Ok(0)
     }
 
-    async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn cancel_tasks_by_crawl_id(
+        &self,
+        _crawl_id: crawlrs::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 
@@ -144,7 +152,10 @@ impl TaskRepository for MockTaskRepository {
         Ok(0)
     }
 
-    async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+    async fn find_by_crawl_id(
+        &self,
+        _crawl_id: crawlrs::domain::id::Id,
+    ) -> Result<Vec<Task>, RepositoryError> {
         Ok(vec![])
     }
 
@@ -158,17 +169,23 @@ impl TaskRepository for MockTaskRepository {
 
     async fn batch_cancel(
         &self,
-        _task_ids: Vec<Uuid>,
-        _team_id: Uuid,
+        _task_ids: Vec<crawlrs::domain::id::Id>,
+        _team_id: crawlrs::domain::id::Id,
         _force: bool,
-    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+    ) -> Result<
+        (
+            Vec<crawlrs::domain::id::Id>,
+            Vec<(crawlrs::domain::id::Id, String)>,
+        ),
+        RepositoryError,
+    > {
         Ok((vec![], vec![]))
     }
 
     async fn renew_lock(
         &self,
-        _task_id: Uuid,
-        _worker_id: Uuid,
+        _task_id: crawlrs::domain::id::Id,
+        _worker_id: crawlrs::domain::id::Id,
         _extend_seconds: i64,
     ) -> Result<bool, RepositoryError> {
         Ok(true)
@@ -209,14 +226,17 @@ impl TasksBacklogRepository for MockTasksBacklogRepository {
         Ok(backlog.clone())
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        id: crawlrs::domain::id::Id,
+    ) -> Result<Option<TasksBacklog>, RepositoryError> {
         let backlogs = self.backlogs.lock().unwrap();
         Ok(backlogs.iter().find(|b| b.id == id).cloned())
     }
 
     async fn find_by_task_id(
         &self,
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
     ) -> Result<Option<TasksBacklog>, RepositoryError> {
         let backlogs = self.backlogs.lock().unwrap();
         Ok(backlogs.iter().find(|b| b.task_id == task_id).cloned())
@@ -235,7 +255,7 @@ impl TasksBacklogRepository for MockTasksBacklogRepository {
         }
     }
 
-    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError> {
+    async fn delete(&self, id: crawlrs::domain::id::Id) -> Result<(), RepositoryError> {
         let mut backlogs = self.backlogs.lock().unwrap();
         backlogs.retain(|b| b.id != id);
         Ok(())
@@ -243,7 +263,7 @@ impl TasksBacklogRepository for MockTasksBacklogRepository {
 
     async fn get_pending_tasks(
         &self,
-        team_id: Option<Uuid>,
+        team_id: Option<crawlrs::domain::id::Id>,
         limit: Option<u64>,
     ) -> Result<Vec<TasksBacklog>, RepositoryError> {
         if self.should_fail.load(Ordering::SeqCst) {
@@ -284,7 +304,7 @@ impl TasksBacklogRepository for MockTasksBacklogRepository {
 
     async fn count_by_status(
         &self,
-        _team_id: Option<Uuid>,
+        _team_id: Option<crawlrs::domain::id::Id>,
         status: TasksBacklogStatus,
     ) -> Result<i64, RepositoryError> {
         let backlogs = self.backlogs.lock().unwrap();
@@ -293,7 +313,7 @@ impl TasksBacklogRepository for MockTasksBacklogRepository {
 
     async fn update_status_batch(
         &self,
-        ids: &[Uuid],
+        ids: &[crawlrs::domain::id::Id],
         status: TasksBacklogStatus,
     ) -> Result<u64, RepositoryError> {
         let mut backlogs = self.backlogs.lock().unwrap();
@@ -312,7 +332,7 @@ impl TasksBacklogRepository for MockTasksBacklogRepository {
 // === Mock Credits Repository ===
 
 struct MockCreditsRepository {
-    balances: Arc<std::sync::Mutex<HashMap<Uuid, i64>>>,
+    balances: Arc<std::sync::Mutex<HashMap<crawlrs::domain::id::Id, i64>>>,
     should_fail: Arc<AtomicBool>,
     deduct_count: Arc<std::sync::atomic::AtomicU32>,
 }
@@ -326,7 +346,7 @@ impl MockCreditsRepository {
         }
     }
 
-    fn with_balance(team_id: Uuid, balance: i64) -> Self {
+    fn with_balance(team_id: crawlrs::domain::id::Id, balance: i64) -> Self {
         let mut balances = HashMap::new();
         balances.insert(team_id, balance);
         Self {
@@ -351,7 +371,10 @@ impl MockCreditsRepository {
 
 #[async_trait]
 impl CreditsRepository for MockCreditsRepository {
-    async fn get_balance(&self, team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+    async fn get_balance(
+        &self,
+        team_id: crawlrs::domain::id::Id,
+    ) -> Result<i64, CreditsRepositoryError> {
         if self.should_fail.load(Ordering::SeqCst) {
             return Err(CreditsRepositoryError::DatabaseError(
                 "mock error".to_string(),
@@ -363,11 +386,11 @@ impl CreditsRepository for MockCreditsRepository {
 
     async fn deduct_credits(
         &self,
-        team_id: Uuid,
+        team_id: crawlrs::domain::id::Id,
         amount: i64,
         _transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crawlrs::domain::id::Id>,
     ) -> Result<(), CreditsRepositoryError> {
         if self.should_fail.load(Ordering::SeqCst) {
             return Err(CreditsRepositoryError::DatabaseError(
@@ -383,11 +406,11 @@ impl CreditsRepository for MockCreditsRepository {
 
     async fn add_credits(
         &self,
-        team_id: Uuid,
+        team_id: crawlrs::domain::id::Id,
         amount: i64,
         _transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crawlrs::domain::id::Id>,
     ) -> Result<i64, CreditsRepositoryError> {
         if self.should_fail.load(Ordering::SeqCst) {
             return Err(CreditsRepositoryError::DatabaseError(
@@ -402,7 +425,7 @@ impl CreditsRepository for MockCreditsRepository {
 
     async fn get_transaction_history(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _limit: Option<u32>,
     ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
         Ok(vec![])
@@ -410,7 +433,7 @@ impl CreditsRepository for MockCreditsRepository {
 
     async fn initialize_team_credits(
         &self,
-        team_id: Uuid,
+        team_id: crawlrs::domain::id::Id,
         initial_balance: i64,
     ) -> Result<i64, CreditsRepositoryError> {
         let mut balances = self.balances.lock().unwrap();
@@ -423,12 +446,12 @@ impl CreditsRepository for MockCreditsRepository {
 
 fn make_test_task() -> Task {
     Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
-        team_id: Uuid::new_v4(),
-        api_key_id: Uuid::new_v4(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
+        api_key_id: crawlrs::domain::id::Id::generate().into(),
         url: "https://example.com".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
@@ -540,7 +563,7 @@ async fn test_new_preserves_config() {
     let service = make_service(task_repo, backlog_repo, credits_repo, config).await;
 
     // Verify config is returned via the trait accessor
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let rl_config = service.get_team_rate_limit_config(team_id).await.unwrap();
     assert_eq!(rl_config.requests_per_second, 42);
 
@@ -601,7 +624,7 @@ async fn test_get_team_rate_limit_config_returns_stored_config() {
 
     let service = make_service(task_repo, backlog_repo, credits_repo, config).await;
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let result = service.get_team_rate_limit_config(team_id).await;
     assert!(result.is_ok());
     let returned = result.unwrap();
@@ -623,7 +646,7 @@ async fn test_update_team_rate_limit_config_is_noop_returns_ok() {
     )
     .await;
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let new_config = RateLimitConfig::default();
     let result = service
         .update_team_rate_limit_config(team_id, new_config)
@@ -664,8 +687,8 @@ async fn test_check_team_concurrency_disabled_returns_allowed() {
     )
     .await;
 
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let result = service.check_team_concurrency(team_id, task_id).await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), ConcurrencyResult::Allowed);
@@ -684,8 +707,8 @@ async fn test_check_team_concurrency_task_not_found_returns_database_error() {
 
     let service = make_service(task_repo, backlog_repo, credits_repo, config).await;
 
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let result = service.check_team_concurrency(team_id, task_id).await;
     assert!(result.is_err());
     assert!(matches!(
@@ -706,8 +729,8 @@ async fn test_check_team_concurrency_task_repo_failure_returns_database_error() 
 
     let service = make_service(task_repo, backlog_repo, credits_repo, config).await;
 
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let result = service.check_team_concurrency(team_id, task_id).await;
     assert!(result.is_err());
     assert!(matches!(
@@ -800,7 +823,7 @@ async fn test_get_team_current_concurrency_returns_zero() {
     )
     .await;
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let result = service.get_team_current_concurrency(team_id).await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 0);
@@ -819,7 +842,7 @@ async fn test_get_team_concurrency_config_returns_stored_config() {
 
     let service = make_service(task_repo, backlog_repo, credits_repo, config).await;
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let result = service.get_team_concurrency_config(team_id).await;
     assert!(result.is_ok());
     let returned = result.unwrap();
@@ -841,7 +864,7 @@ async fn test_update_team_concurrency_config_is_noop_returns_ok() {
     )
     .await;
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let new_config = ConcurrencyConfig::default();
     let result = service
         .update_team_concurrency_config(team_id, new_config)
@@ -862,8 +885,8 @@ async fn test_release_team_concurrency_slot_returns_ok() {
     )
     .await;
 
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let result = service
         .release_team_concurrency_slot(team_id, task_id)
         .await;
@@ -885,8 +908,8 @@ async fn test_release_team_concurrency_slot_processes_backlog() {
     )
     .await;
 
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_id = crawlrs::domain::id::Id::generate();
     let result = service
         .release_team_concurrency_slot(team_id, task_id)
         .await;
@@ -908,7 +931,7 @@ async fn test_process_backlog_tasks_empty_returns_zero() {
     )
     .await;
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let result = service.process_backlog_tasks(team_id).await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 0);
@@ -926,7 +949,7 @@ async fn test_process_backlog_tasks_repo_failure_returns_database_error() {
 
     let service = make_service(task_repo, backlog_repo, credits_repo, config).await;
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let result = service.process_backlog_tasks(team_id).await;
     assert!(result.is_err());
     assert!(matches!(
@@ -943,9 +966,9 @@ async fn test_process_backlog_tasks_skips_expired_entries() {
     let backlog_repo = Arc::new(MockTasksBacklogRepository::new());
     let credits_repo = Arc::new(MockCreditsRepository::new());
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let mut expired_backlog = TasksBacklog::new(
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
         team_id,
         "scrape".to_string(),
         1,
@@ -977,7 +1000,7 @@ async fn test_process_backlog_tasks_skips_expired_entries() {
 
 #[tokio::test]
 async fn test_get_quota_balance_returns_stored_balance() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let task_repo = Arc::new(MockTaskRepository::new());
     let backlog_repo = Arc::new(MockTasksBacklogRepository::new());
     let credits_repo = Arc::new(MockCreditsRepository::with_balance(team_id, 500));
@@ -997,7 +1020,7 @@ async fn test_get_quota_balance_returns_stored_balance() {
 
 #[tokio::test]
 async fn test_get_quota_balance_repo_failure_returns_credits_error() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let task_repo = Arc::new(MockTaskRepository::new());
     let backlog_repo = Arc::new(MockTasksBacklogRepository::new());
     let credits_repo = Arc::new(MockCreditsRepository::failing());
@@ -1020,7 +1043,7 @@ async fn test_get_quota_balance_repo_failure_returns_credits_error() {
 
 #[tokio::test]
 async fn test_check_and_deduct_quota_sufficient_balance_succeeds() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let task_repo = Arc::new(MockTaskRepository::new());
     let backlog_repo = Arc::new(MockTasksBacklogRepository::new());
     let credits_repo = Arc::new(MockCreditsRepository::with_balance(team_id, 100));
@@ -1039,7 +1062,7 @@ async fn test_check_and_deduct_quota_sufficient_balance_succeeds() {
             30,
             CreditsTransactionType::Scrape,
             "test deduction".to_string(),
-            Some(Uuid::new_v4()),
+            Some(crawlrs::domain::id::Id::generate().into()),
         )
         .await;
     assert!(result.is_ok());
@@ -1052,7 +1075,7 @@ async fn test_check_and_deduct_quota_sufficient_balance_succeeds() {
 
 #[tokio::test]
 async fn test_check_and_deduct_quota_insufficient_balance_returns_exceeded() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let task_repo = Arc::new(MockTaskRepository::new());
     let backlog_repo = Arc::new(MockTasksBacklogRepository::new());
     let credits_repo = Arc::new(MockCreditsRepository::with_balance(team_id, 10));
@@ -1089,7 +1112,7 @@ async fn test_check_and_deduct_quota_insufficient_balance_returns_exceeded() {
 
 #[tokio::test]
 async fn test_check_and_deduct_quota_repo_failure_returns_credits_error() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let task_repo = Arc::new(MockTaskRepository::new());
     let backlog_repo = Arc::new(MockTasksBacklogRepository::new());
     let credits_repo = Arc::new(MockCreditsRepository::failing());
@@ -1120,7 +1143,7 @@ async fn test_check_and_deduct_quota_repo_failure_returns_credits_error() {
 
 #[tokio::test]
 async fn test_check_and_deduct_quota_exact_balance_succeeds() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let task_repo = Arc::new(MockTaskRepository::new());
     let backlog_repo = Arc::new(MockTasksBacklogRepository::new());
     let credits_repo = Arc::new(MockCreditsRepository::with_balance(team_id, 50));
@@ -1149,7 +1172,7 @@ async fn test_check_and_deduct_quota_exact_balance_succeeds() {
 
 #[tokio::test]
 async fn test_check_and_deduct_quota_zero_amount_succeeds() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let task_repo = Arc::new(MockTaskRepository::new());
     let backlog_repo = Arc::new(MockTasksBacklogRepository::new());
     let credits_repo = Arc::new(MockCreditsRepository::with_balance(team_id, 100));
@@ -1215,7 +1238,10 @@ async fn test_composite_trait_dispatches_check_team_concurrency() {
 
     let composite: Arc<dyn RateLimitingService> = Arc::new(service);
     let result = composite
-        .check_team_concurrency(Uuid::new_v4(), Uuid::new_v4())
+        .check_team_concurrency(
+            crawlrs::domain::id::Id::generate(),
+            crawlrs::domain::id::Id::generate(),
+        )
         .await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), ConcurrencyResult::Allowed);
@@ -1235,14 +1261,16 @@ async fn test_composite_trait_dispatches_process_backlog_tasks() {
     .await;
 
     let composite: Arc<dyn RateLimitingService> = Arc::new(service);
-    let result = composite.process_backlog_tasks(Uuid::new_v4()).await;
+    let result = composite
+        .process_backlog_tasks(crawlrs::domain::id::Id::generate())
+        .await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), 0);
 }
 
 #[tokio::test]
 async fn test_composite_trait_dispatches_check_and_deduct_quota() {
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let task_repo = Arc::new(MockTaskRepository::new());
     let backlog_repo = Arc::new(MockTasksBacklogRepository::new());
     let credits_repo = Arc::new(MockCreditsRepository::with_balance(team_id, 100));

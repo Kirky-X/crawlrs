@@ -3,7 +3,6 @@ use crate::common::test_helpers::create_test_db_pool;
 use crate::domain::models::webhook_model::{WebhookEventType, WebhookStatus};
 use crate::domain::retention_policy::RetentionBatchPolicy;
 use chrono::{Duration, Utc};
-use uuid::Uuid;
 
 /// 序列化清理测试：共享 testcontainers 容器下，多个清理用例并行时会
 /// 互相删除对方刚插入的数据（retention 覆盖全部行）。
@@ -26,9 +25,9 @@ fn make_event(
         _ => None,
     };
     WebhookEvent::with_all_fields(
-        Uuid::new_v4(),
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         WebhookEventType::CrawlCompleted,
         serde_json::json!({"crawl_id": "c-1"}),
         "https://example.com/hook".to_string(),
@@ -99,7 +98,7 @@ async fn cleanup_terminal_removes_old_terminal_keeps_active() {
     );
 
     // 活事件不仅要"没被删"，还要仍可被 worker 经 find_pending 捞取投递
-    let fetchable_ids: Vec<Uuid> = repo
+    let fetchable_ids: Vec<crate::domain::id::Id> = repo
         .find_pending(10_000)
         .await
         .expect("find_pending failed")

@@ -12,7 +12,6 @@
 use axum::{response::Response, Extension};
 use sdforge::prelude::*;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
@@ -54,7 +53,7 @@ submit!(RouteRegistration::new(
 )]
 #[allow(clippy::result_large_err)] // axum handler 惯用签名：Err 变体为 Response
 async fn scrape_status_route(
-    id: Uuid,
+    id: crate::domain::id::Id,
     #[state] task_repo: Arc<dyn TaskRepository>,
     #[state] result_repo: Arc<dyn ScrapeResultRepository>,
     #[state] auth_state: AuthState,

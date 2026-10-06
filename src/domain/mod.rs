@@ -14,7 +14,10 @@
 /// 体现了纯粹的业务逻辑和业务规则。
 pub mod auth;
 pub mod errors;
+pub mod id;
 pub mod models;
 pub mod repositories;
 pub mod services;
 pub mod use_cases;
+
+pub use id::Id;

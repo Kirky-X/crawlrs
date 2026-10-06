@@ -13,7 +13,6 @@ use crawlrs::domain::repositories::credits_repository::CreditsRepository;
 use crawlrs::infrastructure::database::entities::{credits, credits_transactions};
 use crawlrs::infrastructure::repositories::credits_repo_impl::CreditsRepositoryImpl;
 use dbnexus::sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
-use uuid::Uuid;
 
 /// 测试新团队的余额查询：应自动初始化为 0
 #[tokio::test]
@@ -96,8 +95,8 @@ async fn test_get_transaction_history_returns_records() {
     let team_id = app.team_id;
 
     // 直接插入两条交易记录（绕过存储过程）
-    let txn1_id = Uuid::new_v4();
-    let txn2_id = Uuid::new_v4();
+    let txn1_id = crawlrs::domain::id::Id::generate();
+    let txn2_id = crawlrs::domain::id::Id::generate();
     let now = chrono::Utc::now().fixed_offset();
 
     let session = app
@@ -108,8 +107,8 @@ async fn test_get_transaction_history_returns_records() {
     let conn = session.connection().expect("Failed to get connection");
 
     credits_transactions::ActiveModel {
-        id: Set(txn1_id),
-        team_id: Set(team_id),
+        id: Set(txn1_id.into()),
+        team_id: Set(team_id.into()),
         amount: Set(-10),
         transaction_type: Set("scrape".to_string()),
         description: Set("Test scrape deduction".to_string()),
@@ -121,8 +120,8 @@ async fn test_get_transaction_history_returns_records() {
     .expect("Failed to insert txn1");
 
     credits_transactions::ActiveModel {
-        id: Set(txn2_id),
-        team_id: Set(team_id),
+        id: Set(txn2_id.into()),
+        team_id: Set(team_id.into()),
         amount: Set(100),
         transaction_type: Set("subscription".to_string()),
         description: Set("Test subscription credit".to_string()),
@@ -183,8 +182,8 @@ async fn test_get_transaction_history_no_limit() {
     let conn = session.connection().expect("Failed to get connection");
 
     credits_transactions::ActiveModel {
-        id: Set(Uuid::new_v4()),
-        team_id: Set(team_id),
+        id: Set(crawlrs::domain::id::Id::generate().into()),
+        team_id: Set(team_id.into()),
         amount: Set(50),
         transaction_type: Set("refund".to_string()),
         description: Set("Refund test".to_string()),
@@ -320,7 +319,7 @@ async fn test_deduct_credits_with_reference_id() {
     let app = create_test_app_no_worker().await;
     let repo = CreditsRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let reference_id = Uuid::new_v4();
+    let reference_id = crawlrs::domain::id::Id::generate();
 
     repo.initialize_team_credits(team_id, 500)
         .await
@@ -383,7 +382,7 @@ async fn tc_get_transaction_history_returns_empty_for_team_without_transactions(
     let repo = CreditsRepositoryImpl::new(app.db_pool.clone());
 
     // 使用一个全新的、没有交易记录的团队 ID
-    let unknown_team_id = Uuid::new_v4();
+    let unknown_team_id = crawlrs::domain::id::Id::generate();
     let history = repo
         .get_transaction_history(unknown_team_id, Some(10))
         .await
@@ -401,7 +400,7 @@ async fn tc_get_balance_multiple_teams_independent() {
     let app = create_test_app_no_worker().await;
     let repo = CreditsRepositoryImpl::new(app.db_pool.clone());
     let team1_id = app.team_id;
-    let team2_id = Uuid::new_v4();
+    let team2_id = crawlrs::domain::id::Id::generate();
 
     // 先为 team2 创建一个 team 记录（FK 约束）
     let session = app
@@ -455,7 +454,10 @@ async fn tc_get_balance_multiple_teams_independent() {
 }
 
 /// 辅助函数：清理指定 team_id 的 credits 和 credits_transactions
-async fn cleanup_credits(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
+async fn cleanup_credits(
+    app: &super::super::helpers::test_app::TestApp,
+    team_id: crawlrs::domain::id::Id,
+) {
     let session = app
         .db_pool
         .get_session("admin")

@@ -11,7 +11,6 @@
 #![cfg(feature = "teams")]
 
 use chrono::Utc;
-use uuid::Uuid;
 
 use crawlrs::application::dto::geo_restriction_request::{
     TeamGeoRestrictionsResponse, UpdateTeamGeoRestrictionsRequest,
@@ -26,7 +25,7 @@ use crawlrs::presentation::handlers::team_handler::{TeamInfoResponse, TeamUsageR
 #[test]
 fn tc_team_info_response_serialization_round_trip() {
     let response = TeamInfoResponse {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         name: "Test Team".to_string(),
         credits_balance: 1000,
         total_tasks: 50,
@@ -47,7 +46,7 @@ fn tc_team_info_response_serialization_round_trip() {
 #[test]
 fn tc_team_info_response_json_field_names() {
     let response = TeamInfoResponse {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         name: "Fields Team".to_string(),
         credits_balance: -500,
         total_tasks: 0,
@@ -65,7 +64,7 @@ fn tc_team_info_response_json_field_names() {
 #[test]
 fn tc_team_info_response_negative_balance() {
     let response = TeamInfoResponse {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         name: "Negative".to_string(),
         credits_balance: -100,
         total_tasks: 5,
@@ -81,7 +80,7 @@ fn tc_team_info_response_negative_balance() {
 #[test]
 fn tc_team_info_response_clone_preserves_fields() {
     let response = TeamInfoResponse {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         name: "Clone Team".to_string(),
         credits_balance: 250,
         total_tasks: 10,
@@ -102,7 +101,7 @@ fn tc_team_info_response_clone_preserves_fields() {
 #[test]
 fn tc_team_usage_response_serialization_round_trip() {
     let response = TeamUsageResponse {
-        team_id: Uuid::new_v4(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         period: "30d".to_string(),
         total_requests: 1000,
         successful_requests: 950,
@@ -124,7 +123,7 @@ fn tc_team_usage_response_serialization_round_trip() {
 #[test]
 fn tc_team_usage_response_json_fields() {
     let response = TeamUsageResponse {
-        team_id: Uuid::new_v4(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         period: "7d".to_string(),
         total_requests: 100,
         successful_requests: 90,
@@ -142,7 +141,7 @@ fn tc_team_usage_response_json_fields() {
 #[test]
 fn tc_team_usage_response_zero_values() {
     let response = TeamUsageResponse {
-        team_id: Uuid::nil(),
+        team_id: crawlrs::domain::id::Id::nil(),
         period: String::new(),
         total_requests: 0,
         successful_requests: 0,
@@ -152,14 +151,14 @@ fn tc_team_usage_response_zero_values() {
     };
     let json = serde_json::to_string(&response).expect("must serialize");
     let parsed: TeamUsageResponse = serde_json::from_str(&json).expect("must deserialize");
-    assert_eq!(parsed.team_id, Uuid::nil());
+    assert_eq!(parsed.team_id, crawlrs::domain::id::Id::nil());
     assert_eq!(parsed.total_requests, 0);
 }
 
 #[test]
 fn tc_team_usage_response_clone_preserves_fields() {
     let response = TeamUsageResponse {
-        team_id: Uuid::new_v4(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         period: "1d".to_string(),
         total_requests: 5,
         successful_requests: 4,
@@ -180,7 +179,7 @@ fn tc_team_usage_response_clone_preserves_fields() {
 #[test]
 fn tc_team_geo_restrictions_response_with_defaults() {
     let response = TeamGeoRestrictionsResponse {
-        team_id: Uuid::new_v4(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         enable_geo_restrictions: false,
         allowed_countries: None,
         blocked_countries: None,
@@ -204,7 +203,7 @@ fn tc_team_geo_restrictions_response_serialization() {
         domain_blacklist: None,
     };
     let response = TeamGeoRestrictionsResponse {
-        team_id: Uuid::new_v4(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         enable_geo_restrictions: restrictions.enable_geo_restrictions,
         allowed_countries: restrictions.allowed_countries.clone(),
         blocked_countries: restrictions.blocked_countries.clone(),
@@ -222,7 +221,7 @@ fn tc_team_geo_restrictions_response_serialization() {
 #[test]
 fn tc_team_geo_restrictions_response_empty_lists() {
     let response = TeamGeoRestrictionsResponse {
-        team_id: Uuid::new_v4(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         enable_geo_restrictions: true,
         allowed_countries: Some(vec![]),
         blocked_countries: Some(vec![]),

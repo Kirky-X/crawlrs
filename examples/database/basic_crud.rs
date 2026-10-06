@@ -93,6 +93,10 @@ async fn main() {
 }
 
 /// 构造示例 DbConfig（不连接数据库）
+// `..Default::default()` 用于兜底 dbnexus feature 门控字段（retry/failover/
+// replica-routing）；当这些 feature 全部关闭时字面量已穷举→clippy 报
+// needless_update。此处按 feature 组合双关保留，故局部允许该 lint。
+#[allow(clippy::needless_update)]
 fn build_sample_config() -> DbConfig {
     DbConfig {
         url: DATABASE_URL.to_string(),
@@ -110,9 +114,10 @@ fn build_sample_config() -> DbConfig {
         warmup_timeout: 30,
         warmup_retries: 3,
         cache_config: CacheConfig::default(),
-        retry_policy: None,
-        failover_config: None,
-        replica_config: None,
+        // retry_policy / failover_config / replica_config 由 dbnexus 的
+        // retry/failover/replica-routing feature 门控；examples 未启用，
+        // 用 `..Default::default()` 兜底，避免对 feature 组合的硬编码。
+        ..Default::default()
     }
 }
 

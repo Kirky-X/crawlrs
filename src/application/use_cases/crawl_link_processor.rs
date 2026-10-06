@@ -10,7 +10,6 @@ use crate::application::dto::crawl_request::CrawlRequestDto;
 use crate::domain::models::{Crawl, CrawlStatus, Task, TaskStatus, TaskType};
 use chrono::{DateTime, Utc};
 use serde_json::json;
-use uuid::Uuid;
 
 /// 构建初始爬取任务（种子任务）。
 ///
@@ -25,15 +24,15 @@ use uuid::Uuid;
 /// * `domain_blacklist` - 域名黑名单列表（来自地理限制）
 /// * `now` - 当前时间戳
 pub fn build_initial_crawl_task(
-    team_id: Uuid,
-    api_key_id: Uuid,
-    crawl_id: Uuid,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
+    crawl_id: crate::domain::id::Id,
     dto: &CrawlRequestDto,
     domain_blacklist: Vec<String>,
     now: DateTime<Utc>,
 ) -> Task {
     Task {
-        id: Uuid::new_v4(),
+        id: crate::domain::id::Id::generate(),
         task_type: TaskType::Crawl,
         status: TaskStatus::Queued,
         priority: 100,
@@ -72,8 +71,8 @@ pub fn build_initial_crawl_task(
 /// * `dto` - 爬取请求 DTO
 /// * `now` - 当前时间戳
 pub fn build_crawl_entity(
-    crawl_id: Uuid,
-    team_id: Uuid,
+    crawl_id: crate::domain::id::Id,
+    team_id: crate::domain::id::Id,
     dto: &CrawlRequestDto,
     now: DateTime<Utc>,
 ) -> Crawl {
@@ -130,9 +129,9 @@ mod tests {
 
     #[test]
     fn test_build_initial_crawl_task() {
-        let team_id = Uuid::new_v4();
-        let api_key_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let api_key_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let dto = make_dto();
         let now = Utc::now();
 
@@ -164,9 +163,9 @@ mod tests {
         dto.sitemap_url = Some("https://cdn.b.com/sitemap-index.xml".to_string());
 
         let task = build_initial_crawl_task(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             &dto,
             vec![],
             Utc::now(),
@@ -181,8 +180,8 @@ mod tests {
 
     #[test]
     fn test_build_crawl_entity() {
-        let crawl_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let dto = make_dto();
         let now = Utc::now();
 
@@ -195,8 +194,8 @@ mod tests {
 
     #[test]
     fn test_build_crawl_entity_default_name() {
-        let crawl_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let mut dto = make_dto();
         dto.name = None;
         let now = Utc::now();

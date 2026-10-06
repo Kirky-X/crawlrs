@@ -43,7 +43,7 @@ pub async fn search(
     let api_key_id = auth_state.api_key_id;
 
     // 1. 检查限流
-    // 性能直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
+    // 性能直接传 `crate::domain::id::Id`（实现 Display），由 helper 内部按需 to_string，
     // 消除 handler 中的中间变量分配。
     if let Err(response) =
         check_rate_limit(rate_limiting_service.as_ref(), api_key_id, "/v1/search").await
@@ -102,7 +102,7 @@ pub async fn search(
                     match task_repo.find_by_crawl_id(crawl_id).await {
                         Ok(tasks) => {
                             if !tasks.is_empty() {
-                                let task_ids: Vec<uuid::Uuid> =
+                                let task_ids: Vec<crate::domain::id::Id> =
                                     tasks.iter().map(|task| task.id).collect();
                                 match wait_for_tasks_completion(
                                     task_repo.as_ref(),
@@ -239,7 +239,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = uuid::Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let err =
             SearchServiceError::CreditsRepository(CreditsRepositoryError::CreditsNotFound(team_id));
         let (status, _msg) = <(StatusCode, String)>::from(err);
@@ -432,7 +432,7 @@ mod tests {
                     score: None,
                 },
             ],
-            crawl_id: Some(uuid::Uuid::new_v4()),
+            crawl_id: Some(crate::domain::id::Id::generate()),
             credits_used: 1,
         };
         let json = serde_json::to_string(&response).unwrap();
@@ -758,7 +758,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = uuid::Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let err =
             SearchServiceError::CreditsRepository(CreditsRepositoryError::InsufficientCredits {
                 available: 0,
@@ -857,7 +857,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let crawl_id = uuid::Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         let json = format!(
             r#"{{"query":"test","results":[],"crawl_id":"{}","credits_used":3}}"#,
             crawl_id
@@ -904,7 +904,7 @@ mod tests {
                 engine: Some("google".to_string()),
                 score: None,
             }],
-            crawl_id: Some(uuid::Uuid::new_v4()),
+            crawl_id: Some(crate::domain::id::Id::generate()),
             credits_used: 7,
         };
         let json = serde_json::to_string(&original).unwrap();
@@ -1219,7 +1219,6 @@ mod tests {
     use dbnexus::DbPool;
     use std::collections::HashSet;
     use std::sync::Mutex;
-    use uuid::Uuid;
 
     /// Construct a lazy `DbPool` that does not connect to any database.
     fn make_test_db_pool() -> Arc<DbPool> {
@@ -1232,14 +1231,14 @@ mod tests {
     fn make_test_auth_state() -> AuthState {
         AuthState::new(
             make_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         )
     }
 
     /// Build a sample domain SearchResponse for testing.
-    fn make_search_response(crawl_id: Option<Uuid>) -> DomainSearchResponse {
+    fn make_search_response(crawl_id: Option<crate::domain::id::Id>) -> DomainSearchResponse {
         DomainSearchResponse {
             query: "test query".to_string(),
             results: vec![DomainSearchResult {
@@ -1270,15 +1269,15 @@ mod tests {
     }
 
     /// Build a Task for testing with the given team_id and status.
-    fn make_test_task(team_id: Uuid, status: TaskStatus) -> Task {
+    fn make_test_task(team_id: crate::domain::id::Id, status: TaskStatus) -> Task {
         let now = chrono::Utc::now();
         Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Scrape,
             status,
             priority: 0,
             team_id,
-            api_key_id: Uuid::new_v4(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::Value::Null,
             retry_count: 0,
@@ -1326,8 +1325,8 @@ mod tests {
     impl SearchServiceTrait for MockSearchService {
         async fn search(
             &self,
-            _team_id: Uuid,
-            _api_key_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _api_key_id: crate::domain::id::Id,
             _query: SearchQuery,
         ) -> Result<DomainSearchResponse, SearchServiceError> {
             self.search_result
@@ -1386,7 +1385,10 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -1394,27 +1396,30 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
@@ -1436,7 +1441,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -1444,7 +1452,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             match self.find_by_crawl_id_result.lock().unwrap().take() {
                 Some(result) => result,
                 None => Ok(vec![]),
@@ -1463,17 +1474,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -1522,14 +1539,14 @@ mod tests {
 
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<RateLimitConfig, RateLimitingError> {
             Ok(RateLimitConfig::default())
         }
 
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1544,37 +1561,37 @@ mod tests {
     impl ConcurrencyControlService for MockRateLimitingService {
         async fn check_team_concurrency(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             Ok(ConcurrencyResult::Allowed)
         }
 
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
         async fn get_team_current_concurrency(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
 
         async fn get_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
             Ok(ConcurrencyConfig::default())
         }
 
         async fn update_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1583,7 +1600,10 @@ mod tests {
 
     #[async_trait]
     impl BacklogService for MockRateLimitingService {
-        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+        async fn process_backlog_tasks(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
     }
@@ -1592,25 +1612,28 @@ mod tests {
     impl QuotaService for MockRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
-        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(0)
         }
 
         async fn refund_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
@@ -1651,7 +1674,7 @@ mod tests {
             return;
         }
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
-            make_search_response(Some(Uuid::new_v4())),
+            make_search_response(Some(crate::domain::id::Id::generate())),
         ));
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::new());
         let rate_limit: Arc<dyn RateLimitingService> =
@@ -1677,7 +1700,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
             make_search_response(Some(crawl_id)),
         ));
@@ -1705,8 +1728,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let task = make_test_task(team_id, TaskStatus::Completed);
 
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
@@ -1740,7 +1763,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
             make_search_response(Some(crawl_id)),
         ));
@@ -1775,8 +1798,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
-        let crawl_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let crawl_id = crate::domain::id::Id::generate();
         let task = make_test_task(team_id, TaskStatus::Queued);
 
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_success(
@@ -2057,7 +2080,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let search_service: Arc<dyn SearchServiceTrait> = Arc::new(MockSearchService::new_error(
             SearchServiceError::CreditsRepository(CreditsRepositoryError::CreditsNotFound(team_id)),
         ));

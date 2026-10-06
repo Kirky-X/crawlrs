@@ -9,7 +9,6 @@ use crate::common::time_utils::{
 use crate::domain::models::{Webhook, WebhookEvent, WebhookEventType, WebhookStatus};
 use crate::infrastructure::database::entities::{webhook, webhook_event};
 use dbnexus::sea_orm::ActiveValue::{Set, Unchanged};
-use uuid::Uuid;
 
 /// Mapper for converting between Webhook domain model and database entity
 pub struct WebhookMapper;
@@ -18,8 +17,8 @@ impl WebhookMapper {
     /// Convert database entity to domain model
     pub fn to_domain(entity: webhook::Model) -> Webhook {
         Webhook {
-            id: entity.id,
-            team_id: entity.team_id,
+            id: entity.id.into(),
+            team_id: entity.team_id.into(),
             url: entity.url,
             created_at: from_db_datetime(entity.created_at),
         }
@@ -28,8 +27,8 @@ impl WebhookMapper {
     /// Convert domain model to database entity
     pub fn to_entity(domain: &Webhook) -> webhook::Model {
         webhook::Model {
-            id: domain.id,
-            team_id: domain.team_id,
+            id: domain.id.into(),
+            team_id: domain.team_id.into(),
             url: domain.url.clone(),
             created_at: to_db_datetime(domain.created_at),
         }
@@ -48,9 +47,9 @@ impl WebhookEventMapper {
     /// Convert database entity to domain model
     pub fn to_domain(entity: webhook_event::Model) -> WebhookEvent {
         WebhookEvent::with_all_fields(
-            entity.id,
-            entity.team_id,
-            entity.webhook_id.unwrap_or(Uuid::nil()),
+            entity.id.into(),
+            entity.team_id.into(),
+            entity.webhook_id.map(Into::into).unwrap_or_default(),
             Self::parse_event_type(&entity.event_type),
             entity.payload,
             entity.webhook_url,
@@ -70,9 +69,9 @@ impl WebhookEventMapper {
     /// Convert domain model to database entity
     pub fn to_entity(domain: &WebhookEvent) -> webhook_event::Model {
         webhook_event::Model {
-            id: domain.id,
-            team_id: domain.team_id,
-            webhook_id: Some(domain.webhook_id),
+            id: domain.id.into(),
+            team_id: domain.team_id.into(),
+            webhook_id: Some(domain.webhook_id.into()),
             event_type: domain.event_type.to_string(),
             payload: domain.payload.clone(),
             webhook_url: domain.webhook_url.clone(),
@@ -153,14 +152,13 @@ mod tests {
     use super::*;
     use crate::common::time_utils::to_db_datetime;
     use chrono::Utc;
-    use uuid::Uuid;
 
     #[test]
     fn test_webhook_mapper_roundtrip() {
         let now = Utc::now();
         let domain = Webhook {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate().into(),
             url: "https://example.com/webhook".to_string(),
             created_at: now,
         };
@@ -176,9 +174,9 @@ mod tests {
     fn test_webhook_event_mapper_roundtrip() {
         let now = Utc::now();
         let domain = WebhookEvent::with_all_fields(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             WebhookEventType::CrawlCompleted,
             serde_json::json!({"test": "data"}),
             "https://example.com/webhook".to_string(),
@@ -207,14 +205,14 @@ mod tests {
         let now_db = to_db_datetime(Utc::now());
         let entities = vec![
             webhook::Model {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: crate::domain::id::Id::generate().into(),
                 url: "https://a.com/hook".to_string(),
                 created_at: now_db,
             },
             webhook::Model {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: crate::domain::id::Id::generate().into(),
                 url: "https://b.com/hook".to_string(),
                 created_at: now_db,
             },
@@ -236,14 +234,14 @@ mod tests {
     fn test_webhook_event_mapper_to_domain_list() {
         let now = Utc::now();
         let now_db = to_db_datetime(now);
-        let team_id = Uuid::new_v4();
-        let webhook_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let webhook_id = crate::domain::id::Id::generate();
 
         let entities = vec![
             webhook_event::Model {
-                id: Uuid::new_v4(),
-                team_id,
-                webhook_id: Some(webhook_id),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: team_id.into(),
+                webhook_id: Some(webhook_id.into()),
                 event_type: "crawl.completed".to_string(),
                 status: webhook_event::SeaWebhookStatus::Pending,
                 payload: serde_json::json!({"a": 1}),
@@ -259,9 +257,9 @@ mod tests {
                 delivered_at: None,
             },
             webhook_event::Model {
-                id: Uuid::new_v4(),
-                team_id,
-                webhook_id: Some(webhook_id),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: team_id.into(),
+                webhook_id: Some(webhook_id.into()),
                 event_type: "scrape.failed".to_string(),
                 status: webhook_event::SeaWebhookStatus::Failed,
                 payload: serde_json::json!({"b": 2}),
@@ -295,9 +293,9 @@ mod tests {
         let now_db = to_db_datetime(now);
 
         let entity = webhook_event::Model {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
-            webhook_id: Some(Uuid::new_v4()),
+            id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate().into(),
+            webhook_id: Some(crate::domain::id::Id::generate().into()),
             event_type: "custom.event.type".to_string(),
             status: webhook_event::SeaWebhookStatus::Pending,
             payload: serde_json::json!({}),
@@ -326,8 +324,8 @@ mod tests {
         let now_db = to_db_datetime(now);
 
         let entity = webhook_event::Model {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate().into(),
             webhook_id: None,
             event_type: "crawl.completed".to_string(),
             status: webhook_event::SeaWebhookStatus::Pending,
@@ -345,8 +343,8 @@ mod tests {
         };
 
         let domain = WebhookEventMapper::to_domain(entity);
-        // When webhook_id is None, it should default to Uuid::nil()
-        assert_eq!(domain.webhook_id, Uuid::nil());
+        // When webhook_id is None, it should default to crate::domain::id::Id::nil()
+        assert_eq!(domain.webhook_id, crate::domain::id::Id::nil());
     }
 
     #[test]
@@ -368,9 +366,9 @@ mod tests {
 
         for (sea_status, expected_status) in statuses.into_iter().zip(expected) {
             let entity = webhook_event::Model {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
-                webhook_id: Some(Uuid::new_v4()),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: crate::domain::id::Id::generate().into(),
+                webhook_id: Some(crate::domain::id::Id::generate().into()),
                 event_type: "crawl.completed".to_string(),
                 status: sea_status,
                 payload: serde_json::json!({}),
@@ -409,9 +407,9 @@ mod tests {
 
         for (type_str, expected_type) in event_types {
             let entity = webhook_event::Model {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
-                webhook_id: Some(Uuid::new_v4()),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: crate::domain::id::Id::generate().into(),
+                webhook_id: Some(crate::domain::id::Id::generate().into()),
                 event_type: type_str.to_string(),
                 status: webhook_event::SeaWebhookStatus::Pending,
                 payload: serde_json::json!({}),
@@ -437,9 +435,9 @@ mod tests {
         let now = Utc::now();
 
         let domain = WebhookEvent::with_all_fields(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             WebhookEventType::CrawlCompleted,
             serde_json::json!({"key": "value"}),
             "https://example.com/hook".to_string(),

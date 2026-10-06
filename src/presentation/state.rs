@@ -304,7 +304,6 @@ mod tests {
     // teams-off 时 IpAddr 未使用
     #[cfg(feature = "teams")]
     use std::net::IpAddr;
-    use uuid::Uuid;
 
     // ============ No-op mocks ============
     // These mocks satisfy the trait bounds required by CrawlHandlerState.
@@ -317,37 +316,52 @@ mod tests {
         async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             Ok(crawl.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Crawl>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             Ok(crawl.clone())
         }
-        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_completed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_failed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn update_status(
             &self,
-            _id: Uuid,
+            _id: crate::domain::id::Id,
             _status: crate::domain::models::CrawlStatus,
         ) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_total_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn find_by_team_id_paginated(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u32,
             _offset: u32,
         ) -> Result<Vec<Crawl>, RepositoryError> {
             Ok(vec![])
         }
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn count_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
     }
@@ -358,30 +372,36 @@ mod tests {
         async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -399,13 +419,19 @@ mod tests {
         ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -416,17 +442,23 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -442,10 +474,16 @@ mod tests {
         async fn create(&self, webhook: &Webhook) -> Result<Webhook, RepositoryError> {
             Ok(webhook.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Webhook>, RepositoryError> {
             Ok(None)
         }
-        async fn find_by_team_id(&self, _team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+        async fn find_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<Vec<Webhook>, RepositoryError> {
             Ok(vec![])
         }
     }
@@ -456,13 +494,22 @@ mod tests {
         async fn save(&self, _result: ScrapeResult) -> anyhow::Result<()> {
             Ok(())
         }
-        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+        async fn find_by_task_id(
+            &self,
+            _task_id: crate::domain::id::Id,
+        ) -> anyhow::Result<Option<ScrapeResult>> {
             Ok(None)
         }
-        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(
+            &self,
+            _task_ids: &[crate::domain::id::Id],
+        ) -> anyhow::Result<Vec<ScrapeResult>> {
             Ok(vec![])
         }
-        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+        async fn get_team_avg_response_time(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> anyhow::Result<f64> {
             Ok(0.0)
         }
 
@@ -479,7 +526,7 @@ mod tests {
     impl GeoRestrictionRepository for MockGeoRestrictionRepository {
         async fn get_team_restrictions(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<
             TeamGeoRestrictions,
             crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
@@ -488,7 +535,7 @@ mod tests {
         }
         async fn update_team_restrictions(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _restrictions: &TeamGeoRestrictions,
         ) -> Result<
             (),
@@ -498,7 +545,7 @@ mod tests {
         }
         async fn log_geo_restriction_action(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _ip_address: &str,
             _country_code: &str,
             _action: &str,
@@ -534,13 +581,13 @@ mod tests {
         }
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<RateLimitConfig, RateLimitingError> {
             Ok(RateLimitConfig::default())
         }
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -553,33 +600,33 @@ mod tests {
     impl ConcurrencyControlService for MockRateLimitingService {
         async fn check_team_concurrency(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             Ok(ConcurrencyResult::Allowed)
         }
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
         async fn get_team_current_concurrency(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
         async fn get_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
             Ok(ConcurrencyConfig::default())
         }
         async fn update_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -587,7 +634,10 @@ mod tests {
     }
     #[async_trait]
     impl BacklogService for MockRateLimitingService {
-        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+        async fn process_backlog_tasks(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
     }
@@ -595,24 +645,27 @@ mod tests {
     impl QuotaService for MockRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
-        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(0)
         }
 
         async fn refund_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }

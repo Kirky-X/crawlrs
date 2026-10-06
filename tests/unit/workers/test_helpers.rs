@@ -4,19 +4,18 @@
 //! Test helper functions for workers tests
 
 use chrono::Utc;
-use uuid::Uuid;
 
 use crate::domain::models::task::{Task, TaskStatus, TaskType};
 
 /// Create a test task with specified status
 pub fn create_test_task(status: TaskStatus) -> Task {
     Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status,
         priority: 0,
-        team_id: Uuid::new_v4(),
-        api_key_id: Uuid::new_v4(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
+        api_key_id: crawlrs::domain::id::Id::generate().into(),
         url: "https://example.com".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,

@@ -8,7 +8,6 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// 团队领域模型
 ///
@@ -18,7 +17,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Team {
     /// 团队唯一标识
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// 团队名称
     pub name: String,
     /// 创建时间
@@ -29,7 +28,7 @@ pub struct Team {
 
 impl Team {
     /// 创建新的团队
-    pub fn new(id: Uuid, name: String) -> Self {
+    pub fn new(id: crate::domain::id::Id, name: String) -> Self {
         let now = Utc::now();
         Self {
             id,
@@ -41,7 +40,7 @@ impl Team {
 
     /// 创建带自定义时间戳的团队（供 mapper 使用）
     pub fn with_timestamps(
-        id: Uuid,
+        id: crate::domain::id::Id,
         name: String,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
@@ -79,7 +78,7 @@ pub enum TeamError {
 
     /// 团队未找到
     #[error("Team not found: {0}")]
-    NotFound(Uuid),
+    NotFound(crate::domain::id::Id),
 }
 
 #[cfg(test)]
@@ -88,7 +87,7 @@ mod tests {
 
     #[test]
     fn test_team_new_sets_fields_and_timestamps() {
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let before = Utc::now();
         let team = Team::new(id, "My Team".to_string());
         let after = Utc::now();
@@ -101,7 +100,7 @@ mod tests {
 
     #[test]
     fn test_team_with_timestamps_sets_all_fields() {
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let created = Utc::now();
         let updated = created + chrono::Duration::seconds(10);
 
@@ -115,13 +114,13 @@ mod tests {
 
     #[test]
     fn test_validate_name_valid_passes() {
-        let team = Team::new(Uuid::new_v4(), "Valid Team".to_string());
+        let team = Team::new(crate::domain::id::Id::generate(), "Valid Team".to_string());
         assert!(team.validate_name().is_ok());
     }
 
     #[test]
     fn test_validate_name_empty_fails() {
-        let team = Team::new(Uuid::new_v4(), String::new());
+        let team = Team::new(crate::domain::id::Id::generate(), String::new());
         let err = team.validate_name().expect_err("empty name should fail");
         match err {
             TeamError::InvalidName(msg) => assert!(msg.contains("empty")),
@@ -131,14 +130,14 @@ mod tests {
 
     #[test]
     fn test_validate_name_whitespace_only_fails() {
-        let team = Team::new(Uuid::new_v4(), "   ".to_string());
+        let team = Team::new(crate::domain::id::Id::generate(), "   ".to_string());
         assert!(team.validate_name().is_err());
     }
 
     #[test]
     fn test_validate_name_too_long_fails() {
         let long_name = "a".repeat(256);
-        let team = Team::new(Uuid::new_v4(), long_name);
+        let team = Team::new(crate::domain::id::Id::generate(), long_name);
         let err = team.validate_name().expect_err("long name should fail");
         match err {
             TeamError::InvalidName(msg) => assert!(msg.contains("255")),
@@ -149,20 +148,23 @@ mod tests {
     #[test]
     fn test_validate_name_max_length_passes() {
         let max_name = "a".repeat(255);
-        let team = Team::new(Uuid::new_v4(), max_name);
+        let team = Team::new(crate::domain::id::Id::generate(), max_name);
         assert!(team.validate_name().is_ok());
     }
 
     #[test]
     fn test_team_clone_and_equality() {
-        let team = Team::new(Uuid::new_v4(), "Test".to_string());
+        let team = Team::new(crate::domain::id::Id::generate(), "Test".to_string());
         let cloned = team.clone();
         assert_eq!(team, cloned);
     }
 
     #[test]
     fn test_team_serde_roundtrip() {
-        let team = Team::new(Uuid::new_v4(), "Serialize Team".to_string());
+        let team = Team::new(
+            crate::domain::id::Id::generate(),
+            "Serialize Team".to_string(),
+        );
         let json = serde_json::to_string(&team).expect("serialize");
         let deserialized: Team = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(team, deserialized);
@@ -174,7 +176,7 @@ mod tests {
         assert!(invalid.to_string().contains("Invalid team name"));
         assert!(invalid.to_string().contains("bad"));
 
-        let not_found = TeamError::NotFound(Uuid::nil());
+        let not_found = TeamError::NotFound(crate::domain::id::Id::nil());
         assert!(not_found.to_string().contains("Team not found"));
     }
 }

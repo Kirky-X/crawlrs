@@ -329,14 +329,14 @@ impl RateLimitService for LimiteronService {
 
     async fn get_team_rate_limit_config(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crate::domain::id::Id,
     ) -> Result<RateLimitConfig, RateLimitingError> {
         Ok(self.config.rate_limit.clone())
     }
 
     async fn update_team_rate_limit_config(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crate::domain::id::Id,
         _config: RateLimitConfig,
     ) -> Result<(), RateLimitingError> {
         // 目前不支持动态更新配置
@@ -355,8 +355,8 @@ impl RateLimitService for LimiteronService {
 impl ConcurrencyControlService for LimiteronService {
     async fn check_team_concurrency(
         &self,
-        team_id: uuid::Uuid,
-        task_id: uuid::Uuid,
+        team_id: crate::domain::id::Id,
+        task_id: crate::domain::id::Id,
     ) -> Result<ConcurrencyResult, RateLimitingError> {
         if !self.config.concurrency.enabled {
             return Ok(ConcurrencyResult::Allowed);
@@ -419,8 +419,8 @@ impl ConcurrencyControlService for LimiteronService {
 
     async fn release_team_concurrency_slot(
         &self,
-        team_id: uuid::Uuid,
-        _task_id: uuid::Uuid,
+        team_id: crate::domain::id::Id,
+        _task_id: crate::domain::id::Id,
     ) -> Result<(), RateLimitingError> {
         debug!(
             "LimiteronService: Releasing concurrency slot for team: {}",
@@ -435,7 +435,7 @@ impl ConcurrencyControlService for LimiteronService {
 
     async fn get_team_current_concurrency(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crate::domain::id::Id,
     ) -> Result<u32, RateLimitingError> {
         // 在实际实现中，应该从存储中获取当前并发数
         // 这里暂时返回 0，生产环境需要从数据库获取
@@ -444,14 +444,14 @@ impl ConcurrencyControlService for LimiteronService {
 
     async fn get_team_concurrency_config(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crate::domain::id::Id,
     ) -> Result<ConcurrencyConfig, RateLimitingError> {
         Ok(self.config.concurrency.clone())
     }
 
     async fn update_team_concurrency_config(
         &self,
-        _team_id: uuid::Uuid,
+        _team_id: crate::domain::id::Id,
         _config: ConcurrencyConfig,
     ) -> Result<(), RateLimitingError> {
         // 目前不支持动态更新配置
@@ -461,7 +461,10 @@ impl ConcurrencyControlService for LimiteronService {
 
 #[async_trait]
 impl BacklogService for LimiteronService {
-    async fn process_backlog_tasks(&self, team_id: uuid::Uuid) -> Result<u32, RateLimitingError> {
+    async fn process_backlog_tasks(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<u32, RateLimitingError> {
         debug!(
             "LimiteronService: Processing backlog tasks for team: {}",
             team_id
@@ -552,11 +555,11 @@ impl BacklogService for LimiteronService {
 impl QuotaService for LimiteronService {
     async fn check_and_deduct_quota(
         &self,
-        team_id: uuid::Uuid,
+        team_id: crate::domain::id::Id,
         amount: i64,
         transaction_type: crate::domain::models::CreditsTransactionType,
         description: String,
-        reference_id: Option<uuid::Uuid>,
+        reference_id: Option<crate::domain::id::Id>,
     ) -> Result<(), RateLimitingError> {
         debug!(
             "LimiteronService: Checking and deducting quota for team: {}, amount: {}",
@@ -601,10 +604,10 @@ impl QuotaService for LimiteronService {
 
     async fn refund_quota(
         &self,
-        team_id: uuid::Uuid,
+        team_id: crate::domain::id::Id,
         amount: i64,
         description: String,
-        reference_id: Option<uuid::Uuid>,
+        reference_id: Option<crate::domain::id::Id>,
     ) -> Result<(), RateLimitingError> {
         debug!(
             "LimiteronService: Refunding quota for team: {}, amount: {}",
@@ -636,7 +639,10 @@ impl QuotaService for LimiteronService {
         }
     }
 
-    async fn get_quota_balance(&self, team_id: uuid::Uuid) -> Result<i64, RateLimitingError> {
+    async fn get_quota_balance(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<i64, RateLimitingError> {
         match self.credits_repository.get_balance(team_id).await {
             Ok(balance) => Ok(balance),
             Err(e) => {
@@ -780,7 +786,6 @@ mod tests {
     use chrono::Utc;
     use std::collections::HashSet;
     use std::sync::Mutex;
-    use uuid::Uuid;
 
     /// Configurable mock TaskRepository1
     struct MockTaskRepository {
@@ -843,7 +848,10 @@ mod tests {
         async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             match self.find_mode {
                 FindByIdMode::Task => Ok(self.task.clone()),
                 FindByIdMode::None => Ok(None),
@@ -861,24 +869,27 @@ mod tests {
             }
             Ok(task.clone())
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -896,13 +907,19 @@ mod tests {
         ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -913,17 +930,23 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -1016,12 +1039,15 @@ mod tests {
             self.created_backlogs.lock().unwrap().push(backlog.clone());
             Ok(backlog.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<TasksBacklog>, RepositoryError> {
             Ok(None)
         }
         async fn find_by_task_id(
             &self,
-            _task_id: Uuid,
+            _task_id: crate::domain::id::Id,
         ) -> Result<Option<TasksBacklog>, RepositoryError> {
             Ok(None)
         }
@@ -1034,12 +1060,12 @@ mod tests {
             self.updated_backlogs.lock().unwrap().push(backlog.clone());
             Ok(backlog.clone())
         }
-        async fn delete(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn delete(&self, _id: crate::domain::id::Id) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn get_pending_tasks(
             &self,
-            _team_id: Option<Uuid>,
+            _team_id: Option<crate::domain::id::Id>,
             _limit: Option<u64>,
         ) -> Result<Vec<TasksBacklog>, RepositoryError> {
             if self.get_pending_should_fail {
@@ -1057,14 +1083,14 @@ mod tests {
         }
         async fn count_by_status(
             &self,
-            _team_id: Option<Uuid>,
+            _team_id: Option<crate::domain::id::Id>,
             _status: TasksBacklogStatus,
         ) -> Result<i64, RepositoryError> {
             Ok(0)
         }
         async fn update_status_batch(
             &self,
-            _ids: &[Uuid],
+            _ids: &[crate::domain::id::Id],
             _status: TasksBacklogStatus,
         ) -> Result<u64, RepositoryError> {
             Ok(0)
@@ -1111,7 +1137,10 @@ mod tests {
 
     #[async_trait]
     impl CreditsRepository for MockCreditsRepository {
-        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+        async fn get_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, CreditsRepositoryError> {
             if self.get_balance_should_fail {
                 return Err(CreditsRepositoryError::DatabaseError("mock".to_string()));
             }
@@ -1119,11 +1148,11 @@ mod tests {
         }
         async fn deduct_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), CreditsRepositoryError> {
             *self.deduct_calls.lock().unwrap() += 1;
             if self.deduct_should_fail {
@@ -1133,24 +1162,24 @@ mod tests {
         }
         async fn add_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<i64, CreditsRepositoryError> {
             Ok(0)
         }
         async fn get_transaction_history(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: Option<u32>,
         ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
             Ok(vec![])
         }
         async fn initialize_team_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             initial_balance: i64,
         ) -> Result<i64, CreditsRepositoryError> {
             Ok(initial_balance)
@@ -1176,12 +1205,16 @@ mod tests {
         .expect("Failed to build LimiteronService")
     }
 
-    fn make_task(task_id: Uuid, team_id: Uuid, status: TaskStatus) -> Task {
+    fn make_task(
+        task_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+        status: TaskStatus,
+    ) -> Task {
         let mut task = Task::new(
             task_id,
             TaskType::Scrape,
             team_id,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             "https://example.com".to_string(),
             serde_json::json!({}),
         );
@@ -1189,7 +1222,10 @@ mod tests {
         task
     }
 
-    fn make_pending_backlog(task_id: Uuid, team_id: Uuid) -> TasksBacklog {
+    fn make_pending_backlog(
+        task_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+    ) -> TasksBacklog {
         TasksBacklog::new(
             task_id,
             team_id,
@@ -1200,7 +1236,10 @@ mod tests {
         )
     }
 
-    fn make_expired_backlog(task_id: Uuid, team_id: Uuid) -> TasksBacklog {
+    fn make_expired_backlog(
+        task_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+    ) -> TasksBacklog {
         TasksBacklog::new(
             task_id,
             team_id,
@@ -1261,7 +1300,9 @@ mod tests {
         )
         .await;
 
-        let result = service.get_team_rate_limit_config(Uuid::new_v4()).await;
+        let result = service
+            .get_team_rate_limit_config(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_ok());
         let got = result.unwrap();
         // RateLimitConfig doesn't derive PartialEq — compare key fields instead
@@ -1283,7 +1324,10 @@ mod tests {
         .await;
 
         let result = service
-            .update_team_rate_limit_config(Uuid::new_v4(), RateLimitConfig::default())
+            .update_team_rate_limit_config(
+                crate::domain::id::Id::generate(),
+                RateLimitConfig::default(),
+            )
             .await;
         assert!(result.is_ok());
     }
@@ -1319,7 +1363,10 @@ mod tests {
         .await;
 
         let result = service
-            .check_team_concurrency(Uuid::new_v4(), Uuid::new_v4())
+            .check_team_concurrency(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            )
             .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ConcurrencyResult::Allowed);
@@ -1336,7 +1383,10 @@ mod tests {
         .await;
 
         let result = service
-            .check_team_concurrency(Uuid::new_v4(), Uuid::new_v4())
+            .check_team_concurrency(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            )
             .await;
         assert!(result.is_err());
         assert!(matches!(
@@ -1356,7 +1406,10 @@ mod tests {
         .await;
 
         let result = service
-            .check_team_concurrency(Uuid::new_v4(), Uuid::new_v4())
+            .check_team_concurrency(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            )
             .await;
         assert!(result.is_err());
         assert!(matches!(
@@ -1368,8 +1421,8 @@ mod tests {
     #[tokio::test]
     async fn test_check_team_concurrency_under_limit_returns_allowed() {
         // get_team_current_concurrency returns 0, max_concurrent_per_team default 10 → Allowed
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let service = make_service_with_mocks(
             Arc::new(MockTaskRepository::with_task(make_task(
                 task_id,
@@ -1393,8 +1446,8 @@ mod tests {
         let mut config = RateLimitingConfig::default();
         config.concurrency.max_concurrent_per_team = 0;
 
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let backlog_repo = Arc::new(MockBacklogRepository::new());
         let service = make_service_with_mocks(
             Arc::new(MockTaskRepository::with_task(make_task(
@@ -1428,8 +1481,8 @@ mod tests {
         let mut config = RateLimitingConfig::default();
         config.concurrency.max_concurrent_per_team = 0;
 
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let service = make_service_with_mocks(
             Arc::new(MockTaskRepository::with_task(make_task(
                 task_id,
@@ -1461,7 +1514,10 @@ mod tests {
         .await;
 
         let result = service
-            .release_team_concurrency_slot(Uuid::new_v4(), Uuid::new_v4())
+            .release_team_concurrency_slot(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            )
             .await;
         assert!(result.is_ok());
     }
@@ -1477,7 +1533,10 @@ mod tests {
         .await;
 
         let result = service
-            .release_team_concurrency_slot(Uuid::new_v4(), Uuid::new_v4())
+            .release_team_concurrency_slot(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            )
             .await;
         assert!(result.is_err());
         assert!(matches!(
@@ -1496,7 +1555,9 @@ mod tests {
         )
         .await;
 
-        let result = service.get_team_current_concurrency(Uuid::new_v4()).await;
+        let result = service
+            .get_team_current_concurrency(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0);
     }
@@ -1514,7 +1575,9 @@ mod tests {
         )
         .await;
 
-        let result = service.get_team_concurrency_config(Uuid::new_v4()).await;
+        let result = service
+            .get_team_concurrency_config(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_ok());
         let got = result.unwrap();
         // ConcurrencyConfig doesn't derive PartialEq — compare key fields instead
@@ -1539,7 +1602,10 @@ mod tests {
         .await;
 
         let result = service
-            .update_team_concurrency_config(Uuid::new_v4(), ConcurrencyConfig::default())
+            .update_team_concurrency_config(
+                crate::domain::id::Id::generate(),
+                ConcurrencyConfig::default(),
+            )
             .await;
         assert!(result.is_ok());
     }
@@ -1556,7 +1622,9 @@ mod tests {
         )
         .await;
 
-        let result = service.process_backlog_tasks(Uuid::new_v4()).await;
+        let result = service
+            .process_backlog_tasks(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -1574,15 +1642,17 @@ mod tests {
         )
         .await;
 
-        let result = service.process_backlog_tasks(Uuid::new_v4()).await;
+        let result = service
+            .process_backlog_tasks(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0);
     }
 
     #[tokio::test]
     async fn test_process_backlog_tasks_expired_marks_expired_and_updates() {
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let expired = make_expired_backlog(task_id, team_id);
         let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![expired]));
         let service = make_service_with_mocks(
@@ -1605,8 +1675,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_backlog_tasks_expired_update_failure_continues() {
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let expired = make_expired_backlog(task_id, team_id);
         let backlog_repo = Arc::new(MockBacklogRepository::with_failing_update());
         *backlog_repo.pending_tasks.lock().unwrap() = vec![expired];
@@ -1627,8 +1697,8 @@ mod tests {
     #[tokio::test]
     async fn test_process_backlog_tasks_task_find_by_id_err_continues() {
         // Pending (non-expired) backlog, but find_by_id returns Err
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let backlog = make_pending_backlog(task_id, team_id);
         let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
         let service = make_service_with_mocks(
@@ -1647,8 +1717,8 @@ mod tests {
     #[tokio::test]
     async fn test_process_backlog_tasks_task_not_found_skips_update() {
         // Pending backlog, find_by_id returns Ok(None) → skip task update branch
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let backlog = make_pending_backlog(task_id, team_id);
         // NOTE: source bug — mark_completed() on a Pending backlog fails, so
         // processed_count never increments. We assert the observed behavior.
@@ -1670,8 +1740,8 @@ mod tests {
     #[tokio::test]
     async fn test_process_backlog_tasks_task_not_queued_skips_status_update() {
         // Task found but status != Queued → skip the update-task branch
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let backlog = make_pending_backlog(task_id, team_id);
         let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
         let task_repo = Arc::new(MockTaskRepository::with_task(make_task(
@@ -1696,8 +1766,8 @@ mod tests {
     #[tokio::test]
     async fn test_process_backlog_tasks_task_queued_calls_task_update() {
         // Task is Queued → task.update called (succeeds) → mark_completed fails → 0
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let backlog = make_pending_backlog(task_id, team_id);
         let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
         let task_repo = Arc::new(MockTaskRepository::with_task(make_task(
@@ -1722,8 +1792,8 @@ mod tests {
     #[tokio::test]
     async fn test_process_backlog_tasks_task_update_failure_continues() {
         // Task is Queued, but task.update fails → continue (no increment)
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let backlog = make_pending_backlog(task_id, team_id);
         let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
         let task_repo = Arc::new(MockTaskRepository::with_failing_update(make_task(
@@ -1751,8 +1821,8 @@ mod tests {
         let mut config = RateLimitingConfig::default();
         config.concurrency.max_concurrent_per_team = 0;
 
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let backlog = make_pending_backlog(task_id, team_id);
         let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
         let service = make_service_with_mocks(
@@ -1782,7 +1852,7 @@ mod tests {
 
         let result = service
             .check_and_deduct_quota(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 10,
                 CreditsTransactionType::Scrape,
                 "test".to_string(),
@@ -1808,7 +1878,7 @@ mod tests {
 
         let result = service
             .check_and_deduct_quota(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 10,
                 CreditsTransactionType::Scrape,
                 "test".to_string(),
@@ -1839,7 +1909,7 @@ mod tests {
 
         let result = service
             .check_and_deduct_quota(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 10,
                 CreditsTransactionType::Scrape,
                 "test".to_string(),
@@ -1863,7 +1933,7 @@ mod tests {
 
         let result = service
             .check_and_deduct_quota(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 10,
                 CreditsTransactionType::Scrape,
                 "test".to_string(),
@@ -1888,7 +1958,9 @@ mod tests {
         )
         .await;
 
-        let result = service.get_quota_balance(Uuid::new_v4()).await;
+        let result = service
+            .get_quota_balance(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -1906,7 +1978,9 @@ mod tests {
         )
         .await;
 
-        let result = service.get_quota_balance(Uuid::new_v4()).await;
+        let result = service
+            .get_quota_balance(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 42);
     }

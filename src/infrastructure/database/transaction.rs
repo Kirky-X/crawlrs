@@ -31,7 +31,6 @@ use parking_lot::RwLock;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use thiserror::Error;
-use uuid::Uuid;
 
 /// Transaction error types
 #[derive(Error, Debug)]
@@ -139,7 +138,7 @@ impl Default for TransactionConfig {
 #[derive(Debug, Clone)]
 struct Savepoint {
     /// Unique savepoint identifier
-    id: Uuid,
+    id: crate::domain::id::Id,
     /// Savepoint name
     name: String,
 }
@@ -411,7 +410,7 @@ impl TransactionManager {
     /// tx_manager.commit().await?;
     /// ```
     #[allow(clippy::await_holding_lock)]
-    pub async fn savepoint(&self, name: &str) -> Result<Uuid, TransactionError> {
+    pub async fn savepoint(&self, name: &str) -> Result<crate::domain::id::Id, TransactionError> {
         validate_savepoint_name(name)?;
 
         let mut active_tx = self.active_transaction.write();
@@ -460,7 +459,7 @@ impl TransactionManager {
         })?;
 
         let savepoint = Savepoint {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             name: name.to_string(),
         };
 

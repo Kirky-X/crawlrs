@@ -10,8 +10,6 @@
 //!
 //! Task9: api-sdk feature removed; tests always run.
 
-use uuid::Uuid;
-
 use crawlrs::presentation::sdk::{
     build_sdk_router, SdkCrawlResponse, SdkCreateCrawlRequest, SdkCreateTaskRequest,
     SdkCreateTaskResponse, SdkScrapeRequest, SdkScrapeResponse, SdkSearchRequest,
@@ -161,7 +159,7 @@ fn tc_sdk_create_task_request_invalid_task_type_still_parses() {
 
 #[test]
 fn tc_sdk_create_task_response_serialization() {
-    let id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
     let resp = SdkCreateTaskResponse {
         id,
         url: "https://example.com".to_string(),
@@ -194,7 +192,7 @@ fn tc_sdk_scrape_request_missing_url_fails() {
 
 #[test]
 fn tc_sdk_scrape_response_serialization() {
-    let id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
     let resp = SdkScrapeResponse {
         id,
         url: "https://scrape.example.com".to_string(),
@@ -241,7 +239,7 @@ fn tc_sdk_create_crawl_request_missing_seed_url_fails() {
 
 #[test]
 fn tc_sdk_crawl_response_serialization() {
-    let id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
     let resp = SdkCrawlResponse {
         id,
         status: "Active".to_string(),

@@ -9,7 +9,6 @@ use axum::{
     response::IntoResponse,
 };
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::application::use_cases::crawl_use_case::CrawlUseCaseError;
 use crate::i18n::{I18nBundle, Locale};
@@ -36,7 +35,7 @@ pub async fn get_crawl(
     Extension(auth_state): Extension<AuthState>,
     Extension(locale): Extension<Locale>,
     Extension(bundle): Extension<Arc<I18nBundle>>,
-    Path(crawl_id): Path<Uuid>,
+    Path(crawl_id): Path<crate::domain::id::Id>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     let use_case = state.create_use_case();
@@ -73,7 +72,7 @@ pub async fn get_crawl_results(
     Extension(auth_state): Extension<AuthState>,
     Extension(locale): Extension<Locale>,
     Extension(bundle): Extension<Arc<I18nBundle>>,
-    Path(crawl_id): Path<Uuid>,
+    Path(crawl_id): Path<crate::domain::id::Id>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     let use_case = state.create_use_case();

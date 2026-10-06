@@ -111,7 +111,6 @@ mod tests {
     use axum::http::Request;
     use std::collections::HashSet;
     use std::sync::Arc;
-    use uuid::Uuid;
 
     use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::auth::ApiKeyScope;
@@ -132,16 +131,19 @@ mod tests {
         async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
             Ok(task)
         }
-        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+        async fn dequeue(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, QueueError> {
             Ok(None)
         }
-        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn complete(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
-        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn fail(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
-        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn cancel(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
     }
@@ -153,30 +155,36 @@ mod tests {
         async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -194,13 +202,19 @@ mod tests {
         ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -211,17 +225,23 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -241,13 +261,13 @@ mod tests {
         }
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<RateLimitConfig, RateLimitingError> {
             Ok(RateLimitConfig::default())
         }
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -261,33 +281,33 @@ mod tests {
     impl ConcurrencyControlService for MockRateLimitService {
         async fn check_team_concurrency(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             Ok(ConcurrencyResult::Allowed)
         }
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
         async fn get_team_current_concurrency(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
         async fn get_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
             Ok(ConcurrencyConfig::default())
         }
         async fn update_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -296,7 +316,10 @@ mod tests {
 
     #[async_trait]
     impl BacklogService for MockRateLimitService {
-        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+        async fn process_backlog_tasks(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
     }
@@ -305,24 +328,27 @@ mod tests {
     impl QuotaService for MockRateLimitService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: crate::domain::models::CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
-        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(1000)
         }
 
         async fn refund_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
@@ -351,8 +377,8 @@ mod tests {
             .insert(Arc::new(MockRateLimitService) as Arc<dyn RateLimitingService>);
         parts.extensions.insert(AuthState::new(
             create_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         ));
 
@@ -389,8 +415,8 @@ mod tests {
             .insert(Arc::new(MockRateLimitService) as Arc<dyn RateLimitingService>);
         parts.extensions.insert(AuthState::new(
             create_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         ));
 
@@ -416,8 +442,8 @@ mod tests {
             .insert(Arc::new(MockRateLimitService) as Arc<dyn RateLimitingService>);
         parts.extensions.insert(AuthState::new(
             create_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         ));
 
@@ -443,8 +469,8 @@ mod tests {
             .insert(Arc::new(MockRateLimitService) as Arc<dyn RateLimitingService>);
         parts.extensions.insert(AuthState::new(
             create_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         ));
 
@@ -470,8 +496,8 @@ mod tests {
             .insert(Arc::new(MockTaskRepo) as Arc<dyn TaskRepository>);
         parts.extensions.insert(AuthState::new(
             create_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         ));
 
@@ -527,8 +553,8 @@ mod tests {
             rate_limiting_service: Arc::new(MockRateLimitService),
             auth_state: AuthState::new(
                 create_test_db_pool(),
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 ApiKeyScope::default(),
             ),
         };
@@ -549,8 +575,8 @@ mod tests {
             rate_limiting_service: Arc::new(MockRateLimitService),
             auth_state: AuthState::new(
                 create_test_db_pool(),
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 ApiKeyScope::default(),
             ),
         };

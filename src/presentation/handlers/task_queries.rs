@@ -47,8 +47,8 @@ use tokio::time::sleep;
 /// Returns `CrawlRsError` if the repository cannot be reached.
 pub async fn wait_for_tasks_completion(
     task_repo: &dyn TaskRepository,
-    task_ids: &[uuid::Uuid],
-    team_id: uuid::Uuid,
+    task_ids: &[crate::domain::id::Id],
+    team_id: crate::domain::id::Id,
     sync_wait_ms: u32,
     base_poll_interval_ms: u64,
 ) -> Result<(), CrawlRsError> {
@@ -109,8 +109,8 @@ pub(crate) fn poll_count_exceeded(count: u32, max_count: u32) -> bool {
 /// 查询任务状态用于轮询
 pub(crate) async fn query_tasks_for_poll(
     task_repo: &dyn TaskRepository,
-    team_id: uuid::Uuid,
-    task_ids: &[uuid::Uuid],
+    team_id: crate::domain::id::Id,
+    task_ids: &[crate::domain::id::Id],
 ) -> Result<Vec<crate::domain::models::Task>, CrawlRsError> {
     let (tasks, _) = task_repo
         .query_tasks(TaskQueryParams {
@@ -127,7 +127,7 @@ pub(crate) async fn query_tasks_for_poll(
 #[inline]
 pub(crate) fn calculate_completion_rate(
     tasks: &[crate::domain::models::Task],
-    task_ids: &[uuid::Uuid],
+    task_ids: &[crate::domain::id::Id],
 ) -> f64 {
     if task_ids.is_empty() {
         return 1.0;
@@ -283,7 +283,7 @@ pub(crate) fn apply_defaults(request: &TaskQueryRequestDto) -> (u32, u32, bool, 
 /// 执行任务查询
 pub(crate) async fn execute_task_query<T: TaskRepository>(
     task_repo: &T,
-    team_id: uuid::Uuid,
+    team_id: crate::domain::id::Id,
     request: &TaskQueryRequestDto,
     limit: u32,
     offset: u32,
@@ -310,7 +310,7 @@ pub(crate) async fn execute_task_query<T: TaskRepository>(
 pub(crate) async fn handle_sync_wait<T: TaskRepository>(
     task_repo: &T,
     tasks: &[crate::domain::models::Task],
-    team_id: uuid::Uuid,
+    team_id: crate::domain::id::Id,
     sync_wait_ms: u32,
 ) -> Result<u64, CrawlRsError> {
     let task_ids = extract_task_ids(tasks);
@@ -353,8 +353,8 @@ pub struct SyncWaitResult {
 /// Returns `CrawlRsError` if the wait or repository call fails.
 pub async fn handle_sync_wait_and_get_status(
     task_repo: &dyn TaskRepository,
-    task_ids: &[uuid::Uuid],
-    team_id: uuid::Uuid,
+    task_ids: &[crate::domain::id::Id],
+    team_id: crate::domain::id::Id,
     sync_wait_ms: u32,
 ) -> Result<SyncWaitResult, CrawlRsError> {
     if sync_wait_ms == 0 || task_ids.is_empty() {
@@ -399,7 +399,7 @@ pub(crate) async fn fetch_scrape_results(
     scrape_result_repo: &ScrapeResultRepositoryImpl,
     tasks: &[crate::domain::models::Task],
 ) -> Result<
-    Option<std::collections::HashMap<uuid::Uuid, crate::domain::models::ScrapeResult>>,
+    Option<std::collections::HashMap<crate::domain::id::Id, crate::domain::models::ScrapeResult>>,
     CrawlRsError,
 > {
     let task_ids = extract_task_ids(tasks);
@@ -416,7 +416,7 @@ pub(crate) async fn fetch_scrape_results(
 pub(crate) fn build_task_infos(
     tasks: &[crate::domain::models::Task],
     results_map: Option<
-        &std::collections::HashMap<uuid::Uuid, crate::domain::models::ScrapeResult>,
+        &std::collections::HashMap<crate::domain::id::Id, crate::domain::models::ScrapeResult>,
     >,
 ) -> Vec<TaskInfoDto> {
     tasks

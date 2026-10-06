@@ -31,7 +31,7 @@ pub enum DomainError {
 
     // ==================== 任务错误 ====================
     #[error("Task not found: {task_id}")]
-    TaskNotFound { task_id: uuid::Uuid },
+    TaskNotFound { task_id: crate::domain::id::Id },
 
     #[error("Invalid task state: current {current}, expected {expected}")]
     InvalidTaskState { current: String, expected: String },
@@ -44,7 +44,7 @@ pub enum DomainError {
 
     // ==================== 团队和配额错误 ====================
     #[error("Team not found: {team_id}")]
-    TeamNotFound { team_id: uuid::Uuid },
+    TeamNotFound { team_id: crate::domain::id::Id },
 
     #[error("Insufficient credits: required {required}, available {available}")]
     InsufficientCredits { required: i64, available: i64 },
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_task_not_found() {
-        let task_id = uuid::Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let error = DomainError::TaskNotFound { task_id };
 
         let msg = error.to_string();
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn test_team_not_found() {
-        let team_id = uuid::Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let error = DomainError::TeamNotFound { team_id };
         let msg = error.to_string();
         assert!(msg.contains("Team not found"));
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_team_not_found_nil_uuid() {
-        let team_id = uuid::Uuid::nil();
+        let team_id = crate::domain::id::Id::nil();
         let error = DomainError::TeamNotFound { team_id };
         let msg = error.to_string();
         assert!(msg.contains("Team not found"));
@@ -534,7 +534,7 @@ mod tests {
             },
             DomainError::PathFiltered { path: "p".into() },
             DomainError::TaskNotFound {
-                task_id: uuid::Uuid::nil(),
+                task_id: crate::domain::id::Id::nil(),
             },
             DomainError::InvalidTaskState {
                 current: "a".into(),
@@ -545,7 +545,7 @@ mod tests {
                 timeout_seconds: 1,
             },
             DomainError::TeamNotFound {
-                team_id: uuid::Uuid::nil(),
+                team_id: crate::domain::id::Id::nil(),
             },
             DomainError::InsufficientCredits {
                 required: 1,
@@ -628,7 +628,7 @@ mod tests {
         let locale = make_test_locale();
         let bundle = make_test_bundle();
         let err = DomainError::TaskNotFound {
-            task_id: uuid::Uuid::nil(),
+            task_id: crate::domain::id::Id::nil(),
         };
         let msg = err.user_message_locale(&locale, &bundle);
         assert!(!msg.is_empty());
@@ -663,7 +663,7 @@ mod tests {
         let locale = make_test_locale();
         let bundle = make_test_bundle();
         let err = DomainError::TeamNotFound {
-            team_id: uuid::Uuid::nil(),
+            team_id: crate::domain::id::Id::nil(),
         };
         let msg = err.user_message_locale(&locale, &bundle);
         assert!(!msg.is_empty());
@@ -786,7 +786,7 @@ mod tests {
         let locale: Locale = "zh-CN".parse().unwrap();
         let bundle = make_test_bundle();
         let err = DomainError::TaskNotFound {
-            task_id: uuid::Uuid::nil(),
+            task_id: crate::domain::id::Id::nil(),
         };
         let msg = err.user_message_locale(&locale, &bundle);
         assert!(!msg.is_empty());

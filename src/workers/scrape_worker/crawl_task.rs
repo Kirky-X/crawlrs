@@ -18,7 +18,6 @@ use crate::infrastructure::security::ssrf::is_internal_url;
 use crate::workers::crawl::adaptive::{CrawlStats, StopCondition};
 use anyhow::Result;
 use log::{debug, error, info, warn};
-use uuid::Uuid;
 
 // 提取到独立模块的函数导入
 use crate::workers::scrape_executor::{process_text_encoding, save_result};
@@ -117,7 +116,7 @@ impl ScrapeWorker {
         &self,
         task: &Task,
         response: ScrapeResponse,
-        crawl_id: Uuid,
+        crawl_id: crate::domain::id::Id,
         depth: u32,
         config: &CrawlConfigDto,
         request: &ScrapeRequest,
@@ -310,7 +309,12 @@ impl ScrapeWorker {
     /// 持久化进度指针（重启续爬）。失败打 error 日志并说明后果，不传播
     /// （种子任务已完成，喂入失败不改变任务状态）。
     #[cfg(feature = "sitemap")]
-    async fn feed_sitemap_source(&self, task: &Task, crawl_id: Uuid, config: &CrawlConfigDto) {
+    async fn feed_sitemap_source(
+        &self,
+        task: &Task,
+        crawl_id: crate::domain::id::Id,
+        config: &CrawlConfigDto,
+    ) {
         use std::sync::Arc;
 
         use crate::workers::crawl::sitemap_source::{
@@ -430,7 +434,7 @@ impl ScrapeWorker {
         &self,
         task: &mut Task,
         error: anyhow::Error,
-        crawl_id: Uuid,
+        crawl_id: crate::domain::id::Id,
         request: &ScrapeRequest,
     ) -> Result<()> {
         self.deduct_feature_credits(

@@ -14,7 +14,6 @@ use log::{error, info, warn};
 use scraper::{Html, Selector};
 use serde_json::json;
 use url::Url;
-use uuid::Uuid;
 
 use chrono::Utc;
 
@@ -71,7 +70,7 @@ pub async fn check_robots_txt(
 /// * `crawl_id` - 爬取任务 ID
 /// * `crawl_repository` - 爬取仓库
 pub async fn update_crawl_completion_status(
-    crawl_id: Uuid,
+    crawl_id: crate::domain::id::Id,
     crawl_repository: &dyn CrawlRepository,
 ) {
     match crawl_repository.find_by_id(crawl_id).await {
@@ -119,7 +118,7 @@ pub async fn update_crawl_completion_status(
 pub async fn extract_and_queue_links(
     task: &Task,
     response: &ScrapeResponse,
-    crawl_id: Uuid,
+    crawl_id: crate::domain::id::Id,
     current_depth: u32,
     config: &CrawlConfigDto,
     repository: &dyn TaskRepository,
@@ -321,7 +320,7 @@ pub async fn extract_and_queue_links(
         while let Some(scored) = frontier.pop() {
             // 出队按 priority ASC（小值先出）。
             // DFS（栈语义）：子链接键 = 父 priority - (子深度)，i32 负空间
-            // 保证默认 priority=0 与超深链路下仍严格随深度递减（复查 M1：
+            // 保证默认 priority=0 与超深链路下仍严格随深度递减（复查
             // 此前 saturating_sub(1) 在 priority=0 或深链路塌缩回 BFS）。
             // BFS（层序）：继承父 priority。
             let mut priority = task.priority;
@@ -333,7 +332,7 @@ pub async fn extract_and_queue_links(
             }
 
             let new_task = Task {
-                id: Uuid::new_v4(),
+                id: crate::domain::id::Id::generate(),
                 task_type: TaskType::Crawl,
                 status: TaskStatus::Queued,
                 priority,
@@ -376,12 +375,12 @@ mod tests {
 
     fn make_task(url: &str) -> Task {
         Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Crawl,
             status: TaskStatus::Queued,
             priority: 0,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: url.to_string(),
             payload: json!({}),
             retry_count: 0,
@@ -444,38 +443,53 @@ mod tests {
         async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             Ok(crawl.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Crawl>, RepositoryError> {
             Ok(self.crawl.clone())
         }
         async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             Ok(crawl.clone())
         }
-        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_completed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_failed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn update_status(
             &self,
-            _id: Uuid,
+            _id: crate::domain::id::Id,
             _status: CrawlStatus,
         ) -> Result<(), RepositoryError> {
             self.update_status_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_total_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn find_by_team_id_paginated(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u32,
             _offset: u32,
         ) -> Result<Vec<Crawl>, RepositoryError> {
             Ok(vec![])
         }
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn count_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
     }
@@ -485,38 +499,53 @@ mod tests {
         async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             Ok(crawl.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Crawl>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             Ok(crawl.clone())
         }
-        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_completed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_failed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn update_status(
             &self,
-            _id: Uuid,
+            _id: crate::domain::id::Id,
             _status: CrawlStatus,
         ) -> Result<(), RepositoryError> {
             self.update_status_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_total_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn find_by_team_id_paginated(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u32,
             _offset: u32,
         ) -> Result<Vec<Crawl>, RepositoryError> {
             Ok(vec![])
         }
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn count_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
     }
@@ -543,7 +572,7 @@ mod tests {
     async fn test_update_crawl_completion_status_crawl_not_found() {
         // MockCrawlRepo.find_by_id returns Ok(None) → logs error, no panic
         let repo = MockCrawlRepo::default();
-        update_crawl_completion_status(Uuid::new_v4(), &repo).await;
+        update_crawl_completion_status(crate::domain::id::Id::generate(), &repo).await;
         // No assertion needed — just verify it doesn't panic
     }
 
@@ -576,45 +605,51 @@ mod tests {
             self.create_count.fetch_add(1, Ordering::SeqCst);
             self.captured_priorities.lock().unwrap().push(task.priority);
             Ok(Task::new(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 TaskType::Crawl,
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 String::new(),
                 json!({}),
             ))
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> {
             Ok(Task::new(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 TaskType::Crawl,
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 String::new(),
                 json!({}),
             ))
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -632,13 +667,19 @@ mod tests {
         ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -649,17 +690,23 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -709,7 +756,7 @@ mod tests {
         extract_and_queue_links(
             &task,
             &response,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             0,
             &config,
             &repo,
@@ -741,7 +788,7 @@ mod tests {
         extract_and_queue_links(
             &task,
             &response,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             0,
             &config,
             &repo,
@@ -772,7 +819,7 @@ mod tests {
         extract_and_queue_links(
             &task,
             &response,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             0,
             &config,
             &repo,
@@ -803,7 +850,7 @@ mod tests {
         extract_and_queue_links(
             &task,
             &response,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             0,
             &config,
             &repo,
@@ -835,7 +882,7 @@ mod tests {
         extract_and_queue_links(
             &task,
             &response,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             0,
             &config,
             &repo,
@@ -869,7 +916,7 @@ mod tests {
             extract_and_queue_links(
                 &task,
                 &response,
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 0,
                 &config,
                 &repo,
@@ -915,7 +962,7 @@ mod tests {
         extract_and_queue_links(
             &task,
             &response,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             0,
             &config,
             &repo,
@@ -938,8 +985,8 @@ mod tests {
     async fn test_update_crawl_completion_status_all_done_marks_completed() {
         // completed(3) + failed(2) == total(5) → should call update_status
         let crawl = Crawl::with_all_fields(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "test".into(),
             "https://example.com".into(),
             "https://example.com".into(),
@@ -953,7 +1000,7 @@ mod tests {
             None,
         );
         let repo = ConfigurableCrawlRepo::with_crawl(crawl);
-        update_crawl_completion_status(Uuid::new_v4(), &repo).await;
+        update_crawl_completion_status(crate::domain::id::Id::generate(), &repo).await;
         assert_eq!(
             repo.update_status_count.load(Ordering::SeqCst),
             1,
@@ -965,8 +1012,8 @@ mod tests {
     async fn test_update_crawl_completion_status_not_yet_done() {
         // completed(1) + failed(0) != total(5) → should NOT call update_status
         let crawl = Crawl::with_all_fields(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "test".into(),
             "https://example.com".into(),
             "https://example.com".into(),
@@ -980,7 +1027,7 @@ mod tests {
             None,
         );
         let repo = ConfigurableCrawlRepo::with_crawl(crawl);
-        update_crawl_completion_status(Uuid::new_v4(), &repo).await;
+        update_crawl_completion_status(crate::domain::id::Id::generate(), &repo).await;
         assert_eq!(
             repo.update_status_count.load(Ordering::SeqCst),
             0,
@@ -997,42 +1044,57 @@ mod tests {
             async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
                 Ok(crawl.clone())
             }
-            async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+            async fn find_by_id(
+                &self,
+                _id: crate::domain::id::Id,
+            ) -> Result<Option<Crawl>, RepositoryError> {
                 Err(RepositoryError::Database(anyhow::anyhow!("db error")))
             }
             async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
                 Ok(crawl.clone())
             }
-            async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            async fn increment_completed_tasks(
+                &self,
+                _id: crate::domain::id::Id,
+            ) -> Result<(), RepositoryError> {
                 Ok(())
             }
-            async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            async fn increment_failed_tasks(
+                &self,
+                _id: crate::domain::id::Id,
+            ) -> Result<(), RepositoryError> {
                 Ok(())
             }
             async fn update_status(
                 &self,
-                _id: Uuid,
+                _id: crate::domain::id::Id,
                 _status: CrawlStatus,
             ) -> Result<(), RepositoryError> {
                 Ok(())
             }
-            async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+            async fn increment_total_tasks(
+                &self,
+                _id: crate::domain::id::Id,
+            ) -> Result<(), RepositoryError> {
                 Ok(())
             }
             async fn find_by_team_id_paginated(
                 &self,
-                _team_id: Uuid,
+                _team_id: crate::domain::id::Id,
                 _limit: u32,
                 _offset: u32,
             ) -> Result<Vec<Crawl>, RepositoryError> {
                 Ok(vec![])
             }
-            async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+            async fn count_by_team_id(
+                &self,
+                _team_id: crate::domain::id::Id,
+            ) -> Result<u64, RepositoryError> {
                 Ok(0)
             }
         }
         let repo = ErrorCrawlRepo;
-        update_crawl_completion_status(Uuid::new_v4(), &repo).await;
+        update_crawl_completion_status(crate::domain::id::Id::generate(), &repo).await;
         // No panic = success
     }
 
@@ -1056,45 +1118,51 @@ mod tests {
         async fn create(&self, _task: &Task) -> Result<Task, RepositoryError> {
             self.create_count.fetch_add(1, Ordering::SeqCst);
             Ok(Task::new(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 TaskType::Crawl,
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 String::new(),
                 json!({}),
             ))
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, _task: &Task) -> Result<Task, RepositoryError> {
             Ok(Task::new(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 TaskType::Crawl,
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 String::new(),
                 json!({}),
             ))
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -1117,13 +1185,19 @@ mod tests {
         ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -1134,17 +1208,23 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -1177,7 +1257,7 @@ mod tests {
         extract_and_queue_links(
             &task,
             &response,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             0,
             &config,
             &repo,
@@ -1219,7 +1299,7 @@ mod tests {
         extract_and_queue_links(
             &task,
             &response,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             0,
             &config,
             &repo,
@@ -1262,7 +1342,7 @@ mod tests {
         extract_and_queue_links(
             &task,
             &response,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             0,
             &config,
             &repo,

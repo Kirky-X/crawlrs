@@ -10,7 +10,6 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use log::{debug, info, warn};
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::common::CacheContext;
 use crate::domain::models::{ScrapeResult, Task};
@@ -203,7 +202,7 @@ pub async fn save_result(
     let content_to_store = response.content.clone();
 
     let result = ScrapeResult {
-        id: Uuid::new_v4(),
+        id: crate::domain::id::Id::generate(),
         task_id: task.id,
         url: task.url.clone(),
         status_code: response.status_code as i32,
@@ -336,12 +335,12 @@ mod tests {
 
     fn make_task(url: &str) -> Task {
         Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 0,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: url.to_string(),
             payload: json!({}),
             retry_count: 0,
@@ -492,13 +491,19 @@ mod tests {
             self.saved.lock().expect("repo lock").push(result);
             Ok(())
         }
-        async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<ScrapeResult>> {
+        async fn find_by_task_id(
+            &self,
+            _task_id: crate::domain::id::Id,
+        ) -> Result<Option<ScrapeResult>> {
             Ok(None)
         }
-        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(
+            &self,
+            _task_ids: &[crate::domain::id::Id],
+        ) -> Result<Vec<ScrapeResult>> {
             Ok(vec![])
         }
-        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
+        async fn get_team_avg_response_time(&self, _team_id: crate::domain::id::Id) -> Result<f64> {
             Ok(0.0)
         }
 

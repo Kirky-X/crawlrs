@@ -13,14 +13,13 @@ use crawlrs::domain::repositories::webhook_event_repository::WebhookEventReposit
 use crawlrs::infrastructure::database::entities::webhook_event;
 use crawlrs::infrastructure::repositories::webhook_event_repo_impl::WebhookEventRepoImpl;
 use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use uuid::Uuid;
 
 /// 创建测试用的 WebhookEvent（辅助函数）
-fn make_event(team_id: Uuid, webhook_url: &str) -> WebhookEvent {
+fn make_event(team_id: crawlrs::domain::id::Id, webhook_url: &str) -> WebhookEvent {
     WebhookEvent::new(
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
         team_id,
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
         WebhookEventType::CrawlCompleted,
         serde_json::json!({"event": "test", "url": webhook_url}),
         webhook_url.to_string(),
@@ -34,7 +33,10 @@ async fn test_create_and_find_by_id() {
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let unique_url = format!("https://{}.text.npr.org/hook", Uuid::new_v4());
+    let unique_url = format!(
+        "https://{}.text.npr.org/hook",
+        crawlrs::domain::id::Id::generate()
+    );
     let event = make_event(team_id, &unique_url);
 
     let created = repo
@@ -65,7 +67,7 @@ async fn test_find_by_id_returns_none_for_unknown() {
     let app = create_test_app_no_worker().await;
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
 
-    let unknown_id = Uuid::new_v4();
+    let unknown_id = crawlrs::domain::id::Id::generate();
     let result = repo
         .find_by_id(unknown_id)
         .await
@@ -80,7 +82,10 @@ async fn test_find_pending_returns_pending_events() {
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let unique_url = format!("https://{}.text.npr.org/hook", Uuid::new_v4());
+    let unique_url = format!(
+        "https://{}.text.npr.org/hook",
+        crawlrs::domain::id::Id::generate()
+    );
     let event = make_event(team_id, &unique_url);
 
     repo.create(&event).await.expect("Failed to create event");
@@ -105,7 +110,10 @@ async fn test_update_event() {
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let unique_url = format!("https://{}.text.npr.org/hook", Uuid::new_v4());
+    let unique_url = format!(
+        "https://{}.text.npr.org/hook",
+        crawlrs::domain::id::Id::generate()
+    );
     let mut event = make_event(team_id, &unique_url);
 
     repo.create(&event).await.expect("Failed to create event");
@@ -140,7 +148,7 @@ async fn test_find_by_team_id_paginated() {
     let app = create_test_app_no_worker().await;
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // 创建 3 个事件
     for i in 0..3 {
@@ -184,7 +192,10 @@ async fn test_count_by_team_id() {
         .await
         .expect("Failed to count before insert");
 
-    let unique_url = format!("https://{}.text.npr.org/hook", Uuid::new_v4());
+    let unique_url = format!(
+        "https://{}.text.npr.org/hook",
+        crawlrs::domain::id::Id::generate()
+    );
     let event = make_event(team_id, &unique_url);
     repo.create(&event).await.expect("Failed to create event");
 
@@ -219,11 +230,15 @@ async fn test_create_with_different_event_types() {
 
     let mut event_ids = Vec::new();
     for (i, et) in event_types.iter().enumerate() {
-        let url = format!("https://{}-{}.text.npr.org/hook", Uuid::new_v4(), i);
+        let url = format!(
+            "https://{}-{}.text.npr.org/hook",
+            crawlrs::domain::id::Id::generate(),
+            i
+        );
         let event = WebhookEvent::new(
-            Uuid::new_v4(),
+            crawlrs::domain::id::Id::generate(),
             team_id,
-            Uuid::new_v4(),
+            crawlrs::domain::id::Id::generate(),
             et.clone(),
             serde_json::json!({"i": i}),
             url,
@@ -248,7 +263,7 @@ async fn test_find_pending_respects_limit() {
     let app = create_test_app_no_worker().await;
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
     // 创建 5 个 pending 事件
     for i in 0..5 {
@@ -279,7 +294,10 @@ async fn tc_find_pending_includes_failed_retry() {
     let app = create_test_app_no_worker().await;
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
-    let unique_url = format!("https://{}.text.npr.org/failed-retry", Uuid::new_v4());
+    let unique_url = format!(
+        "https://{}.text.npr.org/failed-retry",
+        crawlrs::domain::id::Id::generate()
+    );
 
     // 创建一个 pending 事件
     let mut event = make_event(team_id, &unique_url);
@@ -312,7 +330,7 @@ async fn tc_count_by_team_id_returns_zero_for_unknown_team() {
     let app = create_test_app_no_worker().await;
     let repo = WebhookEventRepoImpl::new(app.db_pool.clone());
 
-    let unknown_team_id = Uuid::new_v4();
+    let unknown_team_id = crawlrs::domain::id::Id::generate();
     let count = repo
         .count_by_team_id(unknown_team_id)
         .await
@@ -340,7 +358,10 @@ async fn tc_find_by_team_id_paginated_offset_beyond_range() {
 }
 
 /// 辅助函数：清理指定 team_id 的 webhook_events
-async fn cleanup_events(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
+async fn cleanup_events(
+    app: &super::super::helpers::test_app::TestApp,
+    team_id: crawlrs::domain::id::Id,
+) {
     let session = app
         .db_pool
         .get_session("admin")

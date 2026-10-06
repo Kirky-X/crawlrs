@@ -30,7 +30,6 @@ use axum::{
 };
 use dbnexus::DbPool;
 use tower::ServiceExt;
-use uuid::Uuid;
 
 use crawlrs::domain::auth::{ApiKeyScope, AuditLogEntry, ScopePermission};
 use crawlrs::domain::services::audit_service::{AuditServiceError, AuditServiceTrait};
@@ -68,8 +67,8 @@ impl AuditServiceTrait for MockAuditService {
     async fn log_allow(
         &self,
         _action: String,
-        _api_key_id: Uuid,
-        _team_id: Uuid,
+        _api_key_id: crawlrs::domain::id::Id,
+        _team_id: crawlrs::domain::id::Id,
         _scope: ApiKeyScope,
     ) -> Result<(), AuditServiceError> {
         Ok(())
@@ -78,8 +77,8 @@ impl AuditServiceTrait for MockAuditService {
     async fn log_deny(
         &self,
         _action: String,
-        _api_key_id: Option<Uuid>,
-        _team_id: Option<Uuid>,
+        _api_key_id: Option<crawlrs::domain::id::Id>,
+        _team_id: Option<crawlrs::domain::id::Id>,
         _reason: String,
         _scope: Option<ApiKeyScope>,
     ) -> Result<(), AuditServiceError> {
@@ -90,7 +89,7 @@ impl AuditServiceTrait for MockAuditService {
 
     async fn get_logs_for_key(
         &self,
-        _api_key_id: Uuid,
+        _api_key_id: crawlrs::domain::id::Id,
         _limit: u64,
         _offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
@@ -99,7 +98,7 @@ impl AuditServiceTrait for MockAuditService {
 
     async fn get_logs_for_team(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _limit: u64,
         _offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
@@ -108,7 +107,7 @@ impl AuditServiceTrait for MockAuditService {
 
     async fn get_denied_requests(
         &self,
-        _api_key_id: Uuid,
+        _api_key_id: crawlrs::domain::id::Id,
         _limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
         Ok(vec![])
@@ -122,7 +121,12 @@ impl AuditServiceTrait for MockAuditService {
 /// Create a test AuthState with the given scope and random IDs.
 fn make_auth_state(scope: ApiKeyScope) -> AuthState {
     let pool = create_test_pool_or_panic();
-    AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), scope)
+    AuthState::new(
+        pool,
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
+        scope,
+    )
 }
 
 /// Build a Router wired with scope_middleware and an AuthState injector layer.
@@ -177,8 +181,8 @@ fn build_auth_test_app(pool: Arc<DbPool>) -> Router {
 #[test]
 fn test_auth_state_new_sets_required_fields() {
     let pool = create_test_pool_or_panic();
-    let team_id = Uuid::new_v4();
-    let api_key_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let api_key_id = crawlrs::domain::id::Id::generate();
     let scope = ApiKeyScope::full_access();
     let state = AuthState::new(pool, team_id, api_key_id, scope.clone());
 

@@ -40,7 +40,6 @@ use axum::{
 use chrono::Utc;
 use dbnexus::sea_orm::{ActiveValue, EntityTrait};
 use tower::ServiceExt;
-use uuid::Uuid;
 
 // 本文件同时编译进 `main`（crate::integration 下）与 `integration_tests`
 // （crate 根下）两个目标，`garrison_lock` 均挂在本文件的父模块，`super::`
@@ -114,7 +113,12 @@ async fn create_test_db_pool() -> Arc<dbnexus::DbPool> {
 /// # 返回
 ///
 /// `(pool, plaintext_key, api_key_id, team_id)`
-async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
+async fn setup_garrison_env() -> (
+    Arc<dbnexus::DbPool>,
+    String,
+    crawlrs::domain::id::Id,
+    crawlrs::domain::id::Id,
+) {
     let pool = create_test_db_pool().await;
     let settings = make_test_settings();
 
@@ -129,7 +133,7 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
         .expect("init_garrison_auth failed");
 
     // 2. 创建测试 team
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let session = pool
         .get_session("admin")
         .await
@@ -139,7 +143,7 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
     // 改用 sea-orm ActiveModel 参数化插入，与 `src/presentation/handlers/api_key_handler.rs::seed_team_in_db` 一致。
     let now = time_utils::to_db_datetime(Utc::now());
     let team_active = TeamActiveModel {
-        id: ActiveValue::Set(team_id),
+        id: ActiveValue::Set(team_id.into()),
         name: ActiveValue::Set("garrison-test-team".to_string()),
         allowed_countries: ActiveValue::Set(None),
         blocked_countries: ActiveValue::Set(None),
@@ -155,7 +159,7 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
         .expect("Failed to insert test team");
 
     // 3. 生成新 api_key_id（同时作为 garrison login_id 约定）
-    let api_key_id = Uuid::new_v4();
+    let api_key_id = crawlrs::domain::id::Id::generate();
 
     // 4. 获取 garrison DAO（已由 init_garrison_auth 注入全局态）
     let dao = get_garrison_dao().expect("GARRISON_DAO must be injected by init_garrison_auth");
@@ -183,8 +187,8 @@ async fn setup_garrison_env() -> (Arc<dbnexus::DbPool>, String, Uuid, Uuid) {
     // `garrison_key_id` 来自 garrison 返回值的子串，虽当前不含特殊字符，
     // 但参数化是防御编程的硬性要求，杜绝未来 garrison 返回值变更引入注入风险。
     let api_key_active = ApiKeyActiveModel {
-        id: ActiveValue::Set(api_key_id),
-        team_id: ActiveValue::Set(team_id),
+        id: ActiveValue::Set(api_key_id.into()),
+        team_id: ActiveValue::Set(team_id.into()),
         key: ActiveValue::Set(garrison_key_id),
         created_at: ActiveValue::Set(now),
         updated_at: ActiveValue::Set(None),

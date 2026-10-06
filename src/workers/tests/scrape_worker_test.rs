@@ -97,10 +97,10 @@ impl CacheService for MockCacheService {
 /// Create a Task with the given JSON payload and default remaining fields.
 fn make_task(payload: Value) -> Task {
     Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Scrape,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         "https://example.com".to_string(),
         payload,
     )
@@ -1098,30 +1098,36 @@ impl TaskRepository for MockTaskRepository {
     async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
         Ok(task.clone())
     }
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
     async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
         Ok(task.clone())
     }
-    async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn acquire_next(
+        &self,
+        _worker_id: crate::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
     async fn mark_completed(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crate::domain::id::Id,
+        _lock_token: Option<crate::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         Ok(1)
     }
     async fn mark_failed(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crate::domain::id::Id,
+        _lock_token: Option<crate::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         Ok(1)
     }
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+    async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
         Ok(1)
     }
     async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -1136,13 +1142,19 @@ impl TaskRepository for MockTaskRepository {
     async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> {
         Ok(0)
     }
-    async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn cancel_tasks_by_crawl_id(
+        &self,
+        _crawl_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
     async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
         Ok(0)
     }
-    async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+    async fn find_by_crawl_id(
+        &self,
+        _crawl_id: crate::domain::id::Id,
+    ) -> Result<Vec<Task>, RepositoryError> {
         Ok(vec![])
     }
     async fn query_tasks(
@@ -1153,17 +1165,23 @@ impl TaskRepository for MockTaskRepository {
     }
     async fn batch_cancel(
         &self,
-        _task_ids: Vec<Uuid>,
-        _team_id: Uuid,
+        _task_ids: Vec<crate::domain::id::Id>,
+        _team_id: crate::domain::id::Id,
         _force: bool,
-    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+    ) -> Result<
+        (
+            Vec<crate::domain::id::Id>,
+            Vec<(crate::domain::id::Id, String)>,
+        ),
+        RepositoryError,
+    > {
         Ok((vec![], vec![]))
     }
 
     async fn renew_lock(
         &self,
-        _task_id: Uuid,
-        _worker_id: Uuid,
+        _task_id: crate::domain::id::Id,
+        _worker_id: crate::domain::id::Id,
         _extend_seconds: i64,
     ) -> Result<bool, RepositoryError> {
         Ok(true)
@@ -1178,13 +1196,19 @@ impl ScrapeResultRepository for MockScrapeResultRepository {
     async fn save(&self, _result: ScrapeResult) -> Result<()> {
         Ok(())
     }
-    async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<ScrapeResult>> {
+    async fn find_by_task_id(
+        &self,
+        _task_id: crate::domain::id::Id,
+    ) -> Result<Option<ScrapeResult>> {
         Ok(None)
     }
-    async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> Result<Vec<ScrapeResult>> {
+    async fn find_by_task_ids(
+        &self,
+        _task_ids: &[crate::domain::id::Id],
+    ) -> Result<Vec<ScrapeResult>> {
         Ok(vec![])
     }
-    async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
+    async fn get_team_avg_response_time(&self, _team_id: crate::domain::id::Id) -> Result<f64> {
         Ok(0.0)
     }
 
@@ -1218,13 +1242,19 @@ impl ScrapeResultRepository for CapturingScrapeResultRepository {
         *guard = Some(result);
         Ok(())
     }
-    async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<ScrapeResult>> {
+    async fn find_by_task_id(
+        &self,
+        _task_id: crate::domain::id::Id,
+    ) -> Result<Option<ScrapeResult>> {
         Ok(None)
     }
-    async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> Result<Vec<ScrapeResult>> {
+    async fn find_by_task_ids(
+        &self,
+        _task_ids: &[crate::domain::id::Id],
+    ) -> Result<Vec<ScrapeResult>> {
         Ok(vec![])
     }
-    async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
+    async fn get_team_avg_response_time(&self, _team_id: crate::domain::id::Id) -> Result<f64> {
         Ok(0.0)
     }
 
@@ -1241,33 +1271,52 @@ impl CrawlRepository for MockCrawlRepository {
     async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
         Ok(crawl.clone())
     }
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<Option<Crawl>, RepositoryError> {
         Ok(None)
     }
     async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
         Ok(crawl.clone())
     }
-    async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_completed_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_failed_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn update_status(&self, _id: Uuid, _status: CrawlStatus) -> Result<(), RepositoryError> {
+    async fn update_status(
+        &self,
+        _id: crate::domain::id::Id,
+        _status: CrawlStatus,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_total_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
     async fn find_by_team_id_paginated(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _limit: u32,
         _offset: u32,
     ) -> Result<Vec<Crawl>, RepositoryError> {
         Ok(vec![])
     }
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 }
@@ -1291,24 +1340,27 @@ impl WebhookService for MockWebhookService {
 /// Mock CreditsRepository — tracks deductions for verification.
 #[derive(Debug, Default)]
 struct MockCreditsRepo {
-    deducted: Arc<std::sync::Mutex<Vec<(Uuid, i64)>>>,
+    deducted: Arc<std::sync::Mutex<Vec<(crate::domain::id::Id, i64)>>>,
     /// Records (reference_id/task_id, transaction_type) of every deduction so
     /// `has_deduction_for_task` can enforce idempotency in tests.
-    deduction_keys: Arc<std::sync::Mutex<Vec<(Uuid, String)>>>,
+    deduction_keys: Arc<std::sync::Mutex<Vec<(crate::domain::id::Id, String)>>>,
 }
 
 #[async_trait::async_trait]
 impl CreditsRepository for MockCreditsRepo {
-    async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+    async fn get_balance(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<i64, CreditsRepositoryError> {
         Ok(100)
     }
     async fn deduct_credits(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         amount: i64,
         transaction_type: CreditsTransactionType,
         _description: String,
-        reference_id: Option<Uuid>,
+        reference_id: Option<crate::domain::id::Id>,
     ) -> Result<(), CreditsRepositoryError> {
         self.deducted
             .lock()
@@ -1324,7 +1376,7 @@ impl CreditsRepository for MockCreditsRepo {
     }
     async fn has_deduction_for_task(
         &self,
-        task_id: Uuid,
+        task_id: crate::domain::id::Id,
         transaction_type: CreditsTransactionType,
     ) -> Result<bool, CreditsRepositoryError> {
         let keys = self
@@ -1337,24 +1389,24 @@ impl CreditsRepository for MockCreditsRepo {
     }
     async fn add_credits(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _amount: i64,
         _transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crate::domain::id::Id>,
     ) -> Result<i64, CreditsRepositoryError> {
         Ok(100)
     }
     async fn get_transaction_history(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _limit: Option<u32>,
     ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
         Ok(vec![])
     }
     async fn initialize_team_credits(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _initial_balance: i64,
     ) -> Result<i64, CreditsRepositoryError> {
         Ok(100)
@@ -1680,10 +1732,10 @@ async fn test_mock_should_crawl_exclude_fallback_string_match() {
 async fn test_mock_build_crawl_request_basic() {
     let worker = build_mock_worker().await;
     let task = Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Crawl,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         "https://example.com".to_string(),
         json!({}),
     );
@@ -1708,10 +1760,10 @@ async fn test_mock_build_crawl_request_basic() {
 async fn test_mock_build_crawl_request_with_headers() {
     let worker = build_mock_worker().await;
     let task = Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Crawl,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         "https://example.com".to_string(),
         json!({}),
     );
@@ -1747,10 +1799,10 @@ async fn test_mock_build_crawl_request_with_headers() {
 async fn test_mock_build_crawl_request_non_string_headers_filtered() {
     let worker = build_mock_worker().await;
     let task = Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Crawl,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         "https://example.com".to_string(),
         json!({}),
     );
@@ -1788,10 +1840,10 @@ async fn test_mock_build_crawl_request_non_string_headers_filtered() {
 async fn test_mock_build_crawl_request_with_proxy() {
     let worker = build_mock_worker().await;
     let task = Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Crawl,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         "https://example.com".to_string(),
         json!({}),
     );
@@ -1817,10 +1869,10 @@ async fn test_mock_build_crawl_request_with_proxy() {
 async fn test_mock_build_crawl_request_empty_headers_map() {
     let worker = build_mock_worker().await;
     let task = Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Crawl,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         "https://example.com".to_string(),
         json!({}),
     );
@@ -1906,7 +1958,12 @@ async fn test_mock_deduct_feature_credits_screenshot_and_proxy() {
     // the method doesn't panic.
     let worker = build_mock_worker().await;
     worker
-        .deduct_feature_credits(Uuid::new_v4(), Uuid::new_v4(), true, true)
+        .deduct_feature_credits(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            true,
+            true,
+        )
         .await;
 }
 
@@ -1914,7 +1971,12 @@ async fn test_mock_deduct_feature_credits_screenshot_and_proxy() {
 async fn test_mock_deduct_feature_credits_screenshot_only() {
     let worker = build_mock_worker().await;
     worker
-        .deduct_feature_credits(Uuid::new_v4(), Uuid::new_v4(), true, false)
+        .deduct_feature_credits(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            true,
+            false,
+        )
         .await;
 }
 
@@ -1922,7 +1984,12 @@ async fn test_mock_deduct_feature_credits_screenshot_only() {
 async fn test_mock_deduct_feature_credits_proxy_only() {
     let worker = build_mock_worker().await;
     worker
-        .deduct_feature_credits(Uuid::new_v4(), Uuid::new_v4(), false, true)
+        .deduct_feature_credits(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            false,
+            true,
+        )
         .await;
 }
 
@@ -1930,7 +1997,12 @@ async fn test_mock_deduct_feature_credits_proxy_only() {
 async fn test_mock_deduct_feature_credits_neither() {
     let worker = build_mock_worker().await;
     worker
-        .deduct_feature_credits(Uuid::new_v4(), Uuid::new_v4(), false, false)
+        .deduct_feature_credits(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            false,
+            false,
+        )
         .await;
 }
 
@@ -2027,7 +2099,9 @@ async fn test_mock_update_crawl_completion_status_crawl_not_found() {
     let worker = build_mock_worker().await;
     // MockCrawlRepository::find_by_id returns None, so this should
     // just log an error and return without panicking.
-    worker.update_crawl_completion_status(Uuid::new_v4()).await;
+    worker
+        .update_crawl_completion_status(crate::domain::id::Id::generate())
+        .await;
 }
 
 // --- parse_crawl_payload tests ---
@@ -2035,7 +2109,7 @@ async fn test_mock_update_crawl_completion_status_crawl_not_found() {
 #[tokio::test]
 async fn test_mock_parse_crawl_payload_valid() {
     let worker = build_mock_worker().await;
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     let task = make_task(json!({
         "crawl_id": crawl_id.to_string(),
         "depth": 2,
@@ -2067,7 +2141,7 @@ async fn test_mock_parse_crawl_payload_missing_crawl_id() {
 #[tokio::test]
 async fn test_mock_parse_crawl_payload_default_depth() {
     let worker = build_mock_worker().await;
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     let task = make_task(json!({
         "crawl_id": crawl_id.to_string(),
         "config": {"max_depth": 1}
@@ -2275,7 +2349,13 @@ async fn test_mock_extract_and_queue_links_html_with_links() {
     };
     let config = make_crawl_config(None, None);
     let result = worker
-        .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+        .extract_and_queue_links(
+            &task,
+            &response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+        )
         .await;
     assert!(result.is_ok());
 }
@@ -2297,7 +2377,13 @@ async fn test_mock_extract_and_queue_links_non_html_skipped() {
     };
     let config = make_crawl_config(None, None);
     let result = worker
-        .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+        .extract_and_queue_links(
+            &task,
+            &response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+        )
         .await;
     assert!(result.is_ok());
 }
@@ -2324,7 +2410,13 @@ async fn test_mock_extract_and_queue_links_with_include_filter() {
     };
     let config = make_crawl_config(Some(vec!["example\\.com".to_string()]), None);
     let result = worker
-        .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+        .extract_and_queue_links(
+            &task,
+            &response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+        )
         .await;
     assert!(result.is_ok());
 }
@@ -2346,7 +2438,12 @@ async fn test_mock_deduct_token_credits_zero_tokens() {
     let worker = build_mock_worker().await;
     let usage = TokenUsage::default();
     worker
-        .deduct_token_credits(Uuid::new_v4(), Uuid::new_v4(), &usage, "test zero")
+        .deduct_token_credits(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            &usage,
+            "test zero",
+        )
         .await;
 }
 
@@ -2359,7 +2456,12 @@ async fn test_mock_deduct_token_credits_with_tokens() {
         total_tokens: 150,
     };
     worker
-        .deduct_token_credits(Uuid::new_v4(), Uuid::new_v4(), &usage, "test with tokens")
+        .deduct_token_credits(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            &usage,
+            "test with tokens",
+        )
         .await;
 }
 
@@ -2380,8 +2482,8 @@ async fn test_deduct_feature_credits_is_idempotent_per_task() {
     )
     .await;
 
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
+    let task_id = crate::domain::id::Id::generate();
     // screenshot=true, proxy=true → extra_credits = 3 (> 0, triggers deduction)
     worker
         .deduct_feature_credits(team_id, task_id, true, true)
@@ -2415,8 +2517,8 @@ async fn test_deduct_token_credits_is_idempotent_per_task() {
     )
     .await;
 
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
+    let task_id = crate::domain::id::Id::generate();
     let usage = TokenUsage {
         prompt_tokens: 100,
         completion_tokens: 50,
@@ -2453,8 +2555,8 @@ async fn test_deduct_feature_and_token_credits_are_independent_per_task() {
     )
     .await;
 
-    let team_id = Uuid::new_v4();
-    let task_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
+    let task_id = crate::domain::id::Id::generate();
     worker
         .deduct_feature_credits(team_id, task_id, true, false)
         .await;
@@ -2546,31 +2648,37 @@ async fn test_handle_scrape_success_returns_false_when_guard_lost() {
         async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             // 模拟锁已被其他 worker 抢占
             Ok(0)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -2588,13 +2696,19 @@ async fn test_handle_scrape_success_returns_false_when_guard_lost() {
         ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -2605,16 +2719,22 @@ async fn test_handle_scrape_success_returns_false_when_guard_lost() {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -2956,7 +3076,14 @@ async fn test_mock_handle_crawl_success_with_link_extraction() {
     let config = make_crawl_config(None, None);
     let request = worker.build_crawl_request(&task, &config);
     let result = worker
-        .handle_crawl_success(&task, response, Uuid::new_v4(), 0, &config, &request)
+        .handle_crawl_success(
+            &task,
+            response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+            &request,
+        )
         .await;
     assert!(result.is_ok());
 }
@@ -2980,7 +3107,14 @@ async fn test_mock_handle_crawl_success_max_depth_no_link_extraction() {
     config.max_depth = 1;
     let request = worker.build_crawl_request(&task, &config);
     let result = worker
-        .handle_crawl_success(&task, response, Uuid::new_v4(), 1, &config, &request)
+        .handle_crawl_success(
+            &task,
+            response,
+            crate::domain::id::Id::generate(),
+            1,
+            &config,
+            &request,
+        )
         .await;
     assert!(result.is_ok());
 }
@@ -2997,7 +3131,7 @@ async fn test_mock_handle_crawl_failure_basic() {
         .handle_crawl_failure(
             &mut task,
             anyhow::anyhow!("Network error"),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             &request,
         )
         .await;
@@ -3083,7 +3217,7 @@ async fn test_mock_process_crawl_task_invalid_payload() {
 async fn test_mock_process_crawl_task_engine_error() {
     let worker = build_mock_worker().await;
     // Valid crawl payload but engine fails → handle_crawl_failure is called.
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     let task = make_task(json!({
         "crawl_id": crawl_id.to_string(),
         "depth": 0,
@@ -3568,7 +3702,7 @@ async fn tc_scrape_worker_new_constructs_successfully() {
         }
     };
     // Verify the worker has a unique ID.
-    assert_ne!(worker.worker_id, Uuid::nil());
+    assert_ne!(worker.worker_id, crate::domain::id::Id::nil());
     // Verify the worker has a default concurrency limit.
     assert!(worker.default_concurrency_limit >= 1);
 }
@@ -3709,7 +3843,7 @@ async fn tc_scrape_worker_builder_builds_full_worker() {
         .expect("ScrapeWorkerBuilder::build should succeed with all required deps");
 
     // Verify the builder produced a valid worker.
-    assert_ne!(worker.worker_id, Uuid::nil());
+    assert_ne!(worker.worker_id, crate::domain::id::Id::nil());
 }
 
 #[tokio::test]
@@ -3728,10 +3862,10 @@ async fn tc_scrape_worker_build_crawl_request() {
     };
 
     let task = Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Crawl,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         "https://example.com".to_string(),
         serde_json::json!({}),
     );
@@ -3761,16 +3895,16 @@ impl TaskQueue for MockTaskQueue {
     async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
         Ok(task)
     }
-    async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+    async fn dequeue(&self, _worker_id: crate::domain::id::Id) -> Result<Option<Task>, QueueError> {
         Ok(None)
     }
-    async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn complete(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
-    async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn fail(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
-    async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn cancel(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
 }
@@ -3783,16 +3917,16 @@ impl TaskQueue for FailingTaskQueue {
     async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
         Ok(task)
     }
-    async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+    async fn dequeue(&self, _worker_id: crate::domain::id::Id) -> Result<Option<Task>, QueueError> {
         Err(QueueError::Empty)
     }
-    async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn complete(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
-    async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn fail(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
-    async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn cancel(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
 }
@@ -3957,7 +4091,14 @@ async fn test_mock_handle_crawl_success_with_extraction_rules() {
     };
     let request = worker.build_crawl_request(&task, &config);
     let result = worker
-        .handle_crawl_success(&task, response, Uuid::new_v4(), 0, &config, &request)
+        .handle_crawl_success(
+            &task,
+            response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+            &request,
+        )
         .await;
     assert!(result.is_ok());
 }
@@ -4009,15 +4150,15 @@ async fn test_mock_parse_crawl_payload_invalid_crawl_id_defaults_to_nil() {
         "config": {"max_depth": 2}
     }));
     let (crawl_id, depth, _) = worker.parse_crawl_payload(&task).await.unwrap();
-    // Invalid UUID string falls back to Uuid::nil() via unwrap_or_default()
-    assert_eq!(crawl_id, Uuid::nil());
+    // Invalid UUID string falls back to crate::domain::id::Id::nil() via unwrap_or_default()
+    assert_eq!(crawl_id, crate::domain::id::Id::nil());
     assert_eq!(depth, 1);
 }
 
 #[tokio::test]
 async fn test_mock_parse_crawl_payload_missing_config_fails() {
     let worker = build_mock_worker().await;
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     // config is missing → defaults to json!({}) → deserialization fails
     // because CrawlConfigDto.max_depth is a required u32 field.
     let task = make_task(json!({
@@ -4031,7 +4172,7 @@ async fn test_mock_parse_crawl_payload_missing_config_fails() {
 async fn test_mock_parse_crawl_payload_invalid_config_json_fails() {
     let worker = build_mock_worker().await;
     let task = make_task(json!({
-        "crawl_id": Uuid::new_v4().to_string(),
+        "crawl_id": crate::domain::id::Id::generate().to_string(),
         "depth": 0,
         "config": "not-an-object"
     }));
@@ -4094,7 +4235,13 @@ async fn test_mock_extract_and_queue_links_dfs_strategy() {
         extraction_schema: None,
     };
     let result = worker
-        .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+        .extract_and_queue_links(
+            &task,
+            &response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+        )
         .await;
     assert!(result.is_ok());
 }
@@ -4126,7 +4273,13 @@ async fn test_mock_extract_and_queue_links_filters_self_and_non_http() {
     };
     let config = make_crawl_config(None, None);
     let result = worker
-        .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+        .extract_and_queue_links(
+            &task,
+            &response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+        )
         .await;
     assert!(result.is_ok());
 }
@@ -4137,10 +4290,10 @@ async fn test_mock_extract_and_queue_links_filters_self_and_non_http() {
 async fn test_mock_build_crawl_request_with_extraction_rules() {
     let worker = build_mock_worker().await;
     let task = Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Crawl,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         "https://example.com".to_string(),
         json!({}),
     );
@@ -4310,7 +4463,7 @@ async fn test_mock_handle_crawl_failure_with_proxy() {
         .handle_crawl_failure(
             &mut task,
             anyhow::anyhow!("Network error"),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             &request,
         )
         .await;
@@ -4337,7 +4490,14 @@ async fn test_mock_handle_crawl_success_with_screenshot() {
     let config = make_crawl_config(None, None);
     let request = worker.build_crawl_request(&task, &config);
     let result = worker
-        .handle_crawl_success(&task, response, Uuid::new_v4(), 0, &config, &request)
+        .handle_crawl_success(
+            &task,
+            response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+            &request,
+        )
         .await;
     assert!(result.is_ok());
 }
@@ -4489,7 +4649,7 @@ impl TaskRepository for ConfigurableTaskRepo {
         self.create_count.fetch_add(1, Ordering::SeqCst);
         Ok(task.clone())
     }
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn find_by_id(&self, id: crate::domain::id::Id) -> Result<Option<Task>, RepositoryError> {
         if self.fail_find_by_id.load(Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock find_by_id error"
@@ -4524,16 +4684,16 @@ impl TaskRepository for ConfigurableTaskRepo {
     // 条件回队同样计入 update 语义：捕获 status=Queued + scheduled_at 的任务快照
     async fn requeue_task(
         &self,
-        id: Uuid,
-        _lock_token: Option<Uuid>,
+        id: crate::domain::id::Id,
+        _lock_token: Option<crate::domain::id::Id>,
         scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<bool, RepositoryError> {
         self.update_count.fetch_add(1, Ordering::SeqCst);
         let mut captured = Task::new(
             id,
             TaskType::Scrape,
-            Uuid::nil(),
-            Uuid::nil(),
+            crate::domain::id::Id::nil(),
+            crate::domain::id::Id::nil(),
             String::new(),
             serde_json::json!({}),
         );
@@ -4542,21 +4702,24 @@ impl TaskRepository for ConfigurableTaskRepo {
         *self.last_updated_task.lock().unwrap() = Some(captured);
         Ok(true)
     }
-    async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn acquire_next(
+        &self,
+        _worker_id: crate::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
     async fn mark_completed(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crate::domain::id::Id,
+        _lock_token: Option<crate::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         self.mark_completed_count.fetch_add(1, Ordering::SeqCst);
         Ok(1)
     }
     async fn mark_failed(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crate::domain::id::Id,
+        _lock_token: Option<crate::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         self.mark_failed_count.fetch_add(1, Ordering::SeqCst);
         if self.fail_mark_failed.load(Ordering::SeqCst) {
@@ -4566,7 +4729,7 @@ impl TaskRepository for ConfigurableTaskRepo {
         }
         Ok(1)
     }
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+    async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
         Ok(1)
     }
     async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -4586,13 +4749,19 @@ impl TaskRepository for ConfigurableTaskRepo {
     async fn reset_stuck_tasks(&self, _timeout: chrono::Duration) -> Result<u64, RepositoryError> {
         Ok(0)
     }
-    async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn cancel_tasks_by_crawl_id(
+        &self,
+        _crawl_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
     async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
         Ok(0)
     }
-    async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+    async fn find_by_crawl_id(
+        &self,
+        _crawl_id: crate::domain::id::Id,
+    ) -> Result<Vec<Task>, RepositoryError> {
         Ok(vec![])
     }
     async fn query_tasks(
@@ -4603,17 +4772,23 @@ impl TaskRepository for ConfigurableTaskRepo {
     }
     async fn batch_cancel(
         &self,
-        _task_ids: Vec<Uuid>,
-        _team_id: Uuid,
+        _task_ids: Vec<crate::domain::id::Id>,
+        _team_id: crate::domain::id::Id,
         _force: bool,
-    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+    ) -> Result<
+        (
+            Vec<crate::domain::id::Id>,
+            Vec<(crate::domain::id::Id, String)>,
+        ),
+        RepositoryError,
+    > {
         Ok((vec![], vec![]))
     }
 
     async fn renew_lock(
         &self,
-        _task_id: Uuid,
-        _worker_id: Uuid,
+        _task_id: crate::domain::id::Id,
+        _worker_id: crate::domain::id::Id,
         _extend_seconds: i64,
     ) -> Result<bool, RepositoryError> {
         Ok(true)
@@ -4659,7 +4834,10 @@ impl CrawlRepository for ConfigurableCrawlRepo {
     async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
         Ok(crawl.clone())
     }
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<Option<Crawl>, RepositoryError> {
         if self.fail_find_by_id.load(Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock find_by_id error"
@@ -4670,7 +4848,10 @@ impl CrawlRepository for ConfigurableCrawlRepo {
     async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
         Ok(crawl.clone())
     }
-    async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_completed_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         if self.fail_increment_completed.load(Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock increment_completed error"
@@ -4678,7 +4859,10 @@ impl CrawlRepository for ConfigurableCrawlRepo {
         }
         Ok(())
     }
-    async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_failed_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         if self.fail_increment_failed.load(Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock increment_failed error"
@@ -4686,7 +4870,11 @@ impl CrawlRepository for ConfigurableCrawlRepo {
         }
         Ok(())
     }
-    async fn update_status(&self, _id: Uuid, _status: CrawlStatus) -> Result<(), RepositoryError> {
+    async fn update_status(
+        &self,
+        _id: crate::domain::id::Id,
+        _status: CrawlStatus,
+    ) -> Result<(), RepositoryError> {
         self.update_status_count.fetch_add(1, Ordering::SeqCst);
         if self.fail_update_status.load(Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
@@ -4695,18 +4883,24 @@ impl CrawlRepository for ConfigurableCrawlRepo {
         }
         Ok(())
     }
-    async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_total_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
     async fn find_by_team_id_paginated(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _limit: u32,
         _offset: u32,
     ) -> Result<Vec<Crawl>, RepositoryError> {
         Ok(vec![])
     }
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 }
@@ -4721,13 +4915,19 @@ impl ScrapeResultRepository for FailingScrapeResultRepo {
     async fn save(&self, _result: ScrapeResult) -> Result<()> {
         Err(anyhow::anyhow!("Mock save error"))
     }
-    async fn find_by_task_id(&self, _task_id: Uuid) -> Result<Option<ScrapeResult>> {
+    async fn find_by_task_id(
+        &self,
+        _task_id: crate::domain::id::Id,
+    ) -> Result<Option<ScrapeResult>> {
         Ok(None)
     }
-    async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> Result<Vec<ScrapeResult>> {
+    async fn find_by_task_ids(
+        &self,
+        _task_ids: &[crate::domain::id::Id],
+    ) -> Result<Vec<ScrapeResult>> {
         Ok(vec![])
     }
-    async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
+    async fn get_team_avg_response_time(&self, _team_id: crate::domain::id::Id) -> Result<f64> {
         Ok(0.0)
     }
 
@@ -4761,16 +4961,19 @@ struct FailingCreditsRepo;
 
 #[async_trait::async_trait]
 impl CreditsRepository for FailingCreditsRepo {
-    async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+    async fn get_balance(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<i64, CreditsRepositoryError> {
         Ok(100)
     }
     async fn deduct_credits(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _amount: i64,
         _transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crate::domain::id::Id>,
     ) -> Result<(), CreditsRepositoryError> {
         Err(CreditsRepositoryError::InsufficientCredits {
             available: 0,
@@ -4779,24 +4982,24 @@ impl CreditsRepository for FailingCreditsRepo {
     }
     async fn add_credits(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _amount: i64,
         _transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crate::domain::id::Id>,
     ) -> Result<i64, CreditsRepositoryError> {
         Ok(100)
     }
     async fn get_transaction_history(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _limit: Option<u32>,
     ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
         Ok(vec![])
     }
     async fn initialize_team_credits(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _initial_balance: i64,
     ) -> Result<i64, CreditsRepositoryError> {
         Ok(_initial_balance)
@@ -4929,16 +5132,16 @@ impl TaskQueue for TaskQueueWithTask {
     async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
         Ok(task)
     }
-    async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+    async fn dequeue(&self, _worker_id: crate::domain::id::Id) -> Result<Option<Task>, QueueError> {
         Ok(self.task.lock().unwrap().take())
     }
-    async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn complete(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
-    async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn fail(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
-    async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn cancel(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
 }
@@ -5591,11 +5794,11 @@ async fn test_process_scrape_task_expired_error_marks_failed() {
 #[tokio::test]
 async fn test_update_crawl_completion_status_all_tasks_completed() {
     let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     // Set up a crawl where completed + failed == total
     let crawl = Crawl::with_all_fields(
         crawl_id,
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         "test".to_string(),
         "https://example.com".to_string(),
         "https://example.com".to_string(),
@@ -5631,11 +5834,11 @@ async fn test_update_crawl_completion_status_all_tasks_completed() {
 #[tokio::test]
 async fn test_update_crawl_completion_status_not_all_tasks_completed() {
     let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     // Set up a crawl where completed + failed < total
     let crawl = Crawl::with_all_fields(
         crawl_id,
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         "test".to_string(),
         "https://example.com".to_string(),
         "https://example.com".to_string(),
@@ -5672,7 +5875,7 @@ async fn test_update_crawl_completion_status_not_all_tasks_completed() {
 async fn test_update_crawl_completion_status_crawl_repo_error() {
     let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
     crawl_repo.fail_find_by_id.store(true, Ordering::SeqCst);
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
 
     let worker = build_configurable_worker(
         Arc::new(ConfigurableTaskRepo::new()),
@@ -5922,7 +6125,12 @@ async fn test_deduct_feature_credits_failure_does_not_propagate_error() {
 
     // Should not panic — error is just logged
     worker
-        .deduct_feature_credits(Uuid::new_v4(), Uuid::new_v4(), true, true)
+        .deduct_feature_credits(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            true,
+            true,
+        )
         .await;
 }
 
@@ -5945,8 +6153,8 @@ async fn test_deduct_token_credits_failure_does_not_propagate_error() {
     // Should not panic — error is just logged
     worker
         .deduct_token_credits(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             &usage,
             "test failing deduct",
         )
@@ -6004,7 +6212,14 @@ async fn test_handle_crawl_success_save_result_failure_propagates_error() {
     let config = make_crawl_config(None, None);
     let request = worker.build_crawl_request(&task, &config);
     let result = worker
-        .handle_crawl_success(&task, response, Uuid::new_v4(), 0, &config, &request)
+        .handle_crawl_success(
+            &task,
+            response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+            &request,
+        )
         .await;
     assert!(
         result.is_err(),
@@ -6068,7 +6283,14 @@ async fn test_handle_crawl_success_increment_completed_error_does_not_propagate(
     config.max_depth = 0; // No link extraction — depth 0 < max_depth 0 is false
     let request = worker.build_crawl_request(&task, &config);
     let result = worker
-        .handle_crawl_success(&task, response, Uuid::new_v4(), 0, &config, &request)
+        .handle_crawl_success(
+            &task,
+            response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+            &request,
+        )
         .await;
     // Should succeed — increment_completed_tasks error is just logged
     assert!(
@@ -6120,7 +6342,7 @@ async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
         .handle_crawl_failure(
             &mut task,
             anyhow::anyhow!("Network error"),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             &request,
         )
         .await;
@@ -6167,7 +6389,7 @@ async fn test_process_crawl_task_robots_denied_marks_failed() {
         memory_scheduler: make_test_memory_scheduler(),
     });
 
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     let task = make_task(json!({
         "crawl_id": crawl_id.to_string(),
         "depth": 0,
@@ -6533,7 +6755,13 @@ async fn test_extract_and_queue_links_find_existing_urls_failure_returns_err() {
     };
     let config = make_crawl_config(None, None);
     let result = worker
-        .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+        .extract_and_queue_links(
+            &task,
+            &response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+        )
         .await;
 
     assert!(
@@ -6671,7 +6899,7 @@ async fn test_process_crawl_task_success_calls_handle_crawl_success() {
     )
     .await;
 
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     // max_depth: 0 → depth 0 < max_depth 0 is false → no link extraction
     let task = make_task(json!({
         "crawl_id": crawl_id.to_string(),
@@ -6778,7 +7006,7 @@ async fn test_handle_crawl_failure_increment_failed_error_logs_and_continues() {
         .handle_crawl_failure(
             &mut task,
             anyhow::anyhow!("Network error"),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             &request,
         )
         .await;
@@ -6797,11 +7025,11 @@ async fn test_update_crawl_completion_status_update_status_error_logs_and_contin
     let crawl_repo = Arc::new(ConfigurableCrawlRepo::new());
     crawl_repo.fail_update_status.store(true, Ordering::SeqCst);
 
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     // completed + failed == total → enters the update_status branch
     let crawl = Crawl::with_all_fields(
         crawl_id,
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         "test".to_string(),
         "https://example.com".to_string(),
         "https://example.com".to_string(),
@@ -7022,7 +7250,13 @@ async fn test_extract_and_queue_links_skips_existing_urls() {
     };
     let config = make_crawl_config(None, None);
     let result = worker
-        .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+        .extract_and_queue_links(
+            &task,
+            &response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+        )
         .await;
     assert!(result.is_ok());
 
@@ -7069,7 +7303,13 @@ async fn test_extract_and_queue_links_bloom_miss_directly_enqueues() {
     };
     let config = make_crawl_config(None, None);
     let result = worker
-        .extract_and_queue_links(&task, &response, Uuid::new_v4(), 0, &config)
+        .extract_and_queue_links(
+            &task,
+            &response,
+            crate::domain::id::Id::generate(),
+            0,
+            &config,
+        )
         .await;
     assert!(result.is_ok());
 

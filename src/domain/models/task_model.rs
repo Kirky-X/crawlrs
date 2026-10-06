@@ -8,7 +8,6 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::task_domain::{TaskStatus, TaskType};
 
@@ -20,7 +19,7 @@ use super::task_domain::{TaskStatus, TaskType};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Task {
     /// Unique identifier for the task
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// Type of task (scrape, crawl, extract)
     pub task_type: TaskType,
     /// Current status of the task
@@ -28,9 +27,9 @@ pub struct Task {
     /// Priority level (higher = more urgent)
     pub priority: i32,
     /// Team ID for multi-tenancy
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// API key ID that created this task
-    pub api_key_id: Uuid,
+    pub api_key_id: crate::domain::id::Id,
     /// Target URL to scrape/crawl
     pub url: String,
     /// Task payload as JSON (request parameters)
@@ -52,11 +51,11 @@ pub struct Task {
     /// When the task completed
     pub completed_at: Option<DateTime<Utc>>,
     /// Parent crawl ID if this task is part of a crawl
-    pub crawl_id: Option<Uuid>,
+    pub crawl_id: Option<crate::domain::id::Id>,
     /// When the task was last updated
     pub updated_at: DateTime<Utc>,
     /// Lock token for distributed task acquisition
-    pub lock_token: Option<Uuid>,
+    pub lock_token: Option<crate::domain::id::Id>,
     /// When the lock expires
     pub lock_expires_at: Option<DateTime<Utc>>,
 }
@@ -64,10 +63,10 @@ pub struct Task {
 impl Task {
     /// Create a new task with default values
     pub fn new(
-        id: Uuid,
+        id: crate::domain::id::Id,
         task_type: TaskType,
-        team_id: Uuid,
-        api_key_id: Uuid,
+        team_id: crate::domain::id::Id,
+        api_key_id: crate::domain::id::Id,
         url: String,
         payload: serde_json::Value,
     ) -> Self {
@@ -159,7 +158,11 @@ impl Task {
     /// MIRROR: the `SET lock_token=$1, lock_expires_at=NOW()+($2*INTERVAL'1 second')`
     /// clause in `TaskRepositoryImpl::acquire_next` raw SQL
     /// (`task_repo_impl.rs`). Changes here must be synchronized with the SQL.
-    pub fn acquire_lock(&mut self, worker_id: Uuid, lock_duration: chrono::Duration) {
+    pub fn acquire_lock(
+        &mut self,
+        worker_id: crate::domain::id::Id,
+        lock_duration: chrono::Duration,
+    ) {
         self.lock_token = Some(worker_id);
         self.lock_expires_at = Some(Utc::now() + lock_duration);
         self.updated_at = Utc::now();
@@ -182,9 +185,9 @@ mod tests {
 
     #[test]
     fn test_task_new_sets_defaults() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
-        let api_key_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
+        let api_key_id = crate::domain::id::Id::generate();
         let payload = serde_json::json!({"url": "https://example.com"});
 
         let before = Utc::now();
@@ -300,7 +303,7 @@ mod tests {
     #[test]
     fn test_is_locked_true_when_lock_in_future() {
         let mut task = make_task();
-        let worker = Uuid::new_v4();
+        let worker = crate::domain::id::Id::generate();
         task.acquire_lock(worker, chrono::Duration::seconds(60));
         assert!(
             task.is_locked(),
@@ -311,7 +314,7 @@ mod tests {
     #[test]
     fn test_is_locked_false_when_lock_expired() {
         let mut task = make_task();
-        task.lock_token = Some(Uuid::new_v4());
+        task.lock_token = Some(crate::domain::id::Id::generate());
         task.lock_expires_at = Some(Utc::now() - chrono::Duration::seconds(10));
         assert!(
             !task.is_locked(),
@@ -406,7 +409,7 @@ mod tests {
     #[test]
     fn test_acquire_lock_sets_token_and_expiry() {
         let mut task = make_task();
-        let worker = Uuid::new_v4();
+        let worker = crate::domain::id::Id::generate();
         let duration = chrono::Duration::seconds(30);
         let before = Utc::now();
 
@@ -428,7 +431,10 @@ mod tests {
     #[test]
     fn test_release_lock_clears_token_and_expiry() {
         let mut task = make_task();
-        task.acquire_lock(Uuid::new_v4(), chrono::Duration::seconds(30));
+        task.acquire_lock(
+            crate::domain::id::Id::generate(),
+            chrono::Duration::seconds(30),
+        );
         assert!(task.lock_token.is_some());
 
         let before = Utc::now();
@@ -449,7 +455,7 @@ mod tests {
         let mut task = make_task();
         task.priority = 5;
         task.retry_count = 2;
-        task.crawl_id = Some(Uuid::new_v4());
+        task.crawl_id = Some(crate::domain::id::Id::generate());
 
         let json = serde_json::to_string(&task).expect("serialize");
         let back: Task = serde_json::from_str(&json).expect("deserialize");
@@ -460,10 +466,10 @@ mod tests {
 
     fn make_task() -> Task {
         Task::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             TaskType::Scrape,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "https://example.com".to_string(),
             serde_json::json!({}),
         )

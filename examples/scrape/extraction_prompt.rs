@@ -9,7 +9,7 @@
 //! # 使用方法
 //!
 //! ```bash
-//! cargo run --example extraction_prompt
+//! cargo run --bin extraction_prompt
 //! ```
 
 use serde_json::json;

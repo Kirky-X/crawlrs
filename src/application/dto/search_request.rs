@@ -29,7 +29,7 @@ pub struct SearchRequestDto {
 pub struct SearchResponseDto {
     pub query: String,
     pub results: Vec<SearchResultDto>,
-    pub crawl_id: Option<uuid::Uuid>, // If async crawling was triggered
+    pub crawl_id: Option<crate::domain::id::Id>, // If async crawling was triggered
     pub credits_used: u32,
 }
 

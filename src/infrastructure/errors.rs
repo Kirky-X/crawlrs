@@ -66,7 +66,7 @@ impl From<InfrastructureError> for crate::domain::errors::DomainError {
         match err {
             InfrastructureError::RecordNotFound { .. } => {
                 crate::domain::errors::DomainError::TaskNotFound {
-                    task_id: uuid::Uuid::nil(),
+                    task_id: crate::domain::id::Id::nil(),
                 }
             }
             _ => crate::domain::errors::DomainError::crawl_config(err.to_string()),
@@ -342,7 +342,7 @@ mod tests {
             key: "k1".into(),
         };
         let domain_err: crate::domain::errors::DomainError = infra_err.into();
-        // DuplicateRecord 不应映射到 TaskNotFound (nil Uuid)，应走默认分支
+        // DuplicateRecord 不应映射到 TaskNotFound (nil crate::domain::id::Id)，应走默认分支
         assert!(matches!(
             domain_err,
             crate::domain::errors::DomainError::CrawlConfigError { .. }

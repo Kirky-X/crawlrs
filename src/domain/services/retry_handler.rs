@@ -144,7 +144,6 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Arc;
     use std::sync::Mutex;
-    use uuid::Uuid;
 
     /// Mock TaskRepository that records `update` calls and can simulate failures.
     struct MockTaskRepository {
@@ -179,7 +178,10 @@ mod tests {
             )))
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -203,27 +205,30 @@ mod tests {
             Ok(1)
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
@@ -245,7 +250,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -253,7 +261,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
 
@@ -266,17 +277,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -286,10 +303,10 @@ mod tests {
     /// Build a minimal Task for retry tests
     fn make_task(attempt_count: i32, max_retries: i32) -> Task {
         let mut task = Task::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             TaskType::Scrape,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "https://example.com".to_string(),
             serde_json::json!({}),
         );
@@ -585,7 +602,11 @@ mod tests {
 
         // Read/query stubs return "not found" / empty results
         assert!(mock.find_by_id(task.id).await.unwrap().is_none());
-        assert!(mock.acquire_next(Uuid::new_v4()).await.unwrap().is_none());
+        assert!(mock
+            .acquire_next(crate::domain::id::Id::generate())
+            .await
+            .unwrap()
+            .is_none());
         assert!(!mock.exists_by_url("https://example.com").await.unwrap());
         assert!(mock
             .find_existing_urls(&["https://example.com".to_string()])
@@ -593,7 +614,7 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(mock
-            .find_by_crawl_id(Uuid::new_v4())
+            .find_by_crawl_id(crate::domain::id::Id::generate())
             .await
             .unwrap()
             .is_empty());
@@ -609,7 +630,9 @@ mod tests {
             0
         );
         assert_eq!(
-            mock.cancel_tasks_by_crawl_id(Uuid::new_v4()).await.unwrap(),
+            mock.cancel_tasks_by_crawl_id(crate::domain::id::Id::generate())
+                .await
+                .unwrap(),
             0
         );
         assert_eq!(mock.expire_tasks().await.unwrap(), 0);

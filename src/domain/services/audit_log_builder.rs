@@ -8,19 +8,18 @@
 //! Service / Error 仍保留在 `audit_service.rs` 中。
 
 use crate::domain::auth::{ApiKeyScope, AuditDecision, AuditLogEntry};
-use uuid::Uuid;
 
 /// Builder for creating audit log entries
 #[derive(Clone, Debug)]
 pub struct AuditLogBuilder {
-    pub api_key_id: Option<Uuid>,
-    pub team_id: Option<Uuid>,
+    pub api_key_id: Option<crate::domain::id::Id>,
+    pub team_id: Option<crate::domain::id::Id>,
     pub requested_action: String,
     pub decision: AuditDecision,
     pub denial_reason: Option<String>,
     pub scope_used: Option<ApiKeyScope>,
     pub ip_address: Option<std::net::IpAddr>,
-    pub trace_id: Option<Uuid>,
+    pub trace_id: Option<crate::domain::id::Id>,
     pub user_agent: Option<String>,
     pub request_path: Option<String>,
     pub request_method: Option<String>,
@@ -47,13 +46,13 @@ impl AuditLogBuilder {
     }
 
     /// Set API Key ID
-    pub fn with_api_key_id(mut self, id: Uuid) -> Self {
+    pub fn with_api_key_id(mut self, id: crate::domain::id::Id) -> Self {
         self.api_key_id = Some(id);
         self
     }
 
     /// Set team ID
-    pub fn with_team_id(mut self, id: Uuid) -> Self {
+    pub fn with_team_id(mut self, id: crate::domain::id::Id) -> Self {
         self.team_id = Some(id);
         self
     }
@@ -77,13 +76,13 @@ impl AuditLogBuilder {
     /// nil UUID 与 NULL 在数据库中语义不同：
     /// - NULL 表示"未知/不适用"
     /// - nil UUID 会被 `find_by_api_key_id(nil_uuid)` 误匹配，混淆真实 API key 的审计日志
-    pub fn maybe_with_api_key_id(mut self, id: Option<Uuid>) -> Self {
+    pub fn maybe_with_api_key_id(mut self, id: Option<crate::domain::id::Id>) -> Self {
         self.api_key_id = id;
         self
     }
 
     /// Conditionally set team ID（语义同 `maybe_with_api_key_id`）。
-    pub fn maybe_with_team_id(mut self, id: Option<Uuid>) -> Self {
+    pub fn maybe_with_team_id(mut self, id: Option<crate::domain::id::Id>) -> Self {
         self.team_id = id;
         self
     }
@@ -101,7 +100,7 @@ impl AuditLogBuilder {
     }
 
     /// Set trace ID
-    pub fn with_trace_id(mut self, id: Uuid) -> Self {
+    pub fn with_trace_id(mut self, id: crate::domain::id::Id) -> Self {
         self.trace_id = Some(id);
         self
     }
@@ -135,7 +134,7 @@ impl AuditLogBuilder {
     /// Build the audit log entry
     pub fn build(self) -> AuditLogEntry {
         AuditLogEntry {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             api_key_id: self.api_key_id,
             team_id: self.team_id,
             requested_action: self.requested_action,
@@ -168,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_audit_log_builder_with_api_key_id() {
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let builder =
             AuditLogBuilder::new("test_action", AuditDecision::Allow).with_api_key_id(api_key_id);
         assert_eq!(builder.api_key_id, Some(api_key_id));
@@ -176,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_audit_log_builder_with_team_id() {
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let builder =
             AuditLogBuilder::new("test_action", AuditDecision::Allow).with_team_id(team_id);
         assert_eq!(builder.team_id, Some(team_id));
@@ -201,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_audit_log_builder_with_trace_id() {
-        let trace_id = Uuid::new_v4();
+        let trace_id = crate::domain::id::Id::generate();
         let builder =
             AuditLogBuilder::new("test_action", AuditDecision::Allow).with_trace_id(trace_id);
         assert_eq!(builder.trace_id, Some(trace_id));
@@ -245,9 +244,9 @@ mod tests {
 
     #[test]
     fn test_audit_log_builder_build_returns_entry() {
-        let api_key_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
-        let trace_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
+        let trace_id = crate::domain::id::Id::generate();
         let ip: std::net::IpAddr = Ipv4Addr::new(10, 0, 0, 1).into();
 
         let entry = AuditLogBuilder::new("test_action", AuditDecision::Allow)
@@ -266,7 +265,7 @@ mod tests {
         assert_eq!(entry.trace_id, Some(trace_id));
         assert_eq!(entry.request_path, Some("/api/test".to_string()));
         assert_eq!(entry.request_method, Some("GET".to_string()));
-        assert!(entry.id != Uuid::nil());
+        assert!(entry.id != crate::domain::id::Id::nil());
         assert!(entry.created_at <= chrono::Utc::now());
     }
 
@@ -290,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_maybe_with_api_key_id_some_sets_value() {
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let builder = AuditLogBuilder::new("authed.deny", AuditDecision::Deny)
             .maybe_with_api_key_id(Some(id));
         assert_eq!(builder.api_key_id, Some(id));
@@ -305,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_maybe_with_team_id_some_sets_value() {
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let builder =
             AuditLogBuilder::new("team.deny", AuditDecision::Deny).maybe_with_team_id(Some(id));
         assert_eq!(builder.team_id, Some(id));
@@ -342,13 +341,13 @@ mod tests {
         assert_eq!(entry.scope_used, None);
         assert_eq!(entry.denial_reason.as_deref(), Some("auth required"));
         // ID must still be a fresh UUID, not nil
-        assert_ne!(entry.id, Uuid::nil());
+        assert_ne!(entry.id, crate::domain::id::Id::nil());
     }
 
     #[test]
     fn test_maybe_with_methods_build_entry_with_some_fields() {
-        let api_key_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let scope = ApiKeyScope::read_only();
 
         let entry = AuditLogBuilder::new("authed.action", AuditDecision::Deny)
@@ -367,7 +366,7 @@ mod tests {
     fn test_maybe_with_overrides_previous_with_value() {
         // maybe_with_* should override a prior with_* call (last-write-wins),
         // including clearing back to None.
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let builder = AuditLogBuilder::new("action", AuditDecision::Allow)
             .with_api_key_id(id)
             .maybe_with_api_key_id(None);

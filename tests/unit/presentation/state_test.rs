@@ -12,7 +12,6 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use uuid::Uuid;
 
 use crawlrs::application::use_cases::crawl_use_case::CrawlUseCase;
 use crawlrs::domain::models::credits_model::CreditsTransactionType;
@@ -50,10 +49,16 @@ impl WebhookRepository for MockWebhookRepository {
     async fn create(&self, webhook: &Webhook) -> Result<Webhook, RepositoryError> {
         Ok(webhook.clone())
     }
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Webhook>, RepositoryError> {
         Ok(None)
     }
-    async fn find_by_team_id(&self, _team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+    async fn find_by_team_id(
+        &self,
+        _team_id: crawlrs::domain::id::Id,
+    ) -> Result<Vec<Webhook>, RepositoryError> {
         Ok(vec![])
     }
 }
@@ -68,7 +73,7 @@ struct MockGeoRestrictionRepository;
 impl GeoRestrictionRepository for MockGeoRestrictionRepository {
     async fn get_team_restrictions(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
     ) -> Result<
         TeamGeoRestrictions,
         crawlrs::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError,
@@ -77,7 +82,7 @@ impl GeoRestrictionRepository for MockGeoRestrictionRepository {
     }
     async fn update_team_restrictions(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _restrictions: &TeamGeoRestrictions,
     ) -> Result<
         (),
@@ -87,7 +92,7 @@ impl GeoRestrictionRepository for MockGeoRestrictionRepository {
     }
     async fn log_geo_restriction_action(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _ip_address: &str,
         _country_code: &str,
         _action: &str,
@@ -123,13 +128,13 @@ impl RateLimitService for MockRateLimitingService {
     }
     async fn get_team_rate_limit_config(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
     ) -> Result<RateLimitConfig, RateLimitingError> {
         Ok(RateLimitConfig::default())
     }
     async fn update_team_rate_limit_config(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _config: RateLimitConfig,
     ) -> Result<(), RateLimitingError> {
         Ok(())
@@ -142,30 +147,33 @@ impl RateLimitService for MockRateLimitingService {
 impl ConcurrencyControlService for MockRateLimitingService {
     async fn check_team_concurrency(
         &self,
-        _team_id: Uuid,
-        _task_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
+        _task_id: crawlrs::domain::id::Id,
     ) -> Result<ConcurrencyResult, RateLimitingError> {
         Ok(ConcurrencyResult::Allowed)
     }
     async fn release_team_concurrency_slot(
         &self,
-        _team_id: Uuid,
-        _task_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
+        _task_id: crawlrs::domain::id::Id,
     ) -> Result<(), RateLimitingError> {
         Ok(())
     }
-    async fn get_team_current_concurrency(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+    async fn get_team_current_concurrency(
+        &self,
+        _team_id: crawlrs::domain::id::Id,
+    ) -> Result<u32, RateLimitingError> {
         Ok(0)
     }
     async fn get_team_concurrency_config(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
     ) -> Result<ConcurrencyConfig, RateLimitingError> {
         Ok(ConcurrencyConfig::default())
     }
     async fn update_team_concurrency_config(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _config: ConcurrencyConfig,
     ) -> Result<(), RateLimitingError> {
         Ok(())
@@ -173,7 +181,10 @@ impl ConcurrencyControlService for MockRateLimitingService {
 }
 #[async_trait]
 impl BacklogService for MockRateLimitingService {
-    async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+    async fn process_backlog_tasks(
+        &self,
+        _team_id: crawlrs::domain::id::Id,
+    ) -> Result<u32, RateLimitingError> {
         Ok(0)
     }
 }
@@ -181,24 +192,27 @@ impl BacklogService for MockRateLimitingService {
 impl QuotaService for MockRateLimitingService {
     async fn check_and_deduct_quota(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _amount: i64,
         _transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crawlrs::domain::id::Id>,
     ) -> Result<(), RateLimitingError> {
         Ok(())
     }
-    async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+    async fn get_quota_balance(
+        &self,
+        _team_id: crawlrs::domain::id::Id,
+    ) -> Result<i64, RateLimitingError> {
         Ok(0)
     }
 
     async fn refund_quota(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _amount: i64,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crawlrs::domain::id::Id>,
     ) -> Result<(), RateLimitingError> {
         Ok(())
     }

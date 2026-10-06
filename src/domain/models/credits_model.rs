@@ -8,7 +8,6 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// Credits domain model
 ///
@@ -17,9 +16,9 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Credits {
     /// Unique identifier
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// Team ID for multi-tenancy
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// Current credit balance (sensitive data)
     balance: i64,
     /// When the record was created
@@ -30,7 +29,11 @@ pub struct Credits {
 
 impl Credits {
     /// Create a new credits record
-    pub fn new(id: Uuid, team_id: Uuid, initial_balance: i64) -> Self {
+    pub fn new(
+        id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+        initial_balance: i64,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id,
@@ -43,8 +46,8 @@ impl Credits {
 
     /// Create a credits record with custom timestamps (for mappers)
     pub fn with_timestamps(
-        id: Uuid,
-        team_id: Uuid,
+        id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         balance: i64,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
@@ -107,9 +110,9 @@ impl Credits {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CreditsTransaction {
     /// Unique identifier
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// Team ID for multi-tenancy
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// Transaction amount (positive for additions, negative for deductions)
     pub amount: i64,
     /// Type of transaction
@@ -117,7 +120,7 @@ pub struct CreditsTransaction {
     /// Human-readable description
     pub description: String,
     /// Reference to related entity (task, crawl, etc.)
-    pub reference_id: Option<Uuid>,
+    pub reference_id: Option<crate::domain::id::Id>,
     /// When the transaction occurred
     pub created_at: DateTime<Utc>,
 }
@@ -125,12 +128,12 @@ pub struct CreditsTransaction {
 impl CreditsTransaction {
     /// Create a new credits transaction
     pub fn new(
-        id: Uuid,
-        team_id: Uuid,
+        id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         amount: i64,
         transaction_type: CreditsTransactionType,
         description: String,
-        reference_id: Option<Uuid>,
+        reference_id: Option<crate::domain::id::Id>,
     ) -> Self {
         Self {
             id,
@@ -145,12 +148,12 @@ impl CreditsTransaction {
 
     /// Create a transaction with custom timestamp (for mappers)
     pub fn with_timestamp(
-        id: Uuid,
-        team_id: Uuid,
+        id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         amount: i64,
         transaction_type: CreditsTransactionType,
         description: String,
-        reference_id: Option<Uuid>,
+        reference_id: Option<crate::domain::id::Id>,
         created_at: DateTime<Utc>,
     ) -> Self {
         Self {
@@ -251,8 +254,8 @@ mod tests {
 
     #[test]
     fn test_credits_new_sets_balance_and_timestamps() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
 
         let before = Utc::now();
         let credits = Credits::new(id, team_id, 1000);
@@ -274,13 +277,21 @@ mod tests {
 
     #[test]
     fn test_credits_new_zero_balance() {
-        let credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 0);
+        let credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            0,
+        );
         assert_eq!(credits.balance(), 0);
     }
 
     #[test]
     fn test_credits_new_negative_balance() {
-        let credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), -50);
+        let credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            -50,
+        );
         assert_eq!(credits.balance(), -50, "negative initial balance allowed");
     }
 
@@ -288,8 +299,8 @@ mod tests {
 
     #[test]
     fn test_credits_with_timestamps_preserves_values() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let created = Utc::now();
         let updated = created + chrono::Duration::seconds(60);
 
@@ -306,7 +317,11 @@ mod tests {
 
     #[test]
     fn test_has_sufficient_balance_true_when_enough() {
-        let credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 1000);
+        let credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            1000,
+        );
         assert!(
             credits.has_sufficient_balance(1000),
             "exact amount should be sufficient"
@@ -319,7 +334,11 @@ mod tests {
 
     #[test]
     fn test_has_sufficient_balance_false_when_insufficient() {
-        let credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 100);
+        let credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            100,
+        );
         assert!(
             !credits.has_sufficient_balance(101),
             "more than balance is insufficient"
@@ -328,7 +347,11 @@ mod tests {
 
     #[test]
     fn test_has_sufficient_balance_zero_amount_always_true() {
-        let credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 0);
+        let credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            0,
+        );
         assert!(
             credits.has_sufficient_balance(0),
             "zero amount against zero balance is sufficient"
@@ -339,7 +362,11 @@ mod tests {
 
     #[test]
     fn test_deduct_success_reduces_balance() {
-        let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 1000);
+        let mut credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            1000,
+        );
         let before = Utc::now();
 
         credits
@@ -356,7 +383,11 @@ mod tests {
 
     #[test]
     fn test_deduct_exact_balance_succeeds() {
-        let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 500);
+        let mut credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            500,
+        );
         credits
             .deduct(500)
             .expect("deducting exact balance should succeed");
@@ -369,7 +400,11 @@ mod tests {
 
     #[test]
     fn test_deduct_insufficient_balance_returns_error() {
-        let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 100);
+        let mut credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            100,
+        );
         let err = credits
             .deduct(300)
             .expect_err("should error when insufficient balance");
@@ -390,7 +425,11 @@ mod tests {
 
     #[test]
     fn test_deduct_zero_amount_succeeds() {
-        let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 100);
+        let mut credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            100,
+        );
         credits.deduct(0).expect("deducting 0 should succeed");
         assert_eq!(
             credits.balance(),
@@ -403,7 +442,11 @@ mod tests {
 
     #[test]
     fn test_add_increases_balance() {
-        let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 500);
+        let mut credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            500,
+        );
         let before = Utc::now();
 
         credits.add(300);
@@ -418,7 +461,11 @@ mod tests {
 
     #[test]
     fn test_add_zero_unchanged_but_updates_timestamp() {
-        let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 500);
+        let mut credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            500,
+        );
         let old_updated = credits.updated_at;
         // Sleep tiny bit to ensure timestamp differs
         std::thread::sleep(std::time::Duration::from_millis(2));
@@ -434,14 +481,22 @@ mod tests {
 
     #[test]
     fn test_set_balance_overrides() {
-        let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 1000);
+        let mut credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            1000,
+        );
         credits.set_balance(42);
         assert_eq!(credits.balance(), 42, "set_balance should override");
     }
 
     #[test]
     fn test_set_balance_negative_allowed() {
-        let mut credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 100);
+        let mut credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            100,
+        );
         credits.set_balance(-10);
         assert_eq!(
             credits.balance(),
@@ -454,9 +509,9 @@ mod tests {
 
     #[test]
     fn test_credits_transaction_new_sets_fields() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
-        let ref_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
+        let ref_id = crate::domain::id::Id::generate();
 
         let before = Utc::now();
         let txn = CreditsTransaction::new(
@@ -484,8 +539,8 @@ mod tests {
     #[test]
     fn test_credits_transaction_new_without_reference() {
         let txn = CreditsTransaction::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             100,
             CreditsTransactionType::Subscription,
             "monthly".to_string(),
@@ -498,8 +553,8 @@ mod tests {
 
     #[test]
     fn test_credits_transaction_with_timestamp_preserves_ts() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let ts = Utc::now();
 
         let txn = CreditsTransaction::with_timestamp(
@@ -527,8 +582,8 @@ mod tests {
     #[test]
     fn test_is_deduction_true_for_negative_amount() {
         let txn = CreditsTransaction::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             -10,
             CreditsTransactionType::Scrape,
             "deduct".to_string(),
@@ -541,8 +596,8 @@ mod tests {
     #[test]
     fn test_is_addition_true_for_positive_amount() {
         let txn = CreditsTransaction::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             50,
             CreditsTransactionType::Subscription,
             "add".to_string(),
@@ -555,8 +610,8 @@ mod tests {
     #[test]
     fn test_is_deduction_and_is_addition_false_for_zero() {
         let txn = CreditsTransaction::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             0,
             CreditsTransactionType::ManualAdjustment,
             "zero".to_string(),
@@ -681,7 +736,11 @@ mod tests {
 
     #[test]
     fn test_credits_serde_roundtrip() {
-        let credits = Credits::new(Uuid::new_v4(), Uuid::new_v4(), 750);
+        let credits = Credits::new(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            750,
+        );
         let json = serde_json::to_string(&credits).expect("serialize");
         let back: Credits = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(credits, back, "serde roundtrip should preserve credits");
@@ -690,12 +749,12 @@ mod tests {
     #[test]
     fn test_credits_transaction_serde_roundtrip() {
         let txn = CreditsTransaction::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             -25,
             CreditsTransactionType::Crawl,
             "crawl cost".to_string(),
-            Some(Uuid::new_v4()),
+            Some(crate::domain::id::Id::generate()),
         );
         let json = serde_json::to_string(&txn).expect("serialize");
         let back: CreditsTransaction = serde_json::from_str(&json).expect("deserialize");

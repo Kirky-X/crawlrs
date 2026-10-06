@@ -13,17 +13,16 @@ use crawlrs::infrastructure::database::entities::scrape_result as db_entity;
 use crawlrs::infrastructure::repositories::scrape_result_repo_impl::ScrapeResultRepositoryImpl;
 use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// 创建测试用的 ScrapeResult（辅助函数）
 fn make_scrape_result(
-    task_id: Uuid,
+    task_id: crawlrs::domain::id::Id,
     url: &str,
     status_code: i32,
     response_time_ms: i64,
 ) -> ScrapeResult {
     ScrapeResult {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_id,
         url: url.to_string(),
         status_code,
@@ -42,8 +41,11 @@ fn make_scrape_result(
 async fn test_save_and_find_by_task_id() {
     let app = create_test_app_no_worker().await;
     let repo = ScrapeResultRepositoryImpl::new(app.db_pool.clone());
-    let task_id = Uuid::new_v4();
-    let unique_url = format!("https://{}.text.npr.org/page", Uuid::new_v4());
+    let task_id = crawlrs::domain::id::Id::generate();
+    let unique_url = format!(
+        "https://{}.text.npr.org/page",
+        crawlrs::domain::id::Id::generate()
+    );
 
     let result = make_scrape_result(task_id, &unique_url, 200, 150);
 
@@ -71,7 +73,7 @@ async fn test_find_by_task_id_returns_none_for_unknown() {
     let app = create_test_app_no_worker().await;
     let repo = ScrapeResultRepositoryImpl::new(app.db_pool.clone());
 
-    let unknown_task_id = Uuid::new_v4();
+    let unknown_task_id = crawlrs::domain::id::Id::generate();
     let result = repo
         .find_by_task_id(unknown_task_id)
         .await
@@ -85,9 +87,9 @@ async fn test_find_by_task_ids_returns_multiple() {
     let app = create_test_app_no_worker().await;
     let repo = ScrapeResultRepositoryImpl::new(app.db_pool.clone());
 
-    let task1_id = Uuid::new_v4();
-    let task2_id = Uuid::new_v4();
-    let task3_id = Uuid::new_v4();
+    let task1_id = crawlrs::domain::id::Id::generate();
+    let task2_id = crawlrs::domain::id::Id::generate();
+    let task3_id = crawlrs::domain::id::Id::generate();
 
     let r1 = make_scrape_result(task1_id, "https://a.text.npr.org", 200, 100);
     let r2 = make_scrape_result(task2_id, "https://b.text.npr.org", 404, 200);
@@ -166,7 +168,7 @@ async fn test_get_team_avg_response_time_returns_zero() {
 async fn test_save_with_screenshot() {
     let app = create_test_app_no_worker().await;
     let repo = ScrapeResultRepositoryImpl::new(app.db_pool.clone());
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
 
     let mut result = make_scrape_result(task_id, "https://screenshot.text.npr.org", 200, 500);
     result.screenshot = Some("base64encodedscreenshot".to_string());
@@ -208,9 +210,12 @@ async fn tc_find_by_task_ids_with_partial_match() {
     let app = create_test_app_no_worker().await;
     let repo = ScrapeResultRepositoryImpl::new(app.db_pool.clone());
 
-    let existing_task_id = Uuid::new_v4();
-    let missing_task_id = Uuid::new_v4();
-    let unique_url = format!("https://{}.text.npr.org/partial", Uuid::new_v4());
+    let existing_task_id = crawlrs::domain::id::Id::generate();
+    let missing_task_id = crawlrs::domain::id::Id::generate();
+    let unique_url = format!(
+        "https://{}.text.npr.org/partial",
+        crawlrs::domain::id::Id::generate()
+    );
 
     let result = make_scrape_result(existing_task_id, &unique_url, 200, 120);
     repo.save(result).await.expect("Failed to save result");
@@ -234,7 +239,10 @@ async fn tc_find_by_task_ids_with_partial_match() {
 }
 
 /// 辅助函数：清理指定 task_id 的 scrape_results
-async fn cleanup_scrape_results(app: &super::super::helpers::test_app::TestApp, task_id: Uuid) {
+async fn cleanup_scrape_results(
+    app: &super::super::helpers::test_app::TestApp,
+    task_id: crawlrs::domain::id::Id,
+) {
     let session = app
         .db_pool
         .get_session("admin")

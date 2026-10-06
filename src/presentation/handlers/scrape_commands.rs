@@ -11,7 +11,6 @@ use axum::{
 };
 use log::error;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::{
     application::dto::scrape_request::ScrapeRequestDto,
@@ -77,7 +76,7 @@ pub async fn create_scrape(
     }
 
     // 1. 检查限流（架构限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
-    // 性能直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
+    // 性能直接传 `crate::domain::id::Id`（实现 Display），由 helper 内部按需 to_string，
     // 消除 handler 中的中间变量分配。
     if let Err(response) = check_rate_limit(
         rate_limiting_service.as_ref(),
@@ -176,7 +175,7 @@ pub async fn create_scrape(
     }
 
     let task = Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Scrape,
         team_id,
         auth_state.api_key_id,
@@ -253,7 +252,7 @@ pub async fn create_scrape(
 ///
 /// Returns 403 if the caller does not own the task, 404 if not found.
 pub async fn cancel_scrape(
-    Path(id): Path<Uuid>,
+    Path(id): Path<crate::domain::id::Id>,
     Extension(repository): Extension<Arc<dyn TaskRepository>>,
     Extension(auth_state): Extension<AuthState>,
     Extension(locale): Extension<Locale>,

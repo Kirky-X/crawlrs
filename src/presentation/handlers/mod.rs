@@ -39,25 +39,28 @@ use crate::domain::models::Task;
 use axum::http::StatusCode;
 use axum::response::Response;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 use crate::infrastructure::security::ssrf::validate_url;
 use crate::presentation::handlers::response_builder::errors;
 
 /// 从任务列表中提取ID列表 - 消除重复代码
 #[inline]
-pub fn extract_task_ids(tasks: &[Task]) -> Vec<Uuid> {
+pub fn extract_task_ids(tasks: &[Task]) -> Vec<crate::domain::id::Id> {
     tasks.iter().map(|task| task.id).collect()
 }
 
 /// 将任务列表转换为ID到任务的映射 - 提高查找效率
 #[inline]
-pub fn tasks_to_id_map(tasks: Vec<Task>) -> HashMap<Uuid, Task> {
+pub fn tasks_to_id_map(tasks: Vec<Task>) -> HashMap<crate::domain::id::Id, Task> {
     tasks.into_iter().map(|task| (task.id, task)).collect()
 }
 
 /// SSRF 验证单个 URL，失败返回错误响应（用于 handler 提前返回）
-pub async fn check_ssrf_url(url: &str, team_id: Uuid, api_key_id: Uuid) -> Option<Response> {
+pub async fn check_ssrf_url(
+    url: &str,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
+) -> Option<Response> {
     match validate_url(url).await {
         Ok(validated) => {
             log::trace!(
@@ -84,8 +87,8 @@ pub async fn check_ssrf_url(url: &str, team_id: Uuid, api_key_id: Uuid) -> Optio
 /// SSRF 批量验证多个 URL，失败返回错误响应
 pub async fn check_ssrf_urls_batch(
     urls: &[String],
-    team_id: Uuid,
-    api_key_id: Uuid,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
 ) -> Option<Response> {
     let results = futures::future::join_all(urls.iter().map(|url| validate_url(url))).await;
     for (url, result) in urls.iter().zip(results) {
@@ -118,18 +121,17 @@ mod tests {
     use super::*;
     use crate::domain::models::{Task, TaskStatus, TaskType};
     use chrono::Utc;
-    use uuid::Uuid;
 
     /// 构造一个用于测试的 Task 实例，id 由参数指定，其余字段使用合理默认值。
-    fn make_task(id: Uuid) -> Task {
+    fn make_task(id: crate::domain::id::Id) -> Task {
         let now = Utc::now();
         Task {
             id,
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 0,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,
@@ -151,9 +153,9 @@ mod tests {
     /// 验证：空切片返回空 Vec；非空切片返回长度相等且顺序一致的 id 列表。
     #[test]
     fn test_extract_task_ids_returns_ids_in_order() {
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
-        let id3 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
+        let id2 = crate::domain::id::Id::generate();
+        let id3 = crate::domain::id::Id::generate();
         let tasks = vec![make_task(id1), make_task(id2), make_task(id3)];
 
         let ids = extract_task_ids(&tasks);
@@ -172,7 +174,7 @@ mod tests {
     /// extract_task_ids 对单元素切片应返回单元素 Vec。
     #[test]
     fn test_extract_task_ids_single_element() {
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let tasks = vec![make_task(id)];
         let ids = extract_task_ids(&tasks);
         assert_eq!(ids, vec![id]);
@@ -181,8 +183,8 @@ mod tests {
     /// extract_task_ids 不应消耗输入（接收 &[Task]），调用后原 Vec 仍可用。
     #[test]
     fn test_extract_task_ids_does_not_consume_input() {
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
+        let id2 = crate::domain::id::Id::generate();
         let tasks = vec![make_task(id1), make_task(id2)];
 
         let ids = extract_task_ids(&tasks);
@@ -198,8 +200,8 @@ mod tests {
     /// 验证：映射大小与输入一致；通过 id 可取回对应任务。
     #[test]
     fn test_tasks_to_id_map_builds_correct_mapping() {
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
+        let id2 = crate::domain::id::Id::generate();
         let tasks = vec![make_task(id1), make_task(id2)];
 
         let map = tasks_to_id_map(tasks);
@@ -223,7 +225,7 @@ mod tests {
     /// 验证：调用后原 Vec 不可再用（编译期保证，此处仅验证返回值正确）。
     #[test]
     fn test_tasks_to_id_map_single_element() {
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let tasks = vec![make_task(id)];
 
         let map = tasks_to_id_map(tasks);
@@ -236,7 +238,7 @@ mod tests {
     /// 虽然 Task.id 通常是唯一的，但函数语义是 HashMap insert，后入覆盖前入。
     #[test]
     fn test_tasks_to_id_map_duplicate_ids_last_wins() {
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let mut task1 = make_task(id);
         task1.url = "https://first.com".to_string();
         let mut task2 = make_task(id);

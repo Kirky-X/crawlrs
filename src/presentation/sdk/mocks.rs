@@ -28,7 +28,6 @@
 //! - production binary 默认不启用 `test-mocks`，mocks 完全不参与编译。
 
 use async_trait::async_trait;
-use uuid::Uuid;
 
 use crate::domain::models::{Crawl, CrawlStatus, Task};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
@@ -49,8 +48,8 @@ pub struct MockSearchService;
 impl SearchServiceTrait for MockSearchService {
     async fn search(
         &self,
-        _team_id: Uuid,
-        _api_key_id: Uuid,
+        _team_id: crate::domain::id::Id,
+        _api_key_id: crate::domain::id::Id,
         query: SearchQuery,
     ) -> Result<SearchResponse, SearchServiceError> {
         Ok(SearchResponse {
@@ -76,16 +75,16 @@ impl TaskQueue for MockTaskQueue {
     async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
         Ok(task)
     }
-    async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+    async fn dequeue(&self, _worker_id: crate::domain::id::Id) -> Result<Option<Task>, QueueError> {
         Ok(None)
     }
-    async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn complete(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
-    async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn fail(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
-    async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn cancel(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
 }
@@ -98,33 +97,52 @@ impl CrawlRepository for MockCrawlRepository {
     async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
         Ok(crawl.clone())
     }
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<Option<Crawl>, RepositoryError> {
         Ok(None)
     }
     async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
         Ok(crawl.clone())
     }
-    async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_completed_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_failed_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn update_status(&self, _id: Uuid, _status: CrawlStatus) -> Result<(), RepositoryError> {
+    async fn update_status(
+        &self,
+        _id: crate::domain::id::Id,
+        _status: CrawlStatus,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_total_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
     async fn find_by_team_id_paginated(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _limit: u32,
         _offset: u32,
     ) -> Result<Vec<Crawl>, RepositoryError> {
         Ok(vec![])
     }
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 }
@@ -141,8 +159,8 @@ pub struct MockSearchServiceError;
 impl SearchServiceTrait for MockSearchServiceError {
     async fn search(
         &self,
-        _team_id: Uuid,
-        _api_key_id: Uuid,
+        _team_id: crate::domain::id::Id,
+        _api_key_id: crate::domain::id::Id,
         _query: SearchQuery,
     ) -> Result<SearchResponse, SearchServiceError> {
         Err(SearchServiceError::SearchEngine(
@@ -162,16 +180,16 @@ impl TaskQueue for MockTaskQueueError {
             anyhow::anyhow!("mock queue enqueue error"),
         )))
     }
-    async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+    async fn dequeue(&self, _worker_id: crate::domain::id::Id) -> Result<Option<Task>, QueueError> {
         Ok(None)
     }
-    async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn complete(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
-    async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn fail(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
-    async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn cancel(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
 }
@@ -187,33 +205,52 @@ impl CrawlRepository for MockCrawlRepositoryError {
             "mock crawl repo create error"
         )))
     }
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<Option<Crawl>, RepositoryError> {
         Ok(None)
     }
     async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
         Ok(crawl.clone())
     }
-    async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_completed_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_failed_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn update_status(&self, _id: Uuid, _status: CrawlStatus) -> Result<(), RepositoryError> {
+    async fn update_status(
+        &self,
+        _id: crate::domain::id::Id,
+        _status: CrawlStatus,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
-    async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_total_tasks(
+        &self,
+        _id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
     async fn find_by_team_id_paginated(
         &self,
-        _team_id: Uuid,
+        _team_id: crate::domain::id::Id,
         _limit: u32,
         _offset: u32,
     ) -> Result<Vec<Crawl>, RepositoryError> {
         Ok(vec![])
     }
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        _team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 }

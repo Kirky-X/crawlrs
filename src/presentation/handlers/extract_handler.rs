@@ -29,13 +29,12 @@ use crate::presentation::handlers::{check_ssrf_urls_batch, sync_wait_status_code
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// 提取任务响应数据传输对象
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExtractResponseDto {
     /// 任务ID
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// 任务状态
     pub status: String,
 }
@@ -166,7 +165,7 @@ where
     }
 
     let task = Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Extract,
         team_id,
         auth_state.api_key_id,
@@ -313,7 +312,7 @@ pub async fn extract(
     }
 
     let task = Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Extract,
         team_id,
         auth_state.api_key_id,
@@ -409,7 +408,6 @@ pub async fn extract(
 mod tests {
     use super::*;
     use crate::domain::models::TaskStatus;
-    use uuid::Uuid;
 
     use crate::domain::models::CreditsTransactionType;
     #[allow(unused_imports)]
@@ -432,13 +430,13 @@ mod tests {
         }
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<RateLimitConfig, RateLimitingError> {
             Ok(RateLimitConfig::default())
         }
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -452,33 +450,33 @@ mod tests {
     impl ConcurrencyControlService for MockAllAllowRateLimitingService {
         async fn check_team_concurrency(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             Ok(ConcurrencyResult::Allowed)
         }
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
         async fn get_team_current_concurrency(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
         async fn get_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
             Ok(ConcurrencyConfig::default())
         }
         async fn update_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -487,7 +485,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl BacklogService for MockAllAllowRateLimitingService {
-        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+        async fn process_backlog_tasks(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
     }
@@ -496,24 +497,27 @@ mod tests {
     impl QuotaService for MockAllAllowRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
         async fn refund_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
-        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(1000)
         }
     }
@@ -532,7 +536,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let dto = ExtractResponseDto {
             id: task_id,
             status: "pending".to_string(),
@@ -548,7 +552,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let json = format!(r#"{{"id":"{}","status":"completed"}}"#, task_id);
         let dto: ExtractResponseDto = serde_json::from_str(&json).unwrap();
         assert_eq!(dto.id, task_id);
@@ -561,7 +565,7 @@ mod tests {
             return;
         }
         let dto = ExtractResponseDto {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             status: "accepted".to_string(),
         };
         let json = serde_json::to_string(&dto).unwrap();
@@ -658,7 +662,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let dto = ExtractResponseDto {
             id: task_id,
             status: "pending".to_string(),
@@ -673,7 +677,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let dto = ExtractResponseDto {
             id: task_id,
             status: "completed".to_string(),
@@ -689,7 +693,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let original = ExtractResponseDto {
             id: task_id,
             status: "queued".to_string(),
@@ -951,9 +955,9 @@ mod tests {
             return;
         }
         // Verify that a Task with Extract type can be constructed (mirrors handler logic)
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
-        let api_key_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
+        let api_key_id = crate::domain::id::Id::generate();
         let now = chrono::Utc::now();
         let task = Task {
             id: task_id,
@@ -1100,19 +1104,22 @@ mod tests {
             Ok(task)
         }
 
-        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+        async fn dequeue(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, QueueError> {
             Ok(None)
         }
 
-        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn complete(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
 
-        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn fail(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
 
-        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn cancel(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
     }
@@ -1158,7 +1165,10 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -1166,27 +1176,30 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
@@ -1208,7 +1221,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -1216,7 +1232,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
 
@@ -1238,17 +1257,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -1297,7 +1322,7 @@ mod tests {
     impl GeoRestrictionRepository for MockGeoRestrictionRepository {
         async fn get_team_restrictions(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
             if self.get_should_fail {
                 return Err(GeoRestrictionRepositoryError::Database(
@@ -1309,7 +1334,7 @@ mod tests {
 
         async fn update_team_restrictions(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _restrictions: &TeamGeoRestrictions,
         ) -> Result<(), GeoRestrictionRepositoryError> {
             Ok(())
@@ -1317,7 +1342,7 @@ mod tests {
 
         async fn log_geo_restriction_action(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _ip_address: &str,
             _country_code: &str,
             _action: &str,
@@ -1384,8 +1409,8 @@ mod tests {
     fn make_test_auth_state() -> AuthState {
         AuthState::new(
             make_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         )
     }
@@ -2000,12 +2025,12 @@ mod tests {
         // waited_time_ms < sync_wait_ms (handler lines 189-190, 205-209).
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let completed_task = Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Extract,
             status: TaskStatus::Completed,
             priority: 0,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::Value::Null,
             retry_count: 0,

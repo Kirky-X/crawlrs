@@ -28,13 +28,12 @@ pub mod cache_config {
 ///
 /// 命名使用 `default_identity` 而非 `auth`，避免与 `domain::auth`（ApiKeyScope 等领域模型）同名歧义。
 pub mod default_identity {
-    use uuid::Uuid;
 
     /// 单租户模式下的默认团队 ID（非 nil，固定值 1）
-    pub const DEFAULT_TEAM_ID: Uuid = Uuid::from_u128(1);
+    pub const DEFAULT_TEAM_ID: crate::domain::id::Id = crate::domain::id::Id::from_u128(1);
 
     /// 单租户模式下的默认 API Key ID（非 nil，固定值 2，与 DEFAULT_TEAM_ID 区分）
-    pub const DEFAULT_API_KEY_ID: Uuid = Uuid::from_u128(2);
+    pub const DEFAULT_API_KEY_ID: crate::domain::id::Id = crate::domain::id::Id::from_u128(2);
 
     /// 单租户降级模式下注入的 `token_hash` 占位字符串。
     ///
@@ -203,12 +202,12 @@ mod tests {
         // DEFAULT_TEAM_ID 与 DEFAULT_API_KEY_ID 必须非 nil 且互不相等
         assert_ne!(
             default_identity::DEFAULT_TEAM_ID,
-            uuid::Uuid::nil(),
+            crate::domain::id::Id::nil(),
             "DEFAULT_TEAM_ID must not be nil UUID"
         );
         assert_ne!(
             default_identity::DEFAULT_API_KEY_ID,
-            uuid::Uuid::nil(),
+            crate::domain::id::Id::nil(),
             "DEFAULT_API_KEY_ID must not be nil UUID"
         );
         assert_ne!(

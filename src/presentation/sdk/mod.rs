@@ -15,7 +15,6 @@
 
 use sdforge::prelude::*;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::domain::models::{Crawl, Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
@@ -61,7 +60,7 @@ pub struct SdkCreateTaskRequest {
 
 #[derive(serde::Serialize)]
 pub struct SdkCreateTaskResponse {
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     pub url: String,
     pub status: String,
 }
@@ -73,7 +72,7 @@ pub struct SdkScrapeRequest {
 
 #[derive(serde::Serialize)]
 pub struct SdkScrapeResponse {
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     pub url: String,
 }
 
@@ -86,7 +85,7 @@ pub struct SdkCreateCrawlRequest {
 
 #[derive(serde::Serialize)]
 pub struct SdkCrawlResponse {
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     pub status: String,
     pub url: String,
 }
@@ -137,7 +136,7 @@ async fn sdk_search(
         .await
         .map_err(|e| ApiError::Internal {
             message: e.to_string(),
-            error_id: Uuid::new_v4().to_string(),
+            error_id: crate::domain::id::Id::generate().to_string(),
             source: None,
             context: None,
         })?;
@@ -195,7 +194,7 @@ async fn sdk_create_task(
 
     let now = chrono::Utc::now();
     let task = Task {
-        id: Uuid::new_v4(),
+        id: crate::domain::id::Id::generate(),
         task_type,
         status: TaskStatus::Queued,
         priority: 0,
@@ -219,7 +218,7 @@ async fn sdk_create_task(
 
     let created = queue.enqueue(task).await.map_err(|e| ApiError::Internal {
         message: e.to_string(),
-        error_id: Uuid::new_v4().to_string(),
+        error_id: crate::domain::id::Id::generate().to_string(),
         source: None,
         context: None,
     })?;
@@ -256,7 +255,7 @@ async fn sdk_scrape(
 
     let now = chrono::Utc::now();
     let task = Task {
-        id: Uuid::new_v4(),
+        id: crate::domain::id::Id::generate(),
         task_type: TaskType::Scrape,
         status: TaskStatus::Queued,
         priority: 0,
@@ -280,7 +279,7 @@ async fn sdk_scrape(
 
     let created = queue.enqueue(task).await.map_err(|e| ApiError::Internal {
         message: e.to_string(),
-        error_id: Uuid::new_v4().to_string(),
+        error_id: crate::domain::id::Id::generate().to_string(),
         source: None,
         context: None,
     })?;
@@ -315,7 +314,7 @@ async fn sdk_create_crawl(
     }
 
     let crawl = Crawl::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         auth_state.team_id,
         req.name,
         req.url,
@@ -328,7 +327,7 @@ async fn sdk_create_crawl(
         .await
         .map_err(|e| ApiError::Internal {
             message: e.to_string(),
-            error_id: Uuid::new_v4().to_string(),
+            error_id: crate::domain::id::Id::generate().to_string(),
             source: None,
             context: None,
         })?;

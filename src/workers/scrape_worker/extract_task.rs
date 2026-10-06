@@ -15,7 +15,6 @@ use chrono::Utc;
 use log::{debug, info, warn};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 use crate::workers::scrape_executor::process_text_encoding;
 
@@ -179,7 +178,7 @@ impl ScrapeWorker {
             .unwrap_or(json!({}));
 
         let scrape_result = ScrapeResult {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_id: task.id,
             url: url.to_string(),
             status_code: response.status_code as i32,

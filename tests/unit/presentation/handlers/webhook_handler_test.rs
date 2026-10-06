@@ -7,7 +7,6 @@
 //! WebhookListResponse) and the Webhook model's construction.
 
 use chrono::Utc;
-use uuid::Uuid;
 
 use crawlrs::application::dto::webhook_request::{
     CreateWebhookRequest, WebhookListResponse, WebhookResponse,
@@ -77,8 +76,8 @@ fn tc_create_webhook_request_with_path_and_query() {
 #[test]
 fn tc_webhook_response_serialization_with_secret() {
     let response = WebhookResponse {
-        id: Uuid::new_v4(),
-        team_id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         url: "https://example.com/hook".to_string(),
         created_at: Utc::now(),
         is_active: true,
@@ -94,8 +93,8 @@ fn tc_webhook_response_serialization_with_secret() {
 #[test]
 fn tc_webhook_response_serialization_secret_none() {
     let response = WebhookResponse {
-        id: Uuid::new_v4(),
-        team_id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         url: "https://example.com/hook".to_string(),
         created_at: Utc::now(),
         is_active: false,
@@ -109,8 +108,8 @@ fn tc_webhook_response_serialization_secret_none() {
 
 #[test]
 fn tc_webhook_response_serialization_includes_all_fields() {
-    let id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
     let response = WebhookResponse {
         id,
         team_id,
@@ -131,8 +130,8 @@ fn tc_webhook_response_serialization_includes_all_fields() {
 #[test]
 fn tc_webhook_response_clone_preserves_fields() {
     let response = WebhookResponse {
-        id: Uuid::new_v4(),
-        team_id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         url: "https://clone.example.com".to_string(),
         created_at: Utc::now(),
         is_active: true,
@@ -164,16 +163,16 @@ fn tc_webhook_list_response_empty() {
 #[test]
 fn tc_webhook_list_response_with_items() {
     let w1 = WebhookResponse {
-        id: Uuid::new_v4(),
-        team_id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         url: "https://hook1.example.com".to_string(),
         created_at: Utc::now(),
         is_active: true,
         secret: None,
     };
     let w2 = WebhookResponse {
-        id: Uuid::new_v4(),
-        team_id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
         url: "https://hook2.example.com".to_string(),
         created_at: Utc::now(),
         is_active: false,
@@ -195,8 +194,8 @@ fn tc_webhook_list_response_with_items() {
 fn tc_webhook_list_response_total_matches_count() {
     let webhooks: Vec<WebhookResponse> = (0..3)
         .map(|_| WebhookResponse {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crawlrs::domain::id::Id::generate().into(),
+            team_id: crawlrs::domain::id::Id::generate().into(),
             url: "https://example.com".to_string(),
             created_at: Utc::now(),
             is_active: true,
@@ -218,8 +217,8 @@ fn tc_webhook_list_response_total_matches_count() {
 
 #[test]
 fn tc_webhook_new_constructor() {
-    let id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
     let webhook = Webhook::new(id, team_id, "https://example.com/hook".to_string());
     assert_eq!(webhook.id, id);
     assert_eq!(webhook.team_id, team_id);
@@ -230,8 +229,8 @@ fn tc_webhook_new_constructor() {
 #[test]
 fn tc_webhook_clone_preserves_fields() {
     let webhook = Webhook::new(
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
         "https://clone.example.com".to_string(),
     );
     let cloned = webhook.clone();
@@ -244,8 +243,8 @@ fn tc_webhook_clone_preserves_fields() {
 #[test]
 fn tc_webhook_debug_format_contains_url() {
     let webhook = Webhook::new(
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
         "https://debug.example.com".to_string(),
     );
     let debug = format!("{:?}", webhook);

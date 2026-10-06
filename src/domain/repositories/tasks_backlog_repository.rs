@@ -10,7 +10,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::domain::repositories::task_repository::RepositoryError;
 
@@ -54,9 +53,9 @@ impl std::str::FromStr for TasksBacklogStatus {
 /// 任务积压领域模型
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TasksBacklog {
-    pub id: Uuid,
-    pub task_id: Uuid,
-    pub team_id: Uuid,
+    pub id: crate::domain::id::Id,
+    pub task_id: crate::domain::id::Id,
+    pub team_id: crate::domain::id::Id,
     pub task_type: String,
     pub priority: i32,
     pub payload: serde_json::Value,
@@ -73,8 +72,8 @@ pub struct TasksBacklog {
 impl TasksBacklog {
     /// 创建新的任务积压项
     pub fn new(
-        task_id: Uuid,
-        team_id: Uuid,
+        task_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         task_type: String,
         priority: i32,
         payload: serde_json::Value,
@@ -82,7 +81,7 @@ impl TasksBacklog {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_id,
             team_id,
             task_type,
@@ -161,22 +160,27 @@ pub trait TasksBacklogRepository: Send + Sync {
     async fn create(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError>;
 
     /// 根据ID查找任务积压项
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError>;
+    async fn find_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<TasksBacklog>, RepositoryError>;
 
     /// 根据任务ID查找任务积压项
-    async fn find_by_task_id(&self, task_id: Uuid)
-        -> Result<Option<TasksBacklog>, RepositoryError>;
+    async fn find_by_task_id(
+        &self,
+        task_id: crate::domain::id::Id,
+    ) -> Result<Option<TasksBacklog>, RepositoryError>;
 
     /// 更新任务积压项
     async fn update(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError>;
 
     /// 删除任务积压项
-    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
+    async fn delete(&self, id: crate::domain::id::Id) -> Result<(), RepositoryError>;
 
     /// 获取待处理的任务积压项（按优先级排序）
     async fn get_pending_tasks(
         &self,
-        team_id: Option<Uuid>,
+        team_id: Option<crate::domain::id::Id>,
         limit: Option<u64>,
     ) -> Result<Vec<TasksBacklog>, RepositoryError>;
 
@@ -189,14 +193,14 @@ pub trait TasksBacklogRepository: Send + Sync {
     /// 统计任务积压项数量
     async fn count_by_status(
         &self,
-        team_id: Option<Uuid>,
+        team_id: Option<crate::domain::id::Id>,
         status: TasksBacklogStatus,
     ) -> Result<i64, RepositoryError>;
 
     /// 批量更新任务积压项状态
     async fn update_status_batch(
         &self,
-        ids: &[Uuid],
+        ids: &[crate::domain::id::Id],
         status: TasksBacklogStatus,
     ) -> Result<u64, RepositoryError>;
 }
@@ -317,8 +321,8 @@ mod tests {
 
     #[test]
     fn test_tasks_backlog_new_defaults() {
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let payload = serde_json::json!({"key": "value"});
         let backlog = TasksBacklog::new(
             task_id,
@@ -346,8 +350,8 @@ mod tests {
     fn test_tasks_backlog_new_with_expires_at() {
         let expires = Utc::now() + chrono::Duration::hours(1);
         let backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "crawl".to_string(),
             1,
             serde_json::json!({}),
@@ -358,8 +362,8 @@ mod tests {
 
     #[test]
     fn test_tasks_backlog_new_generates_unique_ids() {
-        let task_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let b1 = TasksBacklog::new(
             task_id,
             team_id,
@@ -384,8 +388,8 @@ mod tests {
     #[test]
     fn test_mark_processing_from_pending_succeeds() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -398,8 +402,8 @@ mod tests {
     #[test]
     fn test_mark_processing_from_processing_fails() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -414,8 +418,8 @@ mod tests {
     #[test]
     fn test_mark_processing_from_completed_fails() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -431,8 +435,8 @@ mod tests {
     #[test]
     fn test_mark_completed_from_processing_succeeds() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -447,8 +451,8 @@ mod tests {
     #[test]
     fn test_mark_completed_from_pending_fails() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -462,8 +466,8 @@ mod tests {
     #[test]
     fn test_mark_completed_from_completed_fails() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -479,8 +483,8 @@ mod tests {
     #[test]
     fn test_mark_failed_from_any_state() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -493,8 +497,8 @@ mod tests {
     #[test]
     fn test_mark_failed_from_processing() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -510,8 +514,8 @@ mod tests {
     #[test]
     fn test_mark_expired_from_pending() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -524,8 +528,8 @@ mod tests {
     #[test]
     fn test_mark_expired_from_processing() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -541,8 +545,8 @@ mod tests {
     #[test]
     fn test_increment_retry_count_increments() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -560,8 +564,8 @@ mod tests {
     #[test]
     fn test_is_expired_no_expiry_returns_false() {
         let backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -574,8 +578,8 @@ mod tests {
     fn test_is_expired_future_expiry_returns_false() {
         let future = Utc::now() + chrono::Duration::hours(1);
         let backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -588,8 +592,8 @@ mod tests {
     fn test_is_expired_past_expiry_returns_true() {
         let past = Utc::now() - chrono::Duration::hours(1);
         let backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -603,8 +607,8 @@ mod tests {
     #[test]
     fn test_can_retry_below_max() {
         let backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -616,8 +620,8 @@ mod tests {
     #[test]
     fn test_can_retry_at_max() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -632,8 +636,8 @@ mod tests {
     #[test]
     fn test_can_retry_above_max() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "t".to_string(),
             1,
             serde_json::json!({}),
@@ -650,8 +654,8 @@ mod tests {
     #[test]
     fn test_full_lifecycle_pending_to_completed() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "scrape".to_string(),
             5,
             serde_json::json!({"url": "http://example.com"}),
@@ -672,8 +676,8 @@ mod tests {
     #[test]
     fn test_full_lifecycle_with_retries_and_failure() {
         let mut backlog = TasksBacklog::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "crawl".to_string(),
             3,
             serde_json::json!({}),

@@ -8,7 +8,6 @@ use crate::domain::services::team_service::TeamGeoRestrictions;
 use crate::infrastructure::database::entities::{geo_restriction_log, team};
 use dbnexus::sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use dbnexus::DbPool;
-use uuid::Uuid;
 
 use std::sync::Arc;
 
@@ -30,7 +29,7 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
     /// 获取团队的地理限制配置
     async fn get_team_restrictions(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
     ) -> Result<TeamGeoRestrictions, GeoRestrictionRepositoryError> {
         let session = self
             .pool
@@ -78,7 +77,7 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
     /// 更新团队的地理限制配置
     async fn update_team_restrictions(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         restrictions: &TeamGeoRestrictions,
     ) -> Result<(), GeoRestrictionRepositoryError> {
         let session = self
@@ -138,7 +137,7 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
     /// 记录地理限制审计日志
     async fn log_geo_restriction_action(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         ip_address: &str,
         country_code: &str,
         action: &str,
@@ -155,8 +154,8 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?;
 
         let log_entry = geo_restriction_log::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            team_id: Set(team_id),
+            id: Set(crate::domain::id::Id::generate().into()),
+            team_id: Set(team_id.into()),
             ip_address: Set(ip_address.to_string()),
             country_code: Set(Some(country_code.to_string())),
             restriction_type: Set(action.to_string()),
@@ -203,7 +202,9 @@ mod error_path_tests {
             return;
         }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
-        let result = repo.get_team_restrictions(Uuid::new_v4()).await;
+        let result = repo
+            .get_team_restrictions(crate::domain::id::Id::generate())
+            .await;
         match result {
             Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
             other => panic!("expected TeamNotFound error, got {:?}", other),
@@ -218,7 +219,7 @@ mod error_path_tests {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         let result = repo
-            .update_team_restrictions(Uuid::new_v4(), &restrictions)
+            .update_team_restrictions(crate::domain::id::Id::generate(), &restrictions)
             .await;
         match result {
             Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
@@ -234,7 +235,7 @@ mod error_path_tests {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 "192.168.1.1",
                 "US",
                 "allowed",
@@ -264,7 +265,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let err = GeoRestrictionRepositoryError::TeamNotFound(id);
         assert_eq!(format!("{}", err), format!("Team not found: {}", id));
     }
@@ -362,7 +363,9 @@ mod error_path_tests {
             return;
         }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
-        let result = repo.get_team_restrictions(Uuid::nil()).await;
+        let result = repo
+            .get_team_restrictions(crate::domain::id::Id::nil())
+            .await;
         match result {
             Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
             other => panic!("expected TeamNotFound error, got {:?}", other),
@@ -383,7 +386,7 @@ mod error_path_tests {
             domain_blacklist: Some(vec!["bad.com".to_string()]),
         };
         let result = repo
-            .update_team_restrictions(Uuid::new_v4(), &restrictions)
+            .update_team_restrictions(crate::domain::id::Id::generate(), &restrictions)
             .await;
         match result {
             Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
@@ -399,7 +402,7 @@ mod error_path_tests {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let restrictions = crate::domain::services::team_service::TeamGeoRestrictions::default();
         let result = repo
-            .update_team_restrictions(Uuid::nil(), &restrictions)
+            .update_team_restrictions(crate::domain::id::Id::nil(), &restrictions)
             .await;
         match result {
             Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
@@ -414,7 +417,7 @@ mod error_path_tests {
         }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
-            .log_geo_restriction_action(Uuid::new_v4(), "", "", "", "")
+            .log_geo_restriction_action(crate::domain::id::Id::generate(), "", "", "", "")
             .await;
         assert!(
             result.is_ok(),
@@ -431,7 +434,7 @@ mod error_path_tests {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 "192.168.1.1",
                 "测试",
                 "阻止",
@@ -453,7 +456,7 @@ mod error_path_tests {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
             .log_geo_restriction_action(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 "10.0.0.1",
                 "US",
                 "allowed",
@@ -474,7 +477,13 @@ mod error_path_tests {
         }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let result = repo
-            .log_geo_restriction_action(Uuid::nil(), "127.0.0.1", "US", "blocked", "test")
+            .log_geo_restriction_action(
+                crate::domain::id::Id::nil(),
+                "127.0.0.1",
+                "US",
+                "blocked",
+                "test",
+            )
             .await;
         assert!(
             result.is_ok(),
@@ -510,7 +519,7 @@ mod error_path_tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let err = GeoRestrictionRepositoryError::TeamNotFound(Uuid::nil());
+        let err = GeoRestrictionRepositoryError::TeamNotFound(crate::domain::id::Id::nil());
         assert_eq!(
             format!("{}", err),
             "Team not found: 00000000-0000-0000-0000-000000000000"
@@ -915,7 +924,7 @@ mod error_path_tests {
         }
         let variants: Vec<GeoRestrictionRepositoryError> = vec![
             GeoRestrictionRepositoryError::Database("e".into()),
-            GeoRestrictionRepositoryError::TeamNotFound(Uuid::nil()),
+            GeoRestrictionRepositoryError::TeamNotFound(crate::domain::id::Id::nil()),
             GeoRestrictionRepositoryError::Other("o".into()),
         ];
         for err in &variants {
@@ -932,7 +941,7 @@ mod error_path_tests {
             return;
         }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
-        let max_uuid = Uuid::from_u128(u128::MAX);
+        let max_uuid = crate::domain::id::Id::from_u128(u128::MAX);
         let result = repo.get_team_restrictions(max_uuid).await;
         match result {
             Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
@@ -954,7 +963,7 @@ mod error_path_tests {
             domain_blacklist: Some(Vec::new()),
         };
         let result = repo
-            .update_team_restrictions(Uuid::new_v4(), &restrictions)
+            .update_team_restrictions(crate::domain::id::Id::generate(), &restrictions)
             .await;
         match result {
             Err(GeoRestrictionRepositoryError::TeamNotFound(_)) => {}
@@ -970,7 +979,13 @@ mod error_path_tests {
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
         let long_reason = "x".repeat(2000);
         let result = repo
-            .log_geo_restriction_action(Uuid::new_v4(), "10.0.0.1", "US", "allowed", &long_reason)
+            .log_geo_restriction_action(
+                crate::domain::id::Id::generate(),
+                "10.0.0.1",
+                "US",
+                "allowed",
+                &long_reason,
+            )
             .await;
         assert!(
             result.is_ok(),
@@ -985,7 +1000,7 @@ mod error_path_tests {
             return;
         }
         let repo = DatabaseGeoRestrictionRepository::new(create_test_db_pool());
-        let max_uuid = Uuid::from_u128(u128::MAX);
+        let max_uuid = crate::domain::id::Id::from_u128(u128::MAX);
         let result = repo
             .log_geo_restriction_action(max_uuid, "127.0.0.1", "US", "blocked", "test")
             .await;

@@ -20,7 +20,6 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
-use uuid::Uuid;
 
 /// 基准测试：任务创建性能
 ///
@@ -40,10 +39,10 @@ fn benchmark_task_creation(c: &mut Criterion) {
                     let mut tasks = Vec::new();
                     for i in 0..size {
                         let task = Task::new(
-                            Uuid::new_v4(),
+                            crawlrs::domain::id::Id::generate(),
                             TaskType::Scrape,
-                            Uuid::new_v4(),
-                            Uuid::new_v4(),
+                            crawlrs::domain::id::Id::generate(),
+                            crawlrs::domain::id::Id::generate(),
                             format!("https://example{}.com", i),
                             serde_json::json!({"test": true}),
                         );
@@ -70,10 +69,10 @@ fn benchmark_task_status_transitions(c: &mut Criterion) {
     group.bench_function("single_task_lifecycle", |b| {
         b.iter(|| {
             let mut task = Task::new(
-                Uuid::new_v4(),
+                crawlrs::domain::id::Id::generate(),
                 TaskType::Scrape,
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crawlrs::domain::id::Id::generate(),
+                crawlrs::domain::id::Id::generate(),
                 "https://example.com".to_string(),
                 serde_json::json!({}),
             );
@@ -96,10 +95,10 @@ fn benchmark_task_status_transitions(c: &mut Criterion) {
                     let mut tasks = Vec::new();
                     for i in 0..batch_size {
                         let mut task = Task::new(
-                            Uuid::new_v4(),
+                            crawlrs::domain::id::Id::generate(),
                             TaskType::Scrape,
-                            Uuid::new_v4(),
-                            Uuid::new_v4(),
+                            crawlrs::domain::id::Id::generate(),
+                            crawlrs::domain::id::Id::generate(),
                             format!("https://example{}.com", i),
                             serde_json::json!({}),
                         );
@@ -125,10 +124,10 @@ fn benchmark_json_serialization(c: &mut Criterion) {
 
     // 创建测试任务
     let task = Task::new(
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
         TaskType::Scrape,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
+        crawlrs::domain::id::Id::generate(),
         "https://example.com".to_string(),
         serde_json::json!({
             "test": "data",
@@ -189,7 +188,7 @@ fn benchmark_uuid_generation(c: &mut Criterion) {
 
     group.bench_function("generate_single_uuid", |b| {
         b.iter(|| {
-            let uuid = Uuid::new_v4();
+            let uuid = crawlrs::domain::id::Id::generate();
             black_box(uuid);
         });
     });
@@ -198,7 +197,7 @@ fn benchmark_uuid_generation(c: &mut Criterion) {
         b.iter(|| {
             let mut uuids = Vec::new();
             for _ in 0..100 {
-                uuids.push(Uuid::new_v4());
+                uuids.push(crawlrs::domain::id::Id::generate());
             }
             black_box(uuids);
         });

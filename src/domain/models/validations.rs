@@ -8,7 +8,6 @@
 //! to audit, unit-test, and reuse validation logic across models.
 
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
 
 // ========== URL validation ==========
 
@@ -81,7 +80,10 @@ pub fn is_task_expired(expires_at: Option<DateTime<Utc>>) -> bool {
 ///
 /// * `lock_token` - Optional lock token UUID.
 /// * `lock_expires_at` - Optional lock expiration timestamp.
-pub fn is_task_locked(lock_token: Option<Uuid>, lock_expires_at: Option<DateTime<Utc>>) -> bool {
+pub fn is_task_locked(
+    lock_token: Option<crate::domain::id::Id>,
+    lock_expires_at: Option<DateTime<Utc>>,
+) -> bool {
     lock_token.is_some() && lock_expires_at.is_some_and(|expires_at| Utc::now() < expires_at)
 }
 
@@ -236,14 +238,14 @@ mod tests {
 
     #[test]
     fn test_is_task_locked_with_valid_token() {
-        let token = Some(Uuid::new_v4());
+        let token = Some(crate::domain::id::Id::generate());
         let expires = Some(Utc::now() + Duration::hours(1));
         assert!(is_task_locked(token, expires));
     }
 
     #[test]
     fn test_is_task_locked_with_expired_token() {
-        let token = Some(Uuid::new_v4());
+        let token = Some(crate::domain::id::Id::generate());
         let expires = Some(Utc::now() - Duration::hours(1));
         assert!(!is_task_locked(token, expires));
     }

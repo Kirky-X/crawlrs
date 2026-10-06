@@ -12,7 +12,6 @@ use async_trait::async_trait;
 use dbnexus::sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 use dbnexus::DbPool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Webhook repository implementation
 #[derive(Clone)]
@@ -51,7 +50,10 @@ impl WebhookRepository for WebhookRepoImpl {
         Ok(webhook.clone())
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<Webhook>, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -70,7 +72,10 @@ impl WebhookRepository for WebhookRepoImpl {
         Ok(entity.map(WebhookMapper::to_domain))
     }
 
-    async fn find_by_team_id(&self, team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+    async fn find_by_team_id(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<Vec<Webhook>, RepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -98,8 +103,8 @@ mod tests {
 
     fn sample_webhook() -> Webhook {
         Webhook::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "https://example.com/webhook".to_string(),
         )
     }
@@ -165,7 +170,7 @@ mod tests {
             return;
         }
         let repo = WebhookRepoImpl::new(create_test_db_pool());
-        let result = repo.find_by_id(Uuid::new_v4()).await;
+        let result = repo.find_by_id(crate::domain::id::Id::generate()).await;
         assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
         assert!(result.unwrap().is_none(), "unknown id should return None");
     }
@@ -176,7 +181,9 @@ mod tests {
             return;
         }
         let repo = WebhookRepoImpl::new(create_test_db_pool());
-        let result = repo.find_by_team_id(Uuid::new_v4()).await;
+        let result = repo
+            .find_by_team_id(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_ok(), "find_by_team_id failed: {:?}", result.err());
         assert!(
             result.unwrap().is_empty(),

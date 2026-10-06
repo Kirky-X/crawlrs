@@ -41,7 +41,6 @@ mod tests {
     use chrono::NaiveDateTime;
     use sdforge::validator::Validate;
     use std::sync::Arc;
-    use uuid::Uuid;
 
     // ========== ScrapeRequestDto validation tests ==========
 
@@ -139,7 +138,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let dto = ScrapeResponseDto {
             id: task_id,
             url: "https://example.com".to_string(),
@@ -157,7 +156,7 @@ mod tests {
     fn test_scrape_response_dto_empty_capture_absent_in_json() {
         // F6：空捕获不出现在 JSON（skip_serializing_if）
         let dto = ScrapeResponseDto {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             credits_used: 1,
             captured_responses: None,
@@ -178,7 +177,7 @@ mod tests {
     fn test_scrape_response_dto_non_empty_capture_complete_in_json() {
         // F6：非空捕获时字段完整
         let dto = ScrapeResponseDto {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             credits_used: 1,
             captured_responses: Some(vec![CapturedResponseDto {
@@ -205,7 +204,7 @@ mod tests {
         }
         let json = format!(
             r#"{{"id":"{}","url":"https://test.com","credits_used":5}}"#,
-            Uuid::new_v4()
+            crate::domain::id::Id::generate()
         );
         let dto: ScrapeResponseDto = serde_json::from_str(&json).unwrap();
         assert_eq!(dto.url, "https://test.com");
@@ -217,7 +216,10 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let json = format!(r#"{{"id":"{}","url":"https://test.com"}}"#, Uuid::new_v4());
+        let json = format!(
+            r#"{{"id":"{}","url":"https://test.com"}}"#,
+            crate::domain::id::Id::generate()
+        );
         let dto: ScrapeResponseDto = serde_json::from_str(&json).unwrap();
         assert_eq!(dto.credits_used, 0);
     }
@@ -277,7 +279,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let dto = ScrapeStatusResponseDto {
             id: task_id,
             status: "queued".to_string(),
@@ -302,7 +304,7 @@ mod tests {
             return;
         }
         let dto = ScrapeStatusResponseDto {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             status: "failed".to_string(),
             url: "https://example.com".to_string(),
             created_at: NaiveDateTime::parse_from_str("2025-01-01T00:00:00", "%Y-%m-%dT%H:%M:%S")
@@ -821,7 +823,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         let json = format!(
             r#"{{
                 "id": "{}",
@@ -885,7 +887,7 @@ mod tests {
             return;
         }
         let dto = ScrapeResponseDto {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             url: "https://roundtrip.com".to_string(),
             credits_used: 3,
             captured_responses: None,
@@ -919,11 +921,11 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
-        let api_key_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let api_key_id = crate::domain::id::Id::generate();
         let now = chrono::Utc::now();
         let task = Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 0,
@@ -1061,7 +1063,7 @@ mod tests {
 
     // --- MockTaskQueue ---
 
-    type SharedTasks = Arc<Mutex<HashMap<Uuid, Task>>>;
+    type SharedTasks = Arc<Mutex<HashMap<crate::domain::id::Id, Task>>>;
 
     struct MockTaskQueue {
         enqueue_should_fail: bool,
@@ -1092,19 +1094,22 @@ mod tests {
             Ok(task)
         }
 
-        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+        async fn dequeue(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, QueueError> {
             Ok(None)
         }
 
-        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn complete(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
 
-        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn fail(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
 
-        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn cancel(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
     }
@@ -1130,19 +1135,22 @@ mod tests {
             Ok(task)
         }
 
-        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+        async fn dequeue(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, QueueError> {
             Ok(None)
         }
 
-        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn complete(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
 
-        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn fail(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
 
-        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn cancel(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
     }
@@ -1206,7 +1214,10 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             if self.find_should_fail {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "find_by_id failed"
@@ -1219,27 +1230,30 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             if self.mark_cancelled_should_fail {
                 return Err(RepositoryError::Database(anyhow::anyhow!(
                     "mark_cancelled failed"
@@ -1266,7 +1280,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -1274,7 +1291,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
 
@@ -1297,17 +1317,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -1367,14 +1393,14 @@ mod tests {
 
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<RateLimitConfig, RateLimitingError> {
             Ok(RateLimitConfig::default())
         }
 
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1389,37 +1415,37 @@ mod tests {
     impl ConcurrencyControlService for MockRateLimitingService {
         async fn check_team_concurrency(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             Ok(ConcurrencyResult::Allowed)
         }
 
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
         async fn get_team_current_concurrency(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
 
         async fn get_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
             Ok(ConcurrencyConfig::default())
         }
 
         async fn update_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1428,7 +1454,10 @@ mod tests {
 
     #[async_trait]
     impl BacklogService for MockRateLimitingService {
-        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+        async fn process_backlog_tasks(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
     }
@@ -1437,11 +1466,11 @@ mod tests {
     impl QuotaService for MockRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: crate::domain::models::CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             if self.quota_should_fail {
                 return Err(RateLimitingError::CreditsError);
@@ -1449,16 +1478,19 @@ mod tests {
             Ok(())
         }
 
-        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(1000)
         }
 
         async fn refund_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
@@ -1503,18 +1535,27 @@ mod tests {
             Ok(())
         }
 
-        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+        async fn find_by_task_id(
+            &self,
+            _task_id: crate::domain::id::Id,
+        ) -> anyhow::Result<Option<ScrapeResult>> {
             if self.should_fail {
                 return Err(anyhow::anyhow!("scrape result repo down"));
             }
             Ok(self.result.clone())
         }
 
-        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(
+            &self,
+            _task_ids: &[crate::domain::id::Id],
+        ) -> anyhow::Result<Vec<ScrapeResult>> {
             Ok(vec![])
         }
 
-        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+        async fn get_team_avg_response_time(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> anyhow::Result<f64> {
             Ok(0.0)
         }
 
@@ -1529,8 +1570,8 @@ mod tests {
     fn make_auth_state() -> AuthState {
         AuthState::new(
             create_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         )
     }
@@ -1544,24 +1585,24 @@ mod tests {
         Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
     }
 
-    fn make_auth_state_with_team(team_id: Uuid) -> AuthState {
+    fn make_auth_state_with_team(team_id: crate::domain::id::Id) -> AuthState {
         AuthState::new(
             create_test_db_pool(),
             team_id,
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         )
     }
 
-    fn make_task(team_id: Uuid, status: TaskStatus) -> Task {
+    fn make_task(team_id: crate::domain::id::Id, status: TaskStatus) -> Task {
         let now = chrono::Utc::now();
         Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Scrape,
             status,
             priority: 0,
             team_id,
-            api_key_id: Uuid::new_v4(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::Value::Null,
             retry_count: 0,
@@ -1579,9 +1620,9 @@ mod tests {
         }
     }
 
-    fn make_scrape_result(task_id: Uuid) -> ScrapeResult {
+    fn make_scrape_result(task_id: crate::domain::id::Id) -> ScrapeResult {
         ScrapeResult {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_id,
             url: "https://example.com".to_string(),
             status_code: 200,
@@ -1879,7 +1920,7 @@ mod tests {
         // The queue and repo share the same task store, so when enqueue inserts
         // the task, the sync-wait poll will find it. We mark it Completed via
         // a shared store so completion_rate >= 1.0 → is_timeout=false → CREATED.
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let shared: SharedTasks = Arc::new(Mutex::new(HashMap::new()));
         let task_repo = Arc::new(MockTaskRepository::new_linked(Arc::clone(&shared)));
         // Wrap queue so that on enqueue, the task is stored as Completed.
@@ -1917,7 +1958,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let task = make_task(team_id, TaskStatus::Queued);
         let task_id = task.id;
         let repo = Arc::new(MockTaskRepository::with_task(task));
@@ -1943,7 +1984,7 @@ mod tests {
         }
         let repo = Arc::new(MockTaskRepository::new());
         let auth = make_auth_state();
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
 
         let response = cancel_scrape(
             Path(task_id),
@@ -1963,11 +2004,11 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task = make_task(Uuid::new_v4(), TaskStatus::Queued);
+        let task = make_task(crate::domain::id::Id::generate(), TaskStatus::Queued);
         let task_id = task.id;
         let repo = Arc::new(MockTaskRepository::with_task(task));
         // Different team_id
-        let auth = make_auth_state_with_team(Uuid::new_v4());
+        let auth = make_auth_state_with_team(crate::domain::id::Id::generate());
 
         let response = cancel_scrape(
             Path(task_id),
@@ -1989,7 +2030,7 @@ mod tests {
         }
         let repo = Arc::new(MockTaskRepository::failing_find());
         let auth = make_auth_state();
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
 
         let response = cancel_scrape(
             Path(task_id),
@@ -2009,7 +2050,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let task = make_task(team_id, TaskStatus::Queued);
         let task_id = task.id;
         let repo = Arc::new(MockTaskRepository::failing_mark_cancelled());
@@ -2040,7 +2081,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let task = make_task(team_id, TaskStatus::Active);
         let task_id = task.id;
         let task_repo = Arc::new(MockTaskRepository::with_task(task));
@@ -2066,7 +2107,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let mut task = make_task(team_id, TaskStatus::Completed);
         task.completed_at = Some(chrono::Utc::now());
         let task_id = task.id;
@@ -2094,7 +2135,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let mut task = make_task(team_id, TaskStatus::Completed);
         task.completed_at = Some(chrono::Utc::now());
         let task_id = task.id;
@@ -2121,7 +2162,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let mut task = make_task(team_id, TaskStatus::Completed);
         task.completed_at = Some(chrono::Utc::now());
         let task_id = task.id;
@@ -2149,7 +2190,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let mut task = make_task(team_id, TaskStatus::Failed);
         task.completed_at = Some(chrono::Utc::now());
         task.payload = serde_json::json!({"error": "Connection timeout"});
@@ -2177,7 +2218,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let mut task = make_task(team_id, TaskStatus::Failed);
         task.completed_at = Some(chrono::Utc::now());
         // payload has no "error" field → should default to "Task failed"
@@ -2208,7 +2249,7 @@ mod tests {
         let task_repo = Arc::new(MockTaskRepository::new());
         let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
         let auth = make_auth_state();
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
 
         let response = get_scrape_status(
             Path(task_id),
@@ -2229,12 +2270,12 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let task = make_task(Uuid::new_v4(), TaskStatus::Active);
+        let task = make_task(crate::domain::id::Id::generate(), TaskStatus::Active);
         let task_id = task.id;
         let task_repo = Arc::new(MockTaskRepository::with_task(task));
         let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
         // Different team_id
-        let auth = make_auth_state_with_team(Uuid::new_v4());
+        let auth = make_auth_state_with_team(crate::domain::id::Id::generate());
 
         let response = get_scrape_status(
             Path(task_id),
@@ -2258,7 +2299,7 @@ mod tests {
         let task_repo = Arc::new(MockTaskRepository::failing_find());
         let result_repo = Arc::new(MockScrapeResultRepository::new_empty());
         let auth = make_auth_state();
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
 
         let response = get_scrape_status(
             Path(task_id),

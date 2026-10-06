@@ -11,7 +11,6 @@ use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
 use crate::infrastructure::oxcache::CacheService;
 use crate::queue::task_queue::TaskQueue;
-use uuid::Uuid;
 // 请求合并器（同 URL 并发只允许首个执行实际抓取）
 use crate::utils::coalesce::RequestCoalescer;
 // CoalesceCoordinator（封装 try_coalesce 逻辑，注入 ScrapeWorker）
@@ -88,7 +87,7 @@ pub struct WorkerManager {
     ///
     /// 优雅停机回滚在途任务时据此限定回滚范围，
     /// 防止多副本部署下误回滚其他副本正在执行的任务。
-    worker_ids: parking_lot::Mutex<Vec<Uuid>>,
+    worker_ids: parking_lot::Mutex<Vec<crate::domain::id::Id>>,
 }
 
 /// Worker Manager Dependencies
@@ -369,7 +368,7 @@ impl WorkerManager {
     ///
     /// 供优雅停机回滚（`rollback_pending_tasks`）限定回滚范围：
     /// 只回滚本进程认领的在途任务。
-    pub fn worker_ids(&self) -> Vec<Uuid> {
+    pub fn worker_ids(&self) -> Vec<crate::domain::id::Id> {
         self.worker_ids.lock().clone()
     }
 
@@ -487,7 +486,7 @@ mod tests {
         // TeamSemaphore is an in-memory primitive — no external service required.
         let sem = TeamSemaphore::new(10);
         // Verify behavior: acquiring a permit should succeed (limit is 10)
-        let team_id = uuid::Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         assert!(sem.try_acquire(team_id).is_some());
     }
 
@@ -496,7 +495,7 @@ mod tests {
         let sem = TeamSemaphore::new(1);
         let cloned = sem.clone();
         // Both clones share the same internal DashMap
-        let team_id = uuid::Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         // Acquire from original — exhausts the single permit
         let _permit = sem
             .try_acquire(team_id)
@@ -632,7 +631,7 @@ mod tests {
     #[tokio::test]
     async fn test_team_semaphore_acquire_returns_permit() {
         let sem = TeamSemaphore::new(3);
-        let team_id = uuid::Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let permit = sem.acquire(team_id).await;
         assert!(permit.is_ok());
     }
@@ -640,7 +639,7 @@ mod tests {
     #[test]
     fn test_team_semaphore_try_acquire_respects_limit() {
         let sem = TeamSemaphore::new(1);
-        let team_id = uuid::Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let p1 = sem.try_acquire(team_id);
         assert!(p1.is_some());
         // Limit is 1, second acquire should fail
@@ -829,7 +828,6 @@ mod tests {
     use async_trait::async_trait;
     use serde_json::Value;
     use std::collections::{HashMap, HashSet};
-    use uuid::Uuid;
 
     // ---- No-op mock implementations ----
 
@@ -840,16 +838,19 @@ mod tests {
         async fn enqueue(&self, task: Task) -> Result<Task, QueueError> {
             Ok(task)
         }
-        async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+        async fn dequeue(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, QueueError> {
             Ok(None)
         }
-        async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn complete(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
-        async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn fail(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
-        async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+        async fn cancel(&self, _task_id: crate::domain::id::Id) -> Result<(), QueueError> {
             Ok(())
         }
     }
@@ -868,30 +869,36 @@ mod tests {
         async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -916,13 +923,19 @@ mod tests {
         ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -933,17 +946,23 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -966,13 +985,22 @@ mod tests {
         async fn save(&self, _result: ScrapeResult) -> anyhow::Result<()> {
             Ok(())
         }
-        async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+        async fn find_by_task_id(
+            &self,
+            _task_id: crate::domain::id::Id,
+        ) -> anyhow::Result<Option<ScrapeResult>> {
             Ok(None)
         }
-        async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+        async fn find_by_task_ids(
+            &self,
+            _task_ids: &[crate::domain::id::Id],
+        ) -> anyhow::Result<Vec<ScrapeResult>> {
             Ok(vec![])
         }
-        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+        async fn get_team_avg_response_time(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> anyhow::Result<f64> {
             Ok(0.0)
         }
 
@@ -999,37 +1027,52 @@ mod tests {
         async fn create(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             Ok(crawl.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Crawl>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, crawl: &Crawl) -> Result<Crawl, RepositoryError> {
             Ok(crawl.clone())
         }
-        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_completed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_failed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn update_status(
             &self,
-            _id: Uuid,
+            _id: crate::domain::id::Id,
             _status: CrawlStatus,
         ) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_total_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn find_by_team_id_paginated(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u32,
             _offset: u32,
         ) -> Result<Vec<Crawl>, RepositoryError> {
             Ok(vec![])
         }
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn count_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
     }
@@ -1053,39 +1096,42 @@ mod tests {
 
     #[async_trait]
     impl CreditsRepository for MockCreditsRepository {
-        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+        async fn get_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, CreditsRepositoryError> {
             Ok(0)
         }
         async fn deduct_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), CreditsRepositoryError> {
             Ok(())
         }
         async fn add_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<i64, CreditsRepositoryError> {
             Ok(0)
         }
         async fn get_transaction_history(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: Option<u32>,
         ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
             Ok(vec![])
         }
         async fn initialize_team_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _initial_balance: i64,
         ) -> Result<i64, CreditsRepositoryError> {
             Ok(0)

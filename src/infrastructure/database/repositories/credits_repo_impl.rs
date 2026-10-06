@@ -11,7 +11,6 @@ use dbnexus::sea_orm::{
 };
 use dbnexus::DbPool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::common::time_utils;
 use crate::domain::models::{CreditsTransaction, CreditsTransactionType};
@@ -31,7 +30,10 @@ impl CreditsRepositoryImpl {
 
 #[async_trait]
 impl CreditsRepository for CreditsRepositoryImpl {
-    async fn get_balance(&self, team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+    async fn get_balance(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<i64, CreditsRepositoryError> {
         let session = self
             .pool
             .get_session("admin")
@@ -59,11 +61,11 @@ impl CreditsRepository for CreditsRepositoryImpl {
 
     async fn deduct_credits(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         amount: i64,
         transaction_type: CreditsTransactionType,
         description: String,
-        reference_id: Option<Uuid>,
+        reference_id: Option<crate::domain::id::Id>,
     ) -> Result<(), CreditsRepositoryError> {
         let session = self
             .pool
@@ -87,7 +89,7 @@ impl CreditsRepository for CreditsRepositoryImpl {
                 amount.into(),
                 transaction_type.to_string().into(),
                 description.into(),
-                reference_id.into(),
+                reference_id.map(uuid::Uuid::from).into(),
             ],
         );
 
@@ -100,7 +102,7 @@ impl CreditsRepository for CreditsRepositoryImpl {
 
     async fn has_deduction_for_task(
         &self,
-        task_id: Uuid,
+        task_id: crate::domain::id::Id,
         transaction_type: CreditsTransactionType,
     ) -> Result<bool, CreditsRepositoryError> {
         let session = self
@@ -130,11 +132,11 @@ impl CreditsRepository for CreditsRepositoryImpl {
 
     async fn add_credits(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         amount: i64,
         transaction_type: CreditsTransactionType,
         description: String,
-        reference_id: Option<Uuid>,
+        reference_id: Option<crate::domain::id::Id>,
     ) -> Result<i64, CreditsRepositoryError> {
         let session = self
             .pool
@@ -158,7 +160,7 @@ impl CreditsRepository for CreditsRepositoryImpl {
                 amount.into(),
                 transaction_type.to_string().into(),
                 description.into(),
-                reference_id.into(),
+                reference_id.map(uuid::Uuid::from).into(),
             ],
         );
 
@@ -189,7 +191,7 @@ impl CreditsRepository for CreditsRepositoryImpl {
 
     async fn get_transaction_history(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         limit: Option<u32>,
     ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
         let session = self
@@ -220,7 +222,7 @@ impl CreditsRepository for CreditsRepositoryImpl {
 
     async fn initialize_team_credits(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         initial_balance: i64,
     ) -> Result<i64, CreditsRepositoryError> {
         let session = self
@@ -246,8 +248,8 @@ impl CreditsRepository for CreditsRepositoryImpl {
 
         // Create new credits record
         let credits = credits::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            team_id: Set(team_id),
+            id: Set(crate::domain::id::Id::generate().into()),
+            team_id: Set(team_id.into()),
             balance: Set(initial_balance),
             created_at: Set(Utc::now().with_timezone(&time_utils::UTC_OFFSET)),
             updated_at: Set(Utc::now().with_timezone(&time_utils::UTC_OFFSET)),
@@ -294,7 +296,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         // get_balance on unknown team auto-initializes with 0 and returns Ok(0).
         let result = repo.get_balance(team_id).await;
         assert!(result.is_ok(), "get_balance failed: {:?}", result.err());
@@ -315,7 +317,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         // Initialize with 200 credits first so deduction won't go negative.
         repo.initialize_team_credits(team_id, 200)
             .await
@@ -348,7 +350,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let result = repo
             .add_credits(
                 team_id,
@@ -377,7 +379,9 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let result = repo.get_transaction_history(Uuid::new_v4(), Some(10)).await;
+        let result = repo
+            .get_transaction_history(crate::domain::id::Id::generate(), Some(10))
+            .await;
         assert!(
             result.is_ok(),
             "get_transaction_history failed: {:?}",
@@ -395,7 +399,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let result = repo.initialize_team_credits(team_id, 0).await;
         assert!(
             result.is_ok(),
@@ -453,7 +457,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let err = CreditsRepositoryError::CreditsNotFound(team_id);
         assert!(err.to_string().contains("Credits not found for team"));
         assert!(err.to_string().contains(&team_id.to_string()));
@@ -471,7 +475,9 @@ mod tests {
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         // limit=None exercises the branch where no `.limit()` is applied
-        let result = repo.get_transaction_history(Uuid::new_v4(), None).await;
+        let result = repo
+            .get_transaction_history(crate::domain::id::Id::generate(), None)
+            .await;
         assert!(
             result.is_ok(),
             "get_transaction_history failed: {:?}",
@@ -489,7 +495,9 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let result = repo.get_transaction_history(Uuid::new_v4(), Some(0)).await;
+        let result = repo
+            .get_transaction_history(crate::domain::id::Id::generate(), Some(0))
+            .await;
         assert!(
             result.is_ok(),
             "get_transaction_history failed: {:?}",
@@ -505,7 +513,7 @@ mod tests {
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .get_transaction_history(Uuid::new_v4(), Some(u32::MAX))
+            .get_transaction_history(crate::domain::id::Id::generate(), Some(u32::MAX))
             .await;
         assert!(
             result.is_ok(),
@@ -527,7 +535,7 @@ mod tests {
         // Nil UUID is a valid UUID; behavior depends on DB state (auto-init or existing).
         // We only assert Ok because nil UUID is shared across test runs and prior
         // runs may have mutated the balance via deduct/add.
-        let result = repo.get_balance(Uuid::nil()).await;
+        let result = repo.get_balance(crate::domain::id::Id::nil()).await;
         assert!(
             result.is_ok(),
             "get_balance with nil uuid failed: {:?}",
@@ -541,12 +549,12 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         repo.initialize_team_credits(team_id, 200)
             .await
             .expect("initialize failed");
         // Some(reference_id) exercises the `format!("'{}'", id)` branch
-        let reference_id = Uuid::new_v4();
+        let reference_id = crate::domain::id::Id::generate();
         let result = repo
             .deduct_credits(
                 team_id,
@@ -575,7 +583,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         repo.initialize_team_credits(team_id, 100)
             .await
             .expect("initialize failed");
@@ -611,7 +619,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         repo.initialize_team_credits(team_id, 100)
             .await
             .expect("initialize failed");
@@ -642,8 +650,8 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
-        let reference_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let reference_id = crate::domain::id::Id::generate();
         let result = repo
             .add_credits(
                 team_id,
@@ -672,7 +680,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let result = repo
             .add_credits(
                 team_id,
@@ -705,7 +713,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let description = "it's a 'test'".to_string();
         let result = repo
             .add_credits(
@@ -732,7 +740,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let result = repo.initialize_team_credits(team_id, 1000).await;
         assert!(result.is_ok(), "initialize failed: {:?}", result.err());
         assert_eq!(result.unwrap(), 1000, "should return the initial balance");
@@ -747,7 +755,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         // i64 allows negative; the method should still create the record.
         let result = repo.initialize_team_credits(team_id, -500).await;
         assert!(
@@ -771,7 +779,9 @@ mod tests {
         // - If no credits row exists: creates one with balance 0, returns Ok(0)
         // - If a row already exists: returns Ok(existing balance)
         // We only assert Ok to avoid cross-test coupling on the shared nil UUID.
-        let result = repo.initialize_team_credits(Uuid::nil(), 0).await;
+        let result = repo
+            .initialize_team_credits(crate::domain::id::Id::nil(), 0)
+            .await;
         assert!(
             result.is_ok(),
             "initialize with nil uuid failed: {:?}",
@@ -789,7 +799,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         repo.initialize_team_credits(team_id, 100)
             .await
             .expect("initialize failed");
@@ -825,7 +835,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let result = repo
             .add_credits(
                 team_id,
@@ -974,7 +984,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let err = CreditsRepositoryError::CreditsNotFound(Uuid::nil());
+        let err = CreditsRepositoryError::CreditsNotFound(crate::domain::id::Id::nil());
         let msg = format!("{}", err);
         assert!(msg.contains("00000000-0000-0000-0000-000000000000"));
     }

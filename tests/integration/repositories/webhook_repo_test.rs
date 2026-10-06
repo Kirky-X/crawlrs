@@ -12,7 +12,6 @@ use crawlrs::domain::repositories::webhook_repository::WebhookRepository;
 use crawlrs::infrastructure::database::entities::webhook;
 use crawlrs::infrastructure::repositories::webhook_repo_impl::WebhookRepoImpl;
 use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-use uuid::Uuid;
 
 /// 测试创建 Webhook 并通过 ID 查询
 #[tokio::test]
@@ -21,9 +20,9 @@ async fn test_create_and_find_by_id() {
     let repo = WebhookRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
     let url = format!("https://{}.text.npr.org/webhook", unique_prefix);
-    let webhook_id = Uuid::new_v4();
+    let webhook_id = crawlrs::domain::id::Id::generate();
 
     let webhook = Webhook::new(webhook_id, team_id, url.clone());
     let created = repo
@@ -53,7 +52,7 @@ async fn test_find_by_id_returns_none_for_unknown() {
     let app = create_test_app_no_worker().await;
     let repo = WebhookRepoImpl::new(app.db_pool.clone());
 
-    let unknown_id = Uuid::new_v4();
+    let unknown_id = crawlrs::domain::id::Id::generate();
     let result = repo
         .find_by_id(unknown_id)
         .await
@@ -71,14 +70,14 @@ async fn test_find_by_team_id_returns_multiple() {
     let repo = WebhookRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
     let webhook1 = Webhook::new(
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
         team_id,
         format!("https://{}-1.text.npr.org/hook", unique_prefix),
     );
     let webhook2 = Webhook::new(
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
         team_id,
         format!("https://{}-2.text.npr.org/hook", unique_prefix),
     );
@@ -138,9 +137,9 @@ async fn tc_create_duplicate_id_returns_error() {
     let repo = WebhookRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
     let url = format!("https://{}.text.npr.org/dup-hook", unique_prefix);
-    let webhook_id = Uuid::new_v4();
+    let webhook_id = crawlrs::domain::id::Id::generate();
 
     let webhook = Webhook::new(webhook_id, team_id, url);
 
@@ -173,9 +172,9 @@ async fn tc_find_by_team_id_returns_only_team_webhooks() {
     let repo = WebhookRepoImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    let unique_prefix = Uuid::new_v4().to_string();
+    let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
     let webhook = Webhook::new(
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
         team_id,
         format!("https://{}.text.npr.org/isolation", unique_prefix),
     );
@@ -203,7 +202,10 @@ async fn tc_find_by_team_id_returns_only_team_webhooks() {
 }
 
 /// 辅助函数：清理指定 team_id 的 webhooks
-async fn cleanup_webhooks(app: &super::super::helpers::test_app::TestApp, team_id: Uuid) {
+async fn cleanup_webhooks(
+    app: &super::super::helpers::test_app::TestApp,
+    team_id: crawlrs::domain::id::Id,
+) {
     let session = app
         .db_pool
         .get_session("admin")

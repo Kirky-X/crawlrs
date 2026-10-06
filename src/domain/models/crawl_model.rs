@@ -10,7 +10,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use uuid::Uuid;
 
 /// Crawl domain model
 ///
@@ -19,9 +18,9 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Crawl {
     /// Unique identifier
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// Team ID for multi-tenancy
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// Human-readable name
     pub name: String,
     /// Root URL for the crawl
@@ -49,8 +48,8 @@ pub struct Crawl {
 impl Crawl {
     /// Create a new crawl
     pub fn new(
-        id: Uuid,
-        team_id: Uuid,
+        id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         name: String,
         root_url: String,
         url: String,
@@ -77,8 +76,8 @@ impl Crawl {
     /// Create a crawl with all fields (for mappers)
     #[allow(clippy::too_many_arguments)]
     pub fn with_all_fields(
-        id: Uuid,
-        team_id: Uuid,
+        id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         name: String,
         root_url: String,
         url: String,
@@ -305,8 +304,8 @@ mod tests {
 
     #[test]
     fn test_crawl_new_sets_defaults() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let config = serde_json::json!({"max_depth": 3});
 
         let before = Utc::now();
@@ -346,8 +345,8 @@ mod tests {
 
     #[test]
     fn test_crawl_with_all_fields_sets_everything() {
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let config = serde_json::json!({"k": "v"});
         let created = Utc::now();
         let updated = created + chrono::Duration::seconds(10);
@@ -636,8 +635,8 @@ mod tests {
 
     fn make_crawl() -> Crawl {
         Crawl::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "Test".to_string(),
             "https://example.com".to_string(),
             "https://example.com".to_string(),

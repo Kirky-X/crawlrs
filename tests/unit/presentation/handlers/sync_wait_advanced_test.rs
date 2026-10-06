@@ -10,11 +10,10 @@ use crawlrs::presentation::handlers::task_queries::wait_for_tasks_completion;
 use dbnexus::sea_orm::Database;
 use std::sync::Arc;
 use tokio::time::Instant;
-use uuid::Uuid;
 
 fn create_test_task_with_status(
-    id: Uuid,
-    team_id: Uuid,
+    id: crawlrs::domain::id::Id,
+    team_id: crawlrs::domain::id::Id,
     status: TaskStatus,
     task_type: TaskType,
 ) -> Task {
@@ -67,8 +66,8 @@ async fn setup_test_repo() -> TaskRepositoryImpl {
 async fn test_sync_wait_smart_logic_immediate() {
     // Given: 任务会在 1 秒内完成
     let repo = setup_test_repo().await;
-    let task_id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
 
     let completed_task =
         create_test_task_with_status(task_id, team_id, TaskStatus::Completed, TaskType::Scrape);
@@ -94,8 +93,8 @@ async fn test_sync_wait_smart_logic_immediate() {
 async fn test_sync_wait_smart_logic_timeout() {
     // Given: 任务需要较长时间完成
     let repo = setup_test_repo().await;
-    let task_id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
 
     let processing_task =
         create_test_task_with_status(task_id, team_id, TaskStatus::Active, TaskType::Scrape);
@@ -121,8 +120,8 @@ async fn test_sync_wait_smart_logic_timeout() {
 async fn test_sync_wait_multiple_tasks_mixed_status() {
     // Given: 创建多个不同状态的任务
     let repo = setup_test_repo().await;
-    let team_id = Uuid::new_v4();
-    let task_ids = vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
+    let team_id = crawlrs::domain::id::Id::generate();
+    let task_ids = vec![crawlrs::domain::id::Id::generate(), crawlrs::domain::id::Id::generate(), crawlrs::domain::id::Id::generate()];
 
     // 创建：1个已完成，1个活跃中，1个排队
     let completed_task = create_test_task_with_status(
@@ -165,8 +164,8 @@ async fn test_sync_wait_multiple_tasks_mixed_status() {
 async fn test_sync_wait_default_behavior() {
     // Given: 创建一个新任务
     let repo = setup_test_repo().await;
-    let task_id = Uuid::new_v4();
-    let team_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
+    let team_id = crawlrs::domain::id::Id::generate();
 
     let queued_task =
         create_test_task_with_status(task_id, team_id, TaskStatus::Queued, TaskType::Scrape);
@@ -192,10 +191,10 @@ async fn test_sync_wait_default_behavior() {
 async fn test_sync_wait_task_type_variations() {
     // Given: 创建不同类型但相同状态的任务
     let repo = setup_test_repo().await;
-    let team_id = Uuid::new_v4();
-    let scrape_task_id = Uuid::new_v4();
-    let search_task_id = Uuid::new_v4();
-    let crawl_task_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let scrape_task_id = crawlrs::domain::id::Id::generate();
+    let search_task_id = crawlrs::domain::id::Id::generate();
+    let crawl_task_id = crawlrs::domain::id::Id::generate();
 
     let scrape_task = create_test_task_with_status(
         scrape_task_id,

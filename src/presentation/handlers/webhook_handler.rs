@@ -83,7 +83,7 @@ pub async fn create_webhook<R: WebhookRepository>(
     // 架构限流检查必须在最早阶段执行（与 search/scrape/crawl handler 一致），
     // 防止攻击者通过大量无效签名请求耗服（每个请求都做 HMAC 计算会消耗 CPU）。
     // 限流命中时直接返回 429，避免不必要的 HMAC + JSON 解析 + SSRF 验证。
-    // 性能直接传 `Uuid`（实现 Display），由 helper 内部按需 to_string，
+    // 性能直接传 `crate::domain::id::Id`（实现 Display），由 helper 内部按需 to_string，
     // 消除 handler 中的中间变量分配。
     check_rate_limit_as_app_error(
         rate_limiting_service.as_ref(),
@@ -173,7 +173,6 @@ mod tests {
     use dbnexus::DbPool;
     use standardwebhooks::Webhook as StandardWebhook;
     use std::sync::Mutex;
-    use uuid::Uuid;
 
     /// 测试用 webhook 签名密钥
     ///
@@ -213,7 +212,7 @@ mod tests {
     /// 构造包含有效签名 + 时间戳 + msg_id 的 HeaderMap
     fn make_signed_headers(secret: &str, payload: &str) -> HeaderMap {
         let timestamp = Utc::now().timestamp();
-        let msg_id = Uuid::new_v4().to_string();
+        let msg_id = crate::domain::id::Id::generate().to_string();
         let signature = make_test_signature(secret, &msg_id, payload, timestamp);
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -287,8 +286,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let webhook_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let webhook_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let webhook = Webhook {
             id: webhook_id,
             team_id,
@@ -316,8 +315,8 @@ mod tests {
             return;
         }
         let response = WebhookResponse {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
+            team_id: crate::domain::id::Id::generate(),
             url: "https://example.com/hook".to_string(),
             created_at: Utc::now(),
             is_active: true,
@@ -336,8 +335,8 @@ mod tests {
             return;
         }
         let response = WebhookResponse {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
+            team_id: crate::domain::id::Id::generate(),
             url: "https://example.com/hook".to_string(),
             created_at: Utc::now(),
             is_active: false,
@@ -372,15 +371,15 @@ mod tests {
             return;
         }
         let webhook1 = WebhookListEntry {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
+            team_id: crate::domain::id::Id::generate(),
             url: "https://hook1.example.com".to_string(),
             created_at: Utc::now(),
             is_active: true,
         };
         let webhook2 = WebhookListEntry {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
+            team_id: crate::domain::id::Id::generate(),
             url: "https://hook2.example.com".to_string(),
             created_at: Utc::now(),
             is_active: false,
@@ -404,8 +403,8 @@ mod tests {
         }
         let webhooks: Vec<WebhookListEntry> = (0..5)
             .map(|_| WebhookListEntry {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
+                id: crate::domain::id::Id::generate(),
+                team_id: crate::domain::id::Id::generate(),
                 url: "https://example.com".to_string(),
                 created_at: Utc::now(),
                 is_active: true,
@@ -427,8 +426,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let webhook = Webhook::new(id, team_id, "https://example.com/hook".to_string());
         assert_eq!(webhook.id, id);
         assert_eq!(webhook.team_id, team_id);
@@ -462,8 +461,8 @@ mod tests {
     fn make_test_auth_state() -> AuthState {
         AuthState::new(
             make_test_db_pool(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         )
     }
@@ -513,11 +512,17 @@ mod tests {
             Ok(webhook.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Webhook>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Webhook>, RepositoryError> {
             Ok(None)
         }
 
-        async fn find_by_team_id(&self, _team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError> {
+        async fn find_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<Vec<Webhook>, RepositoryError> {
             match self.find_by_team_id_result.lock().unwrap().take() {
                 Some(result) => result,
                 None => Ok(vec![]),
@@ -561,14 +566,14 @@ mod tests {
 
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<RateLimitConfig, RateLimitingError> {
             Ok(RateLimitConfig::default())
         }
 
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -583,37 +588,37 @@ mod tests {
     impl ConcurrencyControlService for MockRateLimitingService {
         async fn check_team_concurrency(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             Ok(ConcurrencyResult::Allowed)
         }
 
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
         async fn get_team_current_concurrency(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
 
         async fn get_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
             Ok(ConcurrencyConfig::default())
         }
 
         async fn update_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -622,7 +627,10 @@ mod tests {
 
     #[async_trait]
     impl BacklogService for MockRateLimitingService {
-        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+        async fn process_backlog_tasks(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
     }
@@ -631,25 +639,28 @@ mod tests {
     impl QuotaService for MockRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: crate::domain::models::CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
-        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(0)
         }
 
         async fn refund_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
@@ -851,14 +862,14 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let webhook1 = Webhook::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             team_id,
             "https://hook1.example.com".to_string(),
         );
         let webhook2 = Webhook::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             team_id,
             "https://hook2.example.com".to_string(),
         );

@@ -4,7 +4,6 @@
 use super::task_repository::RepositoryError;
 use crate::domain::models::WebhookEvent;
 use async_trait::async_trait;
-use uuid::Uuid;
 
 /// Webhook仓库特质
 ///
@@ -14,7 +13,10 @@ pub trait WebhookEventRepository: Send + Sync {
     /// 创建Webhook事件
     async fn create(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError>;
     /// 根据ID查找Webhook事件
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<WebhookEvent>, RepositoryError>;
+    async fn find_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<WebhookEvent>, RepositoryError>;
     /// 查找待处理的Webhook事件
     async fn find_pending(&self, limit: u64) -> Result<Vec<WebhookEvent>, RepositoryError>;
     /// 原子认领待投递的Webhook事件
@@ -26,12 +28,15 @@ pub trait WebhookEventRepository: Send + Sync {
     /// 根据团队ID分页查询Webhook事件
     async fn find_by_team_id_paginated(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<WebhookEvent>, RepositoryError>;
     /// 统计团队Webhook事件数量
-    async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError>;
+    async fn count_by_team_id(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError>;
     /// 更新Webhook事件
     async fn update(&self, event: &WebhookEvent) -> Result<WebhookEvent, RepositoryError>;
 }

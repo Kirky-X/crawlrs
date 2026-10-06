@@ -67,7 +67,10 @@ macro_rules! assert_http_success {
 #[macro_export]
 macro_rules! test_url {
     () => {
-        format!("https://text.npr.org/test-{}", uuid::Uuid::new_v4())
+        format!(
+            "https://text.npr.org/test-{}",
+            crawlrs::domain::id::Id::generate()
+        )
     };
     ($path:expr) => {
         format!("https://text.npr.org/{}", $path)

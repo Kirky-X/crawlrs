@@ -13,7 +13,6 @@ use dbnexus::sea_orm::{
 };
 use dbnexus::DbPool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// ScrapeResult repository implementation using dbnexus
 pub struct ScrapeResultRepositoryImpl {
@@ -36,8 +35,8 @@ impl ScrapeResultRepositoryImpl {
     fn to_active_model(result: &ScrapeResult) -> db_entity::ActiveModel {
         use chrono::FixedOffset;
         db_entity::ActiveModel {
-            id: Set(result.id),
-            task_id: Set(result.task_id),
+            id: Set(result.id.into()),
+            task_id: Set(result.task_id.into()),
             url: Set(result.url.clone()),
             status_code: Set(result.status_code),
             content: Set(result.content.clone()),
@@ -55,8 +54,8 @@ impl ScrapeResultRepositoryImpl {
     /// Convert database model to domain model
     fn to_domain(model: db_entity::Model) -> ScrapeResult {
         ScrapeResult {
-            id: model.id,
-            task_id: model.task_id,
+            id: model.id.into(),
+            task_id: model.task_id.into(),
             url: model.url,
             status_code: model.status_code,
             content: model.content,
@@ -93,7 +92,10 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
         Ok(())
     }
 
-    async fn find_by_task_id(&self, task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+    async fn find_by_task_id(
+        &self,
+        task_id: crate::domain::id::Id,
+    ) -> anyhow::Result<Option<ScrapeResult>> {
         let session = self
             .pool
             .get_session("admin")
@@ -113,7 +115,10 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
         Ok(result.map(Self::to_domain))
     }
 
-    async fn find_by_task_ids(&self, task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+    async fn find_by_task_ids(
+        &self,
+        task_ids: &[crate::domain::id::Id],
+    ) -> anyhow::Result<Vec<ScrapeResult>> {
         if task_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -137,7 +142,10 @@ impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
         Ok(results.into_iter().map(Self::to_domain).collect())
     }
 
-    async fn get_team_avg_response_time(&self, team_id: Uuid) -> anyhow::Result<f64> {
+    async fn get_team_avg_response_time(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> anyhow::Result<f64> {
         let session = self
             .pool
             .get_session("admin")
@@ -248,8 +256,8 @@ mod tests {
 
     fn sample_scrape_result() -> ScrapeResult {
         ScrapeResult {
-            id: Uuid::new_v4(),
-            task_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
+            task_id: crate::domain::id::Id::generate().into(),
             url: "https://example.com/page".to_string(),
             status_code: 200,
             content: "<html>hello</html>".to_string(),
@@ -265,8 +273,8 @@ mod tests {
 
     fn sample_db_model() -> db_entity::Model {
         db_entity::Model {
-            id: Uuid::new_v4(),
-            task_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
+            task_id: crate::domain::id::Id::generate().into(),
             url: "https://example.com/page".to_string(),
             status_code: 404,
             content: "not found".to_string(),
@@ -308,8 +316,8 @@ mod tests {
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
 
         // ActiveModel fields are Set; extract via unwrap() to verify
-        assert_eq!(active.id.unwrap(), result.id);
-        assert_eq!(active.task_id.unwrap(), result.task_id);
+        assert_eq!(result.id, active.id.unwrap());
+        assert_eq!(result.task_id, active.task_id.unwrap());
         assert_eq!(active.url.unwrap(), result.url);
         assert_eq!(active.status_code.unwrap(), result.status_code);
         assert_eq!(active.content.unwrap(), result.content);
@@ -413,8 +421,8 @@ mod tests {
         }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let mut result = sample_scrape_result();
-        result.id = Uuid::new_v4();
-        result.task_id = Uuid::new_v4();
+        result.id = crate::domain::id::Id::generate();
+        result.task_id = crate::domain::id::Id::generate();
         let saved = repo.save(result.clone()).await;
         assert!(saved.is_ok(), "save failed: {:?}", saved.err());
 
@@ -439,7 +447,9 @@ mod tests {
             return;
         }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_task_id(Uuid::new_v4()).await;
+        let result = repo
+            .find_by_task_id(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
         assert!(
             result.unwrap().is_none(),
@@ -454,7 +464,10 @@ mod tests {
         }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .find_by_task_ids(&[Uuid::new_v4(), Uuid::new_v4()])
+            .find_by_task_ids(&[
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+            ])
             .await;
         assert!(
             result.is_ok(),
@@ -490,7 +503,9 @@ mod tests {
         }
         // Unknown team_id → JOIN yields no rows → COALESCE returns 0.0.
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        let result = repo.get_team_avg_response_time(Uuid::new_v4()).await;
+        let result = repo
+            .get_team_avg_response_time(crate::domain::id::Id::generate())
+            .await;
         assert!(
             result.is_ok(),
             "get_team_avg_response_time failed: {:?}",
@@ -507,7 +522,9 @@ mod tests {
             return;
         }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_task_ids(&[Uuid::new_v4()]).await;
+        let result = repo
+            .find_by_task_ids(&[crate::domain::id::Id::generate()])
+            .await;
         assert!(
             result.is_ok(),
             "find_by_task_ids failed: {:?}",
@@ -525,7 +542,9 @@ mod tests {
             return;
         }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        let ids: Vec<Uuid> = (0..100).map(|_| Uuid::new_v4()).collect();
+        let ids: Vec<crate::domain::id::Id> = (0..100)
+            .map(|_| crate::domain::id::Id::generate())
+            .collect();
         let result = repo.find_by_task_ids(&ids).await;
         assert!(
             result.is_ok(),
@@ -544,9 +563,11 @@ mod tests {
             return;
         }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        // Use a fresh random UUID instead of Uuid::nil() to avoid cross-test
+        // Use a fresh random UUID instead of crate::domain::id::Id::nil() to avoid cross-test
         // data pollution (other tests may insert records with nil task_id).
-        let result = repo.find_by_task_id(Uuid::new_v4()).await;
+        let result = repo
+            .find_by_task_id(crate::domain::id::Id::generate())
+            .await;
         assert!(result.is_ok(), "find_by_task_id failed: {:?}", result.err());
         assert!(
             result.unwrap().is_none(),
@@ -561,8 +582,8 @@ mod tests {
         }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
         let mut result = sample_scrape_result();
-        result.id = Uuid::new_v4();
-        result.task_id = Uuid::nil();
+        result.id = crate::domain::id::Id::generate();
+        result.task_id = crate::domain::id::Id::nil();
         let res = repo.save(result).await;
         assert!(res.is_ok(), "save with nil task_id failed: {:?}", res.err());
     }
@@ -574,7 +595,9 @@ mod tests {
         }
         // nil UUID as team_id: no tasks carry team_id=Nil, so JOIN yields 0 rows.
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        let result = repo.get_team_avg_response_time(Uuid::nil()).await;
+        let result = repo
+            .get_team_avg_response_time(crate::domain::id::Id::nil())
+            .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0.0);
     }
@@ -585,8 +608,8 @@ mod tests {
     async fn save_results_with_urls(repo: &ScrapeResultRepositoryImpl, urls: &[&str]) {
         for url in urls {
             let mut result = sample_scrape_result();
-            result.id = Uuid::new_v4();
-            result.task_id = Uuid::new_v4();
+            result.id = crate::domain::id::Id::generate();
+            result.task_id = crate::domain::id::Id::generate();
             result.url = url.to_string();
             repo.save(result).await.expect("save failed");
         }
@@ -598,7 +621,10 @@ mod tests {
             return;
         }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        let prefix = format!("https://listdistinct-{}.example.com", Uuid::new_v4());
+        let prefix = format!(
+            "https://listdistinct-{}.example.com",
+            crate::domain::id::Id::generate()
+        );
         let a = format!("{prefix}/a");
         let b = format!("{prefix}/b");
         // 同 URL 两行 → distinct 只出一个
@@ -621,7 +647,10 @@ mod tests {
             return;
         }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        let prefix = format!("https://keyset-{}.example.com", Uuid::new_v4());
+        let prefix = format!(
+            "https://keyset-{}.example.com",
+            crate::domain::id::Id::generate()
+        );
         let a = format!("{prefix}/a");
         let b = format!("{prefix}/b");
         let c = format!("{prefix}/c");
@@ -695,8 +724,8 @@ mod tests {
 
         // 远古行（1970 年）：比 cutoff（now - 20_000 天 ≈ 1971 年）更旧，必被删除
         let mut ancient = sample_scrape_result();
-        ancient.id = Uuid::new_v4();
-        ancient.task_id = Uuid::new_v4();
+        ancient.id = crate::domain::id::Id::generate();
+        ancient.task_id = crate::domain::id::Id::generate();
         ancient.created_at = chrono::DateTime::from_timestamp(1_000, 0).expect("valid timestamp");
         repo.save(ancient.clone())
             .await
@@ -704,8 +733,8 @@ mod tests {
 
         // 保留期内的行（2023 年）：比 cutoff 新，必须存活
         let mut recent = sample_scrape_result();
-        recent.id = Uuid::new_v4();
-        recent.task_id = Uuid::new_v4();
+        recent.id = crate::domain::id::Id::generate();
+        recent.task_id = crate::domain::id::Id::generate();
         repo.save(recent.clone()).await.expect("save recent failed");
 
         let deleted = repo.cleanup_expired(20_000).await.expect("cleanup failed");

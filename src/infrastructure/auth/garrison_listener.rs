@@ -41,7 +41,7 @@
 //!
 //! 设计权衡：监听器失败不传播（与 garrison `AuditLogListener` 契约一致），
 //! 不阻塞 garrison 主流程。多租户审计完整性通过 `metadata.garrison_tenant_id`
-//! 记录原始 i64 tenant_id 供追溯（不强行转换为 crawlrs team_id Uuid，避免语义错位）。
+//! 记录原始 i64 tenant_id 供追溯（不强行转换为 crawlrs team_id crate::domain::id::Id，避免语义错位）。
 //!
 //! ## 安全防护
 //!
@@ -468,7 +468,7 @@ impl GarrisonListener for CrawlrsAuditListener {
 ///
 /// # api_key_id 解析与 login_id 保留
 ///
-/// `login_id` 字段尝试解析为 [`uuid::Uuid`] 填入 `api_key_id`，失败时 `api_key_id=None`。
+/// `login_id` 字段尝试解析为 [`crate::domain::id::Id`] 填入 `api_key_id`，失败时 `api_key_id=None`。
 /// **无论解析是否成功，原始 `login_id` 字符串都写入 `metadata.login_id`**，
 /// 确保非 UUID 主体（如 `"user-123"`、邮箱）的认证事件可追溯（CWE-778）。
 /// garrison 签发 API Key 时以 crawlrs api_key uuid 作 login_id，故正常路径可解析。
@@ -770,12 +770,12 @@ fn event_to_audit_entry(event: &GarrisonEvent) -> GarrisonResult<AuditLogEntry> 
 ///
 /// # 字段填充策略
 ///
-/// - **api_key_id**：`login_id` 尝试解析为 [`uuid::Uuid`]，成功填入，失败 None
+/// - **api_key_id**：`login_id` 尝试解析为 [`crate::domain::id::Id`]，成功填入，失败 None
 /// - **metadata.login_id**：原始 `login_id` 字符串（截断到 `MAX_LOGIN_ID_LEN`）
 ///   - 无论 `api_key_id` 是否解析成功，都写入 `metadata.login_id` 保留主体标识
 ///   - 非 UUID 主体（如 `"user-123"`、邮箱）的认证事件可追溯（CWE-778）
 /// - **metadata.garrison_tenant_id**：从 garrison task-local tenant context 读取
-///   - garrison `tenant_id` 是 `i64`，crawlrs `team_id` 是 `Uuid`，不强行转换避免语义错位
+///   - garrison `tenant_id` 是 `i64`，crawlrs `team_id` 是 `crate::domain::id::Id`，不强行转换避免语义错位
 ///   - 仅记录原始 `i64` 值供多租户审计追溯
 /// - **User-Agent**：截断到 `MAX_USER_AGENT_LEN`（256 字符，CWE-400 防 DoS）
 /// - **IP**：`IpAddr::parse` 验证格式，过滤非法字符串
@@ -786,7 +786,7 @@ fn build_entry(
     login_id: Option<&str>,
     event: &GarrisonEvent,
 ) -> AuditLogBuilder {
-    let api_key_id = login_id.and_then(|id| uuid::Uuid::parse_str(id).ok());
+    let api_key_id = login_id.and_then(|id| (id).parse::<crate::domain::id::Id>().ok());
     let mut builder =
         AuditLogBuilder::new(action.to_string(), decision).maybe_with_api_key_id(api_key_id);
 
@@ -1000,7 +1000,6 @@ mod tests {
     use super::*;
     use crate::domain::auth::AuditDecision;
     use crate::domain::services::audit_service::AuditServiceError;
-    use uuid::Uuid;
 
     /// 获取测试串行化锁 guard，避免 `AUDIT_SERVICE` 全局态在并行测试中竞态。
     ///
@@ -1062,7 +1061,7 @@ mod tests {
 
     #[test]
     fn test_login_event_converts_to_allow_entry() {
-        let login_id = Uuid::new_v4().to_string();
+        let login_id = crate::domain::id::Id::generate().to_string();
         let event = GarrisonEvent::Login {
             login_id: login_id.clone(),
             token: "tok-1234567890".to_string(),
@@ -1073,7 +1072,10 @@ mod tests {
         assert_eq!(entry.requested_action, "auth.login");
         assert_eq!(entry.decision, AuditDecision::Allow);
         assert!(entry.denial_reason.is_none());
-        assert_eq!(entry.api_key_id, Uuid::parse_str(&login_id).ok());
+        assert_eq!(
+            entry.api_key_id,
+            (&login_id).parse::<crate::domain::id::Id>().ok()
+        );
     }
 
     #[test]
@@ -1087,7 +1089,7 @@ mod tests {
         assert_eq!(entry.requested_action, "auth.login");
         assert_eq!(entry.decision, AuditDecision::Deny);
         assert_eq!(entry.denial_reason.as_deref(), Some("invalid_credentials"));
-        // login_id "user-123" 无法解析为 Uuid，api_key_id 应为 None（语义）
+        // login_id "user-123" 无法解析为 crate::domain::id::Id，api_key_id 应为 None（语义）
         assert!(entry.api_key_id.is_none());
     }
 
@@ -1336,7 +1338,7 @@ mod tests {
 
     #[test]
     fn test_login_id_parses_to_uuid_when_valid() {
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let event = GarrisonEvent::Login {
             login_id: api_key_id.to_string(),
             token: "tok".to_string(),
@@ -1657,8 +1659,8 @@ mod tests {
         async fn log_allow(
             &self,
             _action: String,
-            _api_key_id: Uuid,
-            _team_id: Uuid,
+            _api_key_id: crate::domain::id::Id,
+            _team_id: crate::domain::id::Id,
             _scope: crate::domain::auth::ApiKeyScope,
         ) -> Result<(), AuditServiceError> {
             Ok(())
@@ -1667,8 +1669,8 @@ mod tests {
         async fn log_deny(
             &self,
             _action: String,
-            _api_key_id: Option<Uuid>,
-            _team_id: Option<Uuid>,
+            _api_key_id: Option<crate::domain::id::Id>,
+            _team_id: Option<crate::domain::id::Id>,
             _reason: String,
             _scope: Option<crate::domain::auth::ApiKeyScope>,
         ) -> Result<(), AuditServiceError> {
@@ -1677,7 +1679,7 @@ mod tests {
 
         async fn get_logs_for_key(
             &self,
-            _api_key_id: Uuid,
+            _api_key_id: crate::domain::id::Id,
             _limit: u64,
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
@@ -1686,7 +1688,7 @@ mod tests {
 
         async fn get_logs_for_team(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u64,
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
@@ -1695,7 +1697,7 @@ mod tests {
 
         async fn get_denied_requests(
             &self,
-            _api_key_id: Uuid,
+            _api_key_id: crate::domain::id::Id,
             _limit: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             Ok(self.entries())
@@ -1769,7 +1771,7 @@ mod tests {
         }
 
         let listener = CrawlrsAuditListener::new();
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let event = GarrisonEvent::Login {
             login_id: api_key_id.to_string(),
             token: "tok_0123456789abcdef".to_string(), // >= 16 chars
@@ -1875,7 +1877,7 @@ mod tests {
 
         let listener = CrawlrsAuditListener::new();
         let event = GarrisonEvent::Login {
-            login_id: Uuid::new_v4().to_string(),
+            login_id: crate::domain::id::Id::generate().to_string(),
             token: "tok_0123456789abcdef".to_string(),
             device: None,
             request_context: None,

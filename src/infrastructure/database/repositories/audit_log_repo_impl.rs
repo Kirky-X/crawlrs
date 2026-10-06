@@ -8,7 +8,6 @@ use dbnexus::sea_orm::{
 };
 use dbnexus::DbPool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::domain::auth::{AuditDecision, AuditLogEntry};
 use crate::domain::repositories::audit_log_repository::{AuditLogRepository, AuditRepositoryError};
@@ -74,15 +73,15 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
         let ip_address_value = entry_cloned.ip_address.map(|ip| ip.to_string());
         let active_model =
             crate::infrastructure::database::entities::auth::audit_log::ActiveModel {
-                id: Set(entry_cloned.id),
-                api_key_id: Set(entry_cloned.api_key_id),
-                team_id: Set(entry_cloned.team_id),
+                id: Set(entry_cloned.id.into()),
+                api_key_id: Set(entry_cloned.api_key_id.map(Into::into)),
+                team_id: Set(entry_cloned.team_id.map(Into::into)),
                 requested_action: Set(entry_cloned.requested_action),
                 decision: Set(entry_cloned.decision.to_string()),
                 denial_reason: Set(entry_cloned.denial_reason),
                 scope_used: Set(scope_used_value),
                 ip_address: Set(ip_address_value),
-                trace_id: Set(entry_cloned.trace_id),
+                trace_id: Set(entry_cloned.trace_id.map(Into::into)),
                 user_agent: Set(entry_cloned.user_agent),
                 request_path: Set(entry_cloned.request_path),
                 request_method: Set(entry_cloned.request_method),
@@ -96,7 +95,7 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
 
     async fn find_by_api_key_id(
         &self,
-        api_key_id: Uuid,
+        api_key_id: crate::domain::id::Id,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
@@ -117,7 +116,7 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
 
     async fn find_by_team_id(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
@@ -138,7 +137,7 @@ impl AuditLogRepository for AuditLogRepositoryImpl {
 
     async fn find_denied_for_key(
         &self,
-        api_key_id: Uuid,
+        api_key_id: crate::domain::id::Id,
         limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
         let session = self.pool.get_session("admin").await?;
@@ -190,15 +189,15 @@ mod tests {
 
     fn sample_audit_log_entry() -> AuditLogEntry {
         AuditLogEntry {
-            id: Uuid::new_v4(),
-            api_key_id: Some(Uuid::new_v4()),
-            team_id: Some(Uuid::new_v4()),
+            id: crate::domain::id::Id::generate(),
+            api_key_id: Some(crate::domain::id::Id::generate()),
+            team_id: Some(crate::domain::id::Id::generate()),
             requested_action: "crawl.create".to_string(),
             decision: AuditDecision::Allow,
             denial_reason: None,
             scope_used: Some(sample_scope()),
             ip_address: Some(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))),
-            trace_id: Some(Uuid::new_v4()),
+            trace_id: Some(crate::domain::id::Id::generate()),
             user_agent: Some("test-agent/1.0".to_string()),
             request_path: Some("/api/v1/crawls".to_string()),
             request_method: Some("POST".to_string()),
@@ -249,7 +248,9 @@ mod tests {
             return;
         }
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_api_key_id(Uuid::new_v4(), 10, 0).await;
+        let result = repo
+            .find_by_api_key_id(crate::domain::id::Id::generate(), 10, 0)
+            .await;
         assert!(
             result.is_ok(),
             "find_by_api_key_id failed: {:?}",
@@ -267,7 +268,9 @@ mod tests {
             return;
         }
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_by_team_id(Uuid::new_v4(), 10, 0).await;
+        let result = repo
+            .find_by_team_id(crate::domain::id::Id::generate(), 10, 0)
+            .await;
         assert!(result.is_ok(), "find_by_team_id failed: {:?}", result.err());
         assert!(
             result.unwrap().is_empty(),
@@ -281,7 +284,9 @@ mod tests {
             return;
         }
         let repo = AuditLogRepositoryImpl::new(create_test_db_pool());
-        let result = repo.find_denied_for_key(Uuid::new_v4(), 5).await;
+        let result = repo
+            .find_denied_for_key(crate::domain::id::Id::generate(), 5)
+            .await;
         assert!(
             result.is_ok(),
             "find_denied_for_key failed: {:?}",

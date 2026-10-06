@@ -17,12 +17,12 @@ impl TaskMapper {
     /// Convert database entity to domain model
     pub fn to_domain(entity: task::Model) -> Task {
         Task {
-            id: entity.id,
+            id: entity.id.into(),
             task_type: Self::parse_task_type(&entity.task_type),
             status: Self::parse_task_status(&entity.status),
             priority: entity.priority,
-            team_id: entity.team_id,
-            api_key_id: entity.api_key_id,
+            team_id: entity.team_id.into(),
+            api_key_id: entity.api_key_id.into(),
             url: entity.url,
             payload: entity.payload,
             retry_count: entity.retry_count,
@@ -33,9 +33,9 @@ impl TaskMapper {
             created_at: from_db_datetime(entity.created_at),
             started_at: from_db_datetime_opt(entity.started_at),
             completed_at: from_db_datetime_opt(entity.completed_at),
-            crawl_id: entity.crawl_id,
+            crawl_id: entity.crawl_id.map(Into::into),
             updated_at: from_db_datetime(entity.updated_at),
-            lock_token: entity.lock_token,
+            lock_token: entity.lock_token.map(Into::into),
             lock_expires_at: from_db_datetime_opt(entity.lock_expires_at),
         }
     }
@@ -43,12 +43,12 @@ impl TaskMapper {
     /// Convert domain model to database entity
     pub fn to_entity(domain: &Task) -> task::Model {
         task::Model {
-            id: domain.id,
+            id: domain.id.into(),
             task_type: domain.task_type.to_string(),
             status: domain.status.to_string(),
             priority: domain.priority,
-            team_id: domain.team_id,
-            api_key_id: domain.api_key_id,
+            team_id: domain.team_id.into(),
+            api_key_id: domain.api_key_id.into(),
             url: domain.url.clone(),
             payload: domain.payload.clone(),
             retry_count: domain.retry_count,
@@ -59,9 +59,9 @@ impl TaskMapper {
             created_at: to_db_datetime(domain.created_at),
             started_at: to_db_datetime_opt(domain.started_at),
             completed_at: to_db_datetime_opt(domain.completed_at),
-            crawl_id: domain.crawl_id,
+            crawl_id: domain.crawl_id.map(Into::into),
             updated_at: to_db_datetime(domain.updated_at),
-            lock_token: domain.lock_token,
+            lock_token: domain.lock_token.map(Into::into),
             lock_expires_at: to_db_datetime_opt(domain.lock_expires_at),
         }
     }
@@ -117,16 +117,15 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use dbnexus::sea_orm::ActiveValue;
-    use uuid::Uuid;
 
     /// 构造一个填充了典型值的 task::Model，供各测试按需覆盖字段
     fn make_entity() -> task::Model {
         let now = Utc::now().fixed_offset();
         task::Model {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().to_uuid_v8(),
             task_type: "scrape".to_string(),
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().to_uuid_v8(),
+            api_key_id: crate::domain::id::Id::generate().to_uuid_v8(),
             crawl_id: None,
             url: "https://example.com".to_string(),
             status: "queued".to_string(),
@@ -150,12 +149,12 @@ mod tests {
     fn test_task_mapper_roundtrip() {
         let now = Utc::now();
         let domain = Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 1,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
+            api_key_id: crate::domain::id::Id::generate().into(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({"key": "value"}),
             retry_count: 0,
@@ -282,12 +281,12 @@ mod tests {
     fn test_to_entity_maps_all_fields() {
         let now = Utc::now();
         let domain = Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
             task_type: TaskType::Crawl,
             status: TaskStatus::Active,
             priority: 7,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
+            api_key_id: crate::domain::id::Id::generate().into(),
             url: "https://test.example.com/path".to_string(),
             payload: serde_json::json!({"k": "v", "n": 42}),
             retry_count: 2,
@@ -305,12 +304,12 @@ mod tests {
         };
 
         let entity = TaskMapper::to_entity(&domain);
-        assert_eq!(entity.id, domain.id);
+        assert_eq!(domain.id, entity.id);
         assert_eq!(entity.task_type, "crawl");
         assert_eq!(entity.status, "active");
         assert_eq!(entity.priority, 7);
-        assert_eq!(entity.team_id, domain.team_id);
-        assert_eq!(entity.api_key_id, domain.api_key_id);
+        assert_eq!(domain.team_id, entity.team_id);
+        assert_eq!(domain.api_key_id, entity.api_key_id);
         assert_eq!(entity.url, domain.url);
         assert_eq!(entity.payload, domain.payload);
         assert_eq!(entity.retry_count, 2);
@@ -368,14 +367,14 @@ mod tests {
     #[test]
     fn test_to_active_model_id_is_unchanged() {
         let now = Utc::now();
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let domain = Task {
             id,
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 1,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
+            api_key_id: crate::domain::id::Id::generate().into(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,
@@ -395,19 +394,19 @@ mod tests {
         let active = TaskMapper::to_active_model(&domain);
         // id 必须是 Unchanged（作为 WHERE 条件）
         assert!(matches!(active.id, ActiveValue::Unchanged(_)));
-        assert_eq!(active.id.as_ref(), &id);
+        assert_eq!(active.id.as_ref(), &id.to_uuid_v8());
     }
 
     #[test]
     fn test_to_active_model_created_at_is_unchanged() {
         let now = Utc::now();
         let domain = Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 1,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
+            api_key_id: crate::domain::id::Id::generate().into(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,
@@ -433,12 +432,12 @@ mod tests {
     fn test_to_active_model_other_fields_are_set() {
         let now = Utc::now();
         let domain = Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
             task_type: TaskType::Crawl,
             status: TaskStatus::Active,
             priority: 9,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
+            api_key_id: crate::domain::id::Id::generate().into(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({"k": "v"}),
             retry_count: 1,
@@ -503,15 +502,15 @@ mod tests {
     #[test]
     fn test_to_domain_all_optional_fields_some() {
         let now = Utc::now().fixed_offset();
-        let crawl_id = Uuid::new_v4();
-        let lock_token = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
+        let lock_token = crate::domain::id::Id::generate();
         let mut entity = make_entity();
         entity.scheduled_at = Some(now);
         entity.expires_at = Some(now);
         entity.started_at = Some(now);
         entity.completed_at = Some(now);
-        entity.crawl_id = Some(crawl_id);
-        entity.lock_token = Some(lock_token);
+        entity.crawl_id = Some(crawl_id.into());
+        entity.lock_token = Some(lock_token.into());
         entity.lock_expires_at = Some(now);
 
         let domain = TaskMapper::to_domain(entity);
@@ -531,12 +530,12 @@ mod tests {
         let scheduled = Utc::now() + chrono::Duration::seconds(3600);
         let now = Utc::now();
         let domain = Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 1,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
+            api_key_id: crate::domain::id::Id::generate().into(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,
@@ -581,12 +580,12 @@ mod tests {
     fn test_roundtrip_preserves_all_optional_datetimes() {
         let ts = Utc::now();
         let domain = Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
             task_type: TaskType::Extract,
             status: TaskStatus::Failed,
             priority: 3,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate().into(),
+            api_key_id: crate::domain::id::Id::generate().into(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({"a": 1}),
             retry_count: 2,
@@ -597,9 +596,9 @@ mod tests {
             created_at: ts,
             started_at: Some(ts),
             completed_at: Some(ts),
-            crawl_id: Some(Uuid::new_v4()),
+            crawl_id: Some(crate::domain::id::Id::generate().into()),
             updated_at: ts,
-            lock_token: Some(Uuid::new_v4()),
+            lock_token: Some(crate::domain::id::Id::generate().into()),
             lock_expires_at: Some(ts),
         };
 

@@ -4,12 +4,11 @@
 use crawlrs::domain::models::task_model::Task;
 use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use serde_json::json;
-use uuid::Uuid;
 
 #[test]
 fn test_task_lifecycle_happy_path() {
-    let team_id = Uuid::new_v4();
-    let api_key_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let api_key_id = crawlrs::domain::id::Id::generate();
     let url = "http://example.com".to_string();
     let payload = json!({});
     let mut task = Task::new(TaskType::Scrape, team_id, api_key_id, url, payload);
@@ -24,8 +23,8 @@ fn test_task_lifecycle_happy_path() {
 
 #[test]
 fn test_task_retry_logic() {
-    let team_id = Uuid::new_v4();
-    let api_key_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
+    let api_key_id = crawlrs::domain::id::Id::generate();
     let url = "http://example.com".to_string();
     let payload = json!({});
     let mut task = Task::new(TaskType::Scrape, team_id, api_key_id, url, payload);

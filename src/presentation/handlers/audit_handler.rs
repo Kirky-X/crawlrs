@@ -15,14 +15,13 @@ use axum::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
-use uuid::Uuid;
 
 #[derive(Deserialize)]
 pub struct AuditLogsQuery {
     pub limit: Option<u64>,
     pub offset: Option<u64>,
-    pub api_key_id: Option<Uuid>,
-    pub team_id: Option<Uuid>,
+    pub api_key_id: Option<crate::domain::id::Id>,
+    pub team_id: Option<crate::domain::id::Id>,
 }
 
 /// 拒绝请求查询参数（仅支持 limit，不支持 api_key_id/team_id 过滤）
@@ -364,7 +363,12 @@ mod tests {
 
     fn make_auth_state() -> AuthState {
         let pool = create_test_db_pool();
-        AuthState::new(pool, Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default())
+        AuthState::new(
+            pool,
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            ApiKeyScope::default(),
+        )
     }
 
     fn test_locale() -> Locale {
@@ -376,30 +380,40 @@ mod tests {
         Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
     }
 
-    fn make_auth_state_with_key(api_key_id: Uuid) -> AuthState {
+    fn make_auth_state_with_key(api_key_id: crate::domain::id::Id) -> AuthState {
         let pool = create_test_db_pool();
-        AuthState::new(pool, Uuid::new_v4(), api_key_id, ApiKeyScope::default())
+        AuthState::new(
+            pool,
+            crate::domain::id::Id::generate(),
+            api_key_id,
+            ApiKeyScope::default(),
+        )
     }
 
-    fn make_auth_state_with_team(team_id: Uuid) -> AuthState {
+    fn make_auth_state_with_team(team_id: crate::domain::id::Id) -> AuthState {
         let pool = create_test_db_pool();
-        AuthState::new(pool, team_id, Uuid::new_v4(), ApiKeyScope::default())
+        AuthState::new(
+            pool,
+            team_id,
+            crate::domain::id::Id::generate(),
+            ApiKeyScope::default(),
+        )
     }
 
     fn make_admin_auth_state() -> AuthState {
         let pool = create_test_db_pool();
         AuthState::new(
             pool,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::full_access(),
         )
     }
 
     fn sample_entry(action: &str, decision: AuditDecision) -> AuditLogEntry {
         AuditLogBuilder::new(action, decision)
-            .with_api_key_id(Uuid::new_v4())
-            .with_team_id(Uuid::new_v4())
+            .with_api_key_id(crate::domain::id::Id::generate())
+            .with_team_id(crate::domain::id::Id::generate())
             .build()
     }
 
@@ -433,8 +447,8 @@ mod tests {
         async fn log_allow(
             &self,
             _action: String,
-            _api_key_id: Uuid,
-            _team_id: Uuid,
+            _api_key_id: crate::domain::id::Id,
+            _team_id: crate::domain::id::Id,
             _scope: ApiKeyScope,
         ) -> Result<(), AuditServiceError> {
             Ok(())
@@ -443,8 +457,8 @@ mod tests {
         async fn log_deny(
             &self,
             _action: String,
-            _api_key_id: Option<Uuid>,
-            _team_id: Option<Uuid>,
+            _api_key_id: Option<crate::domain::id::Id>,
+            _team_id: Option<crate::domain::id::Id>,
             _reason: String,
             _scope: Option<ApiKeyScope>,
         ) -> Result<(), AuditServiceError> {
@@ -453,7 +467,7 @@ mod tests {
 
         async fn get_logs_for_key(
             &self,
-            _api_key_id: Uuid,
+            _api_key_id: crate::domain::id::Id,
             _limit: u64,
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
@@ -469,7 +483,7 @@ mod tests {
 
         async fn get_logs_for_team(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u64,
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
@@ -485,7 +499,7 @@ mod tests {
 
         async fn get_denied_requests(
             &self,
-            _api_key_id: Uuid,
+            _api_key_id: crate::domain::id::Id,
             _limit: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
             if self.should_fail {
@@ -516,8 +530,8 @@ mod tests {
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
-            api_key_id: Some(Uuid::new_v4()),
-            team_id: Some(Uuid::new_v4()),
+            api_key_id: Some(crate::domain::id::Id::generate()),
+            team_id: Some(crate::domain::id::Id::generate()),
         };
         assert!(query.api_key_id.is_some());
     }
@@ -531,7 +545,7 @@ mod tests {
             limit: Some(10),
             offset: Some(0),
             api_key_id: None,
-            team_id: Some(Uuid::new_v4()),
+            team_id: Some(crate::domain::id::Id::generate()),
         };
         assert!(query.api_key_id.is_none());
         assert!(query.team_id.is_some());
@@ -560,8 +574,8 @@ mod tests {
         let query = AuditLogsQuery {
             limit: None,
             offset: None,
-            api_key_id: Some(Uuid::new_v4()),
-            team_id: Some(Uuid::new_v4()),
+            api_key_id: Some(crate::domain::id::Id::generate()),
+            team_id: Some(crate::domain::id::Id::generate()),
         };
         match query {
             AuditLogsQuery {
@@ -591,7 +605,7 @@ mod tests {
             sample_entry("scrape", AuditDecision::Allow),
         ];
         let mock = Arc::new(MockAuditService::new(logs));
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let auth_state = make_auth_state_with_key(api_key_id);
         let query = AuditLogsQuery {
             limit: Some(10),
@@ -620,7 +634,7 @@ mod tests {
         }
         let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let auth_state = make_auth_state_with_team(team_id);
         let query = AuditLogsQuery {
             limit: Some(50),
@@ -681,8 +695,8 @@ mod tests {
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
-            api_key_id: Some(Uuid::new_v4()),
-            team_id: Some(Uuid::new_v4()),
+            api_key_id: Some(crate::domain::id::Id::generate()),
+            team_id: Some(crate::domain::id::Id::generate()),
         };
 
         let response = get_audit_logs(
@@ -708,7 +722,7 @@ mod tests {
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
-            api_key_id: Some(Uuid::new_v4()),
+            api_key_id: Some(crate::domain::id::Id::generate()),
             team_id: None,
         };
 
@@ -736,7 +750,7 @@ mod tests {
             limit: Some(10),
             offset: Some(0),
             api_key_id: None,
-            team_id: Some(Uuid::new_v4()),
+            team_id: Some(crate::domain::id::Id::generate()),
         };
 
         let response = get_audit_logs(
@@ -789,7 +803,7 @@ mod tests {
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
-            api_key_id: Some(Uuid::new_v4()),
+            api_key_id: Some(crate::domain::id::Id::generate()),
             team_id: None,
         };
 
@@ -817,7 +831,7 @@ mod tests {
         let query = AuditLogsQuery {
             limit: Some(50000),
             offset: Some(0),
-            api_key_id: Some(Uuid::new_v4()),
+            api_key_id: Some(crate::domain::id::Id::generate()),
             team_id: None,
         };
 
@@ -851,7 +865,7 @@ mod tests {
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
-            api_key_id: Some(Uuid::new_v4()),
+            api_key_id: Some(crate::domain::id::Id::generate()),
             team_id: None,
         };
 
@@ -881,7 +895,7 @@ mod tests {
             limit: Some(10),
             offset: Some(0),
             api_key_id: None,
-            team_id: Some(Uuid::new_v4()),
+            team_id: Some(crate::domain::id::Id::generate()),
         };
 
         let response = get_audit_logs(
@@ -905,7 +919,7 @@ mod tests {
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         // 非 Admin 用户查询自身 api_key_id → 200（自有数据路径）
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let auth_state = make_auth_state_with_key(api_key_id);
         let query = AuditLogsQuery {
             limit: Some(10),
@@ -935,7 +949,7 @@ mod tests {
         let logs = vec![sample_entry("crawl", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         // 非 Admin 用户查询自身 team_id → 200（自有数据路径）
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let auth_state = make_auth_state_with_team(team_id);
         let query = AuditLogsQuery {
             limit: Some(10),
@@ -969,7 +983,7 @@ mod tests {
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
-            api_key_id: Some(Uuid::new_v4()),
+            api_key_id: Some(crate::domain::id::Id::generate()),
             team_id: None,
         };
 
@@ -999,7 +1013,7 @@ mod tests {
             limit: Some(10),
             offset: Some(0),
             api_key_id: None,
-            team_id: Some(Uuid::new_v4()),
+            team_id: Some(crate::domain::id::Id::generate()),
         };
 
         let response = get_audit_logs(
@@ -1023,13 +1037,13 @@ mod tests {
         let logs = vec![sample_entry("search", AuditDecision::Allow)];
         let mock = Arc::new(MockAuditService::new(logs));
         // 非 Admin 用户：自有 api_key_id + 他人 team_id → 403（team_id 检查拦截）
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let auth_state = make_auth_state_with_key(api_key_id);
         let query = AuditLogsQuery {
             limit: Some(10),
             offset: Some(0),
             api_key_id: Some(api_key_id),
-            team_id: Some(Uuid::new_v4()),
+            team_id: Some(crate::domain::id::Id::generate()),
         };
 
         let response = get_audit_logs(
@@ -1121,7 +1135,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
         let denied = vec![sample_entry("search", AuditDecision::Deny)];
         let mock = Arc::new(MockAuditService::new(denied));
         let auth_state = make_auth_state_with_key(api_key_id);

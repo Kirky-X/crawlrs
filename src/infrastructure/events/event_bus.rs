@@ -10,7 +10,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::broadcast;
-use uuid::Uuid;
 
 /// 事件总线错误
 #[derive(Error, Debug)]
@@ -26,27 +25,36 @@ pub enum EventBusError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DomainEvent {
     /// 任务完成
-    TaskCompleted { task_id: Uuid, team_id: Uuid },
+    TaskCompleted {
+        task_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+    },
     /// 任务失败
     TaskFailed {
-        task_id: Uuid,
-        team_id: Uuid,
+        task_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         error: String,
     },
     /// 爬取完成
-    CrawlCompleted { crawl_id: Uuid, team_id: Uuid },
+    CrawlCompleted {
+        crawl_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+    },
     /// 爬取失败
     CrawlFailed {
-        crawl_id: Uuid,
-        team_id: Uuid,
+        crawl_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         error: String,
     },
     /// 抓取完成
-    ScrapeCompleted { scrape_id: Uuid, team_id: Uuid },
+    ScrapeCompleted {
+        scrape_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
+    },
     /// 抓取失败
     ScrapeFailed {
-        scrape_id: Uuid,
-        team_id: Uuid,
+        scrape_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         error: String,
     },
 }

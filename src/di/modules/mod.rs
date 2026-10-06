@@ -27,6 +27,7 @@ pub mod cache_module;
 pub mod database_module;
 pub mod engine_module;
 pub mod http_module;
+pub mod id_module;
 pub mod infrastructure_module;
 pub mod repository_module;
 pub mod service_module;
@@ -40,6 +41,7 @@ pub use cache_module::CacheModule;
 pub use database_module::DatabaseModule;
 pub use engine_module::EngineModule;
 pub use http_module::HttpModule;
+pub use id_module::IdModule;
 pub use infrastructure_module::InfrastructureModule;
 pub use repository_module::RepositoryModule;
 pub use service_module::ServiceModule;
@@ -77,6 +79,9 @@ pub enum ModuleBuildError {
 
     #[error("Service initialization failed: {0}")]
     ServiceInit(String),
+
+    #[error("ID generation (NebulaId) initialization failed: {0}")]
+    IdInit(String),
 
     #[error("Infrastructure initialization failed: {0}")]
     InfrastructureInit(String),

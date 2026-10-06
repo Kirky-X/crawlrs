@@ -9,12 +9,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ScrapeResult {
-    pub id: Uuid,
-    pub task_id: Uuid,
+    pub id: crate::domain::id::Id,
+    pub task_id: crate::domain::id::Id,
     pub url: String,
     pub status_code: i32,
     pub content: String,

@@ -4,7 +4,6 @@
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
 
 /// Sensitive HTTP header names that must be redacted before returning to clients.
 const SENSITIVE_HEADERS: &[&str] = &[
@@ -22,7 +21,7 @@ const SENSITIVE_HEADERS: &[&str] = &[
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ScrapeResponseDto {
     /// 爬取任务的唯一标识符
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// 请求爬取的URL
     pub url: String,
     /// 消耗的积分
@@ -107,7 +106,7 @@ impl ScrapeResultDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrapeStatusResponseDto {
     /// 任务ID
-    pub id: Uuid,
+    pub id: crate::domain::id::Id,
     /// 任务状态
     pub status: String,
     /// 请求URL

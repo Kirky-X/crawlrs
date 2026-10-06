@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use uuid::Uuid;
 
 use crawlrs::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crawlrs::config::settings::Settings;
@@ -84,7 +83,10 @@ impl TaskRepository for MockTaskRepository {
         Ok(new_task)
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         let tasks = self.tasks.lock().unwrap();
         Ok(tasks.iter().find(|t| t.id == id).cloned())
     }
@@ -102,27 +104,30 @@ impl TaskRepository for MockTaskRepository {
         }
     }
 
-    async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn acquire_next(
+        &self,
+        _worker_id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         Ok(None)
     }
 
     async fn mark_completed(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crawlrs::domain::id::Id,
+        _lock_token: Option<crawlrs::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         Ok(1)
     }
 
     async fn mark_failed(
         &self,
-        _id: Uuid,
-        _lock_token: Option<Uuid>,
+        _id: crawlrs::domain::id::Id,
+        _lock_token: Option<crawlrs::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         Ok(1)
     }
 
-    async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+    async fn mark_cancelled(&self, _id: crawlrs::domain::id::Id) -> Result<u64, RepositoryError> {
         Ok(1)
     }
 
@@ -135,18 +140,30 @@ impl TaskRepository for MockTaskRepository {
 
     async fn batch_cancel(
         &self,
-        _task_ids: Vec<Uuid>,
-        _team_id: Uuid,
+        _task_ids: Vec<crawlrs::domain::id::Id>,
+        _team_id: crawlrs::domain::id::Id,
         _force: bool,
-    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+    ) -> Result<
+        (
+            Vec<crawlrs::domain::id::Id>,
+            Vec<(crawlrs::domain::id::Id, String)>,
+        ),
+        RepositoryError,
+    > {
         Ok((vec![], vec![]))
     }
 
-    async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn cancel_tasks_by_crawl_id(
+        &self,
+        _crawl_id: crawlrs::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 
-    async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+    async fn find_by_crawl_id(
+        &self,
+        _crawl_id: crawlrs::domain::id::Id,
+    ) -> Result<Vec<Task>, RepositoryError> {
         Ok(vec![])
     }
 
@@ -173,8 +190,8 @@ impl TaskRepository for MockTaskRepository {
 
     async fn renew_lock(
         &self,
-        _task_id: Uuid,
-        _worker_id: Uuid,
+        _task_id: crawlrs::domain::id::Id,
+        _worker_id: crawlrs::domain::id::Id,
         _extend_seconds: i64,
     ) -> Result<bool, RepositoryError> {
         Ok(true)
@@ -207,20 +224,23 @@ impl TaskQueue for MockTaskQueue {
         Ok(_task)
     }
 
-    async fn dequeue(&self, _worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+    async fn dequeue(
+        &self,
+        _worker_id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Task>, QueueError> {
         self.dequeue_count.fetch_add(1, Ordering::SeqCst);
         Ok(None)
     }
 
-    async fn complete(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn complete(&self, _task_id: crawlrs::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
 
-    async fn fail(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn fail(&self, _task_id: crawlrs::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
 
-    async fn cancel(&self, _task_id: Uuid) -> Result<(), QueueError> {
+    async fn cancel(&self, _task_id: crawlrs::domain::id::Id) -> Result<(), QueueError> {
         Ok(())
     }
 }
@@ -234,15 +254,24 @@ impl ScrapeResultRepository for MockScrapeResultRepository {
         Ok(())
     }
 
-    async fn find_by_task_id(&self, _task_id: Uuid) -> anyhow::Result<Option<ScrapeResult>> {
+    async fn find_by_task_id(
+        &self,
+        _task_id: crawlrs::domain::id::Id,
+    ) -> anyhow::Result<Option<ScrapeResult>> {
         Ok(None)
     }
 
-    async fn find_by_task_ids(&self, _task_ids: &[Uuid]) -> anyhow::Result<Vec<ScrapeResult>> {
+    async fn find_by_task_ids(
+        &self,
+        _task_ids: &[crawlrs::domain::id::Id],
+    ) -> anyhow::Result<Vec<ScrapeResult>> {
         Ok(vec![])
     }
 
-    async fn get_team_avg_response_time(&self, _team_id: Uuid) -> anyhow::Result<f64> {
+    async fn get_team_avg_response_time(
+        &self,
+        _team_id: crawlrs::domain::id::Id,
+    ) -> anyhow::Result<f64> {
         Ok(0.0)
     }
 
@@ -260,7 +289,10 @@ impl CrawlRepository for MockCrawlRepository {
         Ok(crawl.clone())
     }
 
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        _id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Crawl>, RepositoryError> {
         Ok(None)
     }
 
@@ -268,32 +300,48 @@ impl CrawlRepository for MockCrawlRepository {
         Ok(crawl.clone())
     }
 
-    async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_completed_tasks(
+        &self,
+        _id: crawlrs::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
 
-    async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_failed_tasks(
+        &self,
+        _id: crawlrs::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
 
-    async fn update_status(&self, _id: Uuid, _status: CrawlStatus) -> Result<(), RepositoryError> {
+    async fn update_status(
+        &self,
+        _id: crawlrs::domain::id::Id,
+        _status: CrawlStatus,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
 
-    async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+    async fn increment_total_tasks(
+        &self,
+        _id: crawlrs::domain::id::Id,
+    ) -> Result<(), RepositoryError> {
         Ok(())
     }
 
     async fn find_by_team_id_paginated(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _limit: u32,
         _offset: u32,
     ) -> Result<Vec<Crawl>, RepositoryError> {
         Ok(vec![])
     }
 
-    async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn count_by_team_id(
+        &self,
+        _team_id: crawlrs::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 }
@@ -324,35 +372,38 @@ struct MockCreditsRepository;
 
 #[async_trait]
 impl CreditsRepository for MockCreditsRepository {
-    async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+    async fn get_balance(
+        &self,
+        _team_id: crawlrs::domain::id::Id,
+    ) -> Result<i64, CreditsRepositoryError> {
         Ok(1000)
     }
 
     async fn deduct_credits(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _amount: i64,
         _transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crawlrs::domain::id::Id>,
     ) -> Result<(), CreditsRepositoryError> {
         Ok(())
     }
 
     async fn add_credits(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _amount: i64,
         _transaction_type: CreditsTransactionType,
         _description: String,
-        _reference_id: Option<Uuid>,
+        _reference_id: Option<crawlrs::domain::id::Id>,
     ) -> Result<i64, CreditsRepositoryError> {
         Ok(1000)
     }
 
     async fn get_transaction_history(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _limit: Option<u32>,
     ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
         Ok(vec![])
@@ -360,7 +411,7 @@ impl CreditsRepository for MockCreditsRepository {
 
     async fn initialize_team_credits(
         &self,
-        _team_id: Uuid,
+        _team_id: crawlrs::domain::id::Id,
         _initial_balance: i64,
     ) -> Result<i64, CreditsRepositoryError> {
         Ok(_initial_balance)

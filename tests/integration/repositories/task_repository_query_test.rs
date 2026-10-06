@@ -14,12 +14,15 @@ use crawlrs::infrastructure::database::entities::task as task_entity;
 use crawlrs::infrastructure::repositories::task_repo_impl::TaskRepositoryImpl;
 use dbnexus::sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// 创建测试用 Task 的辅助函数
-fn make_task(team_id: Uuid, api_key_id: Uuid, url: &str) -> Task {
+fn make_task(
+    team_id: crawlrs::domain::id::Id,
+    api_key_id: crawlrs::domain::id::Id,
+    url: &str,
+) -> Task {
     let mut task = Task::new(
-        Uuid::new_v4(),
+        crawlrs::domain::id::Id::generate(),
         TaskType::Scrape,
         team_id,
         api_key_id,
@@ -27,7 +30,10 @@ fn make_task(team_id: Uuid, api_key_id: Uuid, url: &str) -> Task {
         serde_json::json!({}),
     );
     // 使用唯一 URL 避免与其他测试冲突
-    task.url = format!("https://{}.text.npr.org/query", Uuid::new_v4());
+    task.url = format!(
+        "https://{}.text.npr.org/query",
+        crawlrs::domain::id::Id::generate()
+    );
     task
 }
 
@@ -59,7 +65,10 @@ async fn tc_query_tasks_by_team_only_success() {
     ));
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
-    let cleanup_prefix = format!("https://query-team-{}.", Uuid::new_v4());
+    let cleanup_prefix = format!(
+        "https://query-team-{}.",
+        crawlrs::domain::id::Id::generate()
+    );
 
     // 创建 2 个任务
     let mut t1 = make_task(team_id, api_key_id, "");
@@ -105,7 +114,10 @@ async fn tc_query_tasks_filter_by_status_success() {
     ));
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
-    let cleanup_prefix = format!("https://query-status-{}.", Uuid::new_v4());
+    let cleanup_prefix = format!(
+        "https://query-status-{}.",
+        crawlrs::domain::id::Id::generate()
+    );
 
     let mut queued_task = make_task(team_id, api_key_id, "");
     queued_task.url = format!("{}q.text.npr.org", cleanup_prefix);
@@ -161,7 +173,10 @@ async fn tc_query_tasks_filter_by_task_type_success() {
     ));
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
-    let cleanup_prefix = format!("https://query-type-{}.", Uuid::new_v4());
+    let cleanup_prefix = format!(
+        "https://query-type-{}.",
+        crawlrs::domain::id::Id::generate()
+    );
 
     let mut scrape_task = make_task(team_id, api_key_id, "");
     scrape_task.url = format!("{}s.text.npr.org", cleanup_prefix);
@@ -214,8 +229,11 @@ async fn tc_query_tasks_filter_by_crawl_id_success() {
     ));
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
-    let cleanup_prefix = format!("https://query-crawl-{}.", Uuid::new_v4());
-    let crawl_id = Uuid::new_v4();
+    let cleanup_prefix = format!(
+        "https://query-crawl-{}.",
+        crawlrs::domain::id::Id::generate()
+    );
+    let crawl_id = crawlrs::domain::id::Id::generate();
 
     let mut t1 = make_task(team_id, api_key_id, "");
     t1.url = format!("{}1.text.npr.org", cleanup_prefix);
@@ -227,7 +245,7 @@ async fn tc_query_tasks_filter_by_crawl_id_success() {
 
     let mut t3 = make_task(team_id, api_key_id, "");
     t3.url = format!("{}3.text.npr.org", cleanup_prefix);
-    t3.crawl_id = Some(Uuid::new_v4()); // 不同的 crawl_id
+    t3.crawl_id = Some(crawlrs::domain::id::Id::generate().into()); // 不同的 crawl_id
 
     repo.create(&t1).await.expect("create t1 failed");
     repo.create(&t2).await.expect("create t2 failed");
@@ -269,7 +287,10 @@ async fn tc_query_tasks_pagination_limit_offset() {
     ));
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
-    let cleanup_prefix = format!("https://query-page-{}.", Uuid::new_v4());
+    let cleanup_prefix = format!(
+        "https://query-page-{}.",
+        crawlrs::domain::id::Id::generate()
+    );
 
     // 创建 3 个任务，时间错开以保证顺序
     let mut ids = Vec::new();
@@ -339,7 +360,7 @@ async fn tc_query_tasks_unknown_team_returns_empty() {
         chrono::Duration::seconds(30),
     ));
 
-    let unknown_team = Uuid::new_v4();
+    let unknown_team = crawlrs::domain::id::Id::generate();
     let params = TaskQueryParams {
         team_id: unknown_team,
         limit: 100,
@@ -368,8 +389,11 @@ async fn tc_query_tasks_combined_filters() {
     ));
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
-    let cleanup_prefix = format!("https://query-combined-{}.", Uuid::new_v4());
-    let crawl_id = Uuid::new_v4();
+    let cleanup_prefix = format!(
+        "https://query-combined-{}.",
+        crawlrs::domain::id::Id::generate()
+    );
+    let crawl_id = crawlrs::domain::id::Id::generate();
 
     // 目标任务：Crawl + Queued + 指定 crawl_id
     let mut target = make_task(team_id, api_key_id, "");
@@ -447,7 +471,10 @@ async fn tc_batch_cancel_all_owned_success() {
     ));
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
-    let cleanup_prefix = format!("https://batch-owned-{}.", Uuid::new_v4());
+    let cleanup_prefix = format!(
+        "https://batch-owned-{}.",
+        crawlrs::domain::id::Id::generate()
+    );
 
     let mut t1 = make_task(team_id, api_key_id, "");
     t1.url = format!("{}1.text.npr.org", cleanup_prefix);
@@ -493,8 +520,8 @@ async fn tc_batch_cancel_non_existent_ids_in_errors() {
     ));
     let team_id = app.team_id;
 
-    let unknown_id1 = Uuid::new_v4();
-    let unknown_id2 = Uuid::new_v4();
+    let unknown_id1 = crawlrs::domain::id::Id::generate();
+    let unknown_id2 = crawlrs::domain::id::Id::generate();
 
     let (cancelled, errors) = repo
         .batch_cancel(vec![unknown_id1, unknown_id2], team_id, false)
@@ -531,7 +558,10 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
     ));
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
-    let cleanup_prefix = format!("https://batch-mismatch-{}.", Uuid::new_v4());
+    let cleanup_prefix = format!(
+        "https://batch-mismatch-{}.",
+        crawlrs::domain::id::Id::generate()
+    );
 
     // 创建属于当前团队的任务
     let mut own_task = make_task(team_id, api_key_id, "");
@@ -541,8 +571,8 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
         .expect("create own_task failed");
 
     // 创建属于另一个团队的任务
-    let other_team_id = Uuid::new_v4();
-    let other_api_key_id = Uuid::new_v4();
+    let other_team_id = crawlrs::domain::id::Id::generate();
+    let other_api_key_id = crawlrs::domain::id::Id::generate();
     {
         let session = app
             .db_pool
@@ -640,7 +670,10 @@ async fn tc_batch_cancel_mixed_ids_partial_success() {
     ));
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
-    let cleanup_prefix = format!("https://batch-mixed-{}.", Uuid::new_v4());
+    let cleanup_prefix = format!(
+        "https://batch-mixed-{}.",
+        crawlrs::domain::id::Id::generate()
+    );
 
     // 创建 2 个属于当前团队的任务
     let mut owned1 = make_task(team_id, api_key_id, "");
@@ -650,7 +683,7 @@ async fn tc_batch_cancel_mixed_ids_partial_success() {
     repo.create(&owned1).await.expect("create owned1 failed");
     repo.create(&owned2).await.expect("create owned2 failed");
 
-    let unknown_id = Uuid::new_v4();
+    let unknown_id = crawlrs::domain::id::Id::generate();
 
     // 批量取消：[owned1, unknown, owned2]
     let ids = vec![owned1.id, unknown_id, owned2.id];
@@ -681,7 +714,10 @@ async fn tc_batch_cancel_idempotent_second_call() {
     ));
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
-    let cleanup_prefix = format!("https://batch-idem-{}.", Uuid::new_v4());
+    let cleanup_prefix = format!(
+        "https://batch-idem-{}.",
+        crawlrs::domain::id::Id::generate()
+    );
 
     let mut t = make_task(team_id, api_key_id, "");
     t.url = format!("{}t.text.npr.org", cleanup_prefix);

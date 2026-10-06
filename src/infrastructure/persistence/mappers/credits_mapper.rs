@@ -14,8 +14,8 @@ impl CreditsMapper {
     /// Convert database entity to domain model
     pub fn to_domain(entity: credits::Model) -> Credits {
         Credits::with_timestamps(
-            entity.id,
-            entity.team_id,
+            entity.id.into(),
+            entity.team_id.into(),
             entity.balance,
             from_db_datetime(entity.created_at),
             from_db_datetime(entity.updated_at),
@@ -25,8 +25,8 @@ impl CreditsMapper {
     /// Convert domain model to database entity
     pub fn to_entity(domain: &Credits) -> credits::Model {
         credits::Model {
-            id: domain.id,
-            team_id: domain.team_id,
+            id: domain.id.into(),
+            team_id: domain.team_id.into(),
             balance: domain.balance(),
             created_at: to_db_datetime(domain.created_at),
             updated_at: to_db_datetime(domain.updated_at),
@@ -46,12 +46,12 @@ impl CreditsTransactionMapper {
     /// Convert database entity to domain model
     pub fn to_domain(entity: credits_transactions::Model) -> CreditsTransaction {
         CreditsTransaction::with_timestamp(
-            entity.id,
-            entity.team_id,
+            entity.id.into(),
+            entity.team_id.into(),
             entity.amount,
             Self::parse_transaction_type(&entity.transaction_type),
             entity.description,
-            entity.reference_id,
+            entity.reference_id.map(Into::into),
             from_db_datetime(entity.created_at),
         )
     }
@@ -59,12 +59,12 @@ impl CreditsTransactionMapper {
     /// Convert domain model to database entity
     pub fn to_entity(domain: &CreditsTransaction) -> credits_transactions::Model {
         credits_transactions::Model {
-            id: domain.id,
-            team_id: domain.team_id,
+            id: domain.id.into(),
+            team_id: domain.team_id.into(),
             amount: domain.amount,
             transaction_type: domain.transaction_type.to_string(),
             description: domain.description.clone(),
-            reference_id: domain.reference_id,
+            reference_id: domain.reference_id.map(Into::into),
             created_at: to_db_datetime(domain.created_at),
         }
     }
@@ -86,12 +86,17 @@ mod tests {
     use super::*;
     use crate::common::time_utils::to_db_datetime;
     use chrono::Utc;
-    use uuid::Uuid;
 
     #[test]
     fn test_credits_mapper_roundtrip() {
         let now = Utc::now();
-        let domain = Credits::with_timestamps(Uuid::new_v4(), Uuid::new_v4(), 1000, now, now);
+        let domain = Credits::with_timestamps(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            1000,
+            now,
+            now,
+        );
 
         let entity = CreditsMapper::to_entity(&domain);
         let back_to_domain = CreditsMapper::to_domain(entity);
@@ -105,12 +110,12 @@ mod tests {
     fn test_transaction_mapper_roundtrip() {
         let now = Utc::now();
         let domain = CreditsTransaction::with_timestamp(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             -100,
             CreditsTransactionType::Scrape,
             "Test transaction".to_string(),
-            Some(Uuid::new_v4()),
+            Some(crate::domain::id::Id::generate().into()),
             now,
         );
 
@@ -127,15 +132,15 @@ mod tests {
         let now_db = to_db_datetime(Utc::now());
         let entities = vec![
             credits::Model {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: crate::domain::id::Id::generate().into(),
                 balance: 100,
                 created_at: now_db,
                 updated_at: now_db,
             },
             credits::Model {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: crate::domain::id::Id::generate().into(),
                 balance: 200,
                 created_at: now_db,
                 updated_at: now_db,
@@ -159,8 +164,8 @@ mod tests {
         let now_db = to_db_datetime(Utc::now());
         let entities = vec![
             credits_transactions::Model {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: crate::domain::id::Id::generate().into(),
                 amount: 50,
                 transaction_type: "subscription".to_string(),
                 description: "Sub".to_string(),
@@ -168,12 +173,12 @@ mod tests {
                 created_at: now_db,
             },
             credits_transactions::Model {
-                id: Uuid::new_v4(),
-                team_id: Uuid::new_v4(),
+                id: crate::domain::id::Id::generate().into(),
+                team_id: crate::domain::id::Id::generate().into(),
                 amount: -10,
                 transaction_type: "scrape".to_string(),
                 description: "Scrape".to_string(),
-                reference_id: Some(Uuid::new_v4()),
+                reference_id: Some(crate::domain::id::Id::generate().into()),
                 created_at: now_db,
             },
         ];
@@ -199,8 +204,8 @@ mod tests {
     fn test_transaction_mapper_invalid_type_falls_back_to_manual_adjustment() {
         let now_db = to_db_datetime(Utc::now());
         let entity = credits_transactions::Model {
-            id: Uuid::new_v4(),
-            team_id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate().into(),
             amount: 100,
             transaction_type: "invalid_type".to_string(),
             description: "Bad type".to_string(),
@@ -230,8 +235,8 @@ mod tests {
 
         for tx_type in types {
             let domain = CreditsTransaction::with_timestamp(
-                Uuid::new_v4(),
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
                 100,
                 tx_type,
                 "Test".to_string(),
@@ -249,8 +254,8 @@ mod tests {
     fn test_transaction_mapper_reference_id_none() {
         let now = Utc::now();
         let domain = CreditsTransaction::with_timestamp(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             50,
             CreditsTransactionType::Refund,
             "Refund".to_string(),
@@ -269,12 +274,12 @@ mod tests {
     fn test_transaction_mapper_negative_amount() {
         let now = Utc::now();
         let domain = CreditsTransaction::with_timestamp(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             -500,
             CreditsTransactionType::Crawl,
             "Large debit".to_string(),
-            Some(Uuid::new_v4()),
+            Some(crate::domain::id::Id::generate().into()),
             now,
         );
 
@@ -288,7 +293,13 @@ mod tests {
     #[test]
     fn test_credits_mapper_negative_balance() {
         let now = Utc::now();
-        let domain = Credits::with_timestamps(Uuid::new_v4(), Uuid::new_v4(), -50, now, now);
+        let domain = Credits::with_timestamps(
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            -50,
+            now,
+            now,
+        );
 
         let entity = CreditsMapper::to_entity(&domain);
         assert_eq!(entity.balance, -50);

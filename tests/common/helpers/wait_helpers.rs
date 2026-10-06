@@ -8,7 +8,6 @@ use crawlrs::domain::models::task_model::Task;
 use crawlrs::domain::repositories::task_repository::TaskRepository;
 use std::time::Duration;
 use tokio::time::sleep;
-use uuid::Uuid;
 
 pub struct WaitHelpers;
 
@@ -40,7 +39,7 @@ impl WaitHelpers {
 
     pub async fn wait_for_task_completion<T: TaskRepository>(
         task_repo: &T,
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         timeout_secs: u64,
     ) -> Result<Task, String> {
         let task_id_clone = task_id;
@@ -70,7 +69,7 @@ impl WaitHelpers {
 
     pub async fn wait_for_task_status<T: TaskRepository>(
         task_repo: &T,
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         expected_status: TaskStatus,
         timeout_secs: u64,
     ) -> Result<Task, String> {
@@ -96,7 +95,7 @@ impl WaitHelpers {
 
     pub async fn wait_for_queued<T: TaskRepository>(
         task_repo: &T,
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         timeout_secs: u64,
     ) -> Result<Task, String> {
         Self::wait_for_task_status(task_repo, task_id, TaskStatus::Queued, timeout_secs).await
@@ -104,7 +103,7 @@ impl WaitHelpers {
 
     pub async fn wait_for_active<T: TaskRepository>(
         task_repo: &T,
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         timeout_secs: u64,
     ) -> Result<Task, String> {
         Self::wait_for_task_status(task_repo, task_id, TaskStatus::Active, timeout_secs).await
@@ -112,7 +111,7 @@ impl WaitHelpers {
 
     pub async fn wait_for_completed<T: TaskRepository>(
         task_repo: &T,
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         timeout_secs: u64,
     ) -> Result<Task, String> {
         Self::wait_for_task_status(task_repo, task_id, TaskStatus::Completed, timeout_secs).await
@@ -120,7 +119,7 @@ impl WaitHelpers {
 
     pub async fn wait_for_failed<T: TaskRepository>(
         task_repo: &T,
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         timeout_secs: u64,
     ) -> Result<Task, String> {
         Self::wait_for_task_status(task_repo, task_id, TaskStatus::Failed, timeout_secs).await
@@ -128,7 +127,7 @@ impl WaitHelpers {
 
     pub async fn wait_for_cancelled<T: TaskRepository>(
         task_repo: &T,
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         timeout_secs: u64,
     ) -> Result<Task, String> {
         Self::wait_for_task_status(task_repo, task_id, TaskStatus::Cancelled, timeout_secs).await

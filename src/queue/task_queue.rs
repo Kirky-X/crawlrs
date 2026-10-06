@@ -9,7 +9,6 @@ use log::debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
-use uuid::Uuid;
 
 /// 队列错误类型
 #[derive(Error, Debug)]
@@ -30,14 +29,14 @@ pub trait TaskQueue: Send + Sync {
     async fn enqueue(&self, task: Task) -> Result<Task, QueueError>;
 
     /// 出队任务
-    async fn dequeue(&self, worker_id: Uuid) -> Result<Option<Task>, QueueError>;
+    async fn dequeue(&self, worker_id: crate::domain::id::Id) -> Result<Option<Task>, QueueError>;
 
     /// 完成任务
-    async fn complete(&self, task_id: Uuid) -> Result<(), QueueError>;
+    async fn complete(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError>;
     /// 失败任务
-    async fn fail(&self, task_id: Uuid) -> Result<(), QueueError>;
+    async fn fail(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError>;
     /// 取消任务
-    async fn cancel(&self, task_id: Uuid) -> Result<(), QueueError>;
+    async fn cancel(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError>;
 }
 
 /// PostgreSQL任务队列实现
@@ -96,7 +95,7 @@ impl TaskQueue for PostgresTaskQueue {
     /// * `Ok(Some(Task))` - 成功出队的任务
     /// * `Ok(None)` - 没有可出队的任务
     /// * `Err(QueueError)` - 出队失败
-    async fn dequeue(&self, worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+    async fn dequeue(&self, worker_id: crate::domain::id::Id) -> Result<Option<Task>, QueueError> {
         debug!("worker_id={}", worker_id);
         let task = self.repository.acquire_next(worker_id).await?;
         if task.is_some() {
@@ -118,7 +117,7 @@ impl TaskQueue for PostgresTaskQueue {
     ///
     /// * `Ok(())` - 成功
     /// * `Err(QueueError)` - 失败
-    async fn complete(&self, task_id: Uuid) -> Result<(), QueueError> {
+    async fn complete(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         // 无锁身份（None）：队列级 complete 仅允许终结未被认领的任务；
         // 持锁 worker 应直接走 repository.mark_completed(带 worker 身份守卫)
         self.repository.mark_completed(task_id, None).await?;
@@ -135,7 +134,7 @@ impl TaskQueue for PostgresTaskQueue {
     ///
     /// * `Ok(())` - 成功
     /// * `Err(QueueError)` - 失败
-    async fn fail(&self, task_id: Uuid) -> Result<(), QueueError> {
+    async fn fail(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         // 无锁身份（None）：语义同 complete
         self.repository.mark_failed(task_id, None).await?;
         Ok(())
@@ -151,7 +150,7 @@ impl TaskQueue for PostgresTaskQueue {
     ///
     /// * `Ok(())` - 成功
     /// * `Err(QueueError)` - 失败
-    async fn cancel(&self, task_id: Uuid) -> Result<(), QueueError> {
+    async fn cancel(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         self.repository.mark_cancelled(task_id).await?;
         Ok(())
     }
@@ -163,19 +162,19 @@ impl<T: TaskQueue + ?Sized> TaskQueue for Arc<T> {
         (**self).enqueue(task).await
     }
 
-    async fn dequeue(&self, worker_id: Uuid) -> Result<Option<Task>, QueueError> {
+    async fn dequeue(&self, worker_id: crate::domain::id::Id) -> Result<Option<Task>, QueueError> {
         (**self).dequeue(worker_id).await
     }
 
-    async fn complete(&self, task_id: Uuid) -> Result<(), QueueError> {
+    async fn complete(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         (**self).complete(task_id).await
     }
 
-    async fn fail(&self, task_id: Uuid) -> Result<(), QueueError> {
+    async fn fail(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         (**self).fail(task_id).await
     }
 
-    async fn cancel(&self, task_id: Uuid) -> Result<(), QueueError> {
+    async fn cancel(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         (**self).cancel(task_id).await
     }
 }
@@ -204,9 +203,9 @@ mod tests {
         fail_calls: AtomicUsize,
         cancel_calls: AtomicUsize,
         /// Last task_id passed to mark_* methods.
-        last_task_id: parking_lot::Mutex<Option<Uuid>>,
+        last_task_id: parking_lot::Mutex<Option<crate::domain::id::Id>>,
         /// Last worker_id passed to acquire_next.
-        last_worker_id: parking_lot::Mutex<Option<Uuid>>,
+        last_worker_id: parking_lot::Mutex<Option<crate::domain::id::Id>>,
         /// When true, repository methods return RepositoryError::Database.
         should_fail: bool,
         /// Task returned by acquire_next; None means empty queue.
@@ -246,10 +245,10 @@ mod tests {
 
     fn sample_task() -> Task {
         Task::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             TaskType::Scrape,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "https://example.com".to_string(),
             serde_json::json!({}),
         )
@@ -275,7 +274,10 @@ mod tests {
             Ok(created)
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             unreachable!("MockTaskRepository::find_by_id not invoked by PostgresTaskQueue tests")
         }
 
@@ -283,7 +285,10 @@ mod tests {
             unreachable!("MockTaskRepository::update not invoked by PostgresTaskQueue tests")
         }
 
-        async fn acquire_next(&self, worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             self.dequeue_calls.fetch_add(1, Ordering::SeqCst);
             *self.last_worker_id.lock() = Some(worker_id);
             if self.should_fail {
@@ -294,8 +299,8 @@ mod tests {
 
         async fn mark_completed(
             &self,
-            task_id: Uuid,
-            _lock_token: Option<Uuid>,
+            task_id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             self.complete_calls.fetch_add(1, Ordering::SeqCst);
             *self.last_task_id.lock() = Some(task_id);
@@ -307,8 +312,8 @@ mod tests {
 
         async fn mark_failed(
             &self,
-            task_id: Uuid,
-            _lock_token: Option<Uuid>,
+            task_id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             self.fail_calls.fetch_add(1, Ordering::SeqCst);
             *self.last_task_id.lock() = Some(task_id);
@@ -318,7 +323,10 @@ mod tests {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, task_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(
+            &self,
+            task_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             self.cancel_calls.fetch_add(1, Ordering::SeqCst);
             *self.last_task_id.lock() = Some(task_id);
             if self.should_fail {
@@ -349,7 +357,10 @@ mod tests {
             )
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             unreachable!("MockTaskRepository::cancel_tasks_by_crawl_id not invoked by PostgresTaskQueue tests")
         }
 
@@ -357,7 +368,10 @@ mod tests {
             unreachable!("MockTaskRepository::expire_tasks not invoked by PostgresTaskQueue tests")
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             unreachable!(
                 "MockTaskRepository::find_by_crawl_id not invoked by PostgresTaskQueue tests"
             )
@@ -372,17 +386,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             unreachable!("MockTaskRepository::batch_cancel not invoked by PostgresTaskQueue tests")
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -438,7 +458,7 @@ mod tests {
     async fn test_dequeue_empty_returns_none() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue = make_queue(mock.clone());
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let result = queue.dequeue(worker_id).await;
         assert!(result.is_ok(), "dequeue on empty queue should succeed");
         assert!(result.unwrap().is_none(), "empty queue should return None");
@@ -450,7 +470,7 @@ mod tests {
         let task = sample_task();
         let mock = Arc::new(MockTaskRepository::with_next_task(task.clone()));
         let queue = make_queue(mock.clone());
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let result = queue.dequeue(worker_id).await;
         let dequeued = result
             .expect("dequeue should succeed")
@@ -464,7 +484,7 @@ mod tests {
     async fn test_dequeue_propagates_repository_error() {
         let mock = Arc::new(MockTaskRepository::failing());
         let queue = make_queue(mock.clone());
-        let result = queue.dequeue(Uuid::new_v4()).await;
+        let result = queue.dequeue(crate::domain::id::Id::generate()).await;
         let err = result.expect_err("should propagate repository error");
         match err {
             QueueError::Repository(_) => {}
@@ -485,7 +505,7 @@ mod tests {
         let task = sample_task();
         let mock = Arc::new(MockTaskRepository::with_next_task(task.clone()));
         let queue = make_queue(mock.clone());
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let result = queue.dequeue(worker_id).await;
         assert!(result.is_ok());
         assert_eq!(mock.dequeue_calls.load(Ordering::SeqCst), 1);
@@ -496,7 +516,7 @@ mod tests {
         ensure_debug_logger();
         let mock = Arc::new(MockTaskRepository::new());
         let queue = make_queue(mock.clone());
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let result = queue.dequeue(worker_id).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
@@ -509,7 +529,7 @@ mod tests {
     async fn test_complete_calls_repository_and_returns_ok() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue = make_queue(mock.clone());
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         queue
             .complete(task_id)
             .await
@@ -522,7 +542,7 @@ mod tests {
     async fn test_fail_calls_repository_and_returns_ok() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue = make_queue(mock.clone());
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         queue.fail(task_id).await.expect("fail should succeed");
         assert_eq!(mock.fail_calls.load(Ordering::SeqCst), 1);
         assert_eq!(*mock.last_task_id.lock(), Some(task_id));
@@ -532,7 +552,7 @@ mod tests {
     async fn test_cancel_calls_repository_and_returns_ok() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue = make_queue(mock.clone());
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         queue.cancel(task_id).await.expect("cancel should succeed");
         assert_eq!(mock.cancel_calls.load(Ordering::SeqCst), 1);
         assert_eq!(*mock.last_task_id.lock(), Some(task_id));
@@ -544,7 +564,7 @@ mod tests {
     async fn test_complete_propagates_repository_error() {
         let mock = Arc::new(MockTaskRepository::failing());
         let queue = make_queue(mock.clone());
-        let result = queue.complete(Uuid::new_v4()).await;
+        let result = queue.complete(crate::domain::id::Id::generate()).await;
         assert!(matches!(result, Err(QueueError::Repository(_))));
         assert_eq!(mock.complete_calls.load(Ordering::SeqCst), 1);
     }
@@ -553,7 +573,7 @@ mod tests {
     async fn test_fail_propagates_repository_error() {
         let mock = Arc::new(MockTaskRepository::failing());
         let queue = make_queue(mock.clone());
-        let result = queue.fail(Uuid::new_v4()).await;
+        let result = queue.fail(crate::domain::id::Id::generate()).await;
         assert!(matches!(result, Err(QueueError::Repository(_))));
         assert_eq!(mock.fail_calls.load(Ordering::SeqCst), 1);
     }
@@ -562,7 +582,7 @@ mod tests {
     async fn test_cancel_propagates_repository_error() {
         let mock = Arc::new(MockTaskRepository::failing());
         let queue = make_queue(mock.clone());
-        let result = queue.cancel(Uuid::new_v4()).await;
+        let result = queue.cancel(crate::domain::id::Id::generate()).await;
         assert!(matches!(result, Err(QueueError::Repository(_))));
         assert_eq!(mock.cancel_calls.load(Ordering::SeqCst), 1);
     }
@@ -610,7 +630,7 @@ mod tests {
     async fn test_arc_delegation_dequeue() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue = Arc::new(make_queue(mock.clone()));
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let result = queue.dequeue(worker_id).await;
         assert!(result.is_ok());
         assert_eq!(mock.dequeue_calls.load(Ordering::SeqCst), 1);
@@ -620,7 +640,10 @@ mod tests {
     async fn test_arc_delegation_complete() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue = Arc::new(make_queue(mock.clone()));
-        queue.complete(Uuid::new_v4()).await.unwrap();
+        queue
+            .complete(crate::domain::id::Id::generate())
+            .await
+            .unwrap();
         assert_eq!(mock.complete_calls.load(Ordering::SeqCst), 1);
     }
 
@@ -628,7 +651,7 @@ mod tests {
     async fn test_arc_delegation_fail() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue = Arc::new(make_queue(mock.clone()));
-        queue.fail(Uuid::new_v4()).await.unwrap();
+        queue.fail(crate::domain::id::Id::generate()).await.unwrap();
         assert_eq!(mock.fail_calls.load(Ordering::SeqCst), 1);
     }
 
@@ -636,7 +659,10 @@ mod tests {
     async fn test_arc_delegation_cancel() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue = Arc::new(make_queue(mock.clone()));
-        queue.cancel(Uuid::new_v4()).await.unwrap();
+        queue
+            .cancel(crate::domain::id::Id::generate())
+            .await
+            .unwrap();
         assert_eq!(mock.cancel_calls.load(Ordering::SeqCst), 1);
     }
 
@@ -650,7 +676,10 @@ mod tests {
         let queue = make_queue(mock.clone());
 
         // Dequeue first (the mock's next_task was pre-set).
-        let dequeued = queue.dequeue(Uuid::new_v4()).await.unwrap();
+        let dequeued = queue
+            .dequeue(crate::domain::id::Id::generate())
+            .await
+            .unwrap();
         assert!(
             dequeued.is_some(),
             "configured next_task should be returned"
@@ -658,7 +687,10 @@ mod tests {
         assert_eq!(dequeued.unwrap().id, task.id);
 
         // Second dequeue should return None (mock's next_task was taken).
-        let second = queue.dequeue(Uuid::new_v4()).await.unwrap();
+        let second = queue
+            .dequeue(crate::domain::id::Id::generate())
+            .await
+            .unwrap();
         assert!(second.is_none(), "second dequeue should return None");
     }
 
@@ -667,9 +699,9 @@ mod tests {
         // Verify each lifecycle method is independent and doesn't interfere.
         let mock = Arc::new(MockTaskRepository::new());
         let queue = make_queue(mock.clone());
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
-        let id3 = Uuid::new_v4();
+        let id1 = crate::domain::id::Id::generate();
+        let id2 = crate::domain::id::Id::generate();
+        let id3 = crate::domain::id::Id::generate();
 
         queue.complete(id1).await.unwrap();
         queue.fail(id2).await.unwrap();
@@ -702,7 +734,7 @@ mod tests {
     async fn test_arc_dyn_delegation_dequeue() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue: Arc<dyn TaskQueue> = Arc::new(make_queue(mock.clone()));
-        let result = queue.dequeue(Uuid::new_v4()).await;
+        let result = queue.dequeue(crate::domain::id::Id::generate()).await;
         assert!(result.is_ok());
         assert_eq!(mock.dequeue_calls.load(Ordering::SeqCst), 1);
     }
@@ -711,7 +743,10 @@ mod tests {
     async fn test_arc_dyn_delegation_complete() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue: Arc<dyn TaskQueue> = Arc::new(make_queue(mock.clone()));
-        queue.complete(Uuid::new_v4()).await.unwrap();
+        queue
+            .complete(crate::domain::id::Id::generate())
+            .await
+            .unwrap();
         assert_eq!(mock.complete_calls.load(Ordering::SeqCst), 1);
     }
 
@@ -719,7 +754,7 @@ mod tests {
     async fn test_arc_dyn_delegation_fail() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue: Arc<dyn TaskQueue> = Arc::new(make_queue(mock.clone()));
-        queue.fail(Uuid::new_v4()).await.unwrap();
+        queue.fail(crate::domain::id::Id::generate()).await.unwrap();
         assert_eq!(mock.fail_calls.load(Ordering::SeqCst), 1);
     }
 
@@ -727,7 +762,10 @@ mod tests {
     async fn test_arc_dyn_delegation_cancel() {
         let mock = Arc::new(MockTaskRepository::new());
         let queue: Arc<dyn TaskQueue> = Arc::new(make_queue(mock.clone()));
-        queue.cancel(Uuid::new_v4()).await.unwrap();
+        queue
+            .cancel(crate::domain::id::Id::generate())
+            .await
+            .unwrap();
         assert_eq!(mock.cancel_calls.load(Ordering::SeqCst), 1);
     }
 }

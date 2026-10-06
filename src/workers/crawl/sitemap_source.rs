@@ -37,7 +37,6 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use url::Url;
-use uuid::Uuid;
 
 use crate::application::dto::map_request::MapRequestDto;
 use crate::application::use_cases::map_use_case::{
@@ -80,9 +79,9 @@ pub struct SitemapFeedStats {
 /// 入队 Task 行的种子上下文（继承种子任务的归属与配置）
 #[derive(Debug, Clone)]
 pub struct SeedTaskContext {
-    pub team_id: Uuid,
-    pub api_key_id: Uuid,
-    pub crawl_id: Uuid,
+    pub team_id: crate::domain::id::Id,
+    pub api_key_id: crate::domain::id::Id,
+    pub crawl_id: crate::domain::id::Id,
     /// 子任务 priority（对齐 `extract_and_queue_links`：继承种子任务）
     pub priority: i32,
     /// 种子任务 payload 中的 `config`（原样透传，保持与链接提取侧同构）
@@ -90,7 +89,7 @@ pub struct SeedTaskContext {
 }
 
 /// 指针的 cache key（每 crawl 一条）
-pub fn sitemap_feed_pointer_key(crawl_id: Uuid) -> String {
+pub fn sitemap_feed_pointer_key(crawl_id: crate::domain::id::Id) -> String {
     format!("crawl:sitemap-feed:{crawl_id}")
 }
 
@@ -109,7 +108,7 @@ pub fn derive_sitemap_url(seed_url: &str) -> Option<String> {
 /// 指针是加速不是正确性依赖，任何异常都安全回退到全量重喂 + 去重兜底。
 async fn load_pointer(
     cache: &dyn CacheService,
-    crawl_id: Uuid,
+    crawl_id: crate::domain::id::Id,
     sitemap_url: &str,
 ) -> Option<usize> {
     let raw = cache
@@ -334,7 +333,7 @@ async fn flush_batch(
 
     for url in &new_urls {
         let task = Task {
-            id: Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Crawl,
             status: TaskStatus::Queued,
             priority: seed.priority,
@@ -476,30 +475,36 @@ mod tests {
             self.created.lock().push(task.clone());
             Ok(task.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -528,13 +533,19 @@ mod tests {
         ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -545,16 +556,22 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -577,7 +594,7 @@ mod tests {
         }
         async fn find_by_id(
             &self,
-            _id: Uuid,
+            _id: crate::domain::id::Id,
         ) -> Result<Option<crate::domain::models::Crawl>, RepositoryError> {
             Ok(None)
         }
@@ -587,32 +604,44 @@ mod tests {
         ) -> Result<crate::domain::models::Crawl, RepositoryError> {
             Ok(crawl.clone())
         }
-        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_completed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_failed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn update_status(
             &self,
-            _id: Uuid,
+            _id: crate::domain::id::Id,
             _status: crate::domain::models::CrawlStatus,
         ) -> Result<(), RepositoryError> {
             Ok(())
         }
-        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_total_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             self.total_added.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
         async fn find_by_team_id_paginated(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u32,
             _offset: u32,
         ) -> Result<Vec<crate::domain::models::Crawl>, RepositoryError> {
             Ok(vec![])
         }
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn count_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
     }
@@ -650,10 +679,10 @@ mod tests {
         }
     }
 
-    fn seed_ctx(crawl_id: Uuid) -> SeedTaskContext {
+    fn seed_ctx(crawl_id: crate::domain::id::Id) -> SeedTaskContext {
         SeedTaskContext {
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             crawl_id,
             priority: 100,
             config_json: json!({"max_depth": 2}),
@@ -709,7 +738,7 @@ mod tests {
         let fetcher = StaticSitemapFetcher {
             responses: HashMap::from([(SITEMAP_URL.to_string(), (200u16, urlset_xml(&locs)))]),
         };
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         let task_repo = CountingTaskRepo::new();
         let crawl_repo = CountingCrawlRepo::default();
         let cache = MockCache::default();
@@ -781,7 +810,7 @@ mod tests {
             Some(vec!["a\\.com/blog/.*".to_string()]),
             Some(vec!["a\\.com/blog/tag/.*".to_string()]),
             vec![],
-            seed_ctx(Uuid::new_v4()),
+            seed_ctx(crate::domain::id::Id::generate()),
             &dedup,
             &task_repo,
             &crawl_repo,
@@ -815,7 +844,7 @@ mod tests {
             Some(vec![]),
             None,
             vec![],
-            seed_ctx(Uuid::new_v4()),
+            seed_ctx(crate::domain::id::Id::generate()),
             &dedup,
             &task_repo,
             &crawl_repo,
@@ -846,7 +875,7 @@ mod tests {
             None,
             None,
             vec!["evil.com".to_string()],
-            seed_ctx(Uuid::new_v4()),
+            seed_ctx(crate::domain::id::Id::generate()),
             &dedup,
             &task_repo,
             &crawl_repo,
@@ -887,7 +916,7 @@ mod tests {
             None,
             None,
             vec![],
-            seed_ctx(Uuid::new_v4()),
+            seed_ctx(crate::domain::id::Id::generate()),
             &dedup,
             &task_repo,
             &crawl_repo,
@@ -911,7 +940,7 @@ mod tests {
     async fn feed_resumes_from_pointer_seek() {
         let locs: Vec<String> = (0..10).map(|i| format!("https://a.com/{i}")).collect();
         let xml = urlset_xml(&locs);
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
 
         // 第一次：喂入 3 条后"崩溃"（手动写指针模拟断点）
         let cache = MockCache::default();
@@ -974,7 +1003,7 @@ mod tests {
         let fetcher = StaticSitemapFetcher {
             responses: HashMap::from([(SITEMAP_URL.to_string(), (200u16, urlset_xml(&locs)))]),
         };
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         let cache = MockCache::default();
         let pointer = SitemapFeedPointer {
             sitemap_url: "https://a.com/old-sitemap.xml".to_string(),
@@ -1022,7 +1051,7 @@ mod tests {
         let fetcher = StaticSitemapFetcher {
             responses: HashMap::from([(SITEMAP_URL.to_string(), (200u16, urlset_xml(&locs)))]),
         };
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         let cache = MockCache::default();
         cache
             .set(&sitemap_feed_pointer_key(crawl_id), "{{not json", 3600)
@@ -1069,7 +1098,7 @@ mod tests {
             None,
             None,
             vec![],
-            seed_ctx(Uuid::new_v4()),
+            seed_ctx(crate::domain::id::Id::generate()),
             &dedup,
             &task_repo,
             &crawl_repo,
@@ -1099,7 +1128,7 @@ mod tests {
             None,
             None,
             vec![],
-            seed_ctx(Uuid::new_v4()),
+            seed_ctx(crate::domain::id::Id::generate()),
             &dedup,
             &task_repo,
             &crawl_repo,
@@ -1129,7 +1158,7 @@ mod tests {
             None,
             None,
             vec![],
-            seed_ctx(Uuid::new_v4()),
+            seed_ctx(crate::domain::id::Id::generate()),
             &dedup,
             &task_repo,
             &crawl_repo,
@@ -1150,7 +1179,7 @@ mod tests {
         let fetcher = StaticSitemapFetcher {
             responses: HashMap::from([(SITEMAP_URL.to_string(), (200u16, urlset_xml(&locs)))]),
         };
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         let task_repo = CountingTaskRepo::new();
         let crawl_repo = CountingCrawlRepo::default();
         let cache = MockCache::default();

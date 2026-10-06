@@ -11,7 +11,6 @@ use axum::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::application::dto::crawl_request::CrawlRequestDto;
 use crate::application::use_cases::crawl_use_case::CrawlUseCaseError;
@@ -252,7 +251,7 @@ pub async fn cancel_crawl(
     Extension(auth_state): Extension<AuthState>,
     Extension(locale): Extension<Locale>,
     Extension(bundle): Extension<Arc<I18nBundle>>,
-    Path(crawl_id): Path<Uuid>,
+    Path(crawl_id): Path<crate::domain::id::Id>,
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
     let use_case = state.create_use_case();

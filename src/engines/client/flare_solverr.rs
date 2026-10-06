@@ -957,3 +957,397 @@ impl ScraperEngine for FlareSolverrEngine {
         self.mrt()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engines::engine_client::HttpMethod;
+
+    fn mk_req(url: &str) -> InternalScrapeRequest {
+        InternalScrapeRequest {
+            url: url.to_string(),
+            method: HttpMethod::Get,
+            headers: HashMap::new(),
+            timeout: Duration::from_secs(30),
+            needs_js: false,
+            needs_screenshot: false,
+            screenshot_config: None,
+            mobile: false,
+            proxy: None,
+            skip_tls_verification: false,
+            needs_tls_fingerprint: false,
+            use_fire_engine: false,
+            actions: Vec::new(),
+            body: None,
+            sync_wait_ms: 0,
+            block_ads: false,
+            block_media: false,
+            session_id: None,
+            wait_for: None,
+            needs_mllm: false,
+        }
+    }
+
+    fn engine() -> FlareSolverrEngine {
+        FlareSolverrEngine::with_url(Arc::new(Client::new()), "http://127.0.0.1:8192")
+    }
+
+    #[test]
+    fn mode_engine_name_maps_each_variant() {
+        assert_eq!(FlareSolverrMode::Full.engine_name(), "flaresolverr");
+        assert_eq!(FlareSolverrMode::Cdp.engine_name(), "flaresolverr_cdp");
+        assert_eq!(FlareSolverrMode::Tls.engine_name(), "flaresolverr_tls");
+        assert_eq!(FlareSolverrMode::default(), FlareSolverrMode::Full);
+    }
+
+    #[test]
+    fn mode_supports_tls_fingerprint() {
+        assert!(!FlareSolverrMode::Full.supports_tls_fingerprint());
+        assert!(FlareSolverrMode::Cdp.supports_tls_fingerprint());
+        assert!(FlareSolverrMode::Tls.supports_tls_fingerprint());
+    }
+
+    #[test]
+    fn mode_default_mrt_by_variant() {
+        assert_eq!(
+            FlareSolverrMode::Full.default_mrt(),
+            Duration::from_secs(30)
+        );
+        assert_eq!(FlareSolverrMode::Cdp.default_mrt(), Duration::from_secs(30));
+        assert_eq!(FlareSolverrMode::Tls.default_mrt(), Duration::from_secs(15));
+    }
+
+    #[test]
+    fn validate_flaresolverr_url_accepts_http_https() {
+        assert_eq!(
+            validate_flaresolverr_url("http://h:1").unwrap(),
+            "http://h:1"
+        );
+        assert_eq!(validate_flaresolverr_url("https://h").unwrap(), "https://h");
+    }
+
+    #[test]
+    fn validate_flaresolverr_url_rejects_bad_scheme_and_format() {
+        assert!(validate_flaresolverr_url("ftp://h").is_err());
+        assert!(validate_flaresolverr_url("not a url").is_err());
+        assert!(validate_flaresolverr_url("").is_err());
+    }
+
+    #[test]
+    fn with_url_valid_keeps_url_and_invalid_falls_back() {
+        let good = FlareSolverrEngine::with_url(Arc::new(Client::new()), "http://127.0.0.1:8192");
+        assert_eq!(good.config.url, "http://127.0.0.1:8192");
+        assert_eq!(good.mode(), FlareSolverrMode::Full);
+        let bad = FlareSolverrEngine::with_url(Arc::new(Client::new()), "ftp://nope");
+        assert_eq!(bad.config.url, FALLBACK_URL);
+    }
+
+    #[test]
+    fn mode_constructors_set_expected_mode() {
+        let c = FlareSolverrEngine::with_cdp_mode_and_url(
+            Arc::new(Client::new()),
+            "http://127.0.0.1:8192",
+            Some("http://proxy:8080"),
+        );
+        assert_eq!(c.mode(), FlareSolverrMode::Cdp);
+        assert_eq!(c.config.proxy_url.as_deref(), Some("http://proxy:8080"));
+        assert!(c.supports_tls_fingerprint());
+
+        let t = FlareSolverrEngine::with_tls_mode_and_url(
+            Arc::new(Client::new()),
+            "http://127.0.0.1:8192",
+            None,
+        );
+        assert_eq!(t.mode(), FlareSolverrMode::Tls);
+        assert!(t.supports_tls_fingerprint());
+    }
+
+    #[test]
+    fn constructors_with_explicit_mrt_override_default() {
+        let full = FlareSolverrEngine::with_url_and_mrt(
+            Arc::new(Client::new()),
+            "http://127.0.0.1:8192",
+            Duration::from_secs(7),
+            42,
+        );
+        assert_eq!(full.mrt(), Duration::from_secs(7));
+        assert_eq!(full.config.timeout_seconds, 42);
+
+        let cdp = FlareSolverrEngine::with_cdp_mode_url_and_mrt(
+            Arc::new(Client::new()),
+            "http://127.0.0.1:8192",
+            None,
+            Duration::from_secs(9),
+            30,
+        );
+        assert_eq!(cdp.mrt(), Duration::from_secs(9));
+
+        let tls = FlareSolverrEngine::with_tls_mode_url_and_mrt(
+            Arc::new(Client::new()),
+            "http://127.0.0.1:8192",
+            None,
+            Duration::from_secs(5),
+            20,
+        );
+        assert_eq!(tls.mrt(), Duration::from_secs(5));
+        assert_eq!(tls.mode(), FlareSolverrMode::Tls);
+    }
+
+    #[test]
+    fn mrt_defaults_per_mode_when_not_injected() {
+        assert_eq!(
+            FlareSolverrEngine::with_url(Arc::new(Client::new()), "http://h:1").mrt(),
+            Duration::from_secs(30)
+        );
+        let tls =
+            FlareSolverrEngine::with_tls_mode_and_url(Arc::new(Client::new()), "http://h:1", None);
+        assert_eq!(tls.mrt(), Duration::from_secs(15));
+    }
+
+    #[test]
+    fn builder_fluently_sets_all_fields() {
+        let e = FlareSolverrEngine::builder()
+            .with_url("http://127.0.0.1:8192")
+            .with_timeout(77)
+            .with_session("sess-1")
+            .with_mode(FlareSolverrMode::Cdp)
+            .with_proxy("http://p:1")
+            .with_mrt(Duration::from_secs(11))
+            .build(Arc::new(Client::new()));
+        assert_eq!(e.mode(), FlareSolverrMode::Cdp);
+        assert_eq!(e.session_id(), Some("sess-1"));
+        assert_eq!(e.config.timeout_seconds, 77);
+        assert_eq!(e.config.proxy_url.as_deref(), Some("http://p:1"));
+        assert_eq!(e.mrt(), Duration::from_secs(11));
+    }
+
+    #[test]
+    fn session_id_none_when_unset() {
+        assert_eq!(engine().session_id(), None);
+    }
+
+    #[test]
+    fn api_url_appends_v1_without_duplication() {
+        let a = FlareSolverrEngine::with_url(Arc::new(Client::new()), "http://h:1/");
+        assert_eq!(a.api_url(), "http://h:1/v1");
+        let b = FlareSolverrEngine::with_config(
+            Arc::new(Client::new()),
+            FlareSolverrConfig {
+                url: "http://h:1/v1".to_string(),
+                timeout_seconds: 60,
+                session_id: None,
+                mode: FlareSolverrMode::Full,
+                proxy_url: None,
+                mrt: None,
+            },
+        );
+        assert_eq!(b.api_url(), "http://h:1/v1");
+    }
+
+    #[test]
+    fn name_and_max_response_time_and_tls_flag() {
+        assert_eq!(engine().name(), "flaresolverr");
+        let tls =
+            FlareSolverrEngine::with_tls_mode_and_url(Arc::new(Client::new()), "http://h:1", None);
+        assert_eq!(tls.name(), "flaresolverr_tls");
+        assert_eq!(tls.max_response_time(), Duration::from_secs(15));
+    }
+
+    #[test]
+    fn support_score_full_mode_branches() {
+        let e = FlareSolverrEngine::with_url(Arc::new(Client::new()), "http://h:1");
+        let mut post = mk_req("https://example.com");
+        post.method = HttpMethod::Post;
+        assert_eq!(e.support_score(&post), 0);
+        assert_eq!(e.support_score(&mk_req("https://example.com")), 80);
+        let mut js = mk_req("https://example.com");
+        js.needs_js = true;
+        assert_eq!(e.support_score(&js), 100);
+    }
+
+    #[test]
+    fn support_score_cdp_mode_branches() {
+        let e =
+            FlareSolverrEngine::with_cdp_mode_and_url(Arc::new(Client::new()), "http://h:1", None);
+        let mut tls_shot = mk_req("https://example.com");
+        tls_shot.needs_tls_fingerprint = true;
+        tls_shot.needs_screenshot = true;
+        assert_eq!(e.support_score(&tls_shot), 100);
+        let mut fire = mk_req("https://example.com");
+        fire.use_fire_engine = true;
+        assert_eq!(e.support_score(&fire), 100);
+        let mut shot = mk_req("https://example.com");
+        shot.needs_screenshot = true;
+        assert_eq!(e.support_score(&shot), 80);
+        let mut js = mk_req("https://example.com");
+        js.needs_js = true;
+        assert_eq!(e.support_score(&js), 90);
+        assert_eq!(e.support_score(&mk_req("https://example.com")), 40);
+    }
+
+    #[test]
+    fn support_score_tls_mode_branches() {
+        let e =
+            FlareSolverrEngine::with_tls_mode_and_url(Arc::new(Client::new()), "http://h:1", None);
+        let mut fire = mk_req("https://example.com");
+        fire.use_fire_engine = true;
+        assert_eq!(e.support_score(&fire), 95);
+        let mut tls = mk_req("https://example.com");
+        tls.needs_tls_fingerprint = true;
+        assert_eq!(e.support_score(&tls), 90);
+        let mut js = mk_req("https://example.com");
+        js.needs_js = true;
+        assert_eq!(e.support_score(&js), 60);
+        assert_eq!(e.support_score(&mk_req("https://example.com")), 70);
+    }
+
+    // === scrape() / session 行为测试（本地 axum mock + 公网 IP 字面量 request.url 过 SSRF）===
+
+    /// 公网 IP 字面量：SSRF 校验对非私网 IP 无需 DNS，确定性通过。
+    const PUBLIC_TARGET: &str = "http://93.184.216.34";
+
+    async fn start_mock(body: String) -> String {
+        use axum::http::header::CONTENT_TYPE;
+        use axum::routing::post;
+        use axum::Router;
+        use tokio::net::TcpListener;
+        let app = Router::new().route(
+            "/v1",
+            post(move || {
+                let b = body.clone();
+                async move { ([(CONTENT_TYPE, "application/json")], b) }
+            }),
+        );
+        let l = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = l.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(l, app).await;
+        });
+        format!("http://{}", addr)
+    }
+
+    fn solution_json(response_body: &str) -> String {
+        format!(
+            r#"{{"status":"ok","message":"","solution":{{"url":"http://x","status":200,"response":"{}","headers":{{"content-type":"text/html"}},"cookies":[],"user_agent":"ua","screenshot":null,"start_timestamp":1,"end_timestamp":2}}}}"#,
+            response_body
+        )
+    }
+
+    #[tokio::test]
+    async fn scrape_rejects_non_get() {
+        let mut r = mk_req(PUBLIC_TARGET);
+        r.method = HttpMethod::Post;
+        let e = engine();
+        let err = e.scrape(&r).await.expect_err("non-GET must err");
+        assert!(matches!(err, EngineError::Other(_)));
+    }
+
+    #[tokio::test]
+    async fn scrape_tls_mode_rejects_screenshot() {
+        let e = FlareSolverrEngine::with_tls_mode_and_url(
+            Arc::new(Client::new()),
+            "http://127.0.0.1:1",
+            None,
+        );
+        let mut r = mk_req(PUBLIC_TARGET);
+        r.needs_screenshot = true;
+        let err = e.scrape(&r).await.expect_err("tls+screenshot must err");
+        assert!(matches!(err, EngineError::Other(_)));
+    }
+
+    #[tokio::test]
+    async fn scrape_success_path_returns_solution() {
+        let mock = start_mock(solution_json("<html>hello</html>")).await;
+        let e = FlareSolverrEngine::with_url(Arc::new(Client::new()), &mock);
+        let resp = e.scrape(&mk_req(PUBLIC_TARGET)).await.expect("scrape ok");
+        assert_eq!(resp.status_code, 200);
+        assert!(resp.content.contains("hello"));
+        assert_eq!(resp.content_type, "text/html");
+    }
+
+    #[tokio::test]
+    async fn scrape_error_status_maps_to_request_failed() {
+        let mock = start_mock(r#"{"status":"error","message":"boom"}"#.to_string()).await;
+        let e = FlareSolverrEngine::with_url(Arc::new(Client::new()), &mock);
+        let err = e
+            .scrape(&mk_req(PUBLIC_TARGET))
+            .await
+            .expect_err("error status");
+        assert!(matches!(err, EngineError::RequestFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn scrape_captcha_page_maps_to_antibot() {
+        let mock = start_mock(solution_json(
+            "this page has a CAPTCHA to verify you are human",
+        ))
+        .await;
+        let e = FlareSolverrEngine::with_url(Arc::new(Client::new()), &mock);
+        let err = e.scrape(&mk_req(PUBLIC_TARGET)).await.expect_err("captcha");
+        assert!(matches!(err, EngineError::AntiBotDetected(_)));
+    }
+
+    #[tokio::test]
+    async fn scrape_ok_but_no_solution_is_request_failed() {
+        let mock = start_mock(r#"{"status":"ok","message":""}"#.to_string()).await;
+        let e = FlareSolverrEngine::with_url(Arc::new(Client::new()), &mock);
+        let err = e
+            .scrape(&mk_req(PUBLIC_TARGET))
+            .await
+            .expect_err("no solution");
+        assert!(matches!(err, EngineError::RequestFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn scrape_invalid_json_is_request_failed() {
+        let mock = start_mock("not-json".to_string()).await;
+        let e = FlareSolverrEngine::with_url(Arc::new(Client::new()), &mock);
+        let err = e
+            .scrape(&mk_req(PUBLIC_TARGET))
+            .await
+            .expect_err("bad json");
+        assert!(matches!(err, EngineError::RequestFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn create_session_ok_sets_id() {
+        let mock =
+            start_mock(r#"{"status":"ok","message":"","session":"abc-123"}"#.to_string()).await;
+        let mut e = FlareSolverrEngine::with_url(Arc::new(Client::new()), &mock);
+        let sid = e.create_session().await.expect("create session");
+        assert_eq!(sid, "abc-123");
+        assert_eq!(e.session_id(), Some("abc-123"));
+    }
+
+    #[tokio::test]
+    async fn create_session_no_id_is_err() {
+        let mock = start_mock(r#"{"status":"ok","message":""}"#.to_string()).await;
+        let mut e = FlareSolverrEngine::with_url(Arc::new(Client::new()), &mock);
+        assert!(e.create_session().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn create_session_error_status_is_err() {
+        let mock = start_mock(r#"{"status":"error","message":"nope"}"#.to_string()).await;
+        let mut e = FlareSolverrEngine::with_url(Arc::new(Client::new()), &mock);
+        assert!(e.create_session().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn destroy_session_ok_clears_id() {
+        let mock = start_mock(r#"{"status":"ok","message":""}"#.to_string()).await;
+        let mut e = FlareSolverrEngine::builder()
+            .with_url(&mock)
+            .with_session("s1")
+            .build(Arc::new(Client::new()));
+        e.destroy_session("s1").await.expect("destroy ok");
+        assert_eq!(e.session_id(), None);
+    }
+
+    #[tokio::test]
+    async fn destroy_session_error_status_is_err() {
+        let mock = start_mock(r#"{"status":"error","message":"x"}"#.to_string()).await;
+        let mut e = FlareSolverrEngine::with_url(Arc::new(Client::new()), &mock);
+        assert!(e.destroy_session("s1").await.is_err());
+    }
+}

@@ -221,4 +221,52 @@ mod tests {
             "所有搜索引擎都失败。"
         );
     }
+
+    /// 遍历所有可构造变体，锁定 `user_message_locale` 每个 match 分支均产出非空本地化文案，
+    /// 并保证 Display 规范串非空（Network/Timeout 因需构造 reqwest::Error/Elapsed 不在此列）。
+    #[test]
+    fn test_user_message_locale_covers_all_constructible_variants() {
+        let bundle = test_bundle();
+        let en: Locale = "en-US".parse().unwrap();
+        let zh: Locale = "zh-CN".parse().unwrap();
+        let variants = vec![
+            SearchError::Parse("p".into()),
+            SearchError::ContentParsing("c".into()),
+            SearchError::EngineClient("bing".into(), "boom".into()),
+            SearchError::BadHttpStatus("bing".into(), 500),
+            SearchError::RateLimited("slow".into()),
+            SearchError::Captcha("sogou".into()),
+            SearchError::InsufficientContent("bing".into(), "too short".into()),
+            SearchError::AllEnginesFailed,
+            SearchError::EngineFailed("bing".into()),
+            SearchError::SmartRoutingFailed("retry exhausted".into()),
+            SearchError::SmartRoutingTimeout(30),
+            SearchError::EngineCreationFailed("cfg missing".into()),
+            SearchError::CircuitOpen("open".into()),
+            SearchError::NoEngineAvailable,
+        ];
+        for v in &variants {
+            assert!(
+                !v.user_message_locale(&en, &bundle).is_empty(),
+                "en empty: {v:?}"
+            );
+            assert!(
+                !v.user_message_locale(&zh, &bundle).is_empty(),
+                "zh empty: {v:?}"
+            );
+            assert!(!v.to_string().is_empty(), "display empty: {v:?}");
+        }
+        // 锁定关键映射不漂移
+        assert_eq!(
+            SearchError::BadHttpStatus("bing".into(), 503).user_message_locale(&en, &bundle),
+            bundle.translate_with_args(
+                &en,
+                "search-error-bad-http-status",
+                &[
+                    ("engine", fluent_bundle::FluentValue::from("bing")),
+                    ("status", fluent_bundle::FluentValue::from(503_i64)),
+                ],
+            )
+        );
+    }
 }

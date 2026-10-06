@@ -152,6 +152,36 @@ pub struct Settings {
     /// （同 `sitemap` / `crawl` 节先例）。
     #[serde(default)]
     pub content_extraction: ContentExtractionSettings,
+
+    /// ID 生成配置（NebulaId 迁移；`serde(default)` 兼容旧配置缺 `[id]` 节）
+    #[serde(default)]
+    pub id: IdSettings,
+}
+
+// =============================================================================
+// ID 生成配置（NebulaId）
+// =============================================================================
+
+/// NebulaId ID 生成配置。
+///
+/// 默认算法 `uuid_v8`（生成 UUID 兼容值，DB `UUID` 列与 API JSON 契约零改动）；
+/// `snowflake` 为可选数值算法。`workspace`/`group` 为调用
+/// `IdGenerator::generate(workspace, group, biz_tag)` 时的默认标识，`biz_tag`
+/// 由各业务域在生成点传入。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ID__")]
+pub struct IdSettings {
+    /// 算法：`uuid_v8`（默认）或 `snowflake`。
+    #[config(default = "uuid_v8".to_string())]
+    pub algorithm: String,
+
+    /// 默认 workspace 标识。
+    #[config(default = "crawlrs".to_string())]
+    pub workspace: String,
+
+    /// 默认 group 标识。
+    #[config(default = "default".to_string())]
+    pub group: String,
 }
 
 // =============================================================================
@@ -1159,6 +1189,7 @@ mod tests {
             politeness: PolitenessSettings::default(),
             session: SessionSettings::default(),
             content_extraction: ContentExtractionSettings::default(),
+            id: IdSettings::default(),
         };
 
         assert_eq!(settings.server.port, 8899);

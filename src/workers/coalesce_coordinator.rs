@@ -34,7 +34,6 @@ use log::{debug, error, info, warn};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use uuid::Uuid;
 
 /// 请求合并协调器
 ///
@@ -94,7 +93,7 @@ impl CoalesceCoordinator {
         &self,
         url: &str,
         task: &Task,
-        worker_id: Uuid,
+        worker_id: crate::domain::id::Id,
     ) -> Result<Option<CoalesceGuard>> {
         match self.request_coalescer.try_start(url, task.id) {
             CoalesceResult::Proceed(g) => Ok(Some(g)),
@@ -191,7 +190,7 @@ impl CoalesceCoordinator {
                                     .await?
                                     .is_none()
                                 {
-                                    leader_result.id = Uuid::new_v4();
+                                    leader_result.id = crate::domain::id::Id::generate();
                                     leader_result.task_id = task.id;
                                     leader_result.created_at = Utc::now();
                                     self.result_repository.save(leader_result).await?;
@@ -228,7 +227,7 @@ impl CoalesceCoordinator {
     async fn reschedule_or_fail(
         &self,
         task: &Task,
-        worker_id: Uuid,
+        worker_id: crate::domain::id::Id,
         reason: &str,
     ) -> Result<Option<CoalesceGuard>> {
         // 追踪 reschedule 次数，超过上限后 mark_failed 防止无限循环
@@ -287,7 +286,6 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
-    use uuid::Uuid;
 
     // === Mock Repositories ===
 
@@ -314,7 +312,10 @@ mod tests {
         async fn create(&self, task: &Task) -> Result<Task, RepositoryError> {
             Ok(task.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, task: &Task) -> Result<Task, RepositoryError> {
@@ -328,26 +329,29 @@ mod tests {
             self.captured_updates.lock().unwrap().push(task.clone());
             Ok(1)
         }
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             self.mark_completed_calls.fetch_add(1, Ordering::SeqCst);
             Ok(1)
         }
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             self.mark_failed_calls.fetch_add(1, Ordering::SeqCst);
             Ok(1)
         }
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
         async fn exists_by_url(&self, _url: &str) -> Result<bool, RepositoryError> {
@@ -365,13 +369,19 @@ mod tests {
         ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
         async fn expire_tasks(&self) -> Result<u64, RepositoryError> {
             Ok(0)
         }
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
         async fn query_tasks(
@@ -382,17 +392,23 @@ mod tests {
         }
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -404,16 +420,16 @@ mod tests {
         return_some: Mutex<bool>,
         /// 记录最近一次 find_by_task_id 查询的 task_id，
         /// 用于断言等待方按 leader task_id（而非自身）查询。
-        last_query_task_id: Mutex<Option<Uuid>>,
+        last_query_task_id: Mutex<Option<crate::domain::id::Id>>,
         /// 首次查询的 task_id（复制源必须为 leader 结果）。
-        first_query_task_id: Mutex<Option<Uuid>>,
+        first_query_task_id: Mutex<Option<crate::domain::id::Id>>,
         /// save 调用次数与最近一次落库结果的 task_id
         /// （结果须复制并改挂到等待方 task_id 名下）。
         save_calls: AtomicU32,
-        last_saved_task_id: Mutex<Option<Uuid>>,
+        last_saved_task_id: Mutex<Option<crate::domain::id::Id>>,
         /// 设定时 find_by_task_id 仅对该 task_id 返回 Some
         /// （模拟真实语义：结果只落在 leader 名下）。
-        some_only_for: Mutex<Option<Uuid>>,
+        some_only_for: Mutex<Option<crate::domain::id::Id>>,
     }
 
     impl ConfigurableResultRepo {
@@ -430,7 +446,7 @@ mod tests {
         }
 
         /// 模拟"结果只落在 leader 名下"：仅 leader 的 task_id 查询返回 Some
-        fn new_with_result_only_for(leader_id: Uuid) -> Self {
+        fn new_with_result_only_for(leader_id: crate::domain::id::Id) -> Self {
             Self {
                 find_calls: AtomicU32::new(0),
                 return_some: Mutex::new(true),
@@ -452,7 +468,7 @@ mod tests {
         }
         async fn find_by_task_id(
             &self,
-            task_id: Uuid,
+            task_id: crate::domain::id::Id,
         ) -> Result<Option<crate::domain::models::ScrapeResult>> {
             self.find_calls.fetch_add(1, Ordering::SeqCst);
             let mut first = self.first_query_task_id.lock().unwrap();
@@ -470,8 +486,8 @@ mod tests {
             };
             if hit {
                 Ok(Some(crate::domain::models::ScrapeResult {
-                    id: uuid::Uuid::new_v4(),
-                    task_id: uuid::Uuid::new_v4(),
+                    id: crate::domain::id::Id::generate(),
+                    task_id: crate::domain::id::Id::generate(),
                     url: String::new(),
                     status_code: 200,
                     content: String::new(),
@@ -488,11 +504,11 @@ mod tests {
         }
         async fn find_by_task_ids(
             &self,
-            _task_ids: &[Uuid],
+            _task_ids: &[crate::domain::id::Id],
         ) -> Result<Vec<crate::domain::models::ScrapeResult>> {
             Ok(vec![])
         }
-        async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
+        async fn get_team_avg_response_time(&self, _team_id: crate::domain::id::Id) -> Result<f64> {
             Ok(0.0)
         }
 
@@ -503,10 +519,10 @@ mod tests {
 
     fn make_task() -> Task {
         Task::new(
-            uuid::Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             TaskType::Scrape,
-            uuid::Uuid::new_v4(),
-            uuid::Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "https://example.com".to_string(),
             json!({}),
         )
@@ -515,7 +531,7 @@ mod tests {
     /// Proceed 路径：首个 worker 获得执行权，返回 Some(guard)
     #[tokio::test]
     async fn try_coalesce_proceed_returns_some_guard() {
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let task_repo = Arc::new(CountingTaskRepo::new());
         let result_repo = Arc::new(ConfigurableResultRepo::new(false));
         let coalescer = Arc::new(RequestCoalescer::new());
@@ -536,7 +552,7 @@ mod tests {
     /// Wait 路径收到广播但 result_repo 未命中：延后 5s 重排
     #[tokio::test]
     async fn try_coalesce_wait_reschedules_when_result_missing() {
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let task_repo = Arc::new(CountingTaskRepo::new());
         let result_repo = Arc::new(ConfigurableResultRepo::new(false)); // 未命中
         let coalescer = Arc::new(RequestCoalescer::new());
@@ -547,7 +563,7 @@ mod tests {
         let url = task.url.clone();
 
         // 占住 slot
-        let first_guard = coalescer.try_start(&url, Uuid::new_v4());
+        let first_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
         // 等待 guard 进入 Wait 路径
         let task_clone = task.clone();
         let coord_clone = coord.clone();
@@ -593,7 +609,7 @@ mod tests {
     /// Wait 路径收到广播且 result_repo 命中：mark_completed 并返回 None
     #[tokio::test]
     async fn try_coalesce_wait_completes_when_result_found() {
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let task_repo = Arc::new(CountingTaskRepo::new());
         let result_repo = Arc::new(ConfigurableResultRepo::new(true)); // 命中
         let coalescer = Arc::new(RequestCoalescer::new());
@@ -604,7 +620,7 @@ mod tests {
         let url = task.url.clone();
 
         // 占住 slot
-        let first_guard = coalescer.try_start(&url, Uuid::new_v4());
+        let first_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
         let task_clone = task.clone();
         let coord_clone = coord.clone();
         let url_clone = url.clone();
@@ -642,7 +658,7 @@ mod tests {
     /// 完整 45s 超时测试因耗时不实际，超时后的自身重排语义由 Closed/Purged 用例覆盖。
     #[tokio::test]
     async fn try_coalesce_wait_does_not_call_find_while_waiting() {
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let task_repo = Arc::new(CountingTaskRepo::new());
         let result_repo = Arc::new(ConfigurableResultRepo::new(false));
         let coalescer = Arc::new(RequestCoalescer::new());
@@ -653,7 +669,7 @@ mod tests {
         let url = task.url.clone();
 
         // 占住 slot 但不释放（模拟首个 worker 长时间处理）
-        let _first_guard = coalescer.try_start(&url, Uuid::new_v4());
+        let _first_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
 
         let task_clone = task.clone();
         let coord_clone = coord.clone();
@@ -679,7 +695,7 @@ mod tests {
     /// 最大重排次数路径：coalesce_reschedule_count >= 3 时 mark_failed
     #[tokio::test]
     async fn try_coalesce_max_reschedule_exceeded_marks_failed() {
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let task_repo = Arc::new(CountingTaskRepo::new());
         let result_repo = Arc::new(ConfigurableResultRepo::new(false));
         let coalescer = Arc::new(RequestCoalescer::new());
@@ -692,7 +708,7 @@ mod tests {
         let url = task.url.clone();
 
         // 占住 slot
-        let first_guard = coalescer.try_start(&url, Uuid::new_v4());
+        let first_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
         let task_clone = task.clone();
         let coord_clone = coord.clone();
         let url_clone = url.clone();
@@ -729,7 +745,7 @@ mod tests {
     /// find_by_task_id 返回 Err 时应传播错误
     #[tokio::test]
     async fn try_coalesce_wait_find_by_task_id_error_propagates() {
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let task_repo = Arc::new(CountingTaskRepo::new());
         let coalescer = Arc::new(RequestCoalescer::new());
 
@@ -742,17 +758,20 @@ mod tests {
             }
             async fn find_by_task_id(
                 &self,
-                _task_id: Uuid,
+                _task_id: crate::domain::id::Id,
             ) -> Result<Option<crate::domain::models::ScrapeResult>> {
                 Err(anyhow::anyhow!("db connection lost"))
             }
             async fn find_by_task_ids(
                 &self,
-                _task_ids: &[Uuid],
+                _task_ids: &[crate::domain::id::Id],
             ) -> Result<Vec<crate::domain::models::ScrapeResult>> {
                 Ok(vec![])
             }
-            async fn get_team_avg_response_time(&self, _team_id: Uuid) -> Result<f64> {
+            async fn get_team_avg_response_time(
+                &self,
+                _team_id: crate::domain::id::Id,
+            ) -> Result<f64> {
                 Ok(0.0)
             }
 
@@ -768,7 +787,7 @@ mod tests {
         let task = make_task();
         let url = task.url.clone();
 
-        let first_guard = coalescer.try_start(&url, Uuid::new_v4());
+        let first_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
         let task_clone = task.clone();
         let coord_clone = coord.clone();
         let url_clone = url.clone();
@@ -800,7 +819,7 @@ mod tests {
     /// recv Closed（leader 异常消失）→ 等待方不进入 Failed，走自身重排
     #[tokio::test]
     async fn try_coalesce_closed_channel_reschedules_not_failed() {
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let task_repo = Arc::new(CountingTaskRepo::new());
         // return_some=true：若等待方误走完成路径查询会命中——反证 Closed 分支不查结果
         let result_repo = Arc::new(ConfigurableResultRepo::new(true));
@@ -812,7 +831,7 @@ mod tests {
         let url = task.url.clone();
 
         // leader 占位；_leader_guard 保活到作用域末，避免其提前 Drop 广播 Completed
-        let _leader_guard = coalescer.try_start(&url, Uuid::new_v4());
+        let _leader_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
 
         let task_clone = task.clone();
         let coord_clone = coord.clone();
@@ -855,7 +874,7 @@ mod tests {
     /// Purged 信号不触发结果查询/完成路径，走自身重排
     #[tokio::test]
     async fn try_coalesce_purged_signal_skips_result_lookup() {
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let task_repo = Arc::new(CountingTaskRepo::new());
         // return_some=true：若等待方误按完成路径查询会命中并 mark_completed——
         // 用以反证 Purged 分支确实跳过了结果查询与完成路径。
@@ -867,7 +886,7 @@ mod tests {
         let task = make_task();
         let url = task.url.clone();
 
-        let _leader_guard = coalescer.try_start(&url, Uuid::new_v4());
+        let _leader_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
 
         let task_clone = task.clone();
         let coord_clone = coord.clone();
@@ -915,10 +934,10 @@ mod tests {
     /// Completed 后等待方按 leader task_id 查询结果（非自身 task_id）
     #[tokio::test]
     async fn try_coalesce_queries_result_by_leader_task_id() {
-        let worker_id = Uuid::new_v4();
+        let worker_id = crate::domain::id::Id::generate();
         let task_repo = Arc::new(CountingTaskRepo::new());
         // leader_id 先行：mock 需模拟"结果只落在 leader 名下"
-        let leader_id = Uuid::new_v4();
+        let leader_id = crate::domain::id::Id::generate();
         let result_repo = Arc::new(ConfigurableResultRepo::new_with_result_only_for(leader_id));
         let coalescer = Arc::new(RequestCoalescer::new());
         let coord =

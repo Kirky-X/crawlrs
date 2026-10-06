@@ -18,7 +18,6 @@
 //! - 配额监控和警告
 
 use log::{info, warn};
-use uuid::Uuid;
 
 // 积分交易类型
 #[derive(Debug, Clone)]
@@ -31,9 +30,9 @@ enum TransactionType {
 #[derive(Debug, Clone)]
 struct CreditTransaction {
     #[allow(dead_code)]
-    id: Uuid,
+    id: crawlrs::domain::id::Id,
     #[allow(dead_code)]
-    team_id: Uuid,
+    team_id: crawlrs::domain::id::Id,
     amount: i64,
     transaction_type: TransactionType,
     description: String,
@@ -43,7 +42,7 @@ struct CreditTransaction {
 // 团队积分管理器
 #[derive(Debug)]
 struct CreditsManager {
-    team_id: Uuid,
+    team_id: crawlrs::domain::id::Id,
     balance: i64,
     transactions: Vec<CreditTransaction>,
     #[allow(dead_code)]
@@ -53,7 +52,12 @@ struct CreditsManager {
 }
 
 impl CreditsManager {
-    pub fn new(team_id: Uuid, initial_credits: i64, daily_limit: i64, monthly_limit: i64) -> Self {
+    pub fn new(
+        team_id: crawlrs::domain::id::Id,
+        initial_credits: i64,
+        daily_limit: i64,
+        monthly_limit: i64,
+    ) -> Self {
         Self {
             team_id,
             balance: initial_credits,
@@ -74,7 +78,7 @@ impl CreditsManager {
 
         self.balance -= amount;
         self.transactions.push(CreditTransaction {
-            id: Uuid::new_v4(),
+            id: crawlrs::domain::id::Id::generate(),
             team_id: self.team_id,
             amount: -amount,
             transaction_type: TransactionType::Debit,
@@ -90,7 +94,7 @@ impl CreditsManager {
     pub fn deposit(&mut self, amount: i64, description: &str) {
         self.balance += amount;
         self.transactions.push(CreditTransaction {
-            id: Uuid::new_v4(),
+            id: crawlrs::domain::id::Id::generate(),
             team_id: self.team_id,
             amount,
             transaction_type: TransactionType::Credit,
@@ -121,7 +125,7 @@ async fn main() {
 
     info!("=== 积分管理示例 ===\n");
 
-    let team_id = Uuid::new_v4();
+    let team_id = crawlrs::domain::id::Id::generate();
     let mut manager = CreditsManager::new(team_id, 10000, 1000, 30000);
 
     info!("Created credits manager for team: {}", team_id);

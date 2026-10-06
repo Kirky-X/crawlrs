@@ -17,9 +17,9 @@ use crate::presentation::middleware::auth_types::AuthState;
 /// 从请求扩展中提取 team_id。
 ///
 /// `auth_middleware` 注入 `AuthState`（包含 team_id/api_key_id/scope），
-/// 此处从 `AuthState` 读取 team_id（不再读取裸 `Uuid` 扩展——
-/// 后 `inject_auth_state` 不再注入裸 `Uuid`）。
-fn extract_team_id(request: &Request) -> Option<uuid::Uuid> {
+/// 此处从 `AuthState` 读取 team_id（不再读取裸 `crate::domain::id::Id` 扩展——
+/// 后 `inject_auth_state` 不再注入裸 `crate::domain::id::Id`）。
+fn extract_team_id(request: &Request) -> Option<crate::domain::id::Id> {
     request.extensions().get::<AuthState>().map(|s| s.team_id)
 }
 
@@ -52,21 +52,25 @@ mod tests {
     use axum::{body::Body, http::StatusCode, routing::get, Router};
     use std::sync::Arc;
     use tower::ServiceExt;
-    use uuid::Uuid;
 
     fn skip_if_no_test_db() -> bool {
         crate::common::test_helpers::skip_if_no_test_db()
     }
 
     /// 构造带 `AuthState`（含 team_id）的测试请求。
-    fn build_request_with_auth_state(team_id: Option<Uuid>) -> Request {
+    fn build_request_with_auth_state(team_id: Option<crate::domain::id::Id>) -> Request {
         let mut builder = Request::builder()
             .uri("/test")
             .body(Body::empty())
             .expect("body should build");
         if let Some(id) = team_id {
             let pool = create_test_db_pool();
-            let auth_state = AuthState::new(pool, id, Uuid::new_v4(), ApiKeyScope::full_access());
+            let auth_state = AuthState::new(
+                pool,
+                id,
+                crate::domain::id::Id::generate(),
+                ApiKeyScope::full_access(),
+            );
             builder.extensions_mut().insert(auth_state);
         }
         builder
@@ -77,7 +81,7 @@ mod tests {
         if skip_if_no_test_db() {
             return;
         }
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let request = build_request_with_auth_state(Some(team_id));
         assert_eq!(extract_team_id(&request), Some(team_id));
     }
@@ -135,7 +139,7 @@ mod tests {
         }
         let semaphore = Arc::new(TeamSemaphore::new(1));
         let app = test_router(semaphore);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         let request = build_request_with_auth_state(Some(team_id));
         let response = app.oneshot(request).await.expect("oneshot should succeed");
         assert_eq!(response.status(), StatusCode::OK);

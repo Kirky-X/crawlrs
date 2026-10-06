@@ -18,7 +18,6 @@
 //! - 负载配置
 
 use log::{info, warn};
-use uuid::Uuid;
 
 // 支持的事件类型
 #[allow(dead_code, clippy::enum_variant_names)]
@@ -36,7 +35,7 @@ enum WebhookEvent {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct WebhookConfig {
-    id: Uuid,
+    id: crawlrs::domain::id::Id,
     url: String,
     secret: String,
     events: Vec<WebhookEvent>,
@@ -47,7 +46,7 @@ struct WebhookConfig {
 impl WebhookConfig {
     pub fn new(url: &str, secret: &str) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: crawlrs::domain::id::Id::generate(),
             url: url.to_string(),
             secret: secret.to_string(),
             events: Vec::new(),

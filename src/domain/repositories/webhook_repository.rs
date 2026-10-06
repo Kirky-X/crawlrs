@@ -4,7 +4,6 @@
 use super::task_repository::RepositoryError;
 use crate::domain::models::Webhook;
 use async_trait::async_trait;
-use uuid::Uuid;
 
 /// Webhook仓库特质
 ///
@@ -14,7 +13,13 @@ pub trait WebhookRepository: Send + Sync {
     /// 创建Webhook
     async fn create(&self, webhook: &Webhook) -> Result<Webhook, RepositoryError>;
     /// 根据ID查找Webhook
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Webhook>, RepositoryError>;
+    async fn find_by_id(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<Option<Webhook>, RepositoryError>;
     /// 根据团队ID查找所有Webhook
-    async fn find_by_team_id(&self, team_id: Uuid) -> Result<Vec<Webhook>, RepositoryError>;
+    async fn find_by_team_id(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<Vec<Webhook>, RepositoryError>;
 }

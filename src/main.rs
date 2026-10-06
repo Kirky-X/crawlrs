@@ -63,7 +63,7 @@ mod app {
     use crawlrs::bootstrap::routes::build_api_app_with_state;
     use crawlrs::bootstrap::workers::spawn_common_workers;
     use crawlrs::di::modules::{
-        CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule,
+        CacheModule, DatabaseModule, EngineModule, HttpModule, IdModule, InfrastructureModule,
         RepositoryModule, ServiceModule, SettingsModule,
     };
     use crawlrs::di::{CrawlRsState, CrawlRsStateExt};
@@ -230,7 +230,7 @@ mod app {
         if existing.is_none() {
             let now = chrono::Utc::now();
             let model = team::ActiveModel {
-                id: Set(team_id),
+                id: Set(team_id.into()),
                 name: Set("default-team".to_string()),
                 allowed_countries: Set(None),
                 blocked_countries: Set(None),
@@ -258,7 +258,7 @@ mod app {
             let dao = crawlrs::infrastructure::auth::garrison_dao::get_garrison_dao()
                 .ok_or_else(|| anyhow::anyhow!("garrison DAO not initialized"))?;
             let handler = ApiKeyHandler::new(dao);
-            let api_key_id = uuid::Uuid::new_v4();
+            let api_key_id = crawlrs::domain::id::Id::generate();
             let login_id = api_key_id.to_string();
             let scopes = vec![
                 "crawlrs:read".to_string(),
@@ -280,8 +280,8 @@ mod app {
             // 3. Insert api_keys mapping
             let now_ts = chrono::Utc::now();
             let key_model = api_key::ActiveModel {
-                id: Set(api_key_id),
-                team_id: Set(team_id),
+                id: Set(api_key_id.into()),
+                team_id: Set(team_id.into()),
                 key: Set(garrison_key_id),
                 created_at: Set(now_ts.into()),
                 updated_at: Set(None),
@@ -374,6 +374,8 @@ mod app {
             .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
         kit.register::<ServiceModule>()
             .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
+        kit.register::<IdModule>()
+            .map_err(|e| anyhow::anyhow!("register IdModule: {e}"))?;
 
         let kit = kit
             .build()

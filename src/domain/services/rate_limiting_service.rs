@@ -3,7 +3,6 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// 限流策略类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,7 +176,7 @@ pub enum ConcurrencyResult {
     /// 被拒绝（并发限制已达到）
     Denied { reason: String },
     /// 任务已加入积压队列
-    Queued { backlog_id: Uuid },
+    Queued { backlog_id: crate::domain::id::Id },
 }
 
 // === 拆分后的接口 ===
@@ -195,13 +194,13 @@ pub trait RateLimitService: Send + Sync {
     /// 获取团队的限流配置
     async fn get_team_rate_limit_config(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
     ) -> Result<RateLimitConfig, RateLimitingError>;
 
     /// 更新团队的限流配置
     async fn update_team_rate_limit_config(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         config: RateLimitConfig,
     ) -> Result<(), RateLimitingError>;
 
@@ -215,30 +214,33 @@ pub trait ConcurrencyControlService: Send + Sync {
     /// 检查团队并发限制
     async fn check_team_concurrency(
         &self,
-        team_id: Uuid,
-        task_id: Uuid,
+        team_id: crate::domain::id::Id,
+        task_id: crate::domain::id::Id,
     ) -> Result<ConcurrencyResult, RateLimitingError>;
 
     /// 释放团队并发槽位
     async fn release_team_concurrency_slot(
         &self,
-        team_id: Uuid,
-        task_id: Uuid,
+        team_id: crate::domain::id::Id,
+        task_id: crate::domain::id::Id,
     ) -> Result<(), RateLimitingError>;
 
     /// 获取团队的当前并发数
-    async fn get_team_current_concurrency(&self, team_id: Uuid) -> Result<u32, RateLimitingError>;
+    async fn get_team_current_concurrency(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<u32, RateLimitingError>;
 
     /// 获取团队的并发配置
     async fn get_team_concurrency_config(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
     ) -> Result<ConcurrencyConfig, RateLimitingError>;
 
     /// 更新团队的并发配置
     async fn update_team_concurrency_config(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         config: ConcurrencyConfig,
     ) -> Result<(), RateLimitingError>;
 }
@@ -247,7 +249,10 @@ pub trait ConcurrencyControlService: Send + Sync {
 #[async_trait]
 pub trait BacklogService: Send + Sync {
     /// 处理积压任务
-    async fn process_backlog_tasks(&self, team_id: Uuid) -> Result<u32, RateLimitingError>;
+    async fn process_backlog_tasks(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<u32, RateLimitingError>;
 }
 
 /// 配额/积分服务接口
@@ -256,11 +261,11 @@ pub trait QuotaService: Send + Sync {
     /// 检查并扣除团队配额（Credits）
     async fn check_and_deduct_quota(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         amount: i64,
         transaction_type: crate::domain::models::CreditsTransactionType,
         description: String,
-        reference_id: Option<Uuid>,
+        reference_id: Option<crate::domain::id::Id>,
     ) -> Result<(), RateLimitingError>;
 
     /// 退还配额积分（入队失败等场景的补偿）
@@ -269,14 +274,17 @@ pub trait QuotaService: Send + Sync {
     /// 不应阻断原始错误路径的返回。
     async fn refund_quota(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         amount: i64,
         description: String,
-        reference_id: Option<Uuid>,
+        reference_id: Option<crate::domain::id::Id>,
     ) -> Result<(), RateLimitingError>;
 
     /// 获取团队配额余额
-    async fn get_quota_balance(&self, team_id: Uuid) -> Result<i64, RateLimitingError>;
+    async fn get_quota_balance(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<i64, RateLimitingError>;
 }
 
 /// 组合接口：提供所有限流与并发控制功能（向后兼容）
@@ -760,7 +768,7 @@ mod tests {
 
     #[test]
     fn test_concurrency_result_queued_carries_backlog_id() {
-        let id = Uuid::new_v4();
+        let id = crate::domain::id::Id::generate();
         let r = ConcurrencyResult::Queued { backlog_id: id };
         match r {
             ConcurrencyResult::Queued { backlog_id } => {
@@ -775,7 +783,7 @@ mod tests {
         assert_ne!(
             ConcurrencyResult::Allowed,
             ConcurrencyResult::Queued {
-                backlog_id: Uuid::new_v4(),
+                backlog_id: crate::domain::id::Id::generate(),
             }
         );
     }

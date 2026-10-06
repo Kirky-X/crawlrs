@@ -5,7 +5,6 @@
 
 use sdforge::validator::Validate;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 /// Validate that each entry in an IP whitelist parses as valid IP or CIDR notation.
 fn validate_cidr_list(ips: &[String]) -> Result<(), sdforge::validator::ValidationError> {
@@ -44,7 +43,7 @@ pub struct UpdateTeamGeoRestrictionsRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct TeamGeoRestrictionsResponse {
     /// 团队 ID
-    pub team_id: Uuid,
+    pub team_id: crate::domain::id::Id,
     /// 是否启用地理限制
     pub enable_geo_restrictions: bool,
     /// 允许的国家代码列表

@@ -106,7 +106,7 @@ impl EngineRouter {
                     "Race mode: all {} candidates failed for {}",
                     total_candidates, request.url
                 );
-                // 复查 M2：全候选被挑战页作废且请求未要求 JS 时，按顺序模式
+                // 复查：全候选被挑战页作废且请求未要求 JS 时，按顺序模式
                 // 语义以 needs_js=true 重派一轮浏览器引擎（升级链对齐）
                 let antibot_detected = matches!(last_error, Some(EngineError::AntiBotDetected(_)));
                 if antibot_detected && !request.needs_js {

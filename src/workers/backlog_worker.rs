@@ -103,7 +103,7 @@ impl BacklogWorker {
         let mut failed_count = 0;
 
         // 2. 按团队分组处理任务
-        let mut backlogs_by_team: std::collections::HashMap<uuid::Uuid, Vec<_>> =
+        let mut backlogs_by_team: std::collections::HashMap<crate::domain::id::Id, Vec<_>> =
             std::collections::HashMap::with_capacity(32);
         for backlog in pending_backlogs {
             backlogs_by_team
@@ -618,7 +618,6 @@ mod tests {
     use async_trait::async_trait;
     use std::collections::HashSet;
     use std::sync::Mutex;
-    use uuid::Uuid;
 
     // ========== Test Settings factory ==========
 
@@ -659,6 +658,7 @@ mod tests {
             politeness: PolitenessSettings::default(),
             session: SessionSettings::default(),
             content_extraction: ContentExtractionSettings::default(),
+            id: IdSettings::default(),
         };
         Arc::new(settings)
     }
@@ -715,13 +715,16 @@ mod tests {
             Ok(backlog.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<TasksBacklog>, RepositoryError> {
             Ok(None)
         }
 
         async fn find_by_task_id(
             &self,
-            _task_id: Uuid,
+            _task_id: crate::domain::id::Id,
         ) -> Result<Option<TasksBacklog>, RepositoryError> {
             Ok(None)
         }
@@ -731,13 +734,13 @@ mod tests {
             Ok(backlog.clone())
         }
 
-        async fn delete(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn delete(&self, _id: crate::domain::id::Id) -> Result<(), RepositoryError> {
             Ok(())
         }
 
         async fn get_pending_tasks(
             &self,
-            _team_id: Option<Uuid>,
+            _team_id: Option<crate::domain::id::Id>,
             _limit: Option<u64>,
         ) -> Result<Vec<TasksBacklog>, RepositoryError> {
             if self.fail_get_pending {
@@ -755,7 +758,7 @@ mod tests {
 
         async fn count_by_status(
             &self,
-            _team_id: Option<Uuid>,
+            _team_id: Option<crate::domain::id::Id>,
             _status: crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus,
         ) -> Result<i64, RepositoryError> {
             Ok(0)
@@ -763,7 +766,7 @@ mod tests {
 
         async fn update_status_batch(
             &self,
-            _ids: &[Uuid],
+            _ids: &[crate::domain::id::Id],
             _status: crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus,
         ) -> Result<u64, RepositoryError> {
             Ok(0)
@@ -773,7 +776,7 @@ mod tests {
     // ========== Mock TaskRepository ==========
 
     struct MockTaskRepo {
-        tasks: Mutex<std::collections::HashMap<Uuid, Task>>,
+        tasks: Mutex<std::collections::HashMap<crate::domain::id::Id, Task>>,
         updated_tasks: Mutex<Vec<Task>>,
         expire_count: AtomicU64,
     }
@@ -803,7 +806,10 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(self.tasks.lock().unwrap().get(&id).cloned())
         }
 
@@ -812,27 +818,30 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
@@ -854,7 +863,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -863,7 +875,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
 
@@ -876,17 +891,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -920,7 +941,7 @@ mod tests {
         fn new_queued() -> Self {
             Self {
                 concurrency_result: Mutex::new(ConcurrencyResult::Queued {
-                    backlog_id: Uuid::new_v4(),
+                    backlog_id: crate::domain::id::Id::generate(),
                 }),
                 should_error: false,
             }
@@ -946,14 +967,14 @@ mod tests {
 
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<RateLimitConfig, RateLimitingError> {
             Ok(RateLimitConfig::default())
         }
 
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -968,8 +989,8 @@ mod tests {
     impl ConcurrencyControlService for MockRateLimitingService {
         async fn check_team_concurrency(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             if self.should_error {
                 return Err(RateLimitingError::Other(anyhow::anyhow!(
@@ -981,29 +1002,29 @@ mod tests {
 
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: Uuid,
-            _task_id: Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
         async fn get_team_current_concurrency(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
 
         async fn get_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
             Ok(ConcurrencyConfig::default())
         }
 
         async fn update_team_concurrency_config(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1012,7 +1033,10 @@ mod tests {
 
     #[async_trait]
     impl BacklogService for MockRateLimitingService {
-        async fn process_backlog_tasks(&self, _team_id: Uuid) -> Result<u32, RateLimitingError> {
+        async fn process_backlog_tasks(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
     }
@@ -1021,25 +1045,28 @@ mod tests {
     impl QuotaService for MockRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
-        async fn get_quota_balance(&self, _team_id: Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(100)
         }
 
         async fn refund_quota(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
@@ -1050,7 +1077,10 @@ mod tests {
 
     // ========== Helper functions ==========
 
-    fn make_backlog(team_id: Uuid, task_id: Uuid) -> TasksBacklog {
+    fn make_backlog(
+        team_id: crate::domain::id::Id,
+        task_id: crate::domain::id::Id,
+    ) -> TasksBacklog {
         TasksBacklog::new(
             task_id,
             team_id,
@@ -1061,34 +1091,43 @@ mod tests {
         )
     }
 
-    fn make_expired_backlog(team_id: Uuid, task_id: Uuid) -> TasksBacklog {
+    fn make_expired_backlog(
+        team_id: crate::domain::id::Id,
+        task_id: crate::domain::id::Id,
+    ) -> TasksBacklog {
         let mut backlog = make_backlog(team_id, task_id);
         backlog.expires_at = Some(Utc::now() - chrono::Duration::hours(1));
         backlog
     }
 
-    fn make_max_retry_backlog(team_id: Uuid, task_id: Uuid) -> TasksBacklog {
+    fn make_max_retry_backlog(
+        team_id: crate::domain::id::Id,
+        task_id: crate::domain::id::Id,
+    ) -> TasksBacklog {
         let mut backlog = make_backlog(team_id, task_id);
         backlog.retry_count = 3;
         backlog.max_retries = 3;
         backlog
     }
 
-    fn make_processing_backlog(team_id: Uuid, task_id: Uuid) -> TasksBacklog {
+    fn make_processing_backlog(
+        team_id: crate::domain::id::Id,
+        task_id: crate::domain::id::Id,
+    ) -> TasksBacklog {
         let mut backlog = make_backlog(team_id, task_id);
         backlog.mark_processing().unwrap();
         backlog
     }
 
-    fn make_task(id: Uuid, status: TaskStatus) -> Task {
+    fn make_task(id: crate::domain::id::Id, status: TaskStatus) -> Task {
         let now = Utc::now();
         Task {
             id,
             task_type: TaskType::Scrape,
             status,
             priority: 0,
-            team_id: Uuid::new_v4(),
-            api_key_id: Uuid::new_v4(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "http://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,
@@ -1172,8 +1211,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_expired_backlog_marks_expired() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let backlog = make_expired_backlog(team_id, task_id);
         let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
         let updated_repo = repo.clone();
@@ -1197,8 +1236,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_max_retry_backlog_marks_failed() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let backlog = make_max_retry_backlog(team_id, task_id);
         let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
         let updated_repo = repo.clone();
@@ -1222,8 +1261,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_concurrency_denied_keeps_backlog() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let backlog = make_backlog(team_id, task_id);
         let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
         let worker = make_worker(
@@ -1241,8 +1280,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_concurrency_queued_returns_completed() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let backlog = make_backlog(team_id, task_id);
         let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
         let worker = make_worker(
@@ -1259,8 +1298,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_allowed_task_not_found_returns_error() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let backlog = make_backlog(team_id, task_id);
         let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
         let worker = make_worker(
@@ -1286,8 +1325,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_allowed_task_not_queued_marks_completed() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let backlog = make_backlog(team_id, task_id);
         // Task is already Completed (not Queued)
         let task = make_task(task_id, TaskStatus::Completed);
@@ -1317,8 +1356,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_allowed_task_queued_reactivates() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let backlog = make_backlog(team_id, task_id);
         let task = make_task(task_id, TaskStatus::Queued);
         let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
@@ -1347,10 +1386,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_multiple_teams() {
-        let team1 = Uuid::new_v4();
-        let team2 = Uuid::new_v4();
-        let backlog1 = make_backlog(team1, Uuid::new_v4());
-        let backlog2 = make_backlog(team2, Uuid::new_v4());
+        let team1 = crate::domain::id::Id::generate();
+        let team2 = crate::domain::id::Id::generate();
+        let backlog1 = make_backlog(team1, crate::domain::id::Id::generate());
+        let backlog2 = make_backlog(team2, crate::domain::id::Id::generate());
         let repo = Arc::new(MockBacklogRepo::new(vec![backlog1, backlog2]));
         let worker = make_worker(
             repo,
@@ -1405,8 +1444,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_expired_backlog_task_not_found() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let expired_backlog = make_expired_backlog(team_id, task_id);
         let repo = Arc::new(MockBacklogRepo::new_with_expired(vec![expired_backlog]));
         let updated_repo = repo.clone();
@@ -1431,8 +1470,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_expired_with_queued_task_marks_failed() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let expired_backlog = make_expired_backlog(team_id, task_id);
         let task = make_task(task_id, TaskStatus::Queued);
         let repo = Arc::new(MockBacklogRepo::new_with_expired(vec![expired_backlog]));
@@ -1464,8 +1503,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_expired_with_non_queued_task_no_task_update() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let expired_backlog = make_expired_backlog(team_id, task_id);
         // Task is already Completed, so it should NOT be marked as Failed
         let task = make_task(task_id, TaskStatus::Completed);
@@ -1492,10 +1531,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_multiple_expired_backlogs() {
-        let team1 = Uuid::new_v4();
-        let team2 = Uuid::new_v4();
-        let expired1 = make_expired_backlog(team1, Uuid::new_v4());
-        let expired2 = make_expired_backlog(team2, Uuid::new_v4());
+        let team1 = crate::domain::id::Id::generate();
+        let team2 = crate::domain::id::Id::generate();
+        let expired1 = make_expired_backlog(team1, crate::domain::id::Id::generate());
+        let expired2 = make_expired_backlog(team2, crate::domain::id::Id::generate());
         let repo = Arc::new(MockBacklogRepo::new_with_expired(vec![expired1, expired2]));
         let updated_repo = repo.clone();
         let worker = make_worker(
@@ -1520,8 +1559,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_success_reactivates_queued_task() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         // seed a Pending backlog (as production get_pending_tasks returns);
         // the worker now transitions Pending → Processing → Completed internally.
         let backlog = make_backlog(team_id, task_id);
@@ -1555,8 +1594,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_task_not_queued_marks_backlog_completed() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         // seed a Pending backlog (as production get_pending_tasks returns);
         // the worker now transitions Pending → Processing → Completed internally.
         let backlog = make_backlog(team_id, task_id);
@@ -1585,8 +1624,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_already_processing_backlog_is_skipped() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         // Backlog already in Processing: the Pending → Processing guard fails, so the
         // worker skips it (warn) without any repository update — it was already handled
         // by another worker/cycle.
@@ -1611,8 +1650,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_concurrency_check_error_returns_completed() {
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let backlog = make_backlog(team_id, task_id);
         let repo = Arc::new(MockBacklogRepo::new(vec![backlog]));
         let worker = make_worker(
@@ -1630,9 +1669,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_mixed_backlogs_expired_and_normal() {
-        let team_id = Uuid::new_v4();
-        let task_id1 = Uuid::new_v4();
-        let task_id2 = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id1 = crate::domain::id::Id::generate();
+        let task_id2 = crate::domain::id::Id::generate();
         // One expired backlog (will be marked Expired)
         let expired = make_expired_backlog(team_id, task_id1);
         // One normal backlog with denied concurrency (will stay as-is)
@@ -1680,24 +1719,27 @@ mod tests {
         async fn create(&self, backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError> {
             Ok(backlog.clone())
         }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<TasksBacklog>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<TasksBacklog>, RepositoryError> {
             Ok(None)
         }
         async fn find_by_task_id(
             &self,
-            _task_id: Uuid,
+            _task_id: crate::domain::id::Id,
         ) -> Result<Option<TasksBacklog>, RepositoryError> {
             Ok(None)
         }
         async fn update(&self, _backlog: &TasksBacklog) -> Result<TasksBacklog, RepositoryError> {
             Err(RepositoryError::Database(anyhow::anyhow!("update failed")))
         }
-        async fn delete(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn delete(&self, _id: crate::domain::id::Id) -> Result<(), RepositoryError> {
             Ok(())
         }
         async fn get_pending_tasks(
             &self,
-            _team_id: Option<Uuid>,
+            _team_id: Option<crate::domain::id::Id>,
             _limit: Option<u64>,
         ) -> Result<Vec<TasksBacklog>, RepositoryError> {
             Ok(vec![])
@@ -1710,14 +1752,14 @@ mod tests {
         }
         async fn count_by_status(
             &self,
-            _team_id: Option<Uuid>,
+            _team_id: Option<crate::domain::id::Id>,
             _status: crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus,
         ) -> Result<i64, RepositoryError> {
             Ok(0)
         }
         async fn update_status_batch(
             &self,
-            _ids: &[Uuid],
+            _ids: &[crate::domain::id::Id],
             _status: crate::domain::repositories::tasks_backlog_repository::TasksBacklogStatus,
         ) -> Result<u64, RepositoryError> {
             Ok(0)
@@ -1728,9 +1770,9 @@ mod tests {
     async fn test_cleanup_expired_tasks_continues_after_process_error() {
         // When process_expired_backlog returns Err (backlog update fails), cleanup_expired_tasks
         // should log the error and continue, ultimately returning Ok.
-        let team_id = Uuid::new_v4();
-        let task_id1 = Uuid::new_v4();
-        let task_id2 = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id1 = crate::domain::id::Id::generate();
+        let task_id2 = crate::domain::id::Id::generate();
         // Two expired backlogs: both will fail on update, but cleanup must continue past the first
         let expired1 = make_expired_backlog(team_id, task_id1);
         let expired2 = make_expired_backlog(team_id, task_id2);
@@ -1752,8 +1794,8 @@ mod tests {
     async fn test_cleanup_expired_tasks_single_failure_returns_completed() {
         // Single expired backlog whose processing fails: cleanup_expired_tasks should still
         // return Ok (the error is logged, not propagated).
-        let team_id = Uuid::new_v4();
-        let task_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
+        let task_id = crate::domain::id::Id::generate();
         let expired = make_expired_backlog(team_id, task_id);
         let repo = Arc::new(FailingUpdateBacklogRepo::new_with_expired(vec![expired]));
         let worker = make_worker(

@@ -13,7 +13,6 @@ use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
 use thiserror::Error;
-use uuid::Uuid;
 
 /// Search query parameters (领域层参数对象)
 #[derive(Debug, Clone)]
@@ -64,7 +63,7 @@ pub struct SearchResult {
 pub struct SearchResponse {
     pub query: String,
     pub results: Vec<SearchResult>,
-    pub crawl_id: Option<Uuid>,
+    pub crawl_id: Option<crate::domain::id::Id>,
     pub credits_used: u32,
 }
 
@@ -111,8 +110,8 @@ pub trait SearchServiceTrait: Send + Sync {
     /// Perform search operation.
     async fn search(
         &self,
-        team_id: Uuid,
-        api_key_id: Uuid,
+        team_id: crate::domain::id::Id,
+        api_key_id: crate::domain::id::Id,
         query: SearchQuery,
     ) -> Result<SearchResponse, SearchServiceError>;
 }
@@ -159,8 +158,8 @@ impl SearchService {
 
     pub async fn search(
         &self,
-        team_id: Uuid,
-        api_key_id: Uuid,
+        team_id: crate::domain::id::Id,
+        api_key_id: crate::domain::id::Id,
         query: SearchQuery,
     ) -> Result<SearchResponse, SearchServiceError> {
         // 简化验证：检查 query 是否为空
@@ -209,7 +208,7 @@ impl SearchService {
 
         // 2. If crawl_results is true, create a crawl task
         if query.crawl_results.unwrap_or(false) && !results.is_empty() {
-            let cid = Uuid::new_v4();
+            let cid = crate::domain::id::Id::generate();
             let _now = Utc::now();
 
             let config = query.crawl_config.unwrap_or(SearchCrawlConfig {
@@ -238,7 +237,7 @@ impl SearchService {
 
             for result in &results {
                 let mut task = Task::new(
-                    Uuid::new_v4(),
+                    crate::domain::id::Id::generate(),
                     TaskType::Crawl,
                     team_id,
                     api_key_id,
@@ -364,8 +363,8 @@ impl SearchService {
 impl SearchServiceTrait for SearchService {
     async fn search(
         &self,
-        team_id: Uuid,
-        api_key_id: Uuid,
+        team_id: crate::domain::id::Id,
+        api_key_id: crate::domain::id::Id,
         query: SearchQuery,
     ) -> Result<SearchResponse, SearchServiceError> {
         Self::search(self, team_id, api_key_id, query).await
@@ -397,7 +396,7 @@ mod tests {
         balance: i64,
         get_balance_fails: bool,
         deduct_fails: bool,
-        deduct_calls: Mutex<Vec<(Uuid, i64)>>,
+        deduct_calls: Mutex<Vec<(crate::domain::id::Id, i64)>>,
     }
 
     impl MockCreditsRepo {
@@ -422,7 +421,10 @@ mod tests {
 
     #[async_trait]
     impl CreditsRepository for MockCreditsRepo {
-        async fn get_balance(&self, _team_id: Uuid) -> Result<i64, CreditsRepositoryError> {
+        async fn get_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, CreditsRepositoryError> {
             if self.get_balance_fails {
                 return Err(CreditsRepositoryError::DatabaseError(
                     "mock get_balance failure".to_string(),
@@ -433,11 +435,11 @@ mod tests {
 
         async fn deduct_credits(
             &self,
-            team_id: Uuid,
+            team_id: crate::domain::id::Id,
             amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), CreditsRepositoryError> {
             if self.deduct_fails {
                 return Err(CreditsRepositoryError::DatabaseError(
@@ -450,18 +452,18 @@ mod tests {
 
         async fn add_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<i64, CreditsRepositoryError> {
             Ok(0)
         }
 
         async fn get_transaction_history(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: Option<u32>,
         ) -> Result<Vec<CreditsTransaction>, CreditsRepositoryError> {
             Ok(vec![])
@@ -469,7 +471,7 @@ mod tests {
 
         async fn initialize_team_credits(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _initial_balance: i64,
         ) -> Result<i64, CreditsRepositoryError> {
             Ok(0)
@@ -514,7 +516,10 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
@@ -522,27 +527,30 @@ mod tests {
             Ok(task.clone())
         }
 
-        async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+        async fn acquire_next(
+            &self,
+            _worker_id: crate::domain::id::Id,
+        ) -> Result<Option<Task>, RepositoryError> {
             Ok(None)
         }
 
         async fn mark_completed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
         async fn mark_failed(
             &self,
-            _id: Uuid,
-            _lock_token: Option<Uuid>,
+            _id: crate::domain::id::Id,
+            _lock_token: Option<crate::domain::id::Id>,
         ) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
-        async fn mark_cancelled(&self, _id: Uuid) -> Result<u64, RepositoryError> {
+        async fn mark_cancelled(&self, _id: crate::domain::id::Id) -> Result<u64, RepositoryError> {
             Ok(1)
         }
 
@@ -564,7 +572,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn cancel_tasks_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
 
@@ -572,7 +583,10 @@ mod tests {
             Ok(0)
         }
 
-        async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+        async fn find_by_crawl_id(
+            &self,
+            _crawl_id: crate::domain::id::Id,
+        ) -> Result<Vec<Task>, RepositoryError> {
             Ok(vec![])
         }
 
@@ -585,17 +599,23 @@ mod tests {
 
         async fn batch_cancel(
             &self,
-            _task_ids: Vec<Uuid>,
-            _team_id: Uuid,
+            _task_ids: Vec<crate::domain::id::Id>,
+            _team_id: crate::domain::id::Id,
             _force: bool,
-        ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+        ) -> Result<
+            (
+                Vec<crate::domain::id::Id>,
+                Vec<(crate::domain::id::Id, String)>,
+            ),
+            RepositoryError,
+        > {
             Ok((vec![], vec![]))
         }
 
         async fn renew_lock(
             &self,
-            _task_id: Uuid,
-            _worker_id: Uuid,
+            _task_id: crate::domain::id::Id,
+            _worker_id: crate::domain::id::Id,
             _extend_seconds: i64,
         ) -> Result<bool, RepositoryError> {
             Ok(true)
@@ -648,7 +668,10 @@ mod tests {
             Ok(crawl.clone())
         }
 
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<Crawl>, RepositoryError> {
+        async fn find_by_id(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<Option<Crawl>, RepositoryError> {
             Ok(None)
         }
 
@@ -656,36 +679,48 @@ mod tests {
             Ok(crawl.clone())
         }
 
-        async fn increment_completed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_completed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
 
-        async fn increment_failed_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_failed_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
 
         async fn update_status(
             &self,
-            _id: Uuid,
+            _id: crate::domain::id::Id,
             _status: CrawlStatus,
         ) -> Result<(), RepositoryError> {
             Ok(())
         }
 
-        async fn increment_total_tasks(&self, _id: Uuid) -> Result<(), RepositoryError> {
+        async fn increment_total_tasks(
+            &self,
+            _id: crate::domain::id::Id,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
 
         async fn find_by_team_id_paginated(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u32,
             _offset: u32,
         ) -> Result<Vec<Crawl>, RepositoryError> {
             Ok(vec![])
         }
 
-        async fn count_by_team_id(&self, _team_id: Uuid) -> Result<u64, RepositoryError> {
+        async fn count_by_team_id(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<u64, RepositoryError> {
             Ok(0)
         }
     }
@@ -1229,7 +1264,7 @@ mod tests {
                 engine: "Google".to_string(),
                 score: None,
             }],
-            crawl_id: Some(Uuid::new_v4()),
+            crawl_id: Some(crate::domain::id::Id::generate()),
             credits_used: 1,
         };
         assert_eq!(response.query, "rust scraping");
@@ -1319,7 +1354,13 @@ mod tests {
     async fn test_search_empty_query_returns_validation_error() {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
         let query = make_query("");
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::ValidationError(msg) => {
@@ -1333,7 +1374,13 @@ mod tests {
     async fn test_search_whitespace_only_query_returns_validation_error() {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
         let query = make_query("   ");
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_err(), "whitespace-only query should fail");
         match result.unwrap_err() {
             SearchServiceError::ValidationError(_) => {}
@@ -1345,7 +1392,13 @@ mod tests {
     async fn test_search_insufficient_credits_returns_error() {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(0)));
         let query = make_query("rust scraping");
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::InsufficientCredits {
@@ -1367,7 +1420,13 @@ mod tests {
         // NOT returned.
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(1)));
         let query = make_query("rust scraping");
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(
             result.is_ok(),
             "should pass credit check and perform_search, got {:?}",
@@ -1392,7 +1451,13 @@ mod tests {
             sources: Some(vec!["bing".to_string()]),
             ..make_query("rust scraping")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(
             result.is_ok(),
             "should reach perform_search and succeed, got {:?}",
@@ -1409,7 +1474,13 @@ mod tests {
             sources: Some(vec!["bing".to_string(), "baidu".to_string()]),
             ..make_query("rust scraping")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(
             result.is_ok(),
             "aggregator path should reach perform_search and succeed, got {:?}",
@@ -1425,7 +1496,13 @@ mod tests {
             engine: Some("exa".to_string()),
             ..make_query("rust scraping")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         // Exa engine is not registered in mock, so it should fail with NoEngineAvailable
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1450,7 +1527,13 @@ mod tests {
             country: Some("us".to_string()),
             ..make_query("rust scraping")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(
             result.is_ok(),
             "should reach perform_search and succeed, got {:?}",
@@ -1468,7 +1551,13 @@ mod tests {
     async fn test_search_get_balance_failure_returns_credits_error() {
         let service = make_service(Arc::new(MockCreditsRepo::failing()));
         let query = make_query("rust scraping");
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::CreditsRepository(err) => match err {
@@ -1485,7 +1574,13 @@ mod tests {
     async fn test_search_negative_balance_returns_insufficient_credits() {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(-5)));
         let query = make_query("rust scraping");
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::InsufficientCredits {
@@ -1506,8 +1601,13 @@ mod tests {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
         let query = make_query("");
         // Use the trait method
-        let result: Result<SearchResponse, SearchServiceError> =
-            SearchServiceTrait::search(&service, Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result: Result<SearchResponse, SearchServiceError> = SearchServiceTrait::search(
+            &service,
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            query,
+        )
+        .await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::ValidationError(_) => {}
@@ -1527,7 +1627,13 @@ mod tests {
         let (service, _, _) =
             make_service_with_recording(credits, Arc::new(MockSearchClient::new()));
         let query = make_query("rust web scraping");
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_ok(), "expected ok, got {:?}", result.err());
         let resp = result.unwrap();
         assert_eq!(resp.query, "rust web scraping");
@@ -1547,7 +1653,13 @@ mod tests {
         let (service, _, _) =
             make_service_with_recording(credits, Arc::new(MockSearchClient::new()));
         let query = make_query("rust");
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_ok());
         let calls = credits_handle.deduct_calls.lock().unwrap().clone();
         assert_eq!(calls.len(), 1, "deduct_credits should be called once");
@@ -1564,7 +1676,13 @@ mod tests {
             crawl_results: Some(true),
             ..make_query("rust scraping")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert!(resp.crawl_id.is_some(), "crawl_id should be set");
@@ -1591,7 +1709,13 @@ mod tests {
             crawl_results: Some(true),
             ..make_query("empty")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert!(resp.crawl_id.is_none(), "no crawl when results empty");
@@ -1615,7 +1739,13 @@ mod tests {
             limit: Some(2),
             ..make_query("limited")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert_eq!(
@@ -1629,7 +1759,13 @@ mod tests {
     async fn test_search_perform_search_failure_returns_search_engine_error() {
         let service = make_failing_search_service(Arc::new(MockCreditsRepo::with_balance(100)));
         let query = make_query("will fail");
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::SearchEngine(msg) => {
@@ -1655,7 +1791,13 @@ mod tests {
             crawl_results: Some(true),
             ..make_query("crawl fails")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::Repository(_) => { /* expected */ }
@@ -1679,7 +1821,13 @@ mod tests {
             crawl_results: Some(true),
             ..make_query("task fails")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::Repository(_) => { /* expected */ }
@@ -1698,7 +1846,13 @@ mod tests {
         let (service, _, _) =
             make_service_with_recording(credits, Arc::new(MockSearchClient::new()));
         let query = make_query("deduct fails");
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_err());
         match result.unwrap_err() {
             SearchServiceError::CreditsRepository(_) => { /* expected */ }
@@ -1710,8 +1864,13 @@ mod tests {
     async fn test_search_trait_delegates_to_success_path() {
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(100)));
         let query = make_query("trait delegation");
-        let result: Result<SearchResponse, SearchServiceError> =
-            SearchServiceTrait::search(&service, Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result: Result<SearchResponse, SearchServiceError> = SearchServiceTrait::search(
+            &service,
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
+            query,
+        )
+        .await;
         assert!(result.is_ok(), "trait should forward to success path");
         let resp = result.unwrap();
         assert_eq!(resp.results.len(), 2);
@@ -1727,7 +1886,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_credits_repo_unused_methods_return_expected_defaults() {
         let credits = MockCreditsRepo::with_balance(10);
-        let team_id = Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         // add_credits returns 0 (stub does not track new balance)
         assert_eq!(
             credits
@@ -1758,11 +1917,11 @@ mod tests {
     #[tokio::test]
     async fn test_mock_task_repo_unused_methods_return_expected_defaults() {
         let task_repo = MockTaskRepo::new();
-        let task_id = Uuid::new_v4();
+        let task_id = crate::domain::id::Id::generate();
         // Read/query stubs return "not found" / empty
         assert!(task_repo.find_by_id(task_id).await.unwrap().is_none());
         assert!(task_repo
-            .acquire_next(Uuid::new_v4())
+            .acquire_next(crate::domain::id::Id::generate())
             .await
             .unwrap()
             .is_none());
@@ -1778,7 +1937,7 @@ mod tests {
         assert_eq!(task_repo.expire_tasks().await.unwrap(), 0);
         assert_eq!(
             task_repo
-                .cancel_tasks_by_crawl_id(Uuid::new_v4())
+                .cancel_tasks_by_crawl_id(crate::domain::id::Id::generate())
                 .await
                 .unwrap(),
             0
@@ -1788,7 +1947,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_crawl_repo_unused_methods_return_expected_defaults() {
         let crawl_repo = MockCrawlRepo::new();
-        let crawl_id = Uuid::new_v4();
+        let crawl_id = crate::domain::id::Id::generate();
         // find_by_id returns None (stub)
         assert!(crawl_repo.find_by_id(crawl_id).await.unwrap().is_none());
         // Counter/status stubs are no-ops returning Ok
@@ -1815,10 +1974,10 @@ mod tests {
     async fn test_mock_task_repo_remaining_methods_return_defaults() {
         let task_repo = MockTaskRepo::new();
         let task = Task::new(
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
             TaskType::Scrape,
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "https://example.com".to_string(),
             json!({}),
         );
@@ -1841,7 +2000,7 @@ mod tests {
         );
         // find_by_crawl_id returns empty vec
         assert!(task_repo
-            .find_by_crawl_id(Uuid::new_v4())
+            .find_by_crawl_id(crate::domain::id::Id::generate())
             .await
             .unwrap()
             .is_empty());
@@ -1854,7 +2013,11 @@ mod tests {
         assert_eq!(count, 0);
         // batch_cancel returns empty tuples
         let (cancelled, failed) = task_repo
-            .batch_cancel(vec![Uuid::new_v4()], Uuid::new_v4(), false)
+            .batch_cancel(
+                vec![crate::domain::id::Id::generate()],
+                crate::domain::id::Id::generate(),
+                false,
+            )
             .await
             .unwrap();
         assert!(cancelled.is_empty());
@@ -1865,8 +2028,8 @@ mod tests {
     async fn test_mock_crawl_repo_update_echoes_back() {
         let crawl_repo = MockCrawlRepo::new();
         let crawl = Crawl::new(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             "Test".to_string(),
             "https://example.com".to_string(),
             "https://example.com".to_string(),
@@ -1945,6 +2108,7 @@ mod tests {
             politeness: PolitenessSettings::default(),
             session: SessionSettings::default(),
             content_extraction: ContentExtractionSettings::default(),
+            id: IdSettings::default(),
         }
     }
 
@@ -1963,7 +2127,11 @@ mod tests {
         // the injected mocks (empty query → ValidationError before touching repos)
         let rt = tokio::runtime::Runtime::new().unwrap();
         let err = rt
-            .block_on(service.search(Uuid::new_v4(), Uuid::new_v4(), make_query("")))
+            .block_on(service.search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                make_query(""),
+            ))
             .unwrap_err();
         assert!(matches!(
             err,
@@ -1997,7 +2165,13 @@ mod tests {
             crawl_config: Some(custom_config),
             ..make_query("custom crawl config")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_ok(), "expected ok, got {:?}", result.err());
         let resp = result.unwrap();
         assert!(resp.crawl_id.is_some(), "crawl_id should be set");
@@ -2049,7 +2223,13 @@ mod tests {
             crawl_config: None,
             ..make_query("default crawl config")
         };
-        let result = service.search(Uuid::new_v4(), Uuid::new_v4(), query).await;
+        let result = service
+            .search(
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                query,
+            )
+            .await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert!(resp.crawl_id.is_some());

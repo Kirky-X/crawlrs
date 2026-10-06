@@ -209,7 +209,10 @@ impl ExtractionServiceTrait for ExtractionService {
 
         let mut strategy = runtime.create_strategy();
         if let Err(err) = strategy
-            .index_document(html_content, &format!("doc-{}", uuid::Uuid::new_v4()))
+            .index_document(
+                html_content,
+                &format!("doc-{}", crate::domain::id::Id::generate()),
+            )
             .await
         {
             log::warn!("RAG indexing failed, falling back to full-page extraction: {err:#}");

@@ -19,7 +19,6 @@
 
 use log::info;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 // 任务状态
 #[derive(Debug, Clone, PartialEq)]
@@ -39,27 +38,27 @@ enum TaskStatus {
 #[derive(Debug, Clone)]
 enum TaskEvent {
     Created {
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         url: String,
     },
     Started {
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
     },
     Progress {
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         pages_scraped: u32,
     },
     Completed {
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         pages_scraped: u32,
         success: bool,
     },
     Failed {
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         error: String,
     },
     Cancelled {
-        task_id: Uuid,
+        task_id: crawlrs::domain::id::Id,
         reason: String,
     },
 }
@@ -68,7 +67,7 @@ enum TaskEvent {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct EventSubscription {
-    id: Uuid,
+    id: crawlrs::domain::id::Id,
     name: String,
     webhook_url: String,
     events: Vec<TaskStatus>,
@@ -78,7 +77,7 @@ struct EventSubscription {
 impl EventSubscription {
     pub fn new(name: &str, webhook_url: &str) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: crawlrs::domain::id::Id::generate(),
             name: name.to_string(),
             webhook_url: webhook_url.to_string(),
             events: Vec::new(),
@@ -175,7 +174,7 @@ async fn main() {
     // 模拟任务事件
     info!("\n--- 模拟任务事件 ---");
 
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
 
     router.route_event(&TaskEvent::Created {
         task_id,

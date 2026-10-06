@@ -621,7 +621,6 @@ pub async fn init_garrison_auth(
         };
         use dbnexus::sea_orm::{ActiveValue, EntityTrait};
         use garrison::protocol::apikey::ApiKeyHandler;
-        use uuid::Uuid;
 
         const GARRISON_NS: &str = "crawlrs";
         const PERM_ADMIN: &str = "crawlrs:admin";
@@ -635,13 +634,13 @@ pub async fn init_garrison_auth(
         };
 
         // `cfg_val` 可选格式：`team_id_uuid`（非空 uuid 时用作目标 team）
-        let team_id_arg: Option<Uuid> = if cfg_val.len() == 36 {
-            Uuid::parse_str(&cfg_val).ok()
+        let team_id_arg: Option<crate::domain::id::Id> = if cfg_val.len() == 36 {
+            cfg_val.parse::<crate::domain::id::Id>().ok()
         } else {
             None
         };
-        let team_id = team_id_arg.unwrap_or_else(Uuid::new_v4);
-        let api_key_id = Uuid::new_v4();
+        let team_id = team_id_arg.unwrap_or_else(crate::domain::id::Id::generate);
+        let api_key_id = crate::domain::id::Id::generate();
 
         // 确保 team 存在（bootstrap 首次启动时 team 表为空）
         let now = time_utils::to_db_datetime(chrono::Utc::now());
@@ -658,7 +657,7 @@ pub async fn init_garrison_auth(
             .is_none()
         {
             let team_active = TeamActiveModel {
-                id: ActiveValue::Set(team_id),
+                id: ActiveValue::Set(team_id.into()),
                 name: ActiveValue::Set(DEFAULT_TEAM_NAME.to_string()),
                 allowed_countries: ActiveValue::Set(None),
                 blocked_countries: ActiveValue::Set(None),
@@ -706,8 +705,8 @@ pub async fn init_garrison_auth(
 
         // 写入 crawlrs `api_keys` 表保留映射，auth_middleware 反查 team_id
         let api_key_active = ApiKeyActiveModel {
-            id: ActiveValue::Set(api_key_id),
-            team_id: ActiveValue::Set(team_id),
+            id: ActiveValue::Set(api_key_id.into()),
+            team_id: ActiveValue::Set(team_id.into()),
             key: ActiveValue::Set(garrison_key_id),
             created_at: ActiveValue::Set(now),
             updated_at: ActiveValue::Set(None),
@@ -1116,14 +1115,14 @@ mod tests {
 
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<RateLimitConfig, RateLimitingError> {
             Ok(RateLimitConfig::default())
         }
 
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
             _config: RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1138,37 +1137,37 @@ mod tests {
     impl ConcurrencyControlService for MockRateLimitingService {
         async fn check_team_concurrency(
             &self,
-            _team_id: uuid::Uuid,
-            _task_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyResult, RateLimitingError> {
             Ok(ConcurrencyResult::Allowed)
         }
 
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: uuid::Uuid,
-            _task_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
         async fn get_team_current_concurrency(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
 
         async fn get_team_concurrency_config(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<ConcurrencyConfig, RateLimitingError> {
             Ok(ConcurrencyConfig::default())
         }
 
         async fn update_team_concurrency_config(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
             _config: ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1179,7 +1178,7 @@ mod tests {
     impl BacklogService for MockRateLimitingService {
         async fn process_backlog_tasks(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
@@ -1189,25 +1188,28 @@ mod tests {
     impl QuotaService for MockRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<uuid::Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
 
-        async fn get_quota_balance(&self, _team_id: uuid::Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(0)
         }
 
         async fn refund_quota(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<uuid::Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
@@ -1281,7 +1283,7 @@ mod tests {
         let settings = make_test_settings(15, true);
         let semaphore = init_team_semaphore(&settings);
         // Adaptive 模式：default_team_limit 作为 initial
-        let team_id = uuid::Uuid::new_v4();
+        let team_id = crate::domain::id::Id::generate();
         assert_eq!(semaphore.current_target(team_id), 15);
     }
 

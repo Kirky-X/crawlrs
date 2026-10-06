@@ -14,7 +14,6 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use log::{error, info};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// 通过组合 `WebhookService` 复用已有的签名生成与发送逻辑，
 /// 避免代码重复。DI 注册在统一处理。
@@ -50,8 +49,12 @@ impl WebhookManagementServiceImpl {
 #[cfg(feature = "webhook")]
 #[async_trait]
 impl WebhookManagementService for WebhookManagementServiceImpl {
-    async fn register_webhook(&self, team_id: Uuid, url: String) -> Result<Webhook> {
-        let webhook = Webhook::new(Uuid::new_v4(), team_id, url);
+    async fn register_webhook(
+        &self,
+        team_id: crate::domain::id::Id,
+        url: String,
+    ) -> Result<Webhook> {
+        let webhook = Webhook::new(crate::domain::id::Id::generate(), team_id, url);
         webhook
             .validate_url()
             .map_err(|e| anyhow!("Invalid webhook URL: {}", e))?;
@@ -71,7 +74,7 @@ impl WebhookManagementService for WebhookManagementServiceImpl {
 
     async fn trigger_webhook(
         &self,
-        webhook_id: Uuid,
+        webhook_id: crate::domain::id::Id,
         event_type: WebhookEventType,
         payload: serde_json::Value,
     ) -> Result<()> {
@@ -180,7 +183,7 @@ impl WebhookManagementService for WebhookManagementServiceImpl {
         Ok(success_count)
     }
 
-    async fn list_webhooks(&self, team_id: Uuid) -> Result<Vec<Webhook>> {
+    async fn list_webhooks(&self, team_id: crate::domain::id::Id) -> Result<Vec<Webhook>> {
         let webhooks = self
             .webhook_repository
             .find_by_team_id(team_id)

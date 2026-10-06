@@ -28,7 +28,6 @@ use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::markdown_service::{MarkdownError, MarkdownServiceTrait};
 use log::{debug, warn};
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Markdown 后处理错误（错误显性化）
 ///
@@ -71,7 +70,6 @@ pub enum MarkdownPostProcessorError {
 /// # use crawlrs::domain::services::content_extractor::ContentExtractionFacade;
 /// # use serde_json::json;
 /// # use std::sync::Arc;
-/// # use uuid::Uuid;
 /// let processor = MarkdownPostProcessor::new(
 ///     Arc::new(HtmdMarkdownService::new()),
 ///     Some(Arc::new(ContentExtractionFacade::new(None))),
@@ -82,7 +80,7 @@ pub enum MarkdownPostProcessorError {
 /// })).unwrap();
 /// // generate is async — use .await in async context
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-/// let md = processor.generate(Uuid::new_v4(), &req, "<html><body><h1>Hi</h1></body></html>").await;
+/// let md = processor.generate(crate::domain::id::Id::generate(), &req, "<html><body><h1>Hi</h1></body></html>").await;
 /// assert!(md.unwrap().is_some());
 /// # });
 /// ```
@@ -148,7 +146,7 @@ impl MarkdownPostProcessor {
     /// ```
     pub async fn generate(
         &self,
-        task_id: Uuid,
+        task_id: crate::domain::id::Id,
         req: &ScrapeRequestDto,
         content: &str,
     ) -> Result<Option<String>, MarkdownPostProcessorError> {
@@ -232,7 +230,7 @@ impl MarkdownPostProcessor {
         let markdown_result = match content_source {
             MainContentSource::PlainText(text) => Ok(escape_leading_markdown_chars(&text)),
             MainContentSource::StructuredHtml(html) => {
-                // 复查 M2：rs-trafilatura 0.2.2 的 content_html 不做相对→绝对
+                // 复查：rs-trafilatura 0.2.2 的 content_html 不做相对→绝对
                 // URL 转换（上游 convert_tags 为死代码），先以页面 URL 为基重写
                 let absolute = absoluteize_links(&html, &req.url);
                 self.markdown_service.to_markdown(&absolute, false)
@@ -266,7 +264,7 @@ impl MarkdownPostProcessor {
     }
 }
 
-/// 复查 M2：把 HTML 中相对的 href/src 重写为基于 `base_url` 的绝对 URL
+/// 复查：把 HTML 中相对的 href/src 重写为基于 `base_url` 的绝对 URL
 ///
 /// rs-trafilatura 0.2.2 的 `content_html` 不做相对→绝对转换（上游
 /// `convert_tags` 为死代码），相对链接直接进 Markdown 会产出下游无法
@@ -364,7 +362,7 @@ mod tests {
         }));
         let result = p
             .generate(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 &req,
                 "<html><body><h1>Title</h1></body></html>",
             )
@@ -387,7 +385,11 @@ mod tests {
             "formats": ["html"]
         }));
         let result = p
-            .generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>")
+            .generate(
+                crate::domain::id::Id::generate(),
+                &req,
+                "<html><body>Hi</body></html>",
+            )
             .await;
         assert!(result.is_ok(), "expected Ok, got Err: {:?}", result.err());
         assert!(
@@ -402,7 +404,11 @@ mod tests {
         let p = make_processor();
         let req = make_req(json!({"url": "https://example.com"}));
         let result = p
-            .generate(Uuid::new_v4(), &req, "<html><body>Hi</body></html>")
+            .generate(
+                crate::domain::id::Id::generate(),
+                &req,
+                "<html><body>Hi</body></html>",
+            )
             .await;
         assert!(result.is_ok(), "expected Ok, got Err: {:?}", result.err());
         assert!(
@@ -422,7 +428,9 @@ mod tests {
             "url": "https://example.com",
             "formats": ["markdown"]
         }));
-        let result = p.generate(Uuid::new_v4(), &req, "").await;
+        let result = p
+            .generate(crate::domain::id::Id::generate(), &req, "")
+            .await;
         match result {
             Err(MarkdownPostProcessorError::EmptyResult) => {}
             other => panic!("expected Err(EmptyResult), got {other:?}"),
@@ -437,7 +445,9 @@ mod tests {
             "url": "https://example.com",
             "formats": ["markdown"]
         }));
-        let result = p.generate(Uuid::new_v4(), &req, "   \n\t  \n  ").await;
+        let result = p
+            .generate(crate::domain::id::Id::generate(), &req, "   \n\t  \n  ")
+            .await;
         match result {
             Err(MarkdownPostProcessorError::EmptyResult) => {}
             other => panic!("expected Err(EmptyResult), got {other:?}"),
@@ -453,7 +463,9 @@ mod tests {
 
         // 未请求 markdown → Ok(None) → 继续无 markdown
         let req = make_req(json!({"url": "https://example.com"}));
-        let result = p.generate(Uuid::new_v4(), &req, "<html></html>").await;
+        let result = p
+            .generate(crate::domain::id::Id::generate(), &req, "<html></html>")
+            .await;
         let generated: Option<String> = match result {
             Ok(md) => md,
             Err(e) => {
@@ -472,7 +484,9 @@ mod tests {
             "url": "https://example.com",
             "formats": ["markdown"]
         }));
-        let result = p.generate(Uuid::new_v4(), &req, "").await;
+        let result = p
+            .generate(crate::domain::id::Id::generate(), &req, "")
+            .await;
         let generated: Option<String> = match result {
             Ok(md) => md,
             Err(e) => {
@@ -522,7 +536,9 @@ mod tests {
                     <p>For deeper analysis see the <a href=\"https://example.com/analysis\">analysis</a> page.</p>\
                     </article>\
                     </body></html>";
-        let result = p.generate(Uuid::new_v4(), &req, html).await;
+        let result = p
+            .generate(crate::domain::id::Id::generate(), &req, html)
+            .await;
         let md = result
             .expect("expected Ok")
             .expect("expected Some(markdown)");
@@ -550,7 +566,7 @@ mod tests {
         }));
         let result = p
             .generate(
-                Uuid::new_v4(),
+                crate::domain::id::Id::generate(),
                 &req,
                 "<html><body><h1>Title</h1><p>Body text.</p></body></html>",
             )

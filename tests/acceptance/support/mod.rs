@@ -321,7 +321,6 @@ async fn bootstrap_admin_key(pool: Arc<dbnexus::DbPool>) -> anyhow::Result<Strin
     use crawlrs::infrastructure::database::entities::team::ActiveModel as TeamActiveModel;
     use crawlrs::infrastructure::database::entities::team::Entity as TeamEntity;
     use dbnexus::sea_orm::{ActiveValue, ConnectionTrait, EntityTrait};
-    use uuid::Uuid;
 
     let team_id = DEFAULT_TEAM_ID;
     let session = pool.get_session("admin").await?;
@@ -330,7 +329,7 @@ async fn bootstrap_admin_key(pool: Arc<dbnexus::DbPool>) -> anyhow::Result<Strin
     if TeamEntity::find_by_id(team_id).one(conn).await?.is_none() {
         let now = time_utils::to_db_datetime(chrono::Utc::now());
         TeamEntity::insert(TeamActiveModel {
-            id: ActiveValue::Set(team_id),
+            id: ActiveValue::Set(team_id.into()),
             name: ActiveValue::Set("default-team".to_string()),
             allowed_countries: ActiveValue::Set(None),
             blocked_countries: ActiveValue::Set(None),
@@ -361,7 +360,7 @@ async fn bootstrap_admin_key(pool: Arc<dbnexus::DbPool>) -> anyhow::Result<Strin
         let dao =
             get_garrison_dao().ok_or_else(|| anyhow::anyhow!("garrison DAO not initialized"))?;
         let handler = ApiKeyHandler::new(dao);
-        let api_key_id = Uuid::new_v4();
+        let api_key_id = crawlrs::domain::id::Id::generate();
         let plaintext_key = handler
             .generate_with_namespace(
                 api_key_id.to_string(),
@@ -383,8 +382,8 @@ async fn bootstrap_admin_key(pool: Arc<dbnexus::DbPool>) -> anyhow::Result<Strin
         let now = time_utils::to_db_datetime(chrono::Utc::now());
         #[allow(deprecated)]
         ApiKeyEntity::insert(ApiKeyActiveModel {
-            id: ActiveValue::Set(api_key_id),
-            team_id: ActiveValue::Set(team_id),
+            id: ActiveValue::Set(api_key_id.into()),
+            team_id: ActiveValue::Set(team_id.into()),
             key: ActiveValue::Set(garrison_key_id),
             created_at: ActiveValue::Set(now),
             updated_at: ActiveValue::Set(None),
@@ -461,7 +460,7 @@ async fn given_no_key(w: &mut AcceptanceWorld) {
 async fn given_regular_key(w: &mut AcceptanceWorld) {
     let harness = w.get_harness().await;
     let payload = serde_json::json!({
-        "team_id": uuid::Uuid::from_u128(1), // DEFAULT_TEAM_ID（bootstrap 已建）
+        "team_id": crawlrs::domain::id::Id::from_u128(1), // DEFAULT_TEAM_ID（bootstrap 已建）
         "scopes": ["read", "write"],
     });
     let response = harness
@@ -552,7 +551,7 @@ async fn when_sign_regular_key(w: &mut AcceptanceWorld, scopes: String) {
     let scope_list: Vec<&str> = scopes.split(',').map(str::trim).collect();
     let harness = w.get_harness().await;
     let payload = serde_json::json!({
-        "team_id": uuid::Uuid::from_u128(1), // DEFAULT_TEAM_ID（bootstrap 已建）
+        "team_id": crawlrs::domain::id::Id::from_u128(1), // DEFAULT_TEAM_ID（bootstrap 已建）
         "scopes": scope_list,
     });
     let mut request = harness.server.post("/v1/admin/api-keys").json(&payload);
@@ -837,7 +836,7 @@ async fn when_create_webhook(w: &mut AcceptanceWorld, path: String, url: String,
     let payload = serde_json::json!({"url": url});
     let body = serde_json::to_string(&payload).expect("serialize webhook payload");
 
-    let msg_id = format!("msg-{}", uuid::Uuid::new_v4());
+    let msg_id = format!("msg-{}", crawlrs::domain::id::Id::generate());
     let timestamp = chrono::Utc::now().timestamp();
     let to_sign = format!("{msg_id}.{timestamp}.{body}");
     let mut mac: Hmac<Sha256> =

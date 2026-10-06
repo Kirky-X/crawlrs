@@ -9,7 +9,6 @@ use crate::domain::repositories::audit_log_repository::{AuditLogRepository, Audi
 use log::debug;
 use std::sync::Arc;
 use thiserror::Error;
-use uuid::Uuid;
 
 // AuditLogBuilder 已拆分到独立文件（架构单一职责）
 // 这里 re-export 保持外部 import 路径向后兼容：
@@ -137,7 +136,7 @@ mod tests {
 
         async fn find_by_api_key_id(
             &self,
-            _api_key_id: Uuid,
+            _api_key_id: crate::domain::id::Id,
             _limit: u64,
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
@@ -151,7 +150,7 @@ mod tests {
 
         async fn find_by_team_id(
             &self,
-            _team_id: Uuid,
+            _team_id: crate::domain::id::Id,
             _limit: u64,
             _offset: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
@@ -165,7 +164,7 @@ mod tests {
 
         async fn find_denied_for_key(
             &self,
-            _api_key_id: Uuid,
+            _api_key_id: crate::domain::id::Id,
             _limit: u64,
         ) -> Result<Vec<AuditLogEntry>, AuditRepositoryError> {
             if self.fail_all {
@@ -191,8 +190,8 @@ mod tests {
 
     fn sample_entry(action: &str, decision: AuditDecision) -> AuditLogEntry {
         AuditLogBuilder::new(action, decision)
-            .with_api_key_id(Uuid::new_v4())
-            .with_team_id(Uuid::new_v4())
+            .with_api_key_id(crate::domain::id::Id::generate())
+            .with_team_id(crate::domain::id::Id::generate())
             .build()
     }
 
@@ -239,8 +238,8 @@ mod tests {
     async fn test_audit_service_log_allow_builds_allow_entry() {
         let repo = Arc::new(MockAuditLogRepository::new());
         let service = AuditService::new(repo.clone());
-        let api_key_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let scope = ApiKeyScope::read_only();
 
         service
@@ -264,7 +263,12 @@ mod tests {
         let repo = Arc::new(MockAuditLogRepository::failing());
         let service = AuditService::new(repo);
         let result = service
-            .log_allow("x", Uuid::new_v4(), Uuid::new_v4(), ApiKeyScope::default())
+            .log_allow(
+                "x",
+                crate::domain::id::Id::generate(),
+                crate::domain::id::Id::generate(),
+                ApiKeyScope::default(),
+            )
             .await;
         assert!(result.is_err());
     }
@@ -275,8 +279,8 @@ mod tests {
     async fn test_audit_service_log_deny_with_all_fields() {
         let repo = Arc::new(MockAuditLogRepository::new());
         let service = AuditService::new(repo.clone());
-        let api_key_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let scope = ApiKeyScope::full_access();
 
         service
@@ -349,7 +353,7 @@ mod tests {
         let service = AuditService::new(repo);
 
         let results = service
-            .get_logs_for_key(Uuid::new_v4(), 10, 0)
+            .get_logs_for_key(crate::domain::id::Id::generate(), 10, 0)
             .await
             .expect("get_logs_for_key should succeed");
         assert_eq!(results.len(), 2);
@@ -362,7 +366,7 @@ mod tests {
         let repo = Arc::new(MockAuditLogRepository::new());
         let service = AuditService::new(repo);
         let results = service
-            .get_logs_for_key(Uuid::new_v4(), 10, 0)
+            .get_logs_for_key(crate::domain::id::Id::generate(), 10, 0)
             .await
             .expect("should succeed");
         assert!(results.is_empty());
@@ -372,7 +376,9 @@ mod tests {
     async fn test_audit_service_get_logs_for_key_repository_error() {
         let repo = Arc::new(MockAuditLogRepository::failing());
         let service = AuditService::new(repo);
-        let result = service.get_logs_for_key(Uuid::new_v4(), 10, 0).await;
+        let result = service
+            .get_logs_for_key(crate::domain::id::Id::generate(), 10, 0)
+            .await;
         assert!(result.is_err());
     }
 
@@ -387,7 +393,7 @@ mod tests {
         let service = AuditService::new(repo);
 
         let results = service
-            .get_logs_for_team(Uuid::new_v4(), 50, 10)
+            .get_logs_for_team(crate::domain::id::Id::generate(), 50, 10)
             .await
             .expect("get_logs_for_team should succeed");
         assert_eq!(results.len(), 1);
@@ -398,7 +404,9 @@ mod tests {
     async fn test_audit_service_get_logs_for_team_repository_error() {
         let repo = Arc::new(MockAuditLogRepository::failing());
         let service = AuditService::new(repo);
-        let result = service.get_logs_for_team(Uuid::new_v4(), 50, 0).await;
+        let result = service
+            .get_logs_for_team(crate::domain::id::Id::generate(), 50, 0)
+            .await;
         assert!(result.is_err());
     }
 
@@ -415,7 +423,7 @@ mod tests {
         let service = AuditService::new(repo);
 
         let results = service
-            .get_denied_requests(Uuid::new_v4(), 100)
+            .get_denied_requests(crate::domain::id::Id::generate(), 100)
             .await
             .expect("get_denied_requests should succeed");
         assert_eq!(results.len(), 2);
@@ -428,7 +436,7 @@ mod tests {
         let repo = Arc::new(MockAuditLogRepository::new());
         let service = AuditService::new(repo);
         let results = service
-            .get_denied_requests(Uuid::new_v4(), 100)
+            .get_denied_requests(crate::domain::id::Id::generate(), 100)
             .await
             .expect("should succeed");
         assert!(results.is_empty());
@@ -438,7 +446,9 @@ mod tests {
     async fn test_audit_service_get_denied_requests_repository_error() {
         let repo = Arc::new(MockAuditLogRepository::failing());
         let service = AuditService::new(repo);
-        let result = service.get_denied_requests(Uuid::new_v4(), 100).await;
+        let result = service
+            .get_denied_requests(crate::domain::id::Id::generate(), 100)
+            .await;
         assert!(result.is_err());
     }
 
@@ -496,8 +506,8 @@ mod tests {
         let result = AuditServiceTrait::log_allow(
             &service,
             "trait.allow".to_string(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            crate::domain::id::Id::generate(),
+            crate::domain::id::Id::generate(),
             ApiKeyScope::default(),
         )
         .await;
@@ -536,9 +546,10 @@ mod tests {
         let repo = Arc::new(MockAuditLogRepository::with_find_results(vec![entry]));
         let service: AuditService<MockAuditLogRepository> = AuditService::new(repo);
 
-        let results = AuditServiceTrait::get_logs_for_key(&service, Uuid::new_v4(), 5, 0)
-            .await
-            .expect("trait get_logs_for_key should succeed");
+        let results =
+            AuditServiceTrait::get_logs_for_key(&service, crate::domain::id::Id::generate(), 5, 0)
+                .await
+                .expect("trait get_logs_for_key should succeed");
         assert_eq!(results.len(), 1);
     }
 
@@ -547,9 +558,10 @@ mod tests {
         let repo = Arc::new(MockAuditLogRepository::new());
         let service: AuditService<MockAuditLogRepository> = AuditService::new(repo);
 
-        let results = AuditServiceTrait::get_logs_for_team(&service, Uuid::new_v4(), 5, 0)
-            .await
-            .expect("trait get_logs_for_team should succeed");
+        let results =
+            AuditServiceTrait::get_logs_for_team(&service, crate::domain::id::Id::generate(), 5, 0)
+                .await
+                .expect("trait get_logs_for_team should succeed");
         assert!(results.is_empty());
     }
 
@@ -558,9 +570,10 @@ mod tests {
         let repo = Arc::new(MockAuditLogRepository::new());
         let service: AuditService<MockAuditLogRepository> = AuditService::new(repo);
 
-        let results = AuditServiceTrait::get_denied_requests(&service, Uuid::new_v4(), 5)
-            .await
-            .expect("trait get_denied_requests should succeed");
+        let results =
+            AuditServiceTrait::get_denied_requests(&service, crate::domain::id::Id::generate(), 5)
+                .await
+                .expect("trait get_denied_requests should succeed");
         assert!(results.is_empty());
     }
 
@@ -607,7 +620,7 @@ mod tests {
     #[test]
     fn test_audit_log_entry_getters_return_set_values() {
         let ip: std::net::IpAddr = Ipv4Addr::new(192, 168, 0, 1).into();
-        let trace_id = Uuid::new_v4();
+        let trace_id = crate::domain::id::Id::generate();
         let entry = AuditLogBuilder::new("action", AuditDecision::Allow)
             .with_ip_address(ip)
             .with_trace_id(trace_id)
@@ -654,8 +667,8 @@ mod tests {
         ensure_debug_logger();
         let repo = Arc::new(MockAuditLogRepository::new());
         let service = AuditService::new(repo.clone());
-        let api_key_id = Uuid::new_v4();
-        let team_id = Uuid::new_v4();
+        let api_key_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
         let scope = ApiKeyScope::read_only();
         service
             .log_deny(
@@ -683,8 +696,8 @@ pub trait AuditServiceTrait: Send + Sync {
     async fn log_allow(
         &self,
         action: String,
-        api_key_id: Uuid,
-        team_id: Uuid,
+        api_key_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         scope: ApiKeyScope,
     ) -> Result<(), AuditServiceError>;
 
@@ -692,8 +705,8 @@ pub trait AuditServiceTrait: Send + Sync {
     async fn log_deny(
         &self,
         action: String,
-        api_key_id: Option<Uuid>,
-        team_id: Option<Uuid>,
+        api_key_id: Option<crate::domain::id::Id>,
+        team_id: Option<crate::domain::id::Id>,
         reason: String,
         scope: Option<ApiKeyScope>,
     ) -> Result<(), AuditServiceError>;
@@ -701,7 +714,7 @@ pub trait AuditServiceTrait: Send + Sync {
     /// Get audit logs for an API Key
     async fn get_logs_for_key(
         &self,
-        api_key_id: Uuid,
+        api_key_id: crate::domain::id::Id,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError>;
@@ -709,7 +722,7 @@ pub trait AuditServiceTrait: Send + Sync {
     /// Get audit logs for a team
     async fn get_logs_for_team(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError>;
@@ -717,7 +730,7 @@ pub trait AuditServiceTrait: Send + Sync {
     /// Get denied requests for an API Key
     async fn get_denied_requests(
         &self,
-        api_key_id: Uuid,
+        api_key_id: crate::domain::id::Id,
         limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError>;
 }
@@ -751,8 +764,8 @@ impl<R: AuditLogRepository> AuditService<R> {
     pub async fn log_allow_internal(
         &self,
         action: impl Into<String>,
-        api_key_id: Uuid,
-        team_id: Uuid,
+        api_key_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         scope: ApiKeyScope,
     ) -> Result<(), AuditServiceError> {
         let entry = AuditLogBuilder::new(action, AuditDecision::Allow)
@@ -768,8 +781,8 @@ impl<R: AuditLogRepository> AuditService<R> {
     pub async fn log_deny_internal(
         &self,
         action: impl Into<String>,
-        api_key_id: Option<Uuid>,
-        team_id: Option<Uuid>,
+        api_key_id: Option<crate::domain::id::Id>,
+        team_id: Option<crate::domain::id::Id>,
         reason: impl Into<String>,
         scope: Option<ApiKeyScope>,
     ) -> Result<(), AuditServiceError> {
@@ -794,8 +807,8 @@ impl<R: AuditLogRepository> AuditService<R> {
     pub async fn log_allow(
         &self,
         action: impl Into<String>,
-        api_key_id: Uuid,
-        team_id: Uuid,
+        api_key_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         scope: ApiKeyScope,
     ) -> Result<(), AuditServiceError> {
         self.log_allow_internal(action, api_key_id, team_id, scope)
@@ -806,8 +819,8 @@ impl<R: AuditLogRepository> AuditService<R> {
     pub async fn log_deny(
         &self,
         action: impl Into<String>,
-        api_key_id: Option<Uuid>,
-        team_id: Option<Uuid>,
+        api_key_id: Option<crate::domain::id::Id>,
+        team_id: Option<crate::domain::id::Id>,
         reason: impl Into<String>,
         scope: Option<ApiKeyScope>,
     ) -> Result<(), AuditServiceError> {
@@ -818,7 +831,7 @@ impl<R: AuditLogRepository> AuditService<R> {
     /// Get audit logs for an API Key
     pub async fn get_logs_for_key(
         &self,
-        api_key_id: Uuid,
+        api_key_id: crate::domain::id::Id,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
@@ -831,7 +844,7 @@ impl<R: AuditLogRepository> AuditService<R> {
     /// Get audit logs for a team
     pub async fn get_logs_for_team(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
@@ -844,7 +857,7 @@ impl<R: AuditLogRepository> AuditService<R> {
     /// Get denied requests for an API Key
     pub async fn get_denied_requests(
         &self,
-        api_key_id: Uuid,
+        api_key_id: crate::domain::id::Id,
         limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
         self.audit_repo
@@ -871,8 +884,8 @@ impl<R: AuditLogRepository + 'static> AuditServiceTrait for AuditService<R> {
     async fn log_allow(
         &self,
         action: String,
-        api_key_id: Uuid,
-        team_id: Uuid,
+        api_key_id: crate::domain::id::Id,
+        team_id: crate::domain::id::Id,
         scope: ApiKeyScope,
     ) -> Result<(), AuditServiceError> {
         self.log_allow_internal(action, api_key_id, team_id, scope)
@@ -882,8 +895,8 @@ impl<R: AuditLogRepository + 'static> AuditServiceTrait for AuditService<R> {
     async fn log_deny(
         &self,
         action: String,
-        api_key_id: Option<Uuid>,
-        team_id: Option<Uuid>,
+        api_key_id: Option<crate::domain::id::Id>,
+        team_id: Option<crate::domain::id::Id>,
         reason: String,
         scope: Option<ApiKeyScope>,
     ) -> Result<(), AuditServiceError> {
@@ -893,7 +906,7 @@ impl<R: AuditLogRepository + 'static> AuditServiceTrait for AuditService<R> {
 
     async fn get_logs_for_key(
         &self,
-        api_key_id: Uuid,
+        api_key_id: crate::domain::id::Id,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
@@ -905,7 +918,7 @@ impl<R: AuditLogRepository + 'static> AuditServiceTrait for AuditService<R> {
 
     async fn get_logs_for_team(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         limit: u64,
         offset: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
@@ -917,7 +930,7 @@ impl<R: AuditLogRepository + 'static> AuditServiceTrait for AuditService<R> {
 
     async fn get_denied_requests(
         &self,
-        api_key_id: Uuid,
+        api_key_id: crate::domain::id::Id,
         limit: u64,
     ) -> Result<Vec<AuditLogEntry>, AuditServiceError> {
         self.audit_repo

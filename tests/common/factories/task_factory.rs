@@ -6,7 +6,6 @@
 use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::infrastructure::database::entities::task::{self, Entity as TaskEntity};
 use dbnexus::sea_orm::{DatabaseConnection, EntityTrait, Set};
-use uuid::Uuid;
 
 pub struct TaskFactory;
 
@@ -23,33 +22,48 @@ impl TaskFactory {
             .expect("Task not found after insertion")
     }
 
-    fn base_task_model(url: String, task_type: TaskType, team_id: Uuid) -> task::ActiveModel {
+    fn base_task_model(
+        url: String,
+        task_type: TaskType,
+        team_id: crawlrs::domain::id::Id,
+    ) -> task::ActiveModel {
         task::ActiveModel {
-            id: Set(Uuid::new_v4()),
+            id: Set(crawlrs::domain::id::Id::generate().into()),
             url: Set(url),
             task_type: Set(task_type.to_string()),
             status: Set(TaskStatus::Queued.to_string()),
             priority: Set(0),
-            team_id: Set(team_id),
+            team_id: Set(team_id.into()),
             ..Default::default()
         }
     }
 
     pub async fn create_scrape_task(db: &DatabaseConnection, url: &str) -> task::Model {
-        let model = Self::base_task_model(url.to_string(), TaskType::Scrape, Uuid::nil());
+        let model = Self::base_task_model(
+            url.to_string(),
+            TaskType::Scrape,
+            crawlrs::domain::id::Id::nil(),
+        );
         Self::insert_and_fetch(db, model).await
     }
 
     pub async fn create_crawl_task(db: &DatabaseConnection, url: &str, depth: u32) -> task::Model {
-        let mut model = Self::base_task_model(url.to_string(), TaskType::Crawl, Uuid::nil());
+        let mut model = Self::base_task_model(
+            url.to_string(),
+            TaskType::Crawl,
+            crawlrs::domain::id::Id::nil(),
+        );
         model.task_type = Set(TaskType::Crawl.to_string());
         model.payload = Set(serde_json::json!({ "depth": depth }));
         Self::insert_and_fetch(db, model).await
     }
 
     pub async fn create_search_task(db: &DatabaseConnection, query: &str) -> task::Model {
-        let mut model =
-            Self::base_task_model(format!("search:{}", query), TaskType::Scrape, Uuid::nil());
+        let mut model = Self::base_task_model(
+            format!("search:{}", query),
+            TaskType::Scrape,
+            crawlrs::domain::id::Id::nil(),
+        );
         model.payload = Set(serde_json::json!({ "query": query }));
         Self::insert_and_fetch(db, model).await
     }
@@ -58,7 +72,7 @@ impl TaskFactory {
         db: &DatabaseConnection,
         url: &str,
         task_type: TaskType,
-        team_id: Uuid,
+        team_id: crawlrs::domain::id::Id,
     ) -> task::Model {
         let model = Self::base_task_model(url.to_string(), task_type, team_id);
         Self::insert_and_fetch(db, model).await

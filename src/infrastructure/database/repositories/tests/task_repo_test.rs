@@ -7,16 +7,15 @@ use crate::common::test_helpers::create_test_db_pool;
 use crate::domain::models::{Task, TaskType};
 use chrono::Duration;
 use serde_json::json;
-use uuid::Uuid;
 
 /// Build a minimal Task instance for tests.
 /// Each call produces fresh UUIDs for id/team_id/api_key_id so tests are isolated.
 fn make_test_task() -> Task {
     Task::new(
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         TaskType::Scrape,
-        Uuid::new_v4(),
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
+        crate::domain::id::Id::generate(),
         "http://example.com".to_string(),
         json!({}),
     )
@@ -25,7 +24,7 @@ fn make_test_task() -> Task {
 /// Build a Task with a unique URL (for exists_by_url / find_existing_urls tests).
 fn make_test_task_with_unique_url() -> Task {
     let mut task = make_test_task();
-    task.url = format!("http://example.com/{}", Uuid::new_v4());
+    task.url = format!("http://example.com/{}", crate::domain::id::Id::generate());
     task
 }
 
@@ -83,7 +82,7 @@ async fn test_find_by_id_with_real_db_returns_none_for_unknown() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.find_by_id(Uuid::new_v4()).await;
+    let result = repo.find_by_id(crate::domain::id::Id::generate()).await;
     assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
     assert!(result.unwrap().is_none(), "unknown UUID should return None");
 }
@@ -98,7 +97,7 @@ async fn test_update_with_real_db_succeeds() {
     // create first
     repo.create(&task).await.expect("create failed");
     // modify fields and update
-    task.url = format!("http://updated.com/{}", Uuid::new_v4());
+    task.url = format!("http://updated.com/{}", crate::domain::id::Id::generate());
     task.priority = 7;
     task.payload = json!({"updated": true});
     let result = repo.update(&task).await;
@@ -127,7 +126,7 @@ async fn test_acquire_next_with_real_db_returns_ok_when_backlog_empty() {
     // only contain other tests' tasks with different team_id, but acquire_next
     // does not filter by team_id — to be safe we use a fresh worker_id and
     // accept that if some other test left a queued task it might be acquired).
-    let result = repo.acquire_next(Uuid::new_v4()).await;
+    let result = repo.acquire_next(crate::domain::id::Id::generate()).await;
     assert!(result.is_ok(), "acquire_next failed: {:?}", result.err());
     // We cannot assert None strongly because the shared test DB may have
     // queued tasks from other tests. We at least verify it returns Ok.
@@ -147,7 +146,7 @@ async fn test_acquire_next_with_real_db_acquires_created_task() {
     task.priority = 0;
     repo.create(&task).await.expect("create failed");
 
-    let worker = Uuid::new_v4();
+    let worker = crate::domain::id::Id::generate();
     let result = repo.acquire_next(worker).await;
     assert!(result.is_ok(), "acquire_next failed: {:?}", result.err());
     let acquired = result.unwrap();
@@ -228,7 +227,10 @@ async fn test_exists_by_url_with_real_db_returns_false_for_unknown() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let unknown_url = format!("http://nonexistent-{}.com", Uuid::new_v4());
+    let unknown_url = format!(
+        "http://nonexistent-{}.com",
+        crate::domain::id::Id::generate()
+    );
     let result = repo.exists_by_url(&unknown_url).await;
     assert!(result.is_ok(), "exists_by_url failed: {:?}", result.err());
     assert!(!result.unwrap(), "unknown URL should return false");
@@ -266,7 +268,10 @@ async fn test_find_existing_urls_with_real_db_returns_empty_for_unknown() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let urls = vec![format!("http://nonexistent-{}.com", Uuid::new_v4())];
+    let urls = vec![format!(
+        "http://nonexistent-{}.com",
+        crate::domain::id::Id::generate()
+    )];
     let result = repo.find_existing_urls(&urls).await;
     assert!(
         result.is_ok(),
@@ -290,7 +295,10 @@ async fn test_find_existing_urls_with_real_db_returns_matching_urls() {
     repo.create(&task1).await.expect("create task1 failed");
     repo.create(&task2).await.expect("create task2 failed");
 
-    let unknown_url = format!("http://nonexistent-{}.com", Uuid::new_v4());
+    let unknown_url = format!(
+        "http://nonexistent-{}.com",
+        crate::domain::id::Id::generate()
+    );
     let urls = vec![task1.url.clone(), task2.url.clone(), unknown_url.clone()];
     let result = repo.find_existing_urls(&urls).await;
     assert!(
@@ -366,7 +374,9 @@ async fn test_cancel_tasks_by_crawl_id_with_real_db_returns_zero_for_unknown() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.cancel_tasks_by_crawl_id(Uuid::new_v4()).await;
+    let result = repo
+        .cancel_tasks_by_crawl_id(crate::domain::id::Id::generate())
+        .await;
     assert!(
         result.is_ok(),
         "cancel_tasks_by_crawl_id failed: {:?}",
@@ -381,7 +391,7 @@ async fn test_cancel_tasks_by_crawl_id_with_real_db_cancels_matching() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     let mut task1 = make_test_task();
     task1.crawl_id = Some(crawl_id);
     let mut task2 = make_test_task();
@@ -476,7 +486,9 @@ async fn test_find_by_crawl_id_with_real_db_returns_empty_for_unknown() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.find_by_crawl_id(Uuid::new_v4()).await;
+    let result = repo
+        .find_by_crawl_id(crate::domain::id::Id::generate())
+        .await;
     assert!(
         result.is_ok(),
         "find_by_crawl_id failed: {:?}",
@@ -494,7 +506,7 @@ async fn test_find_by_crawl_id_with_real_db_returns_matching_tasks() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let crawl_id = Uuid::new_v4();
+    let crawl_id = crate::domain::id::Id::generate();
     let mut task1 = make_test_task();
     task1.crawl_id = Some(crawl_id);
     let mut task2 = make_test_task();
@@ -510,7 +522,7 @@ async fn test_find_by_crawl_id_with_real_db_returns_matching_tasks() {
     assert!(result.is_ok(), "find_by_crawl_id failed");
     let tasks = result.unwrap();
     assert_eq!(tasks.len(), 2, "should find 2 tasks for crawl_id");
-    let ids: HashSet<Uuid> = tasks.iter().map(|t| t.id).collect();
+    let ids: HashSet<crate::domain::id::Id> = tasks.iter().map(|t| t.id).collect();
     assert!(ids.contains(&task1.id));
     assert!(ids.contains(&task2.id));
     assert!(!ids.contains(&unrelated.id));
@@ -523,7 +535,7 @@ async fn test_query_tasks_with_real_db_returns_empty_for_unknown_team() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
-        team_id: Uuid::new_v4(),
+        team_id: crate::domain::id::Id::generate(),
         ..Default::default()
     };
     let result = repo.query_tasks(params).await;
@@ -542,7 +554,7 @@ async fn test_query_tasks_with_real_db_returns_matching_tasks() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let team_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
     let mut task1 = make_test_task();
     task1.team_id = team_id;
     task1.task_type = TaskType::Scrape;
@@ -571,7 +583,9 @@ async fn test_batch_cancel_returns_empty_for_empty_input() {
     }
     // Empty input should short-circuit to Ok((empty, empty)) without DB access
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.batch_cancel(Vec::new(), Uuid::new_v4(), false).await;
+    let result = repo
+        .batch_cancel(Vec::new(), crate::domain::id::Id::generate(), false)
+        .await;
     assert!(result.is_ok());
     let (cancelled, errors) = result.unwrap();
     assert!(cancelled.is_empty());
@@ -584,9 +598,11 @@ async fn test_batch_cancel_with_real_db_returns_errors_for_unknown_ids() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let unknown_id = Uuid::new_v4();
+    let unknown_id = crate::domain::id::Id::generate();
     let task_ids = vec![unknown_id];
-    let result = repo.batch_cancel(task_ids, Uuid::new_v4(), false).await;
+    let result = repo
+        .batch_cancel(task_ids, crate::domain::id::Id::generate(), false)
+        .await;
     assert!(
         result.is_ok(),
         "batch_cancel should succeed even with unknown IDs"
@@ -604,7 +620,7 @@ async fn test_batch_cancel_with_real_db_cancels_owned_tasks() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let team_id = Uuid::new_v4();
+    let team_id = crate::domain::id::Id::generate();
     let mut task1 = make_test_task();
     task1.team_id = team_id;
     let mut task2 = make_test_task();
@@ -722,8 +738,8 @@ fn test_task_query_params_default() {
         return;
     }
     let params = TaskQueryParams::default();
-    // Default should have nil Uuid for team_id
-    assert_eq!(params.team_id, Uuid::nil());
+    // Default should have nil crate::domain::id::Id for team_id
+    assert_eq!(params.team_id, crate::domain::id::Id::nil());
     assert!(params.crawl_id.is_none());
     assert!(params.statuses.is_none());
     assert!(params.task_types.is_none());
@@ -744,8 +760,8 @@ async fn test_query_tasks_with_crawl_id_returns_empty() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
-        team_id: Uuid::new_v4(),
-        crawl_id: Some(Uuid::new_v4()),
+        team_id: crate::domain::id::Id::generate(),
+        crawl_id: Some(crate::domain::id::Id::generate()),
         ..Default::default()
     };
     let result = repo.query_tasks(params).await;
@@ -762,7 +778,7 @@ async fn test_query_tasks_with_statuses_returns_empty() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
-        team_id: Uuid::new_v4(),
+        team_id: crate::domain::id::Id::generate(),
         statuses: Some(vec![TaskStatus::Queued, TaskStatus::Active]),
         ..Default::default()
     };
@@ -780,7 +796,7 @@ async fn test_query_tasks_with_task_types_returns_empty() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
-        team_id: Uuid::new_v4(),
+        team_id: crate::domain::id::Id::generate(),
         task_types: Some(vec![TaskType::Scrape, TaskType::Crawl, TaskType::Extract]),
         ..Default::default()
     };
@@ -798,8 +814,8 @@ async fn test_query_tasks_with_all_optional_filters_returns_empty() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
-        team_id: Uuid::new_v4(),
-        crawl_id: Some(Uuid::new_v4()),
+        team_id: crate::domain::id::Id::generate(),
+        crawl_id: Some(crate::domain::id::Id::generate()),
         statuses: Some(vec![TaskStatus::Completed, TaskStatus::Failed]),
         task_types: Some(vec![TaskType::Scrape]),
         limit: 50,
@@ -824,9 +840,18 @@ async fn test_find_existing_urls_with_multiple_urls_returns_empty_for_unknown() 
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let urls = vec![
-        format!("http://nonexistent-{}.com", Uuid::new_v4()),
-        format!("http://nonexistent-{}.com", Uuid::new_v4()),
-        format!("http://nonexistent-{}.com", Uuid::new_v4()),
+        format!(
+            "http://nonexistent-{}.com",
+            crate::domain::id::Id::generate()
+        ),
+        format!(
+            "http://nonexistent-{}.com",
+            crate::domain::id::Id::generate()
+        ),
+        format!(
+            "http://nonexistent-{}.com",
+            crate::domain::id::Id::generate()
+        ),
     ];
     let result = repo.find_existing_urls(&urls).await;
     assert!(result.is_ok(), "find_existing_urls failed");
@@ -839,16 +864,18 @@ async fn test_batch_cancel_with_multiple_ids_returns_errors_for_unknown() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let id1 = Uuid::new_v4();
-    let id2 = Uuid::new_v4();
-    let id3 = Uuid::new_v4();
+    let id1 = crate::domain::id::Id::generate();
+    let id2 = crate::domain::id::Id::generate();
+    let id3 = crate::domain::id::Id::generate();
     let task_ids = vec![id1, id2, id3];
-    let result = repo.batch_cancel(task_ids, Uuid::new_v4(), false).await;
+    let result = repo
+        .batch_cancel(task_ids, crate::domain::id::Id::generate(), false)
+        .await;
     assert!(result.is_ok(), "batch_cancel should succeed");
     let (cancelled, errors) = result.unwrap();
     assert!(cancelled.is_empty());
     assert_eq!(errors.len(), 3, "all 3 IDs should be reported as not found");
-    let error_ids: HashSet<Uuid> = errors.iter().map(|(id, _)| *id).collect();
+    let error_ids: HashSet<crate::domain::id::Id> = errors.iter().map(|(id, _)| *id).collect();
     assert!(error_ids.contains(&id1));
     assert!(error_ids.contains(&id2));
     assert!(error_ids.contains(&id3));
@@ -860,8 +887,10 @@ async fn test_batch_cancel_with_force_true_returns_errors_for_unknown() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let task_ids = vec![Uuid::new_v4()];
-    let result = repo.batch_cancel(task_ids, Uuid::new_v4(), true).await;
+    let task_ids = vec![crate::domain::id::Id::generate()];
+    let result = repo
+        .batch_cancel(task_ids, crate::domain::id::Id::generate(), true)
+        .await;
     assert!(result.is_ok(), "batch_cancel should succeed");
     let (cancelled, errors) = result.unwrap();
     assert!(cancelled.is_empty());
@@ -1330,7 +1359,7 @@ async fn test_exists_by_url_with_long_url_returns_false_for_unknown() {
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let long_url = format!(
         "http://nonexistent-{}.com/{}",
-        Uuid::new_v4(),
+        crate::domain::id::Id::generate(),
         "a".repeat(2000)
     );
     let result = repo.exists_by_url(&long_url).await;
@@ -1345,8 +1374,8 @@ async fn test_find_existing_urls_with_unicode_urls_returns_empty_for_unknown() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let urls = vec![
-        format!("http://例子-{}.com", Uuid::new_v4()),
-        format!("http://example-{}.org", Uuid::new_v4()),
+        format!("http://例子-{}.com", crate::domain::id::Id::generate()),
+        format!("http://example-{}.org", crate::domain::id::Id::generate()),
     ];
     let result = repo.find_existing_urls(&urls).await;
     assert!(result.is_ok(), "find_existing_urls failed");
@@ -1394,7 +1423,7 @@ async fn test_find_by_id_with_nil_uuid_returns_none() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.find_by_id(Uuid::nil()).await;
+    let result = repo.find_by_id(crate::domain::id::Id::nil()).await;
     assert!(result.is_ok(), "find_by_id failed: {:?}", result.err());
     // Nil UUID is unlikely to match any task (we generate v4 UUIDs in tests).
     let _found = result.unwrap();
@@ -1408,7 +1437,9 @@ async fn test_mark_completed_with_nil_uuid_succeeds_silently() {
     // mark_completed silently returns Ok(()) when the task is not found
     // (this is the current implementation behavior).
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.mark_completed(Uuid::nil(), None).await;
+    let result = repo
+        .mark_completed(crate::domain::id::Id::nil(), None)
+        .await;
     assert!(result.is_ok(), "mark_completed failed: {:?}", result.err());
 }
 
@@ -1418,7 +1449,7 @@ async fn test_mark_failed_with_nil_uuid_succeeds_silently() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.mark_failed(Uuid::nil(), None).await;
+    let result = repo.mark_failed(crate::domain::id::Id::nil(), None).await;
     assert!(result.is_ok(), "mark_failed failed: {:?}", result.err());
 }
 
@@ -1428,7 +1459,7 @@ async fn test_mark_cancelled_with_nil_uuid_succeeds_silently() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.mark_cancelled(Uuid::nil()).await;
+    let result = repo.mark_cancelled(crate::domain::id::Id::nil()).await;
     assert!(result.is_ok(), "mark_cancelled failed: {:?}", result.err());
 }
 
@@ -1440,7 +1471,7 @@ async fn test_acquire_next_with_nil_worker_id_returns_ok() {
     // 序列化 acquire_next 测试：防止并行测试间相互获取 task
     let _guard = acquire_next_test_mutex().lock().await;
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.acquire_next(Uuid::nil()).await;
+    let result = repo.acquire_next(crate::domain::id::Id::nil()).await;
     assert!(result.is_ok(), "acquire_next failed: {:?}", result.err());
     // Whether Some or None depends on the backlog; we just verify Ok.
     let _acquired = result.unwrap();
@@ -1452,7 +1483,9 @@ async fn test_cancel_tasks_by_crawl_id_with_nil_uuid_returns_zero() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.cancel_tasks_by_crawl_id(Uuid::nil()).await;
+    let result = repo
+        .cancel_tasks_by_crawl_id(crate::domain::id::Id::nil())
+        .await;
     assert!(
         result.is_ok(),
         "cancel_tasks_by_crawl_id failed: {:?}",
@@ -1468,7 +1501,7 @@ async fn test_find_by_crawl_id_with_nil_uuid_returns_empty() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let result = repo.find_by_crawl_id(Uuid::nil()).await;
+    let result = repo.find_by_crawl_id(crate::domain::id::Id::nil()).await;
     assert!(
         result.is_ok(),
         "find_by_crawl_id failed: {:?}",
@@ -1484,8 +1517,10 @@ async fn test_batch_cancel_with_nil_uuids_returns_errors() {
         return;
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
-    let task_ids = vec![Uuid::nil()];
-    let result = repo.batch_cancel(task_ids, Uuid::nil(), false).await;
+    let task_ids = vec![crate::domain::id::Id::nil()];
+    let result = repo
+        .batch_cancel(task_ids, crate::domain::id::Id::nil(), false)
+        .await;
     assert!(result.is_ok(), "batch_cancel should succeed");
     let (cancelled, errors) = result.unwrap();
     assert!(
@@ -1510,7 +1545,7 @@ async fn test_query_tasks_with_zero_limit_offset_returns_empty() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
-        team_id: Uuid::new_v4(),
+        team_id: crate::domain::id::Id::generate(),
         limit: 0,
         offset: 0,
         ..Default::default()
@@ -1529,7 +1564,7 @@ async fn test_query_tasks_with_max_limit_returns_empty() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
-        team_id: Uuid::new_v4(),
+        team_id: crate::domain::id::Id::generate(),
         limit: u32::MAX,
         offset: 0,
         ..Default::default()
@@ -1548,7 +1583,7 @@ async fn test_query_tasks_with_nil_team_id_returns_empty() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
-        team_id: Uuid::nil(),
+        team_id: crate::domain::id::Id::nil(),
         ..Default::default()
     };
     let result = repo.query_tasks(params).await;
@@ -1565,7 +1600,7 @@ async fn test_query_tasks_with_empty_statuses_vec_returns_empty() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
-        team_id: Uuid::new_v4(),
+        team_id: crate::domain::id::Id::generate(),
         statuses: Some(Vec::new()),
         ..Default::default()
     };
@@ -1583,7 +1618,7 @@ async fn test_query_tasks_with_empty_task_types_vec_returns_empty() {
     }
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let params = TaskQueryParams {
-        team_id: Uuid::new_v4(),
+        team_id: crate::domain::id::Id::generate(),
         task_types: Some(Vec::new()),
         ..Default::default()
     };

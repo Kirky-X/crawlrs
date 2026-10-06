@@ -8,7 +8,6 @@
 use chrono::Utc;
 use std::collections::HashSet;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crawlrs::domain::models::task_domain::{TaskStatus, TaskType};
 use crawlrs::domain::models::task_model::Task;
@@ -46,7 +45,7 @@ impl MockTaskRepository {
     }
 
     #[allow(dead_code)]
-    pub fn find_task(&self, id: Uuid) -> Option<Task> {
+    pub fn find_task(&self, id: crawlrs::domain::id::Id) -> Option<Task> {
         let tasks = self.tasks.lock().unwrap();
         tasks.iter().find(|t| t.id == id).cloned()
     }
@@ -74,7 +73,10 @@ impl TaskRepository for MockTaskRepository {
         Ok(new_task)
     }
 
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn find_by_id(
+        &self,
+        id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock database error"
@@ -101,7 +103,10 @@ impl TaskRepository for MockTaskRepository {
         }
     }
 
-    async fn acquire_next(&self, _worker_id: Uuid) -> Result<Option<Task>, RepositoryError> {
+    async fn acquire_next(
+        &self,
+        _worker_id: crawlrs::domain::id::Id,
+    ) -> Result<Option<Task>, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock database error"
@@ -122,8 +127,8 @@ impl TaskRepository for MockTaskRepository {
 
     async fn mark_completed(
         &self,
-        id: Uuid,
-        _lock_token: Option<Uuid>,
+        id: crawlrs::domain::id::Id,
+        _lock_token: Option<crawlrs::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
@@ -143,8 +148,8 @@ impl TaskRepository for MockTaskRepository {
 
     async fn mark_failed(
         &self,
-        id: Uuid,
-        _lock_token: Option<Uuid>,
+        id: crawlrs::domain::id::Id,
+        _lock_token: Option<crawlrs::domain::id::Id>,
     ) -> Result<u64, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
@@ -161,7 +166,7 @@ impl TaskRepository for MockTaskRepository {
         }
     }
 
-    async fn mark_cancelled(&self, id: Uuid) -> Result<u64, RepositoryError> {
+    async fn mark_cancelled(&self, id: crawlrs::domain::id::Id) -> Result<u64, RepositoryError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(RepositoryError::Database(anyhow::anyhow!(
                 "Mock database error"
@@ -187,18 +192,30 @@ impl TaskRepository for MockTaskRepository {
 
     async fn batch_cancel(
         &self,
-        _task_ids: Vec<Uuid>,
-        _team_id: Uuid,
+        _task_ids: Vec<crawlrs::domain::id::Id>,
+        _team_id: crawlrs::domain::id::Id,
         _force: bool,
-    ) -> Result<(Vec<Uuid>, Vec<(Uuid, String)>), RepositoryError> {
+    ) -> Result<
+        (
+            Vec<crawlrs::domain::id::Id>,
+            Vec<(crawlrs::domain::id::Id, String)>,
+        ),
+        RepositoryError,
+    > {
         Ok((vec![], vec![]))
     }
 
-    async fn cancel_tasks_by_crawl_id(&self, _crawl_id: Uuid) -> Result<u64, RepositoryError> {
+    async fn cancel_tasks_by_crawl_id(
+        &self,
+        _crawl_id: crawlrs::domain::id::Id,
+    ) -> Result<u64, RepositoryError> {
         Ok(0)
     }
 
-    async fn find_by_crawl_id(&self, _crawl_id: Uuid) -> Result<Vec<Task>, RepositoryError> {
+    async fn find_by_crawl_id(
+        &self,
+        _crawl_id: crawlrs::domain::id::Id,
+    ) -> Result<Vec<Task>, RepositoryError> {
         Ok(vec![])
     }
 
@@ -223,8 +240,8 @@ impl TaskRepository for MockTaskRepository {
 
     async fn renew_lock(
         &self,
-        _task_id: Uuid,
-        _worker_id: Uuid,
+        _task_id: crawlrs::domain::id::Id,
+        _worker_id: crawlrs::domain::id::Id,
         _extend_seconds: i64,
     ) -> Result<bool, RepositoryError> {
         Ok(true)
@@ -235,12 +252,12 @@ impl TaskRepository for MockTaskRepository {
 
 fn create_test_task(status: TaskStatus) -> Task {
     Task {
-        id: Uuid::new_v4(),
+        id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
         status,
         priority: 0,
-        team_id: Uuid::new_v4(),
-        api_key_id: Uuid::new_v4(),
+        team_id: crawlrs::domain::id::Id::generate().into(),
+        api_key_id: crawlrs::domain::id::Id::generate().into(),
         url: "https://example.com".to_string(),
         payload: serde_json::json!({}),
         retry_count: 0,
@@ -322,7 +339,7 @@ async fn test_dequeue_task_success() {
     mock_repo.add_task(task);
 
     let queue = PostgresTaskQueue::new(Arc::new(mock_repo));
-    let worker_id = Uuid::new_v4();
+    let worker_id = crawlrs::domain::id::Id::generate();
 
     let result = queue.dequeue(worker_id).await;
 
@@ -337,7 +354,7 @@ async fn test_dequeue_empty_queue() {
     let mock_repo = MockTaskRepository::new();
     let queue = PostgresTaskQueue::new(Arc::new(mock_repo));
 
-    let worker_id = Uuid::new_v4();
+    let worker_id = crawlrs::domain::id::Id::generate();
     let result = queue.dequeue(worker_id).await;
 
     assert!(result.is_ok());
@@ -349,7 +366,7 @@ async fn test_dequeue_repository_error() {
     let mock_repo = MockTaskRepository::with_failure();
     let queue = PostgresTaskQueue::new(Arc::new(mock_repo));
 
-    let worker_id = Uuid::new_v4();
+    let worker_id = crawlrs::domain::id::Id::generate();
     let result = queue.dequeue(worker_id).await;
 
     assert!(result.is_err());
@@ -368,8 +385,8 @@ async fn test_dequeue_multiple_workers() {
     let queue = Arc::new(PostgresTaskQueue::new(Arc::new(mock_repo)));
 
     // Simulate multiple workers
-    let worker1_id = Uuid::new_v4();
-    let worker2_id = Uuid::new_v4();
+    let worker1_id = crawlrs::domain::id::Id::generate();
+    let worker2_id = crawlrs::domain::id::Id::generate();
     let queue1 = queue.clone();
     let queue2 = queue.clone();
 
@@ -404,7 +421,7 @@ async fn test_complete_task_not_found() {
     let mock_repo = Arc::new(MockTaskRepository::new());
     let queue = PostgresTaskQueue::new(mock_repo.clone());
 
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
     let result = queue.complete(task_id).await;
 
     assert!(result.is_err());
@@ -415,7 +432,7 @@ async fn test_complete_task_repository_error() {
     let mock_repo = Arc::new(MockTaskRepository::with_failure());
     let queue = PostgresTaskQueue::new(mock_repo.clone());
 
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
     let result = queue.complete(task_id).await;
 
     assert!(result.is_err());
@@ -443,7 +460,7 @@ async fn test_fail_task_not_found() {
     let mock_repo = Arc::new(MockTaskRepository::new());
     let queue = PostgresTaskQueue::new(mock_repo.clone());
 
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
     let result = queue.fail(task_id).await;
 
     assert!(result.is_err());
@@ -454,7 +471,7 @@ async fn test_fail_task_repository_error() {
     let mock_repo = Arc::new(MockTaskRepository::with_failure());
     let queue = PostgresTaskQueue::new(mock_repo.clone());
 
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
     let result = queue.fail(task_id).await;
 
     assert!(result.is_err());
@@ -497,7 +514,7 @@ async fn test_cancel_task_not_found() {
     let mock_repo = Arc::new(MockTaskRepository::new());
     let queue = PostgresTaskQueue::new(mock_repo.clone());
 
-    let task_id = Uuid::new_v4();
+    let task_id = crawlrs::domain::id::Id::generate();
     let result = queue.cancel(task_id).await;
 
     assert!(result.is_err());
@@ -523,7 +540,7 @@ async fn test_arc_task_queue_dequeue() {
     mock_repo.add_task(task);
 
     let queue: Arc<dyn TaskQueue> = Arc::new(PostgresTaskQueue::new(Arc::new(mock_repo)));
-    let worker_id = Uuid::new_v4();
+    let worker_id = crawlrs::domain::id::Id::generate();
 
     let result = queue.dequeue(worker_id).await;
 
@@ -557,7 +574,7 @@ async fn test_complete_task_lifecycle() {
     let _enqueued = queue.enqueue(task).await.unwrap();
 
     // Dequeue task
-    let worker_id = Uuid::new_v4();
+    let worker_id = crawlrs::domain::id::Id::generate();
     let dequeued = queue.dequeue(worker_id).await.unwrap().unwrap();
 
     assert_eq!(dequeued.id, task_id);
@@ -580,7 +597,7 @@ async fn test_task_fail_and_retry() {
     queue.enqueue(task).await.unwrap();
 
     // Dequeue
-    let worker_id = Uuid::new_v4();
+    let worker_id = crawlrs::domain::id::Id::generate();
     queue.dequeue(worker_id).await.unwrap().unwrap();
 
     // Fail task
@@ -612,7 +629,7 @@ async fn test_dequeue_with_no_tasks_returns_none() {
     let mock_repo = MockTaskRepository::new();
     let queue = PostgresTaskQueue::new(Arc::new(mock_repo));
 
-    let worker_id = Uuid::new_v4();
+    let worker_id = crawlrs::domain::id::Id::generate();
     let result = queue.dequeue(worker_id).await;
 
     assert!(result.is_ok());
@@ -624,7 +641,7 @@ async fn test_complete_non_existent_task_errors() {
     let mock_repo = MockTaskRepository::new();
     let queue = PostgresTaskQueue::new(Arc::new(mock_repo));
 
-    let random_id = Uuid::new_v4();
+    let random_id = crawlrs::domain::id::Id::generate();
     let result = queue.complete(random_id).await;
 
     assert!(result.is_err());

@@ -4,7 +4,6 @@
 use super::task_repository::RepositoryError;
 use crate::domain::models::{Crawl, CrawlStatus};
 use async_trait::async_trait;
-use uuid::Uuid;
 
 /// 爬取任务仓库特质
 ///
@@ -35,7 +34,8 @@ pub trait CrawlRepository: Send + Sync {
     /// * `Ok(Some(Crawl))` - 找到任务时返回任务实体
     /// * `Ok(None)` - 未找到任务时返回空
     /// * `Err(RepositoryError)` - 查询失败时返回错误
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Crawl>, RepositoryError>;
+    async fn find_by_id(&self, id: crate::domain::id::Id)
+        -> Result<Option<Crawl>, RepositoryError>;
 
     /// 更新爬取任务
     ///
@@ -59,7 +59,10 @@ pub trait CrawlRepository: Send + Sync {
     ///
     /// * `Ok(())` - 成功增加计数
     /// * `Err(RepositoryError)` - 操作失败时返回错误
-    async fn increment_completed_tasks(&self, id: Uuid) -> Result<(), RepositoryError>;
+    async fn increment_completed_tasks(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError>;
 
     /// 增加失败任务计数
     ///
@@ -71,7 +74,10 @@ pub trait CrawlRepository: Send + Sync {
     ///
     /// * `Ok(())` - 成功增加计数
     /// * `Err(RepositoryError)` - 操作失败时返回错误
-    async fn increment_failed_tasks(&self, id: Uuid) -> Result<(), RepositoryError>;
+    async fn increment_failed_tasks(
+        &self,
+        id: crate::domain::id::Id,
+    ) -> Result<(), RepositoryError>;
 
     /// 更新爬取任务状态
     ///
@@ -84,7 +90,11 @@ pub trait CrawlRepository: Send + Sync {
     ///
     /// * `Ok(())` - 成功更新状态
     /// * `Err(RepositoryError)` - 更新失败时返回错误
-    async fn update_status(&self, id: Uuid, status: CrawlStatus) -> Result<(), RepositoryError>;
+    async fn update_status(
+        &self,
+        id: crate::domain::id::Id,
+        status: CrawlStatus,
+    ) -> Result<(), RepositoryError>;
 
     /// 增加总任务计数
     ///
@@ -96,7 +106,8 @@ pub trait CrawlRepository: Send + Sync {
     ///
     /// * `Ok(())` - 成功增加计数
     /// * `Err(RepositoryError)` - 操作失败时返回错误
-    async fn increment_total_tasks(&self, id: Uuid) -> Result<(), RepositoryError>;
+    async fn increment_total_tasks(&self, id: crate::domain::id::Id)
+        -> Result<(), RepositoryError>;
 
     /// 根据团队ID分页查询爬取任务
     ///
@@ -112,7 +123,7 @@ pub trait CrawlRepository: Send + Sync {
     /// * `Err(RepositoryError)` - 查询失败时返回错误
     async fn find_by_team_id_paginated(
         &self,
-        team_id: Uuid,
+        team_id: crate::domain::id::Id,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<Crawl>, RepositoryError>;
@@ -127,5 +138,8 @@ pub trait CrawlRepository: Send + Sync {
     ///
     /// * `Ok(u64)` - 返回任务总数
     /// * `Err(RepositoryError)` - 统计失败时返回错误
-    async fn count_by_team_id(&self, team_id: Uuid) -> Result<u64, RepositoryError>;
+    async fn count_by_team_id(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<u64, RepositoryError>;
 }

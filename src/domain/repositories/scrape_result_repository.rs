@@ -5,8 +5,6 @@ use crate::domain::models::ScrapeResult;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use uuid::Uuid;
-
 /// 爬取结果仓库特质
 ///
 /// 定义爬取结果数据访问接口
@@ -15,13 +13,17 @@ pub trait ScrapeResultRepository: Send + Sync {
     /// 保存爬取结果
     async fn save(&self, result: ScrapeResult) -> Result<()>;
     /// 根据任务ID查找结果
-    async fn find_by_task_id(&self, task_id: Uuid) -> Result<Option<ScrapeResult>>;
+    async fn find_by_task_id(&self, task_id: crate::domain::id::Id)
+        -> Result<Option<ScrapeResult>>;
     /// 根据任务ID列表批量查找结果
-    async fn find_by_task_ids(&self, task_ids: &[Uuid]) -> Result<Vec<ScrapeResult>>;
+    async fn find_by_task_ids(
+        &self,
+        task_ids: &[crate::domain::id::Id],
+    ) -> Result<Vec<ScrapeResult>>;
     /// 获取团队的平均响应时间
     ///
     /// 计算指定团队在过去30天内的平均响应时间
-    async fn get_team_avg_response_time(&self, team_id: Uuid) -> Result<f64>;
+    async fn get_team_avg_response_time(&self, team_id: crate::domain::id::Id) -> Result<f64>;
     /// 清理超过保留期的爬取结果
     ///
     /// 删除 `created_at` 早于 `now - retention_days` 的结果行，返回删除的行数。

@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::sleep;
-use uuid::Uuid;
 
 use crate::application::dto::crawl_request::CrawlConfigDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
@@ -99,10 +98,10 @@ pub struct ScrapeWorker {
     /// gated `markdown` 特性：关闭时本字段不存在，相关分支也不编译。
     #[cfg(feature = "content")]
     markdown_post_processor: MarkdownPostProcessor,
-    token_usage: Arc<DashMap<Uuid, AtomicI64>>,
+    token_usage: Arc<DashMap<crate::domain::id::Id, AtomicI64>>,
     robots_checker: Arc<dyn RobotsCheckerTrait>,
     settings: Arc<Settings>,
-    worker_id: Uuid,
+    worker_id: crate::domain::id::Id,
     default_concurrency_limit: usize,
     retry_handler: RetryHandler,
     extraction_service: Arc<dyn ExtractionServiceTrait>,
@@ -147,7 +146,7 @@ impl std::fmt::Debug for ScrapeWorker {
 
 impl ScrapeWorker {
     /// 本 worker 的认领身份（即任务 lock_token）
-    pub fn worker_id(&self) -> Uuid {
+    pub fn worker_id(&self) -> crate::domain::id::Id {
         self.worker_id
     }
 
@@ -180,7 +179,7 @@ impl ScrapeWorker {
             token_usage: Arc::new(DashMap::new()),
             robots_checker: deps.robots_checker,
             settings: deps.settings,
-            worker_id: Uuid::new_v4(),
+            worker_id: crate::domain::id::Id::generate(),
             default_concurrency_limit: deps.default_concurrency_limit,
             retry_handler,
             extraction_service: deps.extraction_service,
@@ -1133,8 +1132,8 @@ impl ScrapeWorker {
 
     async fn deduct_feature_credits(
         &self,
-        team_id: Uuid,
-        task_id: Uuid,
+        team_id: crate::domain::id::Id,
+        task_id: crate::domain::id::Id,
         screenshot: bool,
         proxy: bool,
     ) {
@@ -1209,8 +1208,8 @@ impl ScrapeWorker {
 
     async fn deduct_token_credits(
         &self,
-        team_id: Uuid,
-        task_id: Uuid,
+        team_id: crate::domain::id::Id,
+        task_id: crate::domain::id::Id,
         usage: &crate::domain::services::llm::TokenUsage,
         description: &str,
     ) {
@@ -1282,7 +1281,13 @@ impl ScrapeWorker {
     /// `add_credits_safe` 存储过程不检查下限，负数金额使余额进入负值，
     /// 并在 `credits_transactions` 留下 `DEBT:` 标记流水，供补账与对账使用，
     /// 避免后置扣费失败被静默吞掉形成坏账。
-    async fn record_debt(&self, team_id: Uuid, task_id: Uuid, amount: i64, reason: &str) {
+    async fn record_debt(
+        &self,
+        team_id: crate::domain::id::Id,
+        task_id: crate::domain::id::Id,
+        amount: i64,
+        reason: &str,
+    ) {
         if let Err(debt_err) = self
             .credits_repository
             .add_credits(
@@ -1539,8 +1544,8 @@ mod incremental_scrape_tests {
     fn not_modified_response_reuses_prior_content_with_marker() {
         use crate::domain::models::ScrapeResult;
         let prior = ScrapeResult {
-            id: uuid::Uuid::new_v4(),
-            task_id: uuid::Uuid::new_v4(),
+            id: crate::domain::id::Id::generate(),
+            task_id: crate::domain::id::Id::generate(),
             url: "https://example.com/a".to_string(),
             status_code: 200,
             content: "<html>original body</html>".to_string(),
@@ -1627,7 +1632,10 @@ fn map_wait_for(ms: Option<u64>) -> Option<WaitFor> {
 // 生产代码直接调用提取后的自由函数。
 #[cfg(test)]
 impl ScrapeWorker {
-    async fn parse_crawl_payload(&self, task: &Task) -> Result<(Uuid, u32, CrawlConfigDto)> {
+    async fn parse_crawl_payload(
+        &self,
+        task: &Task,
+    ) -> Result<(crate::domain::id::Id, u32, CrawlConfigDto)> {
         parse_crawl_payload(task)
     }
 
@@ -1648,7 +1656,7 @@ impl ScrapeWorker {
         )
     }
 
-    async fn update_crawl_completion_status(&self, crawl_id: Uuid) {
+    async fn update_crawl_completion_status(&self, crawl_id: crate::domain::id::Id) {
         update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await
     }
 
@@ -1697,7 +1705,7 @@ impl ScrapeWorker {
         &self,
         task: &Task,
         response: &ScrapeResponse,
-        crawl_id: Uuid,
+        crawl_id: crate::domain::id::Id,
         current_depth: u32,
         config: &CrawlConfigDto,
     ) -> Result<()> {

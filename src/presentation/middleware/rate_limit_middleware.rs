@@ -1042,7 +1042,7 @@ mod tests {
         }
         async fn get_team_rate_limit_config(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<
             crate::domain::services::rate_limiting_service::RateLimitConfig,
             RateLimitingError,
@@ -1051,7 +1051,7 @@ mod tests {
         }
         async fn update_team_rate_limit_config(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
             _config: crate::domain::services::rate_limiting_service::RateLimitConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1065,8 +1065,8 @@ mod tests {
     impl ConcurrencyControlService for MockRateLimitingService {
         async fn check_team_concurrency(
             &self,
-            _team_id: uuid::Uuid,
-            _task_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<
             crate::domain::services::rate_limiting_service::ConcurrencyResult,
             RateLimitingError,
@@ -1075,20 +1075,20 @@ mod tests {
         }
         async fn release_team_concurrency_slot(
             &self,
-            _team_id: uuid::Uuid,
-            _task_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
+            _task_id: crate::domain::id::Id,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
         async fn get_team_current_concurrency(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
         async fn get_team_concurrency_config(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<
             crate::domain::services::rate_limiting_service::ConcurrencyConfig,
             RateLimitingError,
@@ -1097,7 +1097,7 @@ mod tests {
         }
         async fn update_team_concurrency_config(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
             _config: crate::domain::services::rate_limiting_service::ConcurrencyConfig,
         ) -> Result<(), RateLimitingError> {
             Ok(())
@@ -1108,7 +1108,7 @@ mod tests {
     impl BacklogService for MockRateLimitingService {
         async fn process_backlog_tasks(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
         ) -> Result<u32, RateLimitingError> {
             Ok(0)
         }
@@ -1118,24 +1118,27 @@ mod tests {
     impl QuotaService for MockRateLimitingService {
         async fn check_and_deduct_quota(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _transaction_type: CreditsTransactionType,
             _description: String,
-            _reference_id: Option<uuid::Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }
-        async fn get_quota_balance(&self, _team_id: uuid::Uuid) -> Result<i64, RateLimitingError> {
+        async fn get_quota_balance(
+            &self,
+            _team_id: crate::domain::id::Id,
+        ) -> Result<i64, RateLimitingError> {
             Ok(1000)
         }
 
         async fn refund_quota(
             &self,
-            _team_id: uuid::Uuid,
+            _team_id: crate::domain::id::Id,
             _amount: i64,
             _description: String,
-            _reference_id: Option<uuid::Uuid>,
+            _reference_id: Option<crate::domain::id::Id>,
         ) -> Result<(), RateLimitingError> {
             Ok(())
         }

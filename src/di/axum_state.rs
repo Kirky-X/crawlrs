@@ -16,7 +16,7 @@ use trait_kit::{AsyncKit, AsyncReady};
 
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::di::modules::{
-    EngineModule, InfrastructureModule, ModuleBuildError, ServiceModule, SettingsModule,
+    EngineModule, IdModule, InfrastructureModule, ModuleBuildError, ServiceModule, SettingsModule,
 };
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
@@ -38,6 +38,7 @@ use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::extraction_service::ExtractionServiceTrait;
 #[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
+use crate::domain::services::id_service::IdService;
 use crate::domain::services::llm::LLMServiceTrait;
 use crate::domain::services::rag_strategy::EmbeddingProvider;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
@@ -69,6 +70,8 @@ use dbnexus::DbPool;
 pub struct CrawlRsState {
     /// Database pool (dbnexus DbPool for repositories that need it)
     pub db_pool: Arc<DbPool>,
+    /// ID generation service (NebulaId 嵌入式 SDK)
+    pub id_service: Arc<IdService>,
     /// Task repository
     pub task_repo: Arc<dyn TaskRepository>,
     /// Credits repository
@@ -206,6 +209,7 @@ impl CrawlRsState {
         let engines = kit.require::<EngineModule>()?;
         let services = kit.require::<ServiceModule>()?;
         let settings = kit.require::<SettingsModule>()?;
+        let id_service = kit.require::<IdModule>()?;
 
         let search_client = Arc::new(SearchClient::new(engines.engine_client.clone()));
 
@@ -247,6 +251,7 @@ impl CrawlRsState {
 
         Ok(CrawlRsState {
             db_pool: infra.db.inner().clone(),
+            id_service,
             task_repo: infra.repositories.task_repo.clone(),
             credits_repo: infra.repositories.credits_repo.clone(),
             crawl_repo: infra.repositories.crawl_repo.clone(),
@@ -342,6 +347,8 @@ pub trait CrawlRsStateExt {
     fn cache_service(&self) -> Arc<dyn CacheService>;
     /// Get database pool (dbnexus DbPool)
     fn db_pool(&self) -> Arc<DbPool>;
+    /// Get ID generation service (NebulaId)
+    fn id_service(&self) -> Arc<IdService>;
     /// Get tasks backlog repository
     fn tasks_backlog_repo(&self) -> Arc<dyn TasksBacklogRepository>;
     /// Get task queue
@@ -459,6 +466,10 @@ impl CrawlRsStateExt for CrawlRsState {
 
     fn db_pool(&self) -> Arc<DbPool> {
         self.db_pool.clone()
+    }
+
+    fn id_service(&self) -> Arc<IdService> {
+        self.id_service.clone()
     }
 
     fn tasks_backlog_repo(&self) -> Arc<dyn TasksBacklogRepository> {
@@ -605,6 +616,10 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
         self.as_ref().db_pool()
     }
 
+    fn id_service(&self) -> Arc<IdService> {
+        self.as_ref().id_service()
+    }
+
     fn tasks_backlog_repo(&self) -> Arc<dyn TasksBacklogRepository> {
         self.as_ref().tasks_backlog_repo()
     }
@@ -682,7 +697,7 @@ mod tests {
     use super::*;
     use crate::common::test_support::testcontainers_fixtures as tcf;
     use crate::di::modules::{
-        CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule,
+        CacheModule, DatabaseModule, EngineModule, HttpModule, IdModule, InfrastructureModule,
         RepositoryModule, ServiceModule, SettingsModule,
     };
     use std::sync::Arc;
@@ -718,6 +733,8 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
         kit.register::<ServiceModule>()
             .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
+        kit.register::<IdModule>()
+            .map_err(|e| anyhow::anyhow!("register IdModule: {e}"))?;
 
         // 高并行度下 kit.build() 可能因数据库连接失败而报错，用 ? 传播错误让调用方优雅跳过
         let kit = kit
@@ -934,6 +951,8 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
         kit.register::<ServiceModule>()
             .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
+        kit.register::<IdModule>()
+            .map_err(|e| anyhow::anyhow!("register IdModule: {e}"))?;
 
         let kit = kit
             .build()
