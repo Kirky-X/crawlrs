@@ -1074,7 +1074,7 @@ mod tests {
         assert!(entry.denial_reason.is_none());
         assert_eq!(
             entry.api_key_id,
-            (&login_id).parse::<crate::domain::id::Id>().ok()
+            login_id.parse::<crate::domain::id::Id>().ok()
         );
     }
 

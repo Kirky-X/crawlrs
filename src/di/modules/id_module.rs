@@ -13,6 +13,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use nebulaid::core::algorithm::algorithm_factories;
+use nebulaid::core::types::AlgorithmType;
 use nebulaid::sdk::NebulaIdKitBuilder;
 use trait_kit::core::{AsyncAutoBuilder, ModuleMeta};
 use trait_kit::kit::AsyncKit;
@@ -33,6 +35,27 @@ impl ModuleMeta for IdModule {
     }
 }
 
+/// 校验配置的 ID 算法：必须可解析为已知算法，且已编译进本构建。
+///
+/// NebulaId 路由对未编译算法静默跳过（`router::initialize` 对缺失工厂
+/// `continue`），配了 `snowflake`/`segment` 会悄悄落回 uuid_v8——在此显性
+/// 拒绝，让配置错误在启动期暴露。本构建的 nebulaid 仅启用 `sdk,uuid-v8`，
+/// 故只有 `uuid_v8`（含 `uuid_v4`/`uuid_v7` 别名）可用。
+fn resolve_algorithm(name: &str) -> Result<AlgorithmType, String> {
+    let algorithm = name.parse::<AlgorithmType>().map_err(|e| {
+        format!(
+            "id.algorithm = {name:?} 不是已知算法（可选 uuid_v8；uuid_v4/uuid_v7 别名归入 uuid_v8）：{e}"
+        )
+    })?;
+    if !algorithm_factories().contains_key(&algorithm) {
+        return Err(format!(
+            "id.algorithm = {name:?} 未编译进本构建（nebulaid 仅启用 sdk,uuid-v8 特性）；\
+             请改用 uuid_v8，或在 Cargo.toml 启用对应 nebulaid 特性"
+        ));
+    }
+    Ok(algorithm)
+}
+
 impl AsyncAutoBuilder for IdModule {
     type Capability = Arc<IdService>;
     type Error = ModuleBuildError;
@@ -42,6 +65,11 @@ impl AsyncAutoBuilder for IdModule {
     ) -> Pin<Box<dyn Future<Output = Result<Self::Capability, Self::Error>> + Send + 'a>> {
         Box::pin(async move {
             let settings = kit.require::<SettingsModule>()?;
+
+            // 启动期校验：算法名可解析且已编译进本构建。NebulaId 路由对未编译
+            // 算法静默跳过（配了 snowflake/segment 会悄悄落回 uuid_v8），在此
+            // 显性拒绝（见 resolve_algorithm）。
+            resolve_algorithm(&settings.id.algorithm).map_err(ModuleBuildError::IdInit)?;
 
             // 从 crawlrs 配置装配 NebulaId Config。默认算法 uuid_v8 为纯算法
             // （零 DB/零号段）；清空 etcd endpoints 确保走进程内本地锁，无外部依赖。
@@ -75,12 +103,41 @@ impl AsyncAutoBuilder for IdModule {
                 settings.id.group.clone(),
             ));
             log::info!(
-                "IdService initialized (algorithm={}, workspace={}, group={})",
-                settings.id.algorithm,
-                settings.id.workspace,
-                settings.id.group,
+                "{}",
+                crate::i18n::tr_log_args(
+                    "id-service-initialized",
+                    &[
+                        (
+                            "algorithm",
+                            fluent_bundle::FluentValue::from(settings.id.algorithm.to_string()),
+                        ),
+                        (
+                            "workspace",
+                            fluent_bundle::FluentValue::from(settings.id.workspace.as_str()),
+                        ),
+                        (
+                            "group",
+                            fluent_bundle::FluentValue::from(settings.id.group.as_str()),
+                        ),
+                    ],
+                )
             );
             Ok(service)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 未知算法名与未编译算法显性拒绝；uuid_v8 及其别名通过。
+    /// snowflake 断言依赖本构建的 nebulaid 仅启用 uuid-v8 特性。
+    #[test]
+    fn resolve_algorithm_rejects_unknown_and_uncompiled() {
+        assert!(resolve_algorithm("md5").is_err());
+        assert!(resolve_algorithm("snowflake").is_err());
+        assert_eq!(resolve_algorithm("uuid_v8").unwrap(), AlgorithmType::UuidV8);
+        assert_eq!(resolve_algorithm("uuid_v4").unwrap(), AlgorithmType::UuidV8);
     }
 }

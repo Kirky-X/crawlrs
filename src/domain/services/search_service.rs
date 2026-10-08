@@ -79,6 +79,12 @@ pub enum SearchServiceError {
     SearchEngine(String),
     #[error("Insufficient credits: available {available}, required {required}")]
     InsufficientCredits { available: i64, required: i64 },
+    /// 未知搜索引擎名（结构化携带引擎名，供 handler 按请求 locale 翻译）
+    #[error("unknown search engine: {0}")]
+    UnknownEngine(String),
+    /// smart 引擎搜索失败（结构化携带底层错误描述，供 handler 翻译）
+    #[error("smart search: {0}")]
+    SmartSearchFailed(String),
 }
 
 // From implementations for SearchServiceError
@@ -289,7 +295,7 @@ impl SearchService {
                 let response = smart
                     .search(&request)
                     .await
-                    .map_err(|e| SearchServiceError::SearchEngine(format!("smart search: {e}")))?;
+                    .map_err(|e| SearchServiceError::SmartSearchFailed(e.to_string()))?;
                 let results: Vec<SearchResult> = response
                     .items
                     .into_iter()
@@ -309,7 +315,7 @@ impl SearchService {
             // engine=None 真降级到单引擎；engine="smart" 将在下方被
             // from_name 解析后因 SearchClient 未注册 Smart 引擎而显性报错
             if engine.is_none() {
-                log::warn!("smart engine not injected; falling back to single-engine search path");
+                log::warn!("{}", crate::i18n::tr_log("search-smart-not-injected"));
             }
         }
 
@@ -317,9 +323,7 @@ impl SearchService {
         if let Some(name) = engine {
             if name != "smart" && crate::search::types::SearchEngineType::from_name(name).is_none()
             {
-                return Err(SearchServiceError::ValidationError(format!(
-                    "unknown search engine: {name}"
-                )));
+                return Err(SearchServiceError::UnknownEngine(name.to_string()));
             }
         }
 
@@ -958,13 +962,13 @@ mod tests {
             .perform_search("rust async", 10, None, None, Some("google"))
             .await;
         match result {
-            Err(SearchServiceError::ValidationError(msg)) => {
-                assert!(
-                    msg.contains("google"),
-                    "error should name the engine: {msg}"
+            Err(SearchServiceError::UnknownEngine(name)) => {
+                assert_eq!(
+                    name, "google",
+                    "error should carry the unknown engine name: {name}"
                 );
             }
-            other => panic!("expected ValidationError, got {other:?}"),
+            other => panic!("expected UnknownEngine, got {other:?}"),
         }
     }
 

@@ -336,6 +336,20 @@ impl I18nBundle {
             "team-invalid-ip-cidr",
         ]);
 
+        // api.ftl 追加 (4 keys) — sitemap 请求源 / map 端点响应消息
+        keys.extend([
+            "api-sitemap-feature-required",
+            "api-sitemap-source-disabled",
+            "api-map-sitemap-status",
+            "api-map-origin-unparsable",
+        ]);
+
+        // validation.ftl 追加 (1 key) — DTO validator 消息（校验时经启动束解析）
+        keys.extend(["validation-sitemap-url-scheme"]);
+
+        // errors.ftl 追加 (2 keys) — SearchServiceError handler 映射
+        keys.extend(["search-error-unknown-engine", "search-error-smart-search"]);
+
         // validation.ftl (6 keys)
         keys.extend([
             "validation-query-empty",
@@ -422,6 +436,29 @@ impl I18nBundle {
             "scrape-task-encoding-fallback",
         ]);
 
+        // workers.ftl 追加 (15 keys) — F11 sitemap 请求源 / 软 404 / 条件请求日志
+        keys.extend([
+            // Crawl task: soft 404 & sitemap request source (7)
+            "crawl-soft404-detected",
+            "crawl-sitemap-derive-failed",
+            "crawl-sitemap-blacklist-unparsable",
+            "crawl-sitemap-feeding",
+            "crawl-sitemap-feed-resumed",
+            "crawl-sitemap-feed-done",
+            "crawl-sitemap-feed-failed",
+            // Scrape task: conditional request & 304 reuse (3)
+            "scrape-conditional-lookup-failed",
+            "scrape-304-reused",
+            "scrape-304-no-prior",
+            // Sitemap feed pointer (3)
+            "sitemap-pointer-mismatch",
+            "sitemap-pointer-corrupt",
+            "sitemap-resume-without-seek",
+            // Soft 404 detector (2)
+            "soft404-already-initialized",
+            "soft404-hit",
+        ]);
+
         // logs.ftl (29 keys) — 非 worker 运维日志（文本处理流水线/启动期 CORS/
         // 浏览器下载器/引擎路由）
         keys.extend([
@@ -454,6 +491,73 @@ impl I18nBundle {
             "browser-cleaned-up",
             "browser-system-found",
             "engine-registered",
+        ]);
+
+        // logs.ftl 追加 (49 keys) — 引擎/安全/搜索/可观测性运维日志
+        keys.extend([
+            // FlareSolverr engine (5)
+            "flare-url-not-configured",
+            "flare-url-validation-failed",
+            "flare-url-validation-fallback",
+            "flare-mode-url-validation-fallback",
+            "flare-url-not-configured-fallback",
+            // Session identity pool (3)
+            "session-identity-retired",
+            "session-identity-force-retired",
+            "session-cookie-cap-dropped",
+            // Browser wait strategies (2)
+            "wait-network-idle-subscribe-failed",
+            "wait-dom-unstable-degraded",
+            // Playwright engine (9)
+            "playwright-stealth-inject-failed",
+            "playwright-xhr-setup-failed",
+            "playwright-xhr-dropped",
+            "playwright-xhr-internal-blocked",
+            "playwright-xhr-unfinished-at-collect",
+            "playwright-xhr-body-oversize",
+            "playwright-xhr-body-decode-failed",
+            "playwright-xhr-fetch-body-failed",
+            "playwright-handler-event-error",
+            // Browser pool (1)
+            "playwright-pool-drop-no-runtime",
+            // wreq TLS emulation (1)
+            "wreq-non-chromium-emulation",
+            // SSRF protection (1)
+            "ssrf-protection-disabled",
+            // robots.txt (1)
+            "robots-fetch-fail-closed",
+            // MLLM CDP bridge error payloads (4)
+            "mllm-ax-tree-failed",
+            "mllm-dom-resolve-node-failed",
+            "mllm-call-function-params-invalid",
+            "mllm-call-function-click-failed",
+            // Distributed ID service (3)
+            "id-refill-failed",
+            "id-global-generator-initialized",
+            "id-service-initialized",
+            // Bootstrap & map endpoint logs (3)
+            "boot-playwright-capture-enabled",
+            "boot-register-id-module-failed",
+            "map-target-unreachable",
+            // Search engines & smart routing (8)
+            "search-exa-registered",
+            "search-exa-skipped",
+            "search-tavily-registered",
+            "search-tavily-skipped",
+            "search-smart-engine-timeout",
+            "search-smart-start",
+            "search-smart-cross-dedup",
+            "search-smart-not-injected",
+            // Failure snapshot bypass (5)
+            "snapshot-join-failed",
+            "snapshot-dir-create-failed",
+            "snapshot-write-failed",
+            "snapshot-read-dir-failed",
+            "snapshot-evict-failed",
+            // Adaptive concurrency (AIMD) (3)
+            "aimd-limit-increased",
+            "aimd-limit-halved",
+            "aimd-target-changed",
         ]);
 
         // errors.ftl 追加 (16 keys) — SearchError::user_message_locale()

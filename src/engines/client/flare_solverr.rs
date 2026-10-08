@@ -147,16 +147,25 @@ impl Default for FlareSolverrConfig {
         let url = std::env::var("FLARESOLVERR_URL").unwrap_or_default();
         if url.is_empty() {
             log::warn!(
-                "FlareSolverr URL not configured (FLARESOLVERR_URL env var empty or unset). \
-                 Using placeholder '{FALLBACK_URL}'. Set CRAWLRS__ENGINES__FLARESOLVERR__URL \
-                 in config/default.toml or via environment variable."
+                "{}",
+                crate::i18n::tr_log_args(
+                    "flare-url-not-configured",
+                    &[("fallback", fluent_bundle::FluentValue::from(FALLBACK_URL))],
+                )
             );
         }
 
         let validated_url = validate_flaresolverr_url(&url).unwrap_or_else(|e| {
             log::warn!(
-                "FlareSolverr URL validation failed ('{url}'): {e}. \
-                 Falling back to placeholder '{FALLBACK_URL}'."
+                "{}",
+                crate::i18n::tr_log_args(
+                    "flare-url-validation-failed",
+                    &[
+                        ("url", fluent_bundle::FluentValue::from(url.as_str())),
+                        ("error", fluent_bundle::FluentValue::from(e.as_str())),
+                        ("fallback", fluent_bundle::FluentValue::from(FALLBACK_URL)),
+                    ],
+                )
             );
             FALLBACK_URL.to_string()
         });
@@ -186,6 +195,27 @@ fn validate_flaresolverr_url(url: &str) -> Result<String, String> {
     }
 }
 
+/// 各构造路径共用的「URL 校验失败 → 回退占位符」warn 日志
+/// （`mode` 为引擎模式修饰词，如 "CDP"/"TLS+MRT"；无修饰词传空串）
+fn log_flaresolverr_validation_fallback(mode: &str, error: &str) {
+    let key = if mode.is_empty() {
+        "flare-url-validation-fallback"
+    } else {
+        "flare-mode-url-validation-fallback"
+    };
+    log::warn!(
+        "{}",
+        crate::i18n::tr_log_args(
+            key,
+            &[
+                ("mode", fluent_bundle::FluentValue::from(mode)),
+                ("error", fluent_bundle::FluentValue::from(error)),
+                ("fallback", fluent_bundle::FluentValue::from(FALLBACK_URL)),
+            ],
+        )
+    );
+}
+
 /// FlareSolverr HTTP client
 ///
 /// 统一的 FlareSolverr API 客户端，通过 `mode` 字段区分工作模式。
@@ -211,9 +241,7 @@ impl FlareSolverrEngine {
     /// URL 必须为 http/https 协议，否则使用默认占位符（避免 SSRF 风险）。
     pub fn with_url(client: Arc<Client>, url: impl Into<String>) -> Self {
         let validated = validate_flaresolverr_url(&url.into()).unwrap_or_else(|e| {
-            log::warn!(
-                "FlareSolverr URL validation failed: {e}. Falling back to '{FALLBACK_URL}'."
-            );
+            log_flaresolverr_validation_fallback("", &e);
             FALLBACK_URL.to_string()
         });
         let config = FlareSolverrConfig {
@@ -256,9 +284,7 @@ impl FlareSolverrEngine {
         proxy_url: Option<&str>,
     ) -> Self {
         let validated = validate_flaresolverr_url(base_url).unwrap_or_else(|e| {
-            log::warn!(
-                "FlareSolverr CDP URL validation failed: {e}. Falling back to '{FALLBACK_URL}'."
-            );
+            log_flaresolverr_validation_fallback("CDP", &e);
             FALLBACK_URL.to_string()
         });
         let config = FlareSolverrConfig {
@@ -289,9 +315,7 @@ impl FlareSolverrEngine {
         proxy_url: Option<&str>,
     ) -> Self {
         let validated = validate_flaresolverr_url(base_url).unwrap_or_else(|e| {
-            log::warn!(
-                "FlareSolverr TLS URL validation failed: {e}. Falling back to '{FALLBACK_URL}'."
-            );
+            log_flaresolverr_validation_fallback("TLS", &e);
             FALLBACK_URL.to_string()
         });
         let config = FlareSolverrConfig {
@@ -317,9 +341,7 @@ impl FlareSolverrEngine {
         timeout_seconds: u64,
     ) -> Self {
         let validated = validate_flaresolverr_url(&url.into()).unwrap_or_else(|e| {
-            log::warn!(
-                "FlareSolverr Full URL validation failed: {e}. Falling back to '{FALLBACK_URL}'."
-            );
+            log_flaresolverr_validation_fallback("Full", &e);
             FALLBACK_URL.to_string()
         });
         let config = FlareSolverrConfig {
@@ -346,7 +368,7 @@ impl FlareSolverrEngine {
         timeout_seconds: u64,
     ) -> Self {
         let validated = validate_flaresolverr_url(base_url).unwrap_or_else(|e| {
-            log::warn!("FlareSolverr CDP+MRT URL validation failed: {e}. Falling back to '{FALLBACK_URL}'.");
+            log_flaresolverr_validation_fallback("CDP+MRT", &e);
             FALLBACK_URL.to_string()
         });
         let config = FlareSolverrConfig {
@@ -373,7 +395,7 @@ impl FlareSolverrEngine {
         timeout_seconds: u64,
     ) -> Self {
         let validated = validate_flaresolverr_url(base_url).unwrap_or_else(|e| {
-            log::warn!("FlareSolverr TLS+MRT URL validation failed: {e}. Falling back to '{FALLBACK_URL}'.");
+            log_flaresolverr_validation_fallback("TLS+MRT", &e);
             FALLBACK_URL.to_string()
         });
         let config = FlareSolverrConfig {
@@ -396,12 +418,16 @@ impl FlareSolverrEngine {
         // 环境变量 URL 也需校验协议，避免 SSRF 风险
         let raw_url = std::env::var("FLARESOLVERR_URL").unwrap_or_default();
         if raw_url.is_empty() {
-            log::warn!("FlareSolverr URL not configured. Using placeholder '{FALLBACK_URL}'.");
+            log::warn!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "flare-url-not-configured-fallback",
+                    &[("fallback", fluent_bundle::FluentValue::from(FALLBACK_URL))],
+                )
+            );
         }
         let validated = validate_flaresolverr_url(&raw_url).unwrap_or_else(|e| {
-            log::warn!(
-                "FlareSolverr URL validation failed: {e}. Falling back to '{FALLBACK_URL}'."
-            );
+            log_flaresolverr_validation_fallback("", &e);
             FALLBACK_URL.to_string()
         });
         let config = FlareSolverrConfig {

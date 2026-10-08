@@ -57,3 +57,7 @@ search-error-smart-routing-timeout = Smart routing timed out: { $seconds }s
 search-error-engine-creation-failed = Engine creation failed: { $message }
 search-error-circuit-open = Circuit breaker open: { $message }
 search-error-no-engine-available = No available search engine.
+
+# Search service error messages (2 keys) — SearchServiceError handler mapping
+search-error-unknown-engine = Unknown search engine: { $name }
+search-error-smart-search = Smart search failed: { $message }

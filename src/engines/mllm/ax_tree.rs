@@ -26,7 +26,12 @@ pub async fn capture(page: &chromiumoxide::Page) -> Result<Vec<AxNode>, EngineEr
     let response = page
         .execute(GetFullAxTreeParams::default())
         .await
-        .map_err(|e| EngineError::BrowserError(format!("GetFullAXTree failed: {}", e)))?;
+        .map_err(|e| {
+            EngineError::BrowserError(crate::i18n::tr_log_args(
+                "mllm-ax-tree-failed",
+                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+            ))
+        })?;
     Ok(response.result.nodes)
 }
 

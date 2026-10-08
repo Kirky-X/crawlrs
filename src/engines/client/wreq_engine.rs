@@ -68,8 +68,14 @@ pub fn emulation_provider(emulation: TlsEmulation) -> wreq::Emulation {
             "non-Chromium TlsEmulation must never reach WreqEngine (UA pool filters them)"
         );
         log::warn!(
-            "non-Chromium TlsEmulation {emulation:?} reached emulation_provider; \
-             falling back to Chromium emulation (UA pool filter should prevent this)"
+            "{}",
+            crate::i18n::tr_log_args(
+                "wreq-non-chromium-emulation",
+                &[(
+                    "emulation",
+                    fluent_bundle::FluentValue::from(format!("{emulation:?}")),
+                )],
+            )
         );
     }
     wreq::Emulation::builder()

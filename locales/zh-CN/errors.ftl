@@ -57,3 +57,7 @@ search-error-smart-routing-timeout = 智能路由超时: { $seconds } 秒
 search-error-engine-creation-failed = 引擎创建失败: { $message }
 search-error-circuit-open = 熔断器打开: { $message }
 search-error-no-engine-available = 没有可用的搜索引擎。
+
+# 搜索服务错误消息（2 个 key）— SearchServiceError handler 映射
+search-error-unknown-engine = 未知搜索引擎: { $name }
+search-error-smart-search = 智能搜索失败: { $message }

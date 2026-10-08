@@ -16,3 +16,9 @@ api-task-ids-empty = 任务 ID 不能为空。
 
 # 团队地理限制消息（1 个 key）
 team-invalid-ip-cidr = 无效的 IP 地址或 CIDR 格式：{ $value }
+
+# sitemap 请求源与 map 端点消息（4 个 key）
+api-sitemap-feature-required = sitemap 请求源需要 `sitemap` 特性（请使用 --features sitemap 重新构建）
+api-sitemap-source-disabled = sitemap 请求源已禁用（CRAWLRS__SITEMAP__ENABLED=false）；请设置 CRAWLRS__SITEMAP__ENABLED=true 以接受 sitemap_seed
+api-map-sitemap-status = sitemap 返回状态码 { $status }
+api-map-origin-unparsable = 无法从 { $url } 解析出 origin

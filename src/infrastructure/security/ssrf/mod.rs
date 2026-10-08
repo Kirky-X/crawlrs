@@ -345,9 +345,16 @@ pub(crate) fn ssrf_protection_disabled() -> bool {
             std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok();
         if disabled {
             log::warn!(
-                "SSRF protection DISABLED via {} — internal/private network targets are \
-                 reachable; for development/testing only",
-                crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION
+                "{}",
+                crate::i18n::tr_log_args(
+                    "ssrf-protection-disabled",
+                    &[(
+                        "env",
+                        fluent_bundle::FluentValue::from(
+                            crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION,
+                        ),
+                    )],
+                )
             );
         }
         disabled

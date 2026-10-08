@@ -132,7 +132,14 @@ pub fn init_shared(max_fingerprints: usize) {
         .is_err()
     {
         log::warn!(
-            "soft404 detector already initialized; ignoring soft404_max_fingerprints={max_fingerprints} (restart required to apply)"
+            "{}",
+            crate::i18n::tr_log_args(
+                "soft404-already-initialized",
+                &[(
+                    "max_fingerprints",
+                    fluent_bundle::FluentValue::from(max_fingerprints as i64),
+                )],
+            )
         );
     }
 }
@@ -212,12 +219,30 @@ impl Soft404Detector {
         let learned_from = learning.status_code;
         let total = self.hit_count.fetch_add(1, Ordering::Relaxed) + 1;
         log::info!(
-            "soft 404 hit: status {} response matches shell learned from HTTP {} \
-             (content_length={}, body_hash={:02x?}, fingerprint hits={hits}, total hits={total})",
-            fingerprint.status_code,
-            learned_from,
-            fingerprint.content_length,
-            fingerprint.body_hash,
+            "{}",
+            crate::i18n::tr_log_args(
+                "soft404-hit",
+                &[
+                    (
+                        "status",
+                        fluent_bundle::FluentValue::from(fingerprint.status_code as i64),
+                    ),
+                    (
+                        "learned_from",
+                        fluent_bundle::FluentValue::from(learned_from as i64)
+                    ),
+                    (
+                        "content_length",
+                        fluent_bundle::FluentValue::from(fingerprint.content_length as i64),
+                    ),
+                    (
+                        "body_hash",
+                        fluent_bundle::FluentValue::from(format!("{:02x?}", fingerprint.body_hash)),
+                    ),
+                    ("hits", fluent_bundle::FluentValue::from(hits as i64)),
+                    ("total", fluent_bundle::FluentValue::from(total as i64)),
+                ],
+            )
         );
         true
     }

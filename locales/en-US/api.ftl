@@ -16,3 +16,9 @@ api-task-ids-empty = Task IDs cannot be empty.
 
 # Team geo restriction messages (1 key)
 team-invalid-ip-cidr = Invalid IP address or CIDR notation: { $value }
+
+# Sitemap request source & map endpoint messages (4 keys)
+api-sitemap-feature-required = sitemap request source requires the `sitemap` feature (rebuild with --features sitemap)
+api-sitemap-source-disabled = sitemap request source is disabled (CRAWLRS__SITEMAP__ENABLED=false); set CRAWLRS__SITEMAP__ENABLED=true to accept sitemap_seed
+api-map-sitemap-status = sitemap returned status { $status }
+api-map-origin-unparsable = cannot parse origin from { $url }

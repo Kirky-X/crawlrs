@@ -9,3 +9,6 @@ validation-field-required = Field '{ $field }' is required.
 # SDK validation messages (2 keys)
 sdk-query-empty = query cannot be empty
 sdk-url-empty = url cannot be empty
+
+# DTO validator messages (1 key) — resolved at validation time via the startup bundle
+validation-sitemap-url-scheme = sitemap_url must start with http:// or https://

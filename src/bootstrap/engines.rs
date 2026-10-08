@@ -120,10 +120,26 @@ pub fn init_engines(
         if engine_config.playwright.capture_xhr {
             let s = &engine_config.playwright;
             log::info!(
-                "Playwright XHR/Fetch capture enabled (patterns={}, max_bytes={}, max_responses={})",
-                s.capture_xhr_url_patterns.len(),
-                s.capture_xhr_max_bytes,
-                s.capture_xhr_max_responses
+                "{}",
+                crate::i18n::tr_log_args(
+                    "boot-playwright-capture-enabled",
+                    &[
+                        (
+                            "patterns",
+                            fluent_bundle::FluentValue::from(
+                                s.capture_xhr_url_patterns.len() as i64
+                            ),
+                        ),
+                        (
+                            "max_bytes",
+                            fluent_bundle::FluentValue::from(s.capture_xhr_max_bytes as i64),
+                        ),
+                        (
+                            "max_responses",
+                            fluent_bundle::FluentValue::from(s.capture_xhr_max_responses as i64),
+                        ),
+                    ],
+                )
             );
             playwright_engine = playwright_engine.with_xhr_capture(XhrCaptureConfig {
                 url_patterns: s.capture_xhr_url_patterns.clone(),

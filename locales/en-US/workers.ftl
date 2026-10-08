@@ -1,5 +1,7 @@
 # Worker operational log messages — en-US
-# Covers BacklogWorker::process_backlog() log statements (5 keys)
+# Covers BacklogWorker::process_backlog() log statements (5 keys),
+# backlog/link-extractor/scrape-executor details (27 keys) and F11 sitemap
+# request source / conditional-request logs (15 keys)
 
 backlog-processing-started = Processing backlog tasks
 backlog-none-pending = No pending backlog tasks
@@ -39,3 +41,26 @@ scrape-exec-encoding-succeeded = Text encoding processing succeeded, detected en
 scrape-exec-encoding-failed = Text encoding processing failed: { $error }
 scrape-exec-encoding-error = Text encoding processing exception: { $error }
 scrape-task-encoding-fallback = Text encoding processing failed, using original content: { $error }
+
+# Crawl task: soft 404 & sitemap request source (7 keys)
+crawl-soft404-detected = soft 404 detected for url { $url } (task { $task_id }): matching shell fingerprint, result not persisted
+crawl-sitemap-derive-failed = sitemap_seed crawl { $crawl_id } cannot derive sitemap url from { $url }; sitemap request source skipped
+crawl-sitemap-blacklist-unparsable = crawl { $crawl_id }: domain_blacklist payload unparsable ({ $error }); sitemap feed skipped — restriction cannot be verified
+crawl-sitemap-feeding = sitemap request source for crawl { $crawl_id }: feeding { $sitemap_url }
+crawl-sitemap-feed-resumed = sitemap feed for crawl { $crawl_id } resumed from loc { $loc } (pointer { $pointer })
+crawl-sitemap-feed-done = sitemap feed done for crawl { $crawl_id }: enqueued={ $enqueued }, filtered={ $filtered }, duplicates={ $duplicates }, consumed={ $consumed } from { $sitemap_url }
+crawl-sitemap-feed-failed = sitemap request source failed for crawl { $crawl_id } ({ $sitemap_url }): { $error }; crawl continues with page-link discovery only
+
+# Scrape task: conditional request & 304 reuse (3 keys)
+scrape-conditional-lookup-failed = Conditional request: prior result lookup failed for task { $task_id }, degrading to unconditional fetch: { $error }
+scrape-304-reused = Task { $task_id } got 304 Not Modified, reusing prior result ({ $bytes } bytes)
+scrape-304-no-prior = Task { $task_id } got 304 without prior result to reuse, marking failed
+
+# Sitemap feed pointer (3 keys)
+sitemap-pointer-mismatch = sitemap feed pointer for crawl { $crawl_id } targets { $pointer_url } but feeding { $sitemap_url }; ignoring — dedup/DB checks guard against re-enqueue
+sitemap-pointer-corrupt = sitemap feed pointer for crawl { $crawl_id } is corrupt ({ $error }); ignoring
+sitemap-resume-without-seek = sitemap feed for crawl { $crawl_id } resumes without seek (index streams arrive in nondeterministic order; dedup guards re-enqueue), pointer consumed={ $consumed }
+
+# Soft 404 detector (2 keys)
+soft404-already-initialized = soft404 detector already initialized; ignoring soft404_max_fingerprints={ $max_fingerprints } (restart required to apply)
+soft404-hit = soft 404 hit: status { $status } response matches shell learned from HTTP { $learned_from } (content_length={ $content_length }, body_hash={ $body_hash }, fingerprint hits={ $hits }, total hits={ $total })

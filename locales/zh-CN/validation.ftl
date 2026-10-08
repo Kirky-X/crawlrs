@@ -9,3 +9,6 @@ validation-field-required = 字段 '{ $field }' 为必填项。
 # SDK 验证消息（2 个 key）
 sdk-query-empty = 查询不能为空
 sdk-url-empty = url 不能为空
+
+# DTO 验证器消息（1 个 key）— 校验时经启动期全局束解析
+validation-sitemap-url-scheme = sitemap_url 必须以 http:// 或 https:// 开头

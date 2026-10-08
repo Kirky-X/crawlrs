@@ -309,9 +309,14 @@ impl RobotsChecker {
         if let Some(err) = last_error {
             if self.fail_closed {
                 log::warn!(
-                    "Failed to fetch robots.txt from {} (fail-closed): {}",
-                    robots_url,
-                    err
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "robots-fetch-fail-closed",
+                        &[
+                            ("url", fluent_bundle::FluentValue::from(robots_url.as_str())),
+                            ("error", fluent_bundle::FluentValue::from(err.to_string())),
+                        ],
+                    )
                 );
                 // 失败标记按短 TTL 写入内存缓存，防止对不可达目标站打爆
                 {

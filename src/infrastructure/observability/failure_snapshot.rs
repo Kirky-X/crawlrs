@@ -177,7 +177,13 @@ impl FailureSnapshotter {
                     );
                 }
             }
-            Err(e) => log::debug!("failure snapshot: blocking task join failed: {e}"),
+            Err(e) => log::debug!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "snapshot-join-failed",
+                    &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                )
+            ),
         }
     }
 
@@ -234,9 +240,17 @@ fn persist_snapshot(
 
     if let Err(e) = fs::create_dir_all(dir) {
         log::debug!(
-            "failure snapshot: cannot create dir {}: {}",
-            dir.display(),
-            e
+            "{}",
+            crate::i18n::tr_log_args(
+                "snapshot-dir-create-failed",
+                &[
+                    (
+                        "dir",
+                        fluent_bundle::FluentValue::from(dir.display().to_string())
+                    ),
+                    ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                ],
+            )
         );
         return (0, 0);
     }
@@ -250,23 +264,13 @@ fn persist_snapshot(
         let html_path = dir.join(format!("{key}.html"));
         match write_private(&html_path, content.as_bytes()) {
             Ok(()) => written += 1,
-            Err(e) => {
-                log::debug!(
-                    "failure snapshot: write {} failed: {}",
-                    html_path.display(),
-                    e
-                )
-            }
+            Err(e) => log_snapshot_write_failed(&html_path, &e),
         }
         if let Some(bytes) = screenshot {
             let jpg_path = dir.join(format!("{key}.jpg"));
             match write_private(&jpg_path, bytes) {
                 Ok(()) => written += 1,
-                Err(e) => log::debug!(
-                    "failure snapshot: write {} failed: {}",
-                    jpg_path.display(),
-                    e
-                ),
+                Err(e) => log_snapshot_write_failed(&jpg_path, &e),
             }
         }
     }
@@ -278,15 +282,26 @@ fn persist_snapshot(
         .and_then(|raw| write_private(&meta_path, raw.as_bytes()))
     {
         Ok(()) => written += 1,
-        Err(e) => {
-            log::debug!(
-                "failure snapshot: write {} failed: {}",
-                meta_path.display(),
-                e
-            )
-        }
+        Err(e) => log_snapshot_write_failed(&meta_path, &e),
     }
     (written, evicted)
+}
+
+/// 快照写盘失败的旁路 debug 日志（启动期全局束 locale）
+fn log_snapshot_write_failed(path: &Path, error: &std::io::Error) {
+    log::debug!(
+        "{}",
+        crate::i18n::tr_log_args(
+            "snapshot-write-failed",
+            &[
+                (
+                    "path",
+                    fluent_bundle::FluentValue::from(path.display().to_string())
+                ),
+                ("error", fluent_bundle::FluentValue::from(error.to_string())),
+            ],
+        )
+    );
 }
 
 /// 目录文件数逼近 `max_total` 时按 mtime 最旧优先删除，为 `needed` 个新文件腾位
@@ -298,7 +313,19 @@ fn evict_oldest(dir: &Path, needed: u64, max_total: usize) -> u64 {
     let entries = match fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(e) => {
-            log::debug!("failure snapshot: read_dir {} failed: {}", dir.display(), e);
+            log::debug!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "snapshot-read-dir-failed",
+                    &[
+                        (
+                            "dir",
+                            fluent_bundle::FluentValue::from(dir.display().to_string())
+                        ),
+                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                    ],
+                )
+            );
             return 0;
         }
     };
@@ -325,7 +352,19 @@ fn evict_oldest(dir: &Path, needed: u64, max_total: usize) -> u64 {
         }
         match fs::remove_file(&path) {
             Ok(()) => evicted += 1,
-            Err(e) => log::debug!("failure snapshot: evict {} failed: {}", path.display(), e),
+            Err(e) => log::debug!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "snapshot-evict-failed",
+                    &[
+                        (
+                            "path",
+                            fluent_bundle::FluentValue::from(path.display().to_string())
+                        ),
+                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                    ],
+                )
+            ),
         }
     }
     evicted

@@ -59,6 +59,28 @@ pub struct RateLimitingConfig {
     pub rate_limit_ttl_seconds: u64,
 }
 
+/// API Key 标识符提取器：从 [`RequestContext::user_id`] 提取限流标识。
+///
+/// limiteron 默认标识链从 X-User-Id/X-API-Key header 与 client_ip 提取，而
+/// crawlrs 的服务间调用上下文（`build_request_context`）这三者全为空——
+/// Governor 报 "Failed to extract identifier" 后按 fail-open 放行，限流在
+/// 活体形同虚设（配置 60rpm 实测 0 次 429 的根因）。crawlrs 已将 API Key
+/// 写入 `user_id` 字段，本提取器直接取该字段作为按 key 计量的桶标识。
+struct ApiUserIdIdentifierExtractor;
+
+impl limiteron::matchers::IdentifierExtractor for ApiUserIdIdentifierExtractor {
+    fn extract(&self, context: &RequestContext) -> Option<Identifier> {
+        context
+            .user_id
+            .as_ref()
+            .map(|u| Identifier::UserId(u.clone()))
+    }
+
+    fn name(&self) -> &str {
+        "ApiUserIdIdentifierExtractor"
+    }
+}
+
 impl Default for RateLimitingConfig {
     fn default() -> Self {
         Self {
@@ -114,6 +136,7 @@ impl LimiteronService {
             .with_config(flow_config)
             .with_storage(storage)
             .with_ban_storage(ban_storage)
+            .with_identifier_extractor(Arc::new(ApiUserIdIdentifierExtractor))
             // Memory 后端无需 L1（后端本身就是内存）；Database 后端启用 L1
             // 挡住高频键的 DB 往返
             .with_l1_cache_enabled(l1_enabled)
@@ -1271,9 +1294,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_rate_limit_enabled_fails_open_to_allowed() {
-        // SOURCE LIMITATION: build_request_context sets ip=None, client_ip=None,
-        // empty headers → Governor cannot extract identifier → Err → fail-open → Allowed.
+    async fn test_check_rate_limit_enforces_bucket_after_capacity() {
+        // 回归（活体 0 次 429）：默认标识链在 crawlrs 服务间上下文全空，
+        // Governor "Failed to extract identifier" 走 fail-open，限流形同虚设。
+        // ApiUserIdIdentifierExtractor 从 user_id 提取标识后，打满令牌桶
+        // （默认容量 100，refill 10/s）必须出现 Denied。
         let service = make_service_with_mocks(
             Arc::new(MockTaskRepository::with_no_task()),
             Arc::new(MockBacklogRepository::new()),
@@ -1282,9 +1307,26 @@ mod tests {
         )
         .await;
 
-        let result = service.check_rate_limit("k", "/v1/extract").await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), RateLimitResult::Allowed);
+        let mut allowed = 0;
+        let mut denied = 0;
+        for _ in 0..150 {
+            match service.check_rate_limit("key-a", "/v1/map").await.unwrap() {
+                RateLimitResult::Allowed => allowed += 1,
+                RateLimitResult::Denied { .. } | RateLimitResult::RetryAfter { .. } => denied += 1,
+            }
+        }
+        // refill 10/s 会少量回补，允许少量抖动，但拒绝必须出现
+        assert!(allowed >= 90, "容量内请求应放行，实际 allowed={allowed}");
+        assert!(denied > 0, "超出桶容量后必须 Denied，实际 denied={denied}");
+
+        // NOTE: memory flow-rule 语义——DecisionNode 每 rule 持有一个 limiter
+        // 实例，桶按 rule 全局共享（per-key 隔离需走 storage 路径）；key-b 在
+        // key-a 打满后同样 Denied，固化该现行为以防回归认知。
+        let other = service.check_rate_limit("key-b", "/v1/map").await.unwrap();
+        assert!(
+            matches!(other, RateLimitResult::Denied { .. }),
+            "共享规则桶语义下 key-b 应同样被拒，实际 {other:?}"
+        );
     }
 
     #[tokio::test]

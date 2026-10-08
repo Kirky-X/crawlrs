@@ -113,8 +113,11 @@ impl WaitFor {
                     )
                     .await;
                 log::warn!(
-                    "network idle: CDP event subscription failed ({e}); \
-                     falling back to fixed sleep"
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "wait-network-idle-subscribe-failed",
+                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    )
                 );
                 tokio::time::sleep(quiet_window.min(timeout)).await;
                 return Ok(());
@@ -217,8 +220,14 @@ impl WaitFor {
                 // 整个 scrape 失败（stable_duration 超过等待预算时循环数学上
                 // 不可能满足，此前会把 API 合法输入变成确定性失败）
                 log::warn!(
-                    "dom not stable after {}ms, degrading (best-effort wait)",
-                    timeout.as_millis()
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "wait-dom-unstable-degraded",
+                        &[(
+                            "timeout",
+                            fluent_bundle::FluentValue::from(timeout.as_millis() as i64),
+                        )],
+                    )
                 );
                 return Ok(());
             }

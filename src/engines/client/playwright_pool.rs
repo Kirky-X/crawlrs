@@ -1021,10 +1021,7 @@ impl Drop for BrowserPool {
                 });
             }
             Err(_) => {
-                log::warn!(
-                    "No tokio runtime on BrowserPool drop; browser instances and \
-                     profile dirs are not cleaned up"
-                );
+                log::warn!("{}", crate::i18n::tr_log("playwright-pool-drop-no-runtime"));
             }
         }
     }

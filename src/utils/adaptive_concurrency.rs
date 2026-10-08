@@ -19,6 +19,20 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+/// AIMD 状态迁移的旁路 debug 日志（启动期全局束 locale）
+fn log_aimd_transition(key: &str, from: usize, to: usize) {
+    log::debug!(
+        "{}",
+        crate::i18n::tr_log_args(
+            key,
+            &[
+                ("from", fluent_bundle::FluentValue::from(from as i64)),
+                ("to", fluent_bundle::FluentValue::from(to as i64)),
+            ],
+        )
+    );
+}
+
 /// AIMD 控制器默认参数
 pub const DEFAULT_MIN_LIMIT: usize = 1;
 pub const DEFAULT_MAX_LIMIT: usize = 100;
@@ -141,7 +155,7 @@ impl AIMDController {
                     Ordering::Relaxed,
                 ) {
                     Ok(_) => {
-                        log::debug!("AIMD limit increased: {} -> {}", current, new);
+                        log_aimd_transition("aimd-limit-increased", current, new);
                         return new;
                     }
                     Err(_) => continue, // CAS 失败：其他线程修改了，重试
@@ -200,7 +214,7 @@ impl AIMDController {
                 .compare_exchange(current, new, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
             {
-                log::debug!("AIMD limit halved: {} -> {}", current, new);
+                log_aimd_transition("aimd-limit-halved", current, new);
                 return new;
             }
             // CAS 失败：其他线程修改了，重试
@@ -292,7 +306,7 @@ impl AdaptiveSemaphore {
         }
 
         self.target.store(new_target, Ordering::Relaxed);
-        log::debug!("AIMD semaphore target: {} -> {}", current, new_target);
+        log_aimd_transition("aimd-target-changed", current, new_target);
 
         if new_target > current {
             // 增加：直接 add_permits

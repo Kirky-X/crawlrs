@@ -80,7 +80,7 @@ pub enum MarkdownPostProcessorError {
 /// })).unwrap();
 /// // generate is async — use .await in async context
 /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
-/// let md = processor.generate(crate::domain::id::Id::generate(), &req, "<html><body><h1>Hi</h1></body></html>").await;
+/// let md = processor.generate(crawlrs::domain::id::Id::generate(), &req, "<html><body><h1>Hi</h1></body></html>").await;
 /// assert!(md.unwrap().is_some());
 /// # });
 /// ```

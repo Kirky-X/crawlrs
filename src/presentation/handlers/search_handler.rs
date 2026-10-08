@@ -6,6 +6,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use fluent_bundle::FluentValue;
 use log::error;
 use std::sync::Arc;
 
@@ -17,6 +18,7 @@ use crate::{
         services::rate_limiting_service::RateLimitingService,
         services::search_service::{SearchQuery, SearchServiceError, SearchServiceTrait},
     },
+    i18n::{I18nBundle, Locale},
     presentation::handlers::check_ssrf_url,
     presentation::handlers::response_builder::{
         error_response, json_rejection_response, success_response,
@@ -32,6 +34,8 @@ pub async fn search(
     Extension(task_repo): Extension<Arc<dyn TaskRepository>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(locale): Extension<Locale>,
+    Extension(bundle): Extension<Arc<I18nBundle>>,
     payload: Result<Json<SearchRequestDto>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
     // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封，避免纯文本响应
@@ -149,10 +153,30 @@ pub async fn search(
 
             success_response(StatusCode::OK, response_dto)
         }
-        Err(e) => {
-            let (status, msg): (StatusCode, String) = e.into();
-            error_response(status, msg)
-        }
+        Err(e) => match e {
+            SearchServiceError::UnknownEngine(name) => {
+                let msg = crate::i18n::t_with_args(
+                    &locale,
+                    &bundle,
+                    "search-error-unknown-engine",
+                    &[("name", FluentValue::from(name.as_str()))],
+                );
+                error_response(StatusCode::BAD_REQUEST, msg)
+            }
+            SearchServiceError::SmartSearchFailed(detail) => {
+                let msg = crate::i18n::t_with_args(
+                    &locale,
+                    &bundle,
+                    "search-error-smart-search",
+                    &[("message", FluentValue::from(detail.as_str()))],
+                );
+                error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
+            }
+            other => {
+                let (status, msg): (StatusCode, String) = other.into();
+                error_response(status, msg)
+            }
+        },
     }
 }
 
@@ -175,6 +199,14 @@ impl From<SearchServiceError> for (StatusCode, String) {
                 (StatusCode::PAYMENT_REQUIRED, details)
             }
             SearchServiceError::SearchEngine(e) => (StatusCode::INTERNAL_SERVER_ERROR, e),
+            SearchServiceError::UnknownEngine(name) => (
+                StatusCode::BAD_REQUEST,
+                format!("unknown search engine: {name}"),
+            ),
+            SearchServiceError::SmartSearchFailed(detail) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("smart search: {detail}"),
+            ),
         }
     }
 }
@@ -1237,6 +1269,15 @@ mod tests {
         )
     }
 
+    fn test_locale() -> Locale {
+        "en-US".parse().unwrap()
+    }
+
+    fn test_bundle() -> Arc<I18nBundle> {
+        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
+    }
+
     /// Build a sample domain SearchResponse for testing.
     fn make_search_response(crawl_id: Option<crate::domain::id::Id>) -> DomainSearchResponse {
         DomainSearchResponse {
@@ -1660,6 +1701,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -1687,6 +1730,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(0)))),
         )
         .await
@@ -1715,6 +1760,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -1750,6 +1797,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -1781,6 +1830,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -1822,6 +1873,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -1852,6 +1905,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(None))),
         )
         .await
@@ -1878,6 +1933,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -1902,6 +1959,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -1930,6 +1989,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -1959,6 +2020,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -1985,6 +2048,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -2013,6 +2078,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -2041,6 +2108,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -2067,6 +2136,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await
@@ -2094,6 +2165,8 @@ mod tests {
             Extension(task_repo),
             Extension(rate_limit),
             Extension(auth),
+            Extension(test_locale()),
+            Extension(test_bundle()),
             Ok(Json(make_search_request_dto(Some(5000)))),
         )
         .await

@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::application::dto::webhook_request::{
-    CreateWebhookRequest, WebhookListEntry, WebhookListResponse,
+    CreateWebhookRequest, WebhookListEntry, WebhookListResponse, WebhookResponse,
 };
 use crate::config::settings::Settings;
-use crate::domain::models::Webhook;
 use crate::domain::repositories::webhook_repository::WebhookRepository;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 // 架构 domain 层提供 `verify_webhook_signature_from_parts`（timestamp 解析 +
@@ -20,7 +19,7 @@ use crate::domain::use_cases::create_webhook::CreateWebhookUseCase;
 // 直接使用源模块避免读者跳两次 import 才找到实现。
 use crate::infrastructure::security::ssrf::validate_url;
 use crate::presentation::errors::CrawlRsError;
-use crate::presentation::handlers::response_builder::ApiResponse;
+use crate::presentation::handlers::response_builder::{success_response, ApiResponse};
 use crate::presentation::helpers::rate_limit_helper::check_rate_limit_as_app_error;
 use crate::presentation::middleware::auth_middleware::AuthState;
 use axum::body::Bytes;
@@ -79,7 +78,7 @@ pub async fn create_webhook<R: WebhookRepository>(
     Extension(settings): Extension<Arc<Settings>>,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<(StatusCode, Json<Webhook>), CrawlRsError> {
+) -> Result<axum::response::Response, CrawlRsError> {
     // 架构限流检查必须在最早阶段执行（与 search/scrape/crawl handler 一致），
     // 防止攻击者通过大量无效签名请求耗服（每个请求都做 HMAC 计算会消耗 CPU）。
     // 限流命中时直接返回 429，避免不必要的 HMAC + JSON 解析 + SSRF 验证。
@@ -129,7 +128,19 @@ pub async fn create_webhook<R: WebhookRepository>(
 
     let use_case = CreateWebhookUseCase::new(repo);
     let webhook = use_case.execute(team_id, payload.url).await?;
-    Ok((StatusCode::CREATED, Json(webhook)))
+    // 契约：创建响应走标准 {success,data} 包封，并携带签名密钥——送达投递以
+    // settings.webhook.secret 统一签名（webhook_service generate_signature），
+    // 消费方凭该 secret 验证送达的 webhook-signature；secret 仅在创建响应返回，
+    // 列表端点不回传（WebhookListEntry 无 secret 字段）。
+    let response = WebhookResponse {
+        id: webhook.id,
+        team_id: webhook.team_id,
+        url: webhook.url,
+        created_at: webhook.created_at,
+        is_active: true,
+        secret: Some(settings.webhook.secret().to_string()),
+    };
+    Ok(success_response(StatusCode::CREATED, response))
 }
 
 /// 列出团队的 Webhooks
@@ -163,6 +174,7 @@ mod tests {
     use super::*;
     use crate::application::dto::webhook_request::WebhookResponse;
     use crate::domain::auth::ApiKeyScope;
+    use crate::domain::models::Webhook;
     use crate::domain::repositories::task_repository::RepositoryError;
     use crate::domain::services::rate_limiting_service::{
         BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult,
@@ -701,10 +713,20 @@ mod tests {
         .await;
 
         assert!(result.is_ok(), "create_webhook should succeed");
-        let (status, webhook) = result.unwrap();
-        assert_eq!(status, StatusCode::CREATED);
-        assert_eq!(webhook.team_id, team_id);
-        assert_eq!(webhook.url, "https://example.com/webhook");
+        let response = result.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("read body");
+        let parsed: serde_json::Value = serde_json::from_slice(&bytes).expect("json body");
+        assert_eq!(parsed["success"], true, "创建响应走 success/data 包封");
+        assert_eq!(parsed["data"]["team_id"], team_id.to_string());
+        assert_eq!(parsed["data"]["url"], "https://example.com/webhook");
+        assert_eq!(parsed["data"]["is_active"], true);
+        assert_eq!(
+            parsed["data"]["secret"], TEST_WEBHOOK_SECRET,
+            "创建响应必须一次性返回签名密钥（送达验签依赖）"
+        );
     }
 
     #[tokio::test]
@@ -954,9 +976,13 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        let (status, webhook) = result.unwrap();
-        assert_eq!(status, StatusCode::CREATED);
-        assert_eq!(webhook.url, "https://example.com/webhook");
+        let response = result.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("read body");
+        let parsed: serde_json::Value = serde_json::from_slice(&bytes).expect("json body");
+        assert_eq!(parsed["data"]["url"], "https://example.com/webhook");
     }
 
     // ========== webhook signature verification failure tests ==========

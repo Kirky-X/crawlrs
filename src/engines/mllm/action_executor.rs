@@ -96,10 +96,12 @@ async fn click_by_backend_node_id(page: &Page, backend_id: i64) -> Result<Action
     let resolve_params = ResolveNodeParams::builder()
         .backend_node_id(BackendNodeId::new(backend_id))
         .build();
-    let resolved = page
-        .execute(resolve_params)
-        .await
-        .map_err(|e| format!("DOM.resolveNode failed: {e}"))?;
+    let resolved = page.execute(resolve_params).await.map_err(|e| {
+        crate::i18n::tr_log_args(
+            "mllm-dom-resolve-node-failed",
+            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+        )
+    })?;
     let object_id = resolved
         .result
         .object
@@ -116,10 +118,18 @@ async fn click_by_backend_node_id(page: &Page, backend_id: i64) -> Result<Action
         )
         .user_gesture(true)
         .build()
-        .map_err(|e| format!("invalid callFunctionOn params: {e}"))?;
-    page.execute(call_params)
-        .await
-        .map_err(|e| format!("callFunctionOn click failed: {e}"))?;
+        .map_err(|e| {
+            crate::i18n::tr_log_args(
+                "mllm-call-function-params-invalid",
+                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+            )
+        })?;
+    page.execute(call_params).await.map_err(|e| {
+        crate::i18n::tr_log_args(
+            "mllm-call-function-click-failed",
+            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+        )
+    })?;
 
     Ok(ActionResult::ok(format!(
         "clicked via ax_id {}",

@@ -201,7 +201,10 @@ async fn sdk_create_task(
         team_id: auth_state.team_id,
         api_key_id: auth_state.api_key_id,
         url: req.url.clone(),
-        payload: serde_json::json!({}),
+        // scrape 型任务执行前反序列化 ScrapeRequestDto（url 必填），空 payload
+        // 必然 payload_invalid 失败；crawl 型任务由 crawl 管线播种（payload 需
+        // crawl_id/depth/config），此处仅入队不播种
+        payload: serde_json::json!({"url": req.url}),
         retry_count: 0,
         attempt_count: 0,
         max_retries: 3,
@@ -262,7 +265,9 @@ async fn sdk_scrape(
         team_id: auth_state.team_id,
         api_key_id: auth_state.api_key_id,
         url: req.url.clone(),
-        payload: serde_json::json!({}),
+        // worker 执行前反序列化 ScrapeRequestDto（url 必填 + deny_unknown_fields），
+        // 空 payload 会导致任务必然以 payload_invalid 失败
+        payload: serde_json::json!({"url": req.url}),
         retry_count: 0,
         attempt_count: 0,
         max_retries: 3,

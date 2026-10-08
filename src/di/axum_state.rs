@@ -733,8 +733,12 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
         kit.register::<ServiceModule>()
             .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
-        kit.register::<IdModule>()
-            .map_err(|e| anyhow::anyhow!("register IdModule: {e}"))?;
+        kit.register::<IdModule>().map_err(|e| {
+            anyhow::anyhow!(
+                "{}: {e}",
+                crate::i18n::tr_log("boot-register-id-module-failed")
+            )
+        })?;
 
         // 高并行度下 kit.build() 可能因数据库连接失败而报错，用 ? 传播错误让调用方优雅跳过
         let kit = kit
@@ -951,8 +955,12 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
         kit.register::<ServiceModule>()
             .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
-        kit.register::<IdModule>()
-            .map_err(|e| anyhow::anyhow!("register IdModule: {e}"))?;
+        kit.register::<IdModule>().map_err(|e| {
+            anyhow::anyhow!(
+                "{}: {e}",
+                crate::i18n::tr_log("boot-register-id-module-failed")
+            )
+        })?;
 
         let kit = kit
             .build()

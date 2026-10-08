@@ -210,13 +210,32 @@ impl SessionManager {
                 if self.should_retire(&existing) {
                     let fresh = self.build_identity(key, mobile);
                     log::info!(
-                        "session: identity #{} retired (score={:.1}, uses={}, age={:?}), \
-                         replacing with #{}",
-                        existing.id,
-                        existing.error_score(),
-                        existing.uses(),
-                        existing.age(),
-                        fresh.id
+                        "{}",
+                        crate::i18n::tr_log_args(
+                            "session-identity-retired",
+                            &[
+                                ("id", fluent_bundle::FluentValue::from(existing.id as i64),),
+                                (
+                                    "score",
+                                    fluent_bundle::FluentValue::from(existing.error_score()),
+                                ),
+                                (
+                                    "uses",
+                                    fluent_bundle::FluentValue::from(existing.uses() as i64)
+                                ),
+                                (
+                                    "age",
+                                    fluent_bundle::FluentValue::from(format!(
+                                        "{:?}",
+                                        existing.age()
+                                    )),
+                                ),
+                                (
+                                    "fresh_id",
+                                    fluent_bundle::FluentValue::from(fresh.id as i64)
+                                ),
+                            ],
+                        )
                     );
                     occ.insert(fresh.clone());
                     fresh
@@ -263,11 +282,22 @@ impl SessionManager {
         let key = Self::affinity_key(host, session_id);
         if let Some((_, identity)) = self.sessions.remove(&key) {
             log::info!(
-                "session: identity #{} force-retired for host {} (score={:.1}, uses={})",
-                identity.id,
-                host,
-                identity.error_score(),
-                identity.uses()
+                "{}",
+                crate::i18n::tr_log_args(
+                    "session-identity-force-retired",
+                    &[
+                        ("id", fluent_bundle::FluentValue::from(identity.id as i64)),
+                        ("host", fluent_bundle::FluentValue::from(host)),
+                        (
+                            "score",
+                            fluent_bundle::FluentValue::from(identity.error_score()),
+                        ),
+                        (
+                            "uses",
+                            fluent_bundle::FluentValue::from(identity.uses() as i64)
+                        ),
+                    ],
+                )
             );
         }
     }
@@ -303,11 +333,20 @@ impl SessionManager {
                 let pair_len = pair.len() + if blob.is_empty() { 0 } else { 2 };
                 if pair_len > self.cookie_cache_max_bytes {
                     log::warn!(
-                        "session: dropping set-cookie pair ({} bytes) exceeding cache cap {} \
-                         for identity #{}",
-                        pair.len(),
-                        self.cookie_cache_max_bytes,
-                        identity.id
+                        "{}",
+                        crate::i18n::tr_log_args(
+                            "session-cookie-cap-dropped",
+                            &[
+                                ("bytes", fluent_bundle::FluentValue::from(pair.len() as i64)),
+                                (
+                                    "cap",
+                                    fluent_bundle::FluentValue::from(
+                                        self.cookie_cache_max_bytes as i64
+                                    ),
+                                ),
+                                ("id", fluent_bundle::FluentValue::from(identity.id as i64),),
+                            ],
+                        )
                     );
                     continue;
                 }

@@ -115,7 +115,7 @@ mod tests {
             -100,
             CreditsTransactionType::Scrape,
             "Test transaction".to_string(),
-            Some(crate::domain::id::Id::generate().into()),
+            Some(crate::domain::id::Id::generate()),
             now,
         );
 
@@ -279,7 +279,7 @@ mod tests {
             -500,
             CreditsTransactionType::Crawl,
             "Large debit".to_string(),
-            Some(crate::domain::id::Id::generate().into()),
+            Some(crate::domain::id::Id::generate()),
             now,
         );
 

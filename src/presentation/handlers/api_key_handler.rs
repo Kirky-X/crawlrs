@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn test_validate_request_happy_path_minimal() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(3600),
         };
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn test_validate_request_happy_path_all_scopes() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string(), "write".to_string(), "admin".to_string()],
             expires_in_secs: Some(86400),
         };
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn test_validate_request_default_expires_ok() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["admin".to_string()],
             expires_in_secs: None,
         };
@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn test_validate_request_max_expires_ok() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(MAX_EXPIRES_IN_SECS),
         };
@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn test_validate_request_empty_scopes_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec![],
             expires_in_secs: None,
         };
@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn test_validate_request_invalid_scope_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["superuser".to_string()],
             expires_in_secs: None,
         };
@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn test_validate_request_mix_valid_invalid_scope_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string(), "delete".to_string()],
             expires_in_secs: None,
         };
@@ -569,7 +569,7 @@ mod tests {
     #[test]
     fn test_validate_request_zero_expires_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(0),
         };
@@ -580,7 +580,7 @@ mod tests {
     #[test]
     fn test_validate_request_negative_expires_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(-1),
         };
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn test_validate_request_over_max_expires_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(MAX_EXPIRES_IN_SECS + 1),
         };
@@ -606,7 +606,7 @@ mod tests {
         let oversized_scopes: Vec<String> =
             std::iter::repeat_n("read".to_string(), MAX_SCOPES_LEN + 1).collect();
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: oversized_scopes,
             expires_in_secs: None,
         };
@@ -624,7 +624,7 @@ mod tests {
     fn test_validate_request_scopes_at_limit_ok() {
         let scopes: Vec<String> = std::iter::repeat_n("read".to_string(), MAX_SCOPES_LEN).collect();
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes,
             expires_in_secs: None,
         };
@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn test_validate_request_empty_string_scope_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["".to_string()],
             expires_in_secs: None,
         };
@@ -667,7 +667,7 @@ mod tests {
     #[test]
     fn test_validate_request_case_sensitive_scope_rejected() {
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["Read".to_string()],
             expires_in_secs: None,
         };
@@ -683,7 +683,7 @@ mod tests {
     fn test_validate_request_duplicate_scopes_ok() {
         // 重复 scope 不算错误（garrison 端去重，crawlrs 不强制唯一）
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string(), "read".to_string()],
             expires_in_secs: None,
         };
@@ -742,7 +742,7 @@ mod tests {
         }
         let auth_state = make_read_only_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: None,
         };
@@ -766,7 +766,7 @@ mod tests {
             ApiKeyScope::denied(),
         );
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: None,
         };
@@ -804,7 +804,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec![],
             expires_in_secs: None,
         };
@@ -823,7 +823,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["superuser".to_string()],
             expires_in_secs: None,
         };
@@ -842,7 +842,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(0),
         };
@@ -861,7 +861,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(-100),
         };
@@ -880,7 +880,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: Some(MAX_EXPIRES_IN_SECS + 1),
         };
@@ -908,7 +908,7 @@ mod tests {
         }
         let auth_state = make_admin_auth_state();
         let req = CreateApiKeyRequest {
-            team_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_in_secs: None,
         };
@@ -1182,8 +1182,8 @@ mod tests {
     fn test_create_api_key_response_serialize() {
         let resp = CreateApiKeyResponse {
             api_key: "abc123.def456".to_string(),
-            api_key_id: crate::domain::id::Id::generate().into(),
-            team_id: crate::domain::id::Id::generate().into(),
+            api_key_id: crate::domain::id::Id::generate(),
+            team_id: crate::domain::id::Id::generate(),
             scopes: vec!["read".to_string()],
             expires_at: "2026-08-25T12:00:00Z".to_string(),
         };

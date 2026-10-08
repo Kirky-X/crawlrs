@@ -165,13 +165,14 @@ pub struct Settings {
 /// NebulaId ID 生成配置。
 ///
 /// 默认算法 `uuid_v8`（生成 UUID 兼容值，DB `UUID` 列与 API JSON 契约零改动）；
-/// `snowflake` 为可选数值算法。`workspace`/`group` 为调用
+/// `snowflake`/`segment` 未编译进本构建，配置即启动报错（需启用对应 nebulaid
+/// 特性）。`workspace`/`group` 为调用
 /// `IdGenerator::generate(workspace, group, biz_tag)` 时的默认标识，`biz_tag`
 /// 由各业务域在生成点传入。
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__ID__")]
 pub struct IdSettings {
-    /// 算法：`uuid_v8`（默认）或 `snowflake`。
+    /// 算法：`uuid_v8`（默认；本构建唯一已编译算法，其它值启动即报错）。
     #[config(default = "uuid_v8".to_string())]
     pub algorithm: String,
 

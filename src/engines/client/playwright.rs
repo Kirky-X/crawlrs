@@ -610,7 +610,13 @@ impl ScraperEngine for PlaywrightEngine {
             };
             if !already_installed {
                 if let Err(e) = stealth_injector.apply_before_document(&page).await {
-                    log::warn!("Stealth injection failed (best-effort, continue): {}", e);
+                    log::warn!(
+                        "{}",
+                        crate::i18n::tr_log_args(
+                            "playwright-stealth-inject-failed",
+                            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                        )
+                    );
                 }
             }
 
@@ -979,8 +985,11 @@ impl XhrCaptureSession {
                 // 防止页面存活期事件常开分发
                 let _ = page.execute(NetworkDisableParams::default()).await;
                 log::warn!(
-                    "XHR capture: Network setup failed ({}); capture disabled for this page",
-                    e
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "playwright-xhr-setup-failed",
+                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    )
                 );
                 return None;
             }
@@ -1012,7 +1021,13 @@ impl XhrCaptureSession {
                         // 169.254.169.254 元数据端点），命中即丢弃——捕获通道
                         // 不得成为页面发起的内网数据回传出口
                         if crate::engines::validators::is_internal_url(&url) {
-                            log::debug!("XHR capture: internal URL {} blocked (SSRF)", url);
+                            log::debug!(
+                                "{}",
+                                crate::i18n::tr_log_args(
+                                    "playwright-xhr-internal-blocked",
+                                    &[("url", fluent_bundle::FluentValue::from(url.as_str()))],
+                                )
+                            );
                             continue;
                         }
                         let entry = PendingXhr {
@@ -1068,8 +1083,14 @@ impl XhrCaptureSession {
         };
         if pending_left > 0 {
             log::debug!(
-                "XHR capture: {} XHR(s) unfinished at collect, dropped",
-                pending_left
+                "{}",
+                crate::i18n::tr_log_args(
+                    "playwright-xhr-unfinished-at-collect",
+                    &[(
+                        "count",
+                        fluent_bundle::FluentValue::from(pending_left as i64)
+                    )],
+                )
             );
         }
         if stats.overflow_skipped > 0
@@ -1078,11 +1099,28 @@ impl XhrCaptureSession {
             || stats.fetch_failed > 0
         {
             log::warn!(
-                "XHR capture dropped: oversize={}, decode_failed={}, fetch_failed={}, overflow={}",
-                stats.oversized_dropped,
-                stats.decode_failed,
-                stats.fetch_failed,
-                stats.overflow_skipped
+                "{}",
+                crate::i18n::tr_log_args(
+                    "playwright-xhr-dropped",
+                    &[
+                        (
+                            "oversize",
+                            fluent_bundle::FluentValue::from(stats.oversized_dropped as i64),
+                        ),
+                        (
+                            "decode_failed",
+                            fluent_bundle::FluentValue::from(stats.decode_failed as i64),
+                        ),
+                        (
+                            "fetch_failed",
+                            fluent_bundle::FluentValue::from(stats.fetch_failed as i64),
+                        ),
+                        (
+                            "overflow",
+                            fluent_bundle::FluentValue::from(stats.overflow_skipped as i64),
+                        ),
+                    ],
+                )
             );
         }
         // 收尾关闭 Network domain（Selector/DomStable 等待路径不会 disable；
@@ -1120,22 +1158,36 @@ async fn fetch_and_store(
                 }
                 BodyOutcome::Oversize => {
                     log::debug!(
-                        "XHR capture: body of {} exceeds max_bytes, dropped",
-                        entry.url
+                        "{}",
+                        crate::i18n::tr_log_args(
+                            "playwright-xhr-body-oversize",
+                            &[("url", fluent_bundle::FluentValue::from(entry.url.as_str()))],
+                        )
                     );
                     buf.note_oversize();
                 }
                 BodyOutcome::DecodeFailed => {
-                    log::debug!("XHR capture: body of {} base64 decode failed", entry.url);
+                    log::debug!(
+                        "{}",
+                        crate::i18n::tr_log_args(
+                            "playwright-xhr-body-decode-failed",
+                            &[("url", fluent_bundle::FluentValue::from(entry.url.as_str()))],
+                        )
+                    );
                     buf.note_decode_failed();
                 }
             }
         }
         Err(e) => {
             log::debug!(
-                "XHR capture: getResponseBody failed for {}: {}",
-                entry.url,
-                e
+                "{}",
+                crate::i18n::tr_log_args(
+                    "playwright-xhr-fetch-body-failed",
+                    &[
+                        ("url", fluent_bundle::FluentValue::from(entry.url.as_str())),
+                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                    ],
+                )
             );
             buf.note_fetch_failed();
         }
@@ -1512,7 +1564,13 @@ mod tests {
         tokio::spawn(async move {
             while let Some(h) = handler.next().await {
                 if let Err(e) = h {
-                    log::debug!("browser handler event error (continuing): {:?}", e);
+                    log::debug!(
+                        "{}",
+                        crate::i18n::tr_log_args(
+                            "playwright-handler-event-error",
+                            &[("error", fluent_bundle::FluentValue::from(format!("{e:?}")))],
+                        )
+                    );
                 }
             }
         });

@@ -157,8 +157,8 @@ mod tests {
     fn test_webhook_mapper_roundtrip() {
         let now = Utc::now();
         let domain = Webhook {
-            id: crate::domain::id::Id::generate().into(),
-            team_id: crate::domain::id::Id::generate().into(),
+            id: crate::domain::id::Id::generate(),
+            team_id: crate::domain::id::Id::generate(),
             url: "https://example.com/webhook".to_string(),
             created_at: now,
         };

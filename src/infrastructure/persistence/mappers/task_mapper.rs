@@ -149,12 +149,12 @@ mod tests {
     fn test_task_mapper_roundtrip() {
         let now = Utc::now();
         let domain = Task {
-            id: crate::domain::id::Id::generate().into(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 1,
-            team_id: crate::domain::id::Id::generate().into(),
-            api_key_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({"key": "value"}),
             retry_count: 0,
@@ -281,12 +281,12 @@ mod tests {
     fn test_to_entity_maps_all_fields() {
         let now = Utc::now();
         let domain = Task {
-            id: crate::domain::id::Id::generate().into(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Crawl,
             status: TaskStatus::Active,
             priority: 7,
-            team_id: crate::domain::id::Id::generate().into(),
-            api_key_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://test.example.com/path".to_string(),
             payload: serde_json::json!({"k": "v", "n": 42}),
             retry_count: 2,
@@ -373,8 +373,8 @@ mod tests {
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 1,
-            team_id: crate::domain::id::Id::generate().into(),
-            api_key_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,
@@ -401,12 +401,12 @@ mod tests {
     fn test_to_active_model_created_at_is_unchanged() {
         let now = Utc::now();
         let domain = Task {
-            id: crate::domain::id::Id::generate().into(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 1,
-            team_id: crate::domain::id::Id::generate().into(),
-            api_key_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,
@@ -432,12 +432,12 @@ mod tests {
     fn test_to_active_model_other_fields_are_set() {
         let now = Utc::now();
         let domain = Task {
-            id: crate::domain::id::Id::generate().into(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Crawl,
             status: TaskStatus::Active,
             priority: 9,
-            team_id: crate::domain::id::Id::generate().into(),
-            api_key_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({"k": "v"}),
             retry_count: 1,
@@ -530,12 +530,12 @@ mod tests {
         let scheduled = Utc::now() + chrono::Duration::seconds(3600);
         let now = Utc::now();
         let domain = Task {
-            id: crate::domain::id::Id::generate().into(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Scrape,
             status: TaskStatus::Queued,
             priority: 1,
-            team_id: crate::domain::id::Id::generate().into(),
-            api_key_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({}),
             retry_count: 0,
@@ -580,12 +580,12 @@ mod tests {
     fn test_roundtrip_preserves_all_optional_datetimes() {
         let ts = Utc::now();
         let domain = Task {
-            id: crate::domain::id::Id::generate().into(),
+            id: crate::domain::id::Id::generate(),
             task_type: TaskType::Extract,
             status: TaskStatus::Failed,
             priority: 3,
-            team_id: crate::domain::id::Id::generate().into(),
-            api_key_id: crate::domain::id::Id::generate().into(),
+            team_id: crate::domain::id::Id::generate(),
+            api_key_id: crate::domain::id::Id::generate(),
             url: "https://example.com".to_string(),
             payload: serde_json::json!({"a": 1}),
             retry_count: 2,
@@ -596,9 +596,9 @@ mod tests {
             created_at: ts,
             started_at: Some(ts),
             completed_at: Some(ts),
-            crawl_id: Some(crate::domain::id::Id::generate().into()),
+            crawl_id: Some(crate::domain::id::Id::generate()),
             updated_at: ts,
-            lock_token: Some(crate::domain::id::Id::generate().into()),
+            lock_token: Some(crate::domain::id::Id::generate()),
             lock_expires_at: Some(ts),
         };
 

@@ -81,7 +81,13 @@ impl GlobalIdGen {
                 n
             }
             Err(e) => {
-                log::error!("NebulaId refill failed: {e}");
+                log::error!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "id-refill-failed",
+                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    )
+                );
                 0
             }
         }
@@ -121,9 +127,20 @@ pub async fn init(
     let first = GLOBAL.set(global.clone()).is_ok();
     if first {
         log::info!(
-            "NebulaId global sync generator initialized (pool seeded, workspace={}, group={})",
-            global.workspace,
-            global.group
+            "{}",
+            crate::i18n::tr_log_args(
+                "id-global-generator-initialized",
+                &[
+                    (
+                        "workspace",
+                        fluent_bundle::FluentValue::from(global.workspace.as_str()),
+                    ),
+                    (
+                        "group",
+                        fluent_bundle::FluentValue::from(global.group.as_str())
+                    ),
+                ],
+            )
         );
         // spawn 周期补水任务（任务内 clone Arc 保持存活）。
         tokio::spawn(async move {

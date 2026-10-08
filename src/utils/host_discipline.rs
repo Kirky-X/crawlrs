@@ -814,18 +814,24 @@ mod tests {
     async fn concurrent_gate_release_times_spaced_by_min_interval() {
         // gate 的检查与写入若在 sleep 两侧分离，并发同 host 请求会读到同一
         // 快照、等同一时长后同时放行——批内间隔 0，限速退化为每窗口放一批。
-        // 预约时刻表语义下 N 个并发 gate 必须串行领取放行时刻：
-        // 相邻实际放行时刻差 ≥ min_interval（容差覆盖调度抖动），
-        // 完成总耗时 ≥ (N-1)×min_interval。
+        // 预约时刻表语义下 N 个并发 gate 必须在入口临界区串行领取放行时刻。
+        // 断言对象是时刻表推进量（临界区内计算，零调度噪声）：批量放行退化
+        // 只推进一次时刻表，必被 `post - pre == n×interval` 击穿；返回时刻受
+        // 任务调度抢占影响可漂移，不能作为预约语义的度量。
         let interval = Duration::from_millis(40);
         let d = Arc::new(HostDiscipline::new(interval, Duration::from_secs(60), 3));
         let n = 12u32;
+        let host = "burst.example.com";
+
+        // 预热建档，取得时刻表基准（预热放行 slot₀，表推进到 slot₀+interval）
+        d.gate(host).await;
+        let pre = d.state.get(host).unwrap().next_allowed;
 
         let mut handles = Vec::new();
         for _ in 0..n {
             let dd = Arc::clone(&d);
             handles.push(tokio::spawn(async move {
-                dd.gate("burst.example.com").await;
+                dd.gate(host).await;
                 Instant::now()
             }));
         }
@@ -833,25 +839,22 @@ mod tests {
         for handle in handles {
             released.push(handle.await.expect("task join failed"));
         }
-        released.sort();
 
-        let jitter = Duration::from_millis(10);
-        for (i, pair) in released.windows(2).enumerate() {
-            let gap = pair[1].duration_since(pair[0]);
+        // 时刻表推进量：n 次并发 gate 恰好各推进一个 step
+        let post = d.state.get(host).unwrap().next_allowed;
+        assert_eq!(
+            post - pre,
+            interval * n,
+            "{n} concurrent gates must each reserve exactly one slot (timetable advanced {:+?})",
+            post - pre
+        );
+        // 放行不早于时刻表基准：全部 slot ≥ pre 且 sleep 为 at-least 语义
+        for (i, released_at) in released.iter().enumerate() {
             assert!(
-                gap + jitter >= interval,
-                "release #{i} to #{} gap {gap:?} must be ~min_interval {interval:?}",
-                i + 1
+                released_at >= &pre,
+                "release #{i} at {released_at:?} must not precede timetable base {pre:?}"
             );
         }
-        let total = released
-            .last()
-            .unwrap()
-            .duration_since(*released.first().unwrap());
-        assert!(
-            total + jitter >= interval * (n - 1),
-            "{n} concurrent gates must span >= (N-1)×min_interval, got {total:?}"
-        );
     }
 
     // ========== 并发冒烟：gate/observe/tls_suspect 混合并发无死锁 ==========
@@ -1115,6 +1118,10 @@ mod tests {
     // ========== F1：放行时刻抖动 ==========
 
     /// jitter_ratio=0：放行时刻严格递增、批内间隔恒等于 interval（确定性时刻表）
+    ///
+    /// 断言对象是 gate 领取的预约时刻表（`next_allowed` 在入口临界区推进，
+    /// slotₖ = slotₖ₋₁ + interval），零调度噪声——放行返回时刻受抢占影响
+    /// 不可避免地漂移，不能作为确定性性质的度量（重负载下固定裕度必假阳性）。
     #[tokio::test]
     async fn jitter_zero_releases_deterministically() {
         let interval = Duration::from_millis(40);
@@ -1122,21 +1129,19 @@ mod tests {
         opts.jitter_ratio = 0.0;
         let d = HostDiscipline::with_options(opts);
         let host = "det.example.com";
-        d.gate(host).await;
-        let mut prev = Instant::now();
-        for _ in 0..4 {
+        let mut prev_slot = None;
+        for _ in 0..5 {
             d.gate(host).await;
-            let now = Instant::now();
-            let gap = now.duration_since(prev);
-            assert!(
-                gap >= Duration::from_millis(35),
-                "no-jitter gaps must stay at interval, got {gap:?}"
-            );
-            assert!(
-                gap < Duration::from_millis(90),
-                "no-jitter gaps must not exceed interval, got {gap:?}"
-            );
-            prev = now;
+            // gate 后 next_allowed = 本次 slot + step，反读本次领取的 slot
+            let slot = d.state.get(host).unwrap().next_allowed - interval;
+            if let Some(prev) = prev_slot {
+                assert_eq!(
+                    slot - prev,
+                    interval,
+                    "no-jitter timetable must advance exactly one interval per release"
+                );
+            }
+            prev_slot = Some(slot);
         }
     }
 

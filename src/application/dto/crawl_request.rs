@@ -28,6 +28,23 @@ fn is_http_url(value: &str) -> Result<(), sdforge::validator::ValidationError> {
     }
 }
 
+/// sitemap_url 专用 scheme 校验：消息经启动期 i18n 全局束解析
+/// （validation.ftl `validation-sitemap-url-scheme`；未初始化回退 key 本身）。
+///
+/// 注意：`#[validate(custom(..., message = ...))]` 的 `message` 属性在宏展开时
+/// 以编译期字面量覆盖函数返回的 `err.message`——接入运行时 i18n 必须省略该属性，
+/// 让本函数构造的错误消息生效。
+fn is_http_sitemap_url(value: &str) -> Result<(), sdforge::validator::ValidationError> {
+    if HTTP_URL_RE.is_match(value) {
+        Ok(())
+    } else {
+        Err(
+            sdforge::validator::ValidationError::new("invalid_url_scheme")
+                .with_message(crate::i18n::tr_log("validation-sitemap-url-scheme").into()),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Validate)]
 #[validate(crate = "sdforge::validator")]
 #[serde(deny_unknown_fields)]
@@ -69,10 +86,7 @@ pub struct CrawlRequestDto {
     pub sitemap_seed: Option<bool>,
     /// 显式 sitemap 地址；缺省从种子 URL 派生 `scheme://host[:port]/sitemap.xml`
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[validate(custom(
-        function = "is_http_url",
-        message = "sitemap_url must start with http:// or https://"
-    ))]
+    #[validate(custom(function = "is_http_sitemap_url"))]
     pub sitemap_url: Option<String>,
 }
 
