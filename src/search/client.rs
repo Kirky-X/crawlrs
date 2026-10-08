@@ -108,22 +108,15 @@ impl SearchClient {
             default_engine: default_engine_type(),
         };
 
-        Self::register_default_engines(&mut inner, &engine_client);
+        Self::register_builtin_engines(&mut inner, &engine_client, &settings.engines);
 
-        match settings
-            .exa
-            .api_key()
-            .filter(|key| !key.trim().is_empty())
-        {
+        match settings.exa.api_key().filter(|key| !key.trim().is_empty()) {
             Some(api_key) => {
                 let mut config = ExaConfig {
                     api_key: api_key.to_string(),
                     ..ExaConfig::default()
                 };
-                if let Some(base_url) = settings
-                    .exa
-                    .base_url()
-                    .filter(|url| !url.trim().is_empty())
+                if let Some(base_url) = settings.exa.base_url().filter(|url| !url.trim().is_empty())
                 {
                     config.endpoint = base_url.to_string();
                 }
@@ -131,11 +124,9 @@ impl SearchClient {
                     http_client.as_ref().clone(),
                     config,
                 )) as Arc<dyn SearchEngine>);
-                log::info!("Exa engine registered (engine=\"exa\")");
+                log::info!("{}", crate::i18n::tr_log("search-exa-registered"));
             }
-            None => log::info!(
-                "Exa engine skipped: api_key not configured (set CRAWLRS__SEARCH__EXA__API_KEY to enable engine=\"exa\")"
-            ),
+            None => log::info!("{}", crate::i18n::tr_log("search-exa-skipped")),
         }
 
         match settings
@@ -159,15 +150,93 @@ impl SearchClient {
                     http_client.as_ref().clone(),
                     config,
                 )) as Arc<dyn SearchEngine>);
-                log::info!("Tavily engine registered (engine=\"tavily\")");
+                log::info!("{}", crate::i18n::tr_log("search-tavily-registered"));
             }
-            None => log::info!(
-                "Tavily engine skipped: api_key not configured (set CRAWLRS__SEARCH__TAVILY__API_KEY to enable engine=\"tavily\")"
-            ),
+            None => log::info!("{}", crate::i18n::tr_log("search-tavily-skipped")),
         }
+
+        inner.default_engine =
+            Self::resolve_default_engine(&inner.engines, settings.default_engine.as_deref());
 
         SearchClient {
             inner: Arc::new(inner),
+        }
+    }
+
+    /// 按 `SearchEnginesSettings` 开关注册内置引擎（smart 聚合与单引擎路径共用此注册集）。
+    ///
+    /// 关闭的引擎跳过注册并输出 info 日志；全部关闭时输出 warn（此后
+    /// smart 聚合无引擎可用、单引擎路径显性报 `NoEngineAvailable`）。
+    fn register_builtin_engines(
+        inner: &mut SearchClientInner,
+        engine_client: &Arc<EngineClient>,
+        switches: &crate::config::SearchEnginesSettings,
+    ) {
+        type BuiltinEngineFactory = fn(&Arc<EngineClient>) -> Arc<dyn SearchEngine>;
+        let wanted: &[(&str, bool, BuiltinEngineFactory)] = &[
+            ("bing", switches.bing_enabled, |c| {
+                Arc::new(BingSearchEngine::new(c.clone())) as Arc<dyn SearchEngine>
+            }),
+            ("baidu", switches.baidu_enabled, |c| {
+                Arc::new(BaiduSearchEngine::new(c.clone())) as Arc<dyn SearchEngine>
+            }),
+            ("sogou", switches.sogou_enabled, |c| {
+                Arc::new(SogouSearchEngine::new(c.clone())) as Arc<dyn SearchEngine>
+            }),
+        ];
+        for (name, enabled, build) in wanted {
+            if *enabled {
+                inner.engines.push(build(engine_client));
+            } else {
+                log::info!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "search-engine-disabled-by-config",
+                        &[("engine", fluent_bundle::FluentValue::from(*name))],
+                    )
+                );
+            }
+        }
+        if inner.engines.is_empty() {
+            log::warn!(
+                "{}",
+                crate::i18n::tr_log("search-all-builtin-engines-disabled")
+            );
+        }
+    }
+
+    /// 解析配置的默认引擎：合法且已注册则采用，否则回退 bing 并输出 warn。
+    fn resolve_default_engine(
+        engines: &[Arc<dyn SearchEngine>],
+        configured: Option<&str>,
+    ) -> SearchEngineType {
+        let Some(name) = configured.map(str::trim).filter(|s| !s.is_empty()) else {
+            return default_engine_type();
+        };
+        match SearchEngineType::from_name(name) {
+            Some(engine_type) if engines.iter().any(|e| e.engine_type() == engine_type) => {
+                engine_type
+            }
+            Some(_) => {
+                log::warn!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "search-default-engine-not-registered",
+                        &[("engine", fluent_bundle::FluentValue::from(name))],
+                    )
+                );
+                default_engine_type()
+            }
+            None => {
+                log::warn!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "search-default-engine-unknown",
+                        &[("engine", fluent_bundle::FluentValue::from(name))],
+                    )
+                );
+                default_engine_type()
+            }
         }
     }
 
@@ -503,6 +572,55 @@ mod tests {
             !types.contains(&SearchEngineType::Tavily),
             "tavily should not be registered without api_key"
         );
+    }
+
+    #[test]
+    fn test_with_configured_engines_honors_engine_switches() {
+        let mut settings = SearchSettings::default();
+        settings.engines.baidu_enabled = false;
+        settings.engines.sogou_enabled = false;
+
+        let client = build_configured_client(&settings);
+        let types = registered_engine_types(&client);
+
+        assert_eq!(
+            client.inner.engines.len(),
+            1,
+            "only bing should be registered when baidu/sogou are disabled"
+        );
+        assert_eq!(types, vec![SearchEngineType::Bing]);
+    }
+
+    #[test]
+    fn test_with_configured_engines_default_engine_from_settings() {
+        let mut settings = SearchSettings::default();
+        settings.default_engine = Some("baidu".to_string());
+
+        let client = build_configured_client(&settings);
+        assert_eq!(
+            client.default_engine(),
+            SearchEngineType::Baidu,
+            "configured default_engine must be honored on the single-engine fallback path"
+        );
+    }
+
+    #[test]
+    fn test_with_configured_engines_unknown_default_engine_falls_back_to_bing() {
+        let mut settings = SearchSettings::default();
+        settings.default_engine = Some("definitely-not-an-engine".to_string());
+
+        let client = build_configured_client(&settings);
+        assert_eq!(client.default_engine(), SearchEngineType::Bing);
+    }
+
+    #[test]
+    fn test_with_configured_engines_unregistered_default_engine_falls_back_to_bing() {
+        let mut settings = SearchSettings::default();
+        // exa 合法但未配置凭据 → 未注册 → 回退 bing（而非指向不可用引擎）
+        settings.default_engine = Some("exa".to_string());
+
+        let client = build_configured_client(&settings);
+        assert_eq!(client.default_engine(), SearchEngineType::Bing);
     }
 
     #[test]

@@ -6,6 +6,7 @@ enum ServiceType {
     Api,
     Worker,
     Bootstrap,
+    Migrate,
 }
 
 /// Parse service type from an optional argument string.
@@ -20,8 +21,9 @@ fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
         "api" => Ok(ServiceType::Api),
         "worker" => Ok(ServiceType::Worker),
         "bootstrap" => Ok(ServiceType::Bootstrap),
+        "migrate" => Ok(ServiceType::Migrate),
         other => Err(format!(
-            "Invalid service type: '{}'. Use 'api', 'worker', or 'bootstrap'.",
+            "Invalid service type: '{}'. Use 'api', 'worker', 'bootstrap', or 'migrate'.",
             other
         )),
     }
@@ -327,6 +329,32 @@ mod app {
         Ok(())
     }
 
+    /// Run pending database migrations and exit.
+    ///
+    /// 生产 schema 初始化入口（文档审计缺陷 #1）：此前 `auto_migrate=false` 且无
+    /// migrate 子命令，生产用户只能按 README 手工逐个 `psql -f migrations/*.sql`。
+    /// 迁移目录经 `CRAWLRS_MIGRATIONS_DIR` 覆盖，缺省 `./migrations`。
+    async fn start_migrate_service(app_state: &CrawlRsState) -> anyhow::Result<()> {
+        let dir = std::path::PathBuf::from(
+            env::var("CRAWLRS_MIGRATIONS_DIR").unwrap_or_else(|_| "migrations".to_string()),
+        );
+        if !dir.is_dir() {
+            anyhow::bail!(
+                "migrations directory not found: {} (set CRAWLRS_MIGRATIONS_DIR to override)",
+                dir.display()
+            );
+        }
+        log::info!("Running database migrations from {}...", dir.display());
+        let applied = app_state
+            .db_pool()
+            .run_migrations(&dir)
+            .await
+            .map_err(|e| anyhow::anyhow!("migration failed: {e}"))?;
+        log::info!("Database migrations complete: {applied} applied");
+        println!("Migrations applied: {applied}");
+        Ok(())
+    }
+
     pub(crate) async fn run() -> anyhow::Result<()> {
         // 1. Load and configure settings
         let is_production = env::var("CRAWLRS_ENV")
@@ -374,8 +402,12 @@ mod app {
             .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
         kit.register::<ServiceModule>()
             .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
-        kit.register::<IdModule>()
-            .map_err(|e| anyhow::anyhow!("register IdModule: {e}"))?;
+        kit.register::<IdModule>().map_err(|e| {
+            anyhow::anyhow!(
+                "{}: {e}",
+                crawlrs::i18n::tr_log("boot-register-id-module-failed")
+            )
+        })?;
 
         let kit = kit
             .build()
@@ -398,6 +430,9 @@ mod app {
             }
             ServiceType::Bootstrap => {
                 run_bootstrap(&app_state, &settings).await?;
+            }
+            ServiceType::Migrate => {
+                start_migrate_service(&app_state).await?;
             }
         }
 
@@ -430,6 +465,12 @@ mod tests {
     fn tc_parse_service_type_none_defaults_to_api() {
         let result = parse_service_type(None);
         assert!(matches!(result, Ok(ServiceType::Api)));
+    }
+
+    #[test]
+    fn tc_parse_service_type_migrate() {
+        let result = parse_service_type(Some("migrate"));
+        assert!(matches!(result, Ok(ServiceType::Migrate)));
     }
 
     #[test]

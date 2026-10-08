@@ -63,6 +63,20 @@ pub struct SearchSettings {
     #[config(default = 50)]
     pub max_results: u32,
 
+    /// 默认搜索引擎（单引擎兜底路径：`SearchCommand` 未显式指定 engine 时使用）。
+    ///
+    /// 合法值：bing / baidu / sogou / exa / tavily（须已注册；API 引擎需配置凭据）。
+    /// 缺省或非法值回退 `bing` 并输出 warn 日志。
+    /// `serde(default)` 兼容旧 config/default.toml 缺键（同 robots.fail_closed 先例）。
+    #[serde(default)]
+    pub default_engine: Option<String>,
+
+    /// 内置引擎注册开关（控制 smart 聚合与单引擎路径的注册集）。
+    ///
+    /// `serde(default)` 兼容旧 config/default.toml 缺键（同 robots.fail_closed 先例）。
+    #[serde(default)]
+    pub engines: SearchEnginesSettings,
+
     /// Exa 引擎凭据配置（SearchClient 单引擎路径装配）
     ///
     /// `serde(default)` 兼容旧 config/default.toml 缺键（同 robots.fail_closed 先例）。
@@ -77,6 +91,26 @@ pub struct SearchSettings {
 
     /// Fallback 搜索引擎配置
     pub fallback: SearchFallbackConfig,
+}
+
+/// 内置搜索引擎注册开关（此前为死配置，现已由 `SearchClient::with_configured_engines` 消费）。
+///
+/// 关闭的引擎不注册：smart 聚合（多引擎 fan-out + RRF）与显式单引擎路径都不可用该引擎。
+/// 全部缺省 `true`（与历史行为一致——引擎无条件注册）。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__SEARCH__ENGINES__")]
+pub struct SearchEnginesSettings {
+    /// 注册 Bing 内置引擎
+    #[config(default = true)]
+    pub bing_enabled: bool,
+
+    /// 注册 Baidu 内置引擎
+    #[config(default = true)]
+    pub baidu_enabled: bool,
+
+    /// 注册 Sogou 内置引擎
+    #[config(default = true)]
+    pub sogou_enabled: bool,
 }
 
 /// Exa 引擎凭据配置
@@ -352,6 +386,8 @@ mod tests {
             max_retries: 10,
             retry_delay_ms: 2000,
             max_results: 100,
+            default_engine: None,
+            engines: SearchEnginesSettings::default(),
             exa: ExaEngineSettings::default(),
             tavily: TavilyEngineSettings::default(),
             fallback: SearchFallbackConfig::default(),
@@ -378,6 +414,8 @@ mod tests {
             max_retries: 5,
             retry_delay_ms: 500,
             max_results: 75,
+            default_engine: None,
+            engines: SearchEnginesSettings::default(),
             exa: ExaEngineSettings::default(),
             tavily: TavilyEngineSettings::default(),
             fallback: SearchFallbackConfig::default(),

@@ -127,11 +127,17 @@ rate_limiting_enabled = true
 test_data_enabled = false
 max_retries = 3
 retry_delay_ms = 1000
-default_engine = "baidu"
 # Maximum number of results per search request (API limit cannot exceed this)
 max_results = 50
 
-# Search Engine Enable/Disable Configuration
+# Default engine for the single-engine fallback path (SearchCommand without an
+# explicit engine). Valid: bing/baidu/sogou/exa/tavily (must be registered; API
+# engines require credentials). Empty or invalid falls back to bing with a warning.
+default_engine = "bing"
+
+# Built-in engine registration switches (consumed by SearchClient::with_configured_engines):
+# a disabled engine is not registered, so smart aggregation (multi-engine fan-out + RRF)
+# and the explicit single-engine path both become unavailable for it.
 [search.engines]
 bing_enabled = true
 baidu_enabled = true

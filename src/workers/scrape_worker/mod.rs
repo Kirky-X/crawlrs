@@ -565,8 +565,17 @@ impl ScrapeWorker {
                 Ok(None) => {}
                 Err(e) => {
                     warn!(
-                        "Conditional request: prior result lookup failed for task {},                          degrading to unconditional fetch: {}",
-                        task.id, e
+                        "{}",
+                        crate::i18n::tr_log_args(
+                            "scrape-conditional-lookup-failed",
+                            &[
+                                (
+                                    "task_id",
+                                    fluent_bundle::FluentValue::from(task.id.to_string()),
+                                ),
+                                ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                            ],
+                        )
                     );
                 }
             }
@@ -666,16 +675,35 @@ impl ScrapeWorker {
                     match prior_result {
                         Some(ref prior) => {
                             info!(
-                                "Task {} got 304 Not Modified, reusing prior result ({} bytes)",
-                                task.id,
-                                prior.content.len()
+                                "{}",
+                                crate::i18n::tr_log_args(
+                                    "scrape-304-reused",
+                                    &[
+                                        (
+                                            "task_id",
+                                            fluent_bundle::FluentValue::from(task.id.to_string()),
+                                        ),
+                                        (
+                                            "bytes",
+                                            fluent_bundle::FluentValue::from(
+                                                prior.content.len() as i64
+                                            ),
+                                        ),
+                                    ],
+                                )
                             );
                             not_modified_response(prior, &response)
                         }
                         None => {
                             error!(
-                                "Task {} got 304 without prior result to reuse, marking failed",
-                                task.id
+                                "{}",
+                                crate::i18n::tr_log_args(
+                                    "scrape-304-no-prior",
+                                    &[(
+                                        "task_id",
+                                        fluent_bundle::FluentValue::from(task.id.to_string()),
+                                    )],
+                                )
                             );
                             self.handle_failure(&mut task).await?;
                             return Ok(());
@@ -1416,10 +1444,24 @@ impl ScrapeWorker {
                     })
                     .collect(),
                 sync_wait_ms: dto.sync_wait_ms.unwrap_or(0),
-                // NOTE: ScrapeOptionsDto 当前未暴露 block_ads/block_media/session_id/needs_mllm 字段，
-                // 默认硬编码为 false/None。若未来 DTO 增加这些字段，需同步更新此处。
-                block_ads: false,
-                block_media: false,
+                // needs_mllm 在 llm 特性关闭时显性失败：任务已在队列中，静默降级
+                // 到普通引擎会让用户以为做了视觉分析——失败必须显性化。
+                // （API 入口的 create_scrape use-case 在提交时已先行拒绝，此处
+                // 兜底覆盖直写队列/旧版本任务等绕过 use-case 的路径。）
+                needs_mllm: {
+                    let requested = options.and_then(|o| o.needs_mllm).unwrap_or(false);
+                    if requested {
+                        #[cfg(not(feature = "llm"))]
+                        anyhow::bail!(
+                            "task requested needs_mllm but this build lacks the `llm` feature"
+                        );
+                        #[cfg(feature = "llm")]
+                        log::debug!("task requests MLLM analysis");
+                    }
+                    requested
+                },
+                block_ads: options.and_then(|o| o.block_ads).unwrap_or(false),
+                block_media: options.and_then(|o| o.block_media).unwrap_or(false),
                 session_id: None,
                 // cache_mode 桥接（bypass_cache 优先级处理）
                 //
@@ -1437,7 +1479,6 @@ impl ScrapeWorker {
                 // 与 create_scrape use-case 层的映射保持一致（此前此处硬编码
                 // None，调用方传入的 wait_for 被静默丢弃）
                 wait_for: map_wait_for(options.and_then(|o| o.wait_for)),
-                needs_mllm: false,
             },
         })
     }

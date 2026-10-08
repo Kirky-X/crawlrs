@@ -3,11 +3,11 @@
 
 <div align="center">
 
-![API Version](https://img.shields.io/badge/api-0.2.0-blue)
+![API Version](https://img.shields.io/badge/api-0.2.0--rc.2-blue)
 ![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8899-green)
 ![License](https://img.shields.io/badge/license-Apache%202.0-orange)
 
-**Version:** 0.2.0 | **Base URL:** `http://localhost:8899` | **Updated:** 2026-09-15
+**Version:** 0.2.0-rc.2 | **Base URL:** `http://localhost:8899` | **Updated:** 2026-10-07
 
 </div>
 
@@ -50,7 +50,7 @@ All protected endpoints require authentication using an API key in the `Authoriz
 Authorization: Bearer YOUR_API_KEY
 ```
 
-> **0.2.0 起（`garrison-auth-migration`）：** Bearer token 由 **garrison v0.9.0-rc.1** 校验，格式为 `garrison_key_id.garrison_secret`（明文 key 仅在签发时返回一次）。旧的 SHA-256 `api_key_hash` 已作废，需经 garrison 重新领取。
+> **0.2.0 起（`garrison-auth-migration`）：** Bearer token 由 **garrison v0.9.0-rc.2** 校验，格式为 `garrison_key_id.garrison_secret`（明文 key 仅在签发时返回一次）。旧的 SHA-256 `api_key_hash` 已作废，需经 garrison 重新领取。
 
 ### Garrison 认证
 
@@ -98,8 +98,8 @@ API keys can have different scopes that control access to specific features:
 | Behavior | When `auth` Enabled (default) | When `auth` Disabled |
 |----------|------------------------------|---------------------|
 | `Authorization` header | Required (401 if missing/invalid; 429 on brute-force lockout) | Ignored — requests pass through |
-| `AuthState.team_id` | Resolved via garrison → `api_key_id→team_id` 反查 + `TEAM_ID_CACHE` LRU | Fixed to `DEFAULT_TEAM_ID` (`Uuid::from_u128(1)`) |
-| `AuthState.api_key_id` | Resolved from garrison key | Fixed to `DEFAULT_API_KEY_ID` (`Uuid::from_u128(2)`) |
+| `AuthState.team_id` | Resolved via garrison → `api_key_id→team_id` 反查 + `TEAM_ID_CACHE` LRU | Fixed to `DEFAULT_TEAM_ID` (`domain::id::Id::from_u128(1)`) |
+| `AuthState.api_key_id` | Resolved from garrison key | Fixed to `DEFAULT_API_KEY_ID` (`domain::id::Id::from_u128(2)`) |
 | `AuthState.scope` | `map_perms_to_scope(garrison permissions)` | `ApiKeyScope::full_access()` (all permissions `true`, limits `u32::MAX`) |
 | Token cache | garrison 自管 oxcache；crawlrs 侧 `TEAM_ID_CACHE` 缓存映射 | N/A — fixed identity, no caching |
 | Rate limit lockout | garrison `firewall-bruteforce` (5/60s/300s) | Not tracked (but `rate-limit` feature may still apply per-IP limits) |
@@ -256,7 +256,8 @@ Check if the API is running.
 **Response:**
 ```json
 {
-  "status": "healthy"
+  "status": "healthy",
+  "version": "0.2.0-rc.2"
 }
 ```
 
@@ -268,7 +269,7 @@ Get the current API version.
 
 **Response:**
 ```text
-0.2.0
+0.2.0-rc.2
 ```
 
 ### Get Metrics
@@ -353,7 +354,6 @@ Scrape a single web page.
     "proxy": "http://proxy.example.com:8080",
     "skip_tls_verification": false,
     "needs_tls_fingerprint": false,
-    "needs_mllm": false,
     "use_fire_engine": false
   },
   "metadata": {
@@ -396,12 +396,17 @@ Scrape a single web page.
 | `proxy` | string | — | Proxy URL (e.g. `http://proxy:8080`) |
 | `skip_tls_verification` | boolean | false | Skip TLS certificate verification |
 | `needs_tls_fingerprint` | boolean | false | Require TLS fingerprint adversarial engine (`engine-tls-fingerprint` feature) |
-| `needs_mllm` | boolean | false | Require MLLM autonomous navigation engine (`engine-mllm` feature, implies `engine-playwright` + `genai-llm`) |
 | `use_fire_engine` | boolean | false | Force use FlareSolverr engine |
 | `cache_mode` | string | `"enabled"` | Cache read/write mode: `enabled` (default, normal R/W), `disabled` (cache fully off), `read_only` (hit returns, miss fetches without writing), `bypass` (skip read, normal write — emergency untrusted-cache scenario) |
 | `bypass_cache` | boolean | false | Emergency cache bypass shortcut. `true` overrides `cache_mode` to `bypass` (skip cache read, normal write-back). Use when runtime cache data is untrusted |
-| `block_ads` | boolean | false | **0.2.0** Block ad/tracker domain requests via CDP interception (browser engines only). Matches `intercept::AD_DOMAIN_BLACKLIST` |
-| `block_media` | boolean | false | **0.2.0** Block media resources (image/media/font) via CDP interception (browser engines only) |
+| `only_main_content` | boolean | — | Extract main content before Markdown conversion (strips nav/footer/sidebar/ads). Requires the `markdown` format |
+| `respect_robots` | boolean | — | Honor the target site's robots.txt for this request (falls back to global `robots.scrape_respect_robots`, default off) |
+| `conditional_request` | boolean | — | Incremental fetch: send `If-None-Match`/`If-Modified-Since` when a prior result exists; a `304` reuses the historical content (`x-crawlrs-not-modified: true`) |
+| `block_ads` | boolean | false | Block common ad-domain requests in browser engines |
+| `block_media` | boolean | false | Block image/video/audio media loading in browser engines (speeds up text-only scraping) |
+| `needs_mllm` | boolean | false | Require MLLM visual analysis of the screenshot. Requires the `llm` feature: builds without it reject the request at submission (422) instead of silently degrading to a non-MLLM engine |
+
+> `session_id` remains an internal engine field (browser-session reuse is not exposed per-request yet). Unknown fields are still rejected with 422 via `deny_unknown_fields`.
 
 **Action Types:**
 
@@ -456,8 +461,7 @@ Scrape a single web page.
 
 **Endpoint:** `POST /v1/scrape/{id}/_cancel`
 
-**Parameters:**
-- `id` (path) - Task UUID
+> **⚠️ 当前不可用：** 该端点仅注册在测试用路由装配（`presentation/routes/handlers.rs::routes()`，保留用于路由单元测试）。生产装配（`bootstrap/routes.rs::build_api_app_with_state`）只注册 `POST /v1/scrape` 与 `GET /v1/scrape/{id}`，无抓取取消端点。
 
 **Response:**
 ```json
@@ -483,39 +487,51 @@ Crawl multiple pages from a starting URL.
 ```json
 {
   "url": "https://example.com",
-  "max_depth": 2,
-  "max_pages": 100,
-  "follow_links": true,
-  "include_patterns": ["/blog/.*"],
-  "exclude_patterns": ["/admin/.*"],
-  "formats": ["markdown"],
-  "webhook": "https://your-webhook.com/callback",
-  "options": {
-    "timeout": 30,
-    "js_rendering": false,
+  "name": "my-crawl",
+  "config": {
+    "max_depth": 2,
+    "max_pages": 100,
+    "include_patterns": ["/blog/.*"],
+    "exclude_patterns": ["/admin/.*"],
+    "strategy": "bfs",
+    "crawl_delay_ms": 1000,
+    "max_concurrency": 4,
     "proxy": "http://proxy.example.com:8080"
   },
   "sync_wait_ms": 10000
 }
 ```
 
+> 请求体经 `#[serde(deny_unknown_fields)]` 校验：未列出的字段（如 `formats`、`webhook`、`options`、`follow_links`）会被 422 拒绝。
+
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|-------|----------|-------------|
-| `url` | string | Yes | Starting URL |
-| `max_depth` | integer | No | Maximum crawl depth (default: 1) |
-| `max_pages` | integer | No | Maximum pages to crawl |
-| `follow_links` | boolean | No | Follow links on pages (default: true) |
+| `url` | string | Yes | Starting URL (http/https only) |
+| `name` | string | No | Task name (1-255 chars) |
+| `config` | object | Yes | Crawl configuration (see below) |
+| `sync_wait_ms` | integer | No | Wait time for synchronous response (0-30000, default 5000) |
+| `expires_at` | string | No | Task expiry time (RFC3339) |
+| `sitemap_seed` | boolean | No | Use sitemap as URL discovery source (requires `CRAWLRS__SITEMAP__ENABLED`) |
+| `sitemap_url` | string | No | Explicit sitemap URL (defaults to `<origin>/sitemap.xml`) |
+
+**`config` object (`CrawlConfigDto`):**
+
+| Parameter | Type | Required | Description |
+|-----------|-------|----------|-------------|
+| `max_depth` | integer | Yes | Maximum crawl depth (required, max 100) |
 | `include_patterns` | array | No | Regex patterns for URLs to include |
 | `exclude_patterns` | array | No | Regex patterns for URLs to exclude |
-| `formats` | array | No | Output formats |
-| `webhook` | string | No | Webhook URL for notifications |
-| `options` | object | No | Scraping options |
+| `strategy` | string | No | Traversal strategy: `bfs` (default) or `dfs` |
+| `crawl_delay_ms` | integer | No | Per-host crawl delay (max 86400000) |
+| `max_concurrency` | integer | No | Max concurrent pages (max 50) |
+| `max_pages` | integer | No | Maximum pages to crawl (default 1000, max 100000; exceeded stops early) |
+| `proxy` | string | No | Proxy URL |
+| `headers` | object | No | Custom HTTP headers |
 | `extraction_rules` | object | No | CSS selector extraction rules |
 | `extraction_prompt` | string | No | LLM prompt for data extraction on each crawled page |
 | `extraction_schema` | object | No | JSON Schema for structured LLM extraction |
-| `sync_wait_ms` | integer | No | Wait time for synchronous response |
 
 **Response (Success):**
 ```json
@@ -588,11 +604,11 @@ Crawl multiple pages from a starting URL.
 
 #### Cancel Crawl
 
-Cancel a crawl task. Supports both POST and DELETE methods.
-
-**Endpoint:** `POST /v1/crawl/{id}/_cancel`
+Cancel a crawl task.
 
 **Endpoint:** `DELETE /v1/crawl/{id}`
+
+> `POST /v1/crawl/{id}/_cancel` 仅存在于测试用路由装配（`presentation/routes/handlers.rs::routes()`），生产装配未注册。
 
 **Parameters:**
 - `id` (path) - Task UUID
@@ -774,6 +790,8 @@ Extract structured data from HTML.
 
 Query and manage tasks. Task API follows RESTful conventions with action suffixes (`_query` for queries, `_cancel` for cancellations).
 
+> **⚠️ 当前不可用：** `/v1/tasks/_query` 与 `/v1/tasks/_cancel` 仅注册在测试用路由装配（`presentation/routes/handlers.rs::routes()`）。生产装配（`bootstrap/routes.rs::build_api_app_with_state`）未注册这两个端点。
+
 #### Query Tasks
 
 **Endpoint:** `POST /v1/tasks/_query`
@@ -850,7 +868,7 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 
 ### Team API
 
-> **Conditional Endpoints (R-teams-002):** All `/v1/teams/*` endpoints are only available when the `teams` feature is enabled (default). When `teams` is disabled, these routes are not registered and return 404 Not Found. In single-tenant mode (`teams` disabled), all requests are attributed to `DEFAULT_TEAM_ID` (`Uuid::from_u128(1)`), making team management endpoints unnecessary.
+> **Conditional Endpoints (R-teams-002):** All `/v1/teams/*` endpoints are only available when the `teams` feature is enabled (default). When `teams` is disabled, these routes are not registered and return 404 Not Found. In single-tenant mode (`teams` disabled), all requests are attributed to `DEFAULT_TEAM_ID` (`domain::id::Id::from_u128(1)`), making team management endpoints unnecessary.
 
 #### Get Current Team
 
@@ -948,17 +966,13 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
     "webhooks": [
       {
         "id": "550e8400-e29b-41d4-a716-446655440000",
+        "team_id": "660e8400-e29b-41d4-a716-446655440001",
         "url": "https://your-webhook.com/callback",
-        "events": ["task.completed", "task.failed"],
-        "active": true,
-        "created_at": "2025-01-15T00:00:00Z"
+        "created_at": "2026-01-15T00:00:00Z",
+        "is_active": true
       }
     ],
-    "pagination": {
-      "page": 1,
-      "limit": 20,
-      "total": 5
-    }
+    "total": 5
   }
 }
 ```
@@ -970,41 +984,33 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 **Request Body:**
 ```json
 {
-  "url": "https://your-webhook.com/callback",
-  "events": ["task.completed", "task.failed"],
-  "secret": "your-webhook-secret",
-  "active": true
+  "url": "https://your-webhook.com/callback"
 }
 ```
+
+> 请求体经 `#[serde(deny_unknown_fields)]` 校验：`CreateWebhookRequest` 仅接受 `url`，传入 `events` / `secret` / `active` 等字段会被 422 拒绝。此外，创建请求本身必须携带按服务端全局密钥（`CRAWLRS__WEBHOOK__SECRET`）计算的 Standard Webhooks 签名头（见 [Webhook Signature](#webhook-signature)），签名验证失败返回 401。
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 |-----------|-------|----------|-------------|
-| `url` | string | Yes | Webhook URL |
-| `events` | array | Yes | Events to subscribe to |
-| `secret` | string | No | Secret for webhook signature |
-| `active` | boolean | No | Enable/disable webhook |
+| `url` | string | Yes | Webhook callback URL (http/https) |
 
-**Events:**
-- `task.created` - Task created
-- `task.started` - Task started
-- `task.completed` - Task completed
-- `task.failed` - Task failed
-- `task.cancelled` - Task cancelled
+**Events（服务端自动按任务类型派发，无需订阅）:**
+- `scrape.completed` - Scrape task completed
+- `scrape.failed` - Scrape task failed
+- `crawl.completed` - Crawl task completed
+- `crawl.failed` - Crawl task failed
+- `extract.completed` / `extract.failed` - Extract task completed/failed
 
-**Response (Success):**
+**Response (Success):** `201 Created`（裸 `Webhook` 域模型，无 `success`/`data` 包装；签名密钥由服务端持有，不在响应中返回）
+
 ```json
 {
-  "success": true,
-  "data": {
-    "webhook": {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "url": "https://your-webhook.com/callback",
-      "events": ["task.completed", "task.failed"],
-      "active": true
-    }
-  }
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "team_id": "660e8400-e29b-41d4-a716-446655440001",
+  "url": "https://your-webhook.com/callback",
+  "created_at": "2026-01-15T00:00:00Z"
 }
 ```
 
@@ -1219,38 +1225,36 @@ Webhooks allow you to receive notifications about task events.
 
 ### Webhook Payload Format
 
+投递的 payload 为包含 `task_id`、`status`、`url`、`timestamp`（Unix 秒）的 JSON 对象，失败时附带 `error`：
+
 ```json
 {
-  "event": "task.completed",
-  "timestamp": "2025-01-15T00:00:00Z",
-  "task": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "type": "scrape",
-    "status": "completed",
-    "url": "https://example.com"
-  },
-  "result": {
-    "html": "...",
-    "markdown": "..."
-  }
+  "task_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "url": "https://example.com",
+  "timestamp": 1760000000
 }
 ```
 
+事件类型由任务类型决定（`scrape.completed` / `scrape.failed` / `crawl.completed` / `crawl.failed` / `extract.completed` / `extract.failed`）。
+
 ### Webhook Signature
 
-If a secret is provided, the webhook includes an `X-Webhook-Signature` header:
+签名遵循 [Standard Webhooks](https://www.standardwebhooks.com/) 规范，投递携带三个头：
 
 ```
-X-Webhook-Signature: sha256=hexdigest
+webhook-id: <msg_id>
+webhook-timestamp: <unix_seconds>
+webhook-signature: v1,<base64-encoded-hmac-sha256>
 ```
 
-Verify the signature by computing HMAC SHA256 of the payload using your secret.
+签名消息为 `{msg_id}.{timestamp}.{payload}`（三段以句点拼接），使用服务端配置的密钥（`CRAWLRS__WEBHOOK__SECRET`）计算 HMAC-SHA256。验证时用 `webhook-id` 与 `webhook-timestamp` 头的值重算并对比 `webhook-signature`（推荐使用官方 `standardwebhooks` 库，恒时比较）。
 
 ---
 
 ## 🧩 SDK API
 
-SDK endpoints provide simplified interfaces for common operations, wrapping the underlying REST API.
+SDK endpoints provide simplified interfaces for common operations, wrapping the underlying REST API. All SDK endpoints return the payload object directly (no `success`/`data` envelope).
 
 ### SDK Search
 
@@ -1264,47 +1268,47 @@ SDK endpoints provide simplified interfaces for common operations, wrapping the 
 }
 ```
 
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Search query (non-empty) |
+| `limit` | integer | No | Max results |
+
 **Response:**
 ```json
 {
-  "success": true,
-  "data": {
-    "results": [...],
-    "credits_used": 5
-  }
+  "query": "Rust web scraping",
+  "results": [
+    {
+      "title": "...",
+      "url": "https://...",
+      "description": "...",
+      "engine": "bing"
+    }
+  ],
+  "credits_used": 5
 }
 ```
 
 ### SDK Tasks
+
+Create a queued task (`task_type`: `scrape` or `crawl`).
 
 **Endpoint:** `POST /api/v1/sdk/tasks`
 
 **Request Body:**
 ```json
 {
-  "filters": {
-    "status": ["completed"],
-    "type": ["scrape", "crawl"]
-  },
-  "pagination": {
-    "page": 1,
-    "limit": 20
-  }
+  "url": "https://example.com",
+  "task_type": "scrape"
 }
 ```
 
 **Response:**
 ```json
 {
-  "success": true,
-  "data": {
-    "tasks": [...],
-    "pagination": {
-      "page": 1,
-      "limit": 20,
-      "total": 150
-    }
-  }
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://example.com",
+  "status": "Queued"
 }
 ```
 
@@ -1315,23 +1319,15 @@ SDK endpoints provide simplified interfaces for common operations, wrapping the 
 **Request Body:**
 ```json
 {
-  "url": "https://example.com",
-  "formats": ["markdown"],
-  "sync_wait_ms": 5000
+  "url": "https://example.com"
 }
 ```
 
 **Response:**
 ```json
 {
-  "success": true,
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "completed",
-    "result": {
-      "markdown": "..."
-    }
-  }
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "url": "https://example.com"
 }
 ```
 
@@ -1342,21 +1338,18 @@ SDK endpoints provide simplified interfaces for common operations, wrapping the 
 **Request Body:**
 ```json
 {
+  "name": "my-crawl",
   "url": "https://example.com",
-  "max_pages": 50,
-  "max_depth": 2,
-  "formats": ["markdown"]
+  "seed_url": "https://example.com"
 }
 ```
 
 **Response:**
 ```json
 {
-  "success": true,
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "running"
-  }
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "Queued",
+  "url": "https://example.com"
 }
 ```
 
@@ -1453,43 +1446,38 @@ func Scrape(url string) error {
 
 ## 📋 Changelog
 
-### v0.3.0 (Unreleased — platform-evolution)
+### Unreleased
 
-**New Engines:**
+**Changed:**
+- ID 体系全量迁移至 NebulaId（`domain::id::Id`，默认 `uuid_v8` 算法；API JSON 契约保持 UUID 字符串不变）
+- `/v1/search` 无 `engine` 参数时行为从"单引擎 bing"变为 smart 聚合（多引擎 fan-out + RRF 融合）
+- auth-off 语义回退为直通注入 `full_access()` 固定身份（0.2.0-rc.1 曾收紧为默认 401 + opt-in，rc.2 期间路由装配重构后未保留该收紧）
+
+**New Engines / Algorithms:**
 - TLS Fingerprint Engine (`engine-tls-fingerprint`): WreqEngine based on BoringSSL, real JA3/JA4 fingerprint spoofing
 - MLLM Autonomous Navigation Engine (`engine-mllm`): Vision LLM agentic loop for autonomous page navigation
-- Scrape API `options` 新增 `needs_mllm` 参数（boolean, default false），启用 MLLM 自主导航引擎
-
-**New Algorithms:**
-- RAG 增强提取：DOM 语义分块 → 向量嵌入 → 余弦相似度检索 → LLM 精确提取（`extract_with_rag` 第三种提取模式）
-- 知识图谱覆盖感知爬取：KnowledgeGraphAccumulator + Chao1 覆盖率估计 + 结构空洞检测 + KgBoostScorer URL 优先级
-- DRL 自适应爬取策略：ONNX 推理 + HeuristicPolicy 启发式退化
+- RAG 增强提取、知识图谱覆盖感知爬取、DRL 自适应爬取策略
 
 **Observability:**
 - 5 个新 Prometheus 指标：`crawlrs_queue_depth` / `crawlrs_engine_success_total` / `crawlrs_engine_duration_seconds` / `crawlrs_cache_hit_total` / `crawlrs_webhook_delivery_total`
-- `/metrics` 端点新增平台级指标输出
 
-**Architecture:**
-- router.rs 拆分为 engine_selector / route_sequential / route_race 子模块
-- scrape_worker.rs 拆分为 scrape_task / crawl_task / extract_task + builder + deps
-- ScrapeWorkerDeps 参数对象化（消除 16 参数函数签名）
-- 统一测试 Mock（tests/common/mocks/）
+### 0.2.0-rc.2 (2026-09-21)
+- 自研依赖全面切换 crates.io registry（garrison → 0.9.0-rc.2 等），移除跨仓 path 依赖
 
-### v0.2.0 (2025-07-21)
-- **`garrison-auth-migration：** 认证引擎由 garrison v0.9.0-rc.1 接管，Bearer token 格式改为 `garrison_key_id.garrison_secret`
+### 0.2.0-rc.1 (2026-08-25)
+- auth-off 安全语义收紧：protected routes 默认 401，`allow_unauthenticated_protected()` 显式 opt-in（注：该收紧在后续 Unreleased 中被回退，见上）
+
+### 0.2.0 (2026-07-29)
+- **`garrison-auth-migration`：** 认证引擎由 garrison 接管，Bearer token 格式改为 `garrison_key_id.garrison_secret`
 - 新增 `POST /v1/admin/api-keys` 端点：管理员为指定 team 签发 garrison API Key
-- 新增 [Garrison 认证](#garrison-认证) 与 [迁移指南](#迁移指南020-garrison-auth-migration) 章节
 - 401/429 触发逻辑由 garrison `firewall-bruteforce` 接管（5 次/60 秒/300 秒锁定）
-- Scrape API `options` 新增 `cache_mode`（5 种缓存读写模式）和 `bypass_cache`（应急缓存绕过）字段
+- Scrape API `options` 新增 `cache_mode`（4 种缓存读写模式：`enabled` / `disabled` / `read_only` / `bypass`）和 `bypass_cache`（应急缓存绕过）字段
 - Added `GET /v1/webhooks` to list webhooks
 - Added `GET /v1/teams/me` and `GET /v1/teams/me/usage` team endpoints
 - Added SDK API section (`/api/v1/sdk/*` endpoints)
-- Added `POST /v1/crawl/{id}/_cancel` cancel endpoint (alongside existing `DELETE /v1/crawl/{id}`)
 - Merged Task API sections into single unified section
-- Removed duplicate table of contents
-- Updated base URL to localhost:8899
 
-### v0.1.0 (2025-01-15)
+### 0.1.0 (2026-07-22)
 - Initial release
 - Scrape, Crawl, Search, Extract APIs
 - Rate limiting and concurrency control

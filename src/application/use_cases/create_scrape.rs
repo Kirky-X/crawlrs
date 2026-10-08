@@ -73,6 +73,16 @@ impl CreateScrapeUseCase {
     fn map_dto_to_request(&self, dto: ScrapeRequestDto) -> Result<ScrapeRequest, DomainError> {
         let options = dto.options.unwrap_or_default();
 
+        // needs_mllm 在 llm 特性关闭时显性拒绝：否则请求会路由到普通引擎被静默
+        // 接管（mllm 引擎未注册，support_score 路由取普通引擎），用户以为做了
+        // 视觉分析实际没有——失败必须显性化，禁止静默降级。
+        #[cfg(not(feature = "llm"))]
+        if options.needs_mllm.unwrap_or(false) {
+            return Err(DomainError::ValidationError(
+                "needs_mllm requires the `llm` feature; rebuild with --features llm or omit the option".to_string(),
+            ));
+        }
+
         // bypass_cache 优先级处理
         //
         // 抽取为 `ScrapeOptionsDto::effective_cache_mode()`
@@ -109,8 +119,8 @@ impl CreateScrapeUseCase {
             headers,
             needs_tls_fingerprint: options.needs_tls_fingerprint.unwrap_or(false),
             use_fire_engine: options.use_fire_engine.unwrap_or(false),
-            block_ads: false,
-            block_media: false,
+            block_ads: options.block_ads.unwrap_or(false),
+            block_media: options.block_media.unwrap_or(false),
             session_id: None,
             cache_mode,
             wait_for: options
@@ -118,7 +128,7 @@ impl CreateScrapeUseCase {
                 // 复查 H3：钳制到 10s（引擎侧 WAIT_TIMEOUT_CAP），防合法输入
                 // 触发 DomStable 超预算确定性失败
                 .map(|ms| WaitFor::DomStable(Duration::from_millis(ms.min(10_000)))),
-            needs_mllm: false,
+            needs_mllm: options.needs_mllm.unwrap_or(false),
         };
 
         Ok(ScrapeRequest::new(dto.url).with_options(scrape_options))
@@ -344,6 +354,115 @@ mod tests {
             request.options.headers.get("X-Custom").map(|v| v.as_str()),
             Some("value")
         );
+    }
+
+    // ===== block_ads / block_media / needs_mllm 接线（文档审计缺陷 #4） =====
+
+    #[test]
+    fn test_map_dto_to_request_block_options_wire_through() {
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto = ScrapeRequestDto {
+            url: "https://example.com".to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
+            actions: None,
+            options: Some(ScrapeOptionsDto {
+                block_ads: Some(true),
+                block_media: Some(true),
+                ..Default::default()
+            }),
+            metadata: None,
+            sync_wait_ms: None,
+        };
+
+        let request = use_case
+            .map_dto_to_request(dto)
+            .expect("block options dto should map successfully");
+
+        assert!(request.options.block_ads);
+        assert!(request.options.block_media);
+    }
+
+    /// llm 特性下 needs_mllm 映射进 ScrapeOptions（引擎侧路由 MLLM 分析）。
+    #[cfg(feature = "llm")]
+    #[test]
+    fn test_map_dto_to_request_needs_mllm_wire_through() {
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto = ScrapeRequestDto {
+            url: "https://example.com".to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
+            actions: None,
+            options: Some(ScrapeOptionsDto {
+                needs_mllm: Some(true),
+                ..Default::default()
+            }),
+            metadata: None,
+            sync_wait_ms: None,
+        };
+
+        let request = use_case
+            .map_dto_to_request(dto)
+            .expect("needs_mllm dto should map successfully (llm feature on)");
+
+        assert!(request.options.needs_mllm);
+    }
+
+    /// 无 llm 特性时 needs_mllm 提交期显性拒绝（不静默降级到普通引擎）。
+    #[cfg(not(feature = "llm"))]
+    #[test]
+    fn test_map_dto_to_request_needs_mllm_rejected_without_llm_feature() {
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto = ScrapeRequestDto {
+            url: "https://example.com".to_string(),
+            formats: None,
+            include_tags: None,
+            exclude_tags: None,
+            webhook: None,
+            extraction_rules: None,
+            extraction_prompt: None,
+            extraction_schema: None,
+            actions: None,
+            options: Some(ScrapeOptionsDto {
+                needs_mllm: Some(true),
+                ..Default::default()
+            }),
+            metadata: None,
+            sync_wait_ms: None,
+        };
+
+        let err = use_case
+            .map_dto_to_request(dto)
+            .expect_err("needs_mllm must be rejected without the llm feature");
+        assert!(
+            err.to_string().contains("llm"),
+            "rejection should mention the llm feature, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_map_dto_to_request_block_and_mllm_default_off() {
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto = make_dto("https://example.com");
+
+        let request = use_case
+            .map_dto_to_request(dto)
+            .expect("minimal dto should map successfully");
+
+        // 缺省 None → false：与历史行为一致（此前硬编码 false）
+        assert!(!request.options.block_ads);
+        assert!(!request.options.block_media);
+        assert!(!request.options.needs_mllm);
     }
 
     // ===== cache_mode / bypass_cache 桥接测试 =====

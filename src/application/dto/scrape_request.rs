@@ -173,6 +173,25 @@ pub struct ScrapeOptionsDto {
     /// 历史结果缺验证器或查询失败时降级为无条件抓取。默认 `None`（关闭）。
     #[serde(default)]
     pub conditional_request: Option<bool>,
+    /// 屏蔽广告请求
+    ///
+    /// `Some(true)` 时浏览器引擎拦截常见广告域请求（engine 层能力，见
+    /// `ScrapeRequest.block_ads`）。默认 `None`（关闭）。
+    #[serde(default)]
+    pub block_ads: Option<bool>,
+    /// 屏蔽媒体资源请求
+    ///
+    /// `Some(true)` 时浏览器引擎拦截图片/视频/音频等媒体资源加载，加速
+    /// 纯文本抓取（engine 层能力，见 `ScrapeRequest.block_media`）。
+    /// 默认 `None`（关闭）。
+    #[serde(default)]
+    pub block_media: Option<bool>,
+    /// 是否需要 MLLM 视觉理解
+    ///
+    /// `Some(true)` 时引擎对截图执行多模态大模型分析（需要 `llm` 特性；
+    /// 未启用时引擎侧显性报错而非静默跳过）。默认 `None`（关闭）。
+    #[serde(default)]
+    pub needs_mllm: Option<bool>,
 }
 
 impl ScrapeOptionsDto {
