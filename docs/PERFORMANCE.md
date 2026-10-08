@@ -95,7 +95,7 @@ target/criterion/report/index.html
 
 ### 多层缓存（oxcache / moka）
 
-`[cache]` 配置段控制 L1 内存缓存（`enabled` / `[cache.memory] capacity` / `ttl_seconds`），并支持 search / dns / regex 三种分类型 TTL（`[cache.types.*]`）；另有 5 种缓存模式（Enabled / Disabled / ReadOnly / WriteOnly / Bypass）按请求粒度门控（`CacheContext`）。
+`[cache]` 配置段控制 L1 内存缓存（`enabled` / `[cache.memory] capacity` / `ttl_seconds`），并支持 search / dns / regex 三种分类型 TTL（`[cache.types.*]`）；另有 4 种缓存模式（Enabled / Disabled / ReadOnly / Bypass）按请求粒度门控（`CacheContext`；原 WriteOnly 语义已并入 Bypass）。
 
 ### 关键调优参数
 

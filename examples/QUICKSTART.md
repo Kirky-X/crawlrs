@@ -35,30 +35,29 @@ cargo add crawlrs
 
 ```toml
 [dependencies]
-crawlrs = "0.1"
+crawlrs = "0.2"
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros"] }
 ```
 
 ## 步骤2：编写你的第一个爬虫
 
-创建 `src/main.rs`：
+创建 `src/main.rs`。库模式的唯一抓取入口是 `EngineClient`：
 
 ```rust
-use crawlrs::prelude::*;
+use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 初始化日志
-    tracing_subscriber::fmt::init();
-
     println!("开始爬取示例...");
 
-    // 基本爬取
-    let result = scrape("https://example.com")
-        .format("markdown")
-        .await?;
+    // 创建引擎客户端并发起爬取
+    let client = EngineClient::new();
+    let request = ScrapeRequest::new("https://example.com").timeout(Duration::from_secs(30));
+    let response = client.scrape(&request).await?;
 
-    println!("标题: {}", result.metadata.title);
-    println!("内容长度: {} 字符", result.content.len());
+    println!("状态码: {}", response.status_code);
+    println!("内容长度: {} 字符", response.content.len());
 
     Ok(())
 }
@@ -74,63 +73,42 @@ cargo run
 
 ```
 开始爬取示例...
-标题: Example Domain
-内容长度: 1234 字符
+状态码: 200
+内容长度: 1256 字符
 ```
 
 ## 步骤4：尝试更多功能
 
-### 多格式输出
+### 渲染、截图与更多请求选项
 
 ```rust
-// 获取HTML
-let html = scrape("https://example.com")
-    .format("html")
+// 启用 JavaScript 渲染（需 engine-playwright feature，路由自动改派浏览器引擎）
+let result = client
+    .scrape(&ScrapeRequest::new("https://example.com").needs_js())
     .await?;
 
-// 获取Markdown
-let markdown = scrape("https://example.com")
-    .format("markdown")
+// 页面截图
+let result = client
+    .scrape(&ScrapeRequest::new("https://example.com").needs_screenshot())
     .await?;
 
-// 获取JSON
-let json_data = scrape("https://example.com")
-    .format("json")
-    .await?;
-
-// 获取截图
-let screenshot = scrape("https://example.com")
-    .screenshot(true)
+// 移动端 User-Agent
+let result = client
+    .scrape(&ScrapeRequest::new("https://example.com").mobile())
     .await?;
 ```
 
-### 使用提取规则
+### Markdown / 结构化提取
 
-```rust
-let result = scrape("https://example.com")?
-    .extract(|extractor| {
-        extractor
-            .selector("h1")
-            .text()
-            .selector(".content p")
-            .all()
-    })
-    .await?;
-```
-
-### 使用浏览器引擎
-
-```rust
-// 启用JavaScript渲染
-let result = scrape("https://example.com")
-    .engine("playwright")
-    .wait_for_selector("#content")
-    .await?;
-```
+`EngineClient` 返回引擎原始内容（`response.content` + `content_type`）。
+Markdown / JSON 格式转换与 CSS / LLM 提取属于 HTTP API 能力，通过
+`POST /v1/scrape` 的 `formats`、`extraction_rules`、`extraction_prompt`
+参数使用，详见 [API_REFERENCE.md](../docs/API_REFERENCE.md) 与
+`examples/scrape/extraction_prompt.rs` 示例。
 
 ## 步骤5：运行项目示例
 
-项目包含丰富的示例代码（示例为独立 workspace，需在 `examples/` 目录下以 `--bin` 运行）：
+项目包含丰富的示例代码（示例为根 workspace 成员 crate，需在 `examples/` 目录下以 `--bin` 运行）：
 
 ```bash
 cd examples
@@ -177,17 +155,30 @@ A: 参考以下策略：
 ### Q: 如何配置代理？
 
 ```rust
-let result = scrape("https://example.com")
-    .proxy("http://proxy.example.com:8080")
-    .await?;
+use crawlrs::engines::engine_client::{EngineClient, ScrapeOptions, ScrapeRequest};
+
+let client = EngineClient::new();
+let options = ScrapeOptions {
+    proxy: Some("http://proxy.example.com:8080".to_string()),
+    ..Default::default()
+};
+let request = ScrapeRequest::new("https://example.com").with_options(options);
+let result = client.scrape(&request).await?;
 ```
 
 ### Q: 如何使用认证？
 
-```rust
-let client = crawlrs::Client::with_api_key("your-api-key");
-let result = client.scrape("https://example.com").await?;
+认证属于 HTTP API 层：API Key 由 garrison 签发，通过 `Authorization` 头传递
+（库内 `EngineClient` 不涉及认证）：
+
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer <garrison_key_id>.<garrison_secret>" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}'
 ```
+
+API Key 的签发与管理见 [USER_GUIDE.md](../docs/USER_GUIDE.md)。
 
 ## 下一步
 

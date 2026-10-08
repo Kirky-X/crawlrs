@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use vecboost::config::model::{DeviceType, EngineType, ModelConfig};
+use vecboost::config::model::{DeviceType, EngineType, ModelConfig, ModelTask};
 use vecboost::{LibraryConfig, VecBoostLibrary};
 
 use crate::config::rag::RagSettings;
@@ -73,6 +73,9 @@ fn build_model_config(settings: &RagSettings) -> ModelConfig {
         oom_fallback_enabled: false,
         model_sha256: None,
         quantized: false,
+        // 嵌入用例：任务维度固定 embedding，无决策推理预算
+        task: ModelTask::Embedding,
+        decision_params: None,
     }
 }
 

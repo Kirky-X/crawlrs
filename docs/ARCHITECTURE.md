@@ -52,15 +52,15 @@ crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, l
 |-----------|-----------|---------|
 | Async Runtime | Tokio | 1.53 |
 | Web Framework | Axum | 0.8 |
-| ORM | Sea-ORM (via dbnexus) | 2.0.1 |
+| ORM | Sea-ORM (via dbnexus) | 2.0.4 |
 | HTTP Client | Reqwest | 0.13 |
 | Database | PostgreSQL | 16+ |
-| Cache | oxcache (in-memory) | 0.5.0-rc.2 |
-| Rate Limiting | limiteron | 0.3.0-rc.2 |
-| DI Framework | trait-kit | 0.5.0-rc.2 |
-| Config | confers | 0.6.0-rc.2 |
-| SDK Generator | sdforge | 0.5.0-rc.2 |
-| Logging | inklog | 0.3.0-rc.2 |
+| Cache | oxcache (in-memory) | 0.5.0-rc.6 |
+| Rate Limiting | limiteron | 0.3.0-rc.6 |
+| DI Framework | trait-kit | 0.5.0-rc.7 |
+| Config | confers | 0.6.0-rc.6 |
+| SDK Generator | sdforge | 0.5.0-rc.6 |
+| Logging | inklog | 0.3.0-rc.6 |
 | Browser Engine | chromiumoxide | 0.9 |
 | HTML Parser | scraper | 0.27 |
 
@@ -175,8 +175,8 @@ flowchart TD
     end
 
     subgraph Infra [Infrastructure Layer]
-        DB[(Postgres Database<br/>dbnexus 0.6.0-rc.2)]
-        RC[(oxcache 0.5.0-rc.2<br/>in-memory)]
+        DB[(Postgres Database<br/>dbnexus 0.6.0-rc.6)]
+        RC[(oxcache 0.5.0-rc.6<br/>in-memory)]
         EXT[External APIs]
         MON[inklog / Prometheus]
         SEC[SSRF / Geolocation / DNS]
@@ -569,7 +569,7 @@ infrastructure/
 
 **Database Layer:**
 
-**Technology:** dbnexus 0.6.0-rc.2 (builds on Sea-ORM 2.0.1)
+**Technology:** dbnexus 0.6.0-rc.6 (builds on Sea-ORM 2.0.4)
 
 dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access. Three database backends are supported: PostgreSQL (default), SQLite, and MySQL — selectable via `db-postgres` / `db-sqlite` / `db-mysql` features.
 
@@ -593,7 +593,7 @@ dbnexus provides connection pooling, permission control, migration framework, me
 
 **Cache Layer:**
 
-**Technology:** oxcache 0.5.0-rc.2 (in-memory, no Redis backend)
+**Technology:** oxcache 0.5.0-rc.6 (in-memory, no Redis backend)
 
 ```rust
 // Cache types
@@ -611,9 +611,9 @@ oxcache features activated: memory, serialization, macros, batch-write, metrics,
 
 ## 🧩 Core Components
 
-### Dependency Injection (trait-kit 0.5.0-rc.2)
+### Dependency Injection (trait-kit 0.5.0-rc.7)
 
-DI uses **trait-kit 0.5.0-rc.2** with async module builders. Three top-level modules are registered:
+DI uses **trait-kit 0.5.0-rc.7** with async module builders. Three top-level modules are registered:
 - `InfrastructureModule` - Database pool, HTTP client, cache, repositories
 - `EngineModule` - ReqwestEngine, PlaywrightEngine, FlareSolverrEngine, EngineRouter, EngineClient
 - `ServiceModule` - Rate limiting, search, webhook, team services, workers
@@ -700,7 +700,7 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 | Feature | Default | Depends On | Off-mode Behavior |
 |---------|---------|------------|-------------------|
 | `teams` | on | `auth` | `/v1/teams/*` routes not registered; `extract_handler` loses GR generic + geo-restriction block; `CrawlRsState.{team_service, geo_location_service, geo_restriction_repo}` not compiled; `team_id` falls back to `DEFAULT_TEAM_ID` |
-| `auth` | on | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.9.0-rc.1 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`，无 DB 查询、无暴力破解防护 |
+| `auth` | on | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.9.0-rc.2 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`，无 DB 查询、无暴力破解防护 |
 | `rate-limit` | on | `dep:limiteron` | `LimiteronService` replaced by `NoopRateLimitingService` (check_rate_limit→Allowed, check_and_deduct_quota→Ok, get_quota_balance→Ok(i64::MAX), process_backlog_tasks→Ok(0)); `limiteron_service`/`distributed_rate_limit_middleware`/`limiteron_rate_limit_middleware` modules not compiled |
 | `webhook` | on | — | `WebhookServiceImpl`/`WebhookManagementServiceImpl`/`webhook_sender`/`webhook_handler`/`webhook_worker` modules not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn blocks skipped; `WebhookService` trait preserved and assembled with `NoopWebhookService` (all ops return `Ok(())`) |
 
@@ -711,7 +711,7 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 default = ["platform", "db-postgres"]
 platform = ["teams", "auth", "rate-limit", "webhook", "metrics", "content"]
 teams   = ["auth"]
-auth    = ["dep:garrison", "dep:inventory"]   # 0.2.0: garrison v0.9.0-rc.1 接管认证引擎
+auth    = ["dep:garrison", "dep:inventory"]   # 0.2.0: garrison v0.9.0-rc.2 接管认证引擎
 rate-limit = ["dep:limiteron"]
 webhook = []
 full    = ["standard", "engine-flaresolverr", "extractors", "llm"]
@@ -1187,7 +1187,7 @@ gated `trafilatura`/`dom-smoothie`/`extractors`：
 
 ### Advanced Cache Modes (`src/common/cache_mode.rs`)
 
-- `CacheMode{Enabled,Disabled,ReadOnly,WriteOnly,Bypass}` + `CacheContext{url,method,mode}`
+- `CacheMode{Enabled,Disabled,ReadOnly,Bypass}` + `CacheContext{url,method,mode}`（原 WriteOnly 语义已并入 Bypass）
 - `should_read()`/`should_write()`/`is_cacheable()`（data:/blob:/非幂等→false）
 - `ScrapeOptions.cache_mode: Option<CacheMode>` + DTO `cache_mode`/`bypass_cache` 桥接
 - `scrape_worker` 读写缓存前经 `CacheContext` 门控
@@ -1322,7 +1322,7 @@ Worker lifecycle:
 
 ### Architecture
 
-Caching uses **oxcache 0.5.0-rc.2** with a single in-memory backend (moka). There is no Redis or multi-tier cache.
+Caching uses **oxcache 0.5.0-rc.6** with a single in-memory backend (moka). There is no Redis or multi-tier cache.
 
 ```mermaid
 flowchart TD
@@ -1386,9 +1386,9 @@ pub trait CacheService: Send + Sync {
 
 ## ⏱️ Rate Limiting
 
-**Technology:** limiteron 0.3.0-rc.2 (PostgreSQL-backed)
+**Technology:** limiteron 0.3.0-rc.6 (PostgreSQL-backed)
 
-Rate limiting is implemented using **limiteron 0.3.0-rc.2**, which provides PostgreSQL-backed token bucket rate limiting with the following features:
+Rate limiting is implemented using **limiteron 0.3.0-rc.6**, which provides PostgreSQL-backed token bucket rate limiting with the following features:
 
 | Feature | Purpose |
 |---------|---------|
@@ -1406,7 +1406,7 @@ Three rate limiting middleware implementations coexist:
 
 1. **Basic Rate Limit** (`rate_limit_middleware.rs`) - In-memory token bucket for simple scenarios
 2. **Distributed Rate Limit** (`distributed_rate_limit_middleware.rs`) - Coordination across instances
-3. **Limiteron Rate Limit** (`limiteron_rate_limit_middleware.rs`) - PostgreSQL-backed via limiteron 0.3.0-rc.2
+3. **Limiteron Rate Limit** (`limiteron_rate_limit_middleware.rs`) - PostgreSQL-backed via limiteron 0.3.0-rc.6
 
 ### Multi-Level Limiting
 
@@ -1466,7 +1466,7 @@ Configured with rules for:
 
 ### Authentication
 
-> **0.2.0 变更（`garrison-auth-migration`）：** 认证引擎由 garrison v0.9.0-rc.1 接管。旧的手写 SHA-256 `api_key_hash` 查表、`AuthRateLimiter`、`AuthScopeService` 已被删除；`api_keys.key_hash` / `scopes` 表标记为弃用（`deprecated_at` 列）。
+> **0.2.0 变更（`garrison-auth-migration`）：** 认证引擎由 garrison v0.9.0-rc.2 接管。旧的手写 SHA-256 `api_key_hash` 查表、`AuthRateLimiter`、`AuthScopeService` 已被删除；`api_keys.key_hash` / `scopes` 表标记为弃用（`deprecated_at` 列）。
 
 **Garrison 接管的认证流程：**
 
@@ -1492,13 +1492,13 @@ pub struct AuthState {
 
 ### Garrison 认证引擎
 
-garrison v0.9.0-rc.1 提供五大组件，crawlrs 通过 `auth` feature 隐式依赖：
+garrison v0.9.0-rc.2 提供五大组件，crawlrs 通过 `auth` feature 隐式依赖：
 
 | 组件 | 职责 | crawlrs 集成方式 |
 |------|------|------------------|
 | **DAO** | 自管 postgres schema（`garrison_api_keys` / `garrison_roles` / `garrison_permissions` 等） | 由 garrison 自行迁移，crawlrs 不感知 |
 | **Interface** | `GarrisonUtil::check_api_key` / `ApiKeyHandler::generate_with_namespace` | `auth_middleware_inner` 与 `POST /v1/admin/api-keys` handler 直接调用 |
-| **Config** | RBAC 角色 / 权限 / tenant 隔离配置 | crawlrs 启动时通过 `reissue_api_keys` CLI 预置 RBAC（`tenant_id=0`，所有 team 共享） |
+| **Config** | RBAC 角色 / 权限 / tenant 隔离配置 | garrison 预置 RBAC（`tenant_id=0`，所有 team 共享）；API Key 经 `POST /v1/admin/api-keys` 或 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 启动引导签发 |
 | **RBAC + JWT** | HS256 JWT 签发、角色-权限映射、API Key 生成与校验 | 必填 `CRAWLRS__AUTH__JWT_SECRET`（≥32 字节，弱密钥拒绝启动） |
 | **firewall-bruteforce** | 失败计数、窗口锁定、IP 隔离 | 401/429 由 garrison 直接返回，crawlrs 透传 |
 | **audit-log** | 认证事件落库（成功 / 失败 / 锁定） | 写入 crawlrs `audit_logs` 表 + garrison 自管 schema |

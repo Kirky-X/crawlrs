@@ -59,7 +59,7 @@ Rust 1.97+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16+�
 
 ### ❓ 服务监听哪个端口？如何确认启动成功？
 
-默认 `8899`（`CRAWLRS__SERVER__PORT` 可调）。`curl http://localhost:8899/health` 返回 `{"status":"healthy","version":"0.2.0"}` 即成功。
+默认 `8899`（`CRAWLRS__SERVER__PORT` 可调）。`curl http://localhost:8899/health` 返回 `{"status":"healthy","version":"0.2.0-rc.2"}` 即成功。
 
 ---
 
@@ -75,7 +75,7 @@ Rust 1.97+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16+�
 
 ### ❓ 如何签发新的 API Key？
 
-三种方式：`POST /v1/admin/api-keys`（需 `crawlrs:admin` 权限）；`reissue_api_keys` CLI 工具；开发/测试环境用 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量自动引导 admin key（生产禁用）。
+两种方式：`POST /v1/admin/api-keys`（需 `crawlrs:admin` 权限）；开发/测试环境用 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量自动引导 admin key（生产禁用）。
 
 ### ❓ 必须配置哪些认证相关项？
 

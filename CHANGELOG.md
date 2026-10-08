@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed（依赖升级与特性显式化清洗）
+
+- **自研 rc 链跟进**：dbnexus 0.6.0-rc.5→rc.6、confers 0.6.0-rc.5→rc.6、inklog 0.3.0-rc.5→rc.6（rc.7 fast-masking 在日志行 fancy_regex BacktrackLimitExceeded 时 panic，刻意不升、锁文件钉 rc.6，见 Cargo.toml inklog 注释）、trait-kit 0.5.0-rc.6→rc.7、oxcache 0.5.0-rc.5→rc.6、limiteron 0.3.0-rc.5→rc.6、sdforge 0.5.0-rc.5→rc.6；garrison 0.9.0-rc.2 / vecboost 0.3.0-rc.1 已是最新 rc 不动
+- **三方依赖升最新稳定版**：quick-xml 0.41→0.42（`LocalName::as_ref` 改返 `&str`、`xml10_content` 改返 `Cow<str>`，map_use_case sitemap 解析适配）、rig-core 0.42→0.44（0.43 wire/driver 新架构：rig_embedding_provider 重写为 `OpenAIConfig::new` + `client.embedding(model, Some(ndims)).call(texts)`，并适配 0.43 引入、0.44 延续的显式 ndims 回包宽度校验——宽度不符显性报错而非静默返回）、uuid 1.26→1.27
+- **全量特性显式化**：`[workspace.dependencies]` + 全部直接依赖 + dev-dependencies + examples 关闭默认特性、声明最小特性集；实质裁剪：axum 去 form/matched-path/original-uri/tower-log/tracing（全仓零引用）、sysinfo 仅留 system、genai 仅 rustls-tls、futures 去 executor、criterion 去 rayon/plotters、chromiumoxide 显式 bytes、base64 剥离 simd-unsafe、aho-corasick 显式 std+perf-literal、testcontainers/testcontainers-modules 剥离默认 ring；chrono 显式补 clock+std（此前 `Utc::now` 靠依赖图 feature 并集隐式成立）；plotters、tracing-futures、as-any 与 sysinfo 0.38 双版本退出依赖树
+- **CI actions 升级**：codecov-action v7.0.0→v7.1.1、setup-rust-toolchain v1.17.0→v2.0.0、codeql-action v4.38.0→v4.38.2、action-gh-release v3.0.2→v3.0.3、taiki-e/install-action→v2.87.26、dtolnay/rust-toolchain master SHA 刷新；checkout v7.0.1 / rust-cache v2.9.2 / cargo-deny-action v2.1.1 已是最新未动
+- **钉版佐证维持**：wreq 6.0.0-rc.31（5.x 稳定版全部 yanked，rc.31 仍为最新可用）、testcontainers 0.27（testcontainers-modules 0.15.0 硬依赖 ^0.27.0，cargo outdated 强升 0.28 即版本冲突）、utoipa 5.5（自研 sdforge 0.5.0-rc.6 optional 依赖 ^5.5 并 `pub use utoipa` re-export，升 6.0 双 utoipa 共存触发 E0659 歧义、与 forge 宏生成代码断裂）
+- **已知事项**：`--features rag` 组合预存不可编译——vecboost 0.3.0-rc.1 内部代码与 confers 0.6.0-rc.6 `derive_field_key` 返回 `Zeroizing<[u8;32]>` 不匹配（HEAD 即复现，非本次引入，待 vecboost 发版）；RUSTSEC-2023-0071（rsa）/2024-0436（paste）/2025-0119（number_prefix）维持 deny.toml 既有 ignore 与 CI 前提校验
+- 验证：`cargo check`（no-default / default / full / platform / openapi / engine-tls-fingerprint）全绿；`cargo clippy --features default|full -- -D warnings` 全绿；`cargo fmt --all -- --check` 通过；`cargo check --features full,test-mocks --tests` 全部测试目标编译通过；`cargo test --lib`（standard 6112 / full 6163）0 失败；rag-remote 嵌入单测（wiremock 契约）4/4 通过；`cargo deny check advisories` ok
+
 ### Changed（ID 体系全量迁移至 NebulaId）
 
 - **统一 ID 承载体**：新增 `domain::id::Id`（内部 `u128`，包裹 `nebulaid::core::Id` 语义），为迁移前 `uuid::Uuid` 的全项目替换物；补齐 `Copy/Hash/Default/Ord/FromStr` 并以 UUID 字符串 serde（绕开孤儿规则，保持 API JSON 契约不变）
@@ -69,6 +79,7 @@
 
 ### Changed
 - `/v1/search` 无 `engine` 参数时行为从"单引擎 bing"变为 smart 聚合（见 docs/API_REFERENCE.md Search API）
+- **auth-off 语义回退说明**：0.2.0-rc.1 曾将 auth-off 的 protected routes 收紧为默认 401 + `allow_unauthenticated_protected()` 显式 opt-in（见 0.2.0-rc.1 Breaking）；rc.2 期间路由装配重构（`bootstrap/routes.rs`）后未保留该收紧，当前实现恢复为直通注入 `full_access()` 固定身份（`build_default_identity_template`）。依赖 rc.1 收紧语义的嵌入方需注意：auth-off 面再次默认放行
 
 ## [0.2.0-rc.2] - 2026-09-21
 

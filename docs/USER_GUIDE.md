@@ -118,7 +118,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ## 🔐 Authentication
 
-> **0.2.0 起（`garrison-auth-migration`）：** 认证引擎由 **garrison v0.9.0-rc.1** 接管。Bearer token 格式为 `garrison_key_id.garrison_secret`，由 garrison 签发与校验，crawlrs 不再自管 `key_hash`。
+> **0.2.0 起（`garrison-auth-migration`）：** 认证引擎由 **garrison v0.9.0-rc.2** 接管。Bearer token 格式为 `garrison_key_id.garrison_secret`，由 garrison 签发与校验，crawlrs 不再自管 `key_hash`。
 
 ### Garrison 认证简介
 
@@ -141,7 +141,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ### API Key Configuration
 
-> **0.2.0 起**：API Key 不再通过 `CRAWLRS__AUTH__KEYS` 环境变量或 `[auth] keys` 配置项下发。需通过 `POST /v1/admin/api-keys` 端点或 `reissue_api_keys` CLI 工具向 garrison 申请签发。
+> **0.2.0 起**：API Key 不再通过 `CRAWLRS__AUTH__KEYS` 环境变量或 `[auth] keys` 配置项下发。需通过 `POST /v1/admin/api-keys` 端点向 garrison 申请签发，或用 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量在启动时引导首个 admin key（见 `.env.example`）。
 
 **签发新 API Key（管理员）：**
 
@@ -223,9 +223,11 @@ API keys are scoped to restrict access:
 Rate limits are configured server-side. Default configuration:
 
 ```toml
-[rate_limit]
-requests_per_minute = 60
-concurrent = 10
+[rate_limiting]
+enabled = true
+default_rpm = 60
+default_limit = 60
+burst_size = 20
 ```
 
 Every API response includes your current rate limit status:
@@ -251,7 +253,7 @@ curl -X GET http://localhost:8899/v1/teams/me/usage \
 
 ### Overview
 
-By default, crawlrs builds with all business capability features enabled (`default = ["teams", "auth", "rate-limit", "webhook"]`). For simpler deployments (e.g., internal tools, single-user scraping services), you can disable these features to:
+By default, crawlrs builds with all business capability features enabled (`default = ["platform", "db-postgres"]`，`platform` 展开为 teams/auth/rate-limit/webhook/metrics/content/sitemap/http + dbnexus/axum). For simpler deployments (e.g., internal tools, single-user scraping services), you can disable these features to:
 
 - Reduce binary size (~22MB vs ~30MB)
 - Eliminate database tables for teams/api_keys/webhooks
@@ -278,9 +280,9 @@ When `auth` is disabled, the `default_identity_middleware` injects a fixed `Auth
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `DEFAULT_TEAM_ID` | `Uuid::from_u128(1)` | All requests are attributed to this team |
-| `DEFAULT_API_KEY_ID` | `Uuid::from_u128(2)` | Fixed API Key ID for audit logs |
-| `DEFAULT_IDENTITY_TOKEN_HASH` | `"default_identity"` | Placeholder token hash for downstream extractors |
+| `DEFAULT_TEAM_ID` | `domain::id::Id::from_u128(1)` | All requests are attributed to this team |
+| `DEFAULT_API_KEY_ID` | `domain::id::Id::from_u128(2)` | Fixed API Key ID for audit logs |
+| `DEFAULT_IDENTITY_TOKEN_HASH` | `"sha256:default_identity"` | Placeholder token hash for downstream extractors |
 
 The injected `AuthState` has `ApiKeyScope::full_access()` (read/write/admin all `true`, search/scrape limits `u32::MAX`), so all endpoints are accessible without authentication.
 
@@ -354,7 +356,7 @@ jwt_secret = "your-32-byte-or-longer-hs256-secret-key"
 
 > **⚠️ 强密钥要求：** HS256 密钥必须 ≥32 字节；garrison 启动时检测弱密钥会直接拒绝启动。建议使用 `openssl rand -base64 48` 生成随机密钥。
 >
-> **注意：** 旧的 `CRAWLRS__AUTH__KEYS` 和 `[auth] keys` 配置项已弃用，0.2.0 起不再生效。API Key 改由 garrison 通过 `POST /v1/admin/api-keys` 或 `reissue_api_keys` CLI 签发。
+> **注意：** 旧的 `CRAWLRS__AUTH__KEYS` 和 `[auth] keys` 配置项已弃用，0.2.0 起不再生效。API Key 改由 garrison 通过 `POST /v1/admin/api-keys` 签发。
 
 ### Verification
 
@@ -639,6 +641,8 @@ curl -X POST http://localhost:8899/v1/scrape/550e8400-e29b-41d4-a716-44665544000
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
+> **⚠️ 当前不可用：** `POST /v1/scrape/{id}/_cancel` 仅注册在测试用路由装配，生产装配（`bootstrap/routes.rs`）未注册抓取取消端点。
+
 ---
 
 ## 🕷️ Crawling
@@ -653,10 +657,14 @@ curl -X POST http://localhost:8899/v1/crawl \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com/blog",
-    "max_depth": 2,
-    "max_pages": 100
+    "config": {
+      "max_depth": 2,
+      "max_pages": 100
+    }
   }'
 ```
+
+> `max_depth`（必填）、`max_pages`、`include_patterns`、`exclude_patterns` 等爬取参数位于 `config` 子对象；请求体经 `deny_unknown_fields` 校验，顶层不支持 `formats` / `webhook` / `options` / `follow_links` 字段。
 
 **Response:**
 ```json
@@ -686,8 +694,10 @@ curl -X POST http://localhost:8899/v1/crawl \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
-    "max_depth": 3,
-    "max_pages": 500
+    "config": {
+      "max_depth": 3,
+      "max_pages": 500
+    }
   }'
 ```
 
@@ -701,11 +711,15 @@ curl -X POST http://localhost:8899/v1/crawl \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.com",
-    "follow_links": true,
-    "include_patterns": ["/blog/.*", "/articles/.*"],
-    "exclude_patterns": ["/admin/.*", "/login/.*", "/api/.*"]
+    "config": {
+      "max_depth": 3,
+      "include_patterns": ["/blog/.*", "/articles/.*"],
+      "exclude_patterns": ["/admin/.*", "/login/.*", "/api/.*"]
+    }
   }'
 ```
+
+> URL 过滤由链接发现机制自动执行（爬取即跟随页面链接），`follow_links` 字段不存在。
 
 **Pattern Examples:**
 - `/blog/.*` - Include all blog posts
@@ -770,19 +784,14 @@ curl "http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000/result
 
 ### Cancel a Crawl
 
-Stop a running crawl via cancel endpoint:
-
-```bash
-curl -X POST http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000/_cancel \
-  -H "Authorization: Bearer YOUR_API_KEY"
-```
-
-Or delete the crawl task:
+Stop a running crawl via `DELETE /v1/crawl/{id}`:
 
 ```bash
 curl -X DELETE http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000 \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
+
+> `POST /v1/crawl/{id}/_cancel` 仅存在于测试用路由装配，生产装配未注册；取消统一走 `DELETE /v1/crawl/{id}`。
 
 ---
 
@@ -993,25 +1002,24 @@ Receive notifications when tasks complete:
 curl -X POST http://localhost:8899/v1/webhooks \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
+  -H "webhook-id: msg_1" \
+  -H "webhook-timestamp: 1760000000" \
+  -H "webhook-signature: v1,<base64-hmac-sha256>" \
   -d '{
-    "url": "https://your-server.com/webhook",
-    "events": ["task.completed", "task.failed"],
-    "secret": "your-webhook-secret",
-    "active": true
+    "url": "https://your-server.com/webhook"
   }'
 ```
 
-**Response:**
+> 请求体仅接受 `url` 字段（`deny_unknown_fields`，传 `events` / `secret` / `active` 会被 422 拒绝）。签名密钥由服务端统一配置（`CRAWLRS__WEBHOOK__SECRET`），且创建请求本身必须携带按该密钥计算的 Standard Webhooks 签名头，否则返回 401。
+
+**Response（`201 Created`，裸 `Webhook` 对象）:**
 
 ```json
 {
-  "success": true,
-  "webhook": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "url": "https://your-server.com/webhook",
-    "events": ["task.completed", "task.failed"],
-    "active": true
-  }
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "team_id": "660e8400-e29b-41d4-a716-446655440001",
+  "url": "https://your-server.com/webhook",
+  "created_at": "2026-01-15T00:00:00Z"
 }
 ```
 
@@ -1024,19 +1032,20 @@ curl http://localhost:8899/v1/webhooks \
 
 ### Webhook Events
 
-Subscribe to specific events:
+服务端按任务类型自动派发事件（无需订阅）：
 
 | Event | Trigger | Use Case |
 |--------|----------|-----------|
-| `task.created` | Task created | Immediate tracking |
-| `task.started` | Task started | Progress monitoring |
-| `task.completed` | Task succeeded | Result processing |
-| `task.failed` | Task failed | Error handling |
-| `task.cancelled` | Task cancelled | Cleanup |
+| `scrape.completed` | Scrape task succeeded | Result processing |
+| `scrape.failed` | Scrape task failed | Error handling |
+| `crawl.completed` | Crawl task succeeded | Result processing |
+| `crawl.failed` | Crawl task failed | Error handling |
+| `extract.completed` | Extract task succeeded | Result processing |
+| `extract.failed` | Extract task failed | Error handling |
 
 ### Handle Webhook
 
-Create an endpoint to receive webhooks:
+创建接收端并按 Standard Webhooks 规范验签（签名消息为 `{webhook-id}.{webhook-timestamp}.{payload}`，HMAC-SHA256 后 Base64 编码，`v1,` 前缀）：
 
 ```javascript
 // Express.js example
@@ -1045,25 +1054,25 @@ const app = express();
 const crypto = require('crypto');
 
 app.post('/webhook', express.raw({type: 'application/json'}), (req, res) => {
-  const signature = req.headers['x-webhook-signature'];
+  const msgId = req.headers['webhook-id'];
+  const timestamp = req.headers['webhook-timestamp'];
+  const signature = req.headers['webhook-signature'];
   const payload = req.body;
 
-  const expectedSignature = crypto
+  const expected = crypto
     .createHmac('sha256', 'your-webhook-secret')
-    .update(payload)
-    .digest('hex');
+    .update(`${msgId}.${timestamp}.${payload.toString()}`)
+    .digest('base64');
 
-  if (signature !== `sha256=${expectedSignature}`) {
+  const expectedSig = `v1,${expected}`;
+  const a = Buffer.from(expectedSig);
+  const b = Buffer.from(signature || '');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
 
-  const webhook = JSON.parse(payload);
-  console.log('Event:', webhook.event);
-  console.log('Task:', webhook.task);
-
-  if (webhook.event === 'task.completed') {
-    const result = webhook.result;
-  }
+  const event = JSON.parse(payload);
+  console.log('Task:', event.task_id, 'Status:', event.status);
 
   res.status(200).send('OK');
 });
@@ -1077,21 +1086,14 @@ app.listen(3000, () => {
 
 ```json
 {
-  "event": "task.completed",
-  "timestamp": "2025-01-15T00:00:00Z",
-  "task": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "type": "scrape",
-    "status": "completed",
-    "url": "https://example.com"
-  },
-  "result": {
-    "html": "...",
-    "markdown": "...",
-    "text": "..."
-  }
+  "task_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "url": "https://example.com",
+  "timestamp": 1760000000
 }
 ```
+
+失败事件 `status` 为 `"failed"` 并附带 `"error"` 字段。
 
 ### Webhook Retry Policy
 
@@ -1113,6 +1115,8 @@ app.listen(3000, () => {
 ---
 
 ## 📋 Tasks
+
+> **⚠️ 当前不可用：** `/v1/tasks/_query` 与 `/v1/tasks/_cancel` 仅注册在测试用路由装配（`presentation/routes/handlers.rs::routes()`），生产装配（`bootstrap/routes.rs`）未注册。
 
 ### Query Tasks
 
@@ -1519,7 +1523,7 @@ const response = await axios.post('http://localhost:8899/v1/scrape', data, {
 **Solutions:**
 - Check if multiple clients are using the same API key
 - Implement proper rate limiting in your application
-- Increase `requests_per_minute` in your server config
+- Increase `default_rpm` in your server config (`[rate_limiting]` section)
 - Use async mode (webhooks) instead of sync waiting
 
 **2. "SSRF protection: Internal URLs are not allowed"**
@@ -1665,9 +1669,11 @@ A: Maximum is 30,000 milliseconds (30 seconds). For longer tasks, use webhooks f
 A: Rate limits are set in the server config file (`config/default.toml`):
 
 ```toml
-[rate_limit]
-requests_per_minute = 60
-concurrent = 10
+[rate_limiting]
+enabled = true
+default_rpm = 60
+default_limit = 60
+burst_size = 20
 ```
 
 ---

@@ -117,13 +117,12 @@ url = "postgresql://user:password@localhost/crawlrs"
 [server]
 host = "0.0.0.0"
 port = 8899
-
-[search]
-default_engine = "baidu"
 EOF
 
-# 2. Initialize the database
-cargo run --bin crawlrs -- migrate
+# 2. Initialize the database (the server does not auto-migrate; the dedicated subcommand applies migrations/*.sql in order)
+cargo run --bin crawlrs migrate
+# Migrations directory defaults to ./migrations; override with CRAWLRS_MIGRATIONS_DIR.
+# Manual alternative: for f in migrations/*.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"; done
 
 # 3. Start the server (API mode; worker mode: cargo run --bin crawlrs worker)
 cargo run --bin crawlrs
@@ -132,7 +131,7 @@ cargo run --bin crawlrs
 ```bash
 # 4. Verify the installation
 curl http://localhost:8899/health
-# {"status":"healthy","version":"0.2.0"}
+# {"status":"healthy","version":"0.2.0-rc.2"}
 ```
 
 Calling the scrape endpoint (authentication and all endpoints: see the [📘 API Reference](docs/API_REFERENCE.md)):
@@ -210,7 +209,7 @@ The table below mirrors the `[features]` section of `Cargo.toml`, with `default 
 
 ## 💻 Examples
 
-All 65 runnable examples live in the standalone [`examples/`](examples/) workspace, grouped by domain: search, scrape, crawl, extract, auth, teams, webhooks, cache, config, database, proxy, rate-limiting, sdk, tasks, browser, advanced, etc. (each example is a `[[bin]]` target such as `basic_scrape`). For the categorized list see [examples/README.md](examples/README.md) and [examples/QUICKSTART.md](examples/QUICKSTART.md).
+All 66 runnable examples live in [`examples/`](examples/) (a member crate of the root workspace, `members = ["examples"]` in the root `Cargo.toml`), grouped by domain: search, scrape, crawl, extract, auth, teams, webhooks, cache, config, database, proxy, rate-limiting, sdk, tasks, browser, advanced, etc. (each example is a `[[bin]]` target such as `basic_scrape`). For the categorized list see [examples/README.md](examples/README.md) and [examples/QUICKSTART.md](examples/QUICKSTART.md).
 
 ```bash
 cd examples

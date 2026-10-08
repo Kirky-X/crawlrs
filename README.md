@@ -117,13 +117,12 @@ url = "postgresql://user:password@localhost/crawlrs"
 [server]
 host = "0.0.0.0"
 port = 8899
-
-[search]
-default_engine = "baidu"
 EOF
 
-# 2. 初始化数据库
-cargo run --bin crawlrs -- migrate
+# 2. 初始化数据库（服务启动不自动迁移；专用子命令按序应用 migrations/*.sql）
+cargo run --bin crawlrs migrate
+# 迁移目录缺省 ./migrations，可用 CRAWLRS_MIGRATIONS_DIR 覆盖；
+# 也可手工应用：for f in migrations/*.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"; done
 
 # 3. 启动服务（API 模式；worker 模式：cargo run --bin crawlrs worker）
 cargo run --bin crawlrs
@@ -132,7 +131,7 @@ cargo run --bin crawlrs
 ```bash
 # 4. 验证安装
 curl http://localhost:8899/health
-# {"status":"healthy","version":"0.2.0"}
+# {"status":"healthy","version":"0.2.0-rc.2"}
 ```
 
 调用抓取接口（认证与全部端点详见 [📘 API 参考](docs/API_REFERENCE.md)）：
@@ -210,7 +209,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ## 💻 示例
 
-全部 65 个可运行示例位于 [`examples/`](examples/) 独立 workspace，按功能域分为 search、scrape、crawl、extract、auth、teams、webhooks、cache、config、database、proxy、rate-limiting、sdk、tasks、browser、advanced 等类别（每个示例是 `[[bin]]` 目标，如 `basic_scrape`）。分类清单与说明见 [examples/README.md](examples/README.md) 与 [examples/QUICKSTART.md](examples/QUICKSTART.md)。
+全部 66 个可运行示例位于 [`examples/`](examples/)（根 workspace 成员 crate，主 `Cargo.toml` 的 `members = ["examples"]`），按功能域分为 search、scrape、crawl、extract、auth、teams、webhooks、cache、config、database、proxy、rate-limiting、sdk、tasks、browser、advanced 等类别（每个示例是 `[[bin]]` 目标，如 `basic_scrape`）。分类清单与说明见 [examples/README.md](examples/README.md) 与 [examples/QUICKSTART.md](examples/QUICKSTART.md)。
 
 ```bash
 cd examples

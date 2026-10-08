@@ -101,8 +101,14 @@ where
         Ok(result) => result,
         Err(_) => {
             warn!(
-                "engine timed out after {:?} in smart fan-out, degrading",
-                timeout
+                "{}",
+                crate::i18n::tr_log_args(
+                    "search-smart-engine-timeout",
+                    &[(
+                        "timeout",
+                        fluent_bundle::FluentValue::from(format!("{timeout:?}")),
+                    )],
+                )
             );
             Err(SearchError::SmartRoutingTimeout(timeout.as_secs()))
         }
@@ -248,8 +254,26 @@ impl SearchEngine for SmartSearchEngine {
         let limit = request.limit;
 
         info!(
-            "Smart search start: query={}, limit={}, lang={:?}, country={:?}, offset={}",
-            query, limit, request.lang, request.country, request.offset
+            "{}",
+            crate::i18n::tr_log_args(
+                "search-smart-start",
+                &[
+                    ("query", fluent_bundle::FluentValue::from(query.as_str())),
+                    ("limit", fluent_bundle::FluentValue::from(limit as i64)),
+                    (
+                        "lang",
+                        fluent_bundle::FluentValue::from(format!("{:?}", request.lang)),
+                    ),
+                    (
+                        "country",
+                        fluent_bundle::FluentValue::from(format!("{:?}", request.country)),
+                    ),
+                    (
+                        "offset",
+                        fluent_bundle::FluentValue::from(request.offset as i64)
+                    ),
+                ],
+            )
         );
 
         // 构建共享请求（每个基础引擎使用相同 query/limit/locale/offset）。
@@ -354,8 +378,14 @@ impl SearchEngine for SmartSearchEngine {
         fused = cross_dedup.deduplicate(fused);
         if fused.len() != before {
             info!(
-                "Cross-engine title dedup removed {} near-duplicates",
-                before - fused.len()
+                "{}",
+                crate::i18n::tr_log_args(
+                    "search-smart-cross-dedup",
+                    &[(
+                        "count",
+                        fluent_bundle::FluentValue::from((before - fused.len()) as i64)
+                    )],
+                )
             );
         }
 
@@ -643,27 +673,28 @@ mod tests {
     }
 
     /// F4：同一 gate 连续两次 wait_turn，第二次等待 ≥ min_interval
+    ///
+    /// 断言对齐 wait_turn 自身契约（对既有 last 睡眠 `min_interval - 已流逝`
+    /// 且 tokio sleep 为 at-least 语义），不做固定裕度的间接推断——套件重负载下
+    /// 语句间调度间隙（锁+时钟读数）可吞掉固定裕度造成假阳性。
     #[tokio::test]
     async fn test_outbound_gate_enforces_min_interval() {
-        let gate = OutboundGate::new(Duration::from_millis(120));
-        // 首次不等待
+        let min_interval = Duration::from_millis(120);
+        let gate = OutboundGate::new(min_interval);
+        // 首次无记录放行：上界取 min_interval 本身（「未等满间隔」即性质）
         let start = Instant::now();
         gate.wait_turn().await;
-        assert!(
-            start.elapsed() < Duration::from_millis(80),
-            "first turn must not wait"
-        );
-        // 第二次必须等满 min_interval
-        gate.wait_turn().await;
-        let waited = {
-            let last = gate.last.lock().unwrap();
-            last.unwrap()
-        };
-        let _ = waited;
-        // 直接断言：距首闸记录时刻已推进至少一个间隔（由 wait_turn 内部 sleep 保证）
+        assert!(start.elapsed() < min_interval, "first turn must not wait");
+        // 第二次必须等满 min_interval：直接度量本次调用耗时，
+        // 与「进入时刻相对首记录的余量」对齐（1ms 吸收 Instant 读数间距）
+        let first_record = gate.last.lock().unwrap().expect("first turn must record");
         let second_start = Instant::now();
         gate.wait_turn().await;
-        let elapsed_ok = second_start.elapsed() >= Duration::from_millis(100);
-        assert!(elapsed_ok, "second turn must wait out the min interval");
+        let waited = second_start.elapsed();
+        let expected = min_interval.saturating_sub(second_start.duration_since(first_record));
+        assert!(
+            waited + Duration::from_millis(1) >= expected,
+            "second turn must wait out the min interval (waited {waited:?}, expected ≥ {expected:?})"
+        );
     }
 }
