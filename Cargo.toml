@@ -1,7 +1,6 @@
 # Copyright (c) 2025-2026 Kirky.X🌠
 # SPDX-License-Identifier: Apache-2.0
 
-authors = ["Kirky-X <Kirky-X@outlook.com>"]
 [package]
 name = "crawlrs"
 version = "0.2.0-rc.2"
@@ -56,6 +55,18 @@ db-mysql = [
 # sdforge 0.4 `#[forge]` 宏生成 `cfg(feature = "http")` 门控的 HTTP 路由注册代码
 # （inventory submit）。下游 crate 必须显式声明本 feature 才会生成路由。
 http = ["sdforge/http"]
+# web-axum：platform 剔除 teams/auth 的等价构建面（auth-off 语义生效面，恢复自 v0.2.0-rc.1）。
+# platform 隐含 auth，auth-off 的 default_identity_middleware / allow_unauthenticated_protected
+# 在现有 feature 矩阵中无法编译；本 feature 供 `--no-default-features --features web-axum --lib`
+# 构建/测试该路径（lib 作用域；平台二进制仍走 platform）。
+web-axum = [
+    "rate-limit", "webhook", "metrics", "content",
+    "dep:dbnexus", "dep:axum",
+    "inklog/http", "inklog/postgres", "http",
+]
+# forge-full：激活 presentation/forge_api 的 sdforge inventory 注册面（单一注册面迁移停机坪）。
+# 与手写 protected/v2 路由组互斥（inventory 全局收集，并存即启动 panic）——见 presentation/mod.rs 说明。
+forge-full = ["http"]
 # OpenAPI 3.1 规范（吸收自研 sdforge `openapi`）：`#[forge]` handler 经
 # `cfg_attr(feature = "openapi", utoipa::path)` 标注，路由元数据经 inventory 聚合，
 # GET /v1/sdk/openapi.json 输出完整 spec。
@@ -123,14 +134,19 @@ webhook = []
 # --- 测试特性 ---
 test-mocks = []
 
+# vecboost 修复版（本地一等仓库）：confers 0.6.0-rc.6 加密 API 适配
+# （derive_field_key/decrypt 返回 Zeroizing）。上游发 rc.2 后可移除本段。
+[patch.crates-io]
+vecboost = { path = "../vecboost" }
+
 [dependencies]
 # Async runtime and web framework
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
 axum = { workspace = true, optional = true }
-futures = "0.3"
-async-trait = "0.1"
-tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.7", features = ["trace", "cors"] }
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+async-trait = { version = "0.1", default-features = false }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+tower-http = { version = "0.7", default-features = false, features = ["trace", "cors"] }
 
 # Serialization and configuration
 serde.workspace = true
@@ -138,13 +154,13 @@ serde_json.workspace = true
 confers.workspace = true
 
 # Error handling
-thiserror = "2.0"
+thiserror = { version = "2.0", default-features = false, features = ["std"] }
 anyhow.workspace = true
 
 # Retry with exponential backoff
 
 # Security — constant-time comparison for HMAC signature verification
-subtle = "2.6"
+subtle = { version = "2.6", default-features = false, features = ["std", "i128"] }
 
 # HTTP client and networking
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "cookies", "http2", "charset", "system-proxy", "gzip", "brotli", "stream"] }
@@ -156,7 +172,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 # / stream（bytes_stream 限长读取）——
 # 缺 cookies 时 Set-Cookie 完全不处理（挑战通过后无法保持会话）；缺解压时服务器强推 gzip 会得到乱码。
 wreq = { version = "6.0.0-rc.31", default-features = false, features = ["tokio-rt", "cookies", "gzip", "brotli", "zstd", "charset", "stream"], optional = true }
-url = "2.5"
+url = { version = "2.5", default-features = false, features = ["std"] }
 
 # Database
 # dbnexus-macros 已移除（2026-09-19 审计）：src 零引用，宏经 dbnexus re-export。
@@ -165,41 +181,45 @@ url = "2.5"
 dbnexus = { workspace = true, optional = true }
 
 # Caching and state management
-dashmap = "6.2"
-once_cell = "1.21"
+dashmap = { version = "6.2", default-features = false }
+once_cell = { version = "1.21", default-features = false, features = ["std"] }
 
 # Utilities
 uuid.workspace = true
 chrono.workspace = true
 rand.workspace = true
-sysinfo = { version = "0.39", optional = true }
-dirs = "7.0"
+sysinfo = { version = "0.39", default-features = false, features = ["system"], optional = true }
+dirs = { version = "7.0", default-features = false }
 
 # Logging and observability
 log.workspace = true
-inklog = { version = "0.3.0-rc.5", default-features = false, features = ["cli"] }
+# rc.6：registry rc.7 的 fast-masking 在日志行上 fancy_regex unwrap
+# BacktrackLimitExceeded 直接 panic（消费方主仓 sinnan 真实环境启动即炸实证）；
+# telemetry.rs 的配置映射即按 rc.6 语义编写（未配置 = 内置兜底采样）。上游修复
+# 发版后再随主仓一并收敛 rc.7+。
+inklog = { version = "0.3.0-rc.6", default-features = false, features = ["cli"] }
 # sdforge 非可选：DTO 层 Validate impl（sdforge::validator 重导出）未做 feature 门控，
 # validator 直依赖已移除，基础验证类型恒经 sdforge 提供
 sdforge.workspace = true
-metrics = { version = "0.24", optional = true }
+metrics = { version = "0.24", default-features = false, optional = true }
 metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"], optional = true }
 # inventory：编译期监听器注册（garrison GarrisonListenerEntry 需要，crawlrs 直接使用以注册 CrawlrsAuditListener）
 # optional：仅 auth feature 启用时引入（auth = ["dep:garrison", "dep:inventory"]）
 inventory = { version = "0.3", default-features = false, optional = true }
 
 # Web scraping and content processing
-scraper = { version = "0.27" }
-robotstxt = { version = "0.3" }
-chromiumoxide = { version = "0.9", optional = true }
-chromiumoxide_fetcher = { version = "0.9", optional = true }
+scraper = { version = "0.27", default-features = false, features = ["errors", "main"] }
+robotstxt = { version = "0.3", default-features = false }
+chromiumoxide = { version = "0.9", default-features = false, features = ["bytes"], optional = true }
+chromiumoxide_fetcher = { version = "0.9", default-features = false, features = ["rustls", "zip8"], optional = true }
 
 # Anti-bot detection — gated by `content` feature
 # aho-corasick: Tier2 通用词字面量集的多模式匹配（AC 自动机）
-aho-corasick = { version = "1.1", optional = true }
+aho-corasick = { version = "1.1", default-features = false, features = ["std", "perf-literal"], optional = true }
 
 # Markdown conversion — gated by `content` feature
 # htmd: HTML→Markdown 转换主路径
-htmd = { version = "0.5", optional = true }
+htmd = { version = "0.5", default-features = false, optional = true }
 
 # Content extraction — gated by `trafilatura` / `dom-smoothie` / `extractors` features
 # rs-trafilatura: 主路径，移植自 trafilatura（提取文章正文 + 元数据）
@@ -209,32 +229,32 @@ dom_smoothie = { version = "0.18", default-features = false, optional = true }
 
 # Sitemap 流式解析 — gated by `sitemap` feature
 # quick-xml: 流式 pull 解析器（十万级 URL sitemap 边解析边入 frontier，不整树物化）
-quick-xml = { version = "0.41", default-features = false, optional = true }
+quick-xml = { version = "0.42", default-features = false, optional = true }
 
 # Text processing and encoding
-chardetng = { version = "1.0" }
-encoding_rs = { version = "0.8" }
-lru = "0.18"
-html-escape = "0.2"
-serde_urlencoded = "0.7"
-urlencoding = "2.1"
+chardetng = { version = "1.0", default-features = false }
+encoding_rs = { version = "0.8", default-features = false, features = ["alloc"] }
+lru = { version = "0.18", default-features = false, features = ["hashbrown"] }
+html-escape = { version = "0.2", default-features = false, features = ["std"] }
+serde_urlencoded = { version = "0.7", default-features = false }
+urlencoding = { version = "2.1", default-features = false }
 
 # Cryptography and encoding
 base64.workspace = true
-hmac = "0.13"
-sha2 = "0.11"
-hex = "0.4"
-bcrypt = "0.19"
+hmac = { version = "0.13", default-features = false }
+sha2 = { version = "0.11", default-features = false, features = ["alloc", "oid"] }
+hex = { version = "0.4", default-features = false, features = ["std"] }
+bcrypt = { version = "0.19", default-features = false, features = ["std", "zeroize"] }
 # Standard Webhooks — webhook 签名/验签标准化（T-webhook-001）
 standardwebhooks = { version = "1.0", default-features = false }
 
 # Network utilities
-ipnetwork = "0.21"
+ipnetwork = { version = "0.21", default-features = false }
 # Hickory DNS resolver — 异步 DNS 解析（T-dns-001）
 hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
 
 # Rate limiting and circuit breaking — gated by `rate-limit` feature
-limiteron = { version = "0.3.0-rc.5", default-features = false, features = [
+limiteron = { version = "0.3.0-rc.6", default-features = false, features = [
     # postgres 驱动由 crawlrs db-* 特性组透传 limiteron?/postgres
     "ban-manager",
     "quota-control",
@@ -252,7 +272,7 @@ limiteron = { version = "0.3.0-rc.5", default-features = false, features = [
 garrison = { version = "0.9.0-rc.2", default-features = false, features = ["backend-embedded", "web-axum", "cache-memory", "protocol-apikey", "protocol-jwt", "core-advanced", "authorize-api", "listener", "audit-log", "audit-inklog", "firewall", "firewall-bruteforce", "tenant-isolation", "tracing-log", "three-tier-cache", "protocol-zeroize", "db-retry"], optional = true }
 
 # Concurrency and synchronization
-parking_lot = "0.12"
+parking_lot = { version = "0.12", default-features = false }
 
 # Regular expressions
 regex.workspace = true
@@ -264,9 +284,10 @@ regex.workspace = true
 # hashbrown 0.17 的 ahash 通过 default-hasher 特性提供
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "equivalent", "inline-more"] }
 
-bytes = "1"
-genai = { version = "0.6", optional = true }
-toml = "1.1"
+bytes = { version = "1", default-features = false, features = ["std"] }
+genai = { version = "0.6", default-features = false, features = ["rustls-tls"], optional = true }
+# llm prompt 模板加载（domain/services/llm/prompt_builder.rs）运行时解析 toml
+toml = { version = "1.1", default-features = false, features = ["std", "parse", "serde"] }
 
 # RAG 能力依赖 — gated by rag-local / rag-remote features（不入 default/full，最小引入）
 # vecboost（自研一等仓库，../vecboost）：进程内本地嵌入/重排推理。
@@ -277,10 +298,10 @@ vecboost = { version = "0.3.0-rc.1", optional = true, default-features = false }
 # rig-core：远端嵌入统一客户端（OpenAI 兼容 Client::builder().api_key().base_url()）。
 # 仅用嵌入方向；rig 原生 rerank 只支持 Voyage，远端重排改走自有通用 HTTP 适配。
 # reqwest 0.13 + rustls 与 crawlrs 对齐，feature 联合无重复 TLS 栈。
-rig-core = { version = "0.42", optional = true, default-features = false, features = ["reqwest", "rustls"] }
+rig-core = { version = "0.44", optional = true, default-features = false, features = ["reqwest", "rustls"] }
 
 # Dependency Injection
-trait-kit = { version = "0.5.0-rc.6", features = ["async", "confers", "shutdown"] }
+trait-kit = { version = "0.5.0-rc.7", default-features = false, features = ["async", "confers", "shutdown"] }
 # NebulaId（同作者自研分布式 ID 引擎，../NebulaId 本地路径，不在 crates.io）：
 # crawlrs 全量 ID 生成/处理迁移的目标库。default-features=false 剥离 http/grpc/
 # garrison-auth/postgresql 服务面，仅留 sdk（纯算法 uuid_v8 零 DB/零号段）。其内部
@@ -291,17 +312,19 @@ trait-kit = { version = "0.5.0-rc.6", features = ["async", "confers", "shutdown"
 nebulaid = { path = "../NebulaId", version = "0.3.0-rc.1", default-features = false, features = ["sdk", "uuid-v8"] }
 # feature 裁剪（hygiene）：macros/batch/bloom 在 crawlrs 源码中零使用（已 grep 验证），
 # 仅保留 memory（L1 缓存）+ serialization（类型化存取）+ metrics（命中统计）。
-oxcache = { version = "0.5.0-rc.5", default-features = false, features = ["memory", "serialization", "metrics"] }
-ahash = "0.8"
+oxcache = { version = "0.5.0-rc.6", default-features = false, features = ["memory", "serialization", "metrics"] }
+ahash = { version = "0.8", default-features = false, features = ["std", "runtime-rng"] }
 
 # Internationalization (i18n) — Mozilla Fluent system
-fluent-bundle = "0.16"
-unic-langid = "0.9"
+fluent-bundle = { version = "0.16", default-features = false }
+unic-langid = { version = "0.9", default-features = false }
 # 系统语言检测（unify-rust-i18n 检测链末端：env 链之后探测 OS locale）
-sys-locale = "0.3"
+sys-locale = { version = "0.3", default-features = false }
 
 # API Documentation
 # 'openapi' is a cfg flag generated by sdforge_macros, declared in [lints.rust.unexpected_cfgs].
+# 钉 5.5：sdforge 0.5.0-rc.6 依赖并 re-export utoipa 5.5（sdforge lib.rs `pub use utoipa`），
+# 消费方升 6.0 会双 utoipa 共存触发 E0659 歧义；待 sdforge 侧 adopt utoipa 6 后协同升级。
 utoipa = { version = "5.5", optional = true, default-features = false, features = ["macros"] }
 
 [dev-dependencies]
@@ -309,19 +332,23 @@ utoipa = { version = "5.5", optional = true, default-features = false, features 
 # re-export 在任意 feature 组合下可编译（2026-09-19 sea-orm 直依赖收敛）。
 dbnexus = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
-tokio-test = "0.4"
-wiremock = "0.6"
-reqwest = { version = "0.13", features = ["json"] }
+tokio-test = { version = "0.4", default-features = false }
+wiremock = { version = "0.6", default-features = false }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde_json.workspace = true
-cucumber = { version = "0.23", features = ["macros"] }
-axum-test = "21.1"
-futures = "0.3"
-tempfile = "3.27"
+cucumber = { version = "0.23", default-features = false, features = ["macros"] }
+axum-test = { version = "21.1", default-features = false, features = ["pretty-assertions"] }
+futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+tempfile = { version = "3.27", default-features = false, features = ["getrandom"] }
 uuid = { workspace = true, features = ["v4"] }
-criterion = { version = "0.8", features = ["html_reports"] }
+# rayon/plotters 为默认携带的报表渲染件，html_reports 走 chart.js 不需要
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support", "html_reports"] }
 
-testcontainers = "0.27"
-testcontainers-modules = { version = "0.15", features = ["postgres"] }
+# 历史钉版保持 0.27：testcontainers-modules 最新稳定版 0.15.0 依赖 testcontainers ^0.27.0，
+# 升 0.28 会使 modules 的 Postgres 容器类型与本仓 testcontainers API 断裂；
+# default-features=false 剥离 ring（aws-lc-rs 可经 rustls 供给，容器走 unix socket 无需 TLS）
+testcontainers = { version = "0.27", default-features = false }
+testcontainers-modules = { version = "0.15", default-features = false, features = ["postgres"] }
 
 [[test]]
 name = "integration_tests"
@@ -344,6 +371,15 @@ required-features = ["test-mocks"]
 [[test]]
 name = "route_diag_test"
 path = "tests/route_diag_test.rs"
+required-features = ["platform"]
+
+# BDD 验收套件：cucumber 自管 main（filter_run_and_exit 按标签过滤场景），
+# 必须显式声明 harness=false，否则 auto-discover 挂 libtest 后找不到 #[test]，
+# 二进制编译通过但 0 tests 空转（虚绿）。required-features 与 CI/文档运行口径一致。
+[[test]]
+name = "acceptance"
+path = "tests/acceptance/main.rs"
+harness = false
 required-features = ["platform"]
 
 [[bench]]
@@ -388,34 +424,35 @@ license = "Apache-2.0"
 repository = "https://github.com/Kirky-X/crawlrs"
 
 [workspace.dependencies]
-# Async runtime
-tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
+# Async runtime（tokio 1.x default = []，显式关闭默认特性仅为声明纪律）
+tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1.0", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
 # Configuration
-confers = { version = "0.6.0-rc.5", default-features = false, features = ["validation", "toml", "env", "security-rules"] }
+confers = { version = "0.6.0-rc.6", default-features = false, features = ["validation", "toml", "env", "security-rules"] }
 # Error handling
-anyhow = "1.0"
+anyhow = { version = "1.0", default-features = false, features = ["std"] }
 # Logging
-log = "0.4"
+log = { version = "0.4", default-features = false, features = ["std"] }
 # Utilities
-uuid = { version = "1.26", features = ["v4", "serde"] }
-chrono = { version = "0.4", default-features = false, features = ["serde"] }
-rand = "0.10"
+uuid = { version = "1.27", default-features = false, features = ["std", "v4", "serde"] }
+# clock 显式声明：response_builder 等 Utc::now() 此前靠依赖图 feature 并集隐式获得
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+rand = { version = "0.10", default-features = false, features = ["std", "std_rng", "sys_rng", "thread_rng"] }
 # Text processing
-regex = "1.13"
-# Encoding
-base64 = "0.23"
+regex = { version = "1.13", default-features = false, features = ["std", "perf", "unicode"] }
+# Encoding（simd-unsafe 为上游默认携带的非对齐读 SIMD，产物裁剪时一并剥离）
+base64 = { version = "0.23", default-features = false, features = ["std"] }
 # Database
 # 驱动与 runtime 特性不在此声明（Cargo feature 只加不减，写死会锁死单一后端），
 # 由 crawlrs 的 db-postgres / db-sqlite / db-mysql 特性组按构建选择
-dbnexus = { version = "0.6.0-rc.5", default-features = false, features = ["cache", "macros", "migration", "config-env", "config-toml", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
+dbnexus = { version = "0.6.0-rc.6", default-features = false, features = ["cache", "macros", "migration", "auto-migrate", "config-env", "config-toml", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
 sea-orm = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK
-sdforge = { version = "0.5.0-rc.5", default-features = false, features = ["http"] }
-# Web framework
-axum = "0.8"
+sdforge = { version = "0.5.0-rc.6", default-features = false, features = ["http"] }
+# Web framework（form/matched-path/original-uri/tower-log/tracing 全仓零引用，裁掉）
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
 
 # =============================================================================
 # Target-Specific Dependencies
@@ -425,7 +462,7 @@ axum = "0.8"
 # - 其他 Unix (macOS/BSD): 普通 mmap
 # - 非 Unix (Windows/WASM): 不引入，bloom.rs 自动 fallback 到 Vec<u8> heap
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc = { version = "0.2", default-features = false, features = ["std"] }
 
 [lints.rust.unexpected_cfgs]
 level = "deny"

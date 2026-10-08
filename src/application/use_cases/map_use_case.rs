@@ -28,11 +28,18 @@ pub struct SitemapFetch {
     pub body: String,
 }
 
-/// 用例级错误（handler 映射：TargetUnreachable → 502 MAP_TARGET_UNREACHABLE）
+/// 用例级错误（handler 映射：TargetUnreachable / SitemapStatus →
+/// 502 MAP_TARGET_UNREACHABLE；OriginUnparsable / Internal → 400）
 #[derive(Debug, thiserror::Error)]
 pub enum MapError {
     #[error("target unreachable: {0}")]
     TargetUnreachable(String),
+    /// sitemap 源返回非 2xx 状态（结构化携带状态码，供 handler 按请求 locale 翻译）
+    #[error("sitemap returned status {0}")]
+    SitemapStatus(u16),
+    /// URL 无法解析出 origin（结构化携带原始 URL，供 handler 翻译）
+    #[error("cannot parse origin from {0}")]
+    OriginUnparsable(String),
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -107,10 +114,7 @@ pub trait SitemapFetcher: Send + Sync {
             return Ok(SitemapStream::empty());
         }
         if fetched.status >= 400 {
-            return Err(MapError::TargetUnreachable(format!(
-                "sitemap returned status {}",
-                fetched.status
-            )));
+            return Err(MapError::SitemapStatus(fetched.status));
         }
         let kind = if is_sitemap_index(&fetched.body) {
             SitemapKind::SitemapIndex
@@ -179,10 +183,7 @@ impl SitemapFetcher for EngineSitemapFetcher {
             return Ok(SitemapStream::empty());
         }
         if response.status_code >= 400 {
-            return Err(MapError::TargetUnreachable(format!(
-                "sitemap returned status {}",
-                response.status_code
-            )));
+            return Err(MapError::SitemapStatus(response.status_code));
         }
 
         let (tx, rx) = tokio::sync::mpsc::channel(channel_capacity.max(1));
@@ -195,28 +196,27 @@ impl SitemapFetcher for EngineSitemapFetcher {
                 Ok(Event::Start(e)) => {
                     let name = e.name().local_name();
                     if kind.is_none() {
-                        kind = Some(if name.as_ref().eq_ignore_ascii_case(b"sitemapindex") {
+                        kind = Some(if name.as_ref().eq_ignore_ascii_case("sitemapindex") {
                             SitemapKind::SitemapIndex
                         } else {
                             SitemapKind::Urlset
                         });
                     }
-                    if name.as_ref().eq_ignore_ascii_case(b"loc") {
+                    if name.as_ref().eq_ignore_ascii_case("loc") {
                         in_loc = true;
                         loc_text.clear();
                     }
                 }
-                Ok(Event::Text(t)) if in_loc => match t.xml10_content() {
-                    Ok(text) => match quick_xml::escape::unescape(&text) {
+                Ok(Event::Text(t)) if in_loc => {
+                    match quick_xml::escape::unescape(&t.xml10_content()) {
                         Ok(unescaped) => loc_text.push_str(&unescaped),
                         Err(e) => {
                             log::warn!("sitemap loc entity unescape failed: {e}");
                         }
-                    },
-                    Err(e) => log::warn!("sitemap loc text decode failed: {e}"),
-                },
+                    }
+                }
                 Ok(Event::End(e)) => {
-                    if in_loc && e.name().local_name().as_ref().eq_ignore_ascii_case(b"loc") {
+                    if in_loc && e.name().local_name().as_ref().eq_ignore_ascii_case("loc") {
                         in_loc = false;
                         let loc = loc_text.trim();
                         if !loc.is_empty() && tx.send(loc.to_string()).await.is_err() {
@@ -262,8 +262,8 @@ impl MapUseCase {
     }
 
     pub async fn execute(&self, dto: &MapRequestDto) -> Result<MapResult, MapError> {
-        let origin = extract_origin(&dto.url)
-            .ok_or_else(|| MapError::Internal(format!("cannot parse origin from {}", dto.url)))?;
+        let origin =
+            extract_origin(&dto.url).ok_or_else(|| MapError::OriginUnparsable(dto.url.clone()))?;
 
         let first = self.fetcher.fetch(&format!("{origin}/sitemap.xml")).await?;
         if first.status == 404 {
@@ -271,10 +271,7 @@ impl MapUseCase {
             return Ok(MapResult { links: Vec::new() });
         }
         if first.status >= 400 {
-            return Err(MapError::TargetUnreachable(format!(
-                "sitemap returned status {}",
-                first.status
-            )));
+            return Err(MapError::SitemapStatus(first.status));
         }
 
         let mut locs = parse_locs(&first.body);
@@ -288,7 +285,9 @@ impl MapUseCase {
                 let fetched = match self.fetcher.fetch(&child).await {
                     Ok(f) => Some(f),
                     // 连接级瞬态错误重试一次（ok() 语义：仍失败则放弃该子 sitemap）
-                    Err(MapError::TargetUnreachable(_)) => self.fetcher.fetch(&child).await.ok(),
+                    Err(MapError::TargetUnreachable(_)) | Err(MapError::SitemapStatus(_)) => {
+                        self.fetcher.fetch(&child).await.ok()
+                    }
                     Err(e) => return Err(e),
                 };
                 if let Some(fetched) = fetched {
@@ -326,8 +325,8 @@ impl MapUseCase {
         use tokio::sync::mpsc;
         use tokio::task::JoinSet;
 
-        let origin = extract_origin(&dto.url)
-            .ok_or_else(|| MapError::Internal(format!("cannot parse origin from {}", dto.url)))?;
+        let origin =
+            extract_origin(&dto.url).ok_or_else(|| MapError::OriginUnparsable(dto.url.clone()))?;
 
         let mut first = self
             .fetcher
@@ -372,7 +371,8 @@ impl MapUseCase {
                             .await
                         {
                             Ok(s) => Some(s),
-                            Err(MapError::TargetUnreachable(_)) => fetcher
+                            Err(MapError::TargetUnreachable(_))
+                            | Err(MapError::SitemapStatus(_)) => fetcher
                                 .fetch_streaming(&child, options.channel_capacity)
                                 .await
                                 .ok(),
@@ -753,7 +753,7 @@ mod tests {
         assert!(result.links.is_empty());
     }
 
-    /// R-map-004：目标站 5xx → TargetUnreachable（handler 映射 502）。
+    /// R-map-004：目标站 5xx → SitemapStatus（handler 映射 502 MAP_TARGET_UNREACHABLE）。
     #[tokio::test]
     async fn execute_maps_5xx_to_target_unreachable() {
         let fetcher = MockFetcher {
@@ -765,10 +765,10 @@ mod tests {
         let result = MapUseCase::new(Arc::new(fetcher))
             .execute(&dto(ORIGIN))
             .await;
-        assert!(matches!(result, Err(MapError::TargetUnreachable(_))));
+        assert!(matches!(result, Err(MapError::SitemapStatus(_))));
     }
 
-    /// R-map-001：无效 URL（无法解析 origin）→ Internal 错误（DTO 校验是第一道防线）。
+    /// R-map-001：无效 URL（无法解析 origin）→ OriginUnparsable 错误（DTO 校验是第一道防线）。
     #[tokio::test]
     async fn execute_rejects_unparsable_url() {
         let fetcher = MockFetcher {
@@ -777,7 +777,7 @@ mod tests {
         let result = MapUseCase::new(Arc::new(fetcher))
             .execute(&dto("not-a-url"))
             .await;
-        assert!(matches!(result, Err(MapError::Internal(_))));
+        assert!(matches!(result, Err(MapError::OriginUnparsable(_))));
     }
 
     // ========== execute_streaming（F11 流式路径，sitemap feature） ==========
@@ -842,7 +842,7 @@ mod tests {
             assert!(collect(rx.rx).await.is_empty());
         }
 
-        /// 目标站 5xx / 拉取超时 → TargetUnreachable（错误显性化）
+        /// 目标站 5xx / 拉取超时 → SitemapStatus（错误显性化）
         #[tokio::test]
         async fn streaming_maps_5xx_to_target_unreachable() {
             let fetcher = MockFetcher {
@@ -854,7 +854,7 @@ mod tests {
             let result = MapUseCase::new(Arc::new(fetcher))
                 .execute_streaming(&dto(ORIGIN), stream_options(4, 100, 2))
                 .await;
-            assert!(matches!(result, Err(MapError::TargetUnreachable(_))));
+            assert!(matches!(result, Err(MapError::SitemapStatus(_))));
         }
 
         /// max_urls 消费上限：100 条 loc 只产出前 10 条

@@ -24,10 +24,13 @@ if ! docker ps --format '{{.Names}}' | grep -qx "${container}"; then
     postgres:16 >/dev/null
 fi
 
-# 等待 PG 就绪（最多 60s），超时显性失败
+# 等待 PG 就绪（最多 60s），超时显性失败。
+# 不能用 pg_isready：initdb 临时服务期它即返回成功，随后真实实例重启
+# （后续 psql 报 "the database system is shutting down"）造成就绪竞态。
+# 以对目标库可执行真实查询为准（与后续迁移探测同一路径）。
 ready=0
 for _ in $(seq 1 30); do
-  if docker exec "${container}" pg_isready -U postgres >/dev/null 2>&1; then
+  if [ "$(docker exec "${container}" psql -tA -U postgres -d "${db}" -c "SELECT 1" 2>/dev/null)" = "1" ]; then
     ready=1
     break
   fi

@@ -104,6 +104,26 @@ if [ -z "${TEST_DATABASE_URL:-}" ]; then
   db_password=$(grep -E '^DB_PASSWORD=' docker/.env 2>/dev/null | cut -d= -f2)
   db_name=$(grep -E '^DB_NAME=' docker/.env 2>/dev/null | cut -d= -f2)
   export TEST_DATABASE_URL="postgres://${db_user:-crawlrs}:${db_password:-password}@127.0.0.1:5443/${db_name:-crawlrs}_test"
+  # test_db_data 为持久卷，POSTGRES_PASSWORD 仅在数据目录首次初始化时生效：
+  # 历史遗留的陈旧卷会让容器 healthy 但服务进程 TCP 认证全拒（28P01）。
+  # exec 走容器内 socket（trust）察觉不到，必须 -h 127.0.0.1 走 TCP 验证。
+  if ! PGPASSWORD="${db_password:-password}" docker compose -f "$COMPOSE_FILE" exec -T test-db \
+      psql -h 127.0.0.1 -U "${db_user:-crawlrs}" -d "${db_name:-crawlrs}_test" -c 'SELECT 1' >/dev/null 2>&1; then
+    log_info "test-db TCP 密码认证失败——检测到陈旧数据卷，down -v 重建..."
+    docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" up -d test-db >/dev/null
+    for i in $(seq 1 30); do
+      if [ "$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Health}}' test-db 2>/dev/null)" = "healthy" ]; then
+        break
+      fi
+      [ "$i" = "30" ] && { log_fail "重建后 test-db 30 次探测后仍未健康"; exit 1; }
+      sleep 2
+    done
+    PGPASSWORD="${db_password:-password}" docker compose -f "$COMPOSE_FILE" exec -T test-db \
+      psql -h 127.0.0.1 -U "${db_user:-crawlrs}" -d "${db_name:-crawlrs}_test" -c 'SELECT 1' >/dev/null 2>&1 \
+      || { log_fail "重建后 TCP 密码认证仍失败"; exit 1; }
+    log_pass "陈旧卷已重建（TCP 认证验证通过）"
+  fi
 fi
 log_pass "测试数据库就绪: $TEST_DATABASE_URL"
 
@@ -180,11 +200,26 @@ log_pass "自举完成 (team=$TEAM_ID, key=${API_KEY:0:6}…<masked>)"
 # 掩码化留存服务日志（日志文件不得含明文凭证）
 sed -i "s|${API_KEY}|${API_KEY:0:6}…<masked>|g" "$SERVER_LOG"
 
+# NebulaId Id 的 Display 对版本位非 4/7/8 的数值形态（自举 DEFAULT_TEAM_ID
+# 为 Id(1)）渲染为十进制短格式 "1"，而 credits.team_id 是 UUID 列，短格式直插
+# 会报 invalid input syntax for type uuid。落库路径统一归一为 Uuid::from_u128
+# 的 36 位形态（u128 大端 hex 补零插连字符）；API 调用路径仍传原短格式——
+# 服务端 Id::FromStr 两种形态等价解析，且响应回显的是 Display 短格式。
+TEAM_ID_UUID="$TEAM_ID"
+if [[ "$TEAM_ID" =~ ^[0-9]+$ ]]; then
+  if ! TEAM_ID_UUID=$(printf '%032x' "$TEAM_ID" 2>/dev/null); then
+    log_fail "team_id 数值超出可转换范围（非自举默认团队?）: $TEAM_ID"
+    exit 1
+  fi
+  TEAM_ID_UUID="${TEAM_ID_UUID:0:8}-${TEAM_ID_UUID:8:4}-${TEAM_ID_UUID:12:4}-${TEAM_ID_UUID:16:4}-${TEAM_ID_UUID:20:12}"
+  log_info "team_id 为 NebulaId 短格式，落库路径已归一为 UUID 形态: $TEAM_ID_UUID"
+fi
+
 # 测试夹具：为自举团队充值积分（抓取/搜索按次扣费，种子余额会耗尽导致 402）
 log_info "为自举团队充值测试积分..."
 docker compose -f "$COMPOSE_FILE" exec -T test-db psql -U crawlrs -d crawlrs_test -v ON_ERROR_STOP=1 -q <<SQL
 INSERT INTO credits (team_id, balance)
-VALUES ('${TEAM_ID}', 100000000)
+VALUES ('${TEAM_ID_UUID}', 100000000)
 ON CONFLICT (team_id) DO UPDATE SET balance = 100000000, updated_at = NOW();
 SQL
 log_pass "测试积分已充值"

@@ -256,8 +256,8 @@ mod tests {
 
     fn sample_scrape_result() -> ScrapeResult {
         ScrapeResult {
-            id: crate::domain::id::Id::generate().into(),
-            task_id: crate::domain::id::Id::generate().into(),
+            id: crate::domain::id::Id::generate(),
+            task_id: crate::domain::id::Id::generate(),
             url: "https://example.com/page".to_string(),
             status_code: 200,
             content: "<html>hello</html>".to_string(),

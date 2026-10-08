@@ -119,14 +119,38 @@ async fn load_pointer(
         Ok(p) if p.sitemap_url == sitemap_url => Some(p.consumed),
         Ok(p) => {
             log::warn!(
-                "sitemap feed pointer for crawl {crawl_id} targets {} but feeding {sitemap_url}; \
-                 ignoring — dedup/DB checks guard against re-enqueue",
-                p.sitemap_url
+                "{}",
+                crate::i18n::tr_log_args(
+                    "sitemap-pointer-mismatch",
+                    &[
+                        (
+                            "crawl_id",
+                            fluent_bundle::FluentValue::from(crawl_id.to_string()),
+                        ),
+                        (
+                            "pointer_url",
+                            fluent_bundle::FluentValue::from(p.sitemap_url.as_str()),
+                        ),
+                        ("sitemap_url", fluent_bundle::FluentValue::from(sitemap_url)),
+                    ],
+                )
             );
             None
         }
         Err(e) => {
-            log::warn!("sitemap feed pointer for crawl {crawl_id} is corrupt ({e}); ignoring");
+            log::warn!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "sitemap-pointer-corrupt",
+                    &[
+                        (
+                            "crawl_id",
+                            fluent_bundle::FluentValue::from(crawl_id.to_string()),
+                        ),
+                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                    ],
+                )
+            );
             None
         }
     }
@@ -172,9 +196,20 @@ pub async fn feed_sitemap_as_tasks(
                 Some(consumed)
             } else {
                 log::info!(
-                    "sitemap feed for crawl {} resumes without seek (index streams arrive in \
-                     nondeterministic order; dedup guards re-enqueue), pointer consumed={consumed}",
-                    seed.crawl_id
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "sitemap-resume-without-seek",
+                        &[
+                            (
+                                "crawl_id",
+                                fluent_bundle::FluentValue::from(seed.crawl_id.to_string()),
+                            ),
+                            (
+                                "consumed",
+                                fluent_bundle::FluentValue::from(consumed as i64)
+                            ),
+                        ],
+                    )
                 );
                 None
             }

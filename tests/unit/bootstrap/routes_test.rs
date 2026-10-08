@@ -40,8 +40,8 @@ use crawlrs::bootstrap::routes::{
     create_v2_routes_with_state,
 };
 use crawlrs::di::modules::{
-    CacheModule, DatabaseModule, EngineModule, HttpModule, InfrastructureModule, RepositoryModule,
-    ServiceModule, SettingsModule,
+    CacheModule, DatabaseModule, EngineModule, HttpModule, IdModule, InfrastructureModule,
+    RepositoryModule, ServiceModule, SettingsModule,
 };
 use crawlrs::di::{CrawlRsState, CrawlRsStateExt};
 use crawlrs::infrastructure::auth::reset_garrison_global_state_for_integration_test;
@@ -154,6 +154,11 @@ async fn build_app_state(
         .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
     kit.register::<ServiceModule>()
         .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
+    // IdModule 为 NebulaId 迁移新增（from_kit require id-generation），
+    // 缺失时 build_app_state 报 missing capability，SHARED_STATE 缓存 None
+    // 会让本文件全部用例以 "[skip]" 名义静默空转
+    kit.register::<IdModule>()
+        .map_err(|e| anyhow::anyhow!("register IdModule: {e}"))?;
 
     let kit = kit
         .build()

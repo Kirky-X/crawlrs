@@ -4,22 +4,22 @@
 //! rig 远端嵌入 provider（`rag-remote` feature）
 //!
 //! 通过 rig 的 OpenAI 兼容客户端访问远端嵌入服务（OpenAI / 硅基流动 /
-//! Ollama `/v1` 等）：`Client::builder().api_key(..).base_url(..)` +
-//! `embedding_model_with_ndims(..).embed_texts(..)`。
+//! Ollama `/v1` 等）：`OpenAIConfig::new(key)`（可覆写 `base_url`）+
+//! `client.embedding(model, Some(ndims)).call(texts)`（rig 0.44 wire/driver API）。
 //!
-//! 与 rig 的取舍：rig 0.42 的 rerank 原生仅支持 Voyage，重排方向由
+//! 与 rig 的取舍：rig 0.44 的 rerank 原生仅支持 Voyage，重排方向由
 //! [`crate::infrastructure::services::http_rerank_provider`]（通用 HTTP 适配，
 //! 无 feature 要求）承担，本模块只做嵌入。
 
-use rig_core::client::embeddings::EmbeddingsClient;
-use rig_core::embeddings::EmbeddingModel;
+use rig_core::providers::openai::{OpenAI, OpenAIConfig};
 
 use crate::config::rag::RagSettings;
 use crate::domain::services::rag_strategy::EmbeddingProvider;
 
 /// rig 远端嵌入 provider
 pub struct RigEmbeddingProvider {
-    model: rig_core::providers::openai::EmbeddingModel,
+    client: OpenAI,
+    model_name: String,
     dimensions: usize,
 }
 
@@ -36,22 +36,17 @@ impl RigEmbeddingProvider {
             );
         }
 
-        let mut builder =
-            rig_core::providers::openai::Client::builder().api_key(api_key.to_string());
+        let mut config = OpenAIConfig::new(api_key.to_string());
         let base = settings.remote_api_base.trim();
         if !base.is_empty() {
             if base.parse::<url::Url>().is_err() {
                 return Err(format!("rag.remote_api_base is not a valid URL: {base}"));
             }
-            builder = builder.base_url(base);
+            config.base_url = base.to_string();
         }
-        let client = builder
-            .build()
-            .map_err(|e| format!("rig openai client build failed: {e}"))?;
+        let client = config.client();
 
         let dimensions = settings.remote_dimensions.max(1);
-        let model = client.embedding_model_with_ndims(&settings.remote_embed_model, dimensions);
-
         log::info!(
             "rig remote embedding ready: model={} base={} dims={}",
             settings.remote_embed_model,
@@ -63,7 +58,11 @@ impl RigEmbeddingProvider {
             dimensions
         );
 
-        Ok(Self { model, dimensions })
+        Ok(Self {
+            client,
+            model_name: settings.remote_embed_model.clone(),
+            dimensions,
+        })
     }
 }
 
@@ -73,19 +72,22 @@ impl EmbeddingProvider for RigEmbeddingProvider {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        let embeddings = self
-            .model
-            .embed_texts(texts.to_vec())
+        let model = self
+            .client
+            .embedding(&self.model_name, Some(self.dimensions));
+        let response = model
+            .call(texts.to_vec())
             .await
-            .map_err(|e| anyhow::anyhow!("rig embed_texts failed: {e}"))?;
-        if embeddings.len() != texts.len() {
+            .map_err(|e| anyhow::anyhow!("rig embedding call failed: {e}"))?;
+        if response.embeddings.len() != texts.len() {
             anyhow::bail!(
-                "rig embed_texts returned {} embeddings for {} texts",
-                embeddings.len(),
+                "rig embedding returned {} vectors for {} texts",
+                response.embeddings.len(),
                 texts.len()
             );
         }
-        Ok(embeddings
+        Ok(response
+            .embeddings
             .into_iter()
             .map(|embedding| embedding.vec.into_iter().map(|v| v as f32).collect())
             .collect())
@@ -134,8 +136,21 @@ mod tests {
     #[tokio::test]
     async fn test_embed_texts_via_openai_compatible_endpoint() {
         let server = MockServer::start().await;
+        // rig 0.44 对显式 ndims 校验回包宽度（不缩放）：mock 必须按配置宽度 1536 回包；
+        // 前 3 位承载断言值，其余补零。text-embedding-3-small 原生宽度即 1536，
+        // rig 此时不下发 dimensions 字段，契约只锚定 model + input
+        let vector_a: Vec<serde_json::Value> = [0.25, 0.5, 0.25]
+            .into_iter()
+            .chain(std::iter::repeat_n(0.0, 1533))
+            .map(serde_json::Value::from)
+            .collect();
+        let vector_b: Vec<serde_json::Value> = [1.0, 0.0, 0.0]
+            .into_iter()
+            .chain(std::iter::repeat_n(0.0, 1533))
+            .map(serde_json::Value::from)
+            .collect();
         // wiremock 的 path() 匹配完整路径（含 base_url 段 /v1）；
-        // rig 因显式 ndims 会额外下发 dimensions 字段，用 partial 匹配契约字段
+        // 用 partial 匹配契约字段
         Mock::given(method("POST"))
             .and(path("/v1/embeddings"))
             .and(body_partial_json(serde_json::json!({
@@ -145,8 +160,8 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "object": "list",
                 "data": [
-                    {"object": "embedding", "index": 0, "embedding": [0.25, 0.5, 0.25]},
-                    {"object": "embedding", "index": 1, "embedding": [1.0, 0.0, 0.0]}
+                    {"object": "embedding", "index": 0, "embedding": vector_a},
+                    {"object": "embedding", "index": 1, "embedding": vector_b}
                 ],
                 "model": "text-embedding-3-small",
                 "usage": {"prompt_tokens": 3, "total_tokens": 3}
@@ -163,9 +178,11 @@ mod tests {
             .await
             .expect("embed");
         assert_eq!(vectors.len(), 2);
-        // rig 返回 f64 向量，provider 必须转换为 f32
-        assert_eq!(vectors[0], vec![0.25_f32, 0.5, 0.25]);
-        assert_eq!(vectors[1], vec![1.0_f32, 0.0, 0.0]);
+        // rig 返回 f64 向量，provider 必须转换为 f32 且保持配置宽度
+        assert_eq!(vectors[0].len(), 1536);
+        assert_eq!(&vectors[0][..3], &[0.25_f32, 0.5, 0.25]);
+        assert_eq!(vectors[1].len(), 1536);
+        assert_eq!(&vectors[1][..3], &[1.0_f32, 0.0, 0.0]);
         assert_eq!(provider.dimensions(), 1536);
     }
 

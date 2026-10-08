@@ -128,27 +128,51 @@ ensure_db() {
   DB_MIGRATED=1
 }
 
-start_external_db() {
-  log_info "通过 Docker Compose 拉起测试 PostgreSQL（5443 端口）..."
-  docker compose -f "$COMPOSE_FILE" up -d test-db || return 1
-  COMPOSE_STARTED=1
-  log_info "等待 test-db 健康..."
+wait_test_db_healthy() {
+  local i
   for i in $(seq 1 30); do
     if [ "$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Health}}' test-db 2>/dev/null)" = "healthy" ]; then
-      # 凭据与 docker/.env 对齐（compose 以 ${DB_PASSWORD:-password} 初始化，
-      # .env 覆盖默认值时必须使用覆盖值，否则 TCP 密码认证 28P01）
-      local db_user db_password db_name
-      db_user=$(grep -E '^DB_USER=' docker/.env 2>/dev/null | cut -d= -f2)
-      db_password=$(grep -E '^DB_PASSWORD=' docker/.env 2>/dev/null | cut -d= -f2)
-      db_name=$(grep -E '^DB_NAME=' docker/.env 2>/dev/null | cut -d= -f2)
-      export TEST_DATABASE_URL="postgres://${db_user:-crawlrs}:${db_password:-password}@127.0.0.1:5443/${db_name:-crawlrs}_test"
-      log_pass "test-db 健康: $TEST_DATABASE_URL"
       return 0
     fi
     sleep 2
   done
   log_fail "test-db 30 次探测后仍未健康"
   return 1
+}
+
+# 必须 TCP（-h 127.0.0.1）验证：compose exec 默认走容器内本地 socket（trust），
+# 察觉不到"数据卷以旧密码初始化、宿主 TCP 密码认证全拒（28P01）"的陈旧卷状态。
+verify_test_db_tcp_auth() {
+  PGPASSWORD="${db_password:-password}" docker compose -f "$COMPOSE_FILE" exec -T test-db \
+    psql -h 127.0.0.1 -U "${db_user:-crawlrs}" -d "${db_name:-crawlrs}_test" -c 'SELECT 1' >/dev/null 2>&1
+}
+
+start_external_db() {
+  log_info "通过 Docker Compose 拉起测试 PostgreSQL（5443 端口）..."
+  docker compose -f "$COMPOSE_FILE" up -d test-db || return 1
+  COMPOSE_STARTED=1
+  log_info "等待 test-db 健康..."
+  wait_test_db_healthy || return 1
+  # 凭据与 docker/.env 对齐（compose 以 ${DB_PASSWORD:-password} 初始化，
+  # .env 覆盖默认值时必须使用覆盖值，否则 TCP 密码认证 28P01）
+  local db_user db_password db_name
+  db_user=$(grep -E '^DB_USER=' docker/.env 2>/dev/null | cut -d= -f2)
+  db_password=$(grep -E '^DB_PASSWORD=' docker/.env 2>/dev/null | cut -d= -f2)
+  db_name=$(grep -E '^DB_NAME=' docker/.env 2>/dev/null | cut -d= -f2)
+  export TEST_DATABASE_URL="postgres://${db_user:-crawlrs}:${db_password:-password}@127.0.0.1:5443/${db_name:-crawlrs}_test"
+  # test_db_data 为持久卷，POSTGRES_PASSWORD 仅在数据目录首次初始化时生效：
+  # 历史运行遗留的卷会让容器 healthy 但宿主 TCP 认证全拒（整条套件 28P01 全红）。
+  # 检测到即 down -v 按当前凭据重新初始化，而非带病继续。
+  if ! verify_test_db_tcp_auth; then
+    log_info "test-db TCP 密码认证失败——检测到陈旧数据卷（POSTGRES_PASSWORD 仅首次初始化生效），down -v 重建..."
+    docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
+    docker compose -f "$COMPOSE_FILE" up -d test-db || return 1
+    log_info "等待重建后的 test-db 健康..."
+    wait_test_db_healthy || return 1
+    verify_test_db_tcp_auth || { log_fail "重建后 TCP 密码认证仍失败"; return 1; }
+  fi
+  log_pass "test-db 健康（TCP 认证已验证）: $TEST_DATABASE_URL"
+  return 0
 }
 
 apply_migrations() {

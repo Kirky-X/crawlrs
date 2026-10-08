@@ -5,10 +5,13 @@
 import requests
 import time
 import json
+import os
 import sys
 
-BASE_URL = "http://localhost:8899/v1"
-API_KEY = "test_api_key_123"
+BASE_URL = os.getenv("CRAWLRS_API_URL", "http://localhost:8899") + "/v1"
+# garrison 只认证真实签发的 key（自举 key 随进程轮换），硬编码假 key 必然 401；
+# 必须经 CRAWLRS_API_KEY / TEST_API_KEY 注入有效凭证，未注入则直接拒绝运行
+API_KEY = os.getenv("CRAWLRS_API_KEY", os.getenv("TEST_API_KEY", ""))
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",
     "Content-Type": "application/json"
@@ -39,14 +42,18 @@ def run_crawl(url):
     }
 
     try:
-        # Create Crawl
+        # Create Crawl（响应为 {success, data:{...}} 信封，业务字段在 data 下）；
+        # 202 = 异步入队 Accepted（任务 queued 由 worker 消费），语义正确
         response = requests.post(f"{BASE_URL}/crawl", json=payload, headers=HEADERS)
-        if response.status_code != 201:
+        if response.status_code not in [200, 201, 202]:
             print(f"❌ Failed to create crawl: {response.status_code} - {response.text}")
             return
 
-        data = response.json()
-        crawl_id = data["id"]
+        data = response.json().get("data") or {}
+        crawl_id = data.get("id")
+        if not crawl_id:
+            print(f"❌ Create crawl response missing data.id: {response.text}")
+            return
         print(f"✅ Crawl created with ID: {crawl_id}")
 
         # Poll Status
@@ -58,11 +65,11 @@ def run_crawl(url):
                 time.sleep(1)
                 continue
 
-            crawl_data = status_res.json()
-            status = crawl_data["status"]
-            completed = crawl_data["completed_tasks"]
-            failed = crawl_data["failed_tasks"]
-            total = crawl_data["total_tasks"]
+            crawl_data = status_res.json().get("data") or {}
+            status = crawl_data.get("status")
+            completed = crawl_data.get("completed_tasks", 0)
+            failed = crawl_data.get("failed_tasks", 0)
+            total = crawl_data.get("total_tasks", 0)
 
             print(f"   [{i+1}s] Status: {status}, Completed: {completed}, Failed: {failed}, Total: {total}")
 
@@ -81,16 +88,21 @@ def run_crawl(url):
         print(f"❌ Exception: {e}")
 
 if __name__ == "__main__":
+    if not API_KEY:
+        print("❌ 未设置 API key（CRAWLRS_API_KEY / TEST_API_KEY）："
+              "garrison 只认证真实签发的 key，硬编码凭证必然 401")
+        sys.exit(1)
+
     print("🌍 Starting Real-World Crawl Test")
 
     # Verify Health First
     try:
-        h = requests.get("http://localhost:8899/health")
+        h = requests.get(f"{os.getenv('CRAWLRS_API_URL', 'http://localhost:8899')}/health")
         if h.status_code != 200:
             print("❌ Health check failed. Is the server running?")
             sys.exit(1)
         print("✅ Server is healthy")
-    except:
+    except Exception:
         print("❌ Could not connect to server")
         sys.exit(1)
 

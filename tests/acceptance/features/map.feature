@@ -51,10 +51,11 @@ Feature: Map endpoint
     And the response JSON field "error.code" is "MAP_TARGET_UNREACHABLE"
 
   Scenario: Invalid map URL is rejected
-    # 契约：map 的 DTO validator 校验（"url: URL must start with http://"）→ 422
+    # 契约：与 scrape/crawl/extract 一致，SSRF 静态校验先于 DTO validator，
+    # 无效 URL → 400 VALIDATION_ERROR（"Invalid URL 'not-a-url': relative URL without a base"）
     Given an admin API key
     When I map "not-a-url"
-    Then the response status is 422
+    Then the response status is 400
 
   Scenario: Unauthenticated map request is rejected
     Given no API key

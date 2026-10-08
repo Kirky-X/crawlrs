@@ -24,10 +24,12 @@ Feature: Platform capabilities
     And the response JSON field "success" is true
 
   Scenario: Create and list webhooks
+    # 契约：创建响应走 {success,data} 包封，data.secret 一次性返回签名密钥
     Given an admin API key
     When I create a webhook at "/v1/webhooks" pointing to "{mock_base}/hook" for events "crawl.completed"
-    Then the response status is 200 or 201
-    And the response JSON field "url" is a non-empty string
+    Then the response status is 201
+    And the response JSON field "data.url" is a non-empty string
+    And the response JSON field "data.secret" is a non-empty string
     When I GET "/v1/webhooks"
     Then the response status is 200
     And the response JSON field "success" is true

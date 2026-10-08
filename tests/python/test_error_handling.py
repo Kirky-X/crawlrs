@@ -11,6 +11,8 @@
 import pytest
 import time
 
+from api_test_framework import CrawlrsAPIClient
+
 
 class TestErrorResponses:
     """错误响应测试"""
@@ -27,22 +29,49 @@ class TestErrorResponses:
 
     def test_invalid_api_key(self, api_client):
         """测试无效 API 密钥"""
-        from api_test_framework import CrawlrsAPIClient
-
         invalid_client = CrawlrsAPIClient(api_key="invalid-key")
         result = invalid_client.search(query="test")
 
         assert result.response.status_code in [401, 403]
 
     def test_rate_limit_exceeded(self, api_client):
-        """测试速率限制触发"""
-        results = []
-        for i in range(200):
-            result = api_client.health_check()
-            results.append(result.response.status_code)
+        """测试速率限制触发
+
+        限流为 handler 显式 opt-in（如 map/search/scrape/webhook 入口的
+        check_rate_limit），geo-restrictions 等查询端点不在计量范围；
+        /health 为公共端点按设计跳过限流（PUBLIC_ENDPOINTS）。这里以
+        POST /v1/map 作探针（限流在 SSRF 之前，请求体即被 400 拒绝、
+        零外网零积分消耗），并签发一次性 key 打满限流桶，避免污染共享
+        key 的配额导致同套件后续用例连坐 429。
+        """
+        me = api_client.get_team_info()
+        team_id = ((me.response.body or {}).get("data") or {}).get("id")
+        assert me.success and team_id, (
+            f"无法获取 team_id，无法签发限流测试专用 key: {me.response.status_code}"
+        )
+
+        issued = api_client.issue_api_key(team_id=str(team_id), scopes=["read"])
+        assert issued.response.status_code == 201, (
+            f"签发限流测试 key 失败: {issued.response.status_code} {issued.response.body}"
+        )
+        key = ((issued.response.body or {}).get("data") or {}).get("api_key")
+        assert key, f"签发响应缺少 api_key: {issued.response.body}"
+
+        probe = CrawlrsAPIClient(api_key=key)
+        statuses = []
+        for _ in range(200):
+            # 回环地址命中 SSRF 静态拒绝（400），探针快速返回且不触发外网抓取
+            result = probe.map_url("http://127.0.0.1:9/x")
+            statuses.append(result.response.status_code)
+            if 429 in statuses:
+                break
             time.sleep(0.01)
 
-        assert 429 in results, "未能触发速率限制"
+        assert 429 in statuses, (
+            f"未能触发速率限制（{len(statuses)} 次请求，末次状态 "
+            f"{statuses[-1] if statuses else None}，状态分布 "
+            f"{ {s: statuses.count(s) for s in set(statuses)} }）"
+        )
 
 
 class TestServiceResilience:
@@ -62,11 +91,11 @@ class TestServiceResilience:
         """测试超时处理"""
         result = api_client.crawl(url="https://text.npr.org", sync_wait_ms=100)
 
-        assert result.response.status_code in [200, 408, 500]
+        # 202：同步等待窗口超时后任务保持异步执行（Accepted + queued），语义正确
+        assert result.response.status_code in [200, 202, 408, 500]
 
     def test_concurrent_failure_recovery(self, api_client):
         """测试并发故障恢复"""
-        from api_test_framework import CrawlrsAPIClient
         import concurrent.futures
 
         clients = [CrawlrsAPIClient() for _ in range(5)]
@@ -89,7 +118,7 @@ class TestDataIntegrity:
         for i in range(3):
             result = api_client.search(query="test", engines=["bing"], limit=5)
             if result.success:
-                results.append(result.response.body)
+                results.append(result.response.body.get("data") or {})
 
         if len(results) >= 2:
             assert results[0].keys() == results[1].keys(), "响应数据结构不一致"
@@ -142,8 +171,6 @@ class TestSecurity:
 
     def test_unauthorized_access(self, api_client):
         """测试未授权访问"""
-        from api_test_framework import CrawlrsAPIClient
-
         no_auth_client = CrawlrsAPIClient(api_key="")
         result = no_auth_client.get_audit_logs()
 

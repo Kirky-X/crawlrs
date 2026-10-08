@@ -14,6 +14,12 @@ Crawlrs API 测试框架
 
 import json
 import time
+import base64
+import hashlib
+import hmac
+import os
+import uuid
+
 import requests
 from datetime import datetime
 from typing import Dict, Any, Optional, List
@@ -26,6 +32,23 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# 服务默认端口 8899（config/default.toml），历史上误写为 3000 导致自建客户端
+# 全部 connection refused；显式传入 > 环境变量 > 默认端口
+DEFAULT_BASE_URL = os.getenv("CRAWLRS_API_URL", "http://localhost:8899")
+DEFAULT_API_KEY = os.getenv("CRAWLRS_API_KEY", os.getenv("TEST_API_KEY", "test-api-key"))
+
+
+def is_upstream_captcha(result) -> bool:
+    """引擎上游返回验证码页（本出口 IP 被搜索引擎风控）的环境限制判定。
+
+    服务端对上游 CAPTCHA 的响应为 500 且错误消息含 "CAPTCHA"（如
+    "Engine Baidu returned a CAPTCHA page"），属外部环境限制而非服务端缺陷，
+    调用方应 pytest.skip 而非计为失败。
+    """
+    if result.response.status_code != 500:
+        return False
+    return "CAPTCHA" in str(result.response.body or "")
 
 
 class HTTPMethod(Enum):
@@ -66,11 +89,9 @@ class TestResult:
 class CrawlrsAPIClient:
     """Crawlrs API 客户端"""
 
-    def __init__(
-        self, base_url: str = "http://localhost:3000", api_key: str = "test-api-key"
-    ):
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+    def __init__(self, base_url: Optional[str] = None, api_key: Optional[str] = None):
+        self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        self.api_key = api_key or DEFAULT_API_KEY
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -91,8 +112,13 @@ class CrawlrsAPIClient:
         params: Optional[Dict] = None,
         body: Optional[Dict] = None,
         headers: Optional[Dict] = None,
+        data: Optional[bytes] = None,
     ) -> tuple:
-        """发送 HTTP 请求并记录详细信息"""
+        """发送 HTTP 请求并记录详细信息
+
+        data 提供时按原始字节发送（用于需要精确签名请求体的端点），
+        否则将 body 以 JSON 序列化发送。
+        """
         url = urljoin(self.base_url + "/", endpoint.lstrip("/"))
 
         request_headers = self.session.headers.copy()
@@ -111,11 +137,21 @@ class CrawlrsAPIClient:
                 )
             elif method == HTTPMethod.POST:
                 response = self.session.post(
-                    url, params=params, json=body, headers=request_headers, timeout=30
+                    url,
+                    params=params,
+                    data=data,
+                    json=None if data is not None else body,
+                    headers=request_headers,
+                    timeout=30,
                 )
             elif method == HTTPMethod.PUT:
                 response = self.session.put(
-                    url, params=params, json=body, headers=request_headers, timeout=30
+                    url,
+                    params=params,
+                    data=data,
+                    json=None if data is not None else body,
+                    headers=request_headers,
+                    timeout=30,
                 )
             elif method == HTTPMethod.DELETE:
                 response = self.session.delete(
@@ -299,18 +335,82 @@ class CrawlrsAPIClient:
         )
         return self._record_result(f"extract_{url}", request, response, error)
 
-    def create_webhook(
-        self, url: str, events: List[str], secret: Optional[str] = None
-    ) -> TestResult:
-        """创建 Webhook"""
-        body = {"url": url, "events": events}
-        if secret:
-            body["secret"] = secret
+    @staticmethod
+    def _webhook_signing_secret() -> str:
+        """请求验签密钥：须与服务端 CRAWLRS__WEBHOOK__SECRET 同源。
 
+        测试约定经 TEST_WEBHOOK_SECRET 注入（conftest webhook_test_params 同源），
+        未注入时回读服务端环境变量名，最后回落 test-secret。
+        """
+        return os.getenv(
+            "TEST_WEBHOOK_SECRET", os.getenv("CRAWLRS__WEBHOOK__SECRET", "test-secret")
+        )
+
+    def _webhook_signature_headers(self, payload: bytes) -> Dict[str, str]:
+        """按 standardwebhooks 规范为请求体生成签名头。
+
+        与服务端 webhook_service.rs::generate_signature 同口径：
+        HMAC-SHA256(key=secret, msg="{msg_id}.{timestamp}.{body}")，签名头 `v1,<base64>`；
+        secret 以原始字节使用（含 whsec_ 前缀，两侧字面量一致即可）。
+        """
+        secret = self._webhook_signing_secret()
+        msg_id = f"msg_{uuid.uuid4().hex}"
+        timestamp = str(int(time.time()))
+        to_sign = f"{msg_id}.{timestamp}.".encode("utf-8") + payload
+        digest = hmac.new(secret.encode("utf-8"), to_sign, hashlib.sha256).digest()
+        signature = base64.b64encode(digest).decode("ascii")
+        return {
+            "webhook-id": msg_id,
+            "webhook-timestamp": timestamp,
+            "webhook-signature": f"v1,{signature}",
+        }
+
+    def create_webhook(self, url: str) -> TestResult:
+        """创建 Webhook（POST /v1/webhooks 要求 standardwebhooks 签名头，缺失 401）
+
+        契约：CreateWebhookRequest 仅含 url 且 deny_unknown_fields
+        （src/application/dto/webhook_request.rs），events 不可随创建提交；
+        响应走 {success,data} 包封，data.secret 为服务端签名密钥
+        （settings.webhook.secret，送达投递即以它签名），仅在创建响应返回。
+        """
+        body = {"url": url}
+
+        payload = json.dumps(body).encode("utf-8")
         response, request, error = self._send_request(
-            HTTPMethod.POST, "/v1/webhooks", body=body
+            HTTPMethod.POST,
+            "/v1/webhooks",
+            body=body,
+            data=payload,
+            headers=self._webhook_signature_headers(payload),
         )
         return self._record_result(f"create_webhook_{url}", request, response, error)
+
+    def map_url(self, url: str) -> TestResult:
+        """站点 URL 发现（POST /v1/map，handler 入口显式限流计量点）"""
+        body = {"url": url}
+        response, request, error = self._send_request(
+            HTTPMethod.POST, "/v1/map", body=body
+        )
+        return self._record_result(f"map_{url}", request, response, error)
+
+    def get_team_info(self) -> TestResult:
+        """获取当前团队信息（含 data.id = team_id）"""
+        response, request, error = self._send_request(HTTPMethod.GET, "/v1/teams/me")
+        return self._record_result("get_team_info", request, response, error)
+
+    def issue_api_key(
+        self, team_id: str, scopes: List[str], expires_in_secs: int = 3600
+    ) -> TestResult:
+        """签发 API key（需 crawlrs:admin scope；返回一次性明文 data.api_key）"""
+        body = {
+            "team_id": str(team_id),
+            "scopes": scopes,
+            "expires_in_secs": expires_in_secs,
+        }
+        response, request, error = self._send_request(
+            HTTPMethod.POST, "/v1/admin/api-keys", body=body
+        )
+        return self._record_result("issue_api_key", request, response, error)
 
     def get_team_geo_restrictions(self) -> TestResult:
         """获取团队地理限制"""
@@ -321,7 +421,7 @@ class CrawlrsAPIClient:
             "get_team_geo_restrictions", request, response, error
         )
 
-    def update_team_geo_restrictions(self, restrictions: List[Dict]) -> TestResult:
+    def update_team_geo_restrictions(self, restrictions: Dict) -> TestResult:
         """更新团队地理限制"""
         response, request, error = self._send_request(
             HTTPMethod.PUT, "/v1/teams/geo-restrictions", body=restrictions

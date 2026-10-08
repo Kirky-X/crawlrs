@@ -6,11 +6,17 @@
 调试搜索引擎注册问题
 """
 
+import os
+
 import requests
 
 
 def test_engine_registration():
-    headers = {"Authorization": "Bearer test-api-key"}
+    base_url = os.getenv("CRAWLRS_API_URL", "http://localhost:8899")
+    api_key = os.getenv("CRAWLRS_API_KEY", os.getenv("TEST_API_KEY", ""))
+    if not api_key:
+        raise SystemExit("未设置 API key（CRAWLRS_API_KEY / TEST_API_KEY）")
+    headers = {"Authorization": f"Bearer {api_key}"}
 
     print("=== 搜索引擎注册测试 ===\n")
 
@@ -23,14 +29,14 @@ def test_engine_registration():
 
     for request_engine, expected_engine in test_cases:
         resp = requests.post(
-            "http://localhost:3000/v1/search",
+            f"{base_url}/v1/search",
             json={"query": "test", "engines": [request_engine]},
             headers=headers,
             timeout=30,
         )
 
         data = resp.json()
-        results = data.get("results", [])
+        results = (data.get("data") or {}).get("results", [])
 
         # 统计各引擎返回结果
         engine_counts = {}

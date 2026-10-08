@@ -55,6 +55,9 @@ fn build_inklog_config(settings: &LoggingSettings) -> InklogConfig {
         http_server: None,
         // Per-target 日志级别由 RUST_LOG 承担，此处保持空表（默认值）
         target_levels: Default::default(),
+        // inklog 0.3.0-rc.6 新增：未配置 = 内置兜底采样 / 限流订阅器不接线，行为与 rc.5 一致
+        sampling: Default::default(),
+        rate_limit: Default::default(),
     }
 }
 

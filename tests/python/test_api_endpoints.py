@@ -11,6 +11,8 @@ Crawlrs API 端点测试套件
 import pytest
 import time
 
+from api_test_framework import is_upstream_captcha
+
 
 class TestHealthEndpoints:
     """健康检查端点测试"""
@@ -35,10 +37,12 @@ class TestSearchEndpoints:
     def test_basic_search(self, api_client):
         """测试基本搜索功能"""
         result = api_client.search(query="test", engines=["baidu"], limit=5)
+        if is_upstream_captcha(result):
+            pytest.skip("Baidu 上游返回验证码页（环境限制）")
         assert result.success, f"搜索失败: {result.error_message}"
         assert result.response.status_code == 200
 
-        response_data = result.response.body
+        response_data = result.response.body.get("data") or {}
         assert "results" in response_data
         assert isinstance(response_data["results"], list)
 
@@ -47,9 +51,11 @@ class TestSearchEndpoints:
         result = api_client.search(
             query="python programming", engines=["baidu"], limit=10
         )
+        if is_upstream_captcha(result):
+            pytest.skip("Baidu 上游返回验证码页（环境限制）")
         assert result.success, f"多引擎搜索失败: {result.error_message}"
 
-        response_data = result.response.body
+        response_data = result.response.body.get("data") or {}
         assert "results" in response_data
 
     def test_search_with_sync_wait(self, api_client):
@@ -57,6 +63,8 @@ class TestSearchEndpoints:
         result = api_client.search(
             query="web scraping", engines=["baidu"], limit=5, sync_wait_ms=1000
         )
+        if is_upstream_captcha(result):
+            pytest.skip("Baidu 上游返回验证码页（本出口 IP 被风控，环境限制）")
         assert result.success, f"同步等待搜索失败: {result.error_message}"
 
 
@@ -83,7 +91,7 @@ class TestCrawlEndpoints:
         if not crawl_result.success:
             pytest.skip("无法创建爬取任务")
 
-        response_data = crawl_result.response.body
+        response_data = crawl_result.response.body.get("data") or {}
         if "crawl_id" in response_data and response_data["crawl_id"]:
             crawl_id = response_data["crawl_id"]
             status_result = api_client.get_crawl_status(crawl_id)
@@ -121,14 +129,16 @@ class TestWebhookEndpoints:
     """Webhook 端点测试"""
 
     def test_create_webhook(self, api_client):
-        """测试创建 Webhook"""
-        result = api_client.create_webhook(
-            url="https://httpbin.org/post",
-            events=["task.completed"],
-        )
+        """测试创建 Webhook（客户端按 standardwebhooks 规范签名请求）
+
+        契约：创建仅提交 url（DTO deny_unknown_fields），events 不可随创建提交；
+        响应走 {success,data} 包封，data.secret 为服务端签名密钥（送达验签依赖）。
+        """
+        result = api_client.create_webhook(url="https://httpbin.org/post")
         assert result.success, f"创建 Webhook 失败: {result.error_message}"
-        response_data = result.response.body
+        response_data = result.response.body.get("data") or {}
         assert "id" in response_data
+        assert response_data.get("secret"), "创建响应应返回签名密钥（送达验签依赖）"
 
 
 class TestTeamEndpoints:
@@ -140,10 +150,17 @@ class TestTeamEndpoints:
         assert result.response.status_code in [200, 401, 403]
 
     def test_update_team_geo_restrictions(self, api_client):
-        """测试更新地理限制"""
+        """测试更新地理限制（用例结束恢复关闭，防止污染后续真实爬取用例）"""
         restrictions = {"enable_geo_restrictions": True, "allowed_countries": ["US"]}
         result = api_client.update_team_geo_restrictions(restrictions)
         assert result.response.status_code in [200, 401, 403]
+        restore = api_client.update_team_geo_restrictions(
+            {"enable_geo_restrictions": False}
+        )
+        assert restore.success, (
+            f"恢复地理限制基线失败: {restore.response.status_code} "
+            f"{restore.response.body}"
+        )
 
 
 class TestAuditEndpoints:

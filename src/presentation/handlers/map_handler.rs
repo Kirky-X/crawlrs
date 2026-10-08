@@ -12,6 +12,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use fluent_bundle::FluentValue;
 use log::error;
 use std::sync::Arc;
 
@@ -21,6 +22,7 @@ use crate::application::use_cases::map_use_case::{
 };
 use crate::config::settings::Settings;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
+use crate::i18n::{I18nBundle, Locale};
 use crate::presentation::handlers::check_ssrf_url;
 use crate::presentation::handlers::response_builder::{
     error_response, error_response_with_code, json_rejection_response, success_response,
@@ -34,6 +36,8 @@ pub async fn map(
     Extension(settings): Extension<Arc<Settings>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
     Extension(auth_state): Extension<AuthState>,
+    Extension(locale): Extension<Locale>,
+    Extension(bundle): Extension<Arc<I18nBundle>>,
     payload: Result<Json<MapRequestDto>, axum::extract::rejection::JsonRejection>,
 ) -> impl IntoResponse {
     // 提取器级拒绝（非法 JSON / 字段缺失）映射为统一包封
@@ -56,7 +60,7 @@ pub async fn map(
         return response;
     }
 
-    map_core(&map_use_case, &settings, &payload).await
+    map_core(&map_use_case, &settings, &payload, &locale, &bundle).await
 }
 
 /// 聚合核心：流式消费 loc 通道并按 `execute` 语义聚合为响应
@@ -67,6 +71,8 @@ async fn map_core(
     map_use_case: &MapUseCase,
     settings: &Settings,
     payload: &MapRequestDto,
+    locale: &Locale,
+    bundle: &Arc<I18nBundle>,
 ) -> Response {
     let options = SitemapStreamOptions {
         channel_capacity: settings.sitemap.channel_capacity,
@@ -88,11 +94,44 @@ async fn map_core(
             )
         }
         Err(MapError::TargetUnreachable(msg)) => {
-            error!("map target unreachable for {}: {}", payload.url, msg);
+            log_map_target_unreachable(&payload.url, &msg);
             error_response_with_code(StatusCode::BAD_GATEWAY, "MAP_TARGET_UNREACHABLE", msg)
+        }
+        Err(MapError::SitemapStatus(status)) => {
+            let msg = crate::i18n::t_with_args(
+                locale,
+                bundle,
+                "api-map-sitemap-status",
+                &[("status", FluentValue::from(status as i64))],
+            );
+            log_map_target_unreachable(&payload.url, &msg);
+            error_response_with_code(StatusCode::BAD_GATEWAY, "MAP_TARGET_UNREACHABLE", msg)
+        }
+        Err(MapError::OriginUnparsable(url)) => {
+            let msg = crate::i18n::t_with_args(
+                locale,
+                bundle,
+                "api-map-origin-unparsable",
+                &[("url", FluentValue::from(url.as_str()))],
+            );
+            error_response(StatusCode::BAD_REQUEST, msg)
         }
         Err(MapError::Internal(msg)) => error_response(StatusCode::BAD_REQUEST, msg),
     }
+}
+
+/// 运维日志（启动期全局束 locale）：map 目标不可达
+fn log_map_target_unreachable(url: &str, message: &str) {
+    error!(
+        "{}",
+        crate::i18n::tr_log_args(
+            "map-target-unreachable",
+            &[
+                ("url", FluentValue::from(url)),
+                ("message", FluentValue::from(message)),
+            ],
+        )
+    );
 }
 
 #[cfg(test)]
@@ -151,6 +190,15 @@ mod tests {
 
     fn make_settings() -> Arc<Settings> {
         Arc::new(Settings::default())
+    }
+
+    fn test_bundle() -> Arc<I18nBundle> {
+        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+        Arc::new(I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
+    }
+
+    fn test_locale() -> Locale {
+        "en-US".parse().unwrap()
     }
 
     /// 恒放行的限流服务 mock（对齐 search_handler 测试惯例）
@@ -291,7 +339,14 @@ mod tests {
             exclude_patterns: None,
             limit: None,
         };
-        let response = map_core(&use_case, &make_settings(), &payload).await;
+        let response = map_core(
+            &use_case,
+            &make_settings(),
+            &payload,
+            &test_locale(),
+            &test_bundle(),
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -321,7 +376,14 @@ mod tests {
             exclude_patterns: None,
             limit: None,
         };
-        let response = map_core(&use_case, &make_settings(), &payload).await;
+        let response = map_core(
+            &use_case,
+            &make_settings(),
+            &payload,
+            &test_locale(),
+            &test_bundle(),
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -346,7 +408,14 @@ mod tests {
             exclude_patterns: None,
             limit: None,
         };
-        let response = map_core(&use_case, &make_settings(), &payload).await;
+        let response = map_core(
+            &use_case,
+            &make_settings(),
+            &payload,
+            &test_locale(),
+            &test_bundle(),
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -371,7 +440,14 @@ mod tests {
             exclude_patterns: None,
             limit: None,
         };
-        let response = map_core(&use_case, &make_settings(), &payload).await;
+        let response = map_core(
+            &use_case,
+            &make_settings(),
+            &payload,
+            &test_locale(),
+            &test_bundle(),
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -385,6 +461,10 @@ mod tests {
                 Arc::new(AllowedRateLimiter) as Arc<dyn RateLimitingService>
             ))
             .layer(Extension(make_auth_state()))
+            // handler 提取 Extension<Locale> / Extension<Arc<I18nBundle>>：
+            // 与生产装配同序（bundle 在外层先行插入，middleware 协商后注入 locale）
+            .layer(axum::middleware::from_fn(crate::i18n::i18n_middleware))
+            .layer(Extension(test_bundle()))
     }
 
     /// POST /v1/map 已注册且接线完整：内部地址被 SSRF 防护拦截（400），

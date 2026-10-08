@@ -460,7 +460,7 @@ mod tests {
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .get_pending_tasks(Some(crate::domain::id::Id::generate().into()), Some(10))
+            .get_pending_tasks(Some(crate::domain::id::Id::generate()), Some(10))
             .await;
         assert!(
             result.is_ok(),
@@ -480,7 +480,7 @@ mod tests {
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
-            .get_pending_tasks(Some(crate::domain::id::Id::generate().into()), None)
+            .get_pending_tasks(Some(crate::domain::id::Id::generate()), None)
             .await;
         assert!(
             result.is_ok(),
@@ -519,7 +519,7 @@ mod tests {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .count_by_status(
-                Some(crate::domain::id::Id::generate().into()),
+                Some(crate::domain::id::Id::generate()),
                 TasksBacklogStatus::Pending,
             )
             .await;
@@ -1259,7 +1259,7 @@ mod tests {
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
         let result = repo
             .count_by_status(
-                Some(crate::domain::id::Id::generate().into()),
+                Some(crate::domain::id::Id::generate()),
                 TasksBacklogStatus::Processing,
             )
             .await;
@@ -1299,7 +1299,7 @@ mod tests {
             TasksBacklogStatus::Expired,
         ] {
             let result = repo
-                .count_by_status(Some(crate::domain::id::Id::generate().into()), status)
+                .count_by_status(Some(crate::domain::id::Id::generate()), status)
                 .await;
             assert!(result.is_ok(), "count_by_status failed for {:?}", status);
             assert_eq!(result.unwrap(), 0, "expected 0 count for {:?}", status);

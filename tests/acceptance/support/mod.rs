@@ -44,13 +44,32 @@ pub struct SharedHarness {
 
 static HARNESS: tokio::sync::OnceCell<Arc<SharedHarness>> = tokio::sync::OnceCell::const_new();
 
+/// 首次 bootstrap 失败原因（进程级缓存）。
+///
+/// garrison DAO 为不可重置的进程全局单例：bootstrap 在 DAO 注入之后失败时，
+/// OnceCell 不缓存 panic、场景重试会重新 bootstrap，必然以
+/// "global DAO already injected" 级联失败并掩盖首因错误。缓存首个错误后
+/// 后续调用直接复现首因，不再制造误导性级联。
+static BOOTSTRAP_ERROR: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
+
 pub async fn harness() -> Arc<SharedHarness> {
-    HARNESS
-        .get_or_init(|| async {
-            Arc::new(SharedHarness::bootstrap().await.expect("bootstrap harness"))
-        })
-        .await
-        .clone()
+    if let Some(h) = HARNESS.get() {
+        return h.clone();
+    }
+    if let Some(first_error) = BOOTSTRAP_ERROR.get() {
+        panic!("bootstrap harness 首次失败已缓存，不重试（garrison DAO 全局态不可重置）: {first_error}");
+    }
+    match SharedHarness::bootstrap().await {
+        Ok(harness) => HARNESS
+            .get_or_init(|| async move { Arc::new(harness) })
+            .await
+            .clone(),
+        Err(e) => {
+            let msg = format!("{e:#}");
+            let _ = BOOTSTRAP_ERROR.set(msg.clone());
+            panic!("bootstrap harness: {msg}");
+        }
+    }
 }
 
 const TEST_JWT_SECRET: &str = "acceptance-test-strong-secret-key-for-garrison-32-bytes!!";
@@ -204,7 +223,10 @@ impl SharedHarness {
             .await
             .map_err(|e| anyhow::anyhow!("init inklog: {e}"))?;
 
-        // 3. DI kit 组装（对齐 main.rs 的 8 模块注册）
+        // 3. DI kit 组装（对齐 main.rs 的 9 模块注册；IdModule 为 NebulaId
+        // 迁移新增，缺失时 kit.build 报 missing capability `id-generation`，
+        // 且 garrison DAO 已先注入，全局单例导致后续场景连环
+        // "global DAO already injected"）
         let mut kit = AsyncKit::new();
         kit.set_config(settings.clone());
         kit.register::<crawlrs::di::modules::SettingsModule>()
@@ -223,6 +245,8 @@ impl SharedHarness {
             .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
         kit.register::<crawlrs::di::modules::ServiceModule>()
             .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
+        kit.register::<crawlrs::di::modules::IdModule>()
+            .map_err(|e| anyhow::anyhow!("register IdModule: {e}"))?;
         let kit = kit
             .build()
             .await
@@ -345,10 +369,13 @@ async fn bootstrap_admin_key(pool: Arc<dbnexus::DbPool>) -> anyhow::Result<Strin
 
     // credits 充值：scrape/crawl/search 走 check_and_deduct_quota（balance=0 会
     // 返回 QUOTA_EXCEEDED）。验收场景需要可用余额。
+    // 落库必须用 uuid 形态：Id 的 Display 对数值形态（DEFAULT_TEAM_ID=Id(1)）
+    // 渲染为十进制 "1"，直插 uuid 列报 invalid input syntax for type uuid。
+    let team_uuid: uuid::Uuid = team_id.into();
     conn.execute_unprepared(&format!(
         "INSERT INTO credits (team_id, balance) VALUES ('{}', 100000)
          ON CONFLICT (team_id) DO UPDATE SET balance = GREATEST(credits.balance, 100000)",
-        team_id
+        team_uuid
     ))
     .await?;
 
@@ -610,13 +637,10 @@ async fn when_post_map(w: &mut AcceptanceWorld, path: String, url: String) {
 
 #[when(expr = "I POST {string} creating webhook {string} for events {string}")]
 async fn when_post_webhook(w: &mut AcceptanceWorld, path: String, url: String, events: String) {
-    let event_list: Vec<&str> = events.split(',').map(str::trim).collect();
-    post_json(
-        w,
-        &path,
-        serde_json::json!({"url": url, "events": event_list}),
-    )
-    .await;
+    // CreateWebhookRequest 仅含 url 且 deny_unknown_fields（webhook_request.rs），
+    // events 随创建提交会 400；参数保留以兼容步骤语句措辞
+    let _ = events;
+    post_json(w, &path, serde_json::json!({"url": url})).await;
 }
 
 // ---- feature 面向业务的步骤别名（与 feature 文件语句一致） ----
@@ -942,7 +966,9 @@ async fn then_json_field_is_string(w: &mut AcceptanceWorld, field: String, expec
             .as_str()
             .unwrap_or_else(|| panic!("field {field} is not a string")),
         expected,
-        "field {field} mismatch"
+        // 任务终态类断言失败时整包输出，失败原因（error/message 字段）
+        // 不落 stdout（inklog 入库），没有它无法归因
+        "field {field} mismatch; full response: {json}"
     );
 }
 

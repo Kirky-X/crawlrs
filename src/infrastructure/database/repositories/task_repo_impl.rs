@@ -49,6 +49,17 @@ impl From<dbnexus::DbError> for RepositoryError {
             DbError::Cache(msg) | DbError::Query(msg) => {
                 RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(msg)))
             }
+            DbError::RateLimited { retry_after_secs } => {
+                RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(format!(
+                    "Rate limited (retry_after={retry_after_secs:?})"
+                ))))
+            }
+            DbError::Unsupported(msg) => RepositoryError::Database(anyhow::anyhow!(DbErr::Custom(
+                format!("Unsupported: {}", msg)
+            ))),
+            DbError::VersionConflict { table, id } => RepositoryError::Database(anyhow::anyhow!(
+                DbErr::Custom(format!("Version conflict on table '{table}' for id {id}"))
+            )),
         }
     }
 }

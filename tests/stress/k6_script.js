@@ -19,7 +19,15 @@ export let options = {
     },
 };
 
-const BASE_URL = 'http://localhost:8899';
+const BASE_URL = __ENV.CRAWLRS_API_URL || 'http://localhost:8899';
+// 业务端点要求认证：不带 key 的请求全部落在 401 拒绝路径，阈值断言无意义
+const API_KEY = __ENV.CRAWLRS_API_KEY || __ENV.TEST_API_KEY || '';
+if (!API_KEY) {
+    throw new Error(
+        '未设置 API key（CRAWLRS_API_KEY / TEST_API_KEY）：'
+        + '不带认证的请求全部 401，无法对业务路径产出有效压测数据'
+    );
+}
 
 export default function () {
     // 1. Health Check
@@ -35,6 +43,7 @@ export default function () {
     const params = {
         headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${API_KEY}`,
         },
     };
 
@@ -48,7 +57,8 @@ export default function () {
         let taskId;
         try {
             const body = JSON.parse(res.body);
-            taskId = body.id;
+            // 响应为 {success, data:{...}} 信封，业务字段在 data 下
+            taskId = (body.data || {}).id;
         } catch (e) {
             console.error('Failed to parse response body: ' + res.body);
             return;
@@ -58,12 +68,12 @@ export default function () {
             // 3. Check Task Status
             sleep(Math.random() * 2 + 1); // Wait 1-3 seconds
 
-            res = http.get(`${BASE_URL}/v1/scrape/${taskId}`);
+            res = http.get(`${BASE_URL}/v1/scrape/${taskId}`, params);
             check(res, {
                 'get status status was 200': (r) => r.status === 200,
                 'task has status': (r) => {
                     try {
-                        return JSON.parse(r.body).status !== undefined;
+                        return JSON.parse(r.body).data.status !== undefined;
                     } catch (e) {
                         return false;
                     }
