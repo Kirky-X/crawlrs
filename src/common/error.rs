@@ -5,11 +5,11 @@
 //!
 //! 提供应用程序的统一错误类型，用于处理所有应用级别的错误
 
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 use axum::http::StatusCode;
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 use axum::response::{IntoResponse, Json, Response};
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 use log::error;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -25,10 +25,10 @@ pub enum CrawlRsError {
     /// 数据库错误。platform 启用时承载 `dbnexus::sea_orm::DbErr`（`#[from]` 自动转换）；
     /// 轻量面（agent-lib 等）退化为字符串载荷，不引入 sea-orm。
     /// 匹配处一律用 `Database(_)` 通配载荷，两种构建形态共用同一 match 臂。
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[error("Database error: {0}")]
     Database(#[from] dbnexus::sea_orm::DbErr),
-    #[cfg(not(feature = "platform"))]
+    #[cfg(not(any(feature = "platform", feature = "web-axum")))]
     #[error("Database error: {0}")]
     Database(String),
 
@@ -102,7 +102,7 @@ pub enum CrawlRsError {
 
 impl CrawlRsError {
     /// 获取错误的 HTTP 状态码
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     pub fn status_code(&self) -> StatusCode {
         match self {
             CrawlRsError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -282,7 +282,7 @@ impl From<CrawlRsError> for ApiErrorResponse {
 ///
 /// 在开发环境中显示详细错误信息便于调试，在生产环境中隐藏敏感信息。
 /// 默认情况下隐藏详细错误信息（安全优先）。
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 fn should_show_detailed_errors() -> bool {
     // 检查多个环境变量以支持不同的配置方式
     let env = std::env::var("CRAWLRS_ENV")
@@ -374,7 +374,7 @@ fn sanitize_engine_error(error: &str) -> String {
 /// 根据环境自动选择返回详细错误信息或脱敏后的错误信息：
 /// - 开发环境：返回详细错误信息，便于调试
 /// - 生产环境：返回脱敏后的用户友好错误信息，详细错误记录到日志
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 impl IntoResponse for CrawlRsError {
     fn into_response(self) -> Response {
         let status = self.status_code();
@@ -584,11 +584,11 @@ impl From<RepositoryError> for CrawlRsError {
         match err {
             // 双态:platform 下重建 DbErr::Custom 保住 Database 变体语义;
             // 轻量面 Database 直接承载字符串。
-            #[cfg(feature = "platform")]
+            #[cfg(any(feature = "platform", feature = "web-axum"))]
             RepositoryError::DatabaseError(msg) => {
                 CrawlRsError::Database(dbnexus::sea_orm::DbErr::Custom(msg))
             }
-            #[cfg(not(feature = "platform"))]
+            #[cfg(not(any(feature = "platform", feature = "web-axum")))]
             RepositoryError::DatabaseError(msg) => CrawlRsError::Database(msg),
             RepositoryError::NotFound => CrawlRsError::NotFound("Resource not found".to_string()),
             RepositoryError::AlreadyExists => {
@@ -659,9 +659,9 @@ impl<T, E: std::fmt::Display> RepositoryResultExt<T> for Result<T, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     use crate::common::test_support::ENV_MUTEX;
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     use axum::http::StatusCode;
     use std::time::Duration;
 
@@ -671,7 +671,7 @@ mod tests {
         assert_eq!(err.to_string(), "Not found: User");
     }
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[test]
     fn test_status_code_mapping() {
         assert_eq!(
@@ -695,11 +695,11 @@ mod tests {
     /// 双 cfg 构造器：platform 下载荷为 dbnexus::sea_orm::DbErr，轻量面下为 String——
     /// 使 DB 错误映射测试在两种构建形态下都可编译（2026-09-19 审计）。
     fn make_db_error(msg: &str) -> CrawlRsError {
-        #[cfg(feature = "platform")]
+        #[cfg(any(feature = "platform", feature = "web-axum"))]
         {
             CrawlRsError::Database(dbnexus::sea_orm::DbErr::Custom(msg.to_string()))
         }
-        #[cfg(not(feature = "platform"))]
+        #[cfg(not(any(feature = "platform", feature = "web-axum")))]
         {
             CrawlRsError::Database(msg.to_string())
         }
@@ -822,7 +822,7 @@ mod tests {
         assert!(sanitized.contains("[PARAMS_REDACTED]"));
     }
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[test]
     fn test_should_show_detailed_errors_in_dev() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
@@ -834,7 +834,7 @@ mod tests {
         std::env::remove_var("CRAWLRS_ENV");
     }
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[test]
     fn test_should_show_detailed_errors_in_local() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
@@ -846,7 +846,7 @@ mod tests {
         std::env::remove_var("APP_ENVIRONMENT");
     }
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[test]
     fn test_should_hide_detailed_errors_in_prod() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
@@ -858,7 +858,7 @@ mod tests {
         std::env::remove_var("CRAWLRS_ENV");
     }
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[test]
     fn test_should_hide_detailed_errors_by_default() {
         let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
@@ -897,7 +897,7 @@ mod tests {
     // 完整的状态码映射测试 - 覆盖所有变体
     // =============================================================================
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[test]
     fn test_status_code_all_variants() {
         // 测试所有错误变体的状态码映射
@@ -1108,7 +1108,7 @@ mod tests {
     // IntoResponse 测试 - 生产环境和开发环境
     // =============================================================================
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[tokio::test]
     async fn test_into_response_production_env() {
         let response = {
@@ -1135,7 +1135,7 @@ mod tests {
             .contains("Resource not found"));
     }
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[tokio::test]
     async fn test_into_response_development_env() {
         let response = {
@@ -1160,7 +1160,7 @@ mod tests {
             .contains("bad input"));
     }
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[tokio::test]
     async fn test_into_response_rate_limit() {
         let response = {
@@ -1481,7 +1481,7 @@ mod tests {
 
     // ========== 新变体 Authentication / ServiceUnavailable 的 IntoResponse ==========
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[tokio::test]
     async fn test_app_error_authentication_returns_401() {
         let response = {
@@ -1500,7 +1500,7 @@ mod tests {
         assert_eq!(json["error"]["status"], 401);
     }
 
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[tokio::test]
     async fn test_app_error_service_unavailable_returns_503() {
         let response = {
@@ -1524,7 +1524,7 @@ mod tests {
 
     /// 遍历全部 CrawlRsError 变体，锁定 `user_message_locale`（17 个 match 臂）均产出非空
     /// 本地化文案且 Display 非空（此前仅少量变体被覆盖）。
-    #[cfg(feature = "platform")]
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[test]
     fn test_user_message_locale_across_all_variants() {
         use crate::i18n::{I18nBundle, Locale};

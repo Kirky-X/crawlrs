@@ -2293,6 +2293,8 @@ fn browser_content() -> String {
 }
 
 /// hint 命中：needs_js=false 的请求直接按 needs_js 路由，HTTP 引擎不再被选中
+/// （record_host_browser_hint 与生产调用点同门控 content——无 content 构建不编译）
+#[cfg(feature = "content")]
 #[tokio::test]
 async fn test_host_browser_hint_skips_http_engine() {
     let http = Arc::new(CallCountEngine {

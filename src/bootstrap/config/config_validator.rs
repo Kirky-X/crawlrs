@@ -7,9 +7,9 @@ use super::config_loader::{detect_available_port, load_settings};
 use crate::config::settings::Settings;
 use crate::infrastructure::security::env_var_security::{EnvVarSecurityMonitor, EnvVarValidator};
 use anyhow::Result;
-use confers::security::rules::{
-    CorsValidator, JwtSecretValidator, SecurityValidatorRegistry, ViolationSeverity,
-};
+#[cfg(feature = "auth")]
+use confers::security::rules::JwtSecretValidator;
+use confers::security::rules::{CorsValidator, SecurityValidatorRegistry, ViolationSeverity};
 use confers::types::{AnnotatedValue, ConfigValue, SourceId};
 use confers::ConfigProvider;
 use log::{debug, error, info, warn};

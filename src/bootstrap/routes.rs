@@ -145,7 +145,9 @@ pub fn create_public_routes(state: &CrawlRsState) -> Router {
 /// # Security
 ///
 /// 首次调用时通过 `OnceLock` 保证只打印一次 WARNING 日志，告知运维本实例运行在
-/// 无鉴权模式。三处路由装配点都会调用此函数，
+/// 无鉴权模式（默认拒绝 401；显式调用
+/// `crawlrs::presentation::middleware::auth_middleware::allow_unauthenticated_protected()`
+/// 可放行）。三处路由装配点都会调用此函数，
 /// 但日志只在第一次调用时输出，避免启动日志噪声。
 #[cfg(not(feature = "auth"))]
 fn build_default_identity_template(state: &CrawlRsState) -> AuthState {
@@ -153,16 +155,20 @@ fn build_default_identity_template(state: &CrawlRsState) -> AuthState {
     WARN_ONCE.get_or_init(|| {
         log::warn!(
             "auth feature disabled — running in single-tenant degraded mode; \
-             NO authentication, NO brute-force protection. \
+             protected routes default-denied (401) unless \
+             allow_unauthenticated_protected() is called. \
              DO NOT expose to public networks."
         );
     });
 
+    // 匿名受限身份：denied scope（read/write/admin 全 false、限额 0）。
+    // 恢复 v0.2.0-rc.1 语义（rc.2 装配重构时意外丢失，见 CHANGELOG）——
+    // auth-off 不再注入 full_access；放行须经 allow_unauthenticated_protected() 显式 opt-in。
     AuthState::new(
         state.db_pool.clone(),
         DEFAULT_TEAM_ID,
         DEFAULT_API_KEY_ID,
-        ApiKeyScope::full_access(),
+        ApiKeyScope::denied(),
     )
 }
 
@@ -1341,8 +1347,12 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("register InfrastructureModule: {e}"))?;
         kit.register::<ServiceModule>()
             .map_err(|e| anyhow::anyhow!("register ServiceModule: {e}"))?;
-        kit.register::<IdModule>()
-            .map_err(|e| anyhow::anyhow!("register IdModule: {e}"))?;
+        kit.register::<IdModule>().map_err(|e| {
+            anyhow::anyhow!(
+                "{}: {e}",
+                crate::i18n::tr_log("boot-register-id-module-failed")
+            )
+        })?;
 
         let kit = kit
             .build()

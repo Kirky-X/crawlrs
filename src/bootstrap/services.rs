@@ -4,6 +4,8 @@
 //! Application services initialization.
 
 use log::info;
+// web-axum/auth-off 面不打印 admin key（bootstrap 是 auth 面流程），导入随 auth 门控
+#[cfg(feature = "auth")]
 use std::io::IsTerminal;
 use std::sync::Arc;
 
@@ -25,7 +27,6 @@ use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
 use crate::domain::services::content_extractor::ContentExtractionFacade;
 use crate::domain::services::content_extractor::QualityGateConfig;
 use crate::domain::services::extraction_service::{ExtractionService, ExtractionServiceTrait};
-#[cfg(feature = "auth")]
 use dbnexus::DbPool;
 #[cfg(feature = "auth")]
 use garrison::prelude::{GarrisonDao, GarrisonInterface, GarrisonManager};

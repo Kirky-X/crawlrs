@@ -27,7 +27,7 @@ impl From<AuditServiceError> for CrawlRsError {
             AuditServiceError::RepositoryError(repo_err) => match repo_err {
                 AuditRepositoryError::DatabaseError(anyhow_err) => {
                     // platform 下尝试还原 DbErr（保留结构化信息）；轻量面无 sea-orm，统一转字符串
-                    #[cfg(feature = "platform")]
+                    #[cfg(any(feature = "platform", feature = "web-axum"))]
                     if let Some(db_err) = anyhow_err
                         .downcast_ref::<dbnexus::sea_orm::DbErr>()
                         .cloned()
@@ -36,9 +36,9 @@ impl From<AuditServiceError> for CrawlRsError {
                     }
                     // 轻量面(platform 关)Database 变体为字符串载荷,保留 Database 语义;
                     // platform 下非 DbErr 的 anyhow 错误才落到 Other。
-                    #[cfg(not(feature = "platform"))]
+                    #[cfg(not(any(feature = "platform", feature = "web-axum")))]
                     return CrawlRsError::Database(anyhow_err.to_string());
-                    #[cfg(feature = "platform")]
+                    #[cfg(any(feature = "platform", feature = "web-axum"))]
                     return CrawlRsError::Other(format!("Database error: {}", anyhow_err));
                 }
                 AuditRepositoryError::NotFound => CrawlRsError::Other(repo_err.to_string()),

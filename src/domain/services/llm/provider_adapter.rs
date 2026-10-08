@@ -246,6 +246,10 @@ mod tests {
     }
 
     // ===== send_direct_request / resolve_provider =====
+    //
+    // 以下用例经 axum 起活体 mock：axum 由 platform 提供，llm 单特性（无
+    // platform）的测试构建不含它——该组合下整段不编译，仅保留上方纯函数用例。
+    #[cfg(feature = "platform")]
 
     /// 启动返回固定 (status, body) 的 OpenAI 兼容 mock，路径 /chat。
     async fn start_llm_mock(status: u16, body: String) -> String {
@@ -268,6 +272,7 @@ mod tests {
         format!("http://{}/chat", addr)
     }
 
+    #[cfg(feature = "platform")]
     #[tokio::test]
     async fn send_direct_request_success_parses_content_and_usage() {
         let url = start_llm_mock(
@@ -293,6 +298,7 @@ mod tests {
         assert_eq!(resp.usage.total_tokens, 7);
     }
 
+    #[cfg(feature = "platform")]
     #[tokio::test]
     async fn send_direct_request_no_api_key_no_max_tokens() {
         let url = start_llm_mock(
@@ -308,6 +314,7 @@ mod tests {
         assert_eq!(resp.usage.total_tokens, 0);
     }
 
+    #[cfg(feature = "platform")]
     #[tokio::test]
     async fn send_direct_request_error_status_maps_to_err() {
         let url = start_llm_mock(500, "boom".to_string()).await;
@@ -318,6 +325,7 @@ mod tests {
         assert!(err.to_string().contains("LLM returned error"), "got: {err}");
     }
 
+    #[cfg(feature = "platform")]
     #[tokio::test]
     async fn send_direct_request_invalid_json_maps_to_err() {
         let url = start_llm_mock(200, "not-json".to_string()).await;
@@ -328,6 +336,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "platform")]
     #[tokio::test]
     async fn send_direct_request_empty_choices_maps_to_err() {
         let url = start_llm_mock(200, r#"{"choices":[]}"#.to_string()).await;

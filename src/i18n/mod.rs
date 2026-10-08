@@ -12,7 +12,7 @@
 
 mod bundle;
 mod locale;
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 mod middleware;
 mod translate;
 
@@ -25,7 +25,7 @@ pub use locale::{
     detect_locale_from, detect_system_locale, negotiate_locale, parse_accept_language,
     resolve_startup_default_locale, BUILTIN_DEFAULT_LOCALE,
 };
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 pub use middleware::i18n_middleware;
 pub use translate::{t, t_with_args, tr_log, tr_log_args};
 

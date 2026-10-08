@@ -20,7 +20,7 @@ use crate::config::settings::Settings;
 use crate::i18n::{I18nBundle, Locale};
 use crate::presentation::handlers::response_builder::errors;
 use crate::presentation::handlers::response_builder::{
-    error_response, errors_locale, json_rejection_response, success_response,
+    error_response, error_response_locale, errors_locale, json_rejection_response, success_response,
 };
 use crate::presentation::handlers::task_queries::handle_sync_wait_and_get_status;
 use crate::presentation::handlers::task_queries::SyncWaitResult;
@@ -37,26 +37,22 @@ use log::error;
 /// - sitemap feature 未编译：能力不存在（需 `--features sitemap` 重新构建）
 /// - 主开关关闭（`CRAWLRS__SITEMAP__ENABLED=false`，默认）
 ///
-/// 返回 `Some(原因)` 表示拒绝，`None` 表示放行（或请求未启用 sitemap 源）。
-fn sitemap_seed_rejection(payload: &CrawlRequestDto, settings: &Settings) -> Option<String> {
+/// 返回 `Some(FTL key)` 表示拒绝（文案经请求 locale 翻译，见 api.ftl），
+/// `None` 表示放行（或请求未启用 sitemap 源）。
+fn sitemap_seed_rejection(payload: &CrawlRequestDto, settings: &Settings) -> Option<&'static str> {
+    // sitemap-off 组合下 settings 不参与判断（disabled_reason 恒为 feature-required）
+    #[cfg(not(feature = "sitemap"))]
+    let _ = settings;
     if payload.sitemap_seed != Some(true) {
         return None;
     }
     #[cfg(not(feature = "sitemap"))]
-    let disabled_reason: Option<String> = Some(
-        "sitemap request source requires the `sitemap` feature \
-         (rebuild with --features sitemap)"
-            .to_string(),
-    );
+    let disabled_reason: Option<&'static str> = Some("api-sitemap-feature-required");
     #[cfg(feature = "sitemap")]
-    let disabled_reason: Option<String> = if settings.sitemap.enabled {
+    let disabled_reason: Option<&'static str> = if settings.sitemap.enabled {
         None
     } else {
-        Some(
-            "sitemap request source is disabled (CRAWLRS__SITEMAP__ENABLED=false); \
-             set CRAWLRS__SITEMAP__ENABLED=true to accept sitemap_seed"
-                .to_string(),
-        )
+        Some("api-sitemap-source-disabled")
     };
     disabled_reason
 }
@@ -99,8 +95,8 @@ pub async fn create_crawl(
     }
 
     // F11：sitemap 请求源主开关校验（能力不可用时显式拒绝，禁止静默忽略）
-    if let Some(reason) = sitemap_seed_rejection(&payload, &settings) {
-        return errors::unprocessable_entity(reason);
+    if let Some(key) = sitemap_seed_rejection(&payload, &settings) {
+        return error_response_locale(StatusCode::UNPROCESSABLE_ENTITY, &locale, &bundle, key);
     }
 
     // 1. 检查限流（架构限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）

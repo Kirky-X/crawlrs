@@ -65,7 +65,8 @@ pub mod infrastructure;
 /// 表示层模块
 ///
 /// 处理HTTP请求和响应，包括路由、处理器和中间件
-#[cfg(feature = "platform")]
+/// （web-axum：auth-off 等价构建面，见 Cargo.toml web-axum 注释）
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 pub mod presentation;
 
 /// 工具模块
@@ -76,7 +77,7 @@ pub mod utils;
 /// 工作器模块
 ///
 /// 实现后台任务处理和工作器管理
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 pub mod workers;
 
 /// 搜索模块
@@ -94,19 +95,19 @@ pub mod agent_lib;
 /// 队列模块
 ///
 /// 提供任务队列接口和实现
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 pub mod queue;
 
 /// 引导模块
 ///
 /// 提供应用程序初始化的结构化方式
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 pub mod bootstrap;
 
 /// 依赖注入模块
 ///
 /// 提供基于 trait-kit 的依赖注入框架
-#[cfg(feature = "platform")]
+#[cfg(any(feature = "platform", feature = "web-axum"))]
 pub mod di;
 
 /// 国际化模块
