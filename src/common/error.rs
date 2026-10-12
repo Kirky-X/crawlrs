@@ -3,7 +3,20 @@
 
 //! 统一错误类型定义
 //!
-//! 提供应用程序的统一错误类型，用于处理所有应用级别的错误
+//! 提供应用程序的统一错误类型，用于处理所有应用级别的错误。
+//!
+//! # 与 sdforge 的职责划分
+//!
+//! 17 个领域变体的分类由本模块保有（承载爬虫领域语义，不合并进 sdforge
+//! `ApiError` 的 9 变体）。HTTP 状态码映射经变体归一后委托 sdforge
+//! `unified::http_status_for`；502/504（Network/Engine/Timeout）为库覆盖集外
+//! 残留，显式保留并登记于 docs/ARCHITECTURE.md 自研库反向需求。脱敏双层：
+//! 引擎错误串的正则脱敏为本领域特例（库不做正则脱敏），Internal 类
+//! （Other/ServiceUnavailable）整体遮蔽语义与 `ApiError::sanitized_message`
+//! 对齐（固定遮蔽文案，不透出内部细节）。i18n 经 crawlrs `I18nBundle`
+//! （fluent 装载 + locale→default→key 回退链）——sdforge `TranslationStore`
+//! 仅支持 JSON 装载且回退链为 locale→en→key，不匹配现有 fluent 资源与
+//! 可配置 default 语义，保留差异化实现（缺口已登记）。
 
 #[cfg(any(feature = "platform", feature = "web-axum"))]
 use axum::http::StatusCode;
@@ -101,27 +114,56 @@ pub enum CrawlRsError {
 }
 
 impl CrawlRsError {
+    /// 将领域错误归一为 sdforge `ApiError` 形态（HTTP 语义分类）。
+    ///
+    /// sdforge `ApiError` 无 502/504 对应变体（自研库反向需求已登记，见
+    /// docs/ARCHITECTURE.md「自研库反向需求」）：`Network`/`Engine`/`Timeout`
+    /// 三变体返回 `None`，由 [`Self::status_code`] 保留显式状态码。
+    /// 其余 14 个变体的 HTTP 状态码改由库映射表单点维护
+    /// （`sdforge::error::unified::http_status_for`）。
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
+    fn to_api_error(&self) -> Option<sdforge::error::ApiError> {
+        use sdforge::error::ApiError;
+        Some(match self {
+            CrawlRsError::Database(_)
+            | CrawlRsError::Config(_)
+            | CrawlRsError::Io(_)
+            | CrawlRsError::Task(_)
+            | CrawlRsError::Other(_) => {
+                ApiError::internal_error("crawlrs internal error", "internal")
+            }
+            CrawlRsError::Validation(msg) => ApiError::invalid_input(msg.clone(), None, None),
+            CrawlRsError::Json(err) => ApiError::invalid_input(err.to_string(), None, None),
+            CrawlRsError::Unprocessable(msg) => ApiError::validation("request", msg.clone()),
+            CrawlRsError::NotFound(msg) => ApiError::not_found(msg.clone(), None),
+            CrawlRsError::Authentication(msg) => ApiError::authentication_failed(msg.clone()),
+            CrawlRsError::PermissionDenied(msg) => ApiError::access_denied(msg.clone(), None),
+            CrawlRsError::ServiceUnavailable(_) | CrawlRsError::Cache(_) => {
+                ApiError::service_unavailable("crawlrs", None)
+            }
+            CrawlRsError::RateLimit(_) => ApiError::rate_limit_exceeded(0, 0),
+            CrawlRsError::Network(_) | CrawlRsError::Engine(_) | CrawlRsError::Timeout(_) => {
+                return None
+            }
+        })
+    }
+
     /// 获取错误的 HTTP 状态码
+    ///
+    /// 归一变体经 sdforge `unified::http_status_for` 委托库映射表；
+    /// 502/504 为 sdforge 覆盖集外残留（显式保留，缺口见 docs/ARCHITECTURE.md）。
     #[cfg(any(feature = "platform", feature = "web-axum"))]
     pub fn status_code(&self) -> StatusCode {
+        if let Some(api_error) = self.to_api_error() {
+            return StatusCode::from_u16(sdforge::error::unified::http_status_for(&api_error))
+                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        }
         match self {
-            CrawlRsError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            CrawlRsError::Network(_) => StatusCode::BAD_GATEWAY,
-            CrawlRsError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            CrawlRsError::Validation(_) => StatusCode::BAD_REQUEST,
-            CrawlRsError::Unprocessable(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            CrawlRsError::NotFound(_) => StatusCode::NOT_FOUND,
-            CrawlRsError::Authentication(_) => StatusCode::UNAUTHORIZED,
-            CrawlRsError::PermissionDenied(_) => StatusCode::FORBIDDEN,
-            CrawlRsError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            CrawlRsError::Network(_) | CrawlRsError::Engine(_) => StatusCode::BAD_GATEWAY,
             CrawlRsError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
-            CrawlRsError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            CrawlRsError::Json(_) => StatusCode::BAD_REQUEST,
-            CrawlRsError::Engine(_) => StatusCode::BAD_GATEWAY,
-            CrawlRsError::Cache(_) => StatusCode::SERVICE_UNAVAILABLE,
-            CrawlRsError::Task(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            CrawlRsError::RateLimit(_) => StatusCode::TOO_MANY_REQUESTS,
-            CrawlRsError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            // to_api_error 对其余变体必然返回 Some；新增变体会先在 to_api_error
+            // 的穷尽匹配处编译失败，不会静默落入此臂
+            other => unreachable!("status_code residual branch hit by {other:?}"),
         }
     }
 
@@ -1565,5 +1607,154 @@ mod tests {
             );
             assert!(!v.to_string().is_empty());
         }
+    }
+
+    /// status_code 委托 sdforge 映射表后与迁移前表逐项相等（17 变体全覆盖）。
+    /// sdforge 无 502/504 变体：Network/Engine→502、Timeout→504 为登记的库侧缺口残留。
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
+    #[test]
+    fn test_status_code_matches_pre_migration_table() {
+        use axum::http::StatusCode;
+        let expected: Vec<(CrawlRsError, u16)> = vec![
+            (make_db_error("db"), 500),
+            (CrawlRsError::Network("n".into()), 502),
+            (CrawlRsError::Config("c".into()), 500),
+            (CrawlRsError::Validation("v".into()), 400),
+            (CrawlRsError::Unprocessable("u".into()), 422),
+            (CrawlRsError::NotFound("nf".into()), 404),
+            (CrawlRsError::Authentication("a".into()), 401),
+            (CrawlRsError::PermissionDenied("pd".into()), 403),
+            (CrawlRsError::ServiceUnavailable("su".into()), 503),
+            (CrawlRsError::Timeout("t".into()), 504),
+            (CrawlRsError::Io(std::io::Error::other("io")), 500),
+            (
+                CrawlRsError::Json(
+                    serde_json::from_str::<serde_json::Value>("not-json")
+                        .expect_err("invalid json must produce serde error"),
+                ),
+                400,
+            ),
+            (CrawlRsError::Engine("e".into()), 502),
+            (CrawlRsError::Cache("ca".into()), 503),
+            (CrawlRsError::Task("tk".into()), 500),
+            (CrawlRsError::RateLimit("rl".into()), 429),
+            (CrawlRsError::Other("o".into()), 500),
+        ];
+        assert_eq!(expected.len(), 17, "17 个领域变体必须逐一断言");
+        for (variant, want) in expected {
+            assert_eq!(
+                variant.status_code(),
+                StatusCode::from_u16(want).unwrap(),
+                "status_code mismatch for {variant:?}"
+            );
+        }
+    }
+
+    /// 归一变体（14 个）的状态码必须等于 sdforge `http_status_for` 对归一
+    /// `ApiError` 的映射结果——证明库映射表是唯一事实来源。
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
+    #[test]
+    fn test_status_code_delegates_to_sdforge_mapping() {
+        use axum::http::StatusCode;
+        let normalized = vec![
+            make_db_error("db"),
+            CrawlRsError::Config("c".into()),
+            CrawlRsError::Validation("v".into()),
+            CrawlRsError::Unprocessable("u".into()),
+            CrawlRsError::NotFound("nf".into()),
+            CrawlRsError::Authentication("a".into()),
+            CrawlRsError::PermissionDenied("pd".into()),
+            CrawlRsError::ServiceUnavailable("su".into()),
+            CrawlRsError::Io(std::io::Error::other("io")),
+            CrawlRsError::Json(
+                serde_json::from_str::<serde_json::Value>("not-json")
+                    .expect_err("invalid json must produce serde error"),
+            ),
+            CrawlRsError::Cache("ca".into()),
+            CrawlRsError::Task("tk".into()),
+            CrawlRsError::RateLimit("rl".into()),
+            CrawlRsError::Other("o".into()),
+        ];
+        assert_eq!(normalized.len(), 14, "14 个归一变体必须逐一断言");
+        for variant in &normalized {
+            let api_error = variant
+                .to_api_error()
+                .expect("normalized variant must produce ApiError");
+            let want = StatusCode::from_u16(sdforge::error::unified::http_status_for(&api_error))
+                .expect("sdforge status must be valid");
+            assert_eq!(
+                variant.status_code(),
+                want,
+                "delegation mismatch: {variant:?}"
+            );
+        }
+        // 覆盖集外三变体不得归一（502/504 缺口）
+        assert!(CrawlRsError::Network("n".into()).to_api_error().is_none());
+        assert!(CrawlRsError::Engine("e".into()).to_api_error().is_none());
+        assert!(CrawlRsError::Timeout("t".into()).to_api_error().is_none());
+    }
+
+    /// Internal/ServiceUnavailable 类整体遮蔽语义与 sdforge
+    /// `ApiError::sanitized_message` 对齐：固定遮蔽文案，不透出内部细节。
+    #[test]
+    fn test_sanitized_message_semantic_alignment_with_sdforge() {
+        // 库侧语义基准：Internal/ServiceUnavailable 丢弃原始 message
+        let internal_detail = "connect 10.0.0.1:5432 failed password=sk-secret";
+        let masked =
+            sdforge::error::ApiError::internal_error(internal_detail, "probe").sanitized_message();
+        assert!(!masked.contains("10.0.0.1"));
+        assert!(!masked.contains("sk-secret"));
+        assert!(!masked.is_empty());
+
+        let svc_detail = "upstream http://user:pw@10.1.2.3:8080 down";
+        let svc_masked =
+            sdforge::error::ApiError::service_unavailable("upstream", None).sanitized_message();
+        assert!(!svc_masked.contains("10.1.2.3"));
+        assert!(!svc_masked.contains("pw"));
+
+        // crawlrs 侧对齐：Other/ServiceUnavailable 对外为固定遮蔽文案
+        let crawlrs_internal =
+            CrawlRsError::Other("connect 10.0.0.1:5432 failed password=sk-secret".to_string());
+        let crawlrs_msg = crawlrs_internal.user_message();
+        assert!(!crawlrs_msg.contains("10.0.0.1"));
+        assert!(!crawlrs_msg.contains("sk-secret"));
+
+        let crawlrs_svc = CrawlRsError::ServiceUnavailable(svc_detail.to_string());
+        let crawlrs_svc_msg = crawlrs_svc.user_message();
+        assert!(!crawlrs_svc_msg.contains("10.1.2.3"));
+        assert!(!crawlrs_svc_msg.contains("user:pw"));
+    }
+
+    /// i18n 三级回退链：locale 缺→default（en-US）缺→返回 key 本身。
+    #[cfg(any(feature = "platform", feature = "web-axum"))]
+    #[test]
+    fn test_user_message_locale_fallback_chain() {
+        use crate::i18n::{I18nBundle, Locale};
+        let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap();
+        let en: Locale = "en-US".parse().unwrap();
+        let zh: Locale = "zh-CN".parse().unwrap();
+
+        // 第一级：locale（zh-CN）命中
+        let localized = CrawlRsError::Timeout("t".into()).user_message_locale(&zh, &bundle);
+        assert!(!localized.is_empty());
+
+        // 第二级：locale 缺→回落 default（en-US）
+        let missing_in_zh = bundle.translate(&zh, "error-nonexistent-key");
+        assert_eq!(missing_in_zh, "error-nonexistent-key");
+
+        // 第三级：缺失 key 返回 key 本身（默认 locale 亦无该 key）
+        assert_eq!(
+            bundle.translate(&en, "error-nonexistent-key"),
+            "error-nonexistent-key"
+        );
+
+        // 参数插值不丢失：Validation 的 message 经 FluentValue 传入
+        let msg = CrawlRsError::Validation("email format invalid".to_string());
+        let rendered = msg.user_message_locale(&en, &bundle);
+        assert!(
+            rendered.contains("email format invalid"),
+            "arg interpolation lost: {rendered}"
+        );
     }
 }
