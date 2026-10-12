@@ -239,6 +239,8 @@ docker compose -f docker/docker-compose.yml up -d
 
 crawlrs 遵循领域驱动设计（DDD），采用 `presentation → application → domain → infrastructure` 四层架构：Axum 处理 HTTP 与中间件，Use Case 编排业务逻辑，领域层以 `ScraperEngine` 等 trait 定义能力契约，基础设施层经 dbnexus（Sea-ORM）对接 PostgreSQL、经 oxcache 提供多层缓存。抓取数据通路为：请求经 SSRF 前置校验 → `EngineRouter` 按策略选路（反爬检测可动态改派浏览器引擎）→ Worker 池执行 → 结果落库并触发 Webhook。
 
+自研库矩阵的消费面（同作者共享 rc 链）：garrison 承载认证与健康探针（`auth` 门控）、limiteron 承载限流与引擎熔断状态机（`ManualCircuitBreaker` 薄封装 + `AtomicU8` 同步镜像）、oxcache 承载缓存本体（memory + `serialization` + `metrics`）与 URL 去重布隆过滤器（`bloom` feature，替代自研 MmapBloom）、sdforge 承载 DTO 校验与 HTTP 错误状态码映射（`unified::http_status_for`）。已吸收的 6 处重叠实现与库侧缺口登记见 [🏗️ 架构文档 · 自研库反向需求](docs/ARCHITECTURE.md)。
+
 分层职责、引擎路由细节、全部增强模块、队列/缓存/限流设计与部署拓扑详见 [🏗️ 架构文档](docs/ARCHITECTURE.md)。
 
 ---

@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Changed（selfdev-lib-adoption-r1：6 处自研实现下沉自研库矩阵）
+
+逐项复核 crawlrs 自研实现与自研库（limiteron/garrison/oxcache/sdforge）能力重叠面后吸收，库侧缺口按 §docs/ARCHITECTURE.md「自研库反向需求」登记：
+
+- **S3 错误机制下沉 sdforge**（`src/common/error.rs`）：`status_code` 手写 17 臂改经「变体→`ApiError` 归一 + `unified::http_status_for` 委托」——14 个变体的 HTTP 状态码由库映射表单点维护，映射结果与迁移前表逐项相等（测试钉住）；502/504（Network/Engine/Timeout）为 sdforge 覆盖集外残留，显式保留并登记缺口；`sanitize_engine_error` 正则脱敏保留为领域特例，Internal/ServiceUnavailable 整体遮蔽语义与 `ApiError::sanitized_message` 对齐（测试断言）；i18n 保留 crawlrs `I18nBundle`（sdforge `TranslationStore` 仅支持 JSON 装载、回退链不匹配，缺口已登记）
+- **S5 DNS 单飞折叠 oxcache**（`src/infrastructure/dns/dns_cache.rs`）：`lookup_host` 的 miss/single-flight/回写编排折叠为 `Cache::get_or_with_ttl` 内建 leader/follower，删除自维 `in_flight` DashMap + `FlightSlot` + `resolve_single_flight`（约 120 行）；per-entry TTL 取解析器记录剩余有效期（`valid_until`，以 `default_ttl` 为上限），无记录 TTL 回落 `default_ttl`；hit/miss 指标口径不变
+- **S4 布隆过滤器替换 oxcache `BloomFilter`**（`src/utils/dedup/bloom.rs`）：删除 mmap(MAP_HUGETLB)→mmap→heap 三级降级链与 `unsafe impl Send/Sync`（约 384 行），换得 `Arc<RwLock>` 线程安全与标准 FPR 参数化（`new(1_000_000, 0.01)`，假阳性率常量化）；**行为变化：mmap 大页驻留策略移除——大容量下内存驻留由 2MiB 大页 mmap 变为堆分配（1M @1% ≈ 1.2MB 位图）**；libc 目标依赖随删除
+- **S2 引擎健康吸收 garrison**（`src/engines/health_monitor.rs`，`auth` feature 门控）：探活逻辑改写为 `EngineHealthCheck`（impl garrison `HealthCheck`）注册进 `HealthRegistry`，`/health/live` + `/health/ready` 探针路由经 `axum_routes::health_routes` 并入现有 Router（readiness 聚合 Unhealthy → 503，K8s 摘流语义由库承载；单项探测超时经库 check_timeout 护栏按 Unhealthy 聚合）；聚合口径与迁移前 `get_aggregate_status` 逐字一致（测试对账）；auth-off 构建保留精简回退，不为健康面拉入 garrison 全家桶
+- **S6 熔断薄封装 limiteron `ManualCircuitBreaker`**（`src/engines/circuit_breaker.rs`）：per-engine 键控池由 crawlrs `DashMap` 承载（库无键控熔断器），`record_success`/`record_failure` 转 async 库调用（router 五处调用点转 async），`is_open` 保持同步签名——record 后镜像状态到 `AtomicU8`（+Open 时刻），selector 同步读镜像；`CircuitStats` 与 engine 标签指标保留 crawlrs 埋点；**行为变化：滑窗绝对失败计数 → 库累计比例触发（`total ≥ failure_threshold` 且失败占比 ≥ 0.5）——连续 N 次失败仍必跳闸，混合流量下灵敏度提高**；配置映射 `min_requests = failure_threshold`、`half_open_max_successes = 1` 保留「一次成功即闭合」语义
+- **S1 团队信号量池：判定不可吸收**（`src/domain/services/team_semaphore.rs`）：复核发现库 `ConcurrencyLimiter` 无公开非阻塞入口（`try_acquire` 仅存于库 `#[cfg(test)]` 私有 impl）、键控池许可无法从 `&self` 逃逸借用（并发 map 交出 `&'a V` 必持局部 guard，自引用结构安全 Rust 不可构造）、manager 无注入入口——Fixed 模式保留 crawlrs 实现（签名/调用方零改动），与 S6 同类登记库侧缺口待二次收敛
+- 验证：`cargo test --features default --lib` 6013 通过 / 0 失败；`cargo test --features auth --lib` 6013 通过；`cargo check --features platform,auth,rate-limit,openapi` 通过；`cargo clippy --features default|agent-lib --lib` 零告警；default（经 platform 隐含 auth）/ auth-only / agent-lib（auth-off）三构建面全绿
+
+### Changed（自研库依赖特性扩容）
+
+- limiteron features 不变（`manager` 原按方案补入，S1 判定不可吸收后无消费方，按 feature hygiene 纪律撤回）；oxcache features 补 `bloom`（URL 去重布隆过滤器，替代自研 MmapBloom）；移除 libc 目标依赖（MmapBloom mmap 面随 S4 删除，全仓零引用）
+
 ### Changed（依赖升级与特性显式化清洗）
 
 - **自研 rc 链跟进**：dbnexus 0.6.0-rc.5→rc.6、confers 0.6.0-rc.5→rc.6、inklog 0.3.0-rc.5→rc.6（rc.7 fast-masking 在日志行 fancy_regex BacktrackLimitExceeded 时 panic，刻意不升、锁文件钉 rc.6，见 Cargo.toml inklog 注释）、trait-kit 0.5.0-rc.6→rc.7、oxcache 0.5.0-rc.5→rc.6、limiteron 0.3.0-rc.5→rc.6、sdforge 0.5.0-rc.5→rc.6；garrison 0.9.0-rc.2 / vecboost 0.3.0-rc.1 已是最新 rc 不动

@@ -1,5 +1,38 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
+//!
+//! # S1 吸收复核结论（selfdev-lib-adoption-r1，2026-10-11）
+//!
+//! 方案原计划将 Fixed 模式按键池化下沉 limiteron `LimiterManager::
+//! get_concurrency_limiter`。逐项打开库源码复核后判定**不可吸收**（与 S6
+//! 熔断同类的"部分可行→保留自研 + 登记库侧缺口"），三处硬阻塞：
+//!
+//! 1. **无公开非阻塞获取入口**：`ConcurrencyLimiter` 公开面只有
+//!    `acquire`（async，借位 `SemaphorePermit<'_>`）与 `Limiter::allow`
+//!    （30s 租约语义，非请求级），`try_acquire` 仅存在于库的
+//!    `#[cfg(test)]` 私有 impl（../base/limiteron/src/limiters/concurrency.rs:304
+//!    快照），`TeamSemaphore::try_acquire` 的同步非阻塞签名无库对应。
+//! 2. **键控池许可无法逃逸借用**：`acquire` 的返回 permit 生命周期钉在
+//!    `&ConcurrencyLimiter` 上；任何并发 map（DashMap/RwLock/papaya）从
+//!    `&self` 交出 `&'a V` 都需持有局部 guard（自引用结构在安全 Rust 中
+//!    不可构造），`TeamSemaphore::acquire(&self, ...)` 无法把库 permit
+//!    返回给调用方。调用方（team_semaphore_middleware 持 permit 跨
+//!    `next.run(request).await`、scrape_worker 持 permit 跨整个
+//!    `process_task`）均要求 permit 可移出方法。
+//! 3. **无法注入自有信号量**：`with_dependencies(semaphore, timeout)` 虽
+//!    公开，但 `LimiterManager` 只自建 `ConcurrencyLimiter::new(max)`，
+//!    无注册/注入入口；绕开 manager 自建键控池则等于零吸收。
+//!
+//! 结论：Fixed 模式保留 crawlrs DashMap + `Arc<Semaphore>` 实现，
+//! `acquire`/`try_acquire`/`record_success`/`record_failure` 签名语义
+//! 不变、调用方零改动；库侧缺口（owned/try_acquire、同步 state 快照、
+//! `ConcurrencyLimiter` 动态 resize）按 S8 登记至 docs/ARCHITECTURE.md，
+//! 待 limiteron 补齐后二次收敛。已知分歧：Fixed 队 `default_permits == 0`
+//! 时 `acquire` 将永久阻塞（库路径为 assert 显性失败），生产配置恒 > 0。
+//!
+//! Adaptive 模式同前：`AdaptiveSemaphore` + `AIMDController` 外层保留
+//! （库 `ConcurrencyLimiter` 容量固定、manager 同 key 参数不一致 panic，
+//! 动态 resize 属库侧缺口）。
 
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -664,6 +697,21 @@ mod tests {
     fn test_new_with_zero_permits() {
         let sem = TeamSemaphore::new(0);
         assert_eq!(sem.default_permits, 0);
+    }
+
+    /// 零许可队：非阻塞面立即返回 None（不排队、不挂起）。
+    /// 阻塞面（acquire）在 0 许可下会永久等待——该分歧为 S1 保留自研的
+    /// 已知项（库路径为 assert 显性失败），生产配置恒 > 0。
+    #[test]
+    fn test_zero_permits_try_acquire_returns_none_without_blocking() {
+        let sem = TeamSemaphore::new(0);
+        let team_id = crate::domain::id::Id::generate();
+        assert!(
+            sem.try_acquire(team_id).is_none(),
+            "zero-permit team must not hand out permits on the non-blocking path"
+        );
+        // 条目已创建，但许可池为空
+        assert!(sem.semaphores.contains_key(&team_id));
     }
 
     #[test]

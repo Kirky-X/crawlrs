@@ -26,12 +26,12 @@
 - [📬 Queue System](#-queue-system)
 - [💾 Caching Strategy](#-caching-strategy)
 - [⏱️ Rate Limiting](#️-rate-limiting)
+- [🔁 自研库反向需求](#-自研库反向需求)
 - [🔒 Security Model](#-security-model)
 - [🚢 Deployment Architecture](#-deployment-architecture)
 - [📈 Scalability Considerations](#-scalability-considerations)
 - [🔮 Future Enhancements](#-future-enhancements)
 - [📚 Documentation](#-documentation)
-
 ---
 
 ## 🧭 Overview
@@ -1459,6 +1459,31 @@ Configured with rules for:
 - Default team rate limits
 - API key-level rate limits
 - Burst allowances
+
+---
+
+## 🔁 自研库反向需求
+
+自研库矩阵（limiteron / garrison / oxcache / sdforge，同作者共享 rc 链）已承载认证、限流、缓存、DTO 等基础面。本节登记 **crawlrs 侧已按库能力收敛后仍存在的库侧缺口**——均为向 limiteron / sdforge 反向提需求的依据；每条附本变更（`selfdev-lib-adoption-r1`，2026-10）中的用途与目标收敛路径。oxcache 在本变更消费面（memory 缓存 + `get_or_with_ttl` 内建 single-flight + `BloomFilter`）无缺口。
+
+### limiteron
+
+| # | 需求 | 现状（过渡态） | 用途 / 收敛路径 |
+|---|------|---------------|----------------|
+| L1 | `KeyedCircuitBreaker`：管理器级键控熔断池（对齐 `LimiterManager::get_concurrency_limiter` 形态） | crawlrs `DashMap<String, Arc<ManualCircuitBreaker>>` 薄封装（`src/engines/circuit_breaker.rs`），库只提供单实例 | 引擎熔断（S6）。库补齐键控池后删除 crawlrs DashMap 层，改经 manager 取用 |
+| L2 | 滑窗绝对失败计数模式（对齐 crawlrs 迁移前语义） | 库为累计比例触发（`total >= min_requests` 且 `failures/total >= 0.5`），混合流量下灵敏度提高（行为变化已登记 CHANGELOG） | 引擎熔断（S6）。库补齐滑窗模式后按引擎恢复"窗口内 N 次失败跳闸"语义 |
+| L3 | 同步 `try_admit` / state 快照 | crawlrs `AtomicU8` 镜像（record 路径异步刷新，selector 同步读，`src/engines/circuit_breaker.rs`） | engine_selector 同步候选过滤（禁 sync 上下文 block_on）。库提供同步 state 快照后删除镜像层 |
+| L4 | `ConcurrencyLimiter` 动态 resize | crawlrs AIMD 保留自有 `AdaptiveSemaphore` 外层（`src/domain/services/team_semaphore.rs`）；库 manager 同 key 参数不一致直接 panic，与动态 resize 互斥 | 团队并发 AIMD（S1）。库补齐 resize 后 AIMD 分支可全量池化 |
+| L5 | `ConcurrencyLimiter` 公开 owned / 非阻塞获取入口（`try_acquire` 目前仅存在于库 `#[cfg(test)]` 私有 impl）+ 键控池许可可从 `&self` 逃逸借用 | `TeamSemaphore` Fixed 模式保留 crawlrs `DashMap + Arc<Semaphore>` 实现（`acquire` 返回 owned permit、`try_acquire` 同步返回 `Option`，调用方零改动） | 团队并发 Fixed 池（S1 判定不可吸收的直接原因）。库补齐 owned/try_acquire 后 Fixed 分支可下沉 manager 键控池 |
+
+### sdforge
+
+| # | 需求 | 现状（过渡态） | 用途 / 收敛路径 |
+|---|------|---------------|----------------|
+| S1 | `unified::http_status_for` 映射集补 502/504（BAD_GATEWAY / GATEWAY_TIMEOUT 对应 `ApiError` 变体） | `CrawlRsError::Network`/`Engine`→502、`Timeout`→504 为显式残留三分支（`src/common/error.rs`），其余 14 变体已委托库映射表 | HTTP 状态码映射（S3）。库补齐后删除残留分支，`status_code` 全量委托 |
+| S2 | `TranslationStore` 支持 fluent 资源装载 + 参数插值 + locale→default→key 回退链（当前仅 `load_from_json`，回退链为 locale→en→key） | crawlrs 保留自有 `I18nBundle`（运行时装载 `locales/*.ftl`，可配置 default locale） | 错误消息 i18n（S3）。库 fluent 面补齐后 `user_message_locale` 可改经库装载 |
+
+> 收敛纪律：库侧补齐后按本表逐项二次收敛（删除 crawlrs 薄封装/残留分支），并在对应 specmark 变更中登记。本表只登记**消费面缺口**，不包含库内部缺陷。
 
 ---
 
