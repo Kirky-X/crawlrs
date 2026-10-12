@@ -489,15 +489,15 @@ impl EngineRouter {
             results.len()
         );
 
-        self.circuit_breaker.record_success(&primary_name);
+        self.circuit_breaker.record_success(&primary_name).await;
 
         for (name, _) in results {
-            self.circuit_breaker.record_success(&name);
+            self.circuit_breaker.record_success(&name).await;
         }
 
         for (name, error) in errors {
             if error.is_retryable() {
-                self.circuit_breaker.record_failure(&name);
+                self.circuit_breaker.record_failure(&name).await;
             }
         }
 

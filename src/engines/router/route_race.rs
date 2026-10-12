@@ -173,7 +173,7 @@ impl EngineRouter {
                             }
 
                             self.update_engine_stats(&engine_name, true, response_time);
-                            self.circuit_breaker.record_success(&engine_name);
+                            self.circuit_breaker.record_success(&engine_name).await;
                             self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
                             self.metrics
                                 .successful_requests
@@ -231,7 +231,7 @@ impl EngineRouter {
                             );
 
                             if e.is_retryable() {
-                                self.circuit_breaker.record_failure(&engine_name);
+                                self.circuit_breaker.record_failure(&engine_name).await;
                             }
                             last_error = Some(e);
                             // 继续竞速剩余候选

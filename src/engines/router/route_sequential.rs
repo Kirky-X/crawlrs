@@ -470,7 +470,7 @@ impl EngineRouter {
                     }
 
                     self.update_engine_stats(engine_name, true, response_time);
-                    self.circuit_breaker.record_success(engine_name);
+                    self.circuit_breaker.record_success(engine_name).await;
 
                     // Prometheus 指标埋点
                     counter!(
@@ -561,7 +561,7 @@ impl EngineRouter {
                         .record_engine_failure(engine_name, &e.to_string());
 
                     if e.is_retryable() {
-                        self.circuit_breaker.record_failure(engine_name);
+                        self.circuit_breaker.record_failure(engine_name).await;
 
                         // 记录失败原因到 tracker（在 e move 之前取 reason）
                         let reason = e.retry_reason();
@@ -646,7 +646,7 @@ impl EngineRouter {
                     self.metrics
                         .record_engine_failure(engine_name, &timeout_err.to_string());
 
-                    self.circuit_breaker.record_failure(engine_name);
+                    self.circuit_breaker.record_failure(engine_name).await;
 
                     let reason = timeout_err.retry_reason();
                     tracker.record(reason);

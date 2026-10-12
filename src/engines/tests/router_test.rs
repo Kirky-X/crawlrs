@@ -1531,7 +1531,7 @@ async fn test_route_skips_engine_when_circuit_breaker_open() {
             failure_window: Duration::from_secs(60),
         },
     );
-    router.circuit_breaker.record_failure("guarded");
+    router.circuit_breaker.record_failure("guarded").await;
     assert!(
         router.circuit_breaker.is_open("guarded"),
         "circuit breaker should be open after 1 failure"
@@ -2160,8 +2160,8 @@ fn test_sort_candidates_smart_hybrid_score_priority() {
 
 // === select_optimal_engines 熔断器过滤测试 ===
 
-#[test]
-fn test_select_optimal_engines_circuit_breaker_skips_open() {
+#[tokio::test]
+async fn test_select_optimal_engines_circuit_breaker_skips_open() {
     let e1: Arc<dyn ScraperEngine> = Arc::new(MockEngine {
         engine_name: "open-cb",
         score: 100,
@@ -2174,7 +2174,7 @@ fn test_select_optimal_engines_circuit_breaker_skips_open() {
 
     // 打开 open-cb 的熔断器
     for _ in 0..10 {
-        router.circuit_breaker.record_failure("open-cb");
+        router.circuit_breaker.record_failure("open-cb").await;
     }
 
     let request = make_request();
