@@ -131,13 +131,17 @@ impl AsyncAutoBuilder for IdModule {
 mod tests {
     use super::*;
 
-    /// 未知算法名与未编译算法显性拒绝；uuid_v8 及其别名通过。
-    /// snowflake 断言依赖本构建的 nebulaid 仅启用 uuid-v8 特性。
+    /// 未知算法名与未编译算法显性拒绝；uuid_v8 可用。
+    /// snowflake/uuid_v4 断言依赖本构建的 nebulaid 仅启用 uuid-v8 特性，
+    /// 且 nebulaid rc.3 起 uuid_v4/uuid_v7 为真算法而非 v8 别名（破坏性变更）。
     #[test]
     fn resolve_algorithm_rejects_unknown_and_uncompiled() {
         assert!(resolve_algorithm("md5").is_err());
         assert!(resolve_algorithm("snowflake").is_err());
         assert_eq!(resolve_algorithm("uuid_v8").unwrap(), AlgorithmType::UuidV8);
-        assert_eq!(resolve_algorithm("uuid_v4").unwrap(), AlgorithmType::UuidV8);
+        assert!(
+            resolve_algorithm("uuid_v4").is_err(),
+            "rc.3 起 uuid_v4 为真算法（非 v8 别名），未编译时必须显性拒绝"
+        );
     }
 }
