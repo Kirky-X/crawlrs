@@ -38,7 +38,7 @@ pub mod bloom;
 pub mod deduplicator;
 pub mod interner;
 
-pub use bloom::MmapBloom;
+pub use bloom::{UrlBloom, BLOOM_DEFAULT_CAPACITY, BLOOM_TARGET_FPR};
 pub use deduplicator::Deduplicator;
 pub use interner::UrlInterner;
 

@@ -1788,7 +1788,6 @@ dependencies = [
  "inklog",
  "inventory",
  "ipnetwork",
- "libc",
  "limiteron",
  "log",
  "lru",
@@ -5800,20 +5799,20 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 
 [[package]]
 name = "nebulaid"
-version = "0.3.0-rc.1"
+version = "0.3.0-rc.3"
 dependencies = [
  "arc-swap",
  "async-trait",
  "base64 0.23.1",
  "chrono",
  "confers",
- "fluent-bundle",
  "futures-util",
  "hex",
  "metrics",
  "parking_lot",
  "rand 0.10.3",
  "rustls",
+ "sdforge",
  "serde",
  "serde_json",
  "serde_with",
@@ -5825,7 +5824,6 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "trait-kit",
- "unic-langid",
  "url",
  "uuid",
 ]
@@ -10037,6 +10035,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

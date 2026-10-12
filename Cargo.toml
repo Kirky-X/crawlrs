@@ -310,9 +310,10 @@ trait-kit = { version = "0.5.0-rc.7", default-features = false, features = ["asy
 # 本地 sibling 仓库（../NebulaId）未发布到 registry，直接声明为 path 依赖（不走
 # [workspace.dependencies] 间接，避开 cargo-deny 对非成员路径 workspace 依赖的解析限制）。
 nebulaid = { path = "../NebulaId", version = "0.3.0-rc.1", default-features = false, features = ["sdk", "uuid-v8"] }
-# feature 裁剪（hygiene）：macros/batch/bloom 在 crawlrs 源码中零使用（已 grep 验证），
-# 仅保留 memory（L1 缓存）+ serialization（类型化存取）+ metrics（命中统计）。
-oxcache = { version = "0.5.0-rc.6", default-features = false, features = ["memory", "serialization", "metrics"] }
+# feature 裁剪（hygiene）：macros/batch 在 crawlrs 源码中零使用（已 grep 验证），
+# 保留 memory（L1 缓存）+ serialization（类型化存取）+ metrics（命中统计）
+# + bloom（URL 去重布隆过滤器 utils/dedup）。
+oxcache = { version = "0.5.0-rc.6", default-features = false, features = ["memory", "serialization", "metrics", "bloom"] }
 ahash = { version = "0.8", default-features = false, features = ["std", "runtime-rng"] }
 
 # Internationalization (i18n) — Mozilla Fluent system
@@ -453,16 +454,6 @@ sea-orm = { version = "2.0", default-features = false, features = ["runtime-toki
 sdforge = { version = "0.5.0-rc.6", default-features = false, features = ["http"] }
 # Web framework（form/matched-path/original-uri/tower-log/tracing 全仓零引用，裁掉）
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
-
-# =============================================================================
-# Target-Specific Dependencies
-# =============================================================================
-# libc：MmapBloom 的 mmap/munmap 调用所需
-# - Linux: MAP_HUGETLB 大页支持（性能优化）
-# - 其他 Unix (macOS/BSD): 普通 mmap
-# - 非 Unix (Windows/WASM): 不引入，bloom.rs 自动 fallback 到 Vec<u8> heap
-[target.'cfg(unix)'.dependencies]
-libc = { version = "0.2", default-features = false, features = ["std"] }
 
 [lints.rust.unexpected_cfgs]
 level = "deny"

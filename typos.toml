@@ -18,3 +18,7 @@ hel = "hel"
 # Akamai Bot Manager 会话 cookie 的真实名称（src/engines/antibot/patterns.rs、
 # CHANGELOG 修复记录），typos 会误判为 "_back" 的拼写错误。
 abck = "abck"
+# False Positive Rate（假阳性率）的领域缩写：src/utils/dedup/bloom.rs 的
+# BLOOM_TARGET_FPR 常量与 oxcache BloomFilter::new(capacity, fpr) 参数名
+# 对齐的通用术语，typos 会误判为 "FOR/FAR/FPS"。
+fpr = "fpr"

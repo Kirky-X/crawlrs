@@ -20,11 +20,12 @@
 //!
 //! ## 线程安全
 //!
-//! `UrlInterner` 是 `Send + Sync`（MmapBloom + hashbrown HashSet 均为 Send + Sync），
-//! 但 `insert` 需 `&mut self`（spider 原设计为单线程插入/查询，匹配 ListBucket
-//! 使用模式）。多线程共享需外层 `Mutex/RwLock`。
+//! `UrlInterner` 是 `Send + Sync`——Bloom 为 oxcache `BloomFilter`
+//! （`Arc<RwLock>` 库内线程安全，替代了原 `MmapBloom` 的
+//! `unsafe impl Send/Sync`），HashSet 本身 Send+Sync。`insert` 仍需
+//! `&mut self`（HashSet 写入需独占借用），多实例共享仍走外层锁。
 
-use super::bloom::MmapBloom;
+use super::bloom::{UrlBloom, BLOOM_DEFAULT_CAPACITY, BLOOM_TARGET_FPR};
 use hashbrown::HashSet;
 
 /// URL interner —— Bloom 预筛 + HashSet 精确校验双层缓存
@@ -34,34 +35,52 @@ use hashbrown::HashSet;
 ///   Bloom 阳性 → 查 HashSet 精确判定）
 /// - `definitely_absent(&self, url) -> bool`：返回 Bloom 是否判定为绝对不存在
 ///   （用于"绝对新 URL"快速路径，无需 HashSet 查询）
-#[derive(Debug)]
 pub struct UrlInterner {
     /// 已访问 URL 的精确集合（HashSet）
     links_visited: HashSet<String>,
-    /// mmap-backed bloom filter pre-check for O(1) membership queries
-    bloom: MmapBloom,
+    /// oxcache BloomFilter 预筛（L1 快速负向缓存）
+    bloom: UrlBloom,
+}
+
+impl std::fmt::Debug for UrlInterner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // oxcache BloomFilter 未实现 Debug，按需输出可观测统计量
+        f.debug_struct("UrlInterner")
+            .field("links_visited_len", &self.links_visited.len())
+            .field("bloom_len", &self.bloom.len())
+            .field("bloom_capacity", &self.bloom.capacity())
+            .finish()
+    }
 }
 
 impl Default for UrlInterner {
     fn default() -> Self {
         Self {
             links_visited: HashSet::new(),
-            bloom: MmapBloom::with_default_capacity(),
+            bloom: UrlBloom::new(BLOOM_DEFAULT_CAPACITY, BLOOM_TARGET_FPR),
         }
     }
 }
 
 impl UrlInterner {
-    /// 创建空 interner（默认 Bloom 容量 1M URLs）
+    /// 创建空 interner（默认 Bloom 容量 1M URLs，假阳性率 0.01）
     pub fn new() -> Self {
         Self::default()
     }
 
     /// 创建指定 Bloom 容量的 interner
+    ///
+    /// `capacity == 0` 归一为 [`BLOOM_DEFAULT_CAPACITY`]（库对 0 容量直接 panic，
+    /// 此处保留迁移前 `MmapBloom::new(0)` 的归一语义）。
     pub fn with_capacity(capacity: usize) -> Self {
+        let cap = if capacity == 0 {
+            BLOOM_DEFAULT_CAPACITY
+        } else {
+            capacity
+        };
         Self {
             links_visited: HashSet::new(),
-            bloom: MmapBloom::new(capacity),
+            bloom: UrlBloom::new(cap, BLOOM_TARGET_FPR),
         }
     }
 
@@ -87,10 +106,12 @@ impl UrlInterner {
     /// 以权威 HashSet 重建 2 倍容量的布隆过滤器
     ///
     /// 权威集合是精确真源（HashSet 全量在内存），重建只重放哈希，
-    /// 布隆位图翻倍后 FP 率恢复到构造目标（TARGET_FP）。
+    /// 位图按新容量重算后 FP 率恢复到构造目标（BLOOM_TARGET_FPR）。
+    /// 库 `BloomFilter` 的 `Clone` 共享位图（非深拷贝），故重建走
+    /// "新实例 + HashSet 重放"而非克隆。
     fn rebuild_bloom_scaled(&mut self) {
         let new_cap = self.bloom.capacity().saturating_mul(2);
-        let mut new_bloom = MmapBloom::new(new_cap);
+        let new_bloom = UrlBloom::new(new_cap, BLOOM_TARGET_FPR);
         for url in &self.links_visited {
             new_bloom.insert(url);
         }
@@ -167,16 +188,23 @@ impl UrlInterner {
     }
 
     /// Bloom 内部引用（用于调试/统计）
-    pub fn bloom(&self) -> &MmapBloom {
+    pub fn bloom(&self) -> &UrlBloom {
         &self.bloom
     }
 }
 
 impl Clone for UrlInterner {
+    /// 深拷贝语义：库 `BloomFilter::clone` 共享位图（Arc 克隆），故此处以
+    /// 权威 HashSet 重放构建独立位图，保持"克隆体互不影响"的原语义。
     fn clone(&self) -> Self {
+        let capability = self.bloom.capacity();
+        let bloom = UrlBloom::new(capability, BLOOM_TARGET_FPR);
+        for url in &self.links_visited {
+            bloom.insert(url);
+        }
         Self {
             links_visited: self.links_visited.clone(),
-            bloom: self.bloom.clone(),
+            bloom,
         }
     }
 }
@@ -334,7 +362,16 @@ mod tests {
     fn test_with_capacity() {
         let interner = UrlInterner::with_capacity(1000);
         assert!(interner.is_empty());
-        assert!(interner.bloom().size_bytes() > 0);
+        assert_eq!(interner.bloom().capacity(), 1000);
+        assert_eq!(interner.bloom().len(), 0);
+    }
+
+    /// capacity=0 归一为默认 1M（库对 0 容量 panic，保留迁移前归一语义）
+    #[test]
+    fn test_with_capacity_zero_normalized_to_default() {
+        let interner = UrlInterner::with_capacity(0);
+        assert!(interner.is_empty());
+        assert_eq!(interner.bloom().capacity(), BLOOM_DEFAULT_CAPACITY);
     }
 
     #[test]
