@@ -117,12 +117,27 @@ pub fn create_public_routes(state: &CrawlRsState) -> Router {
         .layer(Extension(state.db_pool.clone()))
         .layer(Extension(state.cache_service.clone()));
 
-    Router::new()
+    let mut router = Router::new()
         .route("/health", get(routes::health_check))
         .merge(ready_routes)
         .route("/metrics", get(metrics_handler::metrics))
         .route("/v1/version", get(routes::version))
-        .with_state(Arc::new(state.clone()))
+        .with_state(Arc::new(state.clone()));
+
+    // S2 吸收（auth 面）：garrison `health_routes` 暴露库承载的 liveness/readiness
+    // 探针（/health/live 恒 200；/health/ready 聚合 HealthRegistry 检查项，
+    // overall Unhealthy → 503，K8s 摘流语义由库承载）。与既有 /health、/ready
+    // 路径无碰撞；garrison 为 auth 可选依赖（经 platform 隐含），auth-off 构建
+    // 不编译这段。merge 置于 with_state 之后：health_routes 返回的 Router 已
+    // 自带 state（Arc<HealthRegistry>），先 merge 会把外层 Router 状态类型钉为 ()。
+    #[cfg(feature = "auth")]
+    {
+        router = router.merge(garrison::health::axum_routes::health_routes(
+            state.engine_client.health_registry(),
+        ));
+    }
+
+    router
 }
 
 /// 构造单租户降级模式下的默认身份 `AuthState` 模板（`auth` feature 关闭时使用）。

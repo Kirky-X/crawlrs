@@ -1432,9 +1432,21 @@ async fn test_engine_client_health_check_returns_degraded() {
     // Construct EngineClient directly so we can inject a health_monitor
     // that actually owns the engines. with_router/with_engines leave the
     // monitor empty, which would always report Healthy.
+    // auth 面：monitor 由 registry 检查项持有（EngineHealthCheck 内部写回状态表），
+    // 经 health_registry 字段注入等效的检查集合。
+    #[cfg(not(feature = "auth"))]
     let client = EngineClient {
         router: Arc::new(EngineRouter::new(engines.clone())),
         health_monitor: Arc::new(EngineHealthMonitor::new(engines)),
+    };
+    #[cfg(feature = "auth")]
+    let client = EngineClient {
+        router: Arc::new(EngineRouter::new(engines.clone())),
+        health_registry: Arc::new(
+            crate::engines::health_monitor::garrison_health::build_health_registry(&Arc::new(
+                EngineHealthMonitor::new(engines),
+            )),
+        ),
     };
 
     let status = client.health_check().await;
@@ -1481,9 +1493,19 @@ async fn test_engine_client_health_check_returns_unavailable() {
         target_url: "https://example.com".to_string(),
     };
 
+    #[cfg(not(feature = "auth"))]
     let client = EngineClient {
         router: Arc::new(EngineRouter::new(engines.clone())),
         health_monitor: Arc::new(EngineHealthMonitor::new_with_config(engines, config)),
+    };
+    #[cfg(feature = "auth")]
+    let client = EngineClient {
+        router: Arc::new(EngineRouter::new(engines.clone())),
+        health_registry: Arc::new(
+            crate::engines::health_monitor::garrison_health::build_health_registry(&Arc::new(
+                EngineHealthMonitor::new_with_config(engines, config),
+            )),
+        ),
     };
 
     let status = client.health_check().await;

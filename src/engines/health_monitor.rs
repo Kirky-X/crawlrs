@@ -323,6 +323,116 @@ pub enum AggregateHealthStatus {
     Unavailable,
 }
 
+// =============================================================================
+// garrison 健康面吸收（S2，`auth` feature 门控）
+// =============================================================================
+//
+// 职责划分：探活逻辑（HTTP 探测 target_url + timeout、响应时长/状态码阈值判定、
+// 连续失败计数）保留在本模块——这是引擎领域逻辑，库不提供；状态登记/聚合/
+// check_timeout 护栏/路由暴露交给 garrison `HealthRegistry` +
+// `axum_routes::health_routes`。auth-off 构建不引入 garrison（依赖树成本），
+// 保留 `EngineHealthMonitor` 自有聚合查询（`get_aggregate_status` 语义不变）。
+
+#[cfg(feature = "auth")]
+pub mod garrison_health {
+    use super::{AggregateHealthStatus, EngineHealth, EngineHealthMonitor, HealthCheckInfo};
+    use garrison::health::{HealthCheck, HealthRegistry, HealthReport, HealthResult, HealthStatus};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+
+    /// crawlrs 三态引擎健康 → garrison `HealthStatus`（三态阈值语义不变）
+    pub fn map_engine_health(health: EngineHealth) -> HealthStatus {
+        match health {
+            EngineHealth::Healthy => HealthStatus::Healthy,
+            EngineHealth::Degraded => HealthStatus::Degraded,
+            EngineHealth::Unhealthy => HealthStatus::Unhealthy,
+        }
+    }
+
+    /// garrison `HealthReport` → crawlrs `AggregateHealthStatus`
+    ///
+    /// 聚合口径与迁移前 `EngineHealthMonitor::get_aggregate_status` 逐字对齐：
+    /// 存在非健康项且无健康项 → Unavailable；存在非健康项 → Degraded（列出名称）；
+    /// 全部健康 → Healthy。注意 garrison `overall` 为 worst-of（任一 Unhealthy
+    /// 即 Unhealthy），故此处按 checks 明细重算而非直接采信 overall，
+    /// 保证混合healthy/unhealthy 场景下与迁移前判定一致。
+    pub fn map_report(report: &HealthReport) -> AggregateHealthStatus {
+        let mut healthy_count = 0usize;
+        let mut non_healthy_names = Vec::new();
+        for check in &report.checks {
+            if check.status == HealthStatus::Healthy {
+                healthy_count += 1;
+            } else {
+                non_healthy_names.push(check.name.clone());
+            }
+        }
+
+        if !non_healthy_names.is_empty() && healthy_count == 0 {
+            AggregateHealthStatus::Unavailable
+        } else if !non_healthy_names.is_empty() {
+            AggregateHealthStatus::Degraded(non_healthy_names)
+        } else {
+            AggregateHealthStatus::Healthy
+        }
+    }
+
+    /// 单引擎 garrison 健康检查项
+    ///
+    /// 内部委托 [`EngineHealthMonitor::check_engine_health`] 的领域探活逻辑，
+    /// 结果写回监控器共享状态表（`get_healthy_engines`/`get_engine_health`
+    /// 等既有消费方无需改动）。引擎列表构造后不可变，index 稳定。
+    pub struct EngineHealthCheck {
+        monitor: Arc<EngineHealthMonitor>,
+        engine_index: usize,
+    }
+
+    impl EngineHealthCheck {
+        /// 绑定监控器与引擎下标构造检查项
+        pub fn new(monitor: Arc<EngineHealthMonitor>, engine_index: usize) -> Self {
+            Self {
+                monitor,
+                engine_index,
+            }
+        }
+    }
+
+    impl HealthCheck for EngineHealthCheck {
+        fn name(&self) -> &str {
+            self.monitor.engines[self.engine_index].name()
+        }
+
+        fn check(&self) -> Pin<Box<dyn Future<Output = HealthResult<HealthStatus>> + Send>> {
+            let monitor = Arc::clone(&self.monitor);
+            let engine_index = self.engine_index;
+            Box::pin(async move {
+                let engine = Arc::clone(&monitor.engines[engine_index]);
+                let info: HealthCheckInfo = monitor.check_engine_health(&engine).await;
+                let status = info.health;
+                monitor
+                    .health_status
+                    .write()
+                    .await
+                    .insert(info.engine_name.clone(), info);
+                Ok(map_engine_health(status))
+            })
+        }
+    }
+
+    /// 由 [`EngineHealthMonitor`] 构建 garrison `HealthRegistry`（每引擎一个检查项）
+    ///
+    /// 单项检查超时护栏取探活配置 `timeout`（与领域配置对齐，替代库默认 5s）。
+    /// 空引擎列表 → 空 registry：`check_all` 返回 Healthy 空报告，
+    /// 与迁移前空引擎列表的聚合结果一致。
+    pub fn build_health_registry(monitor: &Arc<EngineHealthMonitor>) -> HealthRegistry {
+        let mut registry = HealthRegistry::new().with_check_timeout(monitor.config.timeout);
+        for index in 0..monitor.engines.len() {
+            registry.register(Box::new(EngineHealthCheck::new(Arc::clone(monitor), index)));
+        }
+        registry
+    }
+}
+
 #[async_trait]
 impl ScraperEngine for EngineHealthMonitor {
     async fn scrape(
@@ -1021,7 +1131,6 @@ mod tests {
         struct RecoveringEngine {
             call_count: Arc<std::sync::atomic::AtomicU32>,
         }
-
         #[async_trait]
         impl ScraperEngine for RecoveringEngine {
             async fn scrape(
@@ -1088,5 +1197,196 @@ mod tests {
         assert_eq!(health.consecutive_failures, 0);
         assert!(health.error_message.is_none());
         assert!(health.avg_response_time_ms.is_some());
+    }
+
+    // =========================================================================
+    // garrison 健康面吸收（S2，auth 面）：EngineHealthCheck / HealthRegistry /
+    // map_report 口径一致性 + 库 check_timeout 护栏 + health_routes 端点语义
+    // =========================================================================
+
+    #[cfg(feature = "auth")]
+    #[tokio::test]
+    async fn test_garrison_registry_report_matches_crawlrs_aggregate() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockOkEngine::new("healthy-engine")),
+            Arc::new(MockFailEngine::new("failing-engine")),
+        ];
+        let monitor = Arc::new(EngineHealthMonitor::new_with_config(engines, test_config()));
+        let registry = super::garrison_health::build_health_registry(&monitor);
+
+        let report = registry.check_all().await;
+        // 每引擎一个检查项；单项状态与领域探活判定一致（healthy / 首次失败 Degraded）
+        assert_eq!(report.checks.len(), 2);
+        let healthy = report
+            .checks
+            .iter()
+            .find(|c| c.name == "healthy-engine")
+            .expect("healthy-engine check");
+        assert_eq!(
+            healthy.status,
+            garrison::health::HealthStatus::Healthy,
+            "healthy 引擎必须映射为 Healthy"
+        );
+        let failing = report
+            .checks
+            .iter()
+            .find(|c| c.name == "failing-engine")
+            .expect("failing-engine check");
+        assert_eq!(
+            failing.status,
+            garrison::health::HealthStatus::Degraded,
+            "首次失败（未达 max_consecutive_failures）必须映射为 Degraded"
+        );
+
+        // 聚合口径与迁移前 get_aggregate_status 逐字一致（混合 healthy/degraded → Degraded）
+        let mapped = super::garrison_health::map_report(&report);
+        assert_eq!(mapped, monitor.get_aggregate_status().await);
+        match mapped {
+            AggregateHealthStatus::Degraded(names) => {
+                assert!(names.contains(&"failing-engine".to_string()));
+            }
+            other => panic!("expected Degraded, got {other:?}"),
+        }
+    }
+
+    /// 引擎探活失败状态与映射层行为验证：全失败聚合为 Unavailable，名称列表完整。
+    #[cfg(feature = "auth")]
+    #[tokio::test]
+    async fn test_garrison_registry_all_failing_maps_unavailable() {
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![
+            Arc::new(MockFailEngine::new("engine_a")),
+            Arc::new(MockFailEngine::new("engine_b")),
+        ];
+        let config = HealthCheckConfig {
+            max_consecutive_failures: 1, // 单次失败即 Unhealthy
+            ..test_config()
+        };
+        let monitor = Arc::new(EngineHealthMonitor::new_with_config(engines, config));
+        let registry = super::garrison_health::build_health_registry(&monitor);
+
+        let report = registry.check_all().await;
+        assert_eq!(report.overall, garrison::health::HealthStatus::Unhealthy);
+        let mapped = super::garrison_health::map_report(&report);
+        assert_eq!(mapped, AggregateHealthStatus::Unavailable);
+        // 与迁移前聚合一致
+        assert_eq!(mapped, monitor.get_aggregate_status().await);
+    }
+
+    /// 库 check_timeout 护栏：单项探测超过 registry 超时即按 Unhealthy 聚合，
+    /// 不无限阻塞 readiness 探针。
+    #[cfg(feature = "auth")]
+    #[tokio::test]
+    async fn test_garrison_registry_probe_timeout_marks_unhealthy() {
+        struct SlowEngine;
+
+        #[async_trait]
+        impl ScraperEngine for SlowEngine {
+            async fn scrape(
+                &self,
+                _request: &InternalScrapeRequest,
+            ) -> Result<InternalScrapeResponse, EngineError> {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                Ok(InternalScrapeResponse {
+                    captured_responses: Vec::new(),
+                    status_code: 200,
+                    content: "slow".to_string(),
+                    screenshot: None,
+                    content_type: "text/html".to_string(),
+                    headers: HashMap::new(),
+                    response_time_ms: 300,
+                    final_url: None,
+                })
+            }
+
+            fn support_score(&self, _request: &InternalScrapeRequest) -> u8 {
+                100
+            }
+
+            fn name(&self) -> &'static str {
+                "slow-engine"
+            }
+        }
+
+        let config = HealthCheckConfig {
+            timeout: Duration::from_millis(50), // 探活与库护栏同为 50ms
+            max_consecutive_failures: 1,
+            ..test_config()
+        };
+        let engines: Vec<Arc<dyn ScraperEngine>> = vec![Arc::new(SlowEngine)];
+        let monitor = Arc::new(EngineHealthMonitor::new_with_config(engines, config));
+        let registry = super::garrison_health::build_health_registry(&monitor);
+
+        let report = registry.check_all().await;
+        assert_eq!(
+            report.overall,
+            garrison::health::HealthStatus::Unhealthy,
+            "探测超过 check_timeout 护栏必须按 Unhealthy 聚合"
+        );
+        assert_eq!(report.checks.len(), 1);
+        assert_eq!(report.checks[0].name, "slow-engine");
+        assert_eq!(
+            super::garrison_health::map_report(&report),
+            AggregateHealthStatus::Unavailable
+        );
+    }
+
+    /// health_routes 端点语义（库承载）：全部检查不健康时 readiness 返回 503
+    /// （K8s 摘流语义），liveness 恒 200。
+    #[cfg(feature = "auth")]
+    #[tokio::test]
+    async fn test_garrison_health_routes_readiness_503_when_unhealthy() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use garrison::health::{HealthCheck, HealthRegistry, HealthResult, HealthStatus};
+        use std::future::Future;
+        use std::pin::Pin;
+        use tower::ServiceExt;
+
+        struct AlwaysUnhealthy;
+
+        impl HealthCheck for AlwaysUnhealthy {
+            fn name(&self) -> &str {
+                "downstream"
+            }
+
+            fn check(&self) -> Pin<Box<dyn Future<Output = HealthResult<HealthStatus>> + Send>> {
+                Box::pin(async { Ok(HealthStatus::Unhealthy) })
+            }
+        }
+
+        let mut registry = HealthRegistry::new();
+        registry.register(Box::new(AlwaysUnhealthy));
+        let app = garrison::health::axum_routes::health_routes(Arc::new(registry));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "全部下线时 readiness 必须返回非 2xx"
+        );
+
+        let live_app = {
+            let mut registry = HealthRegistry::new();
+            registry.register(Box::new(AlwaysUnhealthy));
+            garrison::health::axum_routes::health_routes(Arc::new(registry))
+        };
+        let live = live_app
+            .oneshot(
+                Request::builder()
+                    .uri("/health/live")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(live.status(), StatusCode::OK, "liveness 必须恒 200");
     }
 }

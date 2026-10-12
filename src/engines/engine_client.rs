@@ -279,8 +279,15 @@ pub trait EngineClientTrait: Send + Sync {
 pub struct EngineClient {
     /// Internal router for engine selection and request routing
     router: Arc<dyn EngineRouterTrait>,
-    /// Internal health monitor for tracking engine health
+    /// Internal health monitor for tracking engine health（auth-off 回退路径持有；
+    /// auth-on 面的探活经 garrison registry，monitor 由 registry 检查项持有）
+    #[cfg(not(feature = "auth"))]
     health_monitor: Arc<EngineHealthMonitor>,
+    /// garrison 健康注册表（S2 吸收，auth 面）：状态登记/聚合/check_timeout
+    /// 护栏与 `health_routes` 路由暴露由库承载；auth-off 构建不编译此字段，
+    /// 健康查询走监控器自有聚合回退。
+    #[cfg(feature = "auth")]
+    health_registry: Arc<garrison::health::HealthRegistry>,
 }
 
 impl EngineClient {
@@ -290,22 +297,37 @@ impl EngineClient {
         Self::with_router(router)
     }
 
-    /// Create an EngineClient with a custom router.
+    /// Create a new EngineClient with a custom router.
     pub fn with_router(router: Arc<dyn EngineRouterTrait>) -> Self {
+        let health_monitor = Arc::new(EngineHealthMonitor::new(Vec::new()));
+        #[cfg(feature = "auth")]
+        let health_registry = Arc::new(
+            crate::engines::health_monitor::garrison_health::build_health_registry(&health_monitor),
+        );
         Self {
             router,
-            health_monitor: Arc::new(EngineHealthMonitor::new(Vec::new())),
+            #[cfg(not(feature = "auth"))]
+            health_monitor,
+            #[cfg(feature = "auth")]
+            health_registry,
         }
     }
 
     /// Create an EngineClient with engines pre-registered.
     pub fn with_engines(engines: Vec<Arc<dyn ScraperEngine>>) -> Self {
-        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouter::new(engines));
+        let router: Arc<dyn EngineRouterTrait> = Arc::new(EngineRouter::new(engines.clone()));
         let engines_for_health = Vec::new(); // Will need to get engines from router
         let health_monitor = Arc::new(EngineHealthMonitor::new(engines_for_health));
+        #[cfg(feature = "auth")]
+        let health_registry = Arc::new(
+            crate::engines::health_monitor::garrison_health::build_health_registry(&health_monitor),
+        );
         Self {
             router,
+            #[cfg(not(feature = "auth"))]
             health_monitor,
+            #[cfg(feature = "auth")]
+            health_registry,
         }
     }
 
@@ -347,26 +369,60 @@ impl EngineClient {
     /// # Returns
     ///
     /// * `EngineHealthStatus` indicating the health of all engines
+    ///
+    /// auth-on：探活经 garrison `HealthRegistry::check_all`（单项 check_timeout
+    /// 护栏 + 并发执行），聚合口径按报告明细重算，与 auth-off 回退路径一致。
+    /// auth-off：监控器自有顺序探活 + `get_aggregate_status` 聚合（精简回退）。
     pub async fn health_check(&self) -> EngineHealthStatus {
-        // Perform health check on all engines
-        self.health_monitor.perform_all_health_checks().await;
-
-        // Get aggregate status and convert to public type
-        let status = self.health_monitor.get_aggregate_status().await;
-
-        match status {
-            AggregateHealthStatus::Healthy => EngineHealthStatus::Healthy,
-            AggregateHealthStatus::Degraded(unhealthy_engines) => {
-                let count = unhealthy_engines.len();
-                EngineHealthStatus::Degraded {
-                    unhealthy_engines,
-                    message: format!("{} engines degraded", count),
+        #[cfg(feature = "auth")]
+        let status = {
+            use crate::engines::health_monitor::garrison_health;
+            let report = self.health_registry.check_all().await;
+            match garrison_health::map_report(&report) {
+                AggregateHealthStatus::Healthy => EngineHealthStatus::Healthy,
+                AggregateHealthStatus::Degraded(unhealthy_engines) => {
+                    let count = unhealthy_engines.len();
+                    EngineHealthStatus::Degraded {
+                        unhealthy_engines,
+                        message: format!("{} engines degraded", count),
+                    }
                 }
+                AggregateHealthStatus::Unavailable => EngineHealthStatus::Unavailable {
+                    message: "All engines unavailable".to_string(),
+                },
             }
-            AggregateHealthStatus::Unavailable => EngineHealthStatus::Unavailable {
-                message: "All engines unavailable".to_string(),
-            },
-        }
+        };
+
+        #[cfg(not(feature = "auth"))]
+        let status = {
+            // Perform health check on all engines
+            self.health_monitor.perform_all_health_checks().await;
+
+            // Get aggregate status and convert to public type
+            let status = self.health_monitor.get_aggregate_status().await;
+
+            match status {
+                AggregateHealthStatus::Healthy => EngineHealthStatus::Healthy,
+                AggregateHealthStatus::Degraded(unhealthy_engines) => {
+                    let count = unhealthy_engines.len();
+                    EngineHealthStatus::Degraded {
+                        unhealthy_engines,
+                        message: format!("{} engines degraded", count),
+                    }
+                }
+                AggregateHealthStatus::Unavailable => EngineHealthStatus::Unavailable {
+                    message: "All engines unavailable".to_string(),
+                },
+            }
+        };
+
+        status
+    }
+
+    /// garrison 健康注册表（auth 面）：供 `health_routes` 探针路由装配使用。
+    #[cfg(feature = "auth")]
+    pub fn health_registry(&self) -> Arc<garrison::health::HealthRegistry> {
+        Arc::clone(&self.health_registry)
     }
 
     /// Get the number of registered engines.
