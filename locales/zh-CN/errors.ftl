@@ -61,3 +61,7 @@ search-error-no-engine-available = 没有可用的搜索引擎。
 # 搜索服务错误消息（2 个 key）— SearchServiceError handler 映射
 search-error-unknown-engine = 未知搜索引擎: { $name }
 search-error-smart-search = 智能搜索失败: { $message }
+
+# ID 模块启动期配置校验（2 个 key）— IdModule::resolve_algorithm()
+error-id-algorithm-unknown = id.algorithm = { $algorithm } 不是已知算法（可选 uuid_v8；uuid_v4/uuid_v7 别名归入 uuid_v8）：{ $error }
+error-id-algorithm-uncompiled = id.algorithm = { $algorithm } 未编译进本构建（nebulaid 仅启用 sdk,uuid-v8 特性）；请改用 uuid_v8，或在 Cargo.toml 启用对应 nebulaid 特性

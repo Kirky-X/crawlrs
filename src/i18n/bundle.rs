@@ -580,6 +580,18 @@ impl I18nBundle {
             "search-error-no-engine-available",
         ]);
 
+        // errors.ftl 追加 (2 keys) — ID 模块启动期算法配置校验（ModuleBuildError::IdInit）
+        keys.extend([
+            "error-id-algorithm-unknown",
+            "error-id-algorithm-uncompiled",
+        ]);
+
+        // logs.ftl 追加 (2 keys) — auth-off 降级模式运维日志
+        keys.extend([
+            "auth-allow-unauthenticated-enabled",
+            "auth-disabled-unauthenticated-denied",
+        ]);
+
         keys.into_iter().map(String::from).collect()
     }
 }

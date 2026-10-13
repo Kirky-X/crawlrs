@@ -61,3 +61,7 @@ search-error-no-engine-available = No available search engine.
 # Search service error messages (2 keys) — SearchServiceError handler mapping
 search-error-unknown-engine = Unknown search engine: { $name }
 search-error-smart-search = Smart search failed: { $message }
+
+# ID module startup config validation (2 keys) — IdModule::resolve_algorithm()
+error-id-algorithm-unknown = id.algorithm = { $algorithm } is not a known algorithm (option: uuid_v8; uuid_v4/uuid_v7 aliases map to uuid_v8): { $error }
+error-id-algorithm-uncompiled = id.algorithm = { $algorithm } is not compiled into this build (nebulaid enables only the sdk,uuid-v8 features); use uuid_v8 instead, or enable the corresponding nebulaid feature in Cargo.toml

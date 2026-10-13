@@ -122,3 +122,7 @@ search-engine-disabled-by-config = 内置搜索引擎 '{ $engine }' 已被配置
 search-all-builtin-engines-disabled = 全部内置搜索引擎均被配置关闭；smart 聚合与单引擎路径将不可用
 search-default-engine-not-registered = search.default_engine '{ $engine }' 未注册（被关闭或缺少凭据）；回退 bing
 search-default-engine-unknown = search.default_engine '{ $engine }' 不是已知引擎名（bing/baidu/sogou/exa/tavily）；回退 bing
+
+# auth-off 降级模式（2 个 key）
+auth-allow-unauthenticated-enabled = allow_unauthenticated_protected() 显式启用：protected routes 将放行未鉴权请求（匿名受限身份）。仅限受信任内网部署；公开网络必须启用 auth feature。
+auth-disabled-unauthenticated-denied = auth feature 已禁用：protected route 收到未鉴权请求，默认拒绝（401）。若确需匿名放行，请显式调用 allow_unauthenticated_protected()。

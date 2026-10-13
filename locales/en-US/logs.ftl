@@ -123,3 +123,7 @@ search-engine-disabled-by-config = Built-in search engine '{ $engine }' disabled
 search-all-builtin-engines-disabled = All builtin search engines are disabled by config; smart aggregation and single-engine search will be unavailable
 search-default-engine-not-registered = search.default_engine '{ $engine }' is not registered (disabled or missing credentials); falling back to bing
 search-default-engine-unknown = search.default_engine '{ $engine }' is not a known engine name (bing/baidu/sogou/exa/tavily); falling back to bing
+
+# Auth-off degraded mode (2 keys)
+auth-allow-unauthenticated-enabled = allow_unauthenticated_protected() explicitly enabled: protected routes will pass unauthenticated requests through with a restricted anonymous identity. For trusted intranet deployments only; the auth feature must be enabled for public networks.
+auth-disabled-unauthenticated-denied = auth feature disabled: protected route received an unauthenticated request, denying by default (401). To allow anonymous access, call allow_unauthenticated_protected() explicitly.
