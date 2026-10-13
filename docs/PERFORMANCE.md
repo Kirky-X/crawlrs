@@ -105,7 +105,7 @@ target/criterion/report/index.html
 | `[concurrency] default_team_limit` | 10 | 多租户场景按团队配额调整 |
 | `[workers] count` | `auto` | CPU 密集型可设为物理核数；IO 密集可更高 |
 | `[timeouts.engines]` 各 MRT | 见 `config/default.toml` | 依据目标站点响应分布校准，过小会放大引擎切换率 |
-| `[rate_limiting] default_limit` / `burst_size` | 60 / 20 | 与下游站点承受度匹配，避免无谓 429 重试 |
+| `[rate_limiting] default_rpm` / `burst_size` | 60 / 20（toml 值；代码 `#[config(default)]` 为 100，以 toml 为准） | 与下游站点承受度匹配，避免无谓 429 重试 |
 | `[proxy]` 轮换与粘性会话 | - | 被封禁域名较多时启用按类别路由与健康检查 |
 
 ---
@@ -113,6 +113,8 @@ target/criterion/report/index.html
 ## 📈 可观测性与测量
 
 ### Prometheus 指标（`metrics` 特性，`GET /metrics`）
+
+> ⚠️ **当前 `/metrics` 为占位实现**：`metrics_handler` 返回 JSON 包封，其中 `metrics` 字段是**硬编码的 Prometheus 风格文本**（`version` 固定 `1.0.0`、uptime 固定 `3600`），并非运行时真实指标，也不是 Prometheus 可抓取的聚合端点。权威抓取格式的 `/metrics` 端点**待实现**——实现前下表仍是指标埋点的权威清单（采集点与标签定义），Prometheus/Alertmanager 抓取不得以当前端点为准。与 [API_REFERENCE.md](API_REFERENCE.md) 的 `/metrics` 口径一致。
 
 | 指标 | 类型 | 说明 |
 |------|------|------|

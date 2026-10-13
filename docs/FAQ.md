@@ -83,11 +83,13 @@ Rust 1.97+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16+�
 
 ### ❓ 401 和 429 有什么区别？
 
-401 表示 key 无效/过期/权限不足；429 表示触发限流或 garrison 防暴力破解锁定（5 次失败 / 60 秒窗口 / 300 秒锁定）。
+401 表示 key 无效/过期/权限不足（auth-off 构建下则表示该路由未显式 `allow_unauthenticated_protected()` 放行）；429 表示触发限流或 garrison 防暴力破解锁定（5 次失败 / 60 秒窗口 / 300 秒锁定）。
 
 ### ❓ 可以完全关闭认证吗？
 
-可以。`cargo build --release --no-default-features` 构建单租户/无认证版本：`default_identity_middleware` 注入固定身份，全部请求归属默认团队；rate-limit / webhook 关闭时同样注入 Noop 实现，业务逻辑无感知。
+可以，但**默认拒绝**。`cargo build --release --no-default-features` 构建单租户/无认证版本：`default_identity_middleware` 注入固定身份，全部请求归属默认团队；rate-limit / webhook 关闭时同样注入 Noop 实现，业务逻辑无感知。
+
+> ⚠️ auth-off 不是"放行一切"：`src/bootstrap/routes.rs:179-188` 注入的是 `ApiKeyScope::denied()`（read/write/admin 全 false、限额 0），因此未显式调用 `crawlrs::presentation::middleware::auth_middleware::allow_unauthenticated_protected()` 的受保护路由**一律返回 401**。要让某个路由在 auth-off 下可匿名访问，必须在代码里显式 opt-in；启动时会打一条 WARNING 提醒本实例运行在无鉴权降级模式，**切勿暴露到公网**。
 
 ---
 
@@ -127,7 +129,18 @@ Rust 1.97+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16+�
 
 ### ❓ 测试规模有多大？
 
-截至 0.2.0：`src/` 内联测试约 5700+，`tests/` 约 950 个，9 组 Criterion 基准，5 个 Python 套件，CI 行覆盖率门禁 80%。详见 [🧪 测试场景矩阵 · 统计汇总](TEST_SCENARIOS.md)。
+截至 0.2.0-rc.2（口径：`grep -rE '^\s*#\[(tokio::)?test\]'` 统计内联测试属性）：
+
+| 项 | 数量 |
+|---|---|
+| `src/` | 408 个 `.rs` 文件、206,781 行、6,310 处内联测试属性 |
+| `tests/` | 116 个 `.rs` 文件、967 个测试函数（其中 `tests/unit/` 70 个文件） |
+| Criterion 基准组 | 9 组（`benches/benchmark.rs`） |
+| Python 测试套件 | 5 个（`tests/python/`） |
+| BDD 验收 | `tests/acceptance/` 51 个场景 / 10 个 feature 文件 |
+| CI 行覆盖率门禁 | 80% |
+
+详见 [🧪 测试场景矩阵 · 统计汇总](TEST_SCENARIOS.md#-统计汇总)。
 
 ### ❓ 如何部署？
 

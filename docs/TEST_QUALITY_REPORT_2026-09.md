@@ -1,5 +1,7 @@
 # crawlrs 测试与质量加固报告（2026-09）
 
+> ⚠️ **历史快照：本报告为 2026-09-16 时点记录，其中的测试数量/覆盖率等数据不代表当前仓库状态，请以当前实测为准。**
+
 > 范围：全链路测试执行、零报错零告警验证、E2E 测试套件固化（API 语义验证 + 审计日志）。
 > 关联文档：[TEST_SCENARIOS.md](TEST_SCENARIOS.md)（场景总矩阵）、`tests/docs/feature-test-matrix.md`（特性组合矩阵）。
 
@@ -9,9 +11,9 @@
 |---|---|
 | clippy（default / full / agent-lib，`--all-targets -D warnings`） | ✅ 零告警 |
 | 依赖 crate（sdforge / trait-kit / limiteron / garrison）编译告警 | ✅ 已清零（本地一等仓库修复） |
-| lib 单元测试（default + full） | ✅ 全绿（5522 + 5653 通过，0 失败） |
-| 集成测试（PostgreSQL，含 garrison 认证端到端） | ✅ 全绿（152 通过，0 失败） |
-| 活体 API E2E（状态码冒烟 + 语义级验证 + 审计日志） | ✅ **冒烟 91/91 + 语义 47/47**（2026-09-16，9 轮迭代收敛） |
+| lib 单元测试（default + full） | ✅ 全绿（5522 + 5653 通过，0 失败）——**历史值（2026-09-16 快照）**，当前内联测试为 6,310 处 |
+| 集成测试（PostgreSQL，含 garrison 认证端到端） | ✅ 全绿（152 通过，0 失败）——**历史值（2026-09-16 快照）**，当前 `tests/` 共 967 个测试函数 |
+| 活体 API E2E（状态码冒烟 + 语义级验证 + 审计日志） | ✅ **冒烟 91/91 + 语义 47/47**（2026-09-16，9 轮迭代收敛）——**历史值**，当前 `api_semantics_test.py` 为 37 个场景 |
 | **全量 7 阶段套件单次通过** | ✅ matrix/static/unit/integration/bench/liveapi 全 PASS（`test-results/e2e-report.txt`，终版无重试触发） |
 | 发现并修复的既有缺陷 | 13 项修复 + 1 项语义澄清（见 §3） |
 
@@ -21,7 +23,7 @@
 
 | 场景类别 | 正常路径 | 边界条件 | 异常与容错 | 验证层 |
 |---|---|---|---|---|
-| 领域模型 / 状态机 | ✅ | ✅（极值/空值/非法词汇） | ✅ | L1 内联 + L2 `tests/unit/`（71 文件） |
+| 领域模型 / 状态机 | ✅ | ✅（极值/空值/非法词汇） | ✅ | L1 内联 + L2 `tests/unit/`（快照时 71 文件，当前 70 个文件） |
 | 引擎路由与降级（SmartHybrid 等） | ✅ | ✅（并发竞争、fallback） | ✅（超时/引擎不可用） | L1 + L2 + 表驱动机 L3 |
 | 仓库层（真实 PostgreSQL） | ✅ | ✅（分页/过滤/锁） | ✅（连接失败重试） | L6 集成（testcontainers/compose） |
 | 认证（garrison RBAC） | ✅（签发→验证→鉴权） | ✅（过期/吊销/32 字节密钥边界） | ✅（INVALID_TOKEN/暴力破解防护） | L6 认证端到端 |
@@ -129,7 +131,7 @@ python3 tests/e2e/api_semantics_test.py \
 ## 6. 复核清单
 
 - [x] `./tests/e2e/e2e-suite.sh` 全阶段 PASS（2026-09-16 08:15 终版，`test-results/e2e-report.txt`）
-- [x] `test-results/api-semantics-matrix.md` 0 FAIL（47/47）
+- [x] `test-results/api-semantics-matrix.md` 0 FAIL（47/47，**历史值**；当前 37 个场景）
 - [x] `test-results/api-audit.jsonl` 抽查：脱敏、状态转换、数据过滤场景符合预期
   （人工审查入口：`test-results/api-interaction-digest.md`）
 - [x] 依赖 crate 修复已提交：trait-kit `563bf11`、limiteron `0241aa1`（sdforge 的导入修复已随其 HEAD 生效，无需单独提交）

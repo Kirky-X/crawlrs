@@ -56,9 +56,13 @@ Welcome to **crawlrs**, a high-performance self-hosted web scraping platform bui
 
 | Engine | Description | Best For |
 |--------|-------------|----------|
-| **Reqwest** | Pure Rust HTTP client | Static HTML, fast scraping |
+| **Reqwest** | Pure Rust HTTP client (default engine) | Static HTML, fast scraping |
 | **Playwright** | Chromium-based browser automation via chromiumoxide | JavaScript-heavy SPAs, interactions |
+| **WreqEngine** | TLS fingerprint spoofing with BoringSSL JA3/JA4 (`engine-tls-fingerprint`) | Sites checking TLS fingerprints |
 | **FlareSolverr** | Cloudflare challenge solver (Full/Cdp/Tls modes) | Sites behind Cloudflare |
+| **MllmEngine** | Vision-LLM autonomous navigation: screenshot → decide → act (`engine-mllm`) | Unstructured pages without stable selectors |
+
+> WreqEngine and MllmEngine are behind feature flags — build with `--features full,engine-tls-fingerprint,engine-mllm`. Note that `--features full` alone does **not** include them (`full = standard + engine-flaresolverr + extractors + llm`).
 
 **FlareSolverr modes:**
 
@@ -109,10 +113,15 @@ curl -X POST http://localhost:8899/v1/scrape \
 ```json
 {
   "success": true,
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "url": "https://example.com"
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "url": "https://example.com",
+    "credits_used": 1
+  }
 }
 ```
+
+> `data` is `ScrapeResponseDto` (`id`, `url`, `credits_used`, `captured_responses`). `credits_used` is always `1` on the enqueue/sync-wait response — one credit per scrape task. `captured_responses` (F6: captured XHR/Fetch responses) is `None` here and therefore omitted from JSON; read it later from the task result's `meta_data.captured_responses`.
 
 ---
 
@@ -141,7 +150,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ### API Key Configuration
 
-> **0.2.0 起**：API Key 不再通过 `CRAWLRS__AUTH__KEYS` 环境变量或 `[auth] keys` 配置项下发。需通过 `POST /v1/admin/api-keys` 端点向 garrison 申请签发，或用 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量在启动时引导首个 admin key（见 `.env.example`）。
+> **0.2.0 起**：API Key 不再通过 `CRAWLRS__AUTH__KEYS` 环境变量或 `[auth] keys` 配置项下发。需通过 `POST /v1/admin/api-keys` 端点向 garrison 申请签发。dev/test 环境可用 `CRAWLRS_BOOTSTRAP_ADMIN=true` 让 API 进程自举首个 admin key。
 
 **签发新 API Key（管理员）：**
 
@@ -158,6 +167,23 @@ curl -X POST http://localhost:8899/v1/admin/api-keys \
 ```
 
 详细参数说明参见 [API_REFERENCE.md → Admin API](API_REFERENCE.md#admin-api)。
+
+**引导首个 admin key（dev/test）：**
+
+两个环境变量，作用不同：
+
+| 变量 | 作用 | 代码位置 |
+|------|------|----------|
+| `CRAWLRS_BOOTSTRAP_ADMIN` | `true`/`1` 时 API 进程在启动时调用 `run_bootstrap` 自举 admin key | `src/main.rs:88` |
+| `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` | bootstrap 时复用的 `<team_id_uuid>`（可选；缺省自动创建 `bootstrap-admin-team`） | `src/bootstrap/services.rs:611` |
+
+```bash
+CRAWLRS_BOOTSTRAP_ADMIN=true ./target/release/crawlrs
+# INFO  CRAWLRS_BOOTSTRAP_ADMIN=true, running auto-bootstrap...
+# INFO  Bootstrap admin key issued: <key_id>.<secret>  (仅在 TTY 输出明文)
+```
+
+> 注意：两个变量已补录于 `.env.example`（`CRAWLRS_BOOTSTRAP_ADMIN` / `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY`）。明文 key 仅在交互式 TTY 输出一次——管道输出会被掩码（CWE-532 设计），所以 dev/bootstrap 场景用 `script -qefc ... /dev/null` 造伪 TTY 才能拿到明文。
 
 Keys are passed as a Bearer token in the `Authorization` header:
 
@@ -179,7 +205,7 @@ curl -H "Authorization: Bearer garrison_key_id.garrison_secret" http://localhost
 
 - 旧 API Key 已作废，客户端须使用 `Authorization: Bearer <garrison_key_id>.<garrison_secret>` 格式
 - 新 team 通过 `POST /v1/admin/api-keys` 签发 API Key，无需运维工具介入
-- 开发/测试环境可通过 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 环境变量自动签发 admin key
+- 开发/测试环境可设 `CRAWLRS_BOOTSTRAP_ADMIN=true`，由 API 进程自身在启动时签发 admin key（须在同一进程内，garrison 的 DAO 为进程内 oxcache，跨进程签发的 key 不可见）
 
 **`migrations/005_deprecate_legacy_api_keys.sql` 行为：**
 
@@ -226,19 +252,24 @@ Rate limits are configured server-side. Default configuration:
 [rate_limiting]
 enabled = true
 default_rpm = 60
-default_limit = 60
 burst_size = 20
 ```
 
-Every API response includes your current rate limit status:
+Rate limit status is **not** exposed through response headers: normal responses carry no per-request quota headers (the Limit / Remaining / Reset style headers commonly seen in rate-limited APIs). Only the 429 response sets a header — `Retry-After` — telling you how long to wait before retrying.
 
-```
-X-RateLimit-Limit: 60
-X-RateLimit-Remaining: 45
-X-RateLimit-Reset: 1705315200
+```bash
+curl -X POST http://localhost:8899/v1/scrape \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}' -i
+# HTTP/1.1 429 Too Many Requests
+# content-type: application/json
+# retry-after: 60
 ```
 
-Check your current limits:
+> 已知缺口：`Retry-After`（429）是唯一会被设置的限流响应头（`src/presentation/middleware/rate_limit_middleware.rs:243-247`）；配额余额类响应头未实现。需要了解剩余配额时，改为轮询 `GET /v1/teams/me/usage`。
+
+Check your current usage:
 
 ```bash
 curl -X GET http://localhost:8899/v1/teams/me/usage \
@@ -255,7 +286,7 @@ curl -X GET http://localhost:8899/v1/teams/me/usage \
 
 By default, crawlrs builds with all business capability features enabled (`default = ["platform", "db-postgres"]`，`platform` 展开为 teams/auth/rate-limit/webhook/metrics/content/sitemap/http + dbnexus/axum). For simpler deployments (e.g., internal tools, single-user scraping services), you can disable these features to:
 
-- Reduce binary size (~22MB vs ~30MB)
+- Reduce binary size (no engines and no business-capability dependencies linked in)
 - Eliminate database tables for teams/api_keys/webhooks
 - Skip API Key verification (requests pass through with a fixed identity)
 - Disable rate limiting (all requests allowed)
@@ -284,7 +315,9 @@ When `auth` is disabled, the `default_identity_middleware` injects a fixed `Auth
 | `DEFAULT_API_KEY_ID` | `domain::id::Id::from_u128(2)` | Fixed API Key ID for audit logs |
 | `DEFAULT_IDENTITY_TOKEN_HASH` | `"sha256:default_identity"` | Placeholder token hash for downstream extractors |
 
-The injected `AuthState` has `ApiKeyScope::full_access()` (read/write/admin all `true`, search/scrape limits `u32::MAX`), so all endpoints are accessible without authentication.
+The injected `AuthState` carries `ApiKeyScope::denied()` (read/write/admin all `false`, limits `0`). Protected routes therefore **reject every request with 401** unless `allow_unauthenticated_protected()` is called explicitly; opt-in also yields the denied scope, not full access. Do not expose an auth-off instance to a public network.
+
+Timeline: deny-by-default was introduced in 0.2.0-rc.1, lost during the 0.2.0-rc.2 assembly refactor, and restored in the Unreleased line (see `CHANGELOG.md`, Breaking).
 
 ### Noop Service Implementations
 
@@ -332,7 +365,6 @@ port = 8899
 [rate_limiting]
 enabled = true
 default_rpm = 60
-default_limit = 60
 burst_size = 20
 
 # No [auth] section needed — auth feature disabled
@@ -409,8 +441,11 @@ curl -X POST http://localhost:8899/v1/scrape \
 ```json
 {
   "success": true,
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "url": "https://example.com/article/123"
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "url": "https://example.com/article/123",
+    "credits_used": 1
+  }
 }
 ```
 
@@ -425,17 +460,25 @@ curl http://localhost:8899/v1/scrape/550e8400-e29b-41d4-a716-446655440000 \
 ```json
 {
   "success": true,
-  "task": {
+  "data": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "status": "completed",
+    "url": "https://example.com/article/123",
+    "created_at": "2026-01-15T00:00:00Z",
+    "completed_at": "2026-01-15T00:00:03Z",
     "result": {
-      "html": "<html>...</html>",
-      "markdown": "# Article Title\n\nContent...",
-      "text": "Article Title\n\nContent..."
-    }
+      "content": "<html><body>...</body></html>",
+      "status_code": 200,
+      "content_type": "text/html; charset=utf-8",
+      "response_time_ms": 812,
+      "created_at": "2026-01-15T00:00:00Z"
+    },
+    "error": null
   }
 }
 ```
+
+> `result` is present only while `status` is `completed`. Its fields are `content` (raw HTML), `status_code`, `content_type`, `response_time_ms`, `headers` (sensitive headers redacted), `meta_data`, `screenshot` and `created_at`. `error` is populated when the task failed.
 
 ### Output Formats
 
@@ -484,23 +527,25 @@ curl -X POST http://localhost:8899/v1/scrape \
     "extraction_rules": {
       "title": {
         "selector": "h1",
-        "attribute": "text"
+        "is_array": false
       },
       "price": {
         "selector": ".price",
-        "attribute": "text"
+        "is_array": false
       },
       "description": {
         "selector": ".description",
-        "attribute": "text"
+        "is_array": false
       },
       "imageUrl": {
         "selector": ".product-image img",
-        "attribute": "src"
+        "attr": "src",
+        "is_array": false
       },
       "inStock": {
         "selector": "#stock-status",
-        "attribute": "data-stock"
+        "attr": "data-stock",
+        "is_array": false
       }
     }
   }'
@@ -641,7 +686,17 @@ curl -X POST http://localhost:8899/v1/scrape/550e8400-e29b-41d4-a716-44665544000
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-> **⚠️ 当前不可用：** `POST /v1/scrape/{id}/_cancel` 仅注册在测试用路由装配，生产装配（`bootstrap/routes.rs`）未注册抓取取消端点。
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Scrape task cancelled."
+  }
+}
+```
+
+> `POST /v1/scrape/{id}/_cancel` is registered in the production route assembly (`src/bootstrap/route_groups/scrape_routes.rs:19-27`), alongside a regression test that asserts the route is registered (`src/bootstrap/route_groups/scrape_routes.rs:38-56`).
 
 ---
 
@@ -670,8 +725,21 @@ curl -X POST http://localhost:8899/v1/crawl \
 ```json
 {
   "success": true,
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "url": "https://example.com/blog"
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "team_id": "660e8400-e29b-41d4-a716-446655440001",
+    "name": "blog",
+    "root_url": "https://example.com/blog",
+    "url": "https://example.com/blog",
+    "status": "queued",
+    "config": { "max_depth": 2, "max_pages": 100 },
+    "total_tasks": 0,
+    "completed_tasks": 0,
+    "failed_tasks": 0,
+    "created_at": "2026-01-15T00:00:00Z",
+    "updated_at": "2026-01-15T00:00:00Z",
+    "completed_at": null
+  }
 }
 ```
 
@@ -743,23 +811,32 @@ curl http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000 \
 ```json
 {
   "success": true,
-  "task": {
+  "data": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "running",
-    "progress": {
-      "pages_processed": 45,
-      "total_pages": 100
-    }
+    "team_id": "660e8400-e29b-41d4-a716-446655440001",
+    "name": "blog",
+    "root_url": "https://example.com/blog",
+    "url": "https://example.com/blog",
+    "status": "processing",
+    "config": { "max_depth": 2, "max_pages": 100 },
+    "total_tasks": 100,
+    "completed_tasks": 45,
+    "failed_tasks": 0,
+    "created_at": "2026-01-15T00:00:00Z",
+    "updated_at": "2026-01-15T00:00:20Z",
+    "completed_at": null
   }
 }
 ```
+
+> The response is the bare `Crawl` model in `data` (no `task` / `progress` wrapper). Progress is tracked through `completed_tasks` / `failed_tasks` / `total_tasks`.
 
 ### Get Crawl Results
 
 Retrieve all pages crawled:
 
 ```bash
-curl "http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000/results?page=1&limit=20" \
+curl http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000/results \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -768,19 +845,25 @@ curl "http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-446655440000/result
 ```json
 {
   "success": true,
-  "results": [
+  "data": [
     {
+      "id": "780e8400-e29b-41d4-a716-446655440003",
+      "task_id": "770e8400-e29b-41d4-a716-446655440002",
       "url": "https://example.com/blog/post-1",
-      "markdown": "# Post Title\n\nContent..."
+      "content": "<html>...</html>",
+      "status_code": 200,
+      "content_type": "text/html; charset=utf-8",
+      "headers": {},
+      "meta_data": {},
+      "screenshot": null,
+      "response_time_ms": 812,
+      "created_at": "2026-01-15T00:00:00Z"
     }
-  ],
-  "pagination": {
-    "total": 150,
-    "page": 1,
-    "limit": 20
-  }
+  ]
 }
 ```
+
+> `data` is a bare array of scrape results (one per crawled sub-task). There is no `page` / `limit` / `pagination` wrapper — `GET /v1/crawl/{id}/results` returns every result for the crawl in a single response. For converted content, request the `markdown` format when creating the crawl and read it from `meta_data`.
 
 ### Cancel a Crawl
 
@@ -791,7 +874,7 @@ curl -X DELETE http://localhost:8899/v1/crawl/550e8400-e29b-41d4-a716-4466554400
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-> `POST /v1/crawl/{id}/_cancel` 仅存在于测试用路由装配，生产装配未注册；取消统一走 `DELETE /v1/crawl/{id}`。
+> Cancel crawls with `DELETE /v1/crawl/{id}`. The `POST /v1/crawl/{id}/_cancel` form exists only in the test route assembly (`src/presentation/routes/handlers.rs:47`, a unit-test helper explicitly not used by production) — production registers only the `DELETE` form (`src/bootstrap/route_groups/crawl_routes.rs:18-27`).
 
 ---
 
@@ -845,6 +928,7 @@ Available search engines:
 | Smart | `smart` | Aggregated multi-engine search with RRF fusion |
 | Exa | `exa` | AI-powered search (requires API key) |
 | Tavily | `tavily` | AI-powered search (requires API key) |
+| Parallel | `parallel` | Fallback engine (MCP endpoint, `src/config/search.rs` `FallbackEngineConfig for parallel`) |
 
 ### Search Options
 
@@ -864,22 +948,14 @@ curl -X POST http://localhost:8899/v1/search \
   }'
 ```
 
-**Available Languages:**
-- `en` - English
-- `zh` - Chinese
-- `es` - Spanish
-- `fr` - French
-- `de` - German
-- `ja` - Japanese
-- `ko` - Korean
+**Languages / regions (常见取值示例 — 当前版本尚未生效):**
 
-**Available Regions:**
-- `us` - United States
-- `uk` - United Kingdom
-- `ca` - Canada
-- `au` - Australia
-- `jp` - Japan
-- `cn` - China
+`lang` and `country` are free-form strings in the request DTO (`src/application/dto/search_request.rs:17-18`), and `perform_search` currently ignores them (`src/domain/services/search_service.rs:284-285` — parameters are prefixed `_`). Common values you can send:
+
+- **Languages:** `en` (English), `zh` (Chinese), `es` (Spanish), `fr` (French), `de` (German), `ja` (Japanese), `ko` (Korean)
+- **Regions:** `us` (United States), `uk` (United Kingdom), `ca` (Canada), `au` (Australia), `jp` (Japan), `cn` (China)
+
+> ⚠️ Known gap: the search backends do not consume `lang` / `country` in this release — passing them is accepted (no validation error) but has no effect on results. Documented as a known gap; do not rely on it for language or geo targeting.
 
 ### Get Search Results
 
@@ -921,70 +997,74 @@ curl -X POST http://localhost:8899/v1/search \
 
 ## 📊 Data Extraction
 
-### Extract from HTML
+### Extract from URLs
 
-Parse structured data from HTML:
+Submit one or more URLs for asynchronous extraction. The request body takes `urls` (1–100, http/https) plus exactly one of `prompt` / `schema` / `rules`; the endpoint enqueues a task and returns `{id, status: "pending"}` (see `docs/API_REFERENCE.md` for the full contract):
 
 ```bash
 curl -X POST http://localhost:8899/v1/extract \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "html": "<html><body><h1>Title</h1><p>Content</p></body></html>",
-    "extraction_rules": {
-      "title": {
-        "selector": "h1",
-        "attribute": "text"
-      },
-      "content": {
-        "selector": "p",
-        "attribute": "text"
-      }
+    "urls": ["https://example.com/article"],
+    "prompt": "Extract the article title and body text"
+  }'
+```
+
+Using extraction rules instead of a prompt:
+
+```bash
+curl -X POST http://localhost:8899/v1/extract \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "urls": ["https://example.com/article"],
+    "rules": {
+      "title": { "selector": "h1", "is_array": false },
+      "content": { "selector": "p", "is_array": false }
     }
   }'
 ```
 
-**Response:**
+**Response (`202 Accepted` when `sync_wait_ms` elapses before the task finishes):**
 
 ```json
 {
-  "success": true,
-  "data": {
-    "title": "Title",
-    "content": "Content"
-  }
+  "id": "01932f4a-1b2c-7d8e-9f0a-3b4c5d6e7f80",
+  "status": "pending"
 }
+```
 ```
 
 ### Advanced Extraction
 
-Extract multiple elements:
+Extract multiple elements from a URL:
 
 ```bash
 curl -X POST http://localhost:8899/v1/extract \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "html": "<html>...</html>",
+    "urls": ["https://example.com"],
     "extraction_rules": {
       "headings": {
         "selector": "h1, h2, h3",
-        "attribute": "text",
-        "multiple": true
+        "is_array": true
       },
       "links": {
         "selector": "a",
-        "attribute": "href",
-        "multiple": true
+        "attr": "href",
+        "is_array": true
       },
       "images": {
         "selector": "img",
-        "attribute": "src",
-        "multiple": true
+        "attr": "src",
+        "is_array": true
       },
       "meta_description": {
         "selector": "meta[name=\"description\"]",
-        "attribute": "content"
+        "attr": "content",
+        "is_array": false
       }
     }
   }'
@@ -1010,18 +1090,25 @@ curl -X POST http://localhost:8899/v1/webhooks \
   }'
 ```
 
-> 请求体仅接受 `url` 字段（`deny_unknown_fields`，传 `events` / `secret` / `active` 会被 422 拒绝）。签名密钥由服务端统一配置（`CRAWLRS__WEBHOOK__SECRET`），且创建请求本身必须携带按该密钥计算的 Standard Webhooks 签名头，否则返回 401。
+> 请求体仅接受 `url` 字段（`deny_unknown_fields`，传 `events` / `secret` / `active` 会被拒绝，返回 `400 VALIDATION_ERROR`）。签名密钥由服务端统一配置（`CRAWLRS__WEBHOOK__SECRET`），且创建请求本身必须携带按该密钥计算的 Standard Webhooks 签名头，否则返回 401。
 
-**Response（`201 Created`，裸 `Webhook` 对象）:**
+**Response（`201 Created`，标准 `{success, data}` 包封）:**
 
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "team_id": "660e8400-e29b-41d4-a716-446655440001",
-  "url": "https://your-server.com/webhook",
-  "created_at": "2026-01-15T00:00:00Z"
+  "success": true,
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "team_id": "660e8400-2b3c-5d7e-8f9a-0b1c2d3e4f50",
+    "url": "https://your-server.com/webhook",
+    "created_at": "2026-01-15T00:00:00Z",
+    "is_active": true,
+    "secret": "whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  }
 }
 ```
+
+> `secret` 仅在创建响应中返回一次，列表端点不回传；请立即保存，后续无法再次读取。
 
 ### List Webhooks
 
@@ -1097,26 +1184,26 @@ app.listen(3000, () => {
 
 ### Webhook Retry Policy
 
-| Status Code | Retry Policy |
-|-----------|--------------|
-| 200-299 | Success, no retry |
-| 400-499 | Retry with exponential backoff |
-| 5xx | Retry with exponential backoff |
-| Timeout | Retry with exponential backoff |
+| Failure class | Retryable? |
+|---------------|------------|
+| Network errors (connection refused / reset, DNS failure, broken pipe, unreachable), timeouts | Yes |
+| `500`, `502`, `503`, `504` | Yes |
+| `429` (rate limit at the receiving end) | Yes |
+| Other `4xx` (400, 401, 403, 404, ...) | No — moved straight to dead letter |
+| 2xx | Success, no retry |
 
-**Retry Schedule:**
-- 1st retry: Immediately
-- 2nd retry: 1 minute
-- 3rd retry: 5 minutes
-- 4th retry: 15 minutes
-- 5th retry: 1 hour
-- After 5 failed attempts: Mark webhook as failed
+**Retry strategy** (`src/utils/retry_policy.rs`, `RetryPolicy::default()`):
+- exponential backoff with full jitter, starting at `initial_backoff = 1s`, `max_backoff = 60s`, `backoff_multiplier = 2.0`
+- `max_retries = 5`
+- after the 5th failed attempt the event is marked `dead` and lands in the dead-letter queue (no further retries)
+
+`src/workers/webhook_worker.rs:53` builds the worker with this default policy (`WebhookWorker::with_default_policy`).
 
 ---
 
 ## 📋 Tasks
 
-> **⚠️ 当前不可用：** `/v1/tasks/_query` 与 `/v1/tasks/_cancel` 仅注册在测试用路由装配（`presentation/routes/handlers.rs::routes()`），生产装配（`bootstrap/routes.rs`）未注册。
+> `/v1/tasks/_query` and `/v1/tasks/_cancel` are registered in the production assembly (`src/presentation/routes/task.rs:20-30`, wired in `src/bootstrap/routes.rs:396`).
 
 ### Query Tasks
 
@@ -1127,8 +1214,8 @@ curl -X POST http://localhost:8899/v1/tasks/_query \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "status": "running",
-    "type": "scrape",
+    "statuses": ["queued", "active"],
+    "task_types": ["scrape"],
     "limit": 20,
     "offset": 0
   }'
@@ -1136,14 +1223,14 @@ curl -X POST http://localhost:8899/v1/tasks/_query \
 
 ### Cancel Task
 
-Cancel any running task by its ID:
+Cancel queued or active tasks by ID (pass an array to `task_ids`):
 
 ```bash
 curl -X POST http://localhost:8899/v1/tasks/_cancel \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "550e8400-e29b-41d4-a716-446655440000"
+    "task_ids": ["550e8400-e29b-41d4-a716-446655440000", "660e8400-2b3c-5d7e-8f9a-0b1c2d3e4f50"]
   }'
 ```
 
@@ -1163,12 +1250,19 @@ curl http://localhost:8899/v1/teams/me \
 ```json
 {
   "success": true,
-  "team": {
-    "id": "team-id-123",
-    "name": "My Team"
+  "data": {
+    "id": "660e8400-e29b-41d4-a716-446655440001",
+    "name": "Team",
+    "credits_balance": 10000,
+    "total_tasks": 0,
+    "completed_tasks": 0,
+    "failed_tasks": 0,
+    "created_at": "2026-01-15T00:00:00Z"
   }
 }
 ```
+
+> `data` is the bare `TeamInfoResponse` (`src/presentation/handlers/team_handler.rs:22-31`). `completed_tasks` / `failed_tasks` are currently always `0` in the implementation — a known gap, not a data guarantee.
 
 ### Get Usage Stats
 
@@ -1182,16 +1276,19 @@ curl http://localhost:8899/v1/teams/me/usage \
 ```json
 {
   "success": true,
-  "usage": {
-    "requests_today": 150,
-    "rate_limit_info": {
-      "limit": 60,
-      "remaining": 45,
-      "reset": 1705315200
-    }
+  "data": {
+    "team_id": "660e8400-e29b-41d4-a716-446655440001",
+    "period": "30d",
+    "total_requests": 0,
+    "successful_requests": 0,
+    "failed_requests": 0,
+    "credits_used": 0,
+    "avg_response_time_ms": 0
   }
 }
 ```
+
+> 字段口径（`src/presentation/handlers/team_handler.rs`，`TeamUsageResponse`）：`team_id` 是认证身份的 team；`period` 固定为 `"30d"`；`total_requests` / `successful_requests` / `failed_requests` 当前实现中恒为 `0`（尚未接入分时统计，属已知缺口）；`credits_used` 取积分余额绝对值（负余额表示已消耗）；`avg_response_time_ms` 来自 `get_team_avg_response_time`，无数据时为 `0.0`。
 
 ---
 
@@ -1359,10 +1456,10 @@ curl -X POST http://localhost:8899/v1/crawl \
   -d '{"url": "https://example.com", "sync_wait_ms": 30000}'
 ```
 
-**Do:**
+**Do:** (scrape 才有顶层 `webhook` 字段；crawl 的请求体经 `deny_unknown_fields` 校验，顶层 `webhook` 会直接 422)
 
 ```bash
-curl -X POST http://localhost:8899/v1/crawl \
+curl -X POST http://localhost:8899/v1/scrape \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com", "webhook": "https://your-server.com/callback"}'
@@ -1472,18 +1569,21 @@ function validateScrapeRequest(request) {
 ### 7. Use Environment Variables for Secrets
 
 ```bash
-# .env file
-CRAWLRS_API_KEY=sk-your-key-here
-CRAWLRS_WEBHOOK_SECRET=my-secret-key
+# .env file — 服务端配置
 CRAWLRS__SERVER__PORT=8899
 CRAWLRS__DATABASE__URL=postgres://user:pass@localhost/crawlrs
+# Webhook 签名密钥（不在服务端签发，由你配置后用于计算/校验 Standard Webhooks 签名）
+CRAWLRS__WEBHOOK__SECRET=whsec-your-webhook-secret
 ```
+
+> API Key **不是**服务端配置项：它由 `POST /v1/admin/api-keys`（或 `CRAWLRS_BOOTSTRAP_ADMIN=true` 自举）签发生成，明文只在签发响应里返回一次。客户端把它存进自己的 secrets manager 即可；服务端不含读取客户端 key 的环境变量，也不存在把 key 写进服务端配置的入口。
 
 ```javascript
 require('dotenv').config();
 
-const API_KEY = process.env.CRAWLRS_API_KEY;
-const WEBHOOK_SECRET = process.env.CRAWLRS_WEBHOOK_SECRET;
+// API Key 来自签发响应，保存在客户端侧的 secrets manager / 环境变量里
+const API_KEY = process.env.MY_APP_API_KEY;
+const WEBHOOK_SECRET = process.env.CRAWLRS__WEBHOOK__SECRET;
 
 const response = await axios.post('http://localhost:8899/v1/scrape', data, {
   headers: { 'Authorization': `Bearer ${API_KEY}` }
@@ -1535,7 +1635,7 @@ const response = await axios.post('http://localhost:8899/v1/scrape', data, {
 - Never use localhost, 127.0.0.1, or internal IPs
 - Validate URLs before sending to API
 
-**3. Task stuck in "running" status**
+**3. Task stuck in "active" status**
 
 **Problem:** Task never completes
 
@@ -1646,15 +1746,15 @@ A: Yes, specify a proxy in options:
 
 **Q: How do I extract data from multiple elements?**
 
-A: Use `multiple: true` in extraction rules:
+A: Use `is_array: true` in extraction rules (with `attr` for the attribute to collect when it is not the element text):
 
 ```json
 {
   "extraction_rules": {
     "links": {
       "selector": "a",
-      "attribute": "href",
-      "multiple": true
+      "attr": "href",
+      "is_array": true
     }
   }
 }
@@ -1672,7 +1772,6 @@ A: Rate limits are set in the server config file (`config/default.toml`):
 [rate_limiting]
 enabled = true
 default_rpm = 60
-default_limit = 60
 burst_size = 20
 ```
 

@@ -57,7 +57,7 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 0.2.0 起认证引擎由 **garrison v0.9.0-rc.2** 提供（`auth` 特性，隐含 `dep:garrison`）：
 
 - Bearer token 格式 `garrison_key_id.garrison_secret`，明文 key 仅在签发响应中返回一次。
-- JWT 以 `CRAWLRS__AUTH__JWT_SECRET`（HS256，≥32 字节，**弱密钥拒绝启动**）签发；secret 经 zeroize 包装，Drop 时清零内存（CWE-316 防护）。
+- JWT 以 `CRAWLRS__AUTH__JWT_SECRET`（HS256，≥32 字节）签发；secret 经 zeroize 包装，Drop 时清零内存（CWE-316 防护）。弱密钥（空或 <32 字节）在**生产环境拒绝启动**（`config_validator.rs` 的安全规则仅 `is_production` 时返回 `Err` 阻断），非生产环境仅告警不阻断；但空 secret 恒被 `build_garrison_config` 拒绝（`garrison_config.rs` `EmptySecret`）。
 - RBAC：预置 `crawlrs:read/write/admin` 权限与 `admin/user/read_only` 角色，经 `auth_bridge::map_perms_to_scope` 映射为 `ApiKeyScope`，多租户隔离（`tenant-isolation`）。
 - 防暴力破解（`firewall-bruteforce`，CWE-307）：5 次失败 / 60 秒窗口 / 300 秒锁定；IP 上下文由 `garrison_ip_context_middleware` 注入，401/429 由 garrison 直接触发（429 遵循 RFC 6585）。
 - 认证事件落库 crawlrs `audit_logs` 表 + garrison 自管 schema（`audit-log` + `audit-inklog`）。
@@ -67,11 +67,13 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 
 每个抓取请求在两处独立校验目标 URL：handler 入队前的前置校验（`src/presentation/helpers/`）与引擎路由执行前的二次校验。覆盖重定向跟随（`ssrf_redirect_test`）与 IP/协议规则（`ssrf_mod_test`），受保护端点签名经 `extract_handler` 泛型注入地理限制仓库（`teams` 特性）。
 
+**kill-switch（危险）**：`CRAWLRS_DISABLE_SSRF_PROTECTION` 一经设置即旁路 SSRF 校验（生效点 `src/infrastructure/services/config_service.rs:222` 的 `ssrf_protection_disabled`；判定逻辑 `src/infrastructure/security/ssrf/mod.rs:345`）。该开关**仅限开发/测试环境调试**；生产环境启动时 `src/bootstrap/config/config_validator.rs` 会输出显著 warn 告警（非阻断，**仅启动时一次**，运行期无持续告警）。生产部署必须删除此环境变量。变量清单与注释见 [.env.example](../.env.example)。
+
 ### 请求完整性与密钥安全
 
 - Webhook 投递使用 [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks) 规范签名，验签采用 `subtle` crate 恒时比较，防时序侧信道。
 - HMAC / SHA-2 用于内部签名链路；`bcrypt` 用于口令散列场景；`zeroize` 用于敏感内存清理。
-- API Key 明文仅在签发时返回一次；`CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` 仅建议用于开发/测试环境自动引导。
+- API Key 明文仅在签发时返回一次；生产环境禁用 admin 自动引导。引导双入口：`CRAWLRS_BOOTSTRAP_ADMIN`（true/1 时 API 进程内自建随机 admin key，`src/main.rs`）与 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY`（指定 key id，`src/bootstrap/services.rs`），二者均仅建议用于开发/测试。两个入口命名不统一（无 `__` 前缀 vs confers 前缀）是已知问题，勿混淆。
 
 ### HTTP 层加固
 
@@ -99,14 +101,14 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 
 ## 🏭 生产部署加固清单
 
-- [ ] 设置强随机 `CRAWLRS__AUTH__JWT_SECRET`（HS256，≥32 字节；弱密钥拒绝启动）
+- [ ] 设置强随机 `CRAWLRS__AUTH__JWT_SECRET`（HS256，≥32 字节；弱密钥生产环境拒绝启动、非生产仅告警）
 - [ ] 通过 `POST /v1/admin/api-keys` 签发 API Key，明文 key 立即写入 secrets manager（仅返回一次）
-- [ ] 生产环境禁用 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY`
+- [ ] 生产环境禁用 admin 自动引导双入口（`CRAWLRS_BOOTSTRAP_ADMIN` 与 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY`，仅开发/测试）
 - [ ] 配置适当的数据库连接池（`[database] max_connections`）与最小权限账号
 - [ ] CORS 配置为具体来源（禁用 `*` 通配）
-- [ ] 根据容量设置速率限制（`default_limit` / `burst_size`）与团队并发（`concurrency.default_team_limit`）
+- [ ] 根据容量设置速率限制（`default_rpm` / `burst_size`）与团队并发（`concurrency.default_team_limit`）
 - [ ] 配置 `[trusted_proxies]`（CIDR）防止 IP 伪造绕过防火墙/限流
-- [ ] 启用 Prometheus 指标导出并接入告警（docker/prometheus/ 提供配置样例）
+- [ ] 启用 Prometheus 指标导出并接入告警（docker/prometheus/ 提供配置样例）。**注意**：当前 `/metrics` 为占位实现（硬编码 `version=1.0.0`、`uptime=3600`，非运行时真实指标），权威 Prometheus 聚合端点尚未实现；`docker/prometheus/` 配置样例仅作参考，真实指标清单见 `docs/PERFORMANCE.md`
 - [ ] 启用结构化日志聚合（inklog），审计日志（`/v1/audit/logs`）纳入巡检
 - [ ] 在 TLS 终止（反向代理/网关）之后部署，健康检查走 `/health`
 - [ ] 审查 Webhook `secret` 配置，验证接收端签名校验

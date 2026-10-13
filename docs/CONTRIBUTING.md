@@ -108,13 +108,27 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 
 ### CI 检查项（PR 必过）
 
-`ci.yml` 包含 9 个 job：check-default、check-full、feature-matrix（7 组合 + garrison 门控断言 + RSA 前提校验）、fmt、clippy（standard/full）、test（Rust 1.97/stable 矩阵）、doc（`cargo doc --features "full" --no-deps`，零警告）、deny、integration-test、coverage（行覆盖 ≥ 80%）。
+`ci.yml` 包含 **11 个 job**（`.github/workflows/ci.yml`）：
+
+| # | Job | 内容 |
+|---|-----|------|
+| 1 | `check-default` | `cargo check`（默认特性） |
+| 2 | `check-full` | `cargo check --features "full"` |
+| 3 | `feature-matrix` | 7 组合 + garrison 门控断言 + RSA 前提校验 |
+| 4 | `fmt` | `cargo fmt --all -- --check` |
+| 5 | `clippy` | `cargo clippy --features "standard" -- -D warnings` + `--features "full" -- -D warnings` |
+| 6 | `test` | `cargo test`（Rust 1.97 / stable 矩阵） |
+| 7 | `doc` | `cargo doc --features "full" --no-deps`（`RUSTDOCFLAGS=-D warnings`，零警告） |
+| 8 | `deny` | `cargo deny check` |
+| 9 | `integration-test` | `cargo test --features "full,test-mocks" --tests`（PostgreSQL 16 service 容器） |
+| 10 | `acceptance-test` | BDD 验收：`cargo test --test acceptance --features platform`（排除 `@external` 标签） |
+| 11 | `coverage` | `cargo llvm-cov`，行覆盖 ≥ 80% |
 
 ---
 
 ## 📐 代码规范
 
-- 格式化以 `cargo fmt` 为准；clippy 全量告警视为错误（`-D warnings`，含 `--all-targets`，`[lints.rust.unexpected_cfgs]` 为 deny 级）。
+- 格式化以 `cargo fmt` 为准；clippy 告警视为错误（`-D warnings`）。**两个口径**：CI 的 clippy job 只跑 `cargo clippy --features "standard" -- -D warnings` 与 `--features "full" -- -D warnings`（ci.yml:180,182，**不带** `--all-targets`）；`--all-targets -D warnings` 只在 E2E 套件 Stage 2（`tests/e2e/e2e-suite.sh`）出现。`[lints.rust.unexpected_cfgs]` 为 deny 级。
 - 并发原语约定：短临界区用 `parking_lot`（非 tokio 同步原语）；指标计数用 `DashMap`。
 - 架构约定：遵循 DDD 四层（presentation → application → domain → infrastructure）；DI 组件在 `src/di/` 的各 capability Module（`SettingsModule`/`CacheModule`/`EngineModule` 等）装配；新增引擎实现 `ScraperEngine` trait 并接入 `EngineRouter`。
 - 新特性必须正确 feature 门控：业务能力关闭时提供 Noop 实现，并在 `tests/e2e/feature-matrix.sh` 矩阵中覆盖相应组合。
@@ -126,7 +140,7 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 
 1. Fork 仓库并创建特性分支（`feature/xxx` 或 `fix/xxx`）。
 2. 完成实现与测试，本地通过「提交前验证顺序」全部命令。
-3. Push 分支并开启 PR（base：`main` 或 `develop`），描述变更动机、影响面与测试情况。
+3. Push 分支并开启 PR（base：`main`——仓库当前只有 main 一个长期分支），描述变更动机、影响面与测试情况。
 4. 等待 CI 全绿；如 feature-matrix 断言失败，检查新特性是否正确门控。
 5. 维护者 review 后合并；合并前保持与 main 同步（CI 配置了按 ref 取消的并发组）。
 

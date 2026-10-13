@@ -20,7 +20,7 @@
 | 层 | 位置 | 中间件需求 | 说明 |
 |---|---|---|---|
 | L1 内联单元测试 | `src/`（`#[cfg(test)]` 模块） | 无 | 覆盖 domain / application / engines / infrastructure 等全部模块 |
-| L2 模块单元测试 | `tests/unit/`（71 个文件） | 无（wiremock 假服务） | 按 presentation / application / domain / engines / search / workers / queue / config / di / utils 分域组织 |
+| L2 模块单元测试 | `tests/unit/`（70 个文件） | 无（wiremock 假服务） | 按 presentation / application / domain / engines / search / workers / queue / config / di / utils 分域组织 |
 | L3 表驱动机 | `tests/main.rs`（`[[test]]` name=`main`） | 无（trait 假实现） | `test-mocks` 门控，共享 mock 位于 `tests/common/mocks/` |
 | L4 SDK API 测试 | `tests/sdk_api_test.rs` | 无 | `test-mocks` 门控 |
 | L5 路由诊断 | `tests/route_diag_test.rs` | 无 | `platform` 门控，验证路由注册与门控一致 |
@@ -49,7 +49,7 @@
 | TLS 指纹引擎 | `cargo test --test integration_tests -- --ignored wreq_fingerprint_test` | full,engine-tls-fingerprint | 需出网 |
 | Python API/性能 | `./scripts/run-tests.sh local` | 运行中的服务实例 | 本地/手动 |
 | E2E API 冒烟 | `tests/e2e/api_test.sh` | 运行中的服务实例 | 手动 / liveapi 阶段自动 |
-| API 语义级验证 | `tests/e2e/api_semantics_test.py` | 运行中的服务实例 | liveapi 阶段自动 / 手动 |
+| API 语义级验证 | `tests/e2e/api_semantics_test.py` | 运行中的服务实例 | liveapi 阶段自动 / 手动（37 个 `scenarios.append` 场景） |
 | 活体 API E2E 编排 | `tests/e2e/live-api-e2e.sh` | Docker（compose PG） | 手动 / liveapi 阶段 |
 | E2E 质量套件 | `./tests/e2e/e2e-suite.sh` | 全部 | 本地/手动，7 阶段 |
 | 特性编译矩阵 | `tests/e2e/feature-matrix.sh` | 全部 | e2e Stage 1 |
@@ -152,7 +152,6 @@ WreqEngine 出网验证 JA3/JA4 指纹伪装（需 `engine-tls-fingerprint` 特�
 | 15-16 | platform+db-sqlite / platform+db-mysql | 同上 | 另两个数据库驱动面 |
 | 17-19 | default / standard / full(+tls-fp+mllm) | `--features ...` | 发布面与引擎全闭包 |
 | 20-21 | default+test-mocks / full+test-mocks（`--all-targets`） | 同上 | 全测试目标编译 |
-| 22 | workspace | `cargo check --workspace` | examples crate |
 
 ### 🔒 硬约束
 
@@ -205,7 +204,7 @@ TEST_DATABASE_URL=postgres://... ./tests/e2e/e2e-suite.sh   # 复用外部 PG（
 | Stage 3 unit | `--lib`（default/full）、`--test main`、`--test sdk_api_test`、`--test route_diag_test` |
 | Stage 4 integration | `--test integration_tests --include-ignored`（含 garrison 认证端到端） |
 | Stage 5 bench | `cargo bench` 缩短采样；首跑建立 `e2e-baseline`，此后自动对比检测回退 |
-| Stage 6 liveapi | `tests/e2e/live-api-e2e.sh`：compose 拉起 PG → 迁移 → 构建 → `crawlrs bootstrap`（伪 TTY 捕获 admin key，日志自动掩码）→ 起服（8901 端口）→ 状态码冒烟（`api_test.sh`）+ 语义级验证（`api_semantics_test.py`，40+ 场景：响应包封一致性/安全脱敏/状态转换/数据过滤/并发）→ 产物 `test-results/{api-smoke.log, api-audit.jsonl, api-semantics-matrix.md}` |
+| Stage 6 liveapi | `tests/e2e/live-api-e2e.sh`：compose 拉起 PG → 迁移 → 构建 → 经 `script` 伪 TTY 启动 `crawlrs api`（环境变量 `CRAWLRS_BOOTSTRAP_ADMIN=true`，由 API 进程自身在启动时调用 `run_bootstrap` 签发 admin key；garrison DAO 是进程内 oxcache，跨进程签发的 key 不可见；明文 key 解析后立即掩码）→ 等待 `/health` 就绪（8901 端口）→ 状态码冒烟（`api_test.sh`）+ 语义级验证（`api_semantics_test.py`，37 个 `scenarios.append` 场景：响应包封一致性/安全脱敏/状态转换/数据过滤/并发）→ 产物 `test-results/{api-smoke.log, api-audit.jsonl, api-semantics-matrix.md}` |
 | Stage 7 report | 汇总 `test-results/e2e-report.txt`；EXIT trap 清理 compose 容器/卷与泄漏的 testcontainers 容器 |
 
 任一阶段失败即非零退出；日志集中在 `test-results/`；单阶段超时护栏 `E2E_STAGE_TIMEOUT`（默认 1800s）。
@@ -235,12 +234,15 @@ python3 tests/e2e/api_semantics_test.py --base-url http://localhost:8899 \
 
 | 指标 | 数量 |
 |---|---|
-| `src/` 内联测试（`#[test]` / `#[tokio::test]`） | 约 5,700+（372 个 `.rs` 文件，约 17.7 万行） |
-| `tests/` 目录测试 | 约 950 个（其中 `tests/unit/` 795 个、71 个文件） |
-| `[[test]]` 显式注册目标 | 4 个（integration_tests / main / sdk_api_test / route_diag_test） |
+| `src/` 内联测试（`#[test]` / `#[tokio::test]`） | 6,310（408 个 `.rs` 文件，206,781 行） |
+| `tests/` 目录测试 | 967 个测试函数（116 个 `.rs` 文件，其中 `tests/unit/` 70 个文件） |
+| `[[test]]` 显式注册目标 | 5 个（integration_tests / main / sdk_api_test / route_diag_test / acceptance） |
 | Criterion 基准组 | 9 组（`benches/benchmark.rs`） |
 | Python 测试套件 | 5 个（`tests/python/`） |
+| BDD 验收场景 | 51 个 / 10 个 feature 文件（`tests/acceptance/features/`） |
 | 特性编译矩阵 | CI 7 组合 + E2E 22 组合 |
 | 覆盖率门禁 | 行覆盖率 ≥ 80%（CI coverage job，Codecov 上报） |
+
+> `acceptance` 目标（`tests/acceptance/main.rs`，`harness = false`，`required-features = ["platform"]`）由 CI `acceptance-test` job 驱动（`cargo test --test acceptance --features platform`，排除 `@external`）。
 
 > 统计随代码演进浮动，以仓库当前 HEAD 实测为准。
