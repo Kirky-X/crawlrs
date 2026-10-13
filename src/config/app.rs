@@ -14,13 +14,18 @@ use serde::{Deserialize, Serialize};
 /// # 字段说明
 ///
 /// * `url` - PostgreSQL 数据库连接字符串（敏感信息，仅 crate 可见）
-/// * `max_connections` - 连接池中最大连接数，默认 100
-/// * `min_connections` - 连接池中最小连接数，默认 10
-/// * `connect_timeout` - 连接超时时间（秒），默认 10 秒
-/// * `idle_timeout` - 空闲连接超时时间（秒），默认 300 秒
-/// * `max_lifetime` - 连接最大存活时间（秒），默认 1800 秒（30 分钟）
-/// * `connection_keepalive` - 连接存活检查间隔（秒），默认 30 秒
-/// * `health_check_interval` - 空闲连接健康检查间隔（秒），默认 60 秒
+/// * `max_connections` - 连接池中最大连接数
+/// * `min_connections` - 连接池中最小连接数
+/// * `connect_timeout` - 连接超时时间（秒）
+/// * `idle_timeout` - 空闲连接超时时间（秒）
+/// * `max_lifetime` - 连接最大存活时间（秒）
+/// * `connection_keepalive` - 连接存活检查间隔（秒）
+/// * `health_check_interval` - 空闲连接健康检查间隔（秒）
+///
+/// # 默认值口径
+///
+/// 上述各键的生效值以 `config/default.toml` `[database]` 节为准；
+/// `#[config(default)]` 仅在对应配置键缺失时生效，两者不一致时 toml 优先。
 ///
 /// # 安全提示
 ///

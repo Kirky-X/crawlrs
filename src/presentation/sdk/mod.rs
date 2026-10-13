@@ -91,7 +91,7 @@ pub struct SdkCrawlResponse {
 }
 
 // ============================================================================
-// Wrapper functions — sdforge #[service_api] generates HTTP endpoints.
+// Wrapper functions — sdforge #[forge] generates HTTP endpoints.
 //
 // Paths use version="v1" + path="/sdk/..." which sdforge resolves to
 // "/api/v1/sdk/..." (the default prefix is /api/{version}).
@@ -344,15 +344,16 @@ async fn sdk_create_crawl(
     })
 }
 
-/// Build the SDK router from all `#[service_api]` registered routes.
+/// Build the SDK router from all `#[forge]` registered routes.
 ///
 /// Collects routes via sdforge's inventory system and returns an Axum router.
 /// Callers must inject the required `Extension<Arc<dyn Trait>>` layers for
 /// each `#[state]` parameter the wrappers depend on.
 ///
 /// `openapi` feature 启用时额外挂载 `GET /openapi.json`，输出聚合自全部
-/// `#[forge]` 路由的 OpenAPI 3.1 规范（相对本路由挂载点，生产路径为
-/// `/v1/sdk/openapi.json`）。
+/// `#[forge]` 路由的 OpenAPI 3.1 规范。该路由相对 `build_sdk_router` 返回的
+/// router 注册，而此 router 在 `bootstrap::routes` 中 merge 到根，故生产路径
+/// 为 `/openapi.json`。
 pub fn build_sdk_router() -> axum::Router {
     let router = sdforge::http::build();
 
