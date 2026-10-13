@@ -84,8 +84,8 @@ High-level modules depend on abstractions (traits), not concrete implementations
 // Domain defines interface
 trait TaskRepository: Send + Sync {
     async fn create(&self, task: &Task) -> Result<Task>;
-    async fn find_by_id(&self, id: Uuid) -> Result<Option<Task>>;
-    async fn acquire_next(&self, worker_id: Uuid) -> Result<Option<Task>>;
+    async fn find_by_id(&self, id: crate::domain::id::Id) -> Result<Option<Task>>;
+    async fn acquire_next(&self, worker_id: crate::domain::id::Id) -> Result<Option<Task>>;
 }
 
 // Infrastructure provides implementation
@@ -127,7 +127,7 @@ flowchart TD
     subgraph API [API Gateway - Axum 0.8]
         subgraph Middleware [Middleware Stack]
             M1[Authentication - API Key / Bearer]
-            M2[Rate Limiting - 3 variants]
+            M2[Rate Limiting - single middleware, limiteron-backed]
             M3[Team Concurrency - Semaphore]
             M4[Security Headers, CORS, Logging]
         end
@@ -156,7 +156,6 @@ flowchart TD
         W2[Webhook Worker]
         W3[Backlog Worker]
         W4[Expiration Worker]
-        W5[Task State Machine]
         W6[Manager]
     end
 
@@ -232,8 +231,17 @@ presentation/
 │   ├── audit_handler.rs
 │   ├── metrics_handler.rs
 │   ├── api_key_handler.rs
+│   ├── map_handler.rs
 │   ├── response_builder.rs
 │   └── mod.rs
+├── forge_api/             # sdforge inventory 注册面（forge-full feature）
+│   ├── mod.rs
+│   ├── crawl.rs
+│   ├── management.rs
+│   ├── map.rs
+│   ├── scrape.rs
+│   ├── search.rs
+│   └── task.rs
 ├── routes/                # Route definitions
 │   ├── mod.rs             # health, version, base routes
 │   ├── handlers.rs        # Handler route registration
@@ -245,9 +253,7 @@ presentation/
 │   ├── auth_middleware.rs
 │   ├── auth_bridge.rs
 │   ├── auth_types.rs
-│   ├── rate_limit_middleware.rs          # Basic rate limiting
-│   ├── distributed_rate_limit_middleware.rs
-│   ├── limiteron_rate_limit_middleware.rs
+│   ├── rate_limit_middleware.rs          # 唯一限流中间件（经 RateLimitingService trait 走 limiteron）
 │   ├── security_headers_middleware.rs
 │   ├── team_semaphore_middleware.rs
 │   ├── scope_validation.rs
@@ -258,13 +264,7 @@ presentation/
 │   └── tests.rs
 ├── helpers/               # Shared helpers
 │   ├── mod.rs
-│   ├── rate_limit_helper.rs
-│   └── ssrf/
-│       ├── mod.rs
-│       ├── error.rs
-│       ├── redirect.rs
-│       ├── static_validator.rs
-│       └── types.rs
+│   └── rate_limit_helper.rs
 ├── extractors/            # Request extractors
 │   ├── mod.rs
 │   └── app_deps.rs
@@ -273,26 +273,47 @@ presentation/
 └── mod.rs
 ```
 
+SSRF 校验实现不在 presentation 层：`src/infrastructure/security/ssrf/{mod,error,redirect,static_validator,types}.rs`。
+
 **SDK Interface Layer (sdforge 0.5):**
 
-The presentation layer includes an SDK interface built on **sdforge 0.5**, which wraps domain services as HTTP endpoints via sdforge's `#[service_api]` macro. All SDK handlers extract authentication context from `AuthState` (populated by `auth_middleware`), never from the request body.
+The presentation layer includes an SDK interface built on **sdforge 0.5**, which wraps domain services as HTTP endpoints via sdforge's `#[forge]` macro. All SDK handlers extract authentication context from `AuthState` (populated by `auth_middleware`), never from the request body.
 
 **Handler Flow:**
 
+生产 handler 的依赖提取有两种真实形态。`scrape_commands::create_scrape` 经聚合提取器 `CrawlRsDeps`（`src/presentation/extractors/app_deps.rs:43`）一次性取常用依赖，地理限制与团队服务以 `Extension<Option<..>>` 注入（teams-off 时为 `None`），另需 `ConnectInfo` 取客户端 IP 做 SSRF 审计：
+
 ```rust
 pub async fn create_scrape(
+    CrawlRsDeps {
+        queue,
+        settings: _settings,
+        task_repo: task_repository,
+        rate_limiting_service,
+        auth_state,
+    }: CrawlRsDeps,
+    // teams-off（Extension 未装配）时为 None，跳过检查
+    Extension(geo_restriction_repo): Extension<Option<Arc<dyn GeoRestrictionRepository>>>,
+    Extension(team_service): Extension<Option<Arc<TeamService>>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    payload: Result<Json<ScrapeRequestDto>, axum::extract::rejection::JsonRejection>,
+) -> impl IntoResponse
+```
+
+`extract_handler::extract`（`src/presentation/handlers/extract_handler.rs:54`）是少数直列 `Extension<...>` 的 handler，且带 `GR` 泛型由路由装配决定（teams-on 装配 `DatabaseGeoRestrictionRepository`，teams-off 用无泛型形式）：
+
+```rust
+pub async fn extract<GR>(
     Extension(queue): Extension<Arc<dyn TaskQueue>>,
+    Extension(_settings): Extension<Arc<Settings>>,
+    Extension(task_repository): Extension<Arc<dyn TaskRepository>>,
     Extension(rate_limiting_service): Extension<Arc<dyn RateLimitingService>>,
+    Extension(geo_restriction_repo): Extension<Arc<GR>>,
+    Extension(team_service): Extension<Arc<TeamService>>,
     Extension(auth_state): Extension<AuthState>,
-    Json(payload): Json<ScrapeRequestDto>,
-) -> impl IntoResponse {
-    // 1. Validate request
-    // 2. Check rate limits
-    // 3. Check SSRF protection
-    // 4. Create task in database
-    // 5. Enqueue for processing
-    // 6. Return task ID
-}
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    // ...
+) -> impl IntoResponse
 ```
 
 **Middleware Stack:**
@@ -300,9 +321,9 @@ pub async fn create_scrape(
 1. **Authentication Middleware** - API key validation, Bearer token, team ID extraction
 2. **Security Headers Middleware** - CSP, X-Content-Type-Options, X-Frame-Options
 3. **CORS** - Configurable origins via `tower-http`
-4. **Rate Limiting** - Three variants: basic (in-memory), distributed (Redis-backed), limiteron (PostgreSQL-backed)
+4. **Rate Limiting** - 单一中间件 `rate_limit_middleware.rs`：实现本身只做 429 + `Retry-After` 判定与头部设置，实际速率判断与配额扣减经 `RateLimitingService` trait 委托给 `LimiteronService`（limiteron 0.3.0-rc.6，PostgreSQL 后端）。全仓无 Redis 依赖
 5. **Team Semaphore Middleware** - Per-team concurrency control
-6. **Scope Validation** - API key permission scope checking
+6. **Scope Validation** - API key permission scope checking（未挂载生产路由）
 
 ---
 
@@ -324,7 +345,8 @@ application/
 │   ├── create_scrape.rs
 │   ├── crawl_use_case.rs
 │   ├── crawl_link_processor.rs
-│   └── crawl_state_machine.rs
+│   ├── crawl_state_machine.rs
+│   └── map_use_case.rs
 └── dto/                   # Data Transfer Objects
     ├── mod.rs
     ├── scrape_request.rs
@@ -334,7 +356,8 @@ application/
     ├── search_request.rs
     ├── task_query_request.rs
     ├── webhook_request.rs
-    └── geo_restriction_request.rs
+    ├── geo_restriction_request.rs
+    └── map_request.rs
 ```
 
 **Use Case Pattern:**
@@ -409,6 +432,7 @@ domain/
 │   ├── extraction_service.rs
 │   ├── extraction_utils.rs
 │   ├── team_service.rs
+│   ├── team_service_test.rs          # 内联测试（与实现同文件）
 │   ├── team_semaphore.rs
 │   ├── search_service.rs
 │   ├── webhook_service.rs
@@ -418,13 +442,19 @@ domain/
 │   ├── audit_service.rs
 │   ├── audit_log_builder.rs
 │   ├── geo_location.rs
-│   ├── llm_service.rs
 │   ├── llm_provider_strategy.rs  # ProviderStrategy 策略模式（OllamaStrategy）
-│   ├── llm/                       # LLM 子模块（prompt_builder, provider_adapter）
-│   ├── content_extractor/         # 正文提取（trafilatura/dom_smoothie/css_rule/facade）
+│   ├── id_service.rs                 # NebulaId ID 生成服务
+│   ├── rag_strategy.rs               # RAG 语义分块 + 向量检索提取
+│   ├── rerank.rs                     # 重排策略
+│   ├── llm/                       # LLM 子模块（mod, prompt_builder, provider_adapter,
+│   │                              #  chunker, provenance, vision_adapter）
+│   ├── content_extractor/         # 正文提取（trafilatura/dom_smoothie/css_rule/quality_gate/facade）
 │   ├── markdown_service.rs
 │   ├── relevance_scorer.rs
-│   └── retry_handler.rs
+│   ├── retry_handler.rs
+│   ├── webhook/                  # Webhook 管理/领域逻辑（management, mod）
+│   └── tests/                    # 领域服务独立测试目录
+├── id/                     # NebulaId 域 ID 类型（Id / IdGenerator）
 ├── auth/                   # Authentication models
 │   ├── mod.rs
 │   └── scope.rs
@@ -439,9 +469,9 @@ domain/
 **Task Entity:**
 ```rust
 pub struct Task {
-    pub id: Uuid,
-    pub team_id: Uuid,
-    pub api_key_id: Uuid,
+    pub id: crate::domain::id::Id,
+    pub team_id: crate::domain::id::Id,
+    pub api_key_id: crate::domain::id::Id,
     pub task_type: TaskType,
     pub status: TaskStatus,
     pub priority: i32,
@@ -455,25 +485,28 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
-    pub crawl_id: Option<Uuid>,
+    pub crawl_id: Option<crate::domain::id::Id>,
     pub updated_at: DateTime<Utc>,
-    pub lock_token: Option<Uuid>,
+    pub lock_token: Option<crate::domain::id::Id>,
     pub lock_expires_at: Option<DateTime<Utc>>,
 }
 ```
+
+所有 ID 字段均为 `crate::domain::id::Id`（NebulaId 域 ID 类型，`src/domain/id/`），不是旧式 UUID 值。
 
 **Task Types:**
 - `Scrape` - Single page scrape
 - `Crawl` - Multi-page crawl
 - `Extract` - Data extraction
 
-**Task Statuses:**
-- `Queued` - Created, waiting for worker
-- `Running` - Being processed by worker
-- `Completed` - Successfully completed
-- `Failed` - Failed with error
-- `Cancelled` - Cancelled by user
-- `Expired` - TTL exceeded
+**Task Statuses** (`src/domain/models/task_domain.rs:67-79`，五态):
+- `queued` - Created, waiting for worker
+- `active` - Being processed by worker（不是 `running`）
+- `completed` - Successfully completed
+- `failed` - Failed with error
+- `cancelled` - Cancelled by user
+
+注意：不存在 `Running` 与 `Expired` 变体。任务过期不改变状态取值，而是由 `expires_at` 字段 + `TaskRepository::expire_tasks()` 周期性清理完成；`Expired` 只作为 `tasks_backlog` 的 `TasksBacklogStatus` 存在（回灌队列的状态机，与 `tasks.status` 是两套枚举）。
 
 ---
 
@@ -539,7 +572,14 @@ infrastructure/
 │   ├── env_var_security.rs
 │   ├── env_injection.rs
 │   ├── env_validation.rs
-│   └── secure_ip.rs
+│   ├── secure_ip.rs
+│   └── ssrf/               # SSRF 校验（mod, error, redirect, static_validator, types）
+├── auth/                   # garrison 认证引擎 DAO 集成
+│   ├── mod.rs              # garrison_config / garrison_dao / garrison_interface / garrison_listener
+├── events/                 # 进程内事件总线
+│   ├── mod.rs
+│   ├── event_bus.rs        # EventBus trait
+│   └── broadcast.rs        # BroadcastEventBus（tokio::sync::broadcast 实现）
 ├── persistence/            # Domain <-> DB entity mappers
 │   ├── mod.rs
 │   └── mappers/
@@ -553,14 +593,18 @@ infrastructure/
 │   ├── config_service.rs
 │   ├── limiteron_service.rs
 │   ├── noop_rate_limiting_service.rs
+│   ├── http_rerank_provider.rs     # 远端 Rerank HTTP 适配（仅 reqwest，无需 feature）
+│   ├── rig_embedding_provider.rs   # rag-remote：rig-core 远端嵌入
+│   ├── vecboost_provider.rs        # rag-local：本地嵌入/重排（Candle CPU）
 │   └── webhook_sender_impl.rs
 ├── dns/                    # DNS resolution + caching
 │   ├── mod.rs
 │   ├── dns_cache.rs
 │   └── ipv4_resolver.rs
-├── observability/          # Observability
+├── observability/          # Observability + 失败快照
 │   ├── mod.rs
-│   └── metrics.rs
+│   ├── metrics.rs
+│   └── failure_snapshot.rs
 ├── geolocation.rs
 ├── metrics.rs
 ├── errors.rs
@@ -602,7 +646,7 @@ pub type DnsCache = Cache<String, DnsCacheEntry>;
 pub type RegexCacheType = Cache<String, String>;
 ```
 
-oxcache features activated: memory, serialization, macros, batch-write, metrics, bloom-filter, tracing. Type-specific TTL:
+oxcache features activated（`Cargo.toml:316`）: `["memory", "serialization", "metrics", "bloom"]`。Type-specific TTL:
 - Search cache: configurable (default 60s)
 - DNS cache: configurable (default 300s)
 - Regex cache: configurable (default 600s)
@@ -613,17 +657,29 @@ oxcache features activated: memory, serialization, macros, batch-write, metrics,
 
 ### Dependency Injection (trait-kit 0.5.0-rc.7)
 
-DI uses **trait-kit 0.5.0-rc.7** with async module builders. Three top-level modules are registered:
-- `InfrastructureModule` - Database pool, HTTP client, cache, repositories
-- `EngineModule` - ReqwestEngine, PlaywrightEngine, FlareSolverrEngine, EngineRouter, EngineClient
-- `ServiceModule` - Rate limiting, search, webhook, team services, workers
+DI uses **trait-kit 0.5.0-rc.7** with async module builders. `src/main.rs:389-405` registers **9 个 Module** 到 `AsyncKit`：
 
-**CrawlRsState** is the runtime state extracted from the built DI container. Since v0.2.0 (`feature-gate-optional-modules` change), 7 fields are gated by `#[cfg(feature = "...")]` and only compiled when the corresponding business-capability feature is enabled:
+| # | Module | 提供 |
+|---|--------|------|
+| 1 | `SettingsModule` | `Arc<Settings>`（含 i18n 解析后的配置） |
+| 2 | `DatabaseModule` | dbnexus 连接池、迁移、权限 |
+| 3 | `HttpModule` | `Arc<reqwest::Client>` |
+| 4 | `CacheModule` | oxcache 缓存组件（search/dns/regex/generic） |
+| 5 | `RepositoryModule` | 仓储组件（依赖 DatabaseModule） |
+| 6 | `EngineModule` | 5 个引擎 + `EngineRouter` + `EngineClient`（依赖 HttpModule、SettingsModule） |
+| 7 | `InfrastructureModule` | DB pool + 缓存服务等基础设施组件 |
+| 8 | `ServiceModule` | 限流/搜索/webhook/团队服务 + 队列 + worker |
+| 9 | `IdModule` | `IdService`（NebulaId ID 生成） |
+
+`EngineModule` 提供 5 个引擎实现：`ReqwestEngine` / `PlaywrightEngine` / `WreqEngine`（`engine-tls-fingerprint`）/ `FlareSolverrEngine`（`engine-flaresolverr`）/ `MllmEngine`（`engine-mllm`）。
+
+**CrawlRsState** 是运行时状态，由 `CrawlRsState::from_kit`（`src/di/axum_state.rs:207`）从构建完成的 kit 提取；它 require 5 个模块：`InfrastructureModule`、`EngineModule`、`ServiceModule`、`SettingsModule`、`IdModule`。自 v0.2.0（`feature-gate-optional-modules` change）起，有 7 个字段被 `#[cfg(feature = "...")]` 门控，仅在对应对业务特性启用时编译：
 
 ```rust
 #[derive(Clone)]
 pub struct CrawlRsState {
     pub db_pool: Arc<DbPool>,
+    pub id_service: Arc<IdService>,
     pub task_repo: Arc<dyn TaskRepository>,
     pub credits_repo: Arc<dyn CreditsRepository>,
     pub crawl_repo: Arc<dyn CrawlRepository>,
@@ -641,6 +697,7 @@ pub struct CrawlRsState {
     pub webhook_service: Arc<dyn WebhookService>,
     pub robots_checker: Arc<dyn RobotsCheckerTrait>,
     pub team_semaphore: Arc<TeamSemaphore>,
+    pub request_coalescer: Arc<RequestCoalescer>,
     pub engine_router: Arc<EngineRouter>,
     pub engine_client: Arc<EngineClient>,
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
@@ -648,11 +705,12 @@ pub struct CrawlRsState {
     pub search_service: Arc<dyn SearchServiceTrait>,
     pub llm_service: Arc<dyn LLMServiceTrait>,
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
+    // RAG：rag.enabled=false 或未配置时为 None（Option，非 cfg 门控）
+    pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    pub rerank_provider: Option<Arc<dyn RerankProvider>>,
     pub content_extractor: Arc<ContentExtractionFacade>,
-    pub regex_cache: Arc<RegexCache>,
     pub cache_service: Arc<dyn CacheService>,
     pub audit_service: Arc<dyn AuditServiceTrait>,
-    pub request_coalescer: Arc<RequestCoalescer>,
     #[cfg(feature = "webhook")]
     pub webhook_worker: Arc<WebhookWorker>,
     pub backlog_worker: Arc<BacklogWorker>,
@@ -662,31 +720,43 @@ pub struct CrawlRsState {
     #[cfg(feature = "teams")]
     pub geo_restriction_repo: Arc<dyn GeoRestrictionRepository>,
     pub i18n_bundle: Arc<I18nBundle>,
+    pub event_bus: Arc<dyn EventBus>,
+    #[cfg(feature = "sitemap")]
+    pub map_use_case: Arc<MapUseCase>,
 }
 ```
+
+`regex_cache` 已不在 `CrawlRsState` 上（无此字段）。默认构建（platform，含 teams/sitemap）下共 **36 个字段**：29 个恒定编译 + 7 个 cfg 门控（`webhook_repo`/`webhook_event_repo`/`webhook_worker` 受 `webhook`，`team_service`/`geo_location_service`/`geo_restriction_repo` 受 `teams`，`map_use_case` 受 `sitemap`）。字段数以 `src/di/axum_state.rs:70-193` 为准。
 
 | Field | Gated By | Off-mode Behavior |
 |-------|----------|-------------------|
 | `webhook_repo` / `webhook_event_repo` / `webhook_worker` | `webhook` | Field not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn block skipped |
 | `team_service` / `geo_location_service` / `geo_restriction_repo` | `teams` | Field not compiled; `/v1/teams/*` routes not registered; `extract_handler` signature loses GR generic |
+| `map_use_case` | `sitemap` | Field not compiled; `/v1/map` route not registered (sitemap 流式站点图) |
 | `webhook_service` | (none, always compiled) | webhook-off: assembled with `NoopWebhookService` (no-op trait impl) |
 | `rate_limiting_service` | (none, always compiled) | rate-limit-off: assembled with `NoopRateLimitingService` (always-allow trait impl) |
+| `embedding_provider` / `rerank_provider` | (none, `Option`) | rag 未启用或未配置时为 `None`，非 cfg 门控 |
 
 See [Feature Gate Architecture](#feature-gate-architecture) for the full gating matrix.
 
 State is injected into Axum handlers via `Extension<CrawlRsState>`.
 
-**Module dependency graph:**
+**Module dependency graph**（`src/main.rs:389-405` 的注册顺序即依赖顺序；`CrawlRsState::from_kit` require 其中 5 个）：
 
 ```text
-SettingsModule (config: Arc<Settings>)
-  ├── DatabaseModule → Arc<DatabasePool>
+SettingsModule (Arc<Settings> + i18n 配置)
+  ├── DatabaseModule → dbnexus pool（迁移/权限）
   ├── HttpModule → Arc<reqwest::Client>
-  └── CacheModule → CacheComponents
-         ├── RepositoryModule → Repositories (depends: DatabaseModule)
-         └── EngineModule → EngineComponents (depends: HttpModule, SettingsModule)
-                └── ServiceModule → ServicesComponents (depends: all above)
+  └── CacheModule → oxcache 缓存组件
+         ├── RepositoryModule → Repositories（依赖 DatabaseModule）
+         ├── InfrastructureModule → 基础设施组件（DB pool、CacheService 等）
+         │     └── ServiceModule → ServicesComponents（依赖 RepositoryModule、EngineModule）
+         ├── EngineModule → EngineComponents（依赖 HttpModule、SettingsModule）
+         │     └── ServiceModule
+         └── IdModule → Arc<IdService>（NebulaId ID 生成）
 ```
+
+`CrawlRsState::from_kit` 提取 `InfrastructureModule`、`EngineModule`、`ServiceModule`、`SettingsModule`、`IdModule` 五个模块的组件并拍平为扁平字段。
 
 ### Feature Gate Architecture
 
@@ -700,8 +770,8 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 | Feature | Default | Depends On | Off-mode Behavior |
 |---------|---------|------------|-------------------|
 | `teams` | on | `auth` | `/v1/teams/*` routes not registered; `extract_handler` loses GR generic + geo-restriction block; `CrawlRsState.{team_service, geo_location_service, geo_restriction_repo}` not compiled; `team_id` falls back to `DEFAULT_TEAM_ID` |
-| `auth` | on | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.9.0-rc.2 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::full_access()}`，无 DB 查询、无暴力破解防护 |
-| `rate-limit` | on | `dep:limiteron` | `LimiteronService` replaced by `NoopRateLimitingService` (check_rate_limit→Allowed, check_and_deduct_quota→Ok, get_quota_balance→Ok(i64::MAX), process_backlog_tasks→Ok(0)); `limiteron_service`/`distributed_rate_limit_middleware`/`limiteron_rate_limit_middleware` modules not compiled |
+| `auth` | on | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.9.0-rc.2 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::denied()}`，无 DB 查询、无暴力破解防护；受保护路由默认 401，放行须经 `allow_unauthenticated_protected()` 显式 opt-in（放行后仍是 denied 受限身份） |
+| `rate-limit` | on | —（空数组） | `LimiteronService` replaced by `NoopRateLimitingService` (check_rate_limit→Allowed, check_and_deduct_quota→Ok, get_quota_balance→Ok(i64::MAX), process_backlog_tasks→Ok(0)); `rate-limit` 只门控装配选择，`limiteron` crate 因 `utils/backoff` 无条件依赖其 retry 原语而始终编译，`rate_limit_middleware` 始终挂载（内部 trait 调用 no-op 实现） |
 | `webhook` | on | — | `WebhookServiceImpl`/`WebhookManagementServiceImpl`/`webhook_sender`/`webhook_handler`/`webhook_worker` modules not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn blocks skipped; `WebhookService` trait preserved and assembled with `NoopWebhookService` (all ops return `Ok(())`) |
 
 ### Default feature set
@@ -709,13 +779,20 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 ```toml
 [features]
 default = ["platform", "db-postgres"]
-platform = ["teams", "auth", "rate-limit", "webhook", "metrics", "content"]
+# platform：完整平台服务能力面。sitemap 是 platform 的组成部分（0.2.0 起）
+platform = ["teams", "auth", "rate-limit", "webhook", "metrics", "content", "sitemap",
+            "dep:dbnexus", "dep:axum", "http"]
 teams   = ["auth"]
 auth    = ["dep:garrison", "dep:inventory"]   # 0.2.0: garrison v0.9.0-rc.2 接管认证引擎
-rate-limit = ["dep:limiteron"]
+rate-limit = []            # 空数组：只门控装配选择，limiteron crate 始终编译
 webhook = []
 full    = ["standard", "engine-flaresolverr", "extractors", "llm"]
+
+# sitemap（0.2.0 起并入 platform）：
+sitemap = ["dep:quick-xml"]
 ```
+
+`rate-limit = []` 的原因：`utils/backoff` 的重试原语无条件依赖 `limiteron` crate，故该依赖不随 feature 关闭而摘除；feature 关闭只把 `RateLimitingService` 的装配从 `LimiteronService` 换成 `NoopRateLimitingService`。同理 `teams` 隐含 `auth`，`auth` 隐含 `dep:garrison` + `dep:inventory`。
 
 ### Gating pattern examples
 
@@ -861,41 +938,29 @@ pub trait ScraperEngine: Send + Sync {
 
 ### Engine Router
 
-The `EngineRouter` (`src/engines/router.rs`) holds a `Vec<Arc<dyn ScraperEngine>>` and selects engines using configurable load balancing strategies:
+The `EngineRouter` (`src/engines/router/mod.rs`，目录实现) holds a `Vec<Arc<dyn ScraperEngine>>` and selects engines. The internal strategy field 在 `EngineRouter::new` 中是**硬编码默认** `LoadBalancingStrategy::SmartHybrid`——settings 侧没有可配置入口，生产装配不调用 setter（`set_strategy` 等 setter 存在但仅在测试中使用）：
 
 ```rust
+// src/engines/router/mod.rs:79,86-186
 pub enum LoadBalancingStrategy {
     RoundRobin,
     WeightedRoundRobin,
     LeastConnections,
     FastestResponse,
     Random,
-    SmartHybrid,  // default - combines multiple strategies
-}
-
-pub struct EngineRouter {
-    engines: Vec<Arc<dyn ScraperEngine>>,
-    circuit_breaker: Arc<CircuitBreaker>,
-    // 使用 DashMap 替代 RwLock<HashMap>，避免读写锁借用开销
-    engine_stats: Arc<DashMap<String, EngineStats>>,
-    round_robin_index: Arc<parking_lot::Mutex<usize>>,
-    strategy: LoadBalancingStrategy,
-    metrics: Arc<RouterMetrics>,
-    max_engine_attempts: usize,
-    max_retries: usize,
-    feature_filter_enabled: bool,
-    race_mode_enabled: bool,
-    dynamic_threshold_factor: f64,
-    // Hedge 控制器，race 胜出后记录延迟用于 P84 估算
-    hedge_controller: HedgeController,
+    SmartHybrid,  // hard-coded default — not settable via config
 }
 ```
 
+其余内部参数同样为构造期常量：`max_engine_attempts = 3`、`max_retries = 5`、`race_mode_enabled = false`（顺序回退为默认模式，竞速模式为显式启用）、`feature_filter_enabled = true`、`dynamic_threshold_factor = 1.0`。
+
+`src/engines/router/` 目录内含四个文件：`mod.rs`（路由器主体）、`engine_selector.rs`（同步候选引擎过滤）、`route_race.rs`（并发竞速）、`route_sequential.rs`（顺序回退）。
+
 The router:
-1. Filters engines by `support_score` (feature-based filtering)
-2. Applies the selected load balancing strategy
-3. Falls back to sequential engines on failure
-4. Supports race mode (concurrent execution, return first success)
+1. Filters engines by `support_score` (feature-based filtering，同步过滤在 `engine_selector.rs`)
+2. Applies the load balancing strategy（`SmartHybrid`，构造期硬编码）
+3. Falls back to sequential engines on failure (`route_sequential.rs`)
+4. Supports race mode (concurrent execution, return first success, `route_race.rs`)
 5. race mode 胜出后调用 `hedge_controller.record_latency(response_time)` 更新 EMA/方差，用于后续 P84 阈值估算（详见 [Hedge 请求副本控制器](#hedge-请求副本控制器)）
 
 ### Hedge 请求副本控制器
@@ -949,9 +1014,7 @@ pub enum WaitFor {
 
 **接入路径：** `InternalScrapeRequest.wait_for: Option<WaitFor>` 字段，Playwright 引擎在 `goto` 后调用 `request.wait_for.unwrap_or_default().wait(&page, timeout)`。
 
-**架构拆分动机：** 枚举定义在非 feature-gated 的 `engine_client.rs`，实现在 feature-gated 的 `wait.rs`，解决跨引擎依赖问题。
-
-**已知限制（DTO 未桥接）：** API DTO 层 `ScrapeRequestOptions.wait_for: Option<u64>` 是数值字段（毫秒），当前 handler 未将其转换为 `WaitFor` 枚举。API 用户传入的 `wait_for` 数值被忽略，Playwright 引擎始终走 `NetworkIdle` 默认策略。计划在后续迭代中将 DTO 升级为 tagged enum JSON 格式（`{"network_idle": {}}` / `{"selector": "#target"}` / `{"dom_stable": {"duration_ms": 500}}`）。
+**桥接实现：** API DTO 层 `ScrapeRequestOptions.wait_for: Option<u64>`（毫秒）在 `create_scrape` use case 中映射为 `WaitFor::DomStable(Duration::from_millis(ms))`，并钳制到 10s（引擎侧 `WAIT_TIMEOUT_CAP`），防合法输入触发 DomStable 超预算确定性失败（`src/application/use_cases/create_scrape.rs:126-130`）。
 
 ### TabPool 浏览器 Tab 复用
 
@@ -1208,7 +1271,7 @@ gated `trafilatura`/`dom-smoothie`/`extractors`：
 - `drl_policy.rs`：`DrlPolicy` ONNX 推理 + `HeuristicPolicy` 启发式退化
 - `scrape_worker::handle_crawl_success` 集成 `StopCondition` 检查，命中时提前终止 crawl
 
-### TLS Fingerprint Engine (`src/engines/client/wreq.rs`)
+### TLS Fingerprint Engine (`src/engines/client/wreq_engine.rs`)
 
 `WreqEngine` 基于 `wreq` crate 实现 TLS 指纹伪装，通过自定义 TLS ClientHello 的 JA3/JA4 指纹模拟真实浏览器。
 
@@ -1217,9 +1280,15 @@ gated `trafilatura`/`dom-smoothie`/`extractors`：
 - **集成路径**: 注册为 `ScraperEngine` 实现，`support_score` 在 `needs_tls_fingerprint=true` 时返回 100
 - **配置**: `[engines.tls_fingerprint]` 控制默认指纹 profile 和启用状态
 
-### MLLM Engine (`src/engines/client/mllm/`)
+### MLLM Engine (`src/engines/client/mllm.rs` + `src/engines/mllm/`)
 
-`MllmEngine` 实现多模态 LLM 自主导航爬取，通过视觉模型理解页面内容并决定下一步动作。
+`MllmEngine` 实现多模态 LLM 自主导航爬取，通过视觉模型理解页面内容并决定下一步动作。引擎本体在 `src/engines/client/mllm.rs`（与其他引擎同一层，注册为 `ScraperEngine` 实现）；其内部模块独立放在 `src/engines/mllm/` 目录下：
+
+- `mod.rs` — 模块装配
+- `ax_tree.rs` — 无障碍树抽取
+- `decision.rs` — 动作决策
+- `action_executor.rs` — 点击/滚动/输入执行
+- `config.rs` — 配置
 
 - **Feature gate**: `engine-mllm`
 - **架构**: Vision Adapter（截图→视觉模型）→ Decision（动作决策）→ Action Executor（执行点击/滚动/输入）
@@ -1268,12 +1337,14 @@ The queue system uses a **trait-based** approach with a PostgreSQL-backed implem
 #[async_trait]
 pub trait TaskQueue: Send + Sync {
     async fn enqueue(&self, task: Task) -> Result<Task, QueueError>;
-    async fn dequeue(&self, worker_id: Uuid) -> Result<Option<Task>, QueueError>;
-    async fn complete(&self, task_id: Uuid) -> Result<(), QueueError>;
-    async fn fail(&self, task_id: Uuid) -> Result<(), QueueError>;
-    async fn cancel(&self, task_id: Uuid) -> Result<(), QueueError>;
+    async fn dequeue(&self, worker_id: crate::domain::id::Id) -> Result<Option<Task>, QueueError>;
+    async fn complete(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError>;
+    async fn fail(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError>;
+    async fn cancel(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError>;
 }
 ```
+
+所有 ID 为 `crate::domain::id::Id`（NebulaId 域 ID），不是旧式 UUID 值。
 
 **PostgresTaskQueue** wraps the `TaskRepository` trait:
 
@@ -1283,22 +1354,22 @@ pub struct PostgresTaskQueue {
 }
 ```
 
-The `TaskRepository` provides `acquire_next(worker_id)` which uses `FOR UPDATE SKIP LOCKED` semantics for safe concurrent worker access.
+The `TaskRepository` provides `acquire_next(worker_id)` which uses `FOR UPDATE SKIP LOCKED` semantics for safe concurrent worker access. Ordering is `priority ASC, created_at ASC`（数值越小越优先），由 `migrations/003` 的两个 partial index（`idx_tasks_acquire_queued` / `idx_tasks_acquire_stale`）支撑有序取任务。详见 [Queue Architecture](queue-architecture.md)。
 
 ### Worker Types
 
-Six worker types run in the background:
+实际运行 **4 类 worker**：
 
-| Worker | Purpose | Key Trait |
-|--------|---------|-----------|
-| `scrape_worker` | Process scrape tasks via EngineClient | `WorkerProcess` |
-| `webhook_worker` | Deliver webhook events to configured URLs | `WorkerProcess` |
-| `backlog_worker` | Reprocess expired/pending tasks | `WorkerProcess` |
-| `expiration_worker` | Expire stale tasks past their TTL | `WorkerProcess` |
-| `task_state_machine` | Handle task state transitions (queued → running → completed/failed) | `WorkerProcess` |
-| `manager` | Orchestrate all worker lifecycle | `Manager` |
+| Worker | Purpose | 启动方 | 驱动方式 |
+|--------|---------|--------|----------|
+| `scrape_worker` | Process scrape tasks via EngineClient | `manager`（N 个副本） | 自有 `run`（不经 AbstractWorker） |
+| `webhook_worker` | Deliver webhook events to configured URLs | `spawn_common_workers` | `AbstractWorker` 模板 |
+| `backlog_worker` | Reprocess expired/pending tasks | `spawn_common_workers` | `AbstractWorker` 模板 |
+| `expiration_worker` | Expire stale tasks past their TTL | `spawn_common_workers` | `AbstractWorker` 模板 |
 
-All workers use the `AbstractWorker<P>` template:
+后三者（webhook/backlog/expiration）由 `src/bootstrap/workers.rs:20-57` 的 `spawn_common_workers` 启动，API 模式与 worker 模式共享，**不经 manager**；scrape_worker 由 manager 启动。`src/workers/task_state_machine.rs` 全仓零调用方（死代码，无运行时接线）。
+
+**Worker 模板**：`AbstractWorker<P>` 只驱动通用 worker（webhook/backlog/expiration）；scrape_worker 用自己的 `run` 循环服务于任务队列：
 
 ```rust
 pub struct AbstractWorker<P>
@@ -1311,10 +1382,10 @@ where
 ```
 
 Worker lifecycle:
-1. `manager` starts all workers on application boot
+1. API/worker 进程启动时 `spawn_common_workers` 拉起 webhook/backlog/expiration；worker 模式下 manager 另起 N 个 scrape_worker
 2. Each worker runs its `process()` on a configurable interval
 3. Workers share the same TaskRepository for task coordination via `FOR UPDATE SKIP LOCKED`
-4. Graceful shutdown via broadcast channel
+4. **Graceful shutdown** 由 `ShutdownCoordinator`（`src/workers/shutdown.rs:35-44`）协调：内嵌 trait-kit 的 `AsyncShutdownCoordinator` 做分阶段停机 hook，`listen_unix_signals` 捕获 SIGTERM/SIGINT 置位关闭 flag；宽限期（默认 30s）内 worker 排空活跃任务，`ShutdownPhase::DrainQueue` 阶段 hook 触发 `rollback_pending_tasks` 把未完成任务回滚为 `queued`，全部见 `src/main.rs:130-203`。broadcast channel 只用于 RequestCoalescer 的同 URL 并发等待，不参与停机流程
 
 ---
 
@@ -1400,13 +1471,18 @@ Rate limiting is implemented using **limiteron 0.3.0-rc.6**, which provides Post
 | Parallel checker | High-concurrency rate limit checks |
 | Audit log | Rate limit violation logging |
 
-### Middleware Variants
+### Middleware 实现
 
-Three rate limiting middleware implementations coexist:
+`src/presentation/middleware/rate_limit_middleware.rs` 是**唯一的**限流中间件。历史上曾并存另外两个平行方案（`src/presentation/middleware/mod.rs:21-24` 的历史注释记录了它们因无路由挂载点、零调用方而被移除的事实），现已不在代码中。该中间件本身只负责 429 判定与 `Retry-After` 响应头，实际速率判断经 `RateLimitingService` trait 委托给 `LimiteronService`（limiteron 0.3.0-rc.6，PostgreSQL 后端）：
 
-1. **Basic Rate Limit** (`rate_limit_middleware.rs`) - In-memory token bucket for simple scenarios
-2. **Distributed Rate Limit** (`distributed_rate_limit_middleware.rs`) - Coordination across instances
-3. **Limiteron Rate Limit** (`limiteron_rate_limit_middleware.rs`) - PostgreSQL-backed via limiteron 0.3.0-rc.6
+```text
+HTTP request → rate_limit_middleware (429 + Retry-After)
+              → RateLimitingService trait
+                ├── rate-limit on:  LimiteronService（PostgreSQL）
+                └── rate-limit off: NoopRateLimitingService（always allow）
+```
+
+全仓无 Redis 依赖，因此不存在跨实例共享的分布式限流变体。tower 原生层语义（429/403 + `RateLimit-*` 响应头）由 limiteron 的 `tower-middleware` 提供，crawlrs 尚未接入。
 
 ### Multi-Level Limiting
 
@@ -1438,8 +1514,8 @@ flowchart TD
 
 ```rust
 pub struct TeamSemaphore {
-    permits: Arc<DashMap<Uuid, Arc<tokio::sync::Semaphore>>>,
-    max_concurrent: Arc<DashMap<Uuid, usize>>,
+    permits: Arc<DashMap<crate::domain::id::Id, Arc<tokio::sync::Semaphore>>>,
+    max_concurrent: Arc<DashMap<crate::domain::id::Id, usize>>,
 }
 ```
 
@@ -1504,8 +1580,8 @@ Configured with rules for:
 ```rust
 pub struct AuthState {
     pub pool: Arc<DbPool>,
-    pub team_id: Uuid,
-    pub api_key_id: Uuid,
+    pub team_id: crate::domain::id::Id,
+    pub api_key_id: crate::domain::id::Id,
     pub scope: ApiKeyScope,
 }
 ```
@@ -1551,7 +1627,7 @@ garrison v0.9.0-rc.2 提供五大组件，crawlrs 通过 `auth` feature 隐式�
 pub async fn scope_middleware(req: Request<Body>, next: Next) -> Result<Response, StatusCode>
 ```
 
-`scope_middleware`（`auth_middleware.rs:335`）从 `AuthState.scope` 读取 `ApiKeyScope`，调用 `determine_required_scope(path, method)` 推导所需 `ScopePermission`，再用 `ApiKeyScope::has_permission` 校验。`ScopePermission` 枚举：`Read` / `Write` / `Admin`（`domain/auth/mod.rs:38`）。
+`scope_middleware`（`src/presentation/middleware/auth_middleware.rs:487`）从 `AuthState.scope` 读取 `ApiKeyScope`，调用 `determine_required_scope(path, method)` 推导所需 `ScopePermission`，再用 `ApiKeyScope::has_permission` 校验。`ScopePermission` 枚举：`Read` / `Write` / `Admin`（`src/domain/auth/mod.rs:35`）。注意该中间件未挂载生产路由。
 
 Scopes: `scrape`, `crawl`, `search`, `extract`, `admin`
 
@@ -1628,7 +1704,7 @@ flowchart TB
     subgraph Container [Docker Container]
         subgraph App [crawlrs Application]
             S1[Axum Server<br/>port 8899]
-            S2[Worker Pool<br/>6 worker types]
+            S2[Scrape Workers + Common Workers<br/>4 worker types]
         end
     end
 
@@ -1674,7 +1750,7 @@ flowchart TB
    - Each pod runs both API server and worker pool
    - Horizontal Pod Autoscaler (CPU/memory based)
    - Load balancer (Ingress)
-   - Health check endpoints: `/health`, `/metrics`
+   - Health check endpoints: `/health`, `/ready`, `/metrics`
 
 2. **PostgreSQL**
    - Primary + Read replicas

@@ -12,6 +12,8 @@
 | 通知 outbox | `webhook_events` | `WebhookEventRepository::find_pending` | webhook 事件重试投递 |
 | 通用消息队列 | `message_queues`（+ `message_queues_archive`） | `PostgresMessageQueueRepository` / `MessageQueue` trait | pgmq 风格命名队列消息 |
 
+> **trait 分层说明**：通用消息队列是**两层 trait**——存储层 `MessageQueueRepository` 定义数据库持久化操作，服务层 `MessageQueue` 定义队列业务语义；两层分别位于 `src/queue/message_queue.rs:81` 与 `:136`。本文表格中的"`MessageQueue` trait"指服务层（PGMQ 风格命名队列消息）；`PostgresMessageQueueRepository` 位于 `src/queue/postgres_message_queue.rs`。
+
 三者都落在 Postgres，但解决的问题不同。混用会导致：锁语义缺失、优先级不可表达、投递重试与任务调度耦合。
 
 ## 各队列机制
@@ -19,7 +21,8 @@
 ### 1. `tasks` — 抓取任务调度（任务队列）
 
 - **机制**：`acquire_next` 两步查询（`status='queued'` 正常路径 + `status='active'` lock 过期恢复路径），`lock_token`/`lock_expires_at` 行级占用，partial index（`idx_tasks_acquire_queued`/`idx_tasks_acquire_stale`）保证低延迟有序取任务。
-- **适用条件**：需要优先级（`priority DESC, created_at ASC`）、lock 语义（worker 崩溃后恢复）、调度与任务生命周期（retry/max_retries/expires_at）绑定的工作负载——即抓取任务本身。
+- **适用条件**：需要优先级（`priority ASC, created_at ASC`，数值越小越优先）、lock 语义（worker 崩溃后恢复）、调度与任务生命周期（retry/max_retries/expires_at）绑定的工作负载——即抓取任务本身。
+- **实现位置**：`src/infrastructure/database/repositories/task_repo_impl.rs` 的 `acquire_next` 两步查询（`ORDER BY priority ASC, created_at ASC`），由 `migrations/003_add_acquire_next_indexes.sql` 的两个 partial index（`idx_tasks_acquire_queued` / `idx_tasks_acquire_stale`，同为 `(priority ASC, created_at ASC)`）直接支撑 Index Scan + LIMIT 1，无需 Sort。
 - **禁止混用**：
   - 任务调度**禁止**改用 `message_queues`——其无 priority 排序、无 lock/占用语义、无 `acquire_next` 的崩溃恢复路径；任务会被消费者的读节奏改变而失去队首优先。
   - 任务调度**禁止**经 `webhook_events` 表达——该表为事件型投递设计，无任务状态机。
@@ -31,7 +34,12 @@
 - **禁止混用**：
   - 不用于承载任务调度（见上）。
   - 不用于进程内解耦/消息广播——那是 `message_queues` 的职责；把广播塞进 outbox 会污染投递状态（无法投递的电影票）。
-- **终态清理**（R-retention-004）：`delivered`/`dead` 终态事件按保留期清理（migration 007 partial index 支撑）；`pending`/`failed` 是活事件永不清理。
+- **终态清理**：索引已就位，但 `webhook_events` 终态清理任务**尚未接线**。`migrations/007_add_retention_indexes.sql` 的两个 partial index（`idx_webhook_events_delivered_at` 过滤 `status='delivered'`、`idx_webhook_events_dead_updated_at` 过滤 `status='dead'`）已建，但 `webhook_event_repo` 没有任何 cleanup 方法，迁移 007 注释中设想的 `RetentionWorker` 模块在 `src/workers/` 下并不存在，故无人执行终态 DELETE 扫描。`pending`/`failed` 是活事件永不清理。
+- **当前实际运行的清理路径**（与 webhook_events 无关）：
+  - `expiration_worker` 的 `expire_tasks()`：把超 `expires_at` 的 `tasks` 行过期；
+  - `expiration_worker` 的 `cleanup_expired(retention = scrape_results_days = 30)`：清理过期 `scrape_results`；
+  - `audit_log_repo_impl.cleanup_old_logs(retention_days)` 已实现，但无运行时调用方。
+- **遗留缺口**（R-retention-004 未闭合）：接线一个 webhook_events 终态清理 worker，或把该清理并入 `expiration_worker` 周期。
 
 ### 3. `message_queues` — 通用消息队列（pgmq 风格）
 

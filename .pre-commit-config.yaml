@@ -31,9 +31,9 @@ repos:
     rev: v1.5.0
     hooks:
       - id: detect-secrets
-        # 已审计基线：收录 30 个文件 / 60 条既有命中（测试向量、文档占位符、本地 DSN、
+        # 已审计基线：收录 30 个文件 / 63 条既有命中（测试向量、文档占位符、本地 DSN、
         # CI service 容器口令、密钥扫描脚本自身的模式表），逐条确认非真实凭据。
-        # 新增真实凭据仍会拦截；新增误报需重跑 `detect-secrets scan` 更新基线并在此提交。
+        # 新增真实凭据仍会拦截；新增误报需重跑 `detect-secrets scan` 更新基线并把新计数写回本注释。
         args: [--baseline, .secrets.baseline, --exclude-files, tests/, --exclude-files, examples/]
         # 基线文件与锁文件不参与扫描
         exclude: '^(Cargo\.lock|\.secrets\.baseline)$'

@@ -7,7 +7,7 @@
 ![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8899-green)
 ![License](https://img.shields.io/badge/license-Apache%202.0-orange)
 
-**Version:** 0.2.0-rc.2 | **Base URL:** `http://localhost:8899` | **Updated:** 2026-10-07
+**Version:** 0.2.0-rc.2 | **Base URL:** `http://localhost:8899` | **Updated:** 2026-10-13
 
 </div>
 
@@ -20,6 +20,9 @@
 - [⚠️ Errors](#️-errors)
 - [🌐 Public Endpoints](#-public-endpoints)
   - [Health Check](#health-check)
+  - [Readiness Check](#readiness-check)
+  - [Garrison Health Probes](#garrison-health-probes)
+  - [OpenAPI Specification](#openapi-specification)
   - [Get Version](#get-version)
   - [Get Metrics](#get-metrics)
 - [🔒 Protected Endpoints](#-protected-endpoints)
@@ -79,30 +82,33 @@ Authorization: Bearer YOUR_API_KEY
 
 ### API Key Scopes
 
-API keys can have different scopes that control access to specific features:
+API keys carry an `ApiKeyScope` with three boolean permissions plus two hourly limits (`src/domain/auth/mod.rs`):
 
-| Scope | Description |
+| Field | Description |
 |--------|-------------|
-| `scrape` | Access to scrape endpoints |
-| `crawl` | Access to crawl endpoints |
-| `search` | Access to search endpoints |
-| `extract` | Access to extract endpoints |
-| `admin` | Full administrative access |
+| `read` | Permission to access read-only endpoints |
+| `write` | Permission to access write endpoints |
+| `admin` | Permission to access administrative endpoints（蕴含 read + write） |
+| `search_limit` | Maximum search requests per hour |
+| `scrape_limit` | Maximum scrape requests per hour |
 
-> **0.2.0 起**：scope 由 garrison RBAC 权限经 `auth_bridge::map_perms_to_scope` 桥接而来，下游业务层无感知。
+> **重要现状（0.2.0-rc.2）：** `scope_middleware` 虽已实现（`src/presentation/middleware/auth_middleware.rs`），但**未挂载到生产路由**——仅存在于测试 Router 装配。除 `POST /v1/admin/api-keys` 在 handler 内部显式校验 `Admin` 权限外，其余端点目前不校验 API Key scope，仅校验 key 有效性。请勿误以为 RBAC 已在端点层生效。
 
-### Auth Disabled Behavior (R-flags-005)
+### Auth Disabled Behavior (auth-off)
 
-> **Conditional:** When the `auth` feature is disabled (via `--no-default-features` or explicit feature selection), API Key authentication is bypassed. The `default_identity_middleware` injects a fixed `AuthState` into all requests.
+> **Conditional:** When the `auth` feature is disabled (via `--no-default-features` or explicit feature selection), the real `auth_middleware_inner` is not compiled. `default_identity_middleware` injects a prebuilt `AuthState` template instead — but **默认拒绝**：未显式 opt-in 时，所有 protected 请求一律返回 `401`。
 
 | Behavior | When `auth` Enabled (default) | When `auth` Disabled |
 |----------|------------------------------|---------------------|
-| `Authorization` header | Required (401 if missing/invalid; 429 on brute-force lockout) | Ignored — requests pass through |
+| `Authorization` header | Required (401 if missing/invalid; 429 on brute-force lockout) | **Ignored, but requests still 401** until `allow_unauthenticated_protected()` is called |
+| Opt-in | N/A | Must explicitly call `auth_middleware::allow_unauthenticated_protected()` (one-time `error!` log declares the security downgrade) |
 | `AuthState.team_id` | Resolved via garrison → `api_key_id→team_id` 反查 + `TEAM_ID_CACHE` LRU | Fixed to `DEFAULT_TEAM_ID` (`domain::id::Id::from_u128(1)`) |
 | `AuthState.api_key_id` | Resolved from garrison key | Fixed to `DEFAULT_API_KEY_ID` (`domain::id::Id::from_u128(2)`) |
-| `AuthState.scope` | `map_perms_to_scope(garrison permissions)` | `ApiKeyScope::full_access()` (all permissions `true`, limits `u32::MAX`) |
+| `AuthState.scope` | `map_perms_to_scope(garrison permissions)` | `ApiKeyScope::denied()` (read/write/admin all `false`, limits 0) — 受限匿名身份，非 `full_access()` |
 | Token cache | garrison 自管 oxcache；crawlrs 侧 `TEAM_ID_CACHE` 缓存映射 | N/A — fixed identity, no caching |
 | Rate limit lockout | garrison `firewall-bruteforce` (5/60s/300s) | Not tracked (but `rate-limit` feature may still apply per-IP limits) |
+
+> 源码依据：`src/bootstrap/routes.rs::build_default_identity_template`（模板携带 `ApiKeyScope::denied()`）与 `src/presentation/middleware/auth_middleware.rs::default_identity_middleware`（默认 401，opt-in 后注入模板）。opt-in 放行后的身份仍是 denied 受限身份，业务层若按权限判断将拒绝服务。
 
 **Build commands:**
 ```bash
@@ -154,17 +160,11 @@ All API responses follow this unified structure:
   "data": {
     // Response data here
   },
-  "meta": {
-    "page": 1,
-    "per_page": 20,
-    "total_items": 100,
-    "total_pages": 5,
-    "has_next": true,
-    "has_previous": false
-  },
   "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
+
+> **当前无端点使用 `meta` 分页包封。** `ApiResponse` 结构体与 `success_response_with_meta` 构造器在 `src/presentation/handlers/response_builder.rs` 有定义（携带 `PaginationMeta`），但生产 handler 无任何调用点；列表端点（如 `GET /v1/webhooks`、audit logs）的分页信息直接平铺在 `data` 内。上述 `meta` 形态仅为保留的库能力，不是现行 API 契约。
 
 ### Error Response
 
@@ -181,17 +181,26 @@ All API responses follow this unified structure:
 
 ### Rate Limit Error Response
 
+限流拒绝（429）由各 handler 内 `check_rate_limit` 直接返回，**不走 `ApiResponse` 包封**，`error` 是字符串而非对象：
+
 ```json
 {
   "success": false,
-  "error": {
-    "code": "RATE_LIMITED",
-    "message": "Rate limit exceeded"
-  },
-  "retry_after_seconds": 60,
-  "timestamp": "2025-01-15T12:00:00+00:00"
+  "error": "Rate limit exceeded: <reason>"
 }
 ```
+
+当命中 `RetryAfter` 结果时额外带扁平 `retry_after_seconds` 字段：
+
+```json
+{
+  "success": false,
+  "error": "Rate limit exceeded, please retry later",
+  "retry_after_seconds": 60
+}
+```
+
+> 源码依据：`src/presentation/helpers/rate_limit_helper.rs::check_rate_limit`。响应头仅设 `Retry-After`，无 `X-RateLimit-*` 系列头。服务端返回 `CrawlRsError` 形态的 handler（如 webhook 创建）则走标准 `ApiResponse` 包封（`error.code = "RATE_LIMITED"`）。
 
 ### Response Fields
 
@@ -199,10 +208,9 @@ All API responses follow this unified structure:
 |-------|------|-------------|
 | `success` | boolean | Whether the request was successful |
 | `data` | object | Response data (only present on success) |
-| `error` | object | Error details (only present on failure) |
+| `error` | object | Error details (only present on failure); see the Rate Limit section for the string form |
 | `error.code` | string | Error code for programmatic handling |
 | `error.message` | string | Human-readable error message |
-| `meta` | object | Pagination metadata (only for list responses) |
 | `timestamp` | string | Response timestamp in RFC3339 format |
 
 ---
@@ -224,32 +232,39 @@ All API responses follow this unified structure:
 
 ### Error Codes
 
+生产错误码清单（`src/common/error.rs::CrawlRsError::error_code` 与 `src/presentation/handlers/response_builder.rs::error_codes`）：
+
 | Error Code | HTTP Status | Description |
 |------------|-------------|-------------|
 | `VALIDATION_ERROR` | 400 | Invalid request parameters |
 | `NOT_FOUND` | 404 | Resource not found |
 | `UNAUTHORIZED` | 401 | Missing or invalid API key |
+| `AUTHENTICATION_ERROR` | 401 | Authentication failed (e.g. webhook signature verification) |
 | `FORBIDDEN` | 403 | Insufficient permissions |
 | `RATE_LIMITED` | 429 | Rate limit exceeded |
-| `CONFLICT` | 409 | Resource conflict |
-| `PRECONDITION_FAILED` | 412 | Precondition failed |
-| `UNPROCESSABLE_ENTITY` | 422 | Validation error |
+| `UNPROCESSABLE_ENTITY` | 422 | Structural validation error (field missing / wrong type / unknown field) |
 | `INTERNAL_ERROR` | 500 | Internal server error |
 | `SERVICE_UNAVAILABLE` | 503 | Service unavailable |
-| `DATABASE_ERROR` | 500 | Database error |
-| `CACHE_ERROR` | 500 | Cache error |
-| `EXTERNAL_SERVICE_ERROR` | 502 | External service error |
-| `TIMEOUT` | 504 | Request timeout |
+| `TASK_ERROR` | 500 | Task processing error |
+| `ENGINE_ERROR` | 502 | Scraping engine error |
+| `JSON_ERROR` | 400 | JSON serialization/deserialization error |
+| `IO_ERROR` | 500 | Internal I/O error |
+| `CONFIGURATION_ERROR` | 500 | Configuration error |
 | `QUOTA_EXCEEDED` | 402 | Quota exceeded |
-| `FEATURE_DISABLED` | 404 | Feature not enabled (route not registered) |
+| `DATABASE_ERROR` | 500 | Database error（经 `CrawlRsError` 路径间接产出） |
+| `CACHE_ERROR` | 503 | Cache error（经 `CrawlRsError` 路径间接产出） |
+| `EXTERNAL_SERVICE_ERROR` | 502 | External service error（经 `CrawlRsError::Network` 间接产出） |
+| `TIMEOUT` | 504 | Request timeout（经 `CrawlRsError::Timeout` 间接产出） |
+
+> `CONFLICT` / `PRECONDITION_FAILED` / `FEATURE_DISABLED` 在 `error_codes` 模块有常量定义，但无生产发射点；feature 未编译时对应路由根本不注册，请求得到的是普通 404（`NOT_FOUND`）。
 
 ---
 
 ## 🌐 Public Endpoints
 
-### Health Check
+### Health Check (Liveness)
 
-Check if the API is running.
+Check if the API process is running. Always returns 200 when the process is alive — dependencies are not probed here.
 
 **Endpoint:** `GET /health`
 
@@ -260,6 +275,55 @@ Check if the API is running.
   "version": "0.2.0-rc.2"
 }
 ```
+
+### Readiness Check
+
+Kubernetes readiness probe: probes PostgreSQL (`SELECT 1`, 3s timeout) and the cache service (`get("__readiness_probe__")`, 1s timeout). Returns 200 with `status: "ready"` when all dependencies are up, 503 with `status: "not_ready"` otherwise.
+
+**Endpoint:** `GET /ready`
+
+**Response (200):**
+```json
+{
+  "status": "ready",
+  "checks": {
+    "database": { "status": "up" },
+    "cache": { "status": "up" },
+    "database_pool": { "status": "ok" }
+  },
+  "version": "0.2.0-rc.2"
+}
+```
+
+**Response (503):**
+```json
+{
+  "status": "not_ready",
+  "checks": {
+    "database": { "status": "down", "error": "..." },
+    "cache": { "status": "up" },
+    "database_pool": { "status": "ok" }
+  },
+  "version": "0.2.0-rc.2"
+}
+```
+
+> `checks` 含 `database`、`cache` 与 `database_pool`（连接池结构化快照：容量/空闲/等待，仅诊断用途，不影响就绪判定）。各探测失败标记 `status: "down"` 并附 `error`（超时为 `"timeout"`）。
+
+### Garrison Health Probes (`auth` builds only)
+
+When the `auth` feature is enabled, garrison's `health_routes` are merged into the public router (`src/bootstrap/routes.rs::create_public_routes`), exposing two additional paths:
+
+- `GET /health/live` — liveness probe, always 200
+- `GET /health/ready` — readiness probe aggregating the garrison `HealthRegistry` checks; `overall` Unhealthy returns 503 (K8s traffic-removal semantics carried by the library)
+
+These paths do not collide with `/health` and `/ready`. `auth`-off builds do not compile these routes.
+
+### OpenAPI Specification
+
+**Endpoint:** `GET /openapi.json` (requires the `openapi` feature; registered at the root path by `src/presentation/sdk/mod.rs`)
+
+**Response:** OpenAPI 3.1 document (JSON), generated by sdforge from all registered SDK endpoints.
 
 ### Get Version
 
@@ -274,32 +338,17 @@ Get the current API version.
 
 ### Get Metrics
 
-Get system performance metrics (requires `metrics` feature).
-
 **Endpoint:** `GET /metrics`
 
+> **⚠️ 当前为占位实现。** `metrics_handler` 返回 JSON 包封，其中 `metrics` 字段是一段**硬编码的 Prometheus 风格文本**——`version` 固定为 `1.0.0`、uptime 固定为 `3600`，并非运行时真实指标，也不是 Prometheus 文本格式聚合端点。权威的真实指标清单（采集点与标签定义）见 [PERFORMANCE.md](PERFORMANCE.md)。`/metrics` 的权威抓取格式（可直接被 Prometheus scraper 消费）尚未实现。
+
 **Response:**
-```text
-# Prometheus metrics format
-api_requests_total{method="POST",endpoint="/v1/scrape"} 1234
-api_request_duration_seconds{method="POST",endpoint="/v1/scrape",quantile="0.5"} 0.045
-# Platform metrics (requires `metrics` feature)
-crawlrs_queue_depth{queue_type="task"} 42
-crawlrs_engine_success_total{engine="reqwest",result="success"} 5678
-crawlrs_engine_duration_seconds{engine="reqwest",quantile="0.95"} 0.12
-crawlrs_cache_hit_total{cache_type="search",result="hit"} 9012
-crawlrs_webhook_delivery_total{result="success",status_code="200"} 3456
+```json
+{
+  "status": "ok",
+  "metrics": "# HELP app_info Information about the application\n# TYPE app_info gauge\napp_info{version=\"1.0.0\"} 1\n# HELP app_uptime_seconds Application uptime in seconds\n# TYPE app_uptime_seconds counter\napp_uptime_seconds 3600"
+}
 ```
-
-**Platform Metrics Reference:**
-
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `crawlrs_queue_depth` | Gauge | `queue_type` | Task queue depth (approximate via AtomicU64) |
-| `crawlrs_engine_success_total` | Counter | `engine`, `result` | Engine success/failure count |
-| `crawlrs_engine_duration_seconds` | Histogram | `engine` | Engine request duration distribution |
-| `crawlrs_cache_hit_total` | Counter | `cache_type`, `result` | Cache hit/miss (search/dns/regex/generic) |
-| `crawlrs_webhook_delivery_total` | Counter | `result`, `status_code` | Webhook delivery success/failure |
 
 ---
 
@@ -324,7 +373,7 @@ Scrape a single web page.
   "extraction_rules": {
     "title": {
       "selector": "h1",
-      "attribute": "text"
+      "attr": "text"
     }
   },
   "actions": [
@@ -347,6 +396,7 @@ Scrape a single web page.
     "screenshot": true,
     "screenshot_options": {
       "full_page": true,
+      "selector": "#main",
       "quality": 90,
       "format": "png"
     },
@@ -387,11 +437,11 @@ Scrape a single web page.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `headers` | object | empty | Custom HTTP headers (e.g. `User-Agent`) |
-| `wait_for` | integer | — | Wait hint in milliseconds (max 60000). Mapped to the `DomStable` wait strategy (DOM unchanged for this duration ⇒ ready); `None` uses the engine default (`WaitFor::NetworkIdle`, CDP network-event based). See [ARCHITECTURE.md → WaitFor](ARCHITECTURE.md#waitfor-策略). |
+| `wait_for` | integer | — | Wait hint in milliseconds (DTO validation max 60000, but the use case clamps `ms.min(10_000)` — values above 10000 are silently truncated to 10000). Mapped to the `DomStable` wait strategy (DOM unchanged for this duration ⇒ ready); `None` uses the engine default (`WaitFor::NetworkIdle`, CDP network-event based). See [ARCHITECTURE.md → WaitFor](ARCHITECTURE.md#waitfor-策略). |
 | `timeout` | integer | 30 | Request timeout in seconds |
 | `js_rendering` | boolean | false | Enable JavaScript rendering |
 | `screenshot` | boolean | false | Capture screenshot |
-| `screenshot_options` | object | — | Screenshot config (`full_page`, `quality`, `format`) |
+| `screenshot_options` | object | — | Screenshot config (`full_page`, `selector`, `quality`, `format`) |
 | `mobile` | boolean | false | Emulate mobile device |
 | `proxy` | string | — | Proxy URL (e.g. `http://proxy:8080`) |
 | `skip_tls_verification` | boolean | false | Skip TLS certificate verification |
@@ -404,7 +454,7 @@ Scrape a single web page.
 | `conditional_request` | boolean | — | Incremental fetch: send `If-None-Match`/`If-Modified-Since` when a prior result exists; a `304` reuses the historical content (`x-crawlrs-not-modified: true`) |
 | `block_ads` | boolean | false | Block common ad-domain requests in browser engines |
 | `block_media` | boolean | false | Block image/video/audio media loading in browser engines (speeds up text-only scraping) |
-| `needs_mllm` | boolean | false | Require MLLM visual analysis of the screenshot. Requires the `llm` feature: builds without it reject the request at submission (422) instead of silently degrading to a non-MLLM engine |
+| `needs_mllm` | boolean | false | Require MLLM visual analysis of the screenshot. Requires the `llm` feature: builds without it reject the request **at execution time** — the worker consuming the `create_scrape` use case fails the task with an explicit validation error (`needs_mllm requires the \`llm\` feature`), instead of silently degrading to a non-MLLM engine. Submission itself succeeds (task is enqueued and later marked `failed`) |
 
 > `session_id` remains an internal engine field (browser-session reuse is not exposed per-request yet). Unknown fields are still rejected with 422 via `deny_unknown_fields`.
 
@@ -425,11 +475,13 @@ Scrape a single web page.
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "url": "https://example.com",
-    "credits_used": 10
+    "credits_used": 1
   },
   "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
+
+> `credits_used` 固定为 1（每次抓取任务入队时扣减 1 credit；入队失败自动退还）。状态码：入队成功为 `201 Created`；`sync_wait_ms > 0` 且等待超时时为 `202 Accepted`（body 结构不变，仍含任务 `id`）。
 
 #### Get Scrape Status
 
@@ -443,25 +495,38 @@ Scrape a single web page.
 {
   "success": true,
   "data": {
-    "task": {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "status": "completed",
-      "url": "https://example.com",
-      "result": {
-        "html": "...",
-        "markdown": "...",
-        "text": "..."
-      }
-    }
-  }
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "completed",
+    "url": "https://example.com",
+    "created_at": "2025-01-15T12:00:00",
+    "completed_at": "2025-01-15T12:00:03",
+    "result": {
+      "content": "<html>...</html>",
+      "status_code": 200,
+      "content_type": "text/html",
+      "response_time_ms": 1200,
+      "headers": { "content-type": "text/html" },
+      "meta_data": {},
+      "screenshot": null,
+      "created_at": "2025-01-15T12:00:03"
+    },
+    "metadata": null,
+    "error": null
+  },
+  "timestamp": "2025-01-15T12:00:03+00:00"
 }
 ```
 
+> 响应为平铺的 `ScrapeStatusResponseDto`（无 `task` 外层键）。`result` 仅在任务 `completed` 时出现；敏感响应头（`set-cookie` / `authorization` 等）在返回前脱敏为 `[REDACTED]`。`error` 仅在任务 `failed` 时出现。
+
 #### Cancel Scrape
+
+Cancel a single scrape task by ID. Only the owning team can cancel; the task is marked `cancelled`.
 
 **Endpoint:** `POST /v1/scrape/{id}/_cancel`
 
-> **⚠️ 当前不可用：** 该端点仅注册在测试用路由装配（`presentation/routes/handlers.rs::routes()`，保留用于路由单元测试）。生产装配（`bootstrap/routes.rs::build_api_app_with_state`）只注册 `POST /v1/scrape` 与 `GET /v1/scrape/{id}`，无抓取取消端点。
+**Parameters:**
+- `id` (path) - Task UUID
 
 **Response:**
 ```json
@@ -469,7 +534,8 @@ Scrape a single web page.
   "success": true,
   "data": {
     "message": "Scrape task cancelled"
-  }
+  },
+  "timestamp": "2025-01-15T12:00:05+00:00"
 }
 ```
 
@@ -520,7 +586,7 @@ Crawl multiple pages from a starting URL.
 
 | Parameter | Type | Required | Description |
 |-----------|-------|----------|-------------|
-| `max_depth` | integer | Yes | Maximum crawl depth (required, max 100) |
+| `max_depth` | integer | Yes | Maximum crawl depth (required; DTO max 100, but the handler tightens this to ≤ 5 — `max_depth > 5` returns 422) |
 | `include_patterns` | array | No | Regex patterns for URLs to include |
 | `exclude_patterns` | array | No | Regex patterns for URLs to exclude |
 | `strategy` | string | No | Traversal strategy: `bfs` (default) or `dfs` |
@@ -539,89 +605,101 @@ Crawl multiple pages from a starting URL.
   "success": true,
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
+    "team_id": "660e8400-e29b-41d4-a716-446655440001",
+    "name": "my-crawl",
+    "root_url": "https://example.com",
     "url": "https://example.com",
-    "credits_used": 50
-  }
+    "status": "queued",
+    "config": { "max_depth": 2 },
+    "total_tasks": 0,
+    "completed_tasks": 0,
+    "failed_tasks": 0,
+    "created_at": "2025-01-15T12:00:00Z",
+    "updated_at": "2025-01-15T12:00:00Z",
+    "completed_at": null
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
+
+> 响应为裸 `Crawl` 域模型（无 `credits_used` 字段，无 `task` 包装）。状态码：创建成功为 `201 Created`；`sync_wait_ms > 0` 且等待超时时为 `202 Accepted`。
 
 #### Get Crawl Status
 
 **Endpoint:** `GET /v1/crawl/{id}`
 
 **Parameters:**
-- `id` (path) - Task UUID
+- `id` (path) - Crawl UUID
 
 **Response:**
 ```json
 {
   "success": true,
   "data": {
-    "task": {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "status": "running",
-      "url": "https://example.com",
-      "progress": {
-        "pages_processed": 45,
-        "total_pages": 100
-      }
-    }
-  }
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "team_id": "660e8400-e29b-41d4-a716-446655440001",
+    "name": "my-crawl",
+    "root_url": "https://example.com",
+    "url": "https://example.com",
+    "status": "processing",
+    "config": { "max_depth": 2 },
+    "total_tasks": 100,
+    "completed_tasks": 45,
+    "failed_tasks": 2,
+    "created_at": "2025-01-15T12:00:00Z",
+    "updated_at": "2025-01-15T12:01:30Z",
+    "completed_at": null
+  },
+  "timestamp": "2025-01-15T12:01:30+00:00"
 }
 ```
+
+> 响应为裸 `Crawl` 域模型（无 `task` / `progress` 包装）。`status` 取 `CrawlStatus` 序列化值（`queued` / `processing` / `completed` / `failed` / `cancelled`）。
 
 #### Get Crawl Results
 
 **Endpoint:** `GET /v1/crawl/{id}/results`
 
 **Parameters:**
-- `id` (path) - Task UUID
+- `id` (path) - Crawl UUID
 
-**Query Parameters:**
-- `page` - Page number (default: 1)
-- `limit` - Results per page (default: 20, max: 100)
+> **无查询参数**：该端点不接受 `page` / `limit`，一次返回该 crawl 下全部子任务的抓取结果。
 
 **Response:**
 ```json
 {
   "success": true,
-  "data": {
-    "results": [
-      {
-        "url": "https://example.com/page1",
-        "html": "...",
-        "markdown": "..."
-      }
-    ],
-    "pagination": {
-      "page": 1,
-      "limit": 20,
-      "total": 100
+  "data": [
+    {
+      "id": "770e8400-e29b-41d4-a716-446655440000",
+      "task_id": "880e8400-e29b-41d4-a716-446655440001",
+      "url": "https://example.com/page1",
+      "status_code": 200,
+      "content": "<html>...</html>",
+      "content_type": "text/html",
+      "headers": {},
+      "meta_data": {},
+      "screenshot": null,
+      "response_time_ms": 1200,
+      "created_at": "2025-01-15T12:00:05Z"
     }
-  }
+  ],
+  "timestamp": "2025-01-15T12:00:05+00:00"
 }
 ```
+
+> 响应 `data` 是裸 `Vec<ScrapeResult>` 数组（非分页包封）。
 
 #### Cancel Crawl
 
-Cancel a crawl task.
+Cancel a crawl task. All sub-tasks of the crawl are cancelled with it.
 
 **Endpoint:** `DELETE /v1/crawl/{id}`
 
-> `POST /v1/crawl/{id}/_cancel` 仅存在于测试用路由装配（`presentation/routes/handlers.rs::routes()`），生产装配未注册。
-
 **Parameters:**
-- `id` (path) - Task UUID
+- `id` (path) - Crawl UUID
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "message": "Crawl task cancelled"
-  }
-}
-```
+**Response:** `204 No Content` — 空 body，无 JSON 包封（`errors` 时返回标准错误包封：403 非属主 / 404 不存在 / 500 内部错误）。
 
 ---
 
@@ -652,10 +730,10 @@ Search using various search engines.
 | `engine` | string | No | Search engine: `smart`（默认，多引擎 fan-out + RRF 聚合）、`bing`、`baidu`、`sogou`。未提供或 `smart` 时并发查询多个引擎并做融合排序与去重；显式引擎名走单引擎路径；未知引擎名返回 400 参数错误（不会静默替换）。`exa`/`tavily` 保留枚举值，需对应引擎注册才可用，未注册时返回 `NoEngineAvailable` |
 | `query` | string | Yes | Search query |
 | `sources` | array | No | `engine` 的别名（multi-source 写法） |
-| `limit` | integer | No | Number of results (default: 10, max: 100) |
-| `lang` | string | No | Search language (default: `en`)；与 `country` 同时提供时驱动 Bing mkt/Accept-Language（baidu/sogou 忽略） |
-| `country` | string | No | Search region (default: `us`) |
-| `sync_wait_ms` | integer | No | 同步等待时长（毫秒，默认 5000，最大 30000） |
+| `limit` | integer | No | Number of results (default: 10; silently capped at `settings.search.max_results`, default **50**) |
+| `lang` | string | No | Search language — **当前版本接受但尚未生效（已知缺口）**：`SearchService::perform_search` 的 `_lang` 参数被忽略；默认 `en` 的 Bing mkt/Accept-Language 驱动尚未实现（baidu/sogou 路径亦不读取该值） |
+| `country` | string | No | Search region — **当前版本接受但尚未生效（已知缺口）**：`_country` 参数被忽略，默认 `us` 亦未驱动任何请求参数 |
+| `sync_wait_ms` | integer | No | 同步等待时长（毫秒，默认 5000）。**注意：** 无 DTO 级上限校验（不同于 scrape/crawl 的显式 `MAX_SYNC_WAIT_MS` 检查），超过 30000 亦照常进入等待轮询 |
 | `crawl_results` | boolean | No | 为 true 时对每条搜索结果创建爬取任务 |
 | `crawl_config` | object | No | 搜索结果异步爬取的配置（结构同爬取任务配置） |
 
@@ -707,7 +785,7 @@ Discover URLs from a site s's sitemap. Synchronous endpoint.
 | `url` | string | Yes | Site origin; `{origin}/sitemap.xml` is fetched |
 | `include_patterns` | string[] | No | Glob whitelist (`*`/`?`) applied first |
 | `exclude_patterns` | string[] | No | Glob blacklist applied after include |
-| `limit` | integer | No | Max URLs returned (default: 1000, max: 10000) |
+| `limit` | integer | No | Max URLs returned (default: 1000). No DTO-level cap — the overall total is bounded by `sitemap.max_urls` (default **50000**, `config/default.toml`) |
 
 **Response:**
 ```json
@@ -721,9 +799,9 @@ Discover URLs from a site s's sitemap. Synchronous endpoint.
 
 **Behavior notes:**
 - Missing sitemap (404) returns 200 with empty `links` (valid state, not an error).
-- Sitemap index (`<sitemapindex>`) is expanded one level (up to 5 sub-sitemaps).
+- Sitemap index (`<sitemapindex>`) is expanded with sub-sitemap fetches bounded by `max_concurrent_sub_sitemaps = 4` (`config/default.toml`), one level deep.
 
-**Errors:** `422` invalid URL/params · `502` `MAP_TARGET_UNREACHABLE` target unreachable or 5xx
+**Errors:** `400` invalid URL/params (`OriginUnparsable` / internal validation) · `502` `MAP_TARGET_UNREACHABLE` target unreachable or 5xx · unknown DTO fields rejected with `422` via `deny_unknown_fields`
 
 ---
 
@@ -733,7 +811,7 @@ Discover URLs from a site s's sitemap. Synchronous endpoint.
 > - **`teams` enabled (default):** `POST /v1/extract` accepts `Extension<Arc<TeamService>>` and `Extension<Arc<GR>>` (geo-restriction repository) parameters, enforcing team-scoped geo-restrictions before task creation.
 > - **`teams` disabled:** `POST /v1/extract` degrades to a simpler signature without geo-restriction parameters; tasks are created directly against `DEFAULT_TEAM_ID` without geo checks.
 
-Extract structured data from HTML.
+Extract structured data from target pages. The endpoint creates an asynchronous extract task (it does **not** extract from inline HTML); results are fetched via the task status endpoints.
 
 #### Extract Data
 
@@ -742,21 +820,9 @@ Extract structured data from HTML.
 **Request Body:**
 ```json
 {
-  "html": "<html>...</html>",
-  "extraction_rules": {
-    "title": {
-      "selector": "h1",
-      "attribute": "text"
-    },
-    "links": {
-      "selector": "a",
-      "attribute": "href",
-      "multiple": true
-    }
-  },
-  "options": {
-    "return_html": true
-  }
+  "urls": ["https://example.com"],
+  "prompt": "Extract the page title and all article links",
+  "sync_wait_ms": 5000
 }
 ```
 
@@ -764,33 +830,42 @@ Extract structured data from HTML.
 
 | Parameter | Type | Required | Description |
 |-----------|-------|----------|-------------|
-| `html` | string | Yes | HTML content to extract from |
-| `extraction_rules` (alias: `rules`) | object | No | CSS selector extraction rules |
-| `extraction_prompt` (alias: `prompt`) | string | No | LLM prompt for data extraction |
-| `extraction_schema` (alias: `schema`) | object | No | JSON Schema for structured LLM extraction |
-| `options` | object | No | Extraction options |
+| `urls` | string[] | Yes | Target URLs (1–100 entries, http/https only) |
+| `prompt` (alias: `extraction_prompt`) | string | One of `prompt`/`schema`/`rules` required | Free-text LLM prompt describing what to extract |
+| `schema` (alias: `extraction_schema`) | object | One of `prompt`/`schema`/`rules` required | JSON Schema for structured LLM extraction |
+| `rules` (alias: `extraction_rules`) | object | One of `prompt`/`schema`/`rules` required | CSS selector extraction rules |
+| `model` | string | No | Model identifier for LLM extraction |
+| `sync_wait_ms` | integer | No | Synchronous wait in milliseconds (default 5000, max 30000; `> 30000` returns 400) |
+
+Each `rules` entry (`ExtractionRule`) supports: `selector`, `attr` (attribute name; `None` extracts text), `is_array` (multiple values), `use_llm`, `llm_prompt`, `output_format` (`json` default / `plaintext`).
 
 **Response (Success):**
 ```json
 {
   "success": true,
   "data": {
-    "title": "Example Page",
-    "links": [
-      "https://example.com/page1",
-      "https://example.com/page2"
-    ]
-  }
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "pending"
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
+
+**Status codes:**
+
+| Status | Meaning |
+|--------|---------|
+| `201` | Task enqueued, no `sync_wait_ms` (or 0) |
+| `202` | `sync_wait_ms` elapsed with the task still not finished — the body still reports `status: "pending"` |
+| `400` | `urls` empty, or none of `prompt`/`schema`/`rules` provided, or `sync_wait_ms > 30000` |
+| `402` | Insufficient credits (`check_and_deduct_quota` failed; the task is not enqueued) |
+| `403`/`500` | Geographic restriction denied / other server-side failure |
 
 ---
 
 ### Task API
 
-Query and manage tasks. Task API follows RESTful conventions with action suffixes (`_query` for queries, `_cancel` for cancellations).
-
-> **⚠️ 当前不可用：** `/v1/tasks/_query` 与 `/v1/tasks/_cancel` 仅注册在测试用路由装配（`presentation/routes/handlers.rs::routes()`）。生产装配（`bootstrap/routes.rs::build_api_app_with_state`）未注册这两个端点。
+Query and manage tasks. Task API follows RESTful conventions with action suffixes (`_query` for queries, `_cancel` for cancellations). Both endpoints are registered in the production router (`src/presentation/routes/task.rs::task_routes`, merged via `src/bootstrap/routes.rs::create_v2_routes_with_state`).
 
 #### Query Tasks
 
@@ -799,46 +874,65 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 **Request Body:**
 ```json
 {
-  "filters": {
-    "status": ["completed", "running"],
-    "type": ["scrape", "crawl", "extract"],
-    "created_after": "2025-01-01T00:00:00Z",
-    "created_before": "2025-01-15T00:00:00Z"
-  },
-  "pagination": {
-    "page": 1,
-    "limit": 20
-  },
-  "sort": {
-    "field": "created_at",
-    "order": "desc"
-  }
+  "task_ids": ["550e8400-e29b-41d4-a716-446655440000"],
+  "task_types": ["scrape", "crawl", "extract"],
+  "statuses": ["queued", "active", "completed", "failed", "cancelled"],
+  "created_after": "2025-01-01T00:00:00Z",
+  "created_before": "2025-01-15T00:00:00Z",
+  "crawl_id": "770e8400-e29b-41d4-a716-446655440000",
+  "limit": 20,
+  "offset": 0,
+  "include_results": false,
+  "sync_wait_ms": 5000
 }
 ```
 
-**Filter Parameters:**
+> All fields are optional and flat (no `filters`/`pagination`/`sort` wrappers). Defaults: `limit` 100, `offset` 0, `include_results` false, `sync_wait_ms` 5000. `limit` range 1–1000 (0 or >1000 rejected with 422). `sync_wait_ms` range 0–30000.
+
+**Parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `status` | array | Filter by status: `pending`, `running`, `completed`, `failed`, `cancelled` |
-| `type` | array | Filter by type: `scrape`, `crawl`, `extract` |
-| `created_after` | string | Filter by creation date (RFC3339) |
-| `created_before` | string | Filter by creation date (RFC3339) |
+| `task_ids` | array | Query specific task IDs |
+| `task_types` (plural) | array | Filter by type: `scrape`, `crawl`, `extract` |
+| `statuses` | array | Filter by status: `queued`, `active`, `completed`, `failed`, `cancelled` |
+| `created_after` | string | Filter by creation date (RFC3339 with offset) |
+| `created_before` | string | Filter by creation date (RFC3339 with offset) |
+| `crawl_id` | string | All sub-tasks of a crawl |
+| `limit` | integer | Results per page (default 100, max 1000) |
+| `offset` | integer | Pagination offset (0-based; no `page` parameter) |
+| `include_results` | boolean | Include task result payload |
+| `sync_wait_ms` | integer | Synchronous poll wait (default 5000, max 30000) |
 
 **Response (Success):**
 ```json
 {
   "success": true,
   "data": {
-    "tasks": [...],
-    "pagination": {
-      "page": 1,
-      "limit": 20,
-      "total": 150
-    }
-  }
+    "tasks": [
+      {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "task_type": "scrape",
+        "status": "completed",
+        "priority": 0,
+        "url": "https://example.com",
+        "attempt_count": 1,
+        "max_retries": 3,
+        "created_at": "2025-01-15T12:00:00+00:00",
+        "started_at": "2025-01-15T12:00:01+00:00",
+        "completed_at": "2025-01-15T12:00:03+00:00",
+        "crawl_id": null,
+        "result": null
+      }
+    ],
+    "total": 150,
+    "has_more": true
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
+
+> 分页用 `limit`/`offset`：`has_more = offset + len(tasks) < total`。无 `page` 参数、无 `pagination` 包封。`status` 序列化为 `queued`/`active`/`completed`/`failed`/`cancelled`。
 
 #### Cancel Tasks
 
@@ -850,17 +944,36 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
   "task_ids": [
     "550e8400-e29b-41d4-a716-446655440000",
     "660e8400-e29b-41d4-a716-446655440001"
-  ]
+  ],
+  "force": false,
+  "sync_wait_ms": 5000
 }
 ```
+
+> `task_ids` is required and must be non-empty (empty list → 422). `force` (default false) cancels tasks even while they are executing. `sync_wait_ms` (default 5000, max 30000) polls until cancellation settles.
 
 **Response:**
 ```json
 {
   "success": true,
   "data": {
-    "cancelled_count": 2
-  }
+    "cancelled_tasks": [
+      {
+        "task_id": "550e8400-e29b-41d4-a716-446655440000",
+        "status": "cancelled",
+        "cancelled_at": "2025-01-15T12:00:05+00:00"
+      }
+    ],
+    "failed_tasks": [
+      {
+        "task_id": "660e8400-e29b-41d4-a716-446655440001",
+        "reason": "Already completed"
+      }
+    ],
+    "total_cancelled": 1,
+    "total_failed": 1
+  },
+  "timestamp": "2025-01-15T12:00:05+00:00"
 }
 ```
 
@@ -880,11 +993,18 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
   "success": true,
   "data": {
     "id": "770e8400-e29b-41d4-a716-446655440000",
-    "name": "My Team",
-    "created_at": "2025-01-01T00:00:00Z"
-  }
+    "name": "Team",
+    "credits_balance": 1000,
+    "total_tasks": 50,
+    "completed_tasks": 0,
+    "failed_tasks": 0,
+    "created_at": "2025-01-15T12:00:00Z"
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
+
+> `total_tasks` counts tasks found via `find_by_crawl_id(team_id)`; `completed_tasks`/`failed_tasks` are currently fixed `0`（handler 统计尚未接通）。`credits_balance` 查询失败时回退为 `0`（不报错）。
 
 #### Get Team Usage
 
@@ -895,13 +1015,19 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 {
   "success": true,
   "data": {
+    "team_id": "770e8400-e29b-41d4-a716-446655440000",
+    "period": "30d",
+    "total_requests": 0,
+    "successful_requests": 0,
+    "failed_requests": 0,
     "credits_used": 1234,
-    "credits_limit": 10000,
-    "requests_today": 42,
-    "requests_limit": 1000
-  }
+    "avg_response_time_ms": 123.45
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
+
+> `period` 固定 `"30d"`。`total_requests`/`successful_requests`/`failed_requests` 当前恒为 `0`（handler 统计尚未接通）；`credits_used` 取积分余额绝对值（负余额表示超支）。无 `credits_limit` / `requests_today` / `requests_limit` 字段。`avg_response_time_ms` 为该团队抓取结果平均响应时间。
 
 #### Get Team Geo Restrictions
 
@@ -912,14 +1038,18 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 {
   "success": true,
   "data": {
-    "restrictions": {
-      "allowed_countries": ["US", "UK", "CA"],
-      "blocked_countries": ["CN", "RU"],
-      "enabled": true
-    }
-  }
+    "team_id": "770e8400-e29b-41d4-a716-446655440000",
+    "enable_geo_restrictions": true,
+    "allowed_countries": ["US", "CA"],
+    "blocked_countries": ["CN", "RU"],
+    "ip_whitelist": ["10.0.0.0/8"],
+    "domain_blacklist": ["evil.com"]
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
+
+> 响应为平铺的 `TeamGeoRestrictionsResponse`（无 `restrictions` 外层包装）。字段名是 `enable_geo_restrictions`（不是 `enabled`）；未设置的列表字段序列化为 `null`。
 
 #### Update Team Geo Restrictions
 
@@ -928,21 +1058,33 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 **Request Body:**
 ```json
 {
-  "allowed_countries": ["US", "UK", "CA"],
+  "enable_geo_restrictions": true,
+  "allowed_countries": ["US", "CA"],
   "blocked_countries": ["CN", "RU"],
-  "enabled": true
+  "ip_whitelist": ["10.0.0.0/8"],
+  "domain_blacklist": ["evil.com"]
 }
 ```
+
+> `enable_geo_restrictions` **必填**（bool，无缺省值）。国家代码必须为 2 字母 ISO 3166-1 alpha-2，`ip_whitelist` 支持 IP 或 CIDR——校验失败返回 `400 VALIDATION_ERROR`。`deny_unknown_fields` 拒绝未知字段（422）。allowed/blocked 列表若提供则不能为空数组。
 
 **Response:**
 ```json
 {
   "success": true,
   "data": {
-    "message": "Geo restrictions updated"
-  }
+    "team_id": "770e8400-e29b-41d4-a716-446655440000",
+    "enable_geo_restrictions": true,
+    "allowed_countries": ["US", "CA"],
+    "blocked_countries": ["CN", "RU"],
+    "ip_whitelist": ["10.0.0.0/8"],
+    "domain_blacklist": ["evil.com"]
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
+
+> 响应为更新后的 restrictions 对象本身（非 `{message}` 包封）。
 
 ---
 
@@ -954,9 +1096,7 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 
 **Endpoint:** `GET /v1/webhooks`
 
-**Query Parameters:**
-- `page` - Page number (default: 1)
-- `limit` - Results per page (default: 20, max: 100)
+> **无查询参数**：一次返回该团队全部 webhook（无 `page` / `limit`）。列表响应**不含** `secret` 字段。
 
 **Response:**
 ```json
@@ -973,7 +1113,8 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
       }
     ],
     "total": 5
-  }
+  },
+  "timestamp": "2026-01-15T00:00:00+00:00"
 }
 ```
 
@@ -988,7 +1129,7 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 }
 ```
 
-> 请求体经 `#[serde(deny_unknown_fields)]` 校验：`CreateWebhookRequest` 仅接受 `url`，传入 `events` / `secret` / `active` 等字段会被 422 拒绝。此外，创建请求本身必须携带按服务端全局密钥（`CRAWLRS__WEBHOOK__SECRET`）计算的 Standard Webhooks 签名头（见 [Webhook Signature](#webhook-signature)），签名验证失败返回 401。
+> 请求体经 `#[serde(deny_unknown_fields)]` 校验：`CreateWebhookRequest` 仅接受 `url`，传入 `events` / `secret` / `active` 等未知字段会被拒绝并返回 **400 `VALIDATION_ERROR`**（handler 以 `serde_json::from_slice` 解析后映射为 `CrawlRsError::Validation`）。此外，创建请求本身必须携带按服务端全局密钥（`CRAWLRS__WEBHOOK__SECRET`）计算的 Standard Webhooks 签名头（见 [Webhook Signature](#webhook-signature)），签名验证失败返回 **401 `AUTHENTICATION_ERROR`**。
 
 **Parameters:**
 
@@ -1003,14 +1144,20 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 - `crawl.failed` - Crawl task failed
 - `extract.completed` / `extract.failed` - Extract task completed/failed
 
-**Response (Success):** `201 Created`（裸 `Webhook` 域模型，无 `success`/`data` 包装；签名密钥由服务端持有，不在响应中返回）
+**Response (Success):** `201 Created`，标准 `{"success":true,"data":{...}}` 包封。**创建响应返回 `secret`**（各 webhook 的签名密钥由服务端按 `settings.webhook.secret` 统一派生，仅在本次创建响应中返回；列表端点不回传）。
 
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "team_id": "660e8400-e29b-41d4-a716-446655440001",
-  "url": "https://your-webhook.com/callback",
-  "created_at": "2026-01-15T00:00:00Z"
+  "success": true,
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "team_id": "660e8400-e29b-41d4-a716-446655440001",
+    "url": "https://your-webhook.com/callback",
+    "created_at": "2026-01-15T00:00:00Z",
+    "is_active": true,
+    "secret": "your-webhook-signing-secret"
+  },
+  "timestamp": "2026-01-15T00:00:00+00:00"
 }
 ```
 
@@ -1023,11 +1170,12 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
 **Endpoint:** `GET /v1/audit/logs`
 
 **Query Parameters:**
-- `event_type` - Filter by event type
-- `start_time` - Start timestamp
-- `end_time` - End timestamp
-- `page` - Page number
-- `limit` - Results per page
+- `limit` - Results per page (default `server_config::DEFAULT_PAGE_LIMIT`, capped at `MAX_PAGE_LIMIT`)
+- `offset` - Pagination offset (default 0)
+- `api_key_id` - Filter by API key (non-admin callers may only pass their own key; otherwise 403)
+- `team_id` - Filter by team (non-admin callers may only pass their own team; otherwise 403)
+
+> 无 `event_type` / `start_time` / `end_time` / `page` 参数。缺省查询调用方自身 `api_key_id` 的日志；admin scope 可查任意 key/team。IDOR 防护见 `audit_handler.rs`。
 
 **Response:**
 ```json
@@ -1037,33 +1185,36 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
     "logs": [
       {
         "id": "550e8400-e29b-41d4-a716-446655440000",
-        "event_type": "api_request",
-        "timestamp": "2025-01-15T00:00:00Z",
         "api_key_id": "770e8400-e29b-41d4-a716-446655440000",
-        "endpoint": "/v1/scrape",
+        "team_id": "660e8400-e29b-41d4-a716-446655440001",
+        "requested_action": "GET /v1/scrape",
+        "decision": "Allow",
+        "denial_reason": null,
+        "scope_used": null,
         "ip_address": "192.168.1.1",
-        "user_agent": "Mozilla/5.0..."
+        "trace_id": null,
+        "user_agent": "Mozilla/5.0...",
+        "request_path": "/v1/scrape",
+        "request_method": "GET",
+        "metadata": {},
+        "created_at": "2025-01-15T00:00:00Z"
       }
-    ],
-    "pagination": {
-      "page": 1,
-      "limit": 20,
-      "total": 500
-    }
-  }
+    ]
+  },
+  "timestamp": "2025-01-15T00:00:00+00:00"
 }
 ```
+
+> 响应仅含 `logs` 数组（`AuditLogEntry`），无 `pagination` 包封。`decision` 序列化为 `"Allow"` / `"Deny"`。
 
 #### Get Denied Requests
 
 **Endpoint:** `GET /v1/audit/denied`
 
 **Query Parameters:**
-- `reason` - Filter by denial reason
-- `start_time` - Start timestamp
-- `end_time` - End timestamp
-- `page` - Page number
-- `limit` - Results per page
+- `limit` - Results per page (default `server_config::DEFAULT_PAGE_LIMIT`, capped at `MAX_PAGE_LIMIT`)
+
+> 仅支持 `limit`；不支持 `reason` / `start_time` / `end_time` / `page`。始终查询调用方自身 `api_key_id` 的拒绝记录（避免 IDOR）。
 
 **Response:**
 ```json
@@ -1073,21 +1224,27 @@ Query and manage tasks. Task API follows RESTful conventions with action suffixe
     "denied_requests": [
       {
         "id": "550e8400-e29b-41d4-a716-446655440000",
-        "timestamp": "2025-01-15T00:00:00Z",
-        "reason": "rate_limit_exceeded",
         "api_key_id": "770e8400-e29b-41d4-a716-446655440000",
-        "endpoint": "/v1/scrape",
-        "ip_address": "192.168.1.1"
+        "team_id": "660e8400-e29b-41d4-a716-446655440001",
+        "requested_action": "POST /v1/scrape",
+        "decision": "Deny",
+        "denial_reason": "rate_limit_exceeded",
+        "scope_used": null,
+        "ip_address": "192.168.1.1",
+        "trace_id": null,
+        "user_agent": "Mozilla/5.0...",
+        "request_path": "/v1/scrape",
+        "request_method": "POST",
+        "metadata": {},
+        "created_at": "2025-01-15T00:00:00Z"
       }
-    ],
-    "pagination": {
-      "page": 1,
-      "limit": 20,
-      "total": 100
-    }
-  }
+    ]
+  },
+  "timestamp": "2025-01-15T00:00:00+00:00"
 }
 ```
+
+> 响应仅含 `denied_requests` 数组（同为 `AuditLogEntry`，`decision` 为 `"Deny"`），无 `pagination` 包封。
 
 ---
 
@@ -1147,13 +1304,14 @@ Expires: 0
     "api_key": "garrison_key_id.garrison_secret",
     "api_key_id": "880e8400-e29b-41d4-a716-446655440000",
     "team_id": "770e8400-e29b-41d4-a716-446655440000",
-    "scopes": ["read", "write"]
+    "scopes": ["read", "write"],
+    "expires_at": "2025-08-20T12:00:00+00:00"
   },
   "timestamp": "2025-07-21T12:00:00+00:00"
 }
 ```
 
-> **注：** 响应中 `scopes` 字段回显请求时传入的 scope（`read`/`write`/`admin`），实际 garrison 权限串（`crawlrs:read` 等）由 handler 在签发时映射，调用方无需关心。
+> **注：** 响应中 `scopes` 字段回显请求时传入的 scope（`read`/`write`/`admin`），实际 garrison 权限串（`crawlrs:read` 等）由 handler 在签发时映射，调用方无需关心。`expires_at` 为 RFC3339 过期时间（缺省 30 天；`expires_in_secs` 必须 > 0 且 ≤ 1 年，`scopes` 最多 10 个元素）。
 
 > **⚠️ 安全提示：** `api_key` 字段是明文 key，仅在本次响应中返回一次。请立即妥善保存（如写入 secrets manager），后续无法再次查询。若丢失需重新签发。
 
@@ -1162,10 +1320,12 @@ Expires: 0
 | Error Code | HTTP Status | Description |
 |------------|-------------|-------------|
 | `UNAUTHORIZED` | 401 | 调用方未认证或 garrison key 无效 |
-| `FORBIDDEN` | 403 | 调用方缺少 `crawlrs:admin` 权限 |
-| `VALIDATION_ERROR` | 400 | 请求体格式错误（如 `team_id` 非 UUID、`scopes` 含未知权限） |
-| `FEATURE_DISABLED` | 404 | `auth` feature 未启用，路由未注册 |
-| `INTERNAL_ERROR` | 500 | garrison `ApiKeyHandler::generate_with_namespace` 内部错误 |
+| `FORBIDDEN` | 403 | 调用方缺少 `crawlrs:admin` 权限（handler 内 `has_permission(Admin)` 校验） |
+| `VALIDATION_ERROR` | 400 | 请求值校验失败（`team_id` 为 nil UUID、`scopes` 为空/含未知权限、`expires_in_secs` 越界） |
+| `UNPROCESSABLE_ENTITY` | 422 | 请求体结构错误（如 `team_id` 非 UUID 的 JSON 数据错误、字段缺失/类型不符） |
+| `INTERNAL_ERROR` | 500 | `team_id` 在 teams 表不存在、garrison DAO 未注入或 `ApiKeyHandler::generate_with_namespace` 内部错误 |
+
+> **注意：** `auth` feature 未启用时路由不注册，请求得到普通 404（`NOT_FOUND`），不存在 `FEATURE_DISABLED` 响应码。
 
 ---
 
@@ -1199,7 +1359,7 @@ background XHR/Fetch responses:
 
 ## ⏱️ Rate Limiting
 
-> **Conditional Behavior (R-rl-003):** Rate limiting is only active when the `rate-limit` feature is enabled (default). When disabled, `NoopRateLimitingService` is injected: `check_rate_limit` returns `Allowed`, `check_and_deduct_quota` returns `Ok(())`, `get_quota_balance` returns `Ok(i64::MAX)`. All requests are allowed without limit, and quota deductions are no-ops. The `X-RateLimit-*` headers are not populated.
+> **Conditional Behavior (R-rl-003):** Rate limiting is only active when the `rate-limit` feature is enabled (default). When disabled, `NoopRateLimitingService` is injected: `check_rate_limit` returns `Allowed`, `check_and_deduct_quota` returns `Ok(())`, `get_quota_balance` returns `Ok(i64::MAX)`. All requests are allowed without limit, and quota deductions are no-ops.
 
 The API implements rate limiting at multiple levels:
 
@@ -1209,13 +1369,15 @@ The API implements rate limiting at multiple levels:
 
 ### Rate Limit Headers
 
-Rate limit information is included in response headers:
+**当前实现仅设一个响应头：** 命中限流返回 429 时设 `Retry-After`。**不存在 `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Reset` 响应头**（全库无发射点，读取这些头的客户端逻辑应移除）。
 
 ```
-X-RateLimit-Limit: 60
-X-RateLimit-Remaining: 45
-X-RateLimit-Reset: 1705315200
+Retry-After: 60
 ```
+
+响应体示例见上方 [Rate Limit Error Response](#rate-limit-error-response)：`error` 为字符串，`RetryAfter` 结果额外带 `retry_after_seconds`。
+
+> 附加语义：限流服务本身出错时默认 fail-closed（返回 503 `SERVICE_UNAVAILABLE`）；设 `RATE_LIMIT_FAIL_OPEN=true` 可改为放行并记录 warn 日志。
 
 ---
 
@@ -1255,6 +1417,8 @@ webhook-signature: v1,<base64-encoded-hmac-sha256>
 ## 🧩 SDK API
 
 SDK endpoints provide simplified interfaces for common operations, wrapping the underlying REST API. All SDK endpoints return the payload object directly (no `success`/`data` envelope).
+
+> **路径解析：** SDK 路由由 sdforge `#[forge]` 宏注册（`version = "v1"` + `path = "/sdk/..."`），sdforge 默认前缀为 `/api/{version}`，因此实际对外路径统一为 `/api/v1/sdk/*`。SDK 路由同样经过认证中间件（`team_id`/`api_key_id` 从 `AuthState` 提取，绝不信任请求体）。
 
 ### SDK Search
 
@@ -1451,7 +1615,7 @@ func Scrape(url string) error {
 **Changed:**
 - ID 体系全量迁移至 NebulaId（`domain::id::Id`，默认 `uuid_v8` 算法；API JSON 契约保持 UUID 字符串不变）
 - `/v1/search` 无 `engine` 参数时行为从"单引擎 bing"变为 smart 聚合（多引擎 fan-out + RRF 融合）
-- auth-off 语义回退为直通注入 `full_access()` 固定身份（0.2.0-rc.1 曾收紧为默认 401 + opt-in，rc.2 期间路由装配重构后未保留该收紧）
+- auth-off 语义：protected routes 默认 401 拒绝，须显式 `allow_unauthenticated_protected()` opt-in；opt-in 后注入 `ApiKeyScope::denied()` 受限匿名身份（`DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`），非 `full_access()`
 
 **New Engines / Algorithms:**
 - TLS Fingerprint Engine (`engine-tls-fingerprint`): WreqEngine based on BoringSSL, real JA3/JA4 fingerprint spoofing
@@ -1465,7 +1629,7 @@ func Scrape(url string) error {
 - 自研依赖全面切换 crates.io registry（garrison → 0.9.0-rc.2 等），移除跨仓 path 依赖
 
 ### 0.2.0-rc.1 (2026-08-25)
-- auth-off 安全语义收紧：protected routes 默认 401，`allow_unauthenticated_protected()` 显式 opt-in（注：该收紧在后续 Unreleased 中被回退，见上）
+- auth-off 安全语义收紧：protected routes 默认 401，`allow_unauthenticated_protected()` 显式 opt-in（该收紧为现行语义，见上方 Auth Disabled Behavior 节）
 
 ### 0.2.0 (2026-07-29)
 - **`garrison-auth-migration`：** 认证引擎由 garrison 接管，Bearer token 格式改为 `garrison_key_id.garrison_secret`
