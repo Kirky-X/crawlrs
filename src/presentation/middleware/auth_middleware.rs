@@ -434,8 +434,8 @@ static ALLOW_LOG_ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 pub fn allow_unauthenticated_protected() {
     ALLOW_LOG_ONCE.get_or_init(|| {
         log::error!(
-            "allow_unauthenticated_protected() 显式启用：protected routes 将放行未鉴权请求 \
-             （匿名受限身份）。仅限受信任内网部署；公开网络必须启用 auth feature。"
+            "{}",
+            crate::i18n::tr_log("auth-allow-unauthenticated-enabled")
         );
     });
     ALLOW_UNAUTHENTICATED.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -470,8 +470,8 @@ pub(crate) async fn default_identity_middleware(
     if !ALLOW_UNAUTHENTICATED.load(std::sync::atomic::Ordering::SeqCst) {
         DENY_LOG_ONCE.get_or_init(|| {
             log::error!(
-                "auth feature disabled：protected route 收到未鉴权请求，默认拒绝（401）。\
-                 若确需匿名放行，请显式调用 allow_unauthenticated_protected()。"
+                "{}",
+                crate::i18n::tr_log("auth-disabled-unauthenticated-denied")
             );
         });
         return (StatusCode::UNAUTHORIZED, "authentication required").into_response();

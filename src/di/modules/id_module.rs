@@ -43,14 +43,18 @@ impl ModuleMeta for IdModule {
 /// 故只有 `uuid_v8`（含 `uuid_v4`/`uuid_v7` 别名）可用。
 fn resolve_algorithm(name: &str) -> Result<AlgorithmType, String> {
     let algorithm = name.parse::<AlgorithmType>().map_err(|e| {
-        format!(
-            "id.algorithm = {name:?} 不是已知算法（可选 uuid_v8；uuid_v4/uuid_v7 别名归入 uuid_v8）：{e}"
+        crate::i18n::tr_log_args(
+            "error-id-algorithm-unknown",
+            &[
+                ("algorithm", fluent_bundle::FluentValue::from(name)),
+                ("error", fluent_bundle::FluentValue::from(e.to_string())),
+            ],
         )
     })?;
     if !algorithm_factories().contains_key(&algorithm) {
-        return Err(format!(
-            "id.algorithm = {name:?} 未编译进本构建（nebulaid 仅启用 sdk,uuid-v8 特性）；\
-             请改用 uuid_v8，或在 Cargo.toml 启用对应 nebulaid 特性"
+        return Err(crate::i18n::tr_log_args(
+            "error-id-algorithm-uncompiled",
+            &[("algorithm", fluent_bundle::FluentValue::from(name))],
         ));
     }
     Ok(algorithm)
