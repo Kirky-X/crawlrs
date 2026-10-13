@@ -80,7 +80,7 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 </tr>
 </table>
 
-Beyond the core capabilities above, crawlrs also provides site mapping, an async task queue (worker mode), multi-level caching and proxy support; for the design and code locations of the engine-level enhancement modules (anti-bot countermeasures, intelligent enhancements, etc.), see the [🏗️ Architecture Document · Crawl Capability Enhancement Modules](docs/ARCHITECTURE.md).
+Beyond the core capabilities above, crawlrs also provides site mapping, an async task queue (worker mode), multi-level caching and proxy support; for the design and code locations of the engine-level enhancement modules (anti-bot countermeasures, intelligent enhancements, etc.), see the [🏗️ Architecture Document](docs/ARCHITECTURE.md).
 
 ---
 
@@ -146,7 +146,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 ### 🧭 Core Concepts
 
 - **Engines & routing**: `EngineClient` is the single public entry point for scraping; internally `EngineRouter` holds `Vec<Arc<dyn ScraperEngine>>` and picks an engine via the `SmartHybrid` (default) / `RaceMode` / `SequentialFallback` strategies.
-- **Dual run modes**: one binary, two personalities — `crawlrs` starts the API server, `crawlrs worker` consumes the task queue in worker mode.
+- **Four run modes**: one binary, dispatched by subcommand (`src/main.rs`) — `crawlrs` or `crawlrs api` (default) starts the API server, `crawlrs worker` consumes the task queue in worker mode, `crawlrs bootstrap` initializes the default team and an admin API key, and `crawlrs migrate` applies `migrations/*.sql` in order.
 - **DDD four layers**: `presentation → application → domain → infrastructure`, wired by trait-kit's capability Modules (`SettingsModule`/`CacheModule`/`EngineModule` etc.) for DI.
 - **Configuration**: powered by confers — TOML files plus `CRAWLRS__`-prefixed environment variables (`__` separates nesting, e.g. `CRAWLRS__DATABASE__URL`).
 - **Feature gating**: when business capabilities (teams/auth/rate-limit/webhook) are off, Noop implementations are injected automatically — single-tenant/unauthenticated deployments need zero business-logic changes.
@@ -159,7 +159,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 | Preset | Build command | Contents | Use case |
 |------|----------|----------|----------|
-| Default | `cargo build --release` | `platform` (teams + auth + rate-limit + webhook + metrics + content) + `db-postgres` | Full platform out of the box |
+| Default | `cargo build --release` | `platform` (teams + auth + rate-limit + webhook + metrics + content + sitemap) + `db-postgres` | Full platform out of the box |
 | `standard` | `cargo build --release --features standard` | Default + `engine-playwright` | Recommended for production (JS rendering + metrics + content processing) |
 | `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | Everything |
 | `no-default` | `cargo build --release --no-default-features` | Pure core scraping stack | Single-tenant/unauthenticated deployments, embedding |
@@ -167,7 +167,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ### 📋 Feature Matrix
 
-The table below mirrors the `[features]` section of `Cargo.toml`, with `default = ["platform", "db-postgres"]`; the core scraping stack (oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt) is always compiled.
+The table below is a major subset of the `[features]` section of `Cargo.toml` (full list: see `Cargo.toml`), with `default = ["platform", "db-postgres"]`; the core scraping stack (oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt) is always compiled.
 
 | Feature | Description | Default |
 |------|------|------|
@@ -239,6 +239,8 @@ The server listens on `8899` by default (configurable via `CRAWLRS__SERVER__PORT
 
 crawlrs follows Domain-Driven Design with a four-layer architecture — `presentation → application → domain → infrastructure`: Axum handles HTTP and middleware, use cases orchestrate business logic, the domain layer defines capability contracts via traits such as `ScraperEngine`, and the infrastructure layer reaches PostgreSQL through dbnexus (Sea-ORM) and multi-level caching through oxcache. The scraping data path is: request passes pre-check SSRF validation → `EngineRouter` selects an engine by strategy (anti-bot detection can dynamically re-dispatch to a browser engine) → worker pool executes → results are persisted and webhooks fire.
 
+The consumption surface of the in-house library matrix (same-author shared rc chain): garrison carries authentication and health probes (gated by `auth`); limiteron carries rate limiting and the engine circuit-breaker state machine (a thin `ManualCircuitBreaker` wrapper plus an `AtomicU8` synchronous mirror); oxcache carries the cache itself (memory + `serialization` + `metrics`) and the URL-deduplication Bloom filter (`bloom` feature, replacing the in-house MmapBloom); sdforge carries DTO validation and HTTP error status-code mapping (`unified::http_status_for`). The in-house library gap register is documented in the [🏗️ Architecture Document · 自研库反向需求](docs/ARCHITECTURE.md).
+
 For layer responsibilities, engine routing details, all enhancement modules, queue/cache/rate-limit design and deployment topologies, see the [🏗️ Architecture Document](docs/ARCHITECTURE.md).
 
 ---
@@ -249,7 +251,9 @@ For layer responsibilities, engine routing details, all enhancement modules, que
 
 The test system spans seven layers: inline unit tests in `src/`, module-organized unit tests in `tests/unit/`, the table-driven harness (`tests/main.rs`, mock injection), SDK API tests (`sdk_api_test`), real-PostgreSQL integration tests (`integration_tests`, incl. garrison auth end-to-end), Python API/performance tests, and the E2E quality suite (`tests/e2e/e2e-suite.sh`: 22-combination feature compile matrix → static checks → unit/integration tests → benchmarks → report). For the exhaustive scenario inventory and file mapping, see the [🧪 Test Scenario Matrix](docs/TEST_SCENARIOS.md).
 
-### ▶️ Commands (identical to CI)
+### ▶️ Commands
+
+**Identical to CI** (see `.github/workflows/ci.yml`):
 
 ```bash
 # Unit tests (CI test job: one round each for standard / full; needs PostgreSQL 16,
@@ -260,24 +264,29 @@ cargo test --features "full" --lib
 # Integration + all test targets (CI integration-test job)
 cargo test --features "full,test-mocks" --tests --no-fail-fast
 
-# Lint and format gates
+# Lint, format and doc gates (fmt / clippy / doc jobs)
 cargo fmt --all -- --check
 cargo clippy --features "standard" -- -D warnings
 cargo clippy --features "full" -- -D warnings
+cargo doc --features "full" --no-deps          # CI doc job (RUSTDOCFLAGS=-D warnings)
 
 # Coverage gate: line coverage no lower than 80% (CI coverage job, uploaded to Codecov)
 cargo llvm-cov --features "full" --fail-under-lines 80
 
 # Supply-chain check (advisories / licenses / bans / sources)
 cargo deny check
+```
 
+**Local extras** (not run by CI):
+
+```bash
 # Benchmarks (Criterion, 9 groups)
 cargo bench
 
 # E2E quality suite (feature matrix + static + tests + integration + bench + report)
 ./tests/e2e/e2e-suite.sh
 
-# Python API / performance tests (local)
+# Python API / performance tests (local mode runs 3 suites: api_endpoints / performance / error_handling)
 ./scripts/run-tests.sh local
 
 # Full pre-commit check (fmt → clippy → check → build → secret scan)
@@ -286,7 +295,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 Test Scale
 
-As of 0.2.0: roughly 5,700+ inline tests in `src/` (372 source files), about 950 in `tests/` (incl. 71 unit-test files and the real-PostgreSQL integration suite), 9 Criterion benchmark groups and 5 Python suites; the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Test Scale](docs/TEST_SCENARIOS.md).
+As of 0.2.0-rc.2: 6,310 inline test attributes in `src/` (408 source files, 206,781 lines), 967 tests in `tests/` (116 `.rs` files, incl. 70 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · 统计汇总](docs/TEST_SCENARIOS.md).
 
 ---
 
@@ -317,7 +326,7 @@ Please do not report security vulnerabilities through public issues — email [K
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">Status</th><th style="text-align:left">Area</th><th style="text-align:left">Items</th></tr>
 <tr><td align="center">✅</td><td>Core platform (0.1.0)</td><td>Five-capability APIs (search/scrape/crawl/extract/map), DDD four layers, multi-tenancy & rate limiting, webhook notifications</td></tr>
-<tr><td align="center">✅</td><td>Platform hardening & smart engines (0.2.0)</td><td>garrison authentication, anti-bot detection, TLS-fingerprint & MLLM engines, RAG/KG/DRL intelligent enhancements, Prometheus observability, E2E quality suite</td></tr>
+<tr><td align="center">✅</td><td>Platform hardening & smart engines (0.2.0-rc.2)</td><td>garrison authentication, anti-bot detection, TLS-fingerprint & MLLM engines, RAG/KG/DRL intelligent enhancements, Prometheus observability, E2E quality suite</td></tr>
 <tr><td align="center">🚧</td><td>Multi-driver databases</td><td><code>db-sqlite</code> / <code>db-mysql</code> covered at compile level; runtime schema provisioning pending (current <code>migrations/*.sql</code> is PG-only DDL)</td></tr>
 <tr><td align="center">📋</td><td>Architecture evolution</td><td>Event-driven internal bus, WebSocket real-time task status, Redis shared cache layer (multi-instance deployments)</td></tr>
 <tr><td align="center">📋</td><td>Performance stewardship</td><td>Routine Criterion baseline (e2e-baseline) regression comparisons, re-measurement of performance figures</td></tr>
@@ -372,7 +381,8 @@ For the full version history see the [📋 Changelog](docs/CHANGELOG.md) (follow
 
 | Version | Date | Highlights |
 |------|------|------|
-| Unreleased | - | TLS fingerprint engine (WreqEngine), MLLM vision-navigation engine, RAG-augmented extraction, knowledge-graph coverage awareness, DRL adaptive policy, 5 new Prometheus metrics; feature absorption F1–F12 (AutoThrottle, session identity, failure snapshots, sitemap request source, XHR capture, extraction quality gate, LLM chunking & provenance, AIMD memory coupling, soft 404, AX-tree snapshot) |
+| 0.2.0-rc.2 | 2026-09-21 | TLS fingerprint engine (WreqEngine), MLLM vision-navigation engine, RAG-augmented extraction, knowledge-graph coverage awareness, DRL adaptive policy, 5 new Prometheus metrics; feature absorption F1–F12 (AutoThrottle, session identity, failure snapshots, sitemap request source, XHR capture, extraction quality gate, LLM chunking & provenance, AIMD memory coupling, soft 404, AX-tree snapshot) |
+| Unreleased | - | auth-off protected routes restore default 401, `web-axum` build surface restored, `crawlrs migrate` subcommand, production route for `POST /v1/scrape/{id}/_cancel`, ScrapeOptionsDto exposing `block_ads`/`block_media`/`needs_mllm`, forge-full staging feature, i18n/Fluent integration, etc. — full list in the [📋 Changelog](docs/CHANGELOG.md) |
 | 0.2.0 | 2026-07-29 | garrison RBAC authentication integration, bootstrap admin key, `DELETE /v1/crawl/{id}`, brute-force protection hardening |
 | 0.1.0 | 2026-07-22 | First public release: five-capability APIs, DDD four-layer architecture, multi-tenancy & rate limiting, unified search |
 

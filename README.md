@@ -80,7 +80,7 @@
 </tr>
 </table>
 
-除上述核心能力外，crawlrs 还提供站点映射、异步任务队列（Worker 模式）、多层缓存与代理支持等能力；引擎级增强模块（反爬对抗、智能增强等）的设计与代码位置详见 [🏗️ 架构文档 · 爬取能力增强模块](docs/ARCHITECTURE.md)。
+除上述核心能力外，crawlrs 还提供站点映射、异步任务队列（Worker 模式）、多层缓存与代理支持等能力；引擎级增强模块（反爬对抗、智能增强等）的设计与代码位置详见 [🏗️ 架构文档](docs/ARCHITECTURE.md)。
 
 ---
 
@@ -146,7 +146,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 ### 🧭 核心概念
 
 - **引擎与路由**：`EngineClient` 是抓取操作唯一公开入口，内部 `EngineRouter` 持有 `Vec<Arc<dyn ScraperEngine>>`，按 `SmartHybrid`（默认）/ `RaceMode` / `SequentialFallback` 策略选择引擎。
-- **双运行模式**：同一二进制两种形态——`crawlrs` 启动 API 服务，`crawlrs worker` 以 Worker 模式消费任务队列。
+- **四种运行形态**：同一二进制按子命令分派（`src/main.rs`）——`crawlrs` 或 `crawlrs api`（默认）启动 API 服务，`crawlrs worker` 以 Worker 模式消费任务队列，`crawlrs bootstrap` 初始化默认团队与 admin API Key，`crawlrs migrate` 按序应用 `migrations/*.sql`。
 - **DDD 四层**：`presentation → application → domain → infrastructure`，DI 由 trait-kit 的各 capability Module（`SettingsModule`/`CacheModule`/`EngineModule` 等）装配。
 - **配置管理**：基于 confers，TOML 文件 + `CRAWLRS__` 前缀环境变量（`__` 分隔嵌套，如 `CRAWLRS__DATABASE__URL`）。
 - **特性门控**：业务能力（teams/auth/rate-limit/webhook）关闭时自动注入 Noop 实现，单租户/无认证部署零业务逻辑改动。
@@ -159,7 +159,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 | 预设 | 构建命令 | 包含内容 | 适用场景 |
 |------|----------|----------|----------|
-| 默认 | `cargo build --release` | `platform`（teams + auth + rate-limit + webhook + metrics + content）+ `db-postgres` | 开箱即用的完整平台 |
+| 默认 | `cargo build --release` | `platform`（teams + auth + rate-limit + webhook + metrics + content + sitemap）+ `db-postgres` | 开箱即用的完整平台 |
 | `standard` | `cargo build --release --features standard` | 默认 + `engine-playwright` | 生产推荐（JS 渲染 + 指标 + 内容处理） |
 | `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | 全部功能 |
 | `no-default` | `cargo build --release --no-default-features` | 纯核心抓取栈 | 单租户/无认证部署、嵌入集成 |
@@ -167,7 +167,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ### 📋 功能矩阵
 
-下表对应 `Cargo.toml` 的 `[features]` 定义，`default = ["platform", "db-postgres"]`；核心抓取栈（oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt）始终编译。
+下表为 `Cargo.toml` `[features]` 的主要特性子集（完整清单见 `Cargo.toml`），`default = ["platform", "db-postgres"]`；核心抓取栈（oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt）始终编译。
 
 | 特性 | 说明 | 默认 |
 |------|------|------|
@@ -239,7 +239,7 @@ docker compose -f docker/docker-compose.yml up -d
 
 crawlrs 遵循领域驱动设计（DDD），采用 `presentation → application → domain → infrastructure` 四层架构：Axum 处理 HTTP 与中间件，Use Case 编排业务逻辑，领域层以 `ScraperEngine` 等 trait 定义能力契约，基础设施层经 dbnexus（Sea-ORM）对接 PostgreSQL、经 oxcache 提供多层缓存。抓取数据通路为：请求经 SSRF 前置校验 → `EngineRouter` 按策略选路（反爬检测可动态改派浏览器引擎）→ Worker 池执行 → 结果落库并触发 Webhook。
 
-自研库矩阵的消费面（同作者共享 rc 链）：garrison 承载认证与健康探针（`auth` 门控）、limiteron 承载限流与引擎熔断状态机（`ManualCircuitBreaker` 薄封装 + `AtomicU8` 同步镜像）、oxcache 承载缓存本体（memory + `serialization` + `metrics`）与 URL 去重布隆过滤器（`bloom` feature，替代自研 MmapBloom）、sdforge 承载 DTO 校验与 HTTP 错误状态码映射（`unified::http_status_for`）。已吸收的 6 处重叠实现与库侧缺口登记见 [🏗️ 架构文档 · 自研库反向需求](docs/ARCHITECTURE.md)。
+自研库矩阵的消费面（同作者共享 rc 链）：garrison 承载认证与健康探针（`auth` 门控）、limiteron 承载限流与引擎熔断状态机（`ManualCircuitBreaker` 薄封装 + `AtomicU8` 同步镜像）、oxcache 承载缓存本体（memory + `serialization` + `metrics`）与 URL 去重布隆过滤器（`bloom` feature，替代自研 MmapBloom）、sdforge 承载 DTO 校验与 HTTP 错误状态码映射（`unified::http_status_for`）。自研库缺口登记见 [🏗️ 架构文档 · 自研库反向需求](docs/ARCHITECTURE.md)。
 
 分层职责、引擎路由细节、全部增强模块、队列/缓存/限流设计与部署拓扑详见 [🏗️ 架构文档](docs/ARCHITECTURE.md)。
 
@@ -251,7 +251,9 @@ crawlrs 遵循领域驱动设计（DDD），采用 `presentation → application
 
 测试体系覆盖七层：`src/` 内联单元测试、`tests/unit/` 按模块组织的单元测试、`tests/main.rs` 表驱动机（mock 注入）、SDK API 测试（`sdk_api_test`）、真实 PostgreSQL 集成测试（`integration_tests`，含 garrison 认证端到端）、Python API/性能测试与 E2E 质量保障套件（`tests/e2e/e2e-suite.sh`：22 组特性编译矩阵 → 静态检查 → 单元/集成测试 → 基准 → 报告）。各层场景穷举与文件映射见 [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md)。
 
-### ▶️ 运行命令（与 CI 一致）
+### ▶️ 运行命令
+
+**与 CI 一致**（见 `.github/workflows/ci.yml`）：
 
 ```bash
 # 单元测试（CI test job：standard / full 各跑一轮；需 PostgreSQL 16，本地由 testcontainers 自动拉起）
@@ -261,24 +263,29 @@ cargo test --features "full" --lib
 # 集成 + 全部测试目标（CI integration-test job）
 cargo test --features "full,test-mocks" --tests --no-fail-fast
 
-# Lint 与格式门禁
+# Lint、格式与文档门禁（fmt / clippy / doc job）
 cargo fmt --all -- --check
 cargo clippy --features "standard" -- -D warnings
 cargo clippy --features "full" -- -D warnings
+cargo doc --features "full" --no-deps          # CI doc job（RUSTDOCFLAGS=-D warnings）
 
 # 覆盖率门禁：行覆盖率不低于 80%（CI coverage job，结果上传 Codecov）
 cargo llvm-cov --features "full" --fail-under-lines 80
 
 # 供应链检查（advisories / licenses / bans / sources）
 cargo deny check
+```
 
+**本地附加**（CI 不执行）：
+
+```bash
 # 基准测试（Criterion，9 组）
 cargo bench
 
 # E2E 质量保障套件（特性矩阵 + 静态 + 测试 + 集成 + 基准 + 报告）
 ./tests/e2e/e2e-suite.sh
 
-# Python API / 性能测试（本地）
+# Python API / 性能测试（local 模式跑 3 个套件：api_endpoints / performance / error_handling）
 ./scripts/run-tests.sh local
 
 # 提交前完整检查（fmt → clippy → check → build → 私钥扫描）
@@ -287,7 +294,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 测试规模
 
-截至 0.2.0：`src/` 内联测试约 5700+ 个（372 个源文件），`tests/` 目录约 950 个（含 71 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 5 个套件；覆盖率门禁为行覆盖率不低于 80%，由 CI 执行。逐项统计见 [🧪 测试场景矩阵 · 测试规模](docs/TEST_SCENARIOS.md)。
+截至 0.2.0-rc.2：`src/` 内联测试 6,310 处（408 个源文件、206,781 行），`tests/` 目录 967 个测试（116 个 `.rs` 文件，含 `tests/unit/` 70 个单元测试文件与真实 PostgreSQL 集成套件），Criterion 基准 9 组，Python 测试 `tests/python/` 共 5 个套件（`scripts/run-tests.sh local` 模式跑其中 3 个：api_endpoints / performance / error_handling）；覆盖率门禁为行覆盖率不低于 80%，由 CI 执行。逐项统计见 [🧪 测试场景矩阵 · 统计汇总](docs/TEST_SCENARIOS.md)。
 
 ---
 
@@ -318,7 +325,7 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
 <tr><td align="center">✅</td><td>核心平台（0.1.0）</td><td>搜索/抓取/爬取/提取/映射五大能力 API、DDD 四层、多租户与限流、Webhook 通知</td></tr>
-<tr><td align="center">✅</td><td>平台加固与智能引擎（0.2.0）</td><td>garrison 认证、反爬检测、TLS 指纹与 MLLM 引擎、RAG/KG/DRL 智能增强、Prometheus 可观测性、E2E 质量套件</td></tr>
+<tr><td align="center">✅</td><td>平台加固与智能引擎（0.2.0-rc.2）</td><td>garrison 认证、反爬检测、TLS 指纹与 MLLM 引擎、RAG/KG/DRL 智能增强、Prometheus 可观测性、E2E 质量套件</td></tr>
 <tr><td align="center">🚧</td><td>数据库多驱动</td><td><code>db-sqlite</code> / <code>db-mysql</code> 已实现编译级覆盖，运行时 schema 供给待补（当前 <code>migrations/*.sql</code> 为 PG 专用 DDL）</td></tr>
 <tr><td align="center">📋</td><td>架构演进</td><td>事件驱动内部总线、WebSocket 实时任务状态、Redis 共享缓存层（多实例部署）</td></tr>
 <tr><td align="center">📋</td><td>性能看护</td><td>Criterion 基线（e2e-baseline）回归对比常态化、性能口径复测</td></tr>
@@ -373,7 +380,8 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
-| Unreleased | - | TLS 指纹引擎（WreqEngine）、MLLM 视觉导航引擎、RAG 增强提取、知识图谱覆盖感知、DRL 自适应策略、5 个新 Prometheus 指标；功能吸收 F1–F12（AutoThrottle、Session 身份、失败快照、sitemap 请求源、XHR 捕获、提取质量门、LLM 分块与溯源、AIMD 内存联动、软 404、AX 树快照） |
+| 0.2.0-rc.2 | 2026-09-21 | TLS 指纹引擎（WreqEngine）、MLLM 视觉导航引擎、RAG 增强提取、知识图谱覆盖感知、DRL 自适应策略、5 个新 Prometheus 指标；功能吸收 F1–F12（AutoThrottle、Session 身份、失败快照、sitemap 请求源、XHR 捕获、提取质量门、LLM 分块与溯源、AIMD 内存联动、软 404、AX 树快照） |
+| Unreleased | - | auth-off 恢复默认 401、`web-axum` 构建面恢复、`crawlrs migrate` 子命令、`POST /v1/scrape/{id}/_cancel` 生产路由、ScrapeOptionsDto 暴露 `block_ads`/`block_media`/`needs_mllm`、forge-full 停机坪、i18n/Fluent 接入等，完整清单见 [📋 更新日志](docs/CHANGELOG.md) |
 | 0.2.0 | 2026-07-29 | garrison RBAC 认证集成、bootstrap admin key、`DELETE /v1/crawl/{id}`、暴力破解防护加固 |
 | 0.1.0 | 2026-07-22 | 首个公开版本：五大能力 API、DDD 四层架构、多租户与限流、统一搜索 |
 
