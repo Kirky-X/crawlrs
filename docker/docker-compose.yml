@@ -61,23 +61,23 @@ services:
       # 服务类型
       - CRAWLRS__SERVICE_TYPE=${SERVICE_TYPE:-api}
 
-      # 搜索引擎配置
-      - CRAWLRS__SEARCH__ENGINES__GOOGLE_ENABLED=${SEARCH_ENGINE_GOOGLE_ENABLED:-false}
+      # 搜索引擎配置（SearchEnginesSettings 仅含 bing/baidu/sogou 开关）
       - CRAWLRS__SEARCH__ENGINES__BING_ENABLED=${SEARCH_ENGINE_BING_ENABLED:-true}
       - CRAWLRS__SEARCH__ENGINES__BAIDU_ENABLED=${SEARCH_ENGINE_BAIDU_ENABLED:-true}
       - CRAWLRS__SEARCH__ENGINES__SOGOU_ENABLED=${SEARCH_ENGINE_SOGOU_ENABLED:-true}
-      - CRAWLRS__SEARCH__DEFAULT_ENGINE=${SEARCH_ENGINE_DEFAULT:-baidu}
+      - CRAWLRS__SEARCH__DEFAULT_ENGINE=${SEARCH_ENGINE_DEFAULT:-bing}
 
       # Google搜索配置
       - CRAWLRS__GOOGLE_SEARCH__API_KEY=${GOOGLE_SEARCH_API_KEY:-}
       - CRAWLRS__GOOGLE_SEARCH__CX=${GOOGLE_SEARCH_CX:-}
 
-      # FlareSolverr配置
-      - CRAWLRS__SEARCH__FLARESOLVERR__URL=http://${FLARESOLVERR_HOST:-flaresolverr}:8191/v1
-      - CRAWLRS__SEARCH__FLARESOLVERR__AUTO_START=${FLARESOLVERR_AUTO_START:-true}
+      # FlareSolverr配置（引擎侧 [engines.flaresolverr]，非 search 侧）
+      - CRAWLRS__ENGINES__FLARESOLVERR__URL=http://${FLARESOLVERR_HOST:-flaresolverr}:8191/v1
+      - CRAWLRS__ENGINES__FLARESOLVERR__ENABLED=${FLARESOLVERR_ENABLED:-true}
 
-      # Chrome配置
-      - CRAWLRS__CHROME_REMOTE_DEBUGGING_URL=http://${CHROME_HOST:-chrome}:9222
+      # 远程浏览器端点：crawlrs 直读无前缀环境变量 CHROMIUM_REMOTE_DEBUGGING_URL
+      # （src/infrastructure/services/config_service.rs，供 Playwright 引擎与 BrowserPool 消费）。
+      # 此处不注入，需接入 browserless/chrome 容器时显式设置该变量。
 
       # 速率限制配置
       - CRAWLRS__RATE_LIMITING__ENABLED=${RATE_LIMITING_ENABLED:-false}

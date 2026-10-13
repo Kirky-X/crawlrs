@@ -8,22 +8,17 @@
 # URL is loaded from CRAWLRS__DATABASE__URL env var in production
 # Empty default allows config to load in test/dev environments
 url = ""
+# 注：下四键的代码默认值（150/20/15/300）与本文件不同；toml 为运行时生效方，以本文件为准。
 max_connections = 20
 min_connections = 5
 connect_timeout = 30
 idle_timeout = 600
+# 连接生命周期三键（与代码默认一致：1800/30/60）
+max_lifetime = 1800
+connection_keepalive = 30
+health_check_interval = 60
 # 池级 prepared statement LRU 缓存容量（dbnexus prepare-cache），None 关闭
 prepare_cache_capacity = 128
-
-# Docker Database Configuration (overridden by environment variables)
-# WARNING: Do NOT hardcode passwords in this file!
-# Use CRAWLRS__DATABASE__PASSWORD environment variable
-[database.docker]
-host = "db"
-port = 5432
-user = "crawlrs"
-password = ""  # Set via CRAWLRS__DATABASE__PASSWORD
-name = "crawlrs"
 
 # Server Configuration
 [server]
@@ -43,8 +38,8 @@ allowed_origins = "*"
 # IMPORTANT: Rate limiting SHOULD be enabled in production to prevent abuse
 [rate_limiting]
 enabled = true
+# 注：代码默认 100 与本文件值不同；toml 为运行时生效方，以本文件为准。
 default_rpm = 60
-default_limit = 60
 burst_size = 20
 # 限流计数/封禁存储后端：
 # - "memory"   进程内存储（默认，单进程语义，重启即清零）
@@ -174,15 +169,7 @@ endpoint = "https://api.tavily.com"
 # api_key defaults to None
 # base_url = ""  # Optional base URL override, set via CRAWLRS__SEARCH__TAVILY__BASE_URL
 
-# FlareSolverr Configuration (for Google search proxy)
-[search.flaresolverr]
-enabled = true
-url = "http://flaresolverr:8191/v1"
-auto_start = true
-timeout_seconds = 30
-max_retries = 3
-
-# Browser Configuration
+# Engine Configuration
 [engines]
 # 响应体大小上限（字节）：超出中断抓取，防止超大/恶意页面 OOM
 max_response_body_bytes = 10485760
@@ -200,31 +187,13 @@ capture_xhr_max_bytes = 262144
 # 单页面最大捕获响应数（防内存放大）
 capture_xhr_max_responses = 50
 
-[browser]
-# Browser auto-download settings
-auto_download = true
-# Browser cache directory (relative to home or absolute path)
-cache_dir = ".cache/crawlrs/chromium"
-# Download timeout in seconds
-download_timeout_seconds = 300
-
-# Browser executable paths (auto-detected if not set)
-# [browser.linux]
-# executable = "/usr/bin/google-chrome"
-# [browser.macos]
-# executable = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-# [browser.windows]
-# executable = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-
 # Webhook Configuration
 [webhook]
-timeout_seconds = 10
-max_retries = 3
-retry_interval_seconds = 60
-user_agent = "Crawlrs-Webhook/1.0"
 # IMPORTANT: Set webhook secret via CRAWLRS__WEBHOOK__SECRET environment variable
 # Do NOT use weak default values like "your-webhook-secret"
 secret = ""
+# 注：代码默认 5 与本文件值不同；toml 为运行时生效方，以本文件为准。
+max_retries = 3
 batch_size = 1000
 
 # Bing Search API Configuration
@@ -235,6 +204,10 @@ batch_size = 1000
 [llm]
 # Set API key via CRAWLRS__LLM__API_KEY environment variable for production
 api_key = ""
+# LLM 提供商（openai/ollama/anthropic 等）；空 = 未显式指定，provider 解析按 api_base_url 推断
+provider = ""
+# 注：下两键的代码默认值（gpt-3.5-turbo / https://api.openai.com/v1）与本文件不同；
+# toml 为运行时生效方，以本文件为准。
 model = "qwen3:1.7b"
 api_base_url = "http://localhost:11434/v1"
 # 直调单请求超时秒数：须覆盖自托管端点的模型冷加载与长生成
@@ -309,23 +282,6 @@ rerank_timeout_seconds = 10
 # --- 行为 ---
 search_rerank_top_n = 25                 # 搜索重排送入 provider 的最大文档数
 rag_top_k = 5                            # RAG 抽取检索 top-K 分块
-
-# Engine Support Score Configuration
-# Scores are used by engine router to select the best engine for a request
-# Range: 0-100 (higher = more preferred)
-[engine_scores]
-# FlareSolverr CDP engine scores
-flaresolverr_cdp_with_tls_screenshot = 100  # TLS fingerprint + screenshot needed
-flaresolverr_cdp_with_tls = 100             # TLS fingerprint needed (no screenshot)
-flaresolverr_cdp_screenshot = 80            # Screenshot only
-flaresolverr_cdp_js = 90                    # JavaScript rendering needed
-flaresolverr_cdp_actions = 90               # Page interactions needed
-flaresolverr_cdp_default = 40               # Default score for basic requests
-
-# FlareSolverr TLS engine scores
-flaresolverr_tls_with_tls = 100             # TLS fingerprint needed
-flaresolverr_tls_unsupported = 0            # JS, screenshot, or actions not supported
-flaresolverr_tls_default = 40               # Default score for basic requests
 
 # HTTP Proxy Configuration
 # Configure proxy for all scraping engines
@@ -473,6 +429,7 @@ initial_backoff_seconds = 1
 max_backoff_seconds = 60
 
 [timeouts.cache]
+# 注：代码默认 600 与本文件值不同；toml 为运行时生效方，以本文件为准。
 default_ttl_seconds = 300
 memory_ttl_seconds = 300
 
@@ -544,8 +501,6 @@ proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1", "::1"]
 # 开发环境可通过环境变量注入：export CRAWLRS__AUTH__JWT_SECRET="test-jwt-secret-32-bytes-or-more!!"
 jwt_secret = ""
 
-# Internationalization (i18n) Configuration
-# 国际化配置，基于 Mozilla Fluent 系统
 [robots]
 # robots.txt 遵从配置
 # robots.txt 匹配与抓取使用的 User-Agent
@@ -553,6 +508,8 @@ user_agent = "crawlrs-bot/1.0"
 # /v1/scrape 单页抓取是否默认遵从 robots.txt（请求级 options.respect_robots 可覆盖；
 # robots.txt 获取失败时 fail-open 放行）
 scrape_respect_robots = false
+# robots.txt 获取失败（重试耗尽）时是否判禁：false 维持 fail-open 放行
+fail_closed = false
 # robots.txt 缓存 TTL（秒）
 cache_ttl_secs = 3600
 # robots.txt 获取失败重试次数与退避（秒）
@@ -560,6 +517,8 @@ fetch_max_retries = 5
 fetch_initial_backoff_secs = 2
 fetch_max_backoff_secs = 10
 
+# Internationalization (i18n) Configuration
+# 国际化配置，基于 Mozilla Fluent 系统
 [i18n]
 # 默认 locale（BCP 47 格式）。
 # 语义（unify-rust-i18n）：本值为内置默认值——未显式改写（仍为 "en-US"）时，
