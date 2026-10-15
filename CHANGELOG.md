@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed（同作者依赖族 rc 线对齐）
+
+- **dbnexus 依赖族对齐 rc.9 线**：移除 dbnexus 已删除的死特性 `config-toml`（rc.6 时即空壳——`= []` 不拉依赖不门控代码，crawlrs 的 TOML 解析来自直接依赖 confers，与该特性无关；上游 `../base/dbnexus@c59ae46` 清理）。vecboost（本地 patch）清单抬到 dbnexus rc.9 后锁失效重解析，各同作者库按既有「最低 rc」semver 要求自动落位最新满足版：dbnexus rc.9 / confers rc.10（rc.8/rc.9 已 yank）/ trait-kit rc.9 / inklog rc.9 / oxcache rc.8 / limiteron rc.7 / sdforge rc.8；garrison 维持 rc.2 不动。`cargo check` 一次通过零 API 破损；完整回归：clippy(default|full) 0 告警、lib 测试 6014+6184 通过、集成 152 通过、liveapi 完整构建全链绿（构建路径自 vecboost 清单变更后首次恢复）。`Cargo.lock` 同步入库
+
 ### Fixed（E2E 覆盖缺口补齐）
 
 - **活体 E2E 覆盖 8 个零覆盖功能面**：`api_test.sh` SDK 断言改打真实挂载路径 `/api/v1/sdk/*`（修正 404 空洞通过与过时 `http feature` 注释，`(422)`/`(403)` 误命名对齐实际 400）；`api_semantics_test.py` 37→45 场景——SDK 语义（search 成功/引擎降级 500、空 query 400、scrape 创建 2xx）、`POST /v1/scrape/{id}/_cancel`（200+`message` 包封+终态轮询、未知 id 404）、`POST /v1/tasks/_cancel` 批量取消（`cancelled∪failed` 全覆盖+逐个终态）、`expires_in_secs=1` 短期 key 过期 401、webhook 签名创建（201+`data.secret` 回显、额外字段拒绝、列表脱敏；缺 `--webhook-secret` 时 SKIP）；`live-api-e2e.sh` 注入 `CRAWLRS__WEBHOOK__SECRET` 并透传，末尾新增 402 关卡（积分归零 → `POST /v1/scrape` 断言 402 `QUOTA_EXCEEDED`）；删除无套件引用的孤儿文件 `tests/e2e/test_scenarios.py`。注：webhook 额外字段拒绝实际为 400 `VALIDATION_ERROR`（handler 手工 `from_slice` 映射），非任务草拟的 422，以服务端现实为准

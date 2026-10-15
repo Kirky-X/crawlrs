@@ -448,7 +448,7 @@ base64 = { version = "0.23", default-features = false, features = ["std"] }
 # Database
 # 驱动与 runtime 特性不在此声明（Cargo feature 只加不减，写死会锁死单一后端），
 # 由 crawlrs 的 db-postgres / db-sqlite / db-mysql 特性组按构建选择
-dbnexus = { version = "0.6.0-rc.6", default-features = false, features = ["cache", "macros", "migration", "auto-migrate", "config-env", "config-toml", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
+dbnexus = { version = "0.6.0-rc.6", default-features = false, features = ["cache", "macros", "migration", "auto-migrate", "config-env", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
 sea-orm = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK
 sdforge = { version = "0.5.0-rc.6", default-features = false, features = ["http"] }

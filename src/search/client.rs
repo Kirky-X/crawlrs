@@ -593,8 +593,10 @@ mod tests {
 
     #[test]
     fn test_with_configured_engines_default_engine_from_settings() {
-        let mut settings = SearchSettings::default();
-        settings.default_engine = Some("baidu".to_string());
+        let settings = SearchSettings {
+            default_engine: Some("baidu".to_string()),
+            ..Default::default()
+        };
 
         let client = build_configured_client(&settings);
         assert_eq!(
@@ -606,8 +608,10 @@ mod tests {
 
     #[test]
     fn test_with_configured_engines_unknown_default_engine_falls_back_to_bing() {
-        let mut settings = SearchSettings::default();
-        settings.default_engine = Some("definitely-not-an-engine".to_string());
+        let settings = SearchSettings {
+            default_engine: Some("definitely-not-an-engine".to_string()),
+            ..Default::default()
+        };
 
         let client = build_configured_client(&settings);
         assert_eq!(client.default_engine(), SearchEngineType::Bing);
@@ -615,9 +619,11 @@ mod tests {
 
     #[test]
     fn test_with_configured_engines_unregistered_default_engine_falls_back_to_bing() {
-        let mut settings = SearchSettings::default();
         // exa 合法但未配置凭据 → 未注册 → 回退 bing（而非指向不可用引擎）
-        settings.default_engine = Some("exa".to_string());
+        let settings = SearchSettings {
+            default_engine: Some("exa".to_string()),
+            ..Default::default()
+        };
 
         let client = build_configured_client(&settings);
         assert_eq!(client.default_engine(), SearchEngineType::Bing);

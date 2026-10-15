@@ -250,7 +250,6 @@ mod tests {
     // 以下用例经 axum 起活体 mock：axum 由 platform 提供，llm 单特性（无
     // platform）的测试构建不含它——该组合下整段不编译，仅保留上方纯函数用例。
     #[cfg(feature = "platform")]
-
     /// 启动返回固定 (status, body) 的 OpenAI 兼容 mock，路径 /chat。
     async fn start_llm_mock(status: u16, body: String) -> String {
         use axum::http::StatusCode;

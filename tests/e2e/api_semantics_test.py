@@ -663,8 +663,17 @@ def build_scenarios(r: Runner):
             return
         check(final.get("status") in ("completed", "success", "failed"),
               "未取消的爬取以 completed/failed 终结")
-        # 结果查询语义
-        s2, _, _, j2 = c.request("crawl_results", "GET", f"/v1/crawl/{crawl_id}/results", timeout=30)
+        # 结果查询语义。crawl 行翻转终态与结果行批量落库存在竞速（实测三跑两现：
+        # completed 后立即查询得空集），终态后给结果集 10s 落库宽限再断言。
+        results, s2, j2 = [], 0, None
+        grace_deadline = time.monotonic() + 10
+        while time.monotonic() < grace_deadline:
+            s2, _, _, j2 = c.request("crawl_results", "GET", f"/v1/crawl/{crawl_id}/results", timeout=30)
+            if s2 == 200 and j2:
+                results = (j2 or {}).get("data") or []
+                if isinstance(results, list) and results:
+                    break
+            time.sleep(2)
         check(s2 == 200, f"results 查询 200（got {s2}）")
         if j2 and s2 == 200:
             Runner.success_envelope(check, j2, "crawl results")
