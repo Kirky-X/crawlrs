@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed（E2E 覆盖缺口补齐）
+
+- **活体 E2E 覆盖 8 个零覆盖功能面**：`api_test.sh` SDK 断言改打真实挂载路径 `/api/v1/sdk/*`（修正 404 空洞通过与过时 `http feature` 注释，`(422)`/`(403)` 误命名对齐实际 400）；`api_semantics_test.py` 37→45 场景——SDK 语义（search 成功/引擎降级 500、空 query 400、scrape 创建 2xx）、`POST /v1/scrape/{id}/_cancel`（200+`message` 包封+终态轮询、未知 id 404）、`POST /v1/tasks/_cancel` 批量取消（`cancelled∪failed` 全覆盖+逐个终态）、`expires_in_secs=1` 短期 key 过期 401、webhook 签名创建（201+`data.secret` 回显、额外字段拒绝、列表脱敏；缺 `--webhook-secret` 时 SKIP）；`live-api-e2e.sh` 注入 `CRAWLRS__WEBHOOK__SECRET` 并透传，末尾新增 402 关卡（积分归零 → `POST /v1/scrape` 断言 402 `QUOTA_EXCEEDED`）；删除无套件引用的孤儿文件 `tests/e2e/test_scenarios.py`。注：webhook 额外字段拒绝实际为 400 `VALIDATION_ERROR`（handler 手工 `from_slice` 映射），非任务草拟的 422，以服务端现实为准
+
 ### Breaking（auth-off 安全语义恢复——文档审计缺陷 #6）
 
 - **auth-off protected routes 恢复默认拒绝（401）**（`ee135748`）：恢复 v0.2.0-rc.1 收紧语义（rc.2 路由装配重构时意外丢失且无记录）。`auth` feature 关闭时，protected 路由默认 401；嵌入方须显式调用 `crawlrs::presentation::middleware::auth_middleware::allow_unauthenticated_protected()` 放行——注入匿名受限身份（`ApiKeyScope::denied()` scope、无 token_hash），一次 `error!` 日志声明降级。默认构建（platform 隐含 auth）不受影响

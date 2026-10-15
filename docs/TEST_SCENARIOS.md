@@ -49,7 +49,7 @@
 | TLS 指纹引擎 | `cargo test --test integration_tests -- --ignored wreq_fingerprint_test` | full,engine-tls-fingerprint | 需出网 |
 | Python API/性能 | `./scripts/run-tests.sh local` | 运行中的服务实例 | 本地/手动 |
 | E2E API 冒烟 | `tests/e2e/api_test.sh` | 运行中的服务实例 | 手动 / liveapi 阶段自动 |
-| API 语义级验证 | `tests/e2e/api_semantics_test.py` | 运行中的服务实例 | liveapi 阶段自动 / 手动（37 个 `scenarios.append` 场景） |
+| API 语义级验证 | `tests/e2e/api_semantics_test.py` | 运行中的服务实例 | liveapi 阶段自动 / 手动（45 个 `scenarios.append` 场景） |
 | 活体 API E2E 编排 | `tests/e2e/live-api-e2e.sh` | Docker（compose PG） | 手动 / liveapi 阶段 |
 | E2E 质量套件 | `./tests/e2e/e2e-suite.sh` | 全部 | 本地/手动，7 阶段 |
 | 特性编译矩阵 | `tests/e2e/feature-matrix.sh` | 全部 | e2e Stage 1 |
@@ -204,7 +204,7 @@ TEST_DATABASE_URL=postgres://... ./tests/e2e/e2e-suite.sh   # 复用外部 PG（
 | Stage 3 unit | `--lib`（default/full）、`--test main`、`--test sdk_api_test`、`--test route_diag_test` |
 | Stage 4 integration | `--test integration_tests --include-ignored`（含 garrison 认证端到端） |
 | Stage 5 bench | `cargo bench` 缩短采样；首跑建立 `e2e-baseline`，此后自动对比检测回退 |
-| Stage 6 liveapi | `tests/e2e/live-api-e2e.sh`：compose 拉起 PG → 迁移 → 构建 → 经 `script` 伪 TTY 启动 `crawlrs api`（环境变量 `CRAWLRS_BOOTSTRAP_ADMIN=true`，由 API 进程自身在启动时调用 `run_bootstrap` 签发 admin key；garrison DAO 是进程内 oxcache，跨进程签发的 key 不可见；明文 key 解析后立即掩码）→ 等待 `/health` 就绪（8901 端口）→ 状态码冒烟（`api_test.sh`）+ 语义级验证（`api_semantics_test.py`，37 个 `scenarios.append` 场景：响应包封一致性/安全脱敏/状态转换/数据过滤/并发）→ 产物 `test-results/{api-smoke.log, api-audit.jsonl, api-semantics-matrix.md}` |
+| Stage 6 liveapi | `tests/e2e/live-api-e2e.sh`：compose 拉起 PG → 迁移 → 构建 → 经 `script` 伪 TTY 启动 `crawlrs api`（环境变量 `CRAWLRS_BOOTSTRAP_ADMIN=true` + `CRAWLRS__WEBHOOK__SECRET` 测试密钥，由 API 进程自身在启动时调用 `run_bootstrap` 签发 admin key；garrison DAO 是进程内 oxcache，跨进程签发的 key 不可见；明文 key 解析后立即掩码）→ 等待 `/health` 就绪（8901 端口）→ 状态码冒烟（`api_test.sh`，含 `/api/v1/sdk/*` 真实路径断言）+ 语义级验证（`api_semantics_test.py`，45 个 `scenarios.append` 场景：响应包封一致性/安全脱敏/状态转换/数据过滤/并发/SDK 语义/取消族/apikey 过期/webhook 签名创建）→ 402 付费墙关卡（积分归零 → `POST /v1/scrape` 断言 402 `QUOTA_EXCEEDED`）→ 产物 `test-results/{api-smoke.log, api-semantics.log, api-audit.jsonl, api-interaction-digest.md, api-semantics-matrix.md, api-quota-402.json, liveapi-server.log}` |
 | Stage 7 report | 汇总 `test-results/e2e-report.txt`；EXIT trap 清理 compose 容器/卷与泄漏的 testcontainers 容器 |
 
 任一阶段失败即非零退出；日志集中在 `test-results/`；单阶段超时护栏 `E2E_STAGE_TIMEOUT`（默认 1800s）。

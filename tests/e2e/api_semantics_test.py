@@ -32,6 +32,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import hmac
 import json
 import re
 import sys
@@ -103,6 +106,26 @@ def mask_text(text: str, secrets: list[str]) -> str:
         if s and s in text:
             text = text.replace(s, mask_token(s))
     return text
+
+
+def sign_webhook(secret: str, msg_id: str, timestamp: int, body: str) -> str:
+    """standardwebhooks 签名：`v1,<base64(hmac_sha256(secret, "{msg_id}.{timestamp}.{body}"))>`。
+
+    与服务端 `StandardWebhook::from_bytes(secret).sign(msg_id, timestamp, body)`
+    一致（见 webhook_handler.rs 测试 helper `make_test_signature`）；
+    timestamp 为 Unix 秒，须在服务端 5 分钟窗口内。
+    """
+    msg = f"{msg_id}.{timestamp}.{body}".encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).digest()
+    return "v1," + base64.b64encode(digest).decode("ascii")
+
+
+def sdk_data(payload):
+    """SDK 成功体兼容提取：sdforge 成功响应为裸 DTO（见 API_REFERENCE SDK 节），
+    若未来套上 ApiResponse 包封则取 data 字段。"""
+    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+        return payload["data"]
+    return payload or {}
 
 
 class Auditor:
@@ -250,6 +273,10 @@ class Runner:
         failed_msgs = [m for ok, m in checks if not ok]
         if err:
             failed_msgs.insert(0, str(err))
+        # CWE-532 纵深防御：失败消息内嵌响应体摘录，打印与覆盖矩阵写入前
+        # 掩码全部已知凭证（审计 JSONL 另有构造期掩码 + 运行末回溯掩码）
+        known_secrets = list(self.auditor.secrets) + list(self.issued_keys)
+        failed_msgs = [mask_text(m, known_secrets) for m in failed_msgs]
         row = {
             "category": category,
             "name": name,
@@ -534,6 +561,53 @@ def build_scenarios(r: Runner):
                   "SSRF 请求绝不产生任务（data 为空）")
         scenarios.append((f"ssrf_reject_{key}", "C-Scrape", f"SSRF 防护：{url}", t_ssrf))
 
+    def t_scrape_cancel_success(check):
+        s0, _, text0, j0 = c.request("scrape_create_for_cancel", "POST", "/v1/scrape",
+                                     body=json.dumps({"url": NEWS_PRIMARY,
+                                                      "metadata": {"e2e": "scrape-cancel"}}),
+                                     timeout=60)
+        check(s0 in (200, 201, 202), f"创建 2xx（got {s0}: {text0[:120]!r}）")
+        task_id = ((j0 or {}).get("data") or {}).get("id")
+        if not task_id:
+            check(False, "未获得 task_id")
+            return
+        s, _, text, j = c.request("scrape_cancel", "POST",
+                                  f"/v1/scrape/{task_id}/_cancel", timeout=30)
+        check(s == 200, f"取消 200（got {s}: {text[:160]!r}）")
+        if j and s == 200:
+            Runner.success_envelope(check, j, "scrape cancel")
+            data = (j or {}).get("data") or {}
+            check(bool(data.get("message")), "data.message 存在（取消确认）")
+        # 终态轮询：cancelled 为主；worker 竞态下已完成（completed/success）亦合法，
+        # 但绝不允许回到 running/pending
+        deadline = time.monotonic() + 60
+        observed = []
+        while time.monotonic() < deadline:
+            s2, _, _, j2 = c.request("scrape_cancel_poll", "GET",
+                                      f"/v1/scrape/{task_id}", timeout=30)
+            if s2 == 200 and j2:
+                st = ((j2.get("data") or {}).get("status"))
+                if st and st not in observed:
+                    observed.append(st)
+                if st in TERMINAL_STATUSES:
+                    break
+            time.sleep(1.5)
+        check(bool(observed) and observed[-1] in TERMINAL_STATUSES,
+              f"取消后到达终态（{observed}）")
+        r.auditor.log_event("state_transition", "scrape_cancel",
+                            {"task_id": task_id, "observed": observed})
+    scenarios.append(("scrape_cancel_success", "C-Scrape",
+                      "取消抓取 200+包封+轮询终态", t_scrape_cancel_success))
+
+    def t_scrape_cancel_unknown(check):
+        s, _, _, j = c.request("scrape_cancel_unknown", "POST",
+                               f"/v1/scrape/{uuid.uuid4()}/_cancel", timeout=30)
+        check(s == 404, f"不存在任务 404（got {s}）")
+        Runner.error_envelope(check, j, s, "scrape cancel unknown",
+                              want_codes={"NOT_FOUND"})
+    scenarios.append(("scrape_cancel_unknown_404", "C-Scrape",
+                      "取消不存在任务 404 包封", t_scrape_cancel_unknown))
+
     # ═══ D. Crawl 语义 ═══
     def _create_crawl(name, payload, timeout=60):
         s, _, text, j = c.request(name, "POST", "/v1/crawl",
@@ -757,6 +831,54 @@ def build_scenarios(r: Runner):
             Runner.error_envelope(check, j, s, "search unknown engine")
     scenarios.append(("search_unknown_engine", "E-Search", "未知引擎显式失败", t_search_bad_engine))
 
+    # ═══ J. SDK 语义（sdforge 真实挂载路径 /api/v1/sdk/*）═══
+    # 成功体为裸 DTO（API_REFERENCE SDK 节），用 sdk_data 兼容包封/裸体两种形态。
+    def t_sdk_search_success(check):
+        s, _, text, j = c.request("sdk_search", "POST", "/api/v1/sdk/search",
+                                  body=json.dumps({"query": "Rust programming",
+                                                   "limit": 3}), timeout=60)
+        check(s in (200, 500), f"成功或显式引擎错误（got {s}: {text[:160]!r}）")
+        if j is None:
+            check(False, f"响应为 JSON（{text[:120]!r}）")
+            return
+        if s == 500:
+            Runner.error_envelope(check, j, s, "sdk search(engine-down)")
+            r.auditor.log_event("env_note", "sdk_search",
+                                {"note": "搜索引擎不可达（网络受限），验证显式失败包封"})
+        else:
+            data = sdk_data(j)
+            check(isinstance(data.get("results"), list), "results 为列表")
+            check(data.get("query") == "Rust programming", "query 回显请求值")
+            # R-001 点名要求：成功体含 credits_used（活体 sdforge 裸 DTO 实含该字段；
+            # 不锁死具体值——扣费点数随引擎/后端策略浮动，非负整数即合法）
+            check(isinstance(data.get("credits_used"), int) and data["credits_used"] >= 0,
+                  f"credits_used 非负整数（got {data.get('credits_used')!r}）")
+    scenarios.append(("sdk_search_success", "J-SDK", "SDK search 成功/引擎降级显式失败", t_sdk_search_success))
+
+    def t_sdk_search_empty(check):
+        s, _, _, j = c.request("sdk_search_empty", "POST", "/api/v1/sdk/search",
+                               body=json.dumps({"query": ""}))
+        check(s == 400, f"空 query 拒绝 400（got {s}）")
+        if j is not None:
+            # SDK 错误体走 sdforge ApiError；若带包封则校验契约，否则仅要求错误信号
+            if isinstance(j, dict) and "success" in j:
+                Runner.error_envelope(check, j, s, "sdk search empty")
+            else:
+                check(bool(j.get("error") or j.get("message")), "错误体含 error/message 信号")
+    scenarios.append(("sdk_search_empty_400", "J-SDK", "SDK search 空 query 校验 400", t_sdk_search_empty))
+
+    def t_sdk_scrape_create(check):
+        s, _, text, j = c.request("sdk_scrape_create", "POST", "/api/v1/sdk/scrape",
+                                  body=json.dumps({"url": NEWS_PRIMARY}), timeout=60)
+        check(s in (200, 201, 202), f"创建 2xx（got {s}: {text[:160]!r}）")
+        if j is None:
+            check(False, f"响应为 JSON（{text[:120]!r}）")
+            return
+        data = sdk_data(j)
+        check(bool(data.get("id")), "id 存在")
+        check(data.get("url") == NEWS_PRIMARY, f"url 回显请求值（got {data.get('url')!r}）")
+    scenarios.append(("sdk_scrape_create", "J-SDK", "SDK scrape 创建 2xx+回显", t_sdk_scrape_create))
+
     # ═══ F. 安全脱敏 ═══
     def t_apikey_issue(check):
         s, h, text, j = c.request("apikey_issue", "POST", "/v1/admin/api-keys",
@@ -798,6 +920,31 @@ def build_scenarios(r: Runner):
         finally:
             c.api_key = saved
     scenarios.append(("apikey_lifecycle", "F-安全脱敏", "新签发 key 立即可认证", t_apikey_lifecycle))
+
+    def t_apikey_expiry(check):
+        s, _, text, j = c.request("apikey_issue_shortlived", "POST", "/v1/admin/api-keys",
+                                  body=json.dumps({"team_id": r.team_id,
+                                                   "scopes": ["read", "write"],
+                                                   "expires_in_secs": 1}))
+        check(s == 201, f"短期 key 签发 201（got {s}: {text[:160]!r}）")
+        key = (((j or {}).get("data") or {}).get("api_key")) if j else None
+        if not key:
+            check(False, "未获得短期 key")
+            return
+        r.issued_keys.append(key)
+        saved = c.api_key
+        c.api_key = key
+        try:
+            s1, _, _, _ = c.request("apikey_expiry_fresh", "GET", "/v1/teams/me")
+            check(s1 == 200, f"未过期前可用 200（got {s1}）")
+            time.sleep(2.5)
+            s2, _, text2, j2 = c.request("apikey_expiry_expired", "GET", "/v1/teams/me")
+            check(s2 == 401, f"过期后拒绝 401（got {s2}: {text2[:160]!r}）")
+            Runner.error_envelope(check, j2, s2, "apikey expired",
+                                  want_codes={"UNAUTHORIZED"})
+        finally:
+            c.api_key = saved
+    scenarios.append(("apikey_expiry", "F-安全脱敏", "短期 key 过期后 401 包封", t_apikey_expiry))
 
     def t_apikey_readonly_scope(check):
         s, _, text, j = c.request("apikey_issue_readonly", "POST", "/v1/admin/api-keys",
@@ -912,6 +1059,107 @@ def build_scenarios(r: Runner):
         Runner.error_envelope(check, j, s, "tasks cancel empty")
     scenarios.append(("tasks_cancel_empty_422", "G-任务过滤", "批量取消空请求 422", t_tasks_cancel_empty))
 
+    def t_tasks_cancel_batch(check):
+        ids = []
+        for i in range(2):
+            s0, _, text0, j0 = c.request(f"batch_cancel_create_{i}", "POST", "/v1/scrape",
+                                         body=json.dumps({"url": NEWS_PRIMARY,
+                                                          "metadata": {"e2e": f"batch-cancel-{i}"}}),
+                                         timeout=60)
+            check(s0 in (200, 201, 202), f"创建 {i} 2xx（got {s0}: {text0[:120]!r}）")
+            tid = ((j0 or {}).get("data") or {}).get("id")
+            if tid:
+                ids.append(str(tid))
+        check(len(ids) == 2, f"获得 2 个 task_id（got {ids}）")
+        if len(ids) != 2:
+            return
+        s, _, text, j = c.request("tasks_cancel_batch", "POST", "/v1/tasks/_cancel",
+                                  body=json.dumps({"task_ids": ids}), timeout=60)
+        check(s == 200, f"批量取消 200（got {s}: {text[:200]!r}）")
+        if j is None or s != 200:
+            return
+        Runner.success_envelope(check, j, "tasks cancel batch")
+        data = (j or {}).get("data") or {}
+        covered = {str(t.get("task_id")) for t in (data.get("cancelled_tasks") or [])}
+        covered |= {str(t.get("task_id")) for t in (data.get("failed_tasks") or [])}
+        check(set(ids) <= covered,
+              f"cancelled∪failed 覆盖全部请求 id（请求={ids}，覆盖={sorted(covered)}）")
+        # 逐个查询达终态（cancelled 为主；worker 竞态下已完成亦合法）
+        for tid in ids:
+            deadline = time.monotonic() + 60
+            final_st = None
+            while time.monotonic() < deadline:
+                s2, _, _, j2 = c.request("batch_cancel_poll", "GET",
+                                          f"/v1/scrape/{tid}", timeout=30)
+                if s2 == 200 and j2:
+                    st = ((j2.get("data") or {}).get("status"))
+                    if st in TERMINAL_STATUSES:
+                        final_st = st
+                        break
+                time.sleep(1.5)
+            check(final_st in TERMINAL_STATUSES, f"{tid} 达终态（got {final_st!r}）")
+        r.auditor.log_event("state_transition", "tasks_cancel_batch",
+                            {"task_ids": ids,
+                             "cancelled": len(data.get("cancelled_tasks") or []),
+                             "failed": len(data.get("failed_tasks") or [])})
+    scenarios.append(("tasks_cancel_batch", "G-任务过滤", "批量取消成功路径+终态", t_tasks_cancel_batch))
+
+    # ═══ K. Webhook 签名创建 ═══
+    def t_webhook_signed_create(check):
+        secret = getattr(r, "webhook_secret", "") or ""
+        if not secret:
+            r.auditor.log_event("env_note", "webhook_signed_create",
+                                {"note": "未传 --webhook-secret，跳过（需 live-api-e2e.sh 注入）"})
+            return  # 无断言 → SKIP
+        hook_url = NEWS_PRIMARY.rstrip("/") + "/webhook-e2e-callback"
+        body_str = json.dumps({"url": hook_url}, separators=(",", ":"))
+        msg_id = str(uuid.uuid4())
+        ts = int(time.time())
+        sig = sign_webhook(secret, msg_id, ts, body_str)
+        s, _, text, j = c.request(
+            "webhook_signed_create", "POST", "/v1/webhooks", body=body_str,
+            extra_headers={"webhook-signature": sig,
+                           "webhook-timestamp": str(ts),
+                           "webhook-id": msg_id}, timeout=30)
+        check(s == 201, f"签名创建 201（got {s}: {text[:200]!r}）")
+        if j is None or s != 201:
+            return
+        Runner.success_envelope(check, j, "webhook create")
+        data = (j or {}).get("data") or {}
+        check(bool(data.get("id")), "data.id 存在")
+        # secret 一次性回显：服务端以 CRAWLRS__WEBHOOK__SECRET 统一签名，
+        # 创建响应携带该 secret 供消费方验签（webhook_handler.rs:130-142）
+        check(data.get("secret") == secret, "data.secret 回显服务端密钥")
+        hook_id = str(data.get("id") or "")
+        # 额外字段同签名 → deny_unknown_fields 拒绝。实际为 400 VALIDATION_ERROR
+        # （API_REFERENCE webhook 节 + handler 手工 from_slice 映射），任务文本 422
+        # 为草拟偏差，以服务端现实为准。
+        body2 = json.dumps({"url": hook_url, "events": ["task.completed"]},
+                           separators=(",", ":"))
+        msg_id2 = str(uuid.uuid4())
+        ts2 = int(time.time())
+        sig2 = sign_webhook(secret, msg_id2, ts2, body2)
+        s2, _, text2, j2 = c.request(
+            "webhook_create_extra_field", "POST", "/v1/webhooks", body=body2,
+            extra_headers={"webhook-signature": sig2,
+                           "webhook-timestamp": str(ts2),
+                           "webhook-id": msg_id2}, timeout=30)
+        check(s2 == 400, f"额外字段拒绝 400（got {s2}: {text2[:160]!r}）")
+        Runner.error_envelope(check, j2, s2, "webhook extra field")
+        # 列表含新 webhook 且无 secret 字段（列表脱敏）
+        s3, _, text3, j3 = c.request("webhook_list", "GET", "/v1/webhooks",
+                                     timeout=30)
+        check(s3 == 200, f"列表 200（got {s3}）")
+        if j3 and s3 == 200:
+            Runner.success_envelope(check, j3, "webhook list")
+            entries = ((j3.get("data") or {}).get("webhooks")) or []
+            mine = [e for e in entries if str(e.get("id") or "") == hook_id]
+            check(bool(mine), f"列表含新建 webhook（id={hook_id[:8]}…）")
+            if mine:
+                check("secret" not in mine[0], "列表条目无 secret 字段（脱敏）")
+    scenarios.append(("webhook_signed_create", "K-Webhook",
+                      "签名创建 201+secret 回显+列表脱敏", t_webhook_signed_create))
+
     # ═══ I. 文本提取（去 HTML 标签）═══
     def t_markdown_extraction(check):
         # formats=["markdown"] → worker 经 HTML→Markdown 转换生成去标签正文，
@@ -1003,14 +1251,20 @@ def main():
     ap.add_argument("--api-key", required=True)
     ap.add_argument("--team-id", required=True)
     ap.add_argument("--audit-log", default="test-results/api-audit.jsonl")
+    ap.add_argument("--webhook-secret", default="",
+                    help="CRAWLRS__WEBHOOK__SECRET 测试值；缺省时 webhook 签名场景 SKIP")
     args = ap.parse_args()
 
     import os
     os.makedirs(os.path.dirname(args.audit_log) or ".", exist_ok=True)
 
-    auditor = Auditor(args.audit_log, secrets=[args.api_key])
+    secrets = [args.api_key]
+    if args.webhook_secret:
+        secrets.append(args.webhook_secret)
+    auditor = Auditor(args.audit_log, secrets=secrets)
     client = Client(args.base_url, args.api_key, auditor)
     runner = Runner(client, auditor, args.team_id, args.base_url)
+    runner.webhook_secret = args.webhook_secret or ""
 
     print(f"crawlrs API 语义级 E2E — {args.base_url}")
     print(f"审计日志: {args.audit_log}\n")

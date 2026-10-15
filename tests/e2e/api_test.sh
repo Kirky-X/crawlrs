@@ -205,13 +205,13 @@ else
 fi
 
 # 3.5 Scrape 错误输入
-run_test "Scrape 空 body (422)"             400 POST "/v1/scrape"  "" "auth"
-run_test "Scrape 无效 URL (422)"            400 POST "/v1/scrape"  '{"url":""}' "auth"
-run_test "Scrape 非 HTTP URL (422)"         400 POST "/v1/scrape"  '{"url":"ftp://evil.com"}' "auth"
-run_test "Scrape 无效 JSON (422)"           400 POST "/v1/scrape"  'not-json' "auth"
-run_test "Scrape SSRF 内网 IP (403)"        400 POST "/v1/scrape"  '{"url":"http://127.0.0.1:65535"}' "auth"
+run_test "Scrape 空 body (400)"             400 POST "/v1/scrape"  "" "auth"
+run_test "Scrape 无效 URL (400)"            400 POST "/v1/scrape"  '{"url":""}' "auth"
+run_test "Scrape 非 HTTP URL (400)"         400 POST "/v1/scrape"  '{"url":"ftp://evil.com"}' "auth"
+run_test "Scrape 无效 JSON (400)"           400 POST "/v1/scrape"  'not-json' "auth"
+run_test "Scrape SSRF 内网 IP (400)"        400 POST "/v1/scrape"  '{"url":"http://127.0.0.1:65535"}' "auth"
 run_test "Scrape 未知字段 (422)"            422 POST "/v1/scrape"  '{"url":"https://text.npr.org","unknown_field":true}' "auth"
-run_test "Scrape 超长 URL (422)"            400 POST "/v1/scrape"  "{\"url\":\"https://$(python3 -c "print('a'*2100)").com\"}" "auth"
+run_test "Scrape 超长 URL (400)"            400 POST "/v1/scrape"  "{\"url\":\"https://$(python3 -c "print('a'*2100)").com\"}" "auth"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 4. Crawl 端点 — 真实网站
@@ -248,8 +248,8 @@ else
 fi
 
 # Crawl 错误输入
-run_test "Crawl 空 body (422)"              400 POST "/v1/crawl"  "" "auth"
-run_test "Crawl 无效 URL (422)"             400 POST "/v1/crawl"  '{"url":"","config":{"max_depth":1}}' "auth"
+run_test "Crawl 空 body (400)"              400 POST "/v1/crawl"  "" "auth"
+run_test "Crawl 无效 URL (400)"             400 POST "/v1/crawl"  '{"url":"","config":{"max_depth":1}}' "auth"
 run_test "Crawl max_depth=0 (边界)"         "201|202" POST "/v1/crawl"  '{"url":"https://text.npr.org","config":{"max_depth":0}}' "auth"
 run_test "Crawl max_depth=101 (超限 422)"     422 POST "/v1/crawl"  '{"url":"https://text.npr.org","config":{"max_depth":101}}' "auth"
 # max_concurrency=51 在当前实现中未被拒绝（验证上限 >51 或未设上限），实际返回 202
@@ -270,8 +270,8 @@ run_search_tolerant "Search lang+country" '{"query":"Rust","lang":"zh-CN","count
 run_search_tolerant "Search sync_wait_ms" '{"query":"Rust","limit":3,"sync_wait_ms":10000}' 30
 
 # Search 错误输入
-run_test "Search 空 query (422)"             400 POST "/v1/search"  '{"query":""}' "auth"
-run_test "Search 空 body (422)"              400 POST "/v1/search"  '' "auth"
+run_test "Search 空 query (400)"             400 POST "/v1/search"  '{"query":""}' "auth"
+run_test "Search 空 body (400)"              400 POST "/v1/search"  '' "auth"
 run_search_tolerant "Search 无效 engine (回落或报错)" '{"query":"test","engine":"nonexistent"}' 30 400
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -287,9 +287,9 @@ run_test_timeout "Extract with sync_wait_ms"       "201|202" POST "/v1/extract" 
     '{"urls":["https://text.npr.org"],"rules":{"title":{"selector":"h1","attr":null,"is_array":false}},"sync_wait_ms":15000}' "auth"
 
 # Extract 错误输入
-run_test "Extract 空 urls (422)"              400 POST "/v1/extract"  '{"urls":[]}' "auth"
-run_test "Extract 无效 URL (422)"             400 POST "/v1/extract"  '{"urls":["not-a-url"]}' "auth"
-run_test "Extract 空 body (422)"              400 POST "/v1/extract"  '' "auth"
+run_test "Extract 空 urls (400)"              400 POST "/v1/extract"  '{"urls":[]}' "auth"
+run_test "Extract 无效 URL (400)"             400 POST "/v1/extract"  '{"urls":["not-a-url"]}' "auth"
+run_test "Extract 空 body (400)"              400 POST "/v1/extract"  '' "auth"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 7. Webhook 端点
@@ -356,19 +356,24 @@ run_test "POST /v1/tasks/_cancel (空 task_ids)" 422 POST "/v1/tasks/_cancel" \
 # ════════════════════════════════════════════════════════════════════════════
 echo -e "\n${YELLOW}▶ 12. SDK 端点${NC}"
 
-# 注：SDK 路由需要 `http` feature（当前构建未启用），返回 404
-run_test_timeout "SDK /sdk/search (需 http feature)" 404 POST "/sdk/search" 30 \
+# SDK 路由由 sdforge 生成：version="v1" + path="/sdk/..." 解析为
+# "/api/v1/sdk/..."（默认前缀 /api/{version}），default 构建恒挂载
+# （src/presentation/sdk/mod.rs:96-97；build_sdk_router 无 cfg 门控）。
+# 成功码以 200 为主，201/202 为创建语义漂移容忍；search 另容忍 500
+# （引擎不可达显式失败，见 run_search_tolerant）；400 为空 query/url
+# 校验拒绝，422 为 JSON 反序列化缺失字段。
+run_test_timeout "SDK /api/v1/sdk/search" "200|400|500" POST "/api/v1/sdk/search" 30 \
     '{"query":"Rust","limit":3}' "auth"
-run_test_timeout "SDK /sdk/scrape (需 http feature)" 404 POST "/sdk/scrape" 30 \
+run_test_timeout "SDK /api/v1/sdk/scrape" "200|201|202|400|422" POST "/api/v1/sdk/scrape" 30 \
     '{"url":"https://text.npr.org"}' "auth"
-run_test "SDK /sdk/tasks (需 http feature)"   404 POST "/sdk/tasks" \
+run_test "SDK /api/v1/sdk/tasks"   "200|201|202|400|422" POST "/api/v1/sdk/tasks" \
     '{"url":"https://text.npr.org","task_type":"scrape"}' "auth"
-run_test "SDK /sdk/crawl (需 http feature)"   404 POST "/sdk/crawl" \
+run_test "SDK /api/v1/sdk/crawl"   "200|201|202|400|422" POST "/api/v1/sdk/crawl" \
     '{"name":"sdk-test","url":"https://text.npr.org","seed_url":"https://text.npr.org"}' "auth"
 
-# SDK 错误输入
-run_test "SDK /sdk/search 空 query (404)"     404 POST "/sdk/search" '{"query":""}' "auth"
-run_test "SDK /sdk/scrape 无效 URL (404)"     404 POST "/sdk/scrape" '{"url":"not-url"}' "auth"
+# SDK 错误输入（空 query/url → 400 InvalidInput；缺失必填字段 → 422）
+run_test "SDK /api/v1/sdk/search 空 query (400)"     400 POST "/api/v1/sdk/search" '{"query":""}' "auth"
+run_test "SDK /api/v1/sdk/scrape 空 url (400)"     400 POST "/api/v1/sdk/scrape" '{"url":""}' "auth"
 
 # ════════════════════════════════════════════════════════════════════════════
 # 13. CORS 与安全头测试

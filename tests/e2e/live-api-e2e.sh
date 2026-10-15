@@ -47,6 +47,9 @@ COMPOSE_FILE="docker/docker-compose.test.yml"
 SERVER_PORT="${CRAWLRS_TEST_SERVER_PORT:-8901}"
 BASE_URL="http://127.0.0.1:${SERVER_PORT}"
 JWT_SECRET="${CRAWLRS_TEST_JWT_SECRET:-e2e-liveapi-jwt-secret-0123456789abcdef!}"
+# webhook 签名密钥（测试固定值，须满足 validate_security：非空、非弱密钥、≥32 字节；
+# 允许经环境覆盖；注入服务 env 并透传给语义测试的 webhook_signed_create 场景）
+WEBHOOK_SECRET="${CRAWLRS_TEST_WEBHOOK_SECRET:-e2e-liveapi-webhook-secret-32-chars-0123456789ab}"
 SERVER_PID=""
 WORKER_PID=""
 OWN_COMPOSE=0
@@ -100,9 +103,11 @@ if [ -z "${TEST_DATABASE_URL:-}" ]; then
     [ "$i" = "30" ] && { log_fail "test-db 30 次探测后仍未健康"; exit 1; }
     sleep 2
   done
-  db_user=$(grep -E '^DB_USER=' docker/.env 2>/dev/null | cut -d= -f2)
-  db_password=$(grep -E '^DB_PASSWORD=' docker/.env 2>/dev/null | cut -d= -f2)
-  db_name=$(grep -E '^DB_NAME=' docker/.env 2>/dev/null | cut -d= -f2)
+  # docker/.env 缺省时走 compose/环境默认凭据：grep 不得因文件缺失经 pipefail
+  # 触发 set -e 静默退出（失败显性化——此处空值+默认值是设计路径，非错误）
+  db_user=$(grep -E '^DB_USER=' docker/.env 2>/dev/null | cut -d= -f2 || true)
+  db_password=$(grep -E '^DB_PASSWORD=' docker/.env 2>/dev/null | cut -d= -f2 || true)
+  db_name=$(grep -E '^DB_NAME=' docker/.env 2>/dev/null | cut -d= -f2 || true)
   export TEST_DATABASE_URL="postgres://${db_user:-crawlrs}:${db_password:-password}@127.0.0.1:5443/${db_name:-crawlrs}_test"
   # test_db_data 为持久卷，POSTGRES_PASSWORD 仅在数据目录首次初始化时生效：
   # 历史遗留的陈旧卷会让容器 healthy 但服务进程 TCP 认证全拒（28P01）。
@@ -155,6 +160,7 @@ SERVER_LOG="test-results/liveapi-server.log"
 : > "$SERVER_LOG"
 script -qefc "env CRAWLRS__DATABASE__URL='$TEST_DATABASE_URL' \
     CRAWLRS__AUTH__JWT_SECRET='$JWT_SECRET' \
+    CRAWLRS__WEBHOOK__SECRET='$WEBHOOK_SECRET' \
     CRAWLRS__SERVER__PORT='$SERVER_PORT' \
     CRAWLRS_BOOTSTRAP_ADMIN=true \
     RUST_LOG='${RUST_LOG:-info}' \
@@ -240,6 +246,7 @@ python3 tests/e2e/api_semantics_test.py \
   --base-url "$BASE_URL" \
   --api-key "$API_KEY" \
   --team-id "$TEAM_ID" \
+  --webhook-secret "$WEBHOOK_SECRET" \
   --audit-log test-results/api-audit.jsonl 2>&1 | tee test-results/api-semantics.log \
   || SEMANTICS_RC=${PIPESTATUS[0]}
 if [ "$SEMANTICS_RC" = "0" ]; then log_pass "语义级验证全部通过"; else log_fail "语义级验证存在失败（见 test-results/api-semantics.log）"; fi
@@ -250,12 +257,57 @@ python3 tests/e2e/api_audit_digest.py \
   --out test-results/api-interaction-digest.md \
   || log_info "审计摘要生成失败（不影响测试结论）"
 
+# ── 6b. 402 付费墙关卡（credits 耗尽 → QUOTA_EXCEEDED）────────────────────────
+# 置于套件最末：归零操作不可逆（本轮不再充值），避免污染前序场景。
+# 仅在冒烟 + 语义全绿后执行；任一前序失败则跳过（先修主干）。
+QUOTA_RC=0
+if [ "$SMOKE_RC" = "0" ] && [ "$SEMANTICS_RC" = "0" ]; then
+  log_info "402 关卡：归零自举团队积分并验证 scrape 被拒..."
+  docker compose -f "$COMPOSE_FILE" exec -T test-db psql -U crawlrs -d crawlrs_test -v ON_ERROR_STOP=1 -q \
+    -c "UPDATE credits SET balance = 0 WHERE team_id = '${TEAM_ID_UUID}';" \
+    || { log_fail "402 关卡：积分归零 SQL 失败"; QUOTA_RC=1; }
+  if [ "$QUOTA_RC" = "0" ]; then
+    QUOTA_RESP=$(curl -s --max-time 30 -w "\n%{http_code}" -X POST "${BASE_URL}/v1/scrape" \
+      -H "Content-Type: application/json" -H "Authorization: Bearer $API_KEY" \
+      -d '{"url":"https://text.npr.org"}' 2>/dev/null || true)
+    QUOTA_CODE=$(echo "$QUOTA_RESP" | tail -1)
+    QUOTA_BODY=$(echo "$QUOTA_RESP" | sed '$d')
+    echo "$QUOTA_BODY" > test-results/api-quota-402.json
+    if QUOTA_BODY="$QUOTA_BODY" QUOTA_CODE="$QUOTA_CODE" python3 -c "
+import json, os, sys
+code = os.environ['QUOTA_CODE']
+body = os.environ.get('QUOTA_BODY') or ''
+try:
+    j = json.loads(body)
+except Exception as e:
+    print(f'402 关卡：响应非 JSON（code={code}）：{body[:200]!r}')
+    sys.exit(1)
+ok = (code == '402' and j.get('success') is False
+      and (j.get('error') or {}).get('code') == 'QUOTA_EXCEEDED'
+      and j.get('data') is None)
+if not ok:
+    print(f'402 关卡断言失败：code={code} success={j.get(\"success\")!r} '
+          f'error.code={(j.get(\"error\") or {}).get(\"code\")!r} body={body[:300]!r}')
+    sys.exit(1)
+print(f'402 关卡通过：code=402 success=false error.code=QUOTA_EXCEEDED')
+"; then
+      log_pass "402 关卡通过（balance=0 → 402 QUOTA_EXCEEDED）"
+    else
+      log_fail "402 关卡失败（见 test-results/api-quota-402.json）"
+      QUOTA_RC=1
+    fi
+  fi
+else
+  log_info "402 关卡跳过（前序 smoke/semantics 未全绿）"
+  QUOTA_RC=1
+fi
+
 # ── 7. 汇总 ──────────────────────────────────────────────────────────────────
 echo ""
-if [ "$SMOKE_RC" = "0" ] && [ "$SEMANTICS_RC" = "0" ]; then
+if [ "$SMOKE_RC" = "0" ] && [ "$SEMANTICS_RC" = "0" ] && [ "$QUOTA_RC" = "0" ]; then
   log_pass "活体 API E2E 全部通过"
-  echo "产物: test-results/{api-smoke.log, api-semantics.log, api-audit.jsonl, api-interaction-digest.md, api-semantics-matrix.md, liveapi-server.log}"
+  echo "产物: test-results/{api-smoke.log, api-semantics.log, api-audit.jsonl, api-interaction-digest.md, api-semantics-matrix.md, api-quota-402.json, liveapi-server.log}"
   exit 0
 fi
-log_fail "活体 API E2E 存在失败（smoke=$SMOKE_RC semantics=$SEMANTICS_RC）"
+log_fail "活体 API E2E 存在失败（smoke=$SMOKE_RC semantics=$SEMANTICS_RC quota402=$QUOTA_RC）"
 exit 1
