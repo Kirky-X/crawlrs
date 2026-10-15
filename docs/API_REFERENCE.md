@@ -1654,6 +1654,6 @@ func Scrape(url string) error {
 ## 📞 Support
 
 For questions or issues:
-- 📖 [Documentation](/)
+- 📖 [Documentation](../README.md)
 - 🐛 [Issue Tracker](https://github.com/Kirky-X/crawlrs/issues)
 - 📧 Email: Kirky-X@outlook.com

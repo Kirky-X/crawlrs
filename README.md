@@ -160,7 +160,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 | 预设 | 构建命令 | 包含内容 | 适用场景 |
 |------|----------|----------|----------|
 | 默认 | `cargo build --release` | `platform`（teams + auth + rate-limit + webhook + metrics + content + sitemap）+ `db-postgres` | 开箱即用的完整平台 |
-| `standard` | `cargo build --release --features standard` | 默认 + `engine-playwright` | 生产推荐（JS 渲染 + 指标 + 内容处理） |
+| `standard` | `cargo build --release --features standard` | 默认 + `engine-playwright` + `sitemap` | 生产推荐（JS 渲染 + 指标 + 内容处理 + 站点地图） |
 | `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | 全部功能 |
 | `no-default` | `cargo build --release --no-default-features` | 纯核心抓取栈 | 单租户/无认证部署、嵌入集成 |
 | `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | agent/嵌入式最小库面 |
@@ -184,6 +184,11 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `engine-mllm` | MLLM 视觉 LLM 自主导航引擎（隐含 `engine-playwright` + `llm`） | ❌ |
 | `trafilatura` / `dom-smoothie` / `extractors` | 正文提取主路径 / 性能回退 / 全启用 | ❌ |
 | `llm` | genai LLM 抽取 | ❌ |
+| `sitemap` | 站点地图生成（`/v1/map` 端点） | ✅（platform/standard） |
+| `rag-local` | 本地 RAG 嵌入与重排（vecboost） | ❌ |
+| `rag-remote` | 远程 RAG 嵌入（rig-core） | ❌ |
+| `rag` | RAG 组合包（`rag-local` + `rag-remote`） | ❌ |
+| `openapi` | OpenAPI 3.1 规范生成（`GET /openapi.json`） | ❌ |
 | `test-mocks` | 测试专用 mock 门控（集成测试需显式启用） | ❌ |
 
 > 特性组合的编译矩阵（22 组合）与验证方式见 [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md)；特性门控的实现模式见 [🏗️ 架构文档 · Feature Gate Architecture](docs/ARCHITECTURE.md)。

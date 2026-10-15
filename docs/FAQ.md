@@ -134,7 +134,7 @@ Rust 1.97+（`Cargo.toml` `rust-version`，构建需 protoc）、PostgreSQL 16+�
 | 项 | 数量 |
 |---|---|
 | `src/` | 408 个 `.rs` 文件、206,781 行、6,310 处内联测试属性 |
-| `tests/` | 116 个 `.rs` 文件、967 个测试函数（其中 `tests/unit/` 70 个文件） |
+| `tests/` | 116 个 `.rs` 文件、967 个测试函数（其中 `tests/unit/` 71 个文件） |
 | Criterion 基准组 | 9 组（`benches/benchmark.rs`） |
 | Python 测试套件 | 5 个（`tests/python/`） |
 | BDD 验收 | `tests/acceptance/` 51 个场景 / 10 个 feature 文件 |

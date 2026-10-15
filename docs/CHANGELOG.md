@@ -7,8 +7,8 @@
 ## 📋 目录
 
 - [Unreleased](#unreleased)
-- [0.2.0-rc.2 - 2026-09-21](#020-rc2---2026-09-21)
-- [0.2.0-rc.1 - 2026-08-25](#020-rc1---2026-08-25)
+- [0.2.0-rc.2 - 2026-09-22](#020-rc2---2026-09-22)
+- [0.2.0-rc.1 - 2026-08-26](#020-rc1---2026-08-26)
 - [0.2.0 - 2026-07-29](#020---2026-07-29)
 - [0.1.0 - 2026-07-22](#010---2026-07-22)
 
@@ -33,6 +33,7 @@
 
 - **i18n / Fluent 接入**：42 处用户可见字符串/日志接入 Fluent（en 默认 + zh 键位对齐），ID 模块配置校验与 auth-off 降级日志双语化并经 tr_log 输出，代码层不再持有用户可见字符串
 - **功能吸收 F1–F12**：AutoThrottle 礼貌策略（延迟收敛 + 429 指数退避 + Crawl-delay 双时钟 + 停滞检测）、Session 身份三件套、sitemap 流式一等请求源 + 软 404 指纹 + seen 预热差量、失败现场快照 + AIMD 内存压力联动、Playwright XHR/Fetch 后台响应捕获、提取降级阶梯质量门 + LLM token 窗口分块并行 merge、提取结果字符级溯源 + MLLM 混合 AX 树快照、视觉调用自定义 OpenAI 兼容端点
+- **引擎与智能增强**：TLS 指纹引擎（`engine-tls-fingerprint`，WreqEngine JA3/JA4 伪装）、MLLM 视觉引擎（`engine-mllm`，OpenAI 兼容端点）、RAG 嵌入/重排（`rag`/`rag-local`/`rag-remote`，vecboost + rig-core）、知识图谱累积器、DRL 策略引擎、可观测性基准（`unified::http_status_for` 错误映射）——详见仓库根 [CHANGELOG.md](../CHANGELOG.md) Unreleased → Added（引擎与智能增强）
 - **引擎健康监控 garrison 化**（auth 门控）：`/health/live` + `/health/ready` 探针（readiness 聚合 Unhealthy → 503 摘流语义）
 
 ### Fixed
@@ -58,7 +59,7 @@
 
 - **jsonwebtoken 死依赖移除**：src 全仓零引用，连带 rsa 0.9.10（RUSTSEC-2023-0071）退出 agent-lib 消费方依赖树；JWT 能力由 garrison（auth feature）自带，不受影响
 
-## [0.2.0-rc.2] - 2026-09-21
+## [0.2.0-rc.2] - 2026-09-22
 
 ### Changed
 - **自研依赖全面切换 crates.io registry**：confers/inklog/dbnexus/sdforge/oxcache/limiteron → 0.x.0-rc.5、trait-kit → 0.5.0-rc.6、garrison → 0.9.0-rc.2、vecboost → 0.3.0-rc.1；移除全部 `../base`、`../garrison` 跨仓 path 依赖与 `[patch.crates-io]` 段，CI 不再依赖兄弟仓 checkout
@@ -70,7 +71,7 @@
 - rustdoc 1.98 严格模式 88 处（裸链接转代码字体/全路径、懒续行缩进、裸泛型 HTML 转义）
 - clippy 1.98：`result_large_err` 显式豁免、`cmp_owned` 消除
 
-## [0.2.0-rc.1] - 2026-08-25
+## [0.2.0-rc.1] - 2026-08-26
 
 ### Added
 - `web-axum` feature：auth-off 的 Web 中间件构建面（platform 隐含 auth 导致原 feature 矩阵中该路径不可构建，现可独立构建/测试）

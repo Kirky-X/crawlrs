@@ -160,7 +160,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 | Preset | Build command | Contents | Use case |
 |------|----------|----------|----------|
 | Default | `cargo build --release` | `platform` (teams + auth + rate-limit + webhook + metrics + content + sitemap) + `db-postgres` | Full platform out of the box |
-| `standard` | `cargo build --release --features standard` | Default + `engine-playwright` | Recommended for production (JS rendering + metrics + content processing) |
+| `standard` | `cargo build --release --features standard` | Default + `engine-playwright` + `sitemap` | Recommended for production (JS rendering + metrics + content processing + sitemap) |
 | `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | Everything |
 | `no-default` | `cargo build --release --no-default-features` | Pure core scraping stack | Single-tenant/unauthenticated deployments, embedding |
 | `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | Minimal agent/embedded library surface |
@@ -184,6 +184,11 @@ The table below is a major subset of the `[features]` section of `Cargo.toml` (f
 | `engine-mllm` | MLLM vision-LLM autonomous navigation engine (implies `engine-playwright` + `llm`) | ❌ |
 | `trafilatura` / `dom-smoothie` / `extractors` | Content extraction main path / performance fallback / all enabled | ❌ |
 | `llm` | genai LLM extraction | ❌ |
+| `sitemap` | Sitemap generation (`/v1/map` endpoint) | ✅ (platform/standard) |
+| `rag-local` | Local RAG embedding and reranking (vecboost) | ❌ |
+| `rag-remote` | Remote RAG embedding (rig-core) | ❌ |
+| `rag` | RAG bundle (`rag-local` + `rag-remote`) | ❌ |
+| `openapi` | OpenAPI 3.1 spec generation (`GET /openapi.json`) | ❌ |
 | `test-mocks` | Test-only mock gating (integration tests must enable explicitly) | ❌ |
 
 > For the feature-combination compile matrix (22 combinations) and how it is verified, see the [🧪 Test Scenario Matrix](docs/TEST_SCENARIOS.md); for the gating implementation pattern, see [🏗️ Architecture Document · Feature Gate Architecture](docs/ARCHITECTURE.md).

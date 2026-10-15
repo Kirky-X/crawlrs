@@ -3,10 +3,10 @@
 <div align="center">
 
 ![Documentation](https://img.shields.io/badge/type-architecture-purple)
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.0--rc.2-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 
-**Version:** 0.2.0 | **Last Updated:** 2026-09-15 | **Author:** Kirky.X
+**Version:** 0.2.0-rc.2 | **Last Updated:** 2026-10-15 | **Author:** Kirky.X
 
 </div>
 
@@ -40,7 +40,7 @@ crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, l
 
 ### Key Design Goals
 
-1. **Performance** - 3-5x higher throughput than Node.js alternatives
+1. **Performance** - 3-5x higher throughput than Node.js alternatives（设计目标，未经权威测量验证，详见 [PERFORMANCE.md](PERFORMANCE.md)）
 2. **Scalability** - Horizontal scaling capabilities via stateless workers
 3. **Type Safety** - Leverage Rust's type system for compile-time safety
 4. **Flexibility** - Trait-based architecture for engines and extensions
@@ -181,6 +181,54 @@ flowchart TD
         SEC[SSRF / Geolocation / DNS]
     end
 
+    subgraph Queue [Queue Layer]
+        Q1[TaskQueue]
+        Q2[PostgresTaskQueue]
+        Q3[MessageQueue]
+    end
+
+    subgraph Search [Search Subsystem]
+        S1[SearchClient]
+        S2[SmartSearchEngine]
+        S3[Baidu/Bing/Sogou]
+        S4[Exa/Tavily]
+    end
+
+    subgraph Common [Common Utilities]
+        CU1[CacheMode]
+        CU2[Error Types]
+        CU3[Constants]
+    end
+
+    subgraph Utils [Utils]
+        U1[Retry/Backoff]
+        U2[Coalesce]
+        U3[UA Pool]
+        U4[Hedge]
+        U5[Dedup]
+    end
+
+    subgraph AgentLib [Agent Library]
+        AL1[Fetch]
+        AL2[Search]
+    end
+
+    subgraph I18n [Internationalization]
+        I1[I18nBundle]
+        I2[Locale]
+    end
+
+    subgraph Config [Configuration]
+        CF1[Settings]
+        CF2[Config Loader]
+    end
+
+    subgraph Bootstrap [Bootstrap]
+        B1[Route Assembly]
+        B2[Service Init]
+        B3[Worker Init]
+    end
+
     Clients -->|"HTTPS/REST API"| API
     API --> App
     API --> Workers
@@ -194,6 +242,17 @@ flowchart TD
     App --> Engines
     Workers --> Engines
     Engines --> EXT
+    Workers --> Queue
+    Queue --> DB
+    App --> Search
+    Search --> EXT
+    Domain --> Common
+    Domain --> Utils
+    Domain --> I18n
+    Config --> API
+    Bootstrap --> API
+    Bootstrap --> Workers
+    Bootstrap --> Engines
 ```
 
 ---
@@ -226,15 +285,15 @@ presentation/
 │   ├── task_handler.rs
 │   ├── task_commands.rs
 │   ├── task_queries.rs
-│   ├── webhook_handler.rs
-│   ├── team_handler.rs
+│   ├── webhook_handler.rs       #[cfg(feature = "webhook")]
+│   ├── team_handler.rs          #[cfg(feature = "teams")]
 │   ├── audit_handler.rs
 │   ├── metrics_handler.rs
-│   ├── api_key_handler.rs
-│   ├── map_handler.rs
+│   ├── api_key_handler.rs       #[cfg(feature = "auth")]
+│   ├── map_handler.rs           #[cfg(feature = "sitemap")]
 │   ├── response_builder.rs
 │   └── mod.rs
-├── forge_api/             # sdforge inventory 注册面（forge-full feature）
+├── forge_api/             # sdforge inventory 注册面（始终编译）
 │   ├── mod.rs
 │   ├── crawl.rs
 │   ├── management.rs
@@ -242,7 +301,7 @@ presentation/
 │   ├── scrape.rs
 │   ├── search.rs
 │   └── task.rs
-├── routes/                # Route definitions
+├── routes/                # Handler organization and unit-test assembly; route assembly in `src/bootstrap/routes.rs`
 │   ├── mod.rs             # health, version, base routes
 │   ├── handlers.rs        # Handler route registration
 │   ├── scrape.rs
@@ -459,9 +518,10 @@ domain/
 │   ├── mod.rs
 │   └── scope.rs
 ├── errors.rs
-└── use_cases/              # Domain use cases
-    ├── mod.rs
-    └── create_webhook.rs
+├── use_cases/              # Domain use cases
+│   ├── mod.rs
+│   └── create_webhook.rs
+├── retention_policy.rs     # Data retention policy definitions
 ```
 
 **Core Domain Entities:**
@@ -530,6 +590,7 @@ infrastructure/
 ├── database/               # Database layer
 │   ├── mod.rs
 │   ├── dbnexus_connection.rs
+│   ├── id_sea_orm.rs
 │   ├── query_monitor.rs
 │   ├── transaction.rs
 │   ├── entities/           # Sea-ORM entity models
@@ -561,7 +622,12 @@ infrastructure/
 │       ├── webhook_event_repo_impl.rs
 │       ├── database_geo_restriction_repo.rs
 │       ├── audit_log_repo_impl.rs
-│       └── tasks_backlog_repo_impl.rs
+│       ├── tasks_backlog_repo_impl.rs
+│       └── tests/               # Repository tests
+│           ├── geo_restriction_cleanup_test.rs
+│           ├── scrape_result_cleanup_test.rs
+│           ├── task_repo_test.rs
+│           └── webhook_event_cleanup_test.rs
 ├── oxcache/                # Unified cache (oxcache-backed)
 │   ├── mod.rs
 │   └── cache_service.rs
@@ -650,6 +716,136 @@ oxcache features activated（`Cargo.toml:316`）: `["memory", "serialization", "
 - Search cache: configurable (default 60s)
 - DNS cache: configurable (default 300s)
 - Regex cache: configurable (default 600s)
+
+---
+
+### Additional Top-Level Modules
+
+**Location:** `src/queue/`, `src/search/`, `src/common/`, `src/utils/`, `src/agent_lib/`, `src/i18n/`, `src/config/`, `src/bootstrap/`
+
+```
+queue/                     # Task queue abstraction
+├── mod.rs
+├── message_queue.rs       # Message queue trait + implementations
+├── postgres_message_queue.rs  # PostgreSQL-backed message queue
+└── task_queue.rs          # TaskQueue trait + PostgresTaskQueue
+
+search/                    # Search subsystem
+├── mod.rs
+├── client.rs              # SearchClient - multi-engine aggregation
+├── client/
+│   ├── baidu.rs           # Baidu search engine
+│   ├── bing.rs            # Bing search engine
+│   ├── exa.rs             # Exa search engine (API)
+│   ├── sogou.rs           # Sogou search engine
+│   ├── tavily.rs          # Tavily search engine (API)
+│   ├── html_parser.rs     # Shared Google-style HTML parser
+│   └── shared_utils.rs    # Shared search utilities
+├── dedup.rs               # ResultDeduplicator (SimHash)
+├── engine_trait.rs        # SearchEngine trait
+├── error.rs               # SearchError types
+├── response.rs            # SearchResponse types
+├── rrf.rs                 # RRFFuser (k=60)
+├── smart/
+│   └── mod.rs             # SmartSearchEngine (concurrent aggregation)
+└── types.rs               # Search types
+
+common/                    # Shared utilities
+├── mod.rs
+├── cache_mode.rs          # CacheMode enum + CacheContext
+├── constants.rs           # Global constants
+├── error.rs               # CrawlRsError types
+├── http_method.rs         # HTTP method types
+├── masking.rs             # Data masking utilities
+├── metrics_shim.rs        # Metrics shim
+├── test_fixtures.rs       # Test fixtures
+├── test_helpers.rs        # Test helpers
+├── text_slice.rs          # Text slice utilities
+└── time_utils.rs          # Time utilities
+
+utils/                     # Utility modules
+├── mod.rs
+├── adaptive_concurrency.rs # AIMD adaptive concurrency
+├── backoff.rs              # Full-jitter backoff
+├── coalesce.rs            # RequestCoalescer
+├── crawl_text_integration.rs # Crawl text integration
+├── dedup/
+│   ├── mod.rs
+│   ├── bloom.rs           # Bloom filter dedup
+│   ├── deduplicator.rs    # Deduplicator trait
+│   └── interner.rs        # String interner
+├── error_helpers.rs       # Error helper utilities
+├── glob.rs                # Glob pattern matching
+├── hedge.rs               # Hedge request controller (EMA/P84)
+├── host_discipline.rs     # Per-host politeness discipline
+├── http_client.rs         # HTTP client utilities
+├── port_sniffer.rs        # Port detection
+├── proxy.rs               # Proxy utilities
+├── regex_cache.rs         # Regex cache
+├── retry/
+│   ├── mod.rs
+│   ├── directive.rs       # RetryDirective
+│   └── tracker.rs         # RetryTracker
+├── retry_after.rs         # Retry-After header parsing
+├── retry_policy.rs        # Retry policy
+├── robots.rs              # Robots.txt checker
+├── search_test.rs         # Search test utilities
+├── telemetry.rs            # Telemetry utilities
+├── text_processing/
+│   ├── mod.rs
+│   ├── encoding.rs        # Text encoding
+│   └── processor.rs       # Text processor
+├── ua_pool.rs             # UA profile pool
+├── url.rs                 # URL utilities
+└── url_normalizer.rs      # URL normalization
+
+agent_lib/                 # Agent library
+├── mod.rs
+├── error.rs               # Agent error types
+├── fetch.rs               # Agent fetch utilities
+└── search.rs              # Agent search utilities
+
+i18n/                      # Internationalization
+├── mod.rs
+├── bundle.rs              # I18nBundle
+├── locale.rs              # Locale handling
+├── middleware.rs          # i18n middleware
+└── translate.rs           # Translation utilities
+
+config/                    # Configuration
+├── mod.rs
+├── app.rs                 # App config
+├── engines.rs             # Engine config
+├── llm.rs                 # LLM config
+├── logging.rs             # Logging config
+├── rag.rs                 # RAG config
+├── runtime.rs             # Runtime config
+├── search.rs              # Search config (incl. BingSearchSettings)
+├── security.rs            # Security config
+├── settings.rs            # Settings struct
+└── validation.rs          # Config validation
+
+bootstrap/                 # Application bootstrap
+├── mod.rs
+├── config/
+│   ├── mod.rs
+│   ├── config_loader.rs   # Config loading
+│   └── config_validator.rs # Config validation
+├── engines.rs             # Engine initialization
+├── error.rs               # Bootstrap errors
+├── infrastructure.rs      # Infrastructure initialization
+├── routes.rs              # Route assembly (authoritative)
+├── route_groups/
+│   ├── mod.rs
+│   ├── crawl_routes.rs    # Crawl route group
+│   ├── management_routes.rs # Management route group
+│   ├── map_routes.rs      # Map route group
+│   ├── scrape_routes.rs   # Scrape route group
+│   └── search_routes.rs   # Search route group
+├── services.rs            # Service initialization
+├── telemetry.rs           # Telemetry initialization
+└── workers.rs             # Worker initialization
+```
 
 ---
 
@@ -760,7 +956,7 @@ SettingsModule (Arc<Settings> + i18n 配置)
 
 ### Feature Gate Architecture
 
-Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 business-capability features** that allow operators to build stripped-down binaries for single-tenant / no-auth / no-webhook / no-rate-limit deployments. The gating strategy follows two complementary patterns:
+Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **6 feature axes** that allow operators to build stripped-down binaries for single-tenant / no-auth / no-webhook / no-rate-limit deployments, plus auth-off web assembly and SDK inventory registration. The gating strategy follows two complementary patterns:
 
 1. **Field/module gating** (`#[cfg(feature = "...")]` on `pub mod`/struct field/fn) — gated symbols are **not compiled** when the feature is off, eliminating dead code and reducing binary size.
 2. **Noop trait injection** — for traits that business logic calls unconditionally (`WebhookService`, `RateLimitingService`), the trait is always compiled but the DI container assembles a no-op implementation when the feature is off, preserving call-site compatibility.
@@ -773,6 +969,8 @@ Since v0.2.0 (`feature-gate-optional-modules` change), crawlrs exposes **4 busin
 | `auth` | on | `dep:garrison, dep:inventory` | **0.2.0 起 garrison v0.9.0-rc.2 接管认证**：`auth_middleware_inner` 调用 `GarrisonUtil::check_api_key` + `bridge_to_auth_state` 注入 `AuthState`；提供 RBAC + JWT + firewall-bruteforce（5 次/60 秒/300 秒锁定）+ audit-log。关闭时改为 `default_identity_middleware` 注入固定 `AuthState{team_id=DEFAULT_TEAM_ID, api_key_id=DEFAULT_API_KEY_ID, scope=ApiKeyScope::denied()}`，无 DB 查询、无暴力破解防护；受保护路由默认 401，放行须经 `allow_unauthenticated_protected()` 显式 opt-in（放行后仍是 denied 受限身份） |
 | `rate-limit` | on | —（空数组） | `LimiteronService` replaced by `NoopRateLimitingService` (check_rate_limit→Allowed, check_and_deduct_quota→Ok, get_quota_balance→Ok(i64::MAX), process_backlog_tasks→Ok(0)); `rate-limit` 只门控装配选择，`limiteron` crate 因 `utils/backoff` 无条件依赖其 retry 原语而始终编译，`rate_limit_middleware` 始终挂载（内部 trait 调用 no-op 实现） |
 | `webhook` | on | — | `WebhookServiceImpl`/`WebhookManagementServiceImpl`/`webhook_sender`/`webhook_handler`/`webhook_worker` modules not compiled; `/v1/webhooks/*` routes not registered; `webhook_worker` spawn blocks skipped; `WebhookService` trait preserved and assembled with `NoopWebhookService` (all ops return `Ok(())`) |
+| `web-axum` | off | `rate-limit`, `webhook`, `metrics`, `content`, `dbnexus`, `axum` | auth-off Web 中间件构建面（platform 隐含 auth 导致原矩阵中该路径不可构建）；`--no-default-features --features web-axum,db-postgres --lib` 构建/测试 auth-off 语义 |
+| `forge-full` | off | `http` | 激活 `presentation/forge_api` 的 sdforge inventory 注册面；与手写 protected/v2 路由组互斥（并存即启动 panic） |
 
 ### Default feature set
 
@@ -861,6 +1059,62 @@ When a feature is off, the corresponding endpoints return **404** (not 401/403) 
 - For `webhook`-off: notify clients that completion callbacks will not be delivered
 - For `teams`-off: only `DEFAULT_TEAM_ID` exists; multi-tenant data isolation is enforced at the application layer (all rows owned by `DEFAULT_TEAM_ID`)
 
+### Configuration Hierarchy
+
+**Location:** `config/default.toml` (confers 0.6.0-rc.6)
+
+```toml
+[database]              # Connection pool, timeouts, prepare-cache
+[server]                # Host, port, enable_port_detection
+[cors]                  # Allowed origins
+[rate_limiting]         # Enabled, default_rpm, burst_size, storage_backend
+[cache]                 # Enabled, memory capacity/TTL
+[cache.memory]          # Moka L1 capacity + TTL
+[cache.types.search]    # Search result cache TTL + max_size
+[cache.types.dns]       # DNS cache TTL + max_size
+[cache.types.regex]     # Regex cache TTL + max_size
+[concurrency]           # Team limits, memory pressure, AIMD
+[politeness]            # Per-host min/max interval, AutoThrottle, backoff, jitter
+[retention]             # Data retention (scrape_results_days)
+[search]                # Timeout, rate limiting, max_results, default_engine
+[search.engines]        # Per-engine enable switches (bing/baidu/sogou)
+[search.fallback]       # Fallback engine order + API keys
+[search.fallback.exa]   # Exa API key + endpoint
+[search.fallback.parallel] # Parallel API key + endpoint
+[search.fallback.tavily]   # Tavily API key + endpoint
+[search.exa]            # Exa single-engine credentials
+[search.tavily]         # Tavily single-engine credentials
+[engines]               # max_response_body_bytes
+[engines.playwright]     # XHR/Fetch capture settings
+[engines.flaresolverr]  # FlareSolverr Full mode
+[engines.flaresolverr_cdp] # FlareSolverr CDP mode
+[engines.flaresolverr_tls] # FlareSolverr TLS mode
+[engines.tls_fingerprint]  # Wreq TLS fingerprint (feature-gated)
+[engines.mllm]          # MLLM autonomous navigation (feature-gated)
+[webhook]               # Secret, max_retries, batch_size
+[bing_search]           # Bing Search API key (via env var)
+[llm]                   # API key, provider, model, timeout, provenance
+[llm.chunking]          # Token window chunking settings
+[content_extraction]    # Min word count, replacement ratio, prose gates
+[rag]                   # Embedding + rerank providers, local/remote settings
+[proxy]                 # URLs, strategy, sticky TTL, cooldown
+[session]               # Session identity pool (proxy + UA/TLS + cookie)
+[workers]               # Count, graceful shutdown, dedup warmup
+[sitemap]               # Enabled, max_urls, concurrency, channel capacity
+[crawl]                 # Soft 404 fingerprint learning
+[timeouts.workers]      # Webhook/backlog intervals
+[timeouts.engines]      # Default/playwright/flaresolverr timeouts + MRT
+[timeouts.retry]        # Initial/max backoff
+[timeouts.cache]        # Default/memory TTL
+[logging]               # Console + file output settings
+[observability]         # Failure snapshot directory + limits
+[trusted_proxies]       # Enabled, proxy IP list (CIDR)
+[auth]                  # JWT secret (garrison)
+[robots]                # User-agent, scrape respect, fail-closed, cache TTL
+[i18n]                  # Default locale, supported locales, locales dir
+[id]                    # NebulaId algorithm, workspace, group
+```
+
 ---
 
 ## 🔄 Data Flow
@@ -932,6 +1186,10 @@ pub trait ScraperEngine: Send + Sync {
 
     fn supports_tls_fingerprint(&self) -> bool {
         false
+    }
+
+    fn max_response_time(&self) -> Duration {
+        Duration::from_secs(30)
     }
 }
 ```
@@ -1525,9 +1783,11 @@ The `TeamSemaphore` enforces per-team concurrency limits. Each team has a dedica
 
 ```rust
 pub struct LimiteronService {
-    config: GlobalConfig,
-    storage: Storage,
-    ban_storage: BanStorage,
+    governor: Arc<Governor>,
+    config: RateLimitingConfig,
+    task_repository: Arc<dyn TaskRepository>,
+    tasks_backlog_repository: Arc<dyn TasksBacklogRepository>,
+    credits_repository: Arc<dyn CreditsRepository>,
 }
 ```
 

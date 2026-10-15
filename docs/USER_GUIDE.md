@@ -1781,7 +1781,7 @@ burst_size = 20
 
 ### Getting Help
 
-- 📖 [Documentation](/)
+- 📖 [Documentation](../README.md)
 - 📚 [API Reference](API_REFERENCE.md)
 - 🏗️ [Architecture](ARCHITECTURE.md)
 - 🐛 [Issue Tracker](https://github.com/Kirky-X/crawlrs/issues)

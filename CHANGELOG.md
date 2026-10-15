@@ -201,7 +201,7 @@
 - **SSRF 旁路接通**（`1ee28a93`）：`CRAWLRS_DISABLE_SSRF_PROTECTION` 开关常量与 config_validator 启动告警此前已就位，但 `SsrfValidator::validate` 仍按主机黑名单 + 内网判定拦截、开关形同虚设（活体探针联调本机 LLM 端点等无法放行）。本次在 Step 5 主机黑名单之前接通旁路——仍解析 DNS 维持 ValidatedUrl / 引擎 DNS-pin 形状，仅跳过黑名单与内网判定；重定向策略同步降级为普通跟随；进程内只 warn 一次，非 dev/test 环境由 config_validator 启动期显著告警
 - **CWE-798 回归测试**（`e466b1b6`）：历史硬编码默认 webhook secret（`default-webhook-secret`）被原样配进生产同样视为未设置、必须阻断启动（`config_validator.rs` 回归用例钉住该分支；此前仅测空串/非空）
 
-## [0.2.0-rc.2] - 2026-09-21
+## [0.2.0-rc.2] - 2026-09-22
 
 ### Changed
 - **自研依赖全面切换 crates.io registry**：confers/inklog/dbnexus/sdforge/oxcache/limiteron → 0.x.0-rc.5、trait-kit → 0.5.0-rc.6、garrison → 0.9.0-rc.2、vecboost → 0.3.0-rc.1；移除全部 `../base`、`../garrison` 跨仓 path 依赖与 `[patch.crates-io]` 段，CI 不再依赖兄弟仓 checkout
@@ -213,7 +213,7 @@
 - rustdoc 1.98 严格模式 88 处（裸链接转代码字体/全路径、懒续行缩进、裸泛型 HTML 转义）
 - clippy 1.98：`result_large_err` 显式豁免、`cmp_owned` 消除
 
-## [0.2.0-rc.1] - 2026-08-25
+## [0.2.0-rc.1] - 2026-08-26
 
 ### Added
 - `web-axum` feature：auth-off 的 Web 中间件构建面（platform 隐含 auth 导致原 feature 矩阵中该路径不可构建，现可独立构建/测试）
