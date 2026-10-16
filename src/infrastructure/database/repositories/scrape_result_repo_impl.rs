@@ -8,8 +8,8 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::infrastructure::database::entities::scrape_result as db_entity;
 use async_trait::async_trait;
 use dbnexus::sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
-    QueryOrder, QueryResult, QuerySelect, Set, Statement,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QueryResult, QuerySelect, Set, Statement,
 };
 use dbnexus::DbPool;
 use std::sync::Arc;
@@ -71,6 +71,26 @@ impl ScrapeResultRepositoryImpl {
 
 #[async_trait]
 impl ScrapeResultRepository for ScrapeResultRepositoryImpl {
+    /// 存在性投影（COUNT）：供结果行不变量检查使用，避免整行（content/
+    /// screenshot 大字段）回读
+    async fn has_result_for_task(&self, task_id: crate::domain::id::Id) -> anyhow::Result<bool> {
+        let session = self
+            .pool
+            .get_session("admin")
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get session: {}", e))?;
+        let conn = session
+            .connection()
+            .map_err(|e| anyhow::anyhow!("Failed to get connection: {}", e))?;
+
+        let count = db_entity::Entity::find()
+            .filter(db_entity::Column::TaskId.eq(task_id))
+            .count(conn)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to count results: {}", e))?;
+        Ok(count > 0)
+    }
+
     async fn save(&self, result: ScrapeResult) -> anyhow::Result<()> {
         let session = self
             .pool

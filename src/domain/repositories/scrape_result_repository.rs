@@ -20,6 +20,11 @@ pub trait ScrapeResultRepository: Send + Sync {
         &self,
         task_ids: &[crate::domain::id::Id],
     ) -> Result<Vec<ScrapeResult>>;
+    /// 任务是否已有结果行（存在性投影，默认委托 find_by_task_id；
+    /// 实现方可覆写为 COUNT 投影避免整行回读）
+    async fn has_result_for_task(&self, task_id: crate::domain::id::Id) -> Result<bool> {
+        Ok(self.find_by_task_id(task_id).await?.is_some())
+    }
     /// 获取团队的平均响应时间
     ///
     /// 计算指定团队在过去30天内的平均响应时间

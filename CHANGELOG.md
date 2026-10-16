@@ -12,6 +12,13 @@
 - **活体套件凭证不落 argv（CWE-214）**：server/worker 改经 0600 `test-results/.liveapi-env` + 内层 `set -a; . file; exec` 注入，`ps` 仅见文件路径；cleanup 与启动前均删除该文件
 - **文档同步**：`docs/API_REFERENCE.md` 限流响应样例更新为新包封（`error.{code,message}` + `retry_after_seconds`）
 
+### Fixed（登记簿终清——错误响应单一形态/指纹全覆盖/结果不变量/后端实证）
+
+- **错误响应单一形态**：`CrawlRsError::IntoResponse` 统一为标准 ApiResponse 包封（data=null + timestamp + error.{code,message}；开发/生产信息分级保留），移除冗余 `error.status` 字段——全站错误响应自此单一形态（RateLimitErrorResponse 的 retry_after_seconds 扩展字段除外，随样例呈现）
+- **浏览器引擎指纹全覆盖**：UA/客户端提示/locale/viewport/stealth 设置抽取为共享 `apply_browser_fingerprint`；MllmEngine 接入——此前 mllm 取页后裸 goto，是全引擎唯一无指纹设置的检测点（运行时验证随引擎启用，编译级已过）
+- **crawl 结果行不变量**：子任务达终态前无结果行则补占位行（COUNT 投影存在性检查，非整行回读）——覆盖去重/软404/合并遗漏一切无结果路径，"completed⇒/results 可查" 成立；语义套件爬取族场景加队列排水屏障（时序侥幸→确定性顺序）
+- **database 限流后端实证**：存储后端参数化（`CRAWLRS_TEST_STORAGE_BACKEND`），database 模式 429 关卡端到端通过（limiteron postgres 存储可用性此前存疑，现证实）；UA 池版本时效维护标准落 UaPool 文档锚点
+
 ### Fixed（遗留收敛——UaPool 消费面/locale/arch + 测试门禁补齐）
 
 - **CriOS Client Hints 数据真相**：两个 iOS Chrome profile 的 `sec_ch_ua` 模板修正为空串（WKWebView 不发送任何 Client Hints，原 Chrome 品牌表系编造能力）——reqwest 等 UA 消费路径不再发出 "UA=WKWebView + 客户端提示=Chromium" 矛盾组合（数据层一修全修：pick()/pick_seeded/router 分支全量受益）；一致性单测把 CriOS 归入空串集

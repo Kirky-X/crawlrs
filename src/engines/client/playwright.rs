@@ -512,6 +512,99 @@ impl Default for PlaywrightEngine {
     }
 }
 
+/// 浏览器会话指纹一致性设置：UA/客户端提示 + locale + viewport + stealth。
+///
+/// PlaywrightEngine 与 MllmEngine 共用——任何驱动真实 Chromium 页面的引擎
+/// 都必须过这一套，否则等于"接了遥控线没化妆"：引擎壳是指纹中性的裸
+/// 浏览器，反爬单请求即可识破。profile 取自 UaPool 的 Chromium 系（P08）；
+/// stealth 经 addScriptToEvaluateOnNewDocument 做 target 级持久注入，
+/// 幂等守卫防止 tab 复用时脚本份数累积。
+///
+/// 失败语义：UA/viewport 硬失败（页面不可用=抓取无意义）；locale/stealth
+/// best-effort 仅告警（与既定策略一致）。
+pub(crate) async fn apply_browser_fingerprint(
+    page: &chromiumoxide::Page,
+    ua_pool: &UaPool,
+    mobile: bool,
+) -> Result<(), EngineError> {
+    let profile = ua_pool.pick_chromium(mobile);
+
+    // 完整 UA override：UA + acceptLanguage + navigator.platform +
+    // userAgentMetadata（Sec-CH-UA* 头与 navigator.userAgentData 的官方
+    // 修正通道）；双词表与 brands 模板见 ua_metadata 模块文档
+    let fingerprint = build_ua_fingerprint(
+        profile.ua,
+        profile.sec_ch_ua,
+        profile.platform,
+        profile.mobile,
+    );
+    let mut ua_override = SetUserAgentOverrideParams::builder()
+        .user_agent(profile.ua)
+        .accept_language(cdp_accept_language(profile.accept_language));
+    if let Some(navigator_platform) = fingerprint.navigator_platform {
+        ua_override = ua_override.platform(navigator_platform);
+    }
+    if let Some(metadata) = fingerprint.metadata {
+        ua_override = ua_override.user_agent_metadata(metadata);
+    }
+    let ua_override = ua_override.build().map_err(|e| {
+        EngineError::BrowserError(format!("Failed to build user agent override: {}", e))
+    })?;
+    page.execute(ua_override).await.map_err(|e| {
+        EngineError::BrowserError(format!("Failed to set user agent override: {}", e))
+    })?;
+
+    // locale 覆盖：accept_language 首段标签，校正 navigator.language 与
+    // Intl 默认 locale（launch 的进程级 --lang 是固定值的残留缺口）；
+    // best-effort：CDP 失败仅告警
+    if let Some(locale) = profile.accept_language.split(',').next() {
+        if let Err(e) = page
+            .execute(
+                chromiumoxide::cdp::browser_protocol::emulation::SetLocaleOverrideParams::builder()
+                    .locale(locale.trim())
+                    .build(),
+            )
+            .await
+        {
+            log::warn!("Failed to set locale override: {}", e);
+        }
+    }
+
+    // viewport 与 UA platform 一致
+    let viewport_params = SetDeviceMetricsOverrideParams::new(
+        profile.viewport.0 as i64,
+        profile.viewport.1 as i64,
+        1.0,
+        profile.mobile,
+    );
+    page.execute(viewport_params)
+        .await
+        .map_err(|e| EngineError::BrowserError(format!("Failed to set viewport: {}", e)))?;
+
+    // stealth 注入（best-effort）：幂等守卫——CDP 注册 target 级持久、随
+    // tab 复用存活，重复注册会让每个 tab 的脚本份数线性累积
+    let stealth_injector = crate::engines::js_inject::JsInjector::stealth();
+    let already_installed: bool = match page
+        .evaluate("() => window.__crawlrs_stealth_installed === true")
+        .await
+    {
+        Ok(v) => v.into_value::<bool>().unwrap_or(false),
+        Err(_) => false,
+    };
+    if !already_installed {
+        if let Err(e) = stealth_injector.apply_before_document(page).await {
+            log::warn!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "playwright-stealth-inject-failed",
+                    &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                )
+            );
+        }
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl ScraperEngine for PlaywrightEngine {
     /// 执行浏览器自动化抓取
@@ -564,122 +657,16 @@ impl ScraperEngine for PlaywrightEngine {
             // Browser 也在 pooled_page drop 时归还到 BrowserPool。
             // 错误路径下 Page 可能不可用，归还路径会 drop 它（关闭 tab）。
 
-            // 从 UaPool 取一致的 UA + viewport profile
-            // 替换原固定移动 UA 分支；mobile 和 desktop 都从池中取 profile。
-            // P08：Playwright 是真实 Chromium 内核——只取 Chromium 系 profile，
-            // 避免 Safari/Firefox UA 与真实 JS 引擎指纹矛盾的检测点。
-            let profile = self.ua_pool.pick_chromium(request.mobile);
-
-            // Set User-Agent（所有请求都设，不只 mobile）
-            // 完整 override：UA + acceptLanguage + navigator.platform +
-            // userAgentMetadata。裸 UA 串曾让 Sec-CH-UA* 请求头与
-            // navigator.userAgentData 停留浏览器默认品牌 HeadlessChrome
-            // （HTTP UA 声称 Chrome、客户端提示声称 HeadlessChrome，服务端
-            // 单请求即可识破）；userAgentMetadata 正是 CDP 的 "To be sent
-            // in Sec-CH-UA-* headers and returned in navigator.userAgentData"
-            // 官方通道。
-            // 两个 CDP platform 字段词表不同（navigator.platform: Win32/
-            // MacIntel/iPhone…；Sec-CH-UA-Platform: Windows/macOS/…），
-            // 由 build_ua_fingerprint 各自映射，绝不同值双写。brands 取
-            // profile.sec_ch_ua 逐版本权威模板（含 Edge/Samsung 正确品牌
-            // 与 GREASE，与 wreq 引擎发头同源）——从 UA 串重解析会把 Edge
-            // 解析成 "Google Chrome" 品牌，与 Edg/ 标记自相矛盾。
-            // metadata 缺席（WKWebView 家族如 CriOS 无 Client Hints）时
-            // 跳过 metadata 设置，回退纯 UA 字符串覆盖——绝不发送空品牌。
-            // acceptLanguage 取 profile 绑定值——与 wreq 引擎
-            // （wreq_engine.rs:619 同样发 profile.accept_language）跨引擎
-            // 一致，避免 zh-CN/en-GB profile 与 en-US 语言串的自相矛盾。
-            let fingerprint = build_ua_fingerprint(
-                profile.ua,
-                profile.sec_ch_ua,
-                profile.platform,
-                profile.mobile,
-            );
-            let mut ua_override = SetUserAgentOverrideParams::builder()
-                .user_agent(profile.ua)
-                .accept_language(cdp_accept_language(
-                    profile.accept_language,
-                ));
-            if let Some(navigator_platform) = fingerprint.navigator_platform {
-                ua_override = ua_override.platform(navigator_platform);
-            }
-            if let Some(metadata) = fingerprint.metadata {
-                ua_override = ua_override.user_agent_metadata(metadata);
-            }
-            let ua_override = ua_override.build().map_err(|e| {
-                EngineError::BrowserError(format!("Failed to build user agent override: {}", e))
-            })?;
-            // Emulation.setUserAgentOverride（非 Network 变体）：CDP 文档明确
-            // "userAgentMetadata must be set for Client Hint headers to be
-            // sent"——Sec-CH-UA* 头由该通道生成
-            page.execute(ua_override).await.map_err(|e| {
-                EngineError::BrowserError(format!("Failed to set user agent override: {}", e))
-            })?;
-
-            // locale 覆盖：取 accept_language 首段标签（zh-CN,zh;q=0.9 →
-            // zh-CN），同时校正 navigator.language 与 Intl 默认 locale——
-            // launch 的进程级 --lang=en-US,en 会给 zh-CN profile 留下
-            // "请求头 zh-CN 而 Intl en-US" 的二次矛盾，此处按 profile 闭合。
-            // best-effort：CDP 失败仅告警（与 stealth 注入同策略，不阻断抓取）
-            if let Some(locale) = profile.accept_language.split(',').next() {
-                if let Err(e) = page
-                    .execute(
-                        chromiumoxide::cdp::browser_protocol::emulation::SetLocaleOverrideParams::builder()
-                            .locale(locale.trim())
-                            .build(),
-                    )
-                    .await
-                {
-                    log::warn!("Failed to set locale override: {}", e);
-                }
-            }
-
-            // Set viewport to match UA platform（viewport 与 UA 一致）
-            // 用 CDP Emulation.setDeviceMetricsOverride 设置视口尺寸 + mobile 标志
-            let viewport_params = SetDeviceMetricsOverrideParams::new(
-                profile.viewport.0 as i64,
-                profile.viewport.1 as i64,
-                1.0,
-                profile.mobile,
-            );
-            page.execute(viewport_params)
-                .await
-                .map_err(|e| {
-                    EngineError::BrowserError(format!("Failed to set viewport: {}", e))
-                })?;
+            // 指纹一致性设置（UA/客户端提示/locale/viewport/stealth）已抽取
+            // 为共享函数——MllmEngine 同样驱动真实 Chromium 页面，必须过同
+            // 一套（此前 mllm 裸 goto，是全引擎里唯一没化妆的检测点）
+            apply_browser_fingerprint(&page, &self.ua_pool, request.mobile).await?;
 
             // 设置自定义 Headers
             if !request.headers.is_empty() {
                 // 如果 chromiumoxide 的 API 限制太多，我们暂时记录日志并跳过，
-                // 或者在未来版本中寻找更底层的 CDP 调用方式
+                // 或在未来版本中寻找更底层的 CDP 调用方式
                 log::warn!("Custom headers are currently partially supported in PlaywrightEngine due to API constraints");
-            }
-
-            // 导航前注入 stealth 脚本（best-effort）
-            // P06：经 CDP addScriptToEvaluateOnNewDocument 注册到所有后续文档——
-            // 此前的 page.evaluate 只作用于当前文档（about:blank），goto 创建
-            // 新文档后覆盖丢失，navigator.webdriver 恒为 true
-            let stealth_injector = crate::engines::js_inject::JsInjector::stealth();
-            // 幂等守卫：CDP 注册 target 级持久、随 tab 复用存活，重复注册会让
-            // 每个 tab 的 stealth 脚本份数随请求次数线性累积。脚本在每个新文档
-            // 重打 `__crawlrs_stealth_installed` 标记——标记存在即已注册，跳过。
-            let already_installed: bool = match page
-                .evaluate("() => window.__crawlrs_stealth_installed === true")
-                .await
-            {
-                Ok(v) => v.into_value::<bool>().unwrap_or(false),
-                Err(_) => false,
-            };
-            if !already_installed {
-                if let Err(e) = stealth_injector.apply_before_document(&page).await {
-                    log::warn!(
-                        "{}",
-                        crate::i18n::tr_log_args(
-                            "playwright-stealth-inject-failed",
-                            &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                        )
-                    );
-                }
             }
 
             // 拦截事件处理 task 的守卫：声明在 if 块外的 async 作用域，覆盖整个

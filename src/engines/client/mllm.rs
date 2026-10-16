@@ -36,6 +36,8 @@ const DEFAULT_MLLM_MRT_SECONDS: u64 = 60;
 pub struct MllmEngine {
     /// 浏览器池引用
     pool: Option<BrowserPool>,
+    /// UA profile 池（指纹一致性设置与 PlaywrightEngine 同源）
+    ua_pool: crate::utils::ua_pool::UaPool,
     /// 视觉模型适配器
     vision_adapter: Arc<dyn VisionAdapterTrait>,
     /// 引擎配置
@@ -50,6 +52,7 @@ impl MllmEngine {
         let mrt = Duration::from_secs(config.mrt_seconds.max(DEFAULT_MLLM_MRT_SECONDS));
         Self {
             pool: None,
+            ua_pool: crate::utils::ua_pool::UaPool::new(),
             vision_adapter,
             config,
             mrt,
@@ -184,6 +187,17 @@ impl ScraperEngine for MllmEngine {
             // Acquire browser page
             let pooled_page = pool.acquire_page().await?;
             let page: chromiumoxide::Page = pooled_page.page().clone();
+
+            // 指纹一致性设置与 PlaywrightEngine 同一套（UA/客户端提示/
+            // locale/viewport/stealth）——本引擎此前裸 goto，是全引擎里
+            // 唯一没化妆的检测点；共享函数见 playwright 模块文档。
+            // UA/viewport 硬失败；运行时验证随引擎启用（视觉模型服务）
+            crate::engines::client::playwright::apply_browser_fingerprint(
+                &page,
+                &self.ua_pool,
+                request.mobile,
+            )
+            .await?;
 
             // Navigate to target URL
             info!("MLLM engine navigating to: {}", request.url);

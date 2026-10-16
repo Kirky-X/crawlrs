@@ -84,6 +84,11 @@ pub struct UaProfile {
 
 /// UA 池 — 桌面 / 移动分组
 ///
+/// **版本时效维护标准**：profile 的 UA/sec_ch_ua 模板落后 Chrome stable
+/// ≥ 2 个大版本（如 stable=133 而池内最新为 131）即全池刷新——反爬方按
+/// 版本分布判定，陈旧版本本身就是指纹。刷新时 UA 串与 sec_ch_ua 模板
+/// 必须成对更新（模板品牌/版本随 UA 走）。
+///
 /// 用法：
 /// - `pool.pick(request.mobile)` — 随机选 profile
 /// - `pool.pick_seeded(attempt as u64, request.mobile)` — 按 attempt 稳定轮换（重试场景）

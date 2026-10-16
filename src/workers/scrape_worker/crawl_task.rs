@@ -203,19 +203,16 @@ impl ScrapeWorker {
             .await?;
         }
 
-        // 结果行不变量（completed⇒结果可查）：无结果路径（soft404 跳过落库）
-        // 在此补最小行。门控到 soft404 分支——正常路径刚完成整行 INSERT，
-        // 无条件回读会把整页 blob 拉回后丢弃（性能审查 F-1）；ensure 失败仅
-        // error 留痕并继续计数——任务行已 Completed（mark_completed 守卫
-        // 胜利），此处 Err 会让 crawl 计数永久卡死且重试被守卫结构性拒绝
-        // （架构审查 F-1：恢复路径是幻觉），降级为显性化日志。
-        if soft404_hit {
-            if let Err(e) = self.ensure_result_row(task).await {
-                error!(
-                    "Failed to ensure result row for crawl task {}: {}",
-                    task.id, e
-                );
-            }
+        // 结果行不变量（completed⇒结果可查）无条件执行：除 soft404 外，
+        // 去重命中/304 等完成路径同样可能无结果行（实测 memory 后端轮
+        // completed+0 结果）。存在性检查为 COUNT 投影（非整行回读）；
+        // ensure 失败仅 error 留痕并继续计数——任务行已 Completed，此处
+        // Err 会让 crawl 计数永久卡死且重试被守卫结构性拒绝。
+        if let Err(e) = self.ensure_result_row(task).await {
+            error!(
+                "Failed to ensure result row for crawl task {}: {}",
+                task.id, e
+            );
         }
 
         if let Err(e) = self
@@ -333,9 +330,9 @@ impl ScrapeWorker {
     /// 覆盖软 404 跳过落库、去重/合并遗漏等一切无结果路径；已有结果行时仅
     /// 一次索引查询、零额外写入。
     pub(super) async fn ensure_result_row(&self, task: &Task) -> Result<()> {
-        match self.result_repository.find_by_task_id(task.id).await {
-            Ok(Some(_)) => Ok(()),
-            Ok(None) => {
+        match self.result_repository.has_result_for_task(task.id).await {
+            Ok(true) => Ok(()),
+            Ok(false) => {
                 info!(
                     "Crawl task {} has no result row, writing minimal placeholder",
                     task.id

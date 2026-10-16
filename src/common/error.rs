@@ -22,6 +22,7 @@
 use axum::http::StatusCode;
 #[cfg(any(feature = "platform", feature = "web-axum"))]
 use axum::response::{IntoResponse, Json, Response};
+use chrono::Utc;
 #[cfg(any(feature = "platform", feature = "web-axum"))]
 use log::error;
 use once_cell::sync::Lazy;
@@ -432,26 +433,31 @@ impl IntoResponse for CrawlRsError {
         );
 
         // 根据环境决定返回给客户端的错误信息
+        // 双渲染器统一：走与 response_builder 相同的 ApiResponse 包封
+        // （data=null + timestamp + error.{code,message}）。error.status 为
+        // 冗余字段（HTTP 状态码即权威），随登记簿清零移除。
         let error_response = if should_show_detailed_errors() {
             // 开发环境：返回详细错误信息
             serde_json::json!({
                 "success": false,
+                "data": serde_json::Value::Null,
                 "error": {
                     "code": error_code,
                     "message": detailed_msg,
-                    "status": status.as_u16(),
-                }
+                },
+                "timestamp": Utc::now().to_rfc3339(),
             })
         } else {
             // 生产环境：返回脱敏后的用户友好错误信息
             let user_msg = self.user_message();
             serde_json::json!({
                 "success": false,
+                "data": serde_json::Value::Null,
                 "error": {
                     "code": error_code,
                     "message": user_msg,
-                    "status": status.as_u16(),
-                }
+                },
+                "timestamp": Utc::now().to_rfc3339(),
             })
         };
 
@@ -1169,7 +1175,8 @@ mod tests {
 
         assert_eq!(json["success"], false);
         assert_eq!(json["error"]["code"], "NOT_FOUND");
-        assert_eq!(json["error"]["status"], 404);
+        assert_eq!(json["data"], serde_json::Value::Null);
+        assert!(json.get("timestamp").is_some());
         // 生产环境返回脱敏后的用户消息
         assert!(json["error"]["message"]
             .as_str()
@@ -1194,7 +1201,8 @@ mod tests {
 
         assert_eq!(json["success"], false);
         assert_eq!(json["error"]["code"], "VALIDATION_ERROR");
-        assert_eq!(json["error"]["status"], 400);
+        assert_eq!(json["data"], serde_json::Value::Null);
+        assert!(json.get("timestamp").is_some());
         // 开发环境返回详细错误信息
         assert!(json["error"]["message"]
             .as_str()
@@ -1220,7 +1228,8 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
         assert_eq!(json["error"]["code"], "RATE_LIMITED");
-        assert_eq!(json["error"]["status"], 429);
+        assert_eq!(json["data"], serde_json::Value::Null);
+        assert!(json.get("timestamp").is_some());
     }
 
     // =============================================================================
@@ -1539,7 +1548,8 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"]["code"], "AUTHENTICATION_ERROR");
-        assert_eq!(json["error"]["status"], 401);
+        assert_eq!(json["data"], serde_json::Value::Null);
+        assert!(json.get("timestamp").is_some());
     }
 
     #[cfg(any(feature = "platform", feature = "web-axum"))]
@@ -1561,7 +1571,8 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"]["code"], "SERVICE_UNAVAILABLE");
-        assert_eq!(json["error"]["status"], 503);
+        assert_eq!(json["data"], serde_json::Value::Null);
+        assert!(json.get("timestamp").is_some());
     }
 
     /// 遍历全部 CrawlRsError 变体，锁定 `user_message_locale`（17 个 match 臂）均产出非空

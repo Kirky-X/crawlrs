@@ -340,6 +340,29 @@ class Runner:
 
 # ── 场景定义 ────────────────────────────────────────────────────────────────
 
+def _wait_queue_drained(c, auditor, timeout_s: int = 90) -> None:
+    """爬取族场景前的队列排水屏障。
+
+    语义套件自身会产生大批 crawl 子任务（单场深 1 × ~24 链接），后继场景
+    若在积压未消化时提交，任务会长时间滞留 queued（实测三跑两现的饥饿
+    家族根因）。轮询任务查询端点直至无 queued 任务；超时放行，由场景
+    自身的超时断言兜底。
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        s, _, _, j = c.request("queue_drain_poll", "POST", "/v1/tasks/_query",
+                               body=json.dumps({"limit": 1,
+                                                "statuses": ["queued"],
+                                                "sync_wait_ms": 0}),
+                               timeout=30)
+        if s == 200 and j:
+            tasks = ((j.get("data") or {}).get("tasks")) or []
+            if not tasks:
+                return
+        time.sleep(2)
+    auditor.log_event("env_note", "queue_drain_timeout",
+                      {"note": f"队列 {timeout_s}s 未排空，放行（场景超时断言兜底）"})
+
 def build_scenarios(r: Runner):
     c = r.client
     scenarios = []
@@ -436,6 +459,7 @@ def build_scenarios(r: Runner):
     scenarios.append(("scrape_create_semantics", "C-Scrape", "创建抓取：包封+回显+UUID", t_scrape_create))
 
     def t_scrape_status_transition(check):
+        _wait_queue_drained(c, r.auditor)
         # 真实新闻站点验证：主站失败按序故障转移；全部站点均未完成才判失败
         last_errors = []
         final, used_site = None, None
@@ -644,6 +668,7 @@ def build_scenarios(r: Runner):
         return seen, final
 
     def t_crawl_lifecycle(check):
+        _wait_queue_drained(c, r.auditor)
         s, _, j = _create_crawl("crawl_lifecycle_create",
                                 {"url": NEWS_PRIMARY, "name": "e2e-sem-lifecycle",
                                  "config": {"max_depth": 1}})
@@ -689,6 +714,7 @@ def build_scenarios(r: Runner):
     scenarios.append(("crawl_lifecycle", "D-Crawl", "爬取生命周期：创建→终态→结果", t_crawl_lifecycle))
 
     def t_crawl_include_patterns(check):
+        _wait_queue_drained(c, r.auditor)
         s, _, j = _create_crawl("crawl_include_create",
                                 {"url": NEWS_FILTER_SEED, "name": "e2e-sem-filter",
                                  "config": {"max_depth": 1,
@@ -1177,6 +1203,7 @@ def build_scenarios(r: Runner):
 
     # ═══ I. 文本提取（去 HTML 标签）═══
     def t_markdown_extraction(check):
+        _wait_queue_drained(c, r.auditor)
         # formats=["markdown"] → worker 经 HTML→Markdown 转换生成去标签正文，
         # 结果经 save_result 落入 result.meta_data.markdown
         s0, _, _, j0 = c.request("extract_md_create", "POST", "/v1/scrape",
