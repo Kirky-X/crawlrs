@@ -200,7 +200,19 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: release-full-deps
+      # 幂等:已发布版本直接跳过,避免重跑时"already exists"报错
+      - name: Check already published
+        id: published
+        env:
+          VERSION: ${{ needs.version-consistency.outputs.version }}
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" -H 'User-Agent: crawlrs-release-verify' \
+            "https://crates.io/api/v1/crates/crawlrs/${VERSION}")
+          echo "crawlrs ${VERSION}: HTTP ${CODE}"
+          echo "exists=$([[ "$CODE" == "200" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+
       - name: Publish to crates.io
+        if: steps.published.outputs.exists == 'false'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish
@@ -245,11 +257,26 @@ jobs:
           name: Release v${{ needs.version-consistency.outputs.version }}
           body: ${{ needs.version-consistency.outputs.body }}
           draft: false
-          prerelease: ${{ contains(needs.version-consistency.outputs.version, '-rc') || contains(needs.version-consistency.outputs.version, '-beta') || contains(needs.version-consistency.outputs.version, '-alpha') }}
+          # 对齐 vecboost：版本串含 "-" 即 prerelease（覆盖 -rc/-beta/-alpha 及一切预发布段）；rc 不得抢占 Latest
+          prerelease: ${{ contains(needs.version-consistency.outputs.version, '-') }}
           files: |
             ${{ env.CRATE_FILE }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # softprops 对同 tag 已有 release 为 upsert 语义（重跑改写而非新建），
+      # uniqueness 断言钉住恰好 1 个
+      - name: Verify release uniqueness (idempotency guard)
+        run: |
+          TAG="v${{ needs.version-consistency.outputs.version }}"
+          COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq "[.[] | select(.tag_name == \"${TAG}\")] | length")
+          echo "release objects for ${TAG}: ${COUNT}"
+          if [ "${COUNT}" != "1" ]; then
+            echo "::error::expected exactly 1 release for ${TAG}, found ${COUNT}; release state is not idempotent"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   verify-release:
     name: Verify Release
