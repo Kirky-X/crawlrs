@@ -8,14 +8,10 @@
 
 use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
 use crate::presentation::errors::CrawlRsError;
+use crate::presentation::handlers::response_builder;
 use crate::presentation::middleware::rate_limit_middleware::RATE_LIMIT_FAIL_OPEN;
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    Json,
-};
+use axum::response::Response;
 use log::{error, warn};
-use serde_json::json;
 use std::fmt::Display;
 
 /// Check rate limit for an API key and endpoint.
@@ -54,25 +50,20 @@ where
 {
     let api_key_str = api_key.to_string();
     match service.check_rate_limit(&api_key_str, endpoint).await {
-        Ok(RateLimitResult::Denied { reason }) => Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({
-                "success": false,
-                "error": format!("Rate limit exceeded: {}", reason)
-            })),
-        )
-            .into_response()),
+        // 统一 ApiResponse 包封（error.{code,message}）——旧式直拼 JSON
+        // （error 为字符串）违背响应契约，已随登记簿清零修正
+        Ok(RateLimitResult::Denied { reason }) => Err(response_builder::errors::too_many_requests(
+            format!("Rate limit exceeded: {}", reason),
+        )),
         Ok(RateLimitResult::RetryAfter {
             retry_after_seconds,
-        }) => Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({
-                "success": false,
-                "error": "Rate limit exceeded, please retry later",
-                "retry_after_seconds": retry_after_seconds
-            })),
-        )
-            .into_response()),
+        }) => Err(response_builder::errors::too_many_requests_with_retry(
+            format!(
+                "Rate limit exceeded, please retry after {} seconds",
+                retry_after_seconds
+            ),
+            retry_after_seconds,
+        )),
         Ok(RateLimitResult::Allowed) => Ok(()),
         Err(e) => {
             if *RATE_LIMIT_FAIL_OPEN {
@@ -88,14 +79,9 @@ where
                      error={} endpoint={}",
                     e, endpoint
                 );
-                Err((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({
-                        "success": false,
-                        "error": "Rate limiting service is temporarily unavailable. Please try again later."
-                    })),
-                )
-                    .into_response())
+                Err(response_builder::errors::service_unavailable(
+                    "Rate limiting service is temporarily unavailable. Please try again later.",
+                ))
             }
         }
     }
@@ -176,6 +162,7 @@ mod tests {
         QuotaService, RateLimitConfig, RateLimitResult, RateLimitService, RateLimitingError,
     };
     use async_trait::async_trait;
+    use axum::http::StatusCode;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -496,6 +483,14 @@ mod tests {
             "reason in body expected: {}",
             body_str
         );
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("body should be valid JSON");
+        assert_eq!(
+            json["error"]["code"], "RATE_LIMITED",
+            "standard envelope error.code expected: {}",
+            body_str
+        );
+        assert!(json.get("data").is_none() || json["data"].is_null());
     }
 
     #[tokio::test]
@@ -519,6 +514,13 @@ mod tests {
         assert!(
             body_str.contains("retry_after_seconds"),
             "retry_after_seconds key expected: {}",
+            body_str
+        );
+        let json: serde_json::Value =
+            serde_json::from_slice(&body).expect("body should be valid JSON");
+        assert_eq!(
+            json["error"]["code"], "RATE_LIMITED",
+            "standard envelope error.code expected: {}",
             body_str
         );
     }
@@ -793,7 +795,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_denied_response_json_has_success_false_and_error_key() {
-        // Verify the JSON structure has both success and error keys.
+        // 标准 ApiResponse 包封：error 为 {code,message} 对象（登记簿清零后）。
         let service = MockRateLimitingService::new(RateLimitResult::Denied {
             reason: "limit hit".to_string(),
         });
@@ -805,13 +807,21 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_slice(&body).expect("body should be valid JSON");
         assert_eq!(json["success"], serde_json::Value::Bool(false));
-        assert!(json["error"].is_string());
-        assert!(json["error"].as_str().unwrap().contains("limit hit"));
+        assert_eq!(json["error"]["code"], "RATE_LIMITED");
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("limit hit"),
+            "message should contain reason: {}",
+            json
+        );
+        assert!(json.get("data").is_none() || json["data"].is_null());
     }
 
     #[tokio::test]
     async fn test_retry_after_response_json_has_all_three_keys() {
-        // Verify the JSON structure has success, error, and retry_after_seconds keys.
+        // RetryAfter 走 RateLimitErrorResponse：success + error{code,message} + retry_after_seconds。
         let service = MockRateLimitingService::new(RateLimitResult::RetryAfter {
             retry_after_seconds: 99,
         });
@@ -823,7 +833,7 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_slice(&body).expect("body should be valid JSON");
         assert_eq!(json["success"], serde_json::Value::Bool(false));
-        assert!(json["error"].is_string());
+        assert_eq!(json["error"]["code"], "RATE_LIMITED");
         assert_eq!(json["retry_after_seconds"], serde_json::json!(99));
     }
 

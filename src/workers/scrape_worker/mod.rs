@@ -705,7 +705,11 @@ impl ScrapeWorker {
                                     )],
                                 )
                             );
-                            self.handle_failure(&mut task).await?;
+                            self.handle_failure(
+                                &mut task,
+                                "304 response without prior result for conditional request",
+                            )
+                            .await?;
                             return Ok(());
                         }
                     }
@@ -728,7 +732,8 @@ impl ScrapeWorker {
                     Err(e) => {
                         error!("Scrape success handler failed: {}", e);
                         debug!("error: {}", e);
-                        self.handle_failure(&mut task).await?;
+                        let err_msg = e.to_string();
+                        self.handle_failure(&mut task, &err_msg).await?;
                     }
                     Ok(false) => {
                         // 丢守卫：认领方会重新执行并扣费，本 worker 不做任何计费
@@ -814,7 +819,8 @@ impl ScrapeWorker {
                             self.repository.update_task_guarded(&t).await?;
                         }
                     } else {
-                        self.handle_failure(&mut task).await?;
+                        let err_msg = e.to_string();
+                        self.handle_failure(&mut task, &err_msg).await?;
                     }
                 }
 
@@ -1150,8 +1156,8 @@ impl ScrapeWorker {
         }
     }
 
-    async fn handle_failure(&self, task: &mut Task) -> Result<()> {
-        match self.retry_handler.handle_failure(task).await {
+    async fn handle_failure(&self, task: &mut Task, error: &str) -> Result<()> {
+        match self.retry_handler.handle_failure(task, error).await {
             crate::domain::services::retry_handler::HandleFailureResult::Retried { .. } => Ok(()),
             crate::domain::services::retry_handler::HandleFailureResult::Failed => Ok(()),
             crate::domain::services::retry_handler::HandleFailureResult::Error(e) => Err(e),

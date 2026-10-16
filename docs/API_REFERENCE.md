@@ -19,9 +19,9 @@
 - [📄 Common Response Format](#-common-response-format)
 - [⚠️ Errors](#️-errors)
 - [🌐 Public Endpoints](#-public-endpoints)
-  - [Health Check](#health-check)
+  - [Health Check](#health-check-liveness)
   - [Readiness Check](#readiness-check)
-  - [Garrison Health Probes](#garrison-health-probes)
+  - [Garrison Health Probes](#garrison-health-probes-auth-builds-only)
   - [OpenAPI Specification](#openapi-specification)
   - [Get Version](#get-version)
   - [Get Metrics](#get-metrics)
@@ -181,26 +181,34 @@ All API responses follow this unified structure:
 
 ### Rate Limit Error Response
 
-限流拒绝（429）由各 handler 内 `check_rate_limit` 直接返回，**不走 `ApiResponse` 包封**，`error` 是字符串而非对象：
+限流拒绝（429）由各 handler 内 `check_rate_limit` 经标准 `ApiResponse` 包封返回，`error` 为 `{code,message}` 对象：
 
 ```json
 {
   "success": false,
-  "error": "Rate limit exceeded: <reason>"
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "Rate limit exceeded: <reason>"
+  },
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
 
-当命中 `RetryAfter` 结果时额外带扁平 `retry_after_seconds` 字段：
+当命中 `RetryAfter` 结果时额外带 `retry_after_seconds` 字段：
 
 ```json
 {
   "success": false,
-  "error": "Rate limit exceeded, please retry later",
-  "retry_after_seconds": 60
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "Rate limit exceeded, please retry after 60 seconds"
+  },
+  "retry_after_seconds": 60,
+  "timestamp": "2025-01-15T12:00:00+00:00"
 }
 ```
 
-> 源码依据：`src/presentation/helpers/rate_limit_helper.rs::check_rate_limit`。响应头仅设 `Retry-After`，无 `X-RateLimit-*` 系列头。服务端返回 `CrawlRsError` 形态的 handler（如 webhook 创建）则走标准 `ApiResponse` 包封（`error.code = "RATE_LIMITED"`）。
+> 源码依据：`src/presentation/helpers/rate_limit_helper.rs::check_rate_limit`（`Denied` → `errors::too_many_requests`，`RetryAfter` → `errors::too_many_requests_with_retry`，后端错误 fail-closed 503 → `errors::service_unavailable`）。响应头仅设 `Retry-After`，无 `X-RateLimit-*` 系列头。
 
 ### Response Fields
 
@@ -208,7 +216,7 @@ All API responses follow this unified structure:
 |-------|------|-------------|
 | `success` | boolean | Whether the request was successful |
 | `data` | object | Response data (only present on success) |
-| `error` | object | Error details (only present on failure); see the Rate Limit section for the string form |
+| `error` | object | Error details (only present on failure) |
 | `error.code` | string | Error code for programmatic handling |
 | `error.message` | string | Human-readable error message |
 | `timestamp` | string | Response timestamp in RFC3339 format |
@@ -426,7 +434,7 @@ Scrape a single web page.
 | `extraction_prompt` | string | No | LLM prompt for data extraction (free text) |
 | `extraction_schema` | object | No | JSON Schema for structured LLM extraction |
 | `actions` | array | No | Page interaction actions |
-| `options` | object | No | Scraping options (see [Options Parameters](#scrape-options-parameters)) |
+| `options` | object | No | Scraping options (see [Scrape API](#scrape-api)) |
 | `metadata` | object | No | Custom metadata for the task |
 | `sync_wait_ms` | integer | No | Wait time for synchronous response (max 30000) |
 
@@ -1375,7 +1383,7 @@ The API implements rate limiting at multiple levels:
 Retry-After: 60
 ```
 
-响应体示例见上方 [Rate Limit Error Response](#rate-limit-error-response)：`error` 为字符串，`RetryAfter` 结果额外带 `retry_after_seconds`。
+响应体示例见上方 [Rate Limit Error Response](#rate-limit-error-response)：标准 `ApiResponse` 包封（`error.code = "RATE_LIMITED"`），`RetryAfter` 结果额外带 `retry_after_seconds`。
 
 > 附加语义：限流服务本身出错时默认 fail-closed（返回 503 `SERVICE_UNAVAILABLE`）；设 `RATE_LIMIT_FAIL_OPEN=true` 可改为放行并记录 warn 日志。
 

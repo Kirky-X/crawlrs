@@ -290,6 +290,12 @@ pub mod errors {
         error_response(StatusCode::UNPROCESSABLE_ENTITY, message)
     }
 
+    /// Service unavailable error response (fail-closed rate-limit backend errors)
+    #[inline]
+    pub fn service_unavailable(message: impl Into<String>) -> Response {
+        error_response(StatusCode::SERVICE_UNAVAILABLE, message)
+    }
+
     /// Payment required error response
     #[inline]
     pub fn payment_required(message: impl Into<String>) -> Response {

@@ -2427,7 +2427,7 @@ async fn test_mock_extract_and_queue_links_with_include_filter() {
 async fn test_mock_handle_failure() {
     let worker = build_mock_worker().await;
     let mut task = make_task(json!({}));
-    let result = worker.handle_failure(&mut task).await;
+    let result = worker.handle_failure(&mut task, "mock failure").await;
     assert!(result.is_ok());
 }
 
@@ -6085,7 +6085,7 @@ async fn test_handle_failure_returns_error_when_repo_update_fails() {
     task.attempt_count = 100;
     task.max_retries = 1;
 
-    let result = worker.handle_failure(&mut task).await;
+    let result = worker.handle_failure(&mut task, "update failure").await;
     assert!(
         result.is_err(),
         "handle_failure should return error when update fails"
@@ -7401,11 +7401,132 @@ async fn test_handle_failure_failed_branch_returns_ok() {
     task.attempt_count = 100;
     task.max_retries = 1;
 
-    let result = worker.handle_failure(&mut task).await;
+    let result = worker.handle_failure(&mut task, "terminal failure").await;
     // Failed branch returns Ok(()) — line 1130
     assert!(
         result.is_ok(),
         "handle_failure should return Ok(()) when task exceeds max_retries"
+    );
+    assert_eq!(
+        task.payload.get("error").and_then(|v| v.as_str()),
+        Some("terminal failure"),
+        "terminal path must carry error string into payload"
+    );
+}
+
+// ========== ensure_result_row: crawl 结果行不变量 ==========
+
+/// Counting result repo for ensure_result_row tests.
+struct CountingResultRepo {
+    existing: Option<ScrapeResult>,
+    saves: std::sync::atomic::AtomicUsize,
+    saved_note: std::sync::Mutex<Option<String>>,
+}
+
+impl CountingResultRepo {
+    fn with_existing(existing: Option<ScrapeResult>) -> Self {
+        Self {
+            existing,
+            saves: std::sync::atomic::AtomicUsize::new(0),
+            saved_note: std::sync::Mutex::new(None),
+        }
+    }
+    fn save_count(&self) -> usize {
+        self.saves.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl ScrapeResultRepository for CountingResultRepo {
+    async fn save(&self, result: ScrapeResult) -> Result<()> {
+        self.saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let note = result
+            .meta_data
+            .get("note")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        *self.saved_note.lock().expect("saved_note lock") = note;
+        assert_eq!(result.status_code, 0, "minimal row uses status_code=0");
+        Ok(())
+    }
+    async fn find_by_task_id(
+        &self,
+        _task_id: crate::domain::id::Id,
+    ) -> Result<Option<ScrapeResult>> {
+        Ok(self.existing.clone())
+    }
+    async fn find_by_task_ids(
+        &self,
+        _task_ids: &[crate::domain::id::Id],
+    ) -> Result<Vec<ScrapeResult>> {
+        Ok(vec![])
+    }
+    async fn get_team_avg_response_time(&self, _team_id: crate::domain::id::Id) -> Result<f64> {
+        Ok(0.0)
+    }
+    async fn cleanup_expired(&self, _retention_days: i64) -> anyhow::Result<u64> {
+        Ok(0)
+    }
+}
+
+fn make_scrape_result_for_task(task: &Task) -> ScrapeResult {
+    ScrapeResult {
+        id: crate::domain::id::Id::generate(),
+        task_id: task.id,
+        url: task.url.clone(),
+        status_code: 200,
+        content: "<html></html>".to_string(),
+        content_type: "text/html".to_string(),
+        headers: serde_json::json!({}),
+        meta_data: serde_json::json!({}),
+        screenshot: None,
+        response_time_ms: 10,
+        created_at: chrono::Utc::now(),
+    }
+}
+
+#[tokio::test]
+async fn test_ensure_result_row_writes_minimal_row_when_missing() {
+    let task = make_task(json!({}));
+    let repo = Arc::new(CountingResultRepo::with_existing(None));
+    let worker = build_worker_with_failing_deps(
+        repo.clone() as Arc<dyn ScrapeResultRepository>,
+        Arc::new(MockWebhookService),
+        Arc::new(MockCreditsRepo::default()),
+    )
+    .await;
+
+    worker
+        .ensure_result_row(&task)
+        .await
+        .expect("ensure should succeed when row missing");
+    assert_eq!(repo.save_count(), 1, "missing row must be backfilled once");
+    assert_eq!(
+        repo.saved_note.lock().expect("lock").as_deref(),
+        Some("no content captured")
+    );
+}
+
+#[tokio::test]
+async fn test_ensure_result_row_skips_write_when_present() {
+    let task = make_task(json!({}));
+    let existing = make_scrape_result_for_task(&task);
+    let repo = Arc::new(CountingResultRepo::with_existing(Some(existing)));
+    let worker = build_worker_with_failing_deps(
+        repo.clone() as Arc<dyn ScrapeResultRepository>,
+        Arc::new(MockWebhookService),
+        Arc::new(MockCreditsRepo::default()),
+    )
+    .await;
+
+    worker
+        .ensure_result_row(&task)
+        .await
+        .expect("ensure should succeed when row present");
+    assert_eq!(
+        repo.save_count(),
+        0,
+        "present row must not trigger extra write"
     );
 }
 

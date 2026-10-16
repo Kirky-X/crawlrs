@@ -4,12 +4,22 @@
 
 ## [Unreleased]
 
+### Fixed（登记簿清零 registry-zero-out）
+
+- **429 响应统一标准包封**：`check_rate_limit` 的 `Denied`/`RetryAfter`/后端错误（fail-closed 503）改经 `response_builder::errors` 标准包封（`error.code = "RATE_LIMITED"`，503 为 `SERVICE_UNAVAILABLE`；`RetryAfter` 保留 `retry_after_seconds`）；单测断言新形态；liveapi 429 关卡断言升级为 `error.code = "RATE_LIMITED"`（旧字符串包封不再接受）
+- **失败任务错误全链路可见**：`RetryHandler::handle_failure` 新增 `error` 参数，终结分支写 `task.payload["error"]`（空串不写，保留"真无错误串才回退"语义）；scrape/crawl 调用点传真实错误；failed 任务的 API `error` 字段不再回退泛化文案
+- **crawl 结果行不变量**：`handle_crawl_success` 在 `increment_completed_tasks` 前调 `ensure_result_row`——无结果行（软 404 跳过落库等一切路径）补最小行（`status_code=0` + `meta_data.note="no content captured"`），有结果行零额外写入；单测覆盖补写/跳过双路径
+- **活体套件凭证不落 argv（CWE-214）**：server/worker 改经 0600 `test-results/.liveapi-env` + 内层 `set -a; . file; exec` 注入，`ps` 仅见文件路径；cleanup 与启动前均删除该文件
+- **文档同步**：`docs/API_REFERENCE.md` 限流响应样例更新为新包封（`error.{code,message}` + `retry_after_seconds`）
+
 ### Fixed（遗留收敛——UaPool 消费面/locale/arch + 测试门禁补齐）
 
 - **CriOS Client Hints 数据真相**：两个 iOS Chrome profile 的 `sec_ch_ua` 模板修正为空串（WKWebView 不发送任何 Client Hints，原 Chrome 品牌表系编造能力）——reqwest 等 UA 消费路径不再发出 "UA=WKWebView + 客户端提示=Chromium" 矛盾组合（数据层一修全修：pick()/pick_seeded/router 分支全量受益）；一致性单测把 CriOS 归入空串集
 - **Playwright locale 覆盖**：页面设置追加 `Emulation.setLocaleOverride`（locale = accept_language 首段标签），闭合 zh-CN 等 profile 的 "请求头 zh-CN 而 Intl 默认 en-US" 二次矛盾（launch `--lang` 为进程级固定值的残留缺口）；CDP 失败 best-effort 不阻断
 - **Sec-CH-UA-Arch 宿主一致**：architecture 由宿主 `std::env::consts::ARCH` 派生（x86_64→x86、aarch64→arm），替代硬编码 x86；Android profile 保持 arm 设备叙事
 - **测试门禁补齐**：liveapi 新增 `crawlrs migrate` 子命令幂等双跑验证（此前 psql 手工迁移恰好绕过二进制迁移路径）、429 限流关卡（80×SSRF 拒绝请求 burst → 429 + rate-limit 错误信号，置于 402 后；限流 helper 走旧式包封——error 为字符串，产品内包封不一致已备案）；api_test.sh 补 garrison 探针冒烟（`/health/live` 200、`/health/ready` 200|503）
+
+- **备案（本变更内统一了 helper 直发路径；平行入口残留）**：`check_rate_limit_as_app_error` → `CrawlRsError::RateLimit::into_response`（search/webhook 等处理器路径）的 429 渲染形态与 helper 略异（无 timestamp、多 error.status、RetryAfter 丢 retry_after_seconds）——双渲染器统一属 `CrawlRsError` IntoResponse 重构，已登记独立工程项；crawl 占位结果行（status_code=0 + note）语义见 API_REFERENCE Get Crawl Results 节
 
 ### Changed（Playwright stealth 指纹一致性升级）
 

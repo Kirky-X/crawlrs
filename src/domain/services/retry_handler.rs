@@ -54,11 +54,14 @@ impl RetryHandler {
     /// # Arguments
     ///
     /// * `task` - The task that failed
+    /// * `error` - Human-readable failure reason; written to
+    ///   `task.payload["error"]` on the terminal (no more retries) path so the
+    ///   API status endpoint can surface it instead of the generic fallback.
     ///
     /// # Returns
     ///
     /// Result indicating whether task was retried or marked as failed
-    pub async fn handle_failure(&self, task: &mut Task) -> HandleFailureResult {
+    pub async fn handle_failure(&self, task: &mut Task, error: &str) -> HandleFailureResult {
         let new_attempt_count = (task.attempt_count + 1) as u32;
 
         // 统一重试上限：策略上限与任务自身 max_retries 取小者，
@@ -81,6 +84,22 @@ impl RetryHandler {
             task.retry_count += 1;
             task.status = TaskStatus::Failed;
             task.completed_at = Some(Utc::now());
+
+            // 终结分支透传错误串：API 回读 payload["error"]，无此写入则回退
+            // "Task failed." 泛化文案。空串不写（保留"真无错误串才回退"语义）。
+            if !error.is_empty() {
+                if let Some(obj) = task.payload.as_object_mut() {
+                    obj.insert(
+                        "error".to_string(),
+                        serde_json::Value::String(error.to_string()),
+                    );
+                } else {
+                    warn!(
+                        "Task {} payload is not an object, cannot record error string",
+                        task.id
+                    );
+                }
+            }
 
             // 守卫式写入：锁被抢占/任务已被他方迁移时放弃终结
             let rows = match self.repository.update_task_guarded(task).await {
@@ -349,7 +368,7 @@ mod tests {
 
         let before = Utc::now();
         let mut task = make_task(0, 5);
-        let result = handler.handle_failure(&mut task).await;
+        let result = handler.handle_failure(&mut task, "boom").await;
 
         match result {
             HandleFailureResult::Retried {
@@ -396,7 +415,7 @@ mod tests {
 
         // Start at attempt_count=2, should retry (3 < 5)
         let mut task = make_task(2, 5);
-        let result = handler.handle_failure(&mut task).await;
+        let result = handler.handle_failure(&mut task, "boom").await;
 
         match result {
             HandleFailureResult::Retried { attempt_count, .. } => {
@@ -427,7 +446,7 @@ mod tests {
         let before = Utc::now();
         // attempt_count=0 -> new_attempt_count=1, should_retry(1)=false (policy max_retries=0)
         let mut task = make_task(0, 5);
-        let result = handler.handle_failure(&mut task).await;
+        let result = handler.handle_failure(&mut task, "boom").await;
 
         match result {
             HandleFailureResult::Failed => { /* expected */ }
@@ -463,7 +482,7 @@ mod tests {
         // 统一重试上限：effective = min(policy.max_retries=5, task.max_retries=3) = 3
         // attempt_count=3 -> new_attempt_count=4 > 3 -> fail（任务声明的上限生效）
         let mut task = make_task(3, 3);
-        let result = handler.handle_failure(&mut task).await;
+        let result = handler.handle_failure(&mut task, "boom").await;
 
         assert!(
             matches!(result, HandleFailureResult::Failed),
@@ -474,6 +493,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_handle_failure_terminal_writes_payload_error() {
+        // 终结分支必须写 payload["error"]，API 侧不再回退泛化文案。
+        let mock = Arc::new(MockTaskRepository::new());
+        let repo: Arc<dyn TaskRepository> = mock.clone();
+        let policy = RetryPolicy {
+            max_retries: 0,
+            ..Default::default()
+        };
+        let handler = RetryHandler::new(repo, policy);
+
+        let mut task = make_task(0, 5);
+        let result = handler
+            .handle_failure(&mut task, "connection timeout")
+            .await;
+        assert!(matches!(result, HandleFailureResult::Failed));
+        assert_eq!(
+            task.payload.get("error").and_then(|v| v.as_str()),
+            Some("connection timeout"),
+            "terminal path must record error string in payload"
+        );
+        let updated = mock
+            .last_updated_task()
+            .expect("update should have been called");
+        assert_eq!(
+            updated.payload.get("error").and_then(|v| v.as_str()),
+            Some("connection timeout")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_failure_retry_path_does_not_write_payload_error() {
+        // 重试分支不写 error（终结时才写，避免中间态污染）。
+        let mock = Arc::new(MockTaskRepository::new());
+        let repo: Arc<dyn TaskRepository> = mock.clone();
+        let policy = RetryPolicy {
+            enable_jitter: false,
+            ..Default::default()
+        };
+        let handler = RetryHandler::new(repo, policy);
+
+        let mut task = make_task(0, 5);
+        let result = handler.handle_failure(&mut task, "transient").await;
+        assert!(matches!(result, HandleFailureResult::Retried { .. }));
+        assert!(
+            task.payload.get("error").is_none(),
+            "retry path must not write payload.error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_failure_terminal_empty_error_writes_nothing() {
+        // 空串不写，保留"真无错误串才回退"语义。
+        let mock = Arc::new(MockTaskRepository::new());
+        let repo: Arc<dyn TaskRepository> = mock.clone();
+        let policy = RetryPolicy {
+            max_retries: 0,
+            ..Default::default()
+        };
+        let handler = RetryHandler::new(repo, policy);
+
+        let mut task = make_task(0, 5);
+        let result = handler.handle_failure(&mut task, "").await;
+        assert!(matches!(result, HandleFailureResult::Failed));
+        assert!(
+            task.payload.get("error").is_none(),
+            "empty error must not create payload.error"
+        );
+    }
+
+    #[tokio::test]
     async fn test_handle_failure_policy_cap_cannot_exceed_task_max_retries() {
         // 任务声明 max_retries=2 时，即使策略允许 5 次，也在第 3 次尝试前终止
         let mock = Arc::new(MockTaskRepository::new());
@@ -481,7 +570,7 @@ mod tests {
         let handler = RetryHandler::new(repo, RetryPolicy::default());
 
         let mut task = make_task(2, 2);
-        let result = handler.handle_failure(&mut task).await;
+        let result = handler.handle_failure(&mut task, "boom").await;
 
         assert!(
             matches!(result, HandleFailureResult::Failed),
@@ -500,7 +589,7 @@ mod tests {
         let handler = RetryHandler::new(repo, RetryPolicy::default());
 
         let mut task = make_task(0, 5);
-        let result = handler.handle_failure(&mut task).await;
+        let result = handler.handle_failure(&mut task, "boom").await;
 
         match result {
             HandleFailureResult::Error(err) => {
@@ -534,7 +623,7 @@ mod tests {
 
         // attempt_count=0 -> new_attempt_count=1, should_retry(1)=false (policy max_retries=0)
         let mut task = make_task(0, 5);
-        let result = handler.handle_failure(&mut task).await;
+        let result = handler.handle_failure(&mut task, "boom").await;
 
         match result {
             HandleFailureResult::Error(err) => {

@@ -12,11 +12,12 @@ use super::{
     update_crawl_completion_status_fn,
 };
 use crate::application::dto::crawl_request::CrawlConfigDto;
-use crate::domain::models::Task;
+use crate::domain::models::{ScrapeResult, Task};
 use crate::engines::engine_client::{ScrapeRequest, ScrapeResponse};
 use crate::infrastructure::security::ssrf::is_internal_url;
 use crate::workers::crawl::adaptive::{CrawlStats, StopCondition};
 use anyhow::Result;
+use chrono::Utc;
 use log::{debug, error, info, warn};
 
 // 提取到独立模块的函数导入
@@ -202,6 +203,21 @@ impl ScrapeWorker {
             .await?;
         }
 
+        // 结果行不变量（completed⇒结果可查）：无结果路径（soft404 跳过落库）
+        // 在此补最小行。门控到 soft404 分支——正常路径刚完成整行 INSERT，
+        // 无条件回读会把整页 blob 拉回后丢弃（性能审查 F-1）；ensure 失败仅
+        // error 留痕并继续计数——任务行已 Completed（mark_completed 守卫
+        // 胜利），此处 Err 会让 crawl 计数永久卡死且重试被守卫结构性拒绝
+        // （架构审查 F-1：恢复路径是幻觉），降级为显性化日志。
+        if soft404_hit {
+            if let Err(e) = self.ensure_result_row(task).await {
+                error!(
+                    "Failed to ensure result row for crawl task {}: {}",
+                    task.id, e
+                );
+            }
+        }
+
         if let Err(e) = self
             .crawl_repository
             .increment_completed_tasks(crawl_id)
@@ -308,6 +324,46 @@ impl ScrapeWorker {
         .await;
 
         Ok(())
+    }
+
+    /// 确保 crawl 子任务的结果行存在（`completed ⇒ /results ≥1 行` 不变量）
+    ///
+    /// 在 `increment_completed_tasks` 之前调用：`find_by_task_id` 为空则补写
+    /// 最小结果行（`status_code=0` + `meta_data.note="no content captured"`），
+    /// 覆盖软 404 跳过落库、去重/合并遗漏等一切无结果路径；已有结果行时仅
+    /// 一次索引查询、零额外写入。
+    pub(super) async fn ensure_result_row(&self, task: &Task) -> Result<()> {
+        match self.result_repository.find_by_task_id(task.id).await {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => {
+                info!(
+                    "Crawl task {} has no result row, writing minimal placeholder",
+                    task.id
+                );
+                let minimal = ScrapeResult {
+                    id: crate::domain::id::Id::generate(),
+                    task_id: task.id,
+                    url: task.url.clone(),
+                    status_code: 0,
+                    content: String::new(),
+                    content_type: String::new(),
+                    headers: serde_json::json!({}),
+                    meta_data: serde_json::json!({"note": "no content captured"}),
+                    screenshot: None,
+                    response_time_ms: 0,
+                    created_at: Utc::now(),
+                };
+                self.result_repository.save(minimal).await?;
+                Ok(())
+            }
+            Err(e) => {
+                error!(
+                    "Failed to check result row for crawl task {}: {}",
+                    task.id, e
+                );
+                Err(e)
+            }
+        }
     }
 
     /// F11：sitemap 流式请求源喂入
@@ -529,7 +585,8 @@ impl ScrapeWorker {
         .await;
 
         error!("Crawl step failed: {}", error);
-        self.handle_failure(task).await?;
+        let err_msg = error.to_string();
+        self.handle_failure(task, &err_msg).await?;
 
         if let Err(e) = self.crawl_repository.increment_failed_tasks(crawl_id).await {
             error!(

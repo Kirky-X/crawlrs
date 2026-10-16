@@ -58,7 +58,11 @@ mkdir -p test-results
 # 清理上一轮活体产物，避免审计日志混入历史结果
 rm -f test-results/api-audit.jsonl test-results/api-semantics-matrix.md \
       test-results/api-smoke.log test-results/api-semantics.log \
-      test-results/liveapi-server.log
+      test-results/liveapi-server.log test-results/.liveapi-env \
+      test-results/.rl429-body.json
+
+# 凭证文件（0600）：server/worker 经内层 source 注入，argv 仅含文件路径（CWE-214）。
+LIVEAPI_ENV="test-results/.liveapi-env"
 
 cleanup() {
   for pid_name in SERVER_PID WORKER_PID; do
@@ -85,8 +89,12 @@ cleanup() {
     log_info "清扫泄漏的 testcontainers 容器..."
     echo "$leaked" | xargs docker rm -f >/dev/null 2>&1 || true
   fi
+  # 凭证文件善后：无论成功失败都不留存（0600 仅进程可见，退出即删）
+  rm -f "$ROOT/$LIVEAPI_ENV" test-results/.rl429-body.json 2>/dev/null || true
 }
-trap cleanup EXIT
+# INT/TERM 同 cleanup：Ctrl+C 前台进程组直杀 shell 时 EXIT trap 不执行，
+# 0600 凭证文件会残留盘上（安全审查 F1）
+trap cleanup EXIT INT TERM
 
 # ── 1. 测试数据库 ────────────────────────────────────────────────────────────
 if [ -z "${TEST_DATABASE_URL:-}" ]; then
@@ -168,19 +176,30 @@ log_pass "crawlrs migrate 幂等双跑通过"
 # 进程自身经 CRAWLRS_BOOTSTRAP_ADMIN=true 签发。run_bootstrap 仅在交互终端
 # 输出完整明文 key（管道下掩码，CWE-532 设计），故经 `script` 伪 TTY 启动；
 # 日志中的明文 key 在解析后立即掩码，防止审计产物泄漏凭证。
+#
+# 凭证卫生（CWE-214）：JWT/WEBHOOK/DATABASE_URL 不落 argv。写法是 0600 env
+# 文件 + 内层 `set -a; . file; exec`——`ps` 仅见文件路径，凭证只在进程
+# environment 与 0600 文件中出现。
+log_info "写入活体凭证文件 (0600, argv 不含凭证)..."
+( umask 077; : > "$LIVEAPI_ENV" )
+chmod 600 "$LIVEAPI_ENV"
+cat > "$LIVEAPI_ENV" <<EOF
+CRAWLRS__DATABASE__URL='${TEST_DATABASE_URL}'
+CRAWLRS__AUTH__JWT_SECRET='${JWT_SECRET}'
+CRAWLRS__WEBHOOK__SECRET='${WEBHOOK_SECRET}'
+CRAWLRS__SERVER__PORT='${SERVER_PORT}'
+CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT='64'
+CRAWLRS__WORKERS__COUNT='64'
+CRAWLRS_BOOTSTRAP_ADMIN='true'
+RUST_LOG='${RUST_LOG:-info}'
+EOF
+chmod 600 "$LIVEAPI_ENV"
 log_info "启动 crawlrs API 服务 (port=$SERVER_PORT, 进程内自举 admin key)..."
 SERVER_LOG="test-results/liveapi-server.log"
 : > "$SERVER_LOG"
 # 团队信号量随 worker 提量：default_team_limit=10 会把并发在途钉在 10
 # （饥饿家族根因——64 worker 大半闲置），测试环境双侧提到 64
-script -qefc "env CRAWLRS__DATABASE__URL='$TEST_DATABASE_URL' \
-    CRAWLRS__AUTH__JWT_SECRET='$JWT_SECRET' \
-    CRAWLRS__WEBHOOK__SECRET='$WEBHOOK_SECRET' \
-    CRAWLRS__SERVER__PORT='$SERVER_PORT' \
-    CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT='64' \
-    CRAWLRS_BOOTSTRAP_ADMIN=true \
-    RUST_LOG='${RUST_LOG:-info}' \
-    '$BIN' api" /dev/null > "$SERVER_LOG" 2>&1 &
+script -qefc "bash -c 'set -a; . \"$ROOT/$LIVEAPI_ENV\"; exec \"$BIN\" api'" /dev/null > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 log_info "等待 /health 就绪..."
@@ -205,11 +224,8 @@ WORKER_LOG="test-results/liveapi-worker.log"
 # worker 提量：语义套件的 crawl 场景子任务（深 1 × ~24 链接）会占满
 # auto（2×核数）配额，尾部场景（include_patterns/markdown）排队饿死
 # （实测三跑两现）——固定 64 让饱和点远超套件爬取广度
-env CRAWLRS__DATABASE__URL="$TEST_DATABASE_URL" \
-    CRAWLRS__AUTH__JWT_SECRET="$JWT_SECRET" \
-    CRAWLRS__WORKERS__COUNT='64' \
-    CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT='64' RUST_LOG="${RUST_LOG:-info}" \
-    "$BIN" worker > "$WORKER_LOG" 2>&1 &
+# 同 server：经凭证文件注入，argv 不含凭证（CWE-214）
+bash -c "set -a; . \"$ROOT/$LIVEAPI_ENV\"; exec \"$BIN\" worker" > "$WORKER_LOG" 2>&1 &
 WORKER_PID=$!
 log_pass "worker 已启动 (pid=$WORKER_PID)"
 
@@ -354,16 +370,17 @@ try:
 except Exception:
     print(f'429 关卡失败：429 响应非 JSON：{body[:200]!r}')
     sys.exit(1)
-# 实际形态备案：限流 helper 走旧式包封（error 为字符串，非标准
-# ApiResponse 的 {code,message} 对象——产品内包封不一致，已登记）
+# 标准包封（登记簿清零后）：success=false、error.code=RATE_LIMITED、data 缺席
 err = j.get('error')
 ok = (j.get('success') is False
-      and (isinstance(err, str) and 'rate limit' in err.lower()
-           or isinstance(err, dict) and err.get('code') == 'RATE_LIMITED'))
+# 契约锚点是 error.code（message 文案随 limiteron locale/策略节点变化，
+# 不作断言依据——安全审查 F5：zh 文案/island 模式措辞不含 'rate limit'）
+      and isinstance(err, dict) and err.get('code') == 'RATE_LIMITED'
+      and j.get('data') is None)
 if not ok:
-    print(f'429 关卡断言失败：success={j.get(\"success\")!r} error={err!r}')
+    print(f'429 关卡断言失败：success={j.get(\"success\")!r} error={err!r} data={j.get(\"data\")!r}')
     sys.exit(1)
-print('429 关卡通过：429 + success=false + rate-limit 错误信号')
+print('429 关卡通过：429 + success=false + error.code=RATE_LIMITED')
 "; then
     log_pass "429 关卡通过（hit=$hit429/80）"
   else
