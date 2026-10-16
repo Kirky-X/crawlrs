@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Fixed（遗留收敛——UaPool 消费面/locale/arch + 测试门禁补齐）
+
+- **CriOS Client Hints 数据真相**：两个 iOS Chrome profile 的 `sec_ch_ua` 模板修正为空串（WKWebView 不发送任何 Client Hints，原 Chrome 品牌表系编造能力）——reqwest 等 UA 消费路径不再发出 "UA=WKWebView + 客户端提示=Chromium" 矛盾组合（数据层一修全修：pick()/pick_seeded/router 分支全量受益）；一致性单测把 CriOS 归入空串集
+- **Playwright locale 覆盖**：页面设置追加 `Emulation.setLocaleOverride`（locale = accept_language 首段标签），闭合 zh-CN 等 profile 的 "请求头 zh-CN 而 Intl 默认 en-US" 二次矛盾（launch `--lang` 为进程级固定值的残留缺口）；CDP 失败 best-effort 不阻断
+- **Sec-CH-UA-Arch 宿主一致**：architecture 由宿主 `std::env::consts::ARCH` 派生（x86_64→x86、aarch64→arm），替代硬编码 x86；Android profile 保持 arm 设备叙事
+- **测试门禁补齐**：liveapi 新增 `crawlrs migrate` 子命令幂等双跑验证（此前 psql 手工迁移恰好绕过二进制迁移路径）、429 限流关卡（80×SSRF 拒绝请求 burst → 429 + rate-limit 错误信号，置于 402 后；限流 helper 走旧式包封——error 为字符串，产品内包封不一致已备案）；api_test.sh 补 garrison 探针冒烟（`/health/live` 200、`/health/ready` 200|503）
+
 ### Changed（Playwright stealth 指纹一致性升级）
 
 - **补服务端可查的指纹矛盾（三路审查后收敛为四层）**：launch 改 New Headless（`new_headless_mode()`）+ `--disable-blink-features=AutomationControlled` + `--lang=en-US,en`（`playwright_pool.rs` 唯一 launch 点）；页面设置由裸 `set_user_agent` 升级为完整 `SetUserAgentOverrideParams`（UA + acceptLanguage + navigator.platform + userAgentMetadata）；brands 取 `UaProfile.sec_ch_ua` 逐版本权威模板（含 Edge/Samsung 正确品牌与 GREASE，与 wreq 发头同源——从 UA 串重解析会把 Edge 解析成 Google Chrome 品牌与 `Edg/` 标记自相矛盾）；**双词表拆分**：`navigator.platform`（Win32/MacIntel/iPhone/Linux armv8l）与 `Sec-CH-UA-Platform`（Windows/macOS/…）由 `build_ua_fingerprint` 各自映射，绝不同值双写（初版 UA 原文双写恰是待消除的矛盾类，审查捕获后修正）；Android 高熵字段按 UA 事实（architecture=arm、model 解析自 UA，`wv` WebView 标记置空）；CriOS（WKWebView，无 Client Hints 能力）从 `pick_chromium` 候选排除且 metadata 整体缺席——绝不发送空品牌 client hints；full_version_list 恒缺席（仅 Accept-CH 索取时发送，伪造比缺席危险）。无新增配置项

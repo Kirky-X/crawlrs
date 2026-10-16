@@ -97,6 +97,13 @@ pub struct UaPool {
     chromium_mobile: OnceLock<Vec<usize>>,
 }
 
+/// iOS WKWebView 家族判定：iOS 上所有第三方浏览器（Chrome=CriOS、
+/// Edge=EdgiOS、Firefox=FxiOS）均为 WKWebView 内核，不发 Client Hints，
+/// 与桌面引擎内核（Chromium/BoringSSL）组合即构成 UA-指纹矛盾。
+fn is_wkwebview_ua(ua: &str) -> bool {
+    ua.contains("CriOS") || ua.contains("EdgiOS") || ua.contains("FxiOS")
+}
+
 impl UaPool {
     /// 构造内置 ≥20 桌面 + ≥20 移动 profile 的 UA 池
     ///
@@ -123,11 +130,12 @@ impl UaPool {
             group
                 .iter()
                 .enumerate()
-                // CriOS（iOS Chrome）实为 WKWebView：UA 无 sec_ch_ua/Client
-                // Hints 能力，配 Chromium 内核（Playwright）或 BoringSSL
-                // 桌面 TLS（wreq）都构成 "UA 声称 iOS WebKit、指纹实为
-                // Chromium" 的矛盾——从 Chromium 系候选中排除
-                .filter(|(_, p)| p.tls_emulation.is_chromium_family() && !p.ua.contains("CriOS"))
+                // iOS 全部第三方浏览器（CriOS/EdgiOS/FxiOS）实为 WKWebView：
+                // UA 无 sec_ch_ua/Client Hints 能力，配 Chromium 内核
+                // （Playwright）或 BoringSSL 桌面 TLS（wreq）都构成
+                // "UA 声称 iOS WebKit、指纹实为 Chromium" 的矛盾——从
+                // Chromium 系候选中排除
+                .filter(|(_, p)| p.tls_emulation.is_chromium_family() && !is_wkwebview_ua(p.ua))
                 .map(|(i, _)| i)
                 .collect()
         })
@@ -491,7 +499,9 @@ fn mobile_profiles() -> Vec<UaProfile> {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/131.0.6778.73 Mobile/15E148 Safari/604.1",
             tls_emulation: TlsEmulation::Chrome131,
             accept_language: AL_EN_US,
-            sec_ch_ua: SEC_CHROME_131,
+            // iOS Chrome 跑在 WKWebView 上：不发任何 Client Hints（sec_ch_ua
+            // 空串 = 数据真相，消费方 is_empty 守卫自然跳过）
+            sec_ch_ua: "",
             platform: "iOS",
             viewport: (393, 852),
             mobile: true,
@@ -500,7 +510,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/130.0.6778.39 Mobile/15E148 Safari/604.1",
             tls_emulation: TlsEmulation::Chrome130,
             accept_language: AL_ZH_CN,
-            sec_ch_ua: SEC_CHROME_130,
+            sec_ch_ua: "",
             platform: "iOS",
             viewport: (390, 844),
             mobile: true,
@@ -632,7 +642,9 @@ fn mobile_profiles() -> Vec<UaProfile> {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/131.0.2592.73 Mobile/15E148 Safari/605.1.15",
             tls_emulation: TlsEmulation::Edge131,
             accept_language: AL_EN_US,
-            sec_ch_ua: SEC_EDGE_131,
+            // iOS 全部第三方浏览器均为 WKWebView（Edge iOS 亦然）：不发
+            // Client Hints——与 CriOS 同类，sec_ch_ua 必空
+            sec_ch_ua: "",
             platform: "iOS",
             viewport: (390, 844),
             mobile: true,
@@ -879,14 +891,24 @@ mod tests {
     fn test_sec_ch_ua_consistency_chromium() {
         let pool = UaPool::new();
         for p in pool.desktop.iter().chain(pool.mobile.iter()) {
-            let is_chromium = p.ua.contains("Chrome")
-                || p.ua.contains("CriOS")
-                || p.ua.contains("Edg")
-                || p.ua.contains("SamsungBrowser");
+            // iOS 全部第三方浏览器是 WKWebView（非 Chromium 引擎），不发
+            // Client Hints——sec_ch_ua 必空，与 Firefox/Safari 同侧
+            let is_wkwebview = is_wkwebview_ua(p.ua);
+            let is_chromium = !is_wkwebview
+                && (p.ua.contains("Chrome")
+                    || p.ua.contains("Edg")
+                    || p.ua.contains("SamsungBrowser"));
             if is_chromium {
                 assert!(
                     !p.sec_ch_ua.is_empty(),
                     "Chromium UA must have non-empty sec_ch_ua: {}",
+                    p.ua
+                );
+            }
+            if is_wkwebview {
+                assert!(
+                    p.sec_ch_ua.is_empty(),
+                    "WKWebView UA must have empty sec_ch_ua: {}",
                     p.ua
                 );
             }
@@ -897,18 +919,22 @@ mod tests {
     fn test_sec_ch_ua_consistency_non_chromium() {
         let pool = UaPool::new();
         for p in pool.desktop.iter().chain(pool.mobile.iter()) {
-            let is_chromium = p.ua.contains("Chrome")
-                || p.ua.contains("CriOS")
-                || p.ua.contains("Edg")
-                || p.ua.contains("SamsungBrowser");
+            // iOS 全部第三方浏览器（CriOS/EdgiOS/FxiOS）是 WKWebView（非
+            // Chromium 引擎），不发 Client Hints——sec_ch_ua 必空
+            let is_wkwebview = is_wkwebview_ua(p.ua);
+            let is_chromium = !is_wkwebview
+                && (p.ua.contains("Chrome")
+                    || p.ua.contains("Edg")
+                    || p.ua.contains("SamsungBrowser"));
             let is_firefox = p.ua.contains("Firefox") || p.ua.contains("FxiOS");
-            // Safari 唯一标识：含 "Version/" 且非 Chromium/Firefox 变体
-            // （iOS 上 Chrome=criOS、Firefox=FxiOS、Edge=EdgiOS 都带 "Safari" 但不带 "Version/"）
-            let is_safari = p.ua.contains("Version/") && !is_chromium && !is_firefox;
-            if is_firefox || is_safari {
+            // Safari 唯一标识：含 "Version/" 且非 Chromium/Firefox/WKWebView 变体
+            // （iOS 上 Chrome=CriOS、Firefox=FxiOS、Edge=EdgiOS 都带 "Safari" 但不带 "Version/"）
+            let is_safari =
+                p.ua.contains("Version/") && !is_chromium && !is_firefox && !is_wkwebview;
+            if is_firefox || is_safari || is_wkwebview {
                 assert!(
                     p.sec_ch_ua.is_empty(),
-                    "Firefox/Safari UA must have empty sec_ch_ua: {}",
+                    "Firefox/Safari/WKWebView UA must have empty sec_ch_ua: {}",
                     p.ua
                 );
             }

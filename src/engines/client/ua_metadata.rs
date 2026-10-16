@@ -45,10 +45,21 @@ pub struct UaFingerprint {
     pub navigator_platform: Option<&'static str>,
 }
 
-/// architecture 固定值（UA 串不含指令集信息；Android 真机为 arm，
-/// 桌面按 design 固定 x86）。
-const ARCH_DESKTOP: &str = "x86";
-const ARCH_ANDROID: &str = "arm";
+/// Sec-CH-UA-Arch 取宿主真实指令集（浏览器就跑在宿主上，真实 Chrome 上报
+/// 真实值）：x86_64→x86、aarch64→arm，其余平台保守回退 x86。
+fn host_architecture() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" => "x86",
+        "aarch64" => "arm",
+        _ => "x86",
+    }
+}
+
+/// Android profile 的 Sec-CH-UA-Arch：设备叙事恒为 arm（真机 Android
+/// Chrome 上报 arm）——与宿主指令集无关，模拟设备连贯性优先。
+fn android_architecture() -> &'static str {
+    "arm"
+}
 /// bitness 固定 64（移动端 iOS Chrome 上报同样为 64 位语义）
 const BITNESS: &str = "64";
 
@@ -73,11 +84,12 @@ pub fn build_ua_fingerprint(
     // 与 client hints 无耦合，仍可安全覆盖
     let metadata = brands.map(|b| {
         let (platform, platform_version) = client_hint_platform(profile_platform, ua);
-        // Android 真机为 arm 指令集；判定须在 platform move 前完成
+        // Android 真机为 arm 指令集（设备叙事）；桌面取宿主真实指令集。
+        // 判定须在 platform move 前完成
         let architecture = if mobile && platform == "Android" {
-            ARCH_ANDROID.to_string()
+            android_architecture().to_string()
         } else {
-            ARCH_DESKTOP.to_string()
+            host_architecture().to_string()
         };
         UserAgentMetadata {
             brands: Some(b),
@@ -408,6 +420,13 @@ mod tests {
 
         let meta = fp.metadata.expect("metadata present");
         assert_eq!(meta.platform, "macOS");
+    }
+
+    #[test]
+    fn test_host_architecture_static_mapping() {
+        // 静态已知映射（非恒真式：与实现各自的 match 独立书写）
+        assert_eq!(super::host_architecture(), "x86"); // 本仓编译目标 x86_64
+        assert_eq!(super::android_architecture(), "arm");
     }
 
     #[test]

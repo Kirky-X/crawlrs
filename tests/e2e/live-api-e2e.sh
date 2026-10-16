@@ -150,6 +150,19 @@ if [ "$SKIP_BUILD" != "1" ]; then
 fi
 [ -x "$BIN" ] || { log_fail "二进制不存在: $BIN（先构建）"; exit 1; }
 
+# ── 2b. migrate 子命令验证：CLI 迁移路径回归（psql 主路径之后、server 之前）──
+# 双跑即幂等断言：迁移文件非幂等时二跑必报错
+log_info "验证 crawlrs migrate 子命令（幂等双跑）..."
+MIGRATE_LOG="test-results/liveapi-migrate.log"
+: > "$MIGRATE_LOG"
+CRAWLRS__DATABASE__URL="$TEST_DATABASE_URL" \
+    CRAWLRS__AUTH__JWT_SECRET="$JWT_SECRET" "$BIN" migrate >> "$MIGRATE_LOG" 2>&1 \
+    || { log_fail "crawlrs migrate 首跑失败（见 $MIGRATE_LOG）"; exit 1; }
+CRAWLRS__DATABASE__URL="$TEST_DATABASE_URL" \
+    CRAWLRS__AUTH__JWT_SECRET="$JWT_SECRET" "$BIN" migrate >> "$MIGRATE_LOG" 2>&1 \
+    || { log_fail "crawlrs migrate 二跑（幂等）失败（见 $MIGRATE_LOG）"; exit 1; }
+log_pass "crawlrs migrate 幂等双跑通过"
+
 # ── 3. 启动服务（进程内自举 admin key）────────────────────────────────────────
 # garrison DAO 为进程内 oxcache 存储（跨进程不可见），admin key 必须由 API
 # 进程自身经 CRAWLRS_BOOTSTRAP_ADMIN=true 签发。run_bootstrap 仅在交互终端
@@ -158,10 +171,13 @@ fi
 log_info "启动 crawlrs API 服务 (port=$SERVER_PORT, 进程内自举 admin key)..."
 SERVER_LOG="test-results/liveapi-server.log"
 : > "$SERVER_LOG"
+# 团队信号量随 worker 提量：default_team_limit=10 会把并发在途钉在 10
+# （饥饿家族根因——64 worker 大半闲置），测试环境双侧提到 64
 script -qefc "env CRAWLRS__DATABASE__URL='$TEST_DATABASE_URL' \
     CRAWLRS__AUTH__JWT_SECRET='$JWT_SECRET' \
     CRAWLRS__WEBHOOK__SECRET='$WEBHOOK_SECRET' \
     CRAWLRS__SERVER__PORT='$SERVER_PORT' \
+    CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT='64' \
     CRAWLRS_BOOTSTRAP_ADMIN=true \
     RUST_LOG='${RUST_LOG:-info}' \
     '$BIN' api" /dev/null > "$SERVER_LOG" 2>&1 &
@@ -186,9 +202,13 @@ log_pass "服务就绪: $BASE_URL"
 # 数据库与 garrison 环境；缺失会导致任务停留在 queued。
 log_info "启动 crawlrs worker 进程..."
 WORKER_LOG="test-results/liveapi-worker.log"
+# worker 提量：语义套件的 crawl 场景子任务（深 1 × ~24 链接）会占满
+# auto（2×核数）配额，尾部场景（include_patterns/markdown）排队饿死
+# （实测三跑两现）——固定 64 让饱和点远超套件爬取广度
 env CRAWLRS__DATABASE__URL="$TEST_DATABASE_URL" \
     CRAWLRS__AUTH__JWT_SECRET="$JWT_SECRET" \
-    RUST_LOG="${RUST_LOG:-info}" \
+    CRAWLRS__WORKERS__COUNT='64' \
+    CRAWLRS__CONCURRENCY__DEFAULT_TEAM_LIMIT='64' RUST_LOG="${RUST_LOG:-info}" \
     "$BIN" worker > "$WORKER_LOG" 2>&1 &
 WORKER_PID=$!
 log_pass "worker 已启动 (pid=$WORKER_PID)"
@@ -302,12 +322,65 @@ else
   QUOTA_RC=1
 fi
 
+# ── 6c. 429 限流关卡（burst → RATE_LIMITED 包封）────────────────────────────
+# 置于 402 之后（本探针为免费 SSRF 拒绝请求，不耗积分；限流检查先于 SSRF
+# 校验——scrape_commands.rs:81，计数必发生）、汇总之前。memory 后端按进程
+# 计数，探针位于全部业务场景之后避免污染前序。桶容量 = default_rpm=60
+# （services.rs:243 桥接），80 连发 + 期间 ~1/s 回添保证必触发。
+RL429_RC=0
+if [ "$SMOKE_RC" = "0" ] && [ "$SEMANTICS_RC" = "0" ] && [ "$QUOTA_RC" = "0" ]; then
+  log_info "429 关卡：burst 80×POST /v1/scrape（SSRF 拒绝体，免费）触发限流..."
+  RL429_BODY=""
+  hit429=0
+  for i in $(seq 1 80); do
+    code=$(curl -s -o test-results/.rl429-body.json -w '%{http_code}' --max-time 10 \
+      -X POST "${BASE_URL}/v1/scrape" \
+      -H "Content-Type: application/json" -H "Authorization: Bearer $API_KEY" \
+      -d '{"url":"http://127.0.0.1:1"}' 2>/dev/null || echo 000)
+    if [ "$code" = "429" ]; then
+      hit429=$((hit429+1))
+      [ -z "$RL429_BODY" ] && RL429_BODY=$(cat test-results/.rl429-body.json 2>/dev/null || true)
+    fi
+  done
+  echo "${RL429_BODY:-}" > test-results/api-quota-429.json
+  if RL429_BODY="$RL429_BODY" HIT429="$hit429" python3 -c "
+import json, os, sys
+body = os.environ.get('RL429_BODY') or ''
+if int(os.environ['HIT429']) < 1:
+    print('429 关卡失败：80 连发未触发任何 429（限流未生效或配置关闭）')
+    sys.exit(1)
+try:
+    j = json.loads(body)
+except Exception:
+    print(f'429 关卡失败：429 响应非 JSON：{body[:200]!r}')
+    sys.exit(1)
+# 实际形态备案：限流 helper 走旧式包封（error 为字符串，非标准
+# ApiResponse 的 {code,message} 对象——产品内包封不一致，已登记）
+err = j.get('error')
+ok = (j.get('success') is False
+      and (isinstance(err, str) and 'rate limit' in err.lower()
+           or isinstance(err, dict) and err.get('code') == 'RATE_LIMITED'))
+if not ok:
+    print(f'429 关卡断言失败：success={j.get(\"success\")!r} error={err!r}')
+    sys.exit(1)
+print('429 关卡通过：429 + success=false + rate-limit 错误信号')
+"; then
+    log_pass "429 关卡通过（hit=$hit429/80）"
+  else
+    log_fail "429 关卡失败（见 test-results/api-quota-429.json）"
+    RL429_RC=1
+  fi
+else
+  log_info "429 关卡跳过（前序 smoke/semantics/402 未全绿）"
+  RL429_RC=1
+fi
+
 # ── 7. 汇总 ──────────────────────────────────────────────────────────────────
 echo ""
-if [ "$SMOKE_RC" = "0" ] && [ "$SEMANTICS_RC" = "0" ] && [ "$QUOTA_RC" = "0" ]; then
+if [ "$SMOKE_RC" = "0" ] && [ "$SEMANTICS_RC" = "0" ] && [ "$QUOTA_RC" = "0" ] && [ "$RL429_RC" = "0" ]; then
   log_pass "活体 API E2E 全部通过"
-  echo "产物: test-results/{api-smoke.log, api-semantics.log, api-audit.jsonl, api-interaction-digest.md, api-semantics-matrix.md, api-quota-402.json, liveapi-server.log}"
+  echo "产物: test-results/{api-smoke.log, api-semantics.log, api-audit.jsonl, api-interaction-digest.md, api-semantics-matrix.md, api-quota-402.json, api-quota-429.json, liveapi-server.log}"
   exit 0
 fi
-log_fail "活体 API E2E 存在失败（smoke=$SMOKE_RC semantics=$SEMANTICS_RC quota402=$QUOTA_RC）"
+log_fail "活体 API E2E 存在失败（smoke=$SMOKE_RC semantics=$SEMANTICS_RC quota402=$QUOTA_RC rl429=$RL429_RC）"
 exit 1

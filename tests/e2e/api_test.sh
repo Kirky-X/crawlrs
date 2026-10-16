@@ -141,6 +141,19 @@ else
     echo -e "  ${RED}✗${NC} [$READY_CODE ≠ 200|503] GET /ready"
 fi
 
+# garrison 探针（auth 面，S2 吸收）：/health/live 恒 200（liveness）；
+# /health/ready 聚合 HealthRegistry，200/503 双态均为合法系统态
+run_test "GET /health/live (200)"  200 GET "/health/live"       "" "noauth"
+GREADY_CODE=$(curl -s -o /dev/null -w '%{http_code}' "${BASE_URL}/health/ready" 2>/dev/null || echo "000")
+TOTAL=$((TOTAL + 1))
+if [[ "$GREADY_CODE" == "200" || "$GREADY_CODE" == "503" ]]; then
+    PASS=$((PASS + 1))
+    echo -e "  ${GREEN}✓${NC} [$GREADY_CODE] GET /health/ready (200 就绪 | 503 摘流，均合法)"
+else
+    FAIL=$((FAIL + 1))
+    echo -e "  ${RED}✗${NC} [$GREADY_CODE ≠ 200|503] GET /health/ready"
+fi
+
 # 公开端点 — 错误方法
 run_test "POST /health (405)"     405 POST "/health"           "" "noauth"
 run_test "GET /v1/scrape (401 无认证)"  401 GET "/v1/scrape"         "" "noauth"

@@ -616,6 +616,24 @@ impl ScraperEngine for PlaywrightEngine {
                 EngineError::BrowserError(format!("Failed to set user agent override: {}", e))
             })?;
 
+            // locale 覆盖：取 accept_language 首段标签（zh-CN,zh;q=0.9 →
+            // zh-CN），同时校正 navigator.language 与 Intl 默认 locale——
+            // launch 的进程级 --lang=en-US,en 会给 zh-CN profile 留下
+            // "请求头 zh-CN 而 Intl en-US" 的二次矛盾，此处按 profile 闭合。
+            // best-effort：CDP 失败仅告警（与 stealth 注入同策略，不阻断抓取）
+            if let Some(locale) = profile.accept_language.split(',').next() {
+                if let Err(e) = page
+                    .execute(
+                        chromiumoxide::cdp::browser_protocol::emulation::SetLocaleOverrideParams::builder()
+                            .locale(locale.trim())
+                            .build(),
+                    )
+                    .await
+                {
+                    log::warn!("Failed to set locale override: {}", e);
+                }
+            }
+
             // Set viewport to match UA platform（viewport 与 UA 一致）
             // 用 CDP Emulation.setDeviceMetricsOverride 设置视口尺寸 + mobile 标志
             let viewport_params = SetDeviceMetricsOverrideParams::new(

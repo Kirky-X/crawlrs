@@ -1758,10 +1758,15 @@ mod tests {
                 !p.accept_language.is_empty(),
                 "Accept-Language must be non-empty"
             );
-            let is_chromium = p.ua.contains("Chrome")
-                || p.ua.contains("CriOS")
-                || p.ua.contains("Edg")
-                || p.ua.contains("SamsungBrowser");
+            // iOS 全部第三方浏览器（CriOS/EdgiOS/FxiOS）是 WKWebView（非
+            // Chromium 引擎），不发 Client Hints——sec_ch_ua 必空（数据真相
+            // 见 ua_pool is_wkwebview_ua）
+            let is_wkwebview =
+                p.ua.contains("CriOS") || p.ua.contains("EdgiOS") || p.ua.contains("FxiOS");
+            let is_chromium = !is_wkwebview
+                && (p.ua.contains("Chrome")
+                    || p.ua.contains("Edg")
+                    || p.ua.contains("SamsungBrowser"));
             if is_chromium {
                 assert!(
                     !p.sec_ch_ua.is_empty(),
@@ -1771,7 +1776,7 @@ mod tests {
             } else {
                 assert!(
                     p.sec_ch_ua.is_empty(),
-                    "Non-Chromium UA must have empty sec_ch_ua: {}",
+                    "Non-Chromium (incl. WKWebView) UA must have empty sec_ch_ua: {}",
                     p.ua
                 );
             }

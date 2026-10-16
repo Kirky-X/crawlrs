@@ -49,7 +49,7 @@ from datetime import datetime, timezone
 
 # 任务状态机合法词汇（与 domain TaskStatus 序列化对齐；超集防御性放宽）
 TASK_STATUS_VOCAB = {
-    "queued", "pending", "processing", "running",
+    "queued", "active", "pending", "processing", "running",
     "completed", "success", "failed", "cancelled", "canceled",
 }
 TERMINAL_STATUSES = {"completed", "success", "failed", "cancelled", "canceled"}
@@ -851,7 +851,13 @@ def build_scenarios(r: Runner):
             check(False, f"响应为 JSON（{text[:120]!r}）")
             return
         if s == 500:
-            Runner.error_envelope(check, j, s, "sdk search(engine-down)")
+            # sdforge 错误体为裸 {code,field,message}（非 ApiResponse 包封）——
+            # 与 sdk_search_empty 同式的双形态兼容
+            if isinstance(j, dict) and "success" in j:
+                Runner.error_envelope(check, j, s, "sdk search(engine-down)")
+            else:
+                check(bool(j.get("error") or j.get("message")),
+                      "sdforge 错误体含 error/message 信号")
             r.auditor.log_event("env_note", "sdk_search",
                                 {"note": "搜索引擎不可达（网络受限），验证显式失败包封"})
         else:
@@ -1204,6 +1210,32 @@ def build_scenarios(r: Runner):
         if final.get("status") not in ("completed", "success"):
             return
         md = (((final.get("result") or {}).get("meta_data") or {}).get("markdown")) or ""
+        if len(md) < 100:
+            # 站点变体容错：npr 偶发返回空正文变体——重提交一次再判
+            r.auditor.log_event("env_note", "markdown_extraction",
+                                {"note": f"首次 markdown 空或过短(len={len(md)})，重试一次"})
+            s0, _, _, j0 = c.request("extract_md_create_retry", "POST", "/v1/scrape",
+                                     body=json.dumps({"url": NEWS_PRIMARY,
+                                                      "formats": ["markdown"],
+                                                      "exclude_tags": ["style", "script"],
+                                                      "metadata": {"e2e": "text-extraction-retry"}}),
+                                     timeout=60)
+            check(s0 in (200, 201, 202), f"重试创建 2xx（got {s0}）")
+            task_id = ((j0 or {}).get("data") or {}).get("id")
+            final = None
+            deadline = time.monotonic() + 90
+            while task_id and time.monotonic() < deadline:
+                s, _, _, j = c.request("extract_md_poll_retry", "GET", f"/v1/scrape/{task_id}",
+                                       timeout=30)
+                if s == 200 and j:
+                    st = ((j.get("data") or {}).get("status"))
+                    if st in TERMINAL_STATUSES:
+                        final = j.get("data")
+                        break
+                time.sleep(1.5)
+            check(final is not None and final.get("status") in ("completed", "success"),
+                  f"重试任务完成（got {(final or {}).get('status')}）")
+            md = (((final or {}).get("result") or {}).get("meta_data") or {}).get("markdown") or ""
         check(bool(md) and len(md) >= 100, f"meta_data.markdown 非空（len={len(md)}）")
         if not md:
             return
