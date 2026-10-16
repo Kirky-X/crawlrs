@@ -123,7 +123,11 @@ impl UaPool {
             group
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| p.tls_emulation.is_chromium_family())
+                // CriOS（iOS Chrome）实为 WKWebView：UA 无 sec_ch_ua/Client
+                // Hints 能力，配 Chromium 内核（Playwright）或 BoringSSL
+                // 桌面 TLS（wreq）都构成 "UA 声称 iOS WebKit、指纹实为
+                // Chromium" 的矛盾——从 Chromium 系候选中排除
+                .filter(|(_, p)| p.tls_emulation.is_chromium_family() && !p.ua.contains("CriOS"))
                 .map(|(i, _)| i)
                 .collect()
         })

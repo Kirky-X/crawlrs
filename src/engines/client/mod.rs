@@ -15,6 +15,12 @@ pub mod playwright;
 #[cfg(feature = "engine-playwright")]
 pub mod playwright_pool;
 
+/// UA 客户端提示 metadata 构造（Sec-CH-UA 一致性，纯函数）
+///
+/// 依赖 chromiumoxide CDP 类型，仅在浏览器引擎启用时可用。
+#[cfg(feature = "engine-playwright")]
+pub mod ua_metadata;
+
 /// Chrome CDP Tab 池
 ///
 /// Page（tab）级复用，减少 `browser.new_page` 开销。

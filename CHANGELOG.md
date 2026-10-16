@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Changed（Playwright stealth 指纹一致性升级）
+
+- **补服务端可查的指纹矛盾（三路审查后收敛为四层）**：launch 改 New Headless（`new_headless_mode()`）+ `--disable-blink-features=AutomationControlled` + `--lang=en-US,en`（`playwright_pool.rs` 唯一 launch 点）；页面设置由裸 `set_user_agent` 升级为完整 `SetUserAgentOverrideParams`（UA + acceptLanguage + navigator.platform + userAgentMetadata）；brands 取 `UaProfile.sec_ch_ua` 逐版本权威模板（含 Edge/Samsung 正确品牌与 GREASE，与 wreq 发头同源——从 UA 串重解析会把 Edge 解析成 Google Chrome 品牌与 `Edg/` 标记自相矛盾）；**双词表拆分**：`navigator.platform`（Win32/MacIntel/iPhone/Linux armv8l）与 `Sec-CH-UA-Platform`（Windows/macOS/…）由 `build_ua_fingerprint` 各自映射，绝不同值双写（初版 UA 原文双写恰是待消除的矛盾类，审查捕获后修正）；Android 高熵字段按 UA 事实（architecture=arm、model 解析自 UA，`wv` WebView 标记置空）；CriOS（WKWebView，无 Client Hints 能力）从 `pick_chromium` 候选排除且 metadata 整体缺席——绝不发送空品牌 client hints；full_version_list 恒缺席（仅 Accept-CH 索取时发送，伪造比缺席危险）。无新增配置项
+- **实测基线（test-results/antibot/）**：header 回声取证 `Sec-CH-UA` 由缺失/HeadlessChrome 变模板品牌（`Google Chrome`+`Chromium`+GREASE，版本与 UA 一致）、`Sec-CH-UA-Platform` 为 client-hints 词表（`macOS`，非 UA 原文 `Mac OS X`）；反爬矩阵 nowsecure.nl/g2.com × js_rendering 通过率 0%→0%（js/plain 均被分类器显式判 `cloudflare challenge structure matched`，兜底语义不变；Turnstile 穿透不在承诺内，见变更 Deferred）。冒烟位 npr-plain 受同机并行构建 CPU 争用致 reqwest 5s MRT 熔断（curl 直测 1.1s 正常），属取证环境噪声，非产品回归
+
 ### Changed（同作者依赖族 rc 线对齐）
 
 - **dbnexus 依赖族对齐 rc.9 线**：移除 dbnexus 已删除的死特性 `config-toml`（rc.6 时即空壳——`= []` 不拉依赖不门控代码，crawlrs 的 TOML 解析来自直接依赖 confers，与该特性无关；上游 `../base/dbnexus@c59ae46` 清理）。vecboost（本地 patch）清单抬到 dbnexus rc.9 后锁失效重解析，各同作者库按既有「最低 rc」semver 要求自动落位最新满足版：dbnexus rc.9 / confers rc.10（rc.8/rc.9 已 yank）/ trait-kit rc.9 / inklog rc.9 / oxcache rc.8 / limiteron rc.7 / sdforge rc.8；garrison 维持 rc.2 不动。`cargo check` 一次通过零 API 破损；完整回归：clippy(default|full) 0 告警、lib 测试 6014+6184 通过、集成 152 通过、liveapi 完整构建全链绿（构建路径自 vecboost 清单变更后首次恢复）。`Cargo.lock` 同步入库

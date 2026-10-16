@@ -504,9 +504,15 @@ impl BrowserPoolState {
             // 获取浏览器路径
             let browser_path = self.get_or_download_browser().await?;
 
+            // stealth：New Headless（真 Chrome 身份，消除旧 headless 的品牌/制品类
+            // 指纹）+ 浏览器层关闭 Blink 自动化标记（navigator.webdriver 的源头，
+            // JS 脚本覆盖只是补救）+ 语言一致性
             let mut builder = BrowserConfig::builder()
                 .no_sandbox()
-                .request_timeout(Duration::from_secs(30));
+                .new_headless_mode()
+                .request_timeout(Duration::from_secs(30))
+                .arg("--disable-blink-features=AutomationControlled")
+                .arg("--lang=en-US,en");
 
             // F6：每实例独立临时 profile 目录。chromiumoxide 默认共享
             // /tmp/chromiumoxide-runner，持有 Chrome SingletonLock——并发启动

@@ -3,6 +3,7 @@
 
 use crate::engines::browser_downloader::{BrowserDownloadConfig, BrowserDownloadManager};
 use crate::engines::client::playwright_pool::{get_global_pool, BrowserPool, BrowserPoolConfig};
+use crate::engines::client::ua_metadata::{build_ua_fingerprint, cdp_accept_language};
 use crate::engines::engine_client::{
     EngineError, InternalCapturedResponse, InternalPageAction, InternalScrapeRequest,
     InternalScrapeResponse, InternalScreenshotConfig, ScraperEngine,
@@ -14,7 +15,9 @@ use crate::utils::proxy::{redact_proxy_url, validate_proxy_url};
 use crate::utils::ua_pool::UaPool;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
+use chromiumoxide::cdp::browser_protocol::emulation::{
+    SetDeviceMetricsOverrideParams, SetUserAgentOverrideParams,
+};
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, EnableParams, EventRequestPaused, FailRequestParams,
 };
@@ -568,9 +571,50 @@ impl ScraperEngine for PlaywrightEngine {
             let profile = self.ua_pool.pick_chromium(request.mobile);
 
             // Set User-Agent（所有请求都设，不只 mobile）
-            page.set_user_agent(profile.ua)
-                .await
-                .map_err(|e| EngineError::BrowserError(e.to_string()))?;
+            // 完整 override：UA + acceptLanguage + navigator.platform +
+            // userAgentMetadata。裸 UA 串曾让 Sec-CH-UA* 请求头与
+            // navigator.userAgentData 停留浏览器默认品牌 HeadlessChrome
+            // （HTTP UA 声称 Chrome、客户端提示声称 HeadlessChrome，服务端
+            // 单请求即可识破）；userAgentMetadata 正是 CDP 的 "To be sent
+            // in Sec-CH-UA-* headers and returned in navigator.userAgentData"
+            // 官方通道。
+            // 两个 CDP platform 字段词表不同（navigator.platform: Win32/
+            // MacIntel/iPhone…；Sec-CH-UA-Platform: Windows/macOS/…），
+            // 由 build_ua_fingerprint 各自映射，绝不同值双写。brands 取
+            // profile.sec_ch_ua 逐版本权威模板（含 Edge/Samsung 正确品牌
+            // 与 GREASE，与 wreq 引擎发头同源）——从 UA 串重解析会把 Edge
+            // 解析成 "Google Chrome" 品牌，与 Edg/ 标记自相矛盾。
+            // metadata 缺席（WKWebView 家族如 CriOS 无 Client Hints）时
+            // 跳过 metadata 设置，回退纯 UA 字符串覆盖——绝不发送空品牌。
+            // acceptLanguage 取 profile 绑定值——与 wreq 引擎
+            // （wreq_engine.rs:619 同样发 profile.accept_language）跨引擎
+            // 一致，避免 zh-CN/en-GB profile 与 en-US 语言串的自相矛盾。
+            let fingerprint = build_ua_fingerprint(
+                profile.ua,
+                profile.sec_ch_ua,
+                profile.platform,
+                profile.mobile,
+            );
+            let mut ua_override = SetUserAgentOverrideParams::builder()
+                .user_agent(profile.ua)
+                .accept_language(cdp_accept_language(
+                    profile.accept_language,
+                ));
+            if let Some(navigator_platform) = fingerprint.navigator_platform {
+                ua_override = ua_override.platform(navigator_platform);
+            }
+            if let Some(metadata) = fingerprint.metadata {
+                ua_override = ua_override.user_agent_metadata(metadata);
+            }
+            let ua_override = ua_override.build().map_err(|e| {
+                EngineError::BrowserError(format!("Failed to build user agent override: {}", e))
+            })?;
+            // Emulation.setUserAgentOverride（非 Network 变体）：CDP 文档明确
+            // "userAgentMetadata must be set for Client Hint headers to be
+            // sent"——Sec-CH-UA* 头由该通道生成
+            page.execute(ua_override).await.map_err(|e| {
+                EngineError::BrowserError(format!("Failed to set user agent override: {}", e))
+            })?;
 
             // Set viewport to match UA platform（viewport 与 UA 一致）
             // 用 CDP Emulation.setDeviceMetricsOverride 设置视口尺寸 + mobile 标志
