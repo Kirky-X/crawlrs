@@ -462,7 +462,7 @@ Scrape a single web page.
 | `conditional_request` | boolean | — | Incremental fetch: send `If-None-Match`/`If-Modified-Since` when a prior result exists; a `304` reuses the historical content (`x-crawlrs-not-modified: true`) |
 | `block_ads` | boolean | false | Block common ad-domain requests in browser engines |
 | `block_media` | boolean | false | Block image/video/audio media loading in browser engines (speeds up text-only scraping) |
-| `needs_mllm` | boolean | false | Require MLLM visual analysis of the screenshot. Requires the `llm` feature: builds without it reject the request **at execution time** — the worker consuming the `create_scrape` use case fails the task with an explicit validation error (`needs_mllm requires the \`llm\` feature`), instead of silently degrading to a non-MLLM engine. Submission itself succeeds (task is enqueued and later marked `failed`) |
+| `needs_mllm` | boolean | false | Require MLLM visual analysis of the screenshot. Requires the `engine-mllm` feature: builds without it reject the request **at submission time** with an explicit validation error (`needs_mllm requires the \`engine-mllm\` feature`) instead of silently degrading to a non-MLLM engine; the worker repeats the check for paths that bypass the `create_scrape` use case |
 
 > `session_id` remains an internal engine field (browser-session reuse is not exposed per-request yet). Unknown fields are still rejected with 422 via `deny_unknown_fields`.
 

@@ -1450,18 +1450,18 @@ impl ScrapeWorker {
                     })
                     .collect(),
                 sync_wait_ms: dto.sync_wait_ms.unwrap_or(0),
-                // needs_mllm 在 llm 特性关闭时显性失败：任务已在队列中，静默降级
+                // needs_mllm 在 engine-mllm 特性关闭时显性失败：任务已在队列中，静默降级
                 // 到普通引擎会让用户以为做了视觉分析——失败必须显性化。
                 // （API 入口的 create_scrape use-case 在提交时已先行拒绝，此处
                 // 兜底覆盖直写队列/旧版本任务等绕过 use-case 的路径。）
                 needs_mllm: {
                     let requested = options.and_then(|o| o.needs_mllm).unwrap_or(false);
                     if requested {
-                        #[cfg(not(feature = "llm"))]
+                        #[cfg(not(feature = "engine-mllm"))]
                         anyhow::bail!(
-                            "task requested needs_mllm but this build lacks the `llm` feature"
+                            "task requested needs_mllm but this build lacks the `engine-mllm` feature"
                         );
-                        #[cfg(feature = "llm")]
+                        #[cfg(feature = "engine-mllm")]
                         log::debug!("task requests MLLM analysis");
                     }
                     requested

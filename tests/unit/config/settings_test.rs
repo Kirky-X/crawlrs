@@ -24,17 +24,8 @@ mod tests {
                     settings.search.enable_ab_testing
                 );
 
-                println!("\nBing Search Config:");
-                println!(
-                    "  API Key: {}",
-                    if settings.llm.api_key.is_some() {
-                        "[SET]"
-                    } else {
-                        "[NOT SET]"
-                    }
-                );
+                println!("\nLLM Config:");
                 println!("  Model: {:?}", settings.llm.model);
-                println!("  API Base URL: {:?}", settings.llm.api_base_url);
 
                 println!("\nDatabase Config:");
                 println!("  URL: {}", settings.database.url);
@@ -43,7 +34,6 @@ mod tests {
                 assert!(settings.bing_search.api_key.is_some());
                 assert!(settings.search.default_engine.is_some());
                 assert!(settings.llm.model.is_some());
-                assert!(settings.llm.api_base_url.is_some());
 
                 println!("\n✓ All configuration sections loaded successfully!");
             }

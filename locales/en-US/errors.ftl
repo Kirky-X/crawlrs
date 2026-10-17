@@ -19,7 +19,7 @@ error-io = Internal I/O error. Please try again later.
 error-engine = Engine error occurred.
 error-internal = Internal server error. Please try again later.
 
-# Domain error messages (17 keys)
+# Domain error messages (18 keys)
 
 domain-error-crawl-config = Crawler configuration error: { $message }
 domain-error-depth-exceeded = Crawl depth exceeded: maximum { $max }, requested { $requested }.
@@ -36,6 +36,7 @@ domain-error-robots-forbidden = URL is forbidden by robots.txt: { $url }
 domain-error-webhook-delivery-failed = Webhook delivery failed.
 domain-error-invalid-webhook-url = Invalid webhook URL: { $url }
 domain-error-llm-extraction-failed = LLM extraction failed.
+domain-error-llm-carrier-not-injected = LLM carrier is not injected: crawlrs no longer bundles LLM provider access; inject a host implementation of LLMServiceTrait.
 domain-error-invalid-css-selector = Invalid CSS selector: { $selector }
 domain-error-validation = Validation error: { $field } - { $message }
 

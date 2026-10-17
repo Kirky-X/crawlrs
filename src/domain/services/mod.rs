@@ -11,7 +11,7 @@
 //! - 提取服务（extraction_service）：处理内容提取和数据解析逻辑
 //! - 提取工具（extraction_utils）：消除提取逻辑重复的共享工具函数
 //! - 地理位置服务（geo_location）：提供IP地址地理位置查询的抽象接口
-//! - LLM服务（llm_service）：集成大语言模型进行智能处理
+//! - LLM 边界（llm）：`LLMServiceTrait` 唯一边界，供应商访问由宿主注入 carrier
 //! - 重试处理器（retry_handler）：处理任务失败的重试逻辑
 //! - 搜索服务（search_service）：处理内容搜索和索引逻辑
 //! - 团队服务（team_service）：处理团队地理限制验证逻辑
@@ -42,7 +42,6 @@ pub mod extraction_utils;
 pub mod geo_location;
 pub mod id_service;
 pub mod llm;
-pub mod llm_provider_strategy;
 /// Markdown 转换服务（content-processing R1）
 ///
 /// gated `markdown` 特性（依赖 `htmd`）。`markdown` 已加入 `standard`/`full`。

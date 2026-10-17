@@ -20,7 +20,7 @@
 //! export GEMINI_API_KEY="your-api-key"
 //!
 //! # 运行示例
-//! cargo run --example mllm_scrape --features full
+//! cargo run --example mllm_scrape --features full,engine-mllm
 //! ```
 
 use crawlrs::engines::engine_client::{EngineClient, ScrapeRequest};

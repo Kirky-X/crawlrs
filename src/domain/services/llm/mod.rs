@@ -1,36 +1,23 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! LLMService - LLM provider interaction handling
+//! LLM 边界与提取编排
 //!
-//! 核心调度层：组合 `prompt_builder`（模板 + prompt 构造）与
-//! `provider_adapter`（HTTP 请求发送）完成 LLM 数据提取；
-//! 长文经 `chunker`（F8）按模型窗口分块并行提取。
+//! [`LLMServiceTrait`] 是 crawlrs 唯一的 LLM 边界：供应商访问由宿主注入的
+//! carrier 承担（默认 [`ExplicitErrorCarrier`] 在未注入时显式报错）。
+//! `prompt_builder`（模板 + prompt 构造）、`chunker`（token 窗口分块并行）、
+//! `provenance`（字符级溯源）保留为编排工具，宿主 carrier 可复用。
 
 pub mod chunker; // token 窗口分块 + 并行提问 + merge（F8）
 pub mod prompt_builder;
 pub mod provenance; // 提取结果字符级溯源对齐（F9）
-pub mod provider_adapter;
-pub mod vision_adapter; // 视觉模型适配器（MLLM 引擎依赖）
+#[cfg(feature = "engine-mllm")]
+pub mod vision_adapter; // 视觉模型适配器（MLLM 引擎依赖，genai 仅经此面保留）
 
-use chunker::ChunkingConfig;
-
-#[cfg(test)]
-use prompt_builder::TemplateLoaderTrait;
-use prompt_builder::{
-    build_prompt, parse_llm_response, FileTemplateLoader, InMemoryTemplateLoader, TemplateLoader,
-};
-use provider_adapter::resolve_provider;
-
-use crate::config::settings::Settings;
 use anyhow::Result;
 use async_trait::async_trait;
-#[cfg(feature = "llm")]
-use genai::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Token usage tracking for LLM calls
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,7 +39,8 @@ pub trait LLMServiceTrait: Send + Sync {
     /// 分块提取：长文按模型窗口切块 → 并行提问 → merge 综合（F8）
     ///
     /// 默认实现等价 [`LLMServiceTrait::extract_data`]（未接入分块的实现方零改动）；
-    /// `LLMService` 覆盖实现，`[llm.chunking].enabled = false` 时同样直走单发路径。
+    /// 宿主 carrier 可复用 [`chunker::extract_chunked`] 覆盖实现，
+    /// `[llm.chunking].enabled = false` 时同样直走单发路径。
     async fn extract_data_chunked(
         &self,
         text: &str,
@@ -79,258 +67,178 @@ pub trait LLMServiceTrait: Send + Sync {
     }
 }
 
-/// LLM服务 - 处理与LLM提供商的交互
-#[derive(Clone)]
-pub struct LLMService {
-    http_client: Arc<reqwest::Client>,
-    /// LLM 客户端
-    #[cfg(feature = "llm")]
-    _client: Client,
-    /// 使用的模型
-    model: String,
-    /// 提供商
-    provider: String,
-    /// API 基础 URL
-    api_base_url: Option<String>,
-    /// API 密钥
-    api_key: Option<String>,
-    /// 提示模板（缓存）
-    templates: HashMap<String, String>,
-    /// token 窗口分块配置（F8；来自 `[llm.chunking]`，经 extract_data_with_provenance 接线）
-    chunking: ChunkingConfig,
-    /// 直调单次回答 token 上限（取 `[llm.chunking] max_output_tokens`；封顶生成时长防挂死）
-    direct_max_output_tokens: Option<u64>,
-    /// 直调单请求超时秒数（`[llm] request_timeout_secs`）
-    request_timeout_secs: u64,
-    /// 溯源对齐配置（F9；来自 `[llm]` 的 `provenance_*` 两键，同上入口接线）
-    provenance: provenance::ProvenanceConfig,
-}
+/// 默认装配的显式失败承载（未注入宿主 carrier 时）
+///
+/// crawlrs 不再内置 LLM 供应商访问栈；LLM 能力由宿主经装配面注入
+/// [`LLMServiceTrait`] 实现（`Services.llm_service` / `init_llm_service` / kit 注册）。
+/// 未注入时本承载把「LLM 不可用」变成可观测的结构化错误，而不是静默降级或 panic。
+pub struct ExplicitErrorCarrier;
 
-impl LLMService {
-    /// Create LLMService with settings and custom template loader
-    pub fn new_with_template_loader(
-        settings: &Settings,
-        http_client: Arc<reqwest::Client>,
-        template_loader: TemplateLoader,
-    ) -> Self {
-        let templates = template_loader.load_templates().unwrap_or_default();
-        let provider = resolve_provider(settings);
-        let model = settings
-            .llm
-            .model
-            .clone()
-            .unwrap_or_else(|| "gpt-3.5-turbo".to_string());
-        let api_base_url = settings.llm.api_base_url.clone();
-        let api_key = settings.llm.api_key.clone();
-        let chunking = ChunkingConfig::from_settings(&settings.llm.chunking);
-        let provenance = provenance::ProvenanceConfig::from_settings(&settings.llm);
-        let direct_max_output_tokens = Some(u64::from(chunking.max_output_tokens));
-        let request_timeout_secs = settings.llm.request_timeout_secs;
-
-        Self {
-            http_client,
-            #[cfg(feature = "llm")]
-            _client: Client::default(),
-            model,
-            provider,
-            api_base_url,
-            api_key,
-            templates,
-            chunking,
-            direct_max_output_tokens,
-            request_timeout_secs,
-            provenance,
+impl ExplicitErrorCarrier {
+    /// 按 locale 取译文案；该 locale 未被启动束加载时用规范串，
+    /// 避免 Fluent 回退到默认语言导致「双语」退化为单语。
+    fn localized(
+        bundle: &crate::i18n::I18nBundle,
+        locale: &crate::i18n::Locale,
+        key: &str,
+        fallback: &str,
+    ) -> String {
+        if bundle.supported_locales().contains(locale) {
+            crate::i18n::t(locale, bundle, key)
+        } else {
+            fallback.to_string()
         }
     }
 
-    /// Create LLMService with settings (uses FileTemplateLoader)
-    pub fn new(settings: &Settings, http_client: Arc<reqwest::Client>) -> Self {
-        Self::new_with_template_loader(
-            settings,
-            http_client,
-            Arc::new(FileTemplateLoader::default()),
-        )
-    }
+    /// 构造结构化错误：anyhow 链 + i18n 双语载荷（en | zh）。
+    ///
+    /// 启动期 i18n 全局束已初始化时经 Fluent 输出双语；未初始化（单测、轻量面）
+    /// 时回退同语义的英文/中文规范串（双轨基准，与 `CrawlRsError::user_message`
+    /// 同惯例）。
+    fn missing_carrier_error() -> anyhow::Error {
+        const KEY: &str = "domain-error-llm-carrier-not-injected";
+        const EN_FALLBACK: &str = "LLM carrier is not injected: crawlrs no longer bundles \
+             LLM provider access; inject a host implementation of LLMServiceTrait";
+        const ZH_FALLBACK: &str = "LLM 未接入承载方：crawlrs 不再内置 LLM 供应商访问，\
+             请经宿主注入 LLMServiceTrait 实现";
 
-    /// Create LLMService with explicit config and custom template loader
-    pub fn new_with_config_and_loader(
-        _api_key: String,
-        model: String,
-        api_base_url: String,
-        http_client: Arc<reqwest::Client>,
-        template_loader: TemplateLoader,
-    ) -> Self {
-        let templates = template_loader.load_templates().unwrap_or_default();
-        let chunking = ChunkingConfig::default();
-
-        Self {
-            http_client: http_client.clone(),
-            #[cfg(feature = "llm")]
-            _client: Client::default(),
-            model,
-            provider: "openai".to_string(),
-            api_base_url: Some(api_base_url),
-            api_key: Some(_api_key),
-            templates,
-            direct_max_output_tokens: Some(u64::from(chunking.max_output_tokens)),
-            request_timeout_secs: 120,
-            chunking,
-            provenance: provenance::ProvenanceConfig::default(),
-        }
-    }
-
-    /// Create LLMService with explicit config (uses InMemoryTemplateLoader with defaults)
-    pub fn new_with_config(
-        _api_key: String,
-        model: String,
-        api_base_url: String,
-        http_client: Arc<reqwest::Client>,
-    ) -> Self {
-        let template_loader: TemplateLoader =
-            Arc::new(InMemoryTemplateLoader::new().with_default_templates());
-        let templates = template_loader.load_templates().unwrap_or_default();
-        let chunking = ChunkingConfig::default();
-
-        Self {
-            http_client: http_client.clone(),
-            #[cfg(feature = "llm")]
-            _client: Client::default(),
-            model,
-            provider: "openai".to_string(),
-            api_base_url: Some(api_base_url),
-            api_key: Some(_api_key),
-            templates,
-            direct_max_output_tokens: Some(u64::from(chunking.max_output_tokens)),
-            request_timeout_secs: 120,
-            chunking,
-            provenance: provenance::ProvenanceConfig::default(),
-        }
+        let (en, zh) = match crate::i18n::startup_i18n() {
+            Some((_, bundle)) => {
+                let en_locale = "en-US".parse::<crate::i18n::Locale>();
+                let zh_locale = "zh-CN".parse::<crate::i18n::Locale>();
+                match (en_locale, zh_locale) {
+                    (Ok(en_locale), Ok(zh_locale)) => (
+                        Self::localized(bundle, &en_locale, KEY, EN_FALLBACK),
+                        Self::localized(bundle, &zh_locale, KEY, ZH_FALLBACK),
+                    ),
+                    _ => (EN_FALLBACK.to_string(), ZH_FALLBACK.to_string()),
+                }
+            }
+            None => (EN_FALLBACK.to_string(), ZH_FALLBACK.to_string()),
+        };
+        anyhow::anyhow!("{en} | {zh}")
     }
 }
 
 #[async_trait]
-impl LLMServiceTrait for LLMService {
+impl LLMServiceTrait for ExplicitErrorCarrier {
     async fn extract_data(
         &self,
-        text: &str,
-        schema: &Value,
-        format: &str,
+        _text: &str,
+        _schema: &Value,
+        _format: &str,
     ) -> Result<(Value, TokenUsage)> {
-        self.extract_data_internal(text, schema, format).await
+        Err(Self::missing_carrier_error())
     }
 
-    /// 分块提取（F8）：`[llm.chunking].enabled = false` 时直走单发路径（现状语义）；
-    /// 启用后由 [`chunker::extract_chunked`] 编排（预检 → 切块 → 并行 → merge）。
+    /// 分块入口同样显式失败：未注入承载时不得静默退化为单发/空结果。
     async fn extract_data_chunked(
         &self,
-        text: &str,
-        schema: &Value,
-        format: &str,
+        _text: &str,
+        _schema: &Value,
+        _format: &str,
     ) -> Result<(Value, TokenUsage)> {
-        if !self.chunking.enabled {
-            return self.extract_data(text, schema, format).await;
-        }
-
-        let extract_one = {
-            let service = self.clone();
-            let schema = schema.clone();
-            let format = format.to_string();
-            move |chunk: String| {
-                let service = service.clone();
-                let schema = schema.clone();
-                let format = format.clone();
-                async move { service.extract_data(&chunk, &schema, &format).await }
-            }
-        };
-        let merge_call = {
-            let service = self.clone();
-            let schema = schema.clone();
-            let format = format.to_string();
-            move |payload: String| {
-                let service = service.clone();
-                let schema = schema.clone();
-                let format = format.clone();
-                // merge payload 内嵌指令与块结果 JSON 数组，复用同一模板/解析链路
-                async move {
-                    service
-                        .extract_data_internal(&payload, &schema, &format)
-                        .await
-                }
-            }
-        };
-
-        chunker::extract_chunked(text, schema, &self.chunking, extract_one, merge_call).await
+        Err(Self::missing_carrier_error())
     }
 
-    /// 溯源提取（F9）：`provenance_enabled = false` 时仅按 chunking 开关决定是否
-    /// 分块；启用时提取（分块开启则走 [`Self::extract_data_chunked`]）后对 merge 后
-    /// 结果做全文对齐——merge 后字段值仍出自原文各块切片，全文对齐即可还原
-    /// 全局 char 区间（chunker::extract_chunked 不暴露逐块偏移，故不做逐块换算）。
+    /// 溯源入口同样显式失败：未注入承载时不得返回空成功。
     async fn extract_data_with_provenance(
         &self,
-        text: &str,
-        schema: &Value,
-        format: &str,
+        _text: &str,
+        _schema: &Value,
+        _format: &str,
     ) -> Result<(Value, Option<Value>, TokenUsage)> {
-        let (value, usage) = if self.chunking.enabled {
-            self.extract_data_chunked(text, schema, format).await?
-        } else {
-            self.extract_data(text, schema, format).await?
-        };
-        if !self.provenance.enabled {
-            return Ok((value, None, usage));
-        }
-        let (value, prov) = provenance::apply_provenance(text, value, &self.provenance);
-        Ok((value, prov, usage))
-    }
-}
-
-impl LLMService {
-    pub async fn extract_data_internal(
-        &self,
-        text: &str,
-        schema: &Value,
-        format: &str,
-    ) -> Result<(Value, TokenUsage)> {
-        let template = self
-            .templates
-            .get(format)
-            .ok_or_else(|| anyhow::anyhow!("Template not found for format: {}", format))?;
-
-        // 使用 prompt_builder 构造 prompt
-        let prompt = build_prompt(template, text, schema)?;
-
-        // 使用 provider_adapter 发送请求
-        let (content, usage) = if let Some(base_url) = &self.api_base_url {
-            let url = provider_adapter::build_request_url(base_url);
-            let response = provider_adapter::send_direct_request(
-                &self.http_client,
-                &url,
-                &self.model,
-                &prompt,
-                self.api_key.as_deref(),
-                self.direct_max_output_tokens,
-                self.request_timeout_secs,
-            )
-            .await?;
-            (response.content, response.usage)
-        } else {
-            let response =
-                provider_adapter::send_genai_request(&self.provider, &self.model, &prompt).await?;
-            (response.content, response.usage)
-        };
-
-        // 使用 prompt_builder 解析响应
-        let data = parse_llm_response(&content, format)?;
-        Ok((data, usage))
+        Err(Self::missing_carrier_error())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prompt_builder::{
+        FileTemplateLoader, InMemoryTemplateLoader, TemplateLoader, TemplateLoaderTrait,
+    };
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+
+    // ===== ExplicitErrorCarrier（默认装配：未注入承载）=====
+
+    /// 默认装配态：`extract_data` 调用返回结构化错误，不 panic、不返回空成功。
+    /// 错误载荷为 i18n 双语（en/zh 均含「未接入承载」语义）。
+    #[tokio::test]
+    async fn test_explicit_error_carrier_extract_data_reports_missing_carrier() {
+        let carrier = ExplicitErrorCarrier;
+        let schema = serde_json::json!({"type": "object"});
+        let err = carrier
+            .extract_data("text", &schema, "json")
+            .await
+            .expect_err("未注入承载时必须显式失败");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("carrier is not injected"),
+            "en payload missing: {message}"
+        );
+        assert!(
+            message.contains("未接入承载方"),
+            "zh payload missing: {message}"
+        );
+    }
+
+    /// 默认装配态：分块入口同样显式失败（不静默降级为单发/空结果）。
+    #[tokio::test]
+    async fn test_explicit_error_carrier_chunked_reports_missing_carrier() {
+        let carrier = ExplicitErrorCarrier;
+        let schema = serde_json::json!({"type": "object"});
+        let err = carrier
+            .extract_data_chunked("text", &schema, "json")
+            .await
+            .expect_err("未注入承载时分块入口必须显式失败");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("carrier is not injected"),
+            "en payload missing: {message}"
+        );
+        assert!(
+            message.contains("未接入承载方"),
+            "zh payload missing: {message}"
+        );
+    }
+
+    /// 默认装配态：溯源入口同样显式失败（不返回空成功）。
+    #[tokio::test]
+    async fn test_explicit_error_carrier_provenance_reports_missing_carrier() {
+        let carrier = ExplicitErrorCarrier;
+        let schema = serde_json::json!({"type": "object"});
+        let err = carrier
+            .extract_data_with_provenance("text", &schema, "json")
+            .await
+            .expect_err("未注入承载时溯源入口必须显式失败");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("carrier is not injected"),
+            "en payload missing: {message}"
+        );
+        assert!(
+            message.contains("未接入承载方"),
+            "zh payload missing: {message}"
+        );
+    }
+
+    /// 启动期 i18n 束就绪时双语载荷来自 FTL（en/zh 各自命中语义键）。
+    #[test]
+    fn test_explicit_error_carrier_bilingual_payload_from_bundle() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/locales");
+        let bundle = crate::i18n::I18nBundle::load("en-US", &["en-US", "zh-CN"], dir)
+            .expect("locales bundle should load");
+        let en_locale = "en-US".parse::<crate::i18n::Locale>().expect("en locale");
+        let zh_locale = "zh-CN".parse::<crate::i18n::Locale>().expect("zh locale");
+        const KEY: &str = "domain-error-llm-carrier-not-injected";
+
+        let en = ExplicitErrorCarrier::localized(&bundle, &en_locale, KEY, "fallback");
+        let zh = ExplicitErrorCarrier::localized(&bundle, &zh_locale, KEY, "fallback");
+        assert!(en.contains("carrier is not injected"), "en payload: {en}");
+        assert!(zh.contains("未接入承载方"), "zh payload: {zh}");
+    }
 
     // ===== TokenUsage tests =====
 
@@ -568,194 +476,91 @@ json = 'json only'
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
-    /// LLMService 构造：`[llm]` 的 `provenance_*` 两键映射进服务配置
+    /// 注入面：宿主 carrier 经 `Arc<dyn LLMServiceTrait>` 装配后，
+    /// `ExtractionService::extract_with_schema` 全链路（清洗 → carrier → 溯源挂载）工作。
+    ///
+    /// 模拟宿主经 `Services.llm_service` pub 字段注入自有实现；编排工具
+    /// （[`provenance::apply_provenance`]）由 carrier 复用，证明边界开放且编排保留。
+    #[tokio::test]
+    async fn test_injected_carrier_full_provenance_chain_works() {
+        use crate::domain::services::extraction_service::{
+            ExtractionService, ExtractionServiceTrait,
+        };
+
+        struct MockCarrier {
+            calls: Arc<AtomicU32>,
+        }
+
+        #[async_trait]
+        impl LLMServiceTrait for MockCarrier {
+            async fn extract_data(
+                &self,
+                _text: &str,
+                _schema: &Value,
+                _format: &str,
+            ) -> Result<(Value, TokenUsage)> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok((
+                    serde_json::json!({"name": "crawlrs"}),
+                    TokenUsage::default(),
+                ))
+            }
+
+            /// 宿主 carrier 复用 crawlrs 公开的溯源编排工具（F9）
+            async fn extract_data_with_provenance(
+                &self,
+                text: &str,
+                schema: &Value,
+                format: &str,
+            ) -> Result<(Value, Option<Value>, TokenUsage)> {
+                let (value, usage) = self.extract_data(text, schema, format).await?;
+                let config = provenance::ProvenanceConfig {
+                    enabled: true,
+                    min_coverage: 0.0,
+                };
+                let (value, prov) = provenance::apply_provenance(text, value, &config);
+                Ok((value, prov, usage))
+            }
+        }
+
+        let calls = Arc::new(AtomicU32::new(0));
+        // 等价于宿主向 `Services.llm_service`（`Arc<dyn LLMServiceTrait>`）注入 carrier
+        let carrier: Arc<dyn LLMServiceTrait> = Arc::new(MockCarrier {
+            calls: calls.clone(),
+        });
+        let service = ExtractionService::new(carrier);
+        let schema = serde_json::json!({"type": "object"});
+        let html = "<html><body><p>crawlrs is a scraper</p></body></html>";
+
+        let (result, _usage) = service
+            .extract_with_schema(html, &schema)
+            .await
+            .expect("注入 carrier 后提取链路应成功");
+
+        assert_eq!(result["name"], "crawlrs");
+        assert_eq!(
+            result["_provenance"]["name"]["start"], 0,
+            "溯源映射应由 carrier 复用编排工具生成并挂载: {result}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// 溯源配置映射：`[llm]` 的 `provenance_*` 两键直接映射进编排配置
+    /// （不依赖任何供应商栈）
     #[test]
-    fn test_llm_service_provenance_config_from_settings() {
-        let mut llm = llm_settings_default();
+    fn test_provenance_config_from_settings() {
+        let mut llm = crate::config::settings::LLMSettings::default();
         llm.provenance_enabled = true;
         llm.provenance_min_coverage = 0.6;
-        let settings = make_test_settings(llm);
-        let service = LLMService::new_with_template_loader(
-            &settings,
-            Arc::new(reqwest::Client::new()),
-            Arc::new(InMemoryTemplateLoader::new()),
-        );
-        assert!(service.provenance.enabled);
-        assert!((service.provenance.min_coverage - 0.6).abs() < f64::EPSILON);
+        let config = provenance::ProvenanceConfig::from_settings(&llm);
+        assert!(config.enabled);
+        assert!((config.min_coverage - 0.6).abs() < f64::EPSILON);
     }
 
-    /// 显式配置构造（无 Settings）时溯源默认禁用（与 chunking 同惯例）
+    /// 模板加载器默认构造可用（prompt_builder 保留为编排工具）
     #[test]
-    fn test_llm_service_new_with_config_provenance_disabled() {
-        let service = LLMService::new_with_config(
-            "key".to_string(),
-            "m".to_string(),
-            "https://api.example.com".to_string(),
-            Arc::new(reqwest::Client::new()),
-        );
-        assert!(!service.provenance.enabled);
-    }
-
-    // ===== LLMService constructor tests =====
-
-    #[test]
-    fn test_llm_service_new_with_config_creates_instance() {
-        let _settings = make_test_settings(llm_settings_default());
-        let http_client = Arc::new(reqwest::Client::new());
-        let service = LLMService::new_with_config(
-            "test-key".to_string(),
-            "gpt-4".to_string(),
-            "https://api.openai.com/v1".to_string(),
-            http_client,
-        );
-        assert_eq!(service.model, "gpt-4");
-        assert_eq!(service.provider, "openai");
-    }
-
-    #[test]
-    fn test_llm_service_new_with_config_and_loader_creates_instance() {
+    fn test_in_memory_template_loader_available() {
         let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
-        let http_client = Arc::new(reqwest::Client::new());
-        let service = LLMService::new_with_config_and_loader(
-            "test-key".to_string(),
-            "gpt-4".to_string(),
-            "https://api.openai.com/v1".to_string(),
-            http_client,
-            loader,
-        );
-        assert_eq!(service.model, "gpt-4");
-    }
-
-    #[test]
-    fn test_llm_service_new_with_config_has_default_templates() {
-        let http_client = Arc::new(reqwest::Client::new());
-        let service = LLMService::new_with_config(
-            "test-key".to_string(),
-            "gpt-4".to_string(),
-            "https://api.openai.com/v1".to_string(),
-            http_client,
-        );
-        assert!(service.templates.contains_key("json"));
-        assert!(service.templates.contains_key("markdown"));
-    }
-
-    #[test]
-    fn test_llm_service_clone_preserves_fields() {
-        let http_client = Arc::new(reqwest::Client::new());
-        let service = LLMService::new_with_config(
-            "key".to_string(),
-            "model-x".to_string(),
-            "https://api.example.com".to_string(),
-            http_client,
-        );
-        let cloned = service.clone();
-        assert_eq!(cloned.model, "model-x");
-        assert_eq!(
-            cloned.api_base_url,
-            Some("https://api.example.com".to_string())
-        );
-    }
-
-    // ===== Helper functions =====
-
-    fn llm_settings_default() -> crate::config::settings::LLMSettings {
-        crate::config::settings::LLMSettings {
-            provider: Some("openai".to_string()),
-            api_key: Some("test-key".to_string()),
-            model: Some("gpt-3.5-turbo".to_string()),
-            api_base_url: None,
-            chunking: crate::config::settings::LlmChunkingSettings::default(),
-            provenance_enabled: false,
-            provenance_min_coverage: 0.75,
-            request_timeout_secs: 120,
-        }
-    }
-
-    fn make_test_settings(llm: crate::config::settings::LLMSettings) -> Settings {
-        Settings {
-            llm,
-            ..Settings::default()
-        }
-    }
-
-    #[test]
-    fn test_new_with_template_loader_default_settings() {
-        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
-        let http_client = Arc::new(reqwest::Client::new());
-        let settings = make_test_settings(llm_settings_default());
-        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
-        assert_eq!(service.provider, "openai");
-        assert_eq!(service.model, "gpt-3.5-turbo");
-    }
-
-    #[test]
-    fn test_new_with_template_loader_with_provider_and_model() {
-        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
-        let http_client = Arc::new(reqwest::Client::new());
-        let mut llm = llm_settings_default();
-        llm.provider = Some("anthropic".to_string());
-        llm.model = Some("claude-2".to_string());
-        let settings = make_test_settings(llm);
-        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
-        assert_eq!(service.provider, "anthropic");
-        assert_eq!(service.model, "claude-2");
-    }
-
-    #[test]
-    fn test_new_with_template_loader_ollama_port_forces_openai() {
-        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
-        let http_client = Arc::new(reqwest::Client::new());
-        let mut llm = llm_settings_default();
-        llm.provider = Some("ollama".to_string());
-        llm.api_base_url = Some("http://localhost:11434".to_string());
-        let settings = make_test_settings(llm);
-        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
-        // OllamaStrategy should resolve to "openai" for localhost:11434
-        assert_eq!(service.provider, "openai");
-    }
-
-    #[test]
-    fn test_new_with_template_loader_172_24_160_1_forces_openai() {
-        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
-        let http_client = Arc::new(reqwest::Client::new());
-        let mut llm = llm_settings_default();
-        llm.provider = Some("ollama".to_string());
-        llm.api_base_url = Some("http://172.24.160.1:8080".to_string());
-        let settings = make_test_settings(llm);
-        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
-        assert_eq!(service.provider, "openai");
-    }
-
-    #[test]
-    fn test_new_with_template_loader_no_api_base_url_skips_ollama_check() {
-        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
-        let http_client = Arc::new(reqwest::Client::new());
-        let mut llm = llm_settings_default();
-        llm.provider = Some("ollama".to_string());
-        llm.api_base_url = None;
-        let settings = make_test_settings(llm);
-        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
-        // Without api_base_url, OllamaStrategy doesn't transform
-        assert_eq!(service.provider, "ollama");
-    }
-
-    #[test]
-    fn test_new_with_template_loader_failing_loader_uses_empty_templates() {
-        let loader: TemplateLoader = Arc::new(InMemoryTemplateLoader::new());
-        let http_client = Arc::new(reqwest::Client::new());
-        let settings = make_test_settings(llm_settings_default());
-        let service = LLMService::new_with_template_loader(&settings, http_client, loader);
-        // Loader returns empty templates, service should still construct
-        assert!(service.templates.is_empty());
-    }
-
-    #[test]
-    fn test_new_with_file_template_loader_default() {
-        let http_client = Arc::new(reqwest::Client::new());
-        let settings = make_test_settings(llm_settings_default());
-        let service = LLMService::new(&settings, http_client);
-        // FileTemplateLoader::default() tries to load from config/prompts.toml
-        // which may or may not exist; service should still construct
-        assert_eq!(service.model, "gpt-3.5-turbo");
+        assert!(loader.load_templates().unwrap().is_empty());
     }
 }

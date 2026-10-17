@@ -384,7 +384,7 @@ pub fn merge_results(results: &[Value]) -> Value {
 
 /// 分块提取编排：术语预检 → 预算判定 → 切块并行提取 → merge 综合
 ///
-/// 回调由调用方注入（LLMService 接 provider 路径；测试接 mock），使编排逻辑
+/// 回调由调用方注入（宿主 carrier 接 provider 路径；测试接 mock），使编排逻辑
 /// 与具体 provider 解耦：
 /// - `extract_one`：单次提取（切块后的文本 → 结构化结果）
 /// - `merge_call`：merge prompt 调用（指令 + 块结果 JSON 数组 → 最终结果）

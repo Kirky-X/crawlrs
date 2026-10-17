@@ -262,6 +262,18 @@ docs/tdd.md
 docs/test.md
 docs/uat.md
 
+# Design documents (PRD/ADD/TRD/DDD/HUB_PROTOCOL) — must not be tracked
+docs/PRD*
+docs/ADD*
+docs/TRD*
+docs/DDD*
+docs/HUB_PROTOCOL*
+docs/prd*
+docs/add*
+docs/trd*
+docs/ddd*
+docs/hub_protocol*
+
 # -----------------------------------------------------------------------------
 # Section 12: Cargo and Rust Specific
 # -----------------------------------------------------------------------------

@@ -99,7 +99,7 @@ cargo build --release
 # 生产推荐：默认 + Playwright 引擎 + 指标 + 内容处理
 cargo build --release --features standard
 
-# 全部功能（standard + FlareSolverr + 正文提取 + LLM）
+# 全功能组合（standard + FlareSolverr + 正文提取 + LLM 边界；不含 vision/MLLM）
 cargo build --release --features full
 ```
 
@@ -162,7 +162,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 |------|----------|----------|----------|
 | 默认 | `cargo build --release` | `platform`（teams + auth + rate-limit + webhook + metrics + content + sitemap）+ `db-postgres` | 开箱即用的完整平台 |
 | `standard` | `cargo build --release --features standard` | 默认 + `engine-playwright` + `sitemap` | 生产推荐（JS 渲染 + 指标 + 内容处理 + 站点地图） |
-| `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | 全部功能 |
+| `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | 全功能组合（不含 vision/MLLM，需另加 `engine-mllm`） |
 | `no-default` | `cargo build --release --no-default-features` | 纯核心抓取栈 | 单租户/无认证部署、嵌入集成 |
 | `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | agent/嵌入式最小库面 |
 
@@ -182,9 +182,9 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `engine-playwright` | chromiumoxide 浏览器自动化引擎 | ❌ |
 | `engine-flaresolverr` | FlareSolverr 反爬引擎（Full/Cdp/Tls 三模式） | ❌ |
 | `engine-tls-fingerprint` | WreqEngine TLS 指纹伪装（BoringSSL JA3/JA4） | ❌ |
-| `engine-mllm` | MLLM 视觉 LLM 自主导航引擎（隐含 `engine-playwright` + `llm`） | ❌ |
+| `engine-mllm` | MLLM 视觉 LLM 自主导航引擎（隐含 `engine-playwright` + `llm`；视觉面保留 `genai`） | ❌ |
 | `trafilatura` / `dom-smoothie` / `extractors` | 正文提取主路径 / 性能回退 / 全启用 | ❌ |
-| `llm` | genai LLM 抽取 | ❌ |
+| `llm` | LLM 提取边界（trait + 编排；供应商访问由宿主 carrier 注入） | ❌ |
 | `sitemap` | 站点地图生成（`/v1/map` 端点） | ✅（platform/standard） |
 | `rag-local` | 本地 RAG 嵌入与重排（vecboost） | ❌ |
 | `rag-remote` | 远程 RAG 嵌入（rig-core） | ❌ |
@@ -213,9 +213,19 @@ crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"]
 |---------|------|:-----------:|
 | `db-postgres` | PostgreSQL 后端（嵌入主存储路径） | ✅ default 已含 |
 | `extractors` | 正文提取（`trafilatura` + `dom-smoothie`） | 显式声明 |
-| `llm` | LLM 结构化提取（`genai`） | 显式声明 |
+| `llm` | LLM 结构化提取边界（trait + 编排，不含供应商访问；carrier 由宿主注入） | 显式声明 |
 
 > RAG（`vecboost`，走 `rag-local`/`rag-remote`）与 TLS 指纹引擎（`wreq`，走 `engine-tls-fingerprint`）**不在**受支持的默认嵌入组合内——它们会引入额外的本地 sibling 路径依赖或 BoringSSL 构建链，需按各自 feature 单独验证。
+
+### LLM 承载注入模型
+
+crawlrs 不再内置任何 LLM 供应商访问（原 `LLMService` / `provider_adapter` / `llm_provider_strategy` 已删除），`LLMServiceTrait` 是唯一 LLM 边界。宿主经以下任一 pub 装配路径注入自有实现（如 fluxgate 的 `FluxgateLLMCarrier`）：
+
+1. `Services.llm_service` pub 字段直接赋值；
+2. 以自有工厂替换 `init_llm_service`；
+3. 经 `CrawlRsState::from_kit` 的装配面注入。
+
+未注入时默认装配 `ExplicitErrorCarrier`：任何 LLM 调用返回 i18n 双语结构化错误（`domain-error-llm-carrier-not-injected`），不 panic、不静默降级。`prompt_builder` / `chunker`（F8）/ `provenance`（F9）编排模块保留，注入 carrier 可复用。
 
 ### 依赖版本统一基线
 
@@ -463,7 +473,7 @@ crawlrs 站在以下优秀开源项目的肩膀上：
 | [chromiumoxide](https://crates.io/crates/chromiumoxide) | Chrome CDP 浏览器自动化 |
 | [wreq](https://crates.io/crates/wreq) | BoringSSL TLS 指纹伪装 |
 | [scraper](https://crates.io/crates/scraper) | HTML 解析 |
-| [genai](https://crates.io/crates/genai) | 多模型 LLM 接入 |
+| [genai](https://crates.io/crates/genai) | 视觉模型接入（`engine-mllm` MLLM 引擎） |
 | [htmd](https://crates.io/crates/htmd) | HTML→Markdown 转换 |
 | [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | 正文提取 |
 | [criterion](https://crates.io/crates/criterion) | 基准测试 |

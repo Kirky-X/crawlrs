@@ -16,7 +16,6 @@ use async_trait::async_trait;
 /// 返回 `Some((base_url, api_key))`——视觉调用改指自托管/第三方网关
 /// （如企业 OpenAI 兼容聚合端点）；否则 `None` 走 provider 原生路由
 /// （gemini/ollama 等按各自默认端点与密钥环境变量）。
-#[cfg(feature = "llm")]
 fn custom_vision_endpoint(model: &str) -> Option<(String, String)> {
     if !model.starts_with("openai:") {
         return None;
@@ -87,73 +86,60 @@ impl VisionAdapterTrait for GenaiVisionAdapter {
         system_prompt: &str,
         model: &str,
     ) -> Result<String> {
-        #[cfg(feature = "llm")]
-        {
-            use genai::chat::{ChatMessage, ChatRequest};
-            use genai::chat::{ContentPart, MessageContent};
+        use genai::chat::{ChatMessage, ChatRequest};
+        use genai::chat::{ContentPart, MessageContent};
 
-            // 构造 multipart 用户消息：截图 + 文本 prompt
-            let image_part = ContentPart::from_binary_base64(
-                "image/jpeg",
-                screenshot_b64,
-                Some("screenshot.jpg".to_string()),
-            );
-            let text_part = ContentPart::from_text(prompt);
-            let user_content = MessageContent::from_parts(vec![image_part, text_part]);
-            let user_message = ChatMessage::user(user_content);
+        // 构造 multipart 用户消息：截图 + 文本 prompt
+        let image_part = ContentPart::from_binary_base64(
+            "image/jpeg",
+            screenshot_b64,
+            Some("screenshot.jpg".to_string()),
+        );
+        let text_part = ContentPart::from_text(prompt);
+        let user_content = MessageContent::from_parts(vec![image_part, text_part]);
+        let user_message = ChatMessage::user(user_content);
 
-            // 构造完整请求（system + user）
-            let system_message = ChatMessage::system(system_prompt.to_string());
-            let chat_req = ChatRequest::new(vec![system_message, user_message]);
+        // 构造完整请求（system + user）
+        let system_message = ChatMessage::system(system_prompt.to_string());
+        let chat_req = ChatRequest::new(vec![system_message, user_message]);
 
-            // 自定义 OpenAI 兼容端点：模型带 openai: 前缀且配置了
-            // CRAWLRS__MLLM__VISION_API_BASE_URL/API_KEY 时，绑定 OpenAI 适配器
-            // 并以 ServiceTargetResolver 全权接管端点与鉴权。绑定 adapter_kind
-            // 是必须的——否则 genai 对未识别模型名回退嗅探为 Ollama（POST
-            // /api/chat 打到网关必然 404）
-            let client = match custom_vision_endpoint(model) {
-                Some((base, key)) => genai::Client::builder()
-                    .with_adapter_kind(genai::adapter::AdapterKind::OpenAI)
-                    .with_service_target_resolver(
-                        genai::resolver::ServiceTargetResolver::from_resolver_fn(
-                            move |mut target: genai::ServiceTarget| {
-                                target.endpoint =
-                                    genai::resolver::Endpoint::from_owned(base.clone());
-                                target.auth = genai::resolver::AuthData::from_single(key.clone());
-                                // 剥掉 openai: 前缀，保留裸模型名
-                                let name = target.model.model_name.as_str();
-                                let bare = name.strip_prefix("openai:").unwrap_or(name);
-                                target.model = genai::ModelIden::new(
-                                    genai::adapter::AdapterKind::OpenAI,
-                                    bare,
-                                );
-                                Ok(target)
-                            },
-                        ),
-                    )
-                    .build(),
-                None => genai::Client::default(),
-            };
+        // 自定义 OpenAI 兼容端点：模型带 openai: 前缀且配置了
+        // CRAWLRS__MLLM__VISION_API_BASE_URL/API_KEY 时，绑定 OpenAI 适配器
+        // 并以 ServiceTargetResolver 全权接管端点与鉴权。绑定 adapter_kind
+        // 是必须的——否则 genai 对未识别模型名回退嗅探为 Ollama（POST
+        // /api/chat 打到网关必然 404）
+        let client = match custom_vision_endpoint(model) {
+            Some((base, key)) => genai::Client::builder()
+                .with_adapter_kind(genai::adapter::AdapterKind::OpenAI)
+                .with_service_target_resolver(
+                    genai::resolver::ServiceTargetResolver::from_resolver_fn(
+                        move |mut target: genai::ServiceTarget| {
+                            target.endpoint = genai::resolver::Endpoint::from_owned(base.clone());
+                            target.auth = genai::resolver::AuthData::from_single(key.clone());
+                            // 剥掉 openai: 前缀，保留裸模型名
+                            let name = target.model.model_name.as_str();
+                            let bare = name.strip_prefix("openai:").unwrap_or(name);
+                            target.model =
+                                genai::ModelIden::new(genai::adapter::AdapterKind::OpenAI, bare);
+                            Ok(target)
+                        },
+                    ),
+                )
+                .build(),
+            None => genai::Client::default(),
+        };
 
-            let chat_res = client.exec_chat(model, chat_req, None).await.map_err(|e| {
-                anyhow::anyhow!("Vision LLM call failed for model {}: {:?}", model, e)
-            })?;
+        let chat_res = client
+            .exec_chat(model, chat_req, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("Vision LLM call failed for model {}: {:?}", model, e))?;
 
-            let content = chat_res
-                .first_text()
-                .ok_or_else(|| anyhow::anyhow!("Vision LLM returned empty content"))?
-                .to_string();
+        let content = chat_res
+            .first_text()
+            .ok_or_else(|| anyhow::anyhow!("Vision LLM returned empty content"))?
+            .to_string();
 
-            Ok(content)
-        }
-        #[cfg(not(feature = "llm"))]
-        {
-            let _ = (screenshot_b64, prompt, system_prompt, model);
-            Err(anyhow::anyhow!(
-                "Vision adapter requires 'llm' feature. \
-                 Please rebuild with --features llm"
-            ))
-        }
+        Ok(content)
     }
 }
 
@@ -163,7 +149,6 @@ mod tests {
 
     /// 自定义端点解析：openai: 前缀 + 非空 base_url 才命中；空 base 视为未配置
     #[test]
-    #[cfg(feature = "llm")]
     fn custom_vision_endpoint_requires_prefix_and_base() {
         std::env::remove_var("CRAWLRS__MLLM__VISION_API_BASE_URL");
         std::env::remove_var("CRAWLRS__MLLM__VISION_API_KEY");

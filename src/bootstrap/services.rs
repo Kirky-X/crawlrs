@@ -33,7 +33,7 @@ use garrison::prelude::{GarrisonDao, GarrisonInterface, GarrisonManager};
 // teams-off 时不导入 teams 相关类型
 #[cfg(feature = "teams")]
 use crate::domain::services::geo_location::GeoLocationService;
-use crate::domain::services::llm::{LLMService, LLMServiceTrait};
+use crate::domain::services::llm::{ExplicitErrorCarrier, LLMServiceTrait};
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 // rate-limit feature 关闭时不导入 LimiteronService 相关配置类型
 use crate::domain::services::rag_strategy::{
@@ -143,7 +143,7 @@ pub struct ServicesComponents {
     pub rerank_provider: Option<Arc<dyn RerankProvider>>,
     /// Content extraction facade
     ///
-    /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLMService，按 Trafilatura→DomSmoothie→CssRule
+    /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLM 承载，按 Trafilatura→DomSmoothie→CssRule
     /// 优先级路由，`confidence < 0.7` 时触发 LLM 回退。由 `scrape_worker` 提取路径使用。
     pub content_extractor: Arc<ContentExtractionFacade>,
     /// Webhook worker
@@ -759,22 +759,24 @@ pub async fn init_garrison_auth(
 
 /// Initialize LLM service.
 ///
-/// This function creates the LLMService for LLM operations,
-/// following dependency injection principles.
+/// crawlrs 不再内置 LLM 供应商访问栈：默认返回 [`ExplicitErrorCarrier`]，
+/// 未注入宿主 carrier 时任何调用返回结构化双语错误（不 panic、不静默降级）。
+/// 宿主可经三条装配路径注入自有 [`LLMServiceTrait`] 实现：
+/// `Services.llm_service` pub 字段、`init_llm_service` 工厂替换、`CrawlRsState::from_kit`。
 ///
 /// # Arguments
 ///
-/// * `settings` - Application settings
-/// * `http_client` - HTTP client for making requests
+/// * `_settings` - Application settings（保留签名兼容；供应商语义配置已退役）
+/// * `_http_client` - HTTP client（保留签名兼容；供应商访问已移交宿主）
 ///
 /// # Returns
 ///
 /// Returns an initialized LLM service wrapped in Arc.
 pub fn init_llm_service(
-    settings: &Settings,
-    http_client: Arc<reqwest::Client>,
+    _settings: &Settings,
+    _http_client: Arc<reqwest::Client>,
 ) -> Arc<dyn LLMServiceTrait> {
-    Arc::new(LLMService::new(settings, http_client))
+    Arc::new(ExplicitErrorCarrier)
 }
 
 /// Initialize all application services.
@@ -1290,12 +1292,23 @@ mod tests {
 
     // ========== init_llm_service tests ==========
 
-    #[test]
-    fn test_init_llm_service_creates_instance() {
+    /// 默认装配返回 ExplicitErrorCarrier：未注入宿主 carrier 时任何调用返回
+    /// 结构化双语错误（不 panic、不静默降级）。
+    #[tokio::test]
+    async fn test_init_llm_service_defaults_to_explicit_error_carrier() {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let http_client = make_http_client();
         let service = init_llm_service(&settings, http_client);
-        // Verify the service is a valid Arc<dyn LLMServiceTrait>
+        let schema = serde_json::json!({"type": "object"});
+        let err = service
+            .extract_data("text", &schema, "json")
+            .await
+            .expect_err("默认装配必须显式失败");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("未接入承载方"),
+            "default carrier must be explicit: {message}"
+        );
         assert!(
             Arc::strong_count(&service) >= 1,
             "init_llm_service should return a valid Arc"

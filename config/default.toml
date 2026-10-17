@@ -202,26 +202,21 @@ batch_size = 1000
 
 # LLM Configuration
 [llm]
-# Set API key via CRAWLRS__LLM__API_KEY environment variable for production
-api_key = ""
-# LLM 提供商（openai/ollama/anthropic 等）；空 = 未显式指定，provider 解析按 api_base_url 推断
-provider = ""
-# 注：下两键的代码默认值（gpt-3.5-turbo / https://api.openai.com/v1）与本文件不同；
-# toml 为运行时生效方，以本文件为准。
+# 供应商访问已移交宿主 carrier（fluxgate 等）：crawlrs 不再读取
+# provider / api_key / api_base_url，只保留提取编排参数。
+# model 与 request_timeout_secs 保留供注入的 carrier 读取。
 model = "qwen3:1.7b"
-api_base_url = "http://localhost:11434/v1"
-# 直调单请求超时秒数：须覆盖自托管端点的模型冷加载与长生成
-# （实测 Ollama 模型重载可达 ~50s，30s 会掐掉全部直调）
+# 单请求超时秒数：供注入的 carrier 构造请求时参考
 request_timeout_secs = 120
 
 # LLM 提取结果字符级溯源对齐（langextract 三层对齐 + 覆盖率/密度双门；
-# 不依赖 --features llm，该 feature 仅门控 genai provider 路径）
+# 不依赖 --features llm，该 feature 仅提供 trait + 编排边界）
 # true 时 extract 结果的字符串字段尝试对齐回原文字符区间，产出 _provenance 映射
 provenance_enabled = false
 # 对齐双门下限：token 覆盖率 ≥ 0.75 且字符密度 ≥ 1/3 才输出区间，全败置 null 由调用方过滤
 provenance_min_coverage = 0.75
 
-# LLM 提取 token 窗口分块（不依赖 --features llm，该 feature 仅门控 genai provider 路径）
+# LLM 提取 token 窗口分块（不依赖 --features llm，该 feature 仅提供 trait + 编排边界）
 # enabled=false 时长文仍单 prompt 直发（向后兼容）；true 后按模型窗口切块→并行提问→单次 merge
 [llm.chunking]
 enabled = false

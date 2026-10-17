@@ -14,7 +14,7 @@
 | `trafilatura` | rs-trafilatura | 正文提取主路径 |
 | `dom-smoothie` | dom_smoothie | 正文提取性能回退 |
 | `metrics` | metrics, metrics-exporter-prometheus, sysinfo | Prometheus 指标 |
-| `llm` | genai | LLM 能力 |
+| `llm` | —（无外部依赖） | LLM 边界（trait + 编排 + ExplicitErrorCarrier，恒编译） |
 | `webhook` | —（纯代码门控） | Webhook 投递与 /v1/webhooks 路由 |
 | `engine-flaresolverr` | —（纯代码门控） | FlareSolverr 引擎 |
 | `test-mocks` | — | 激活 `tests/main.rs` / `sdk_api_test` 两个测试目标 |
@@ -64,7 +64,7 @@ engine-tls-fingerprint ──> dep:wreq
 | 3 | agent-lib+playwright | + `engine-playwright` | 浏览器引擎门控 |
 | 4 | agent-lib+tls-fp | + `engine-tls-fingerprint` | wreq/BoringSSL 门控 |
 | 5 | agent-lib+mllm | + `engine-mllm` | mllm→playwright+llm 传递闭包 |
-| 6 | agent-lib+llm | + `llm` | genai 单独门控 |
+| 6 | agent-lib+llm | + `llm` | LLM 边界单独声明（零外部依赖，边界恒编译） |
 | 7 | agent-lib+metrics | + `metrics` | 库面指标门控 |
 | 8 | content-only | + `content` | 反爬/Markdown 单独 |
 | 9 | trafilatura-only | + `trafilatura` | 单提取器 |

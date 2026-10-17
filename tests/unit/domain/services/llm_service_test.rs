@@ -7,40 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crawlrs::domain::services::llm::{LLMService, TokenUsage};
-    use serde_json::json;
-    use std::sync::Arc;
-
-    #[tokio::test]
-    #[ignore] // Skip: Test requires specific features or has private field access
-    async fn test_extract_data_with_real_implementation() {
-        use crawlrs::config::settings::Settings;
-        use reqwest::Client;
-
-        let settings = Settings::load_sync().unwrap_or_default();
-        let http_client = Arc::new(Client::new());
-        let service = LLMService::new(&settings, http_client);
-
-        // Test with a simple schema and text
-        let text = "The price of the product is $29.99 and it has 4.5 stars rating.";
-        let schema = json!({
-            "type": "object",
-            "properties": {
-                "price": {"type": "number"},
-                "rating": {"type": "number"}
-            },
-            "required": ["price", "rating"]
-        });
-
-        // This might fail if provider/model are not set, but we test the logic
-        let result = service.extract_data_internal(text, &schema, "json").await;
-
-        // Since we are not setting up the real API key here, we expect an error or some response
-        // but we mainly want to check the signature and basic flow
-        if let Err(e) = &result {
-            println!("Expected error during test: {}", e);
-        }
-    }
+    use crawlrs::domain::services::llm::TokenUsage;
 
     #[test]
     fn test_token_usage_serialization() {

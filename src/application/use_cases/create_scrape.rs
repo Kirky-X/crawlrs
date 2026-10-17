@@ -73,13 +73,13 @@ impl CreateScrapeUseCase {
     fn map_dto_to_request(&self, dto: ScrapeRequestDto) -> Result<ScrapeRequest, DomainError> {
         let options = dto.options.unwrap_or_default();
 
-        // needs_mllm 在 llm 特性关闭时显性拒绝：否则请求会路由到普通引擎被静默
-        // 接管（mllm 引擎未注册，support_score 路由取普通引擎），用户以为做了
+        // needs_mllm 在 engine-mllm 特性关闭时显性拒绝：否则请求会路由到普通引擎被
+        // 静默接管（mllm 引擎未注册，support_score 路由取普通引擎），用户以为做了
         // 视觉分析实际没有——失败必须显性化，禁止静默降级。
-        #[cfg(not(feature = "llm"))]
+        #[cfg(not(feature = "engine-mllm"))]
         if options.needs_mllm.unwrap_or(false) {
             return Err(DomainError::ValidationError(
-                "needs_mllm requires the `llm` feature; rebuild with --features llm or omit the option".to_string(),
+                "needs_mllm requires the `engine-mllm` feature; rebuild with --features engine-mllm or omit the option".to_string(),
             ));
         }
 
@@ -388,8 +388,8 @@ mod tests {
         assert!(request.options.block_media);
     }
 
-    /// llm 特性下 needs_mllm 映射进 ScrapeOptions（引擎侧路由 MLLM 分析）。
-    #[cfg(feature = "llm")]
+    /// engine-mllm 特性下 needs_mllm 映射进 ScrapeOptions（引擎侧路由 MLLM 分析）。
+    #[cfg(feature = "engine-mllm")]
     #[test]
     fn test_map_dto_to_request_needs_mllm_wire_through() {
         let use_case = CreateScrapeUseCase::new(make_engine_client());
@@ -418,8 +418,8 @@ mod tests {
         assert!(request.options.needs_mllm);
     }
 
-    /// 无 llm 特性时 needs_mllm 提交期显性拒绝（不静默降级到普通引擎）。
-    #[cfg(not(feature = "llm"))]
+    /// 无 engine-mllm 特性时 needs_mllm 提交期显性拒绝（不静默降级到普通引擎）。
+    #[cfg(not(feature = "engine-mllm"))]
     #[test]
     fn test_map_dto_to_request_needs_mllm_rejected_without_llm_feature() {
         let use_case = CreateScrapeUseCase::new(make_engine_client());

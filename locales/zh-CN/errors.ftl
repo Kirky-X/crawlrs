@@ -19,7 +19,7 @@ error-io = 内部 I/O 错误，请稍后重试。
 error-engine = 引擎错误。
 error-internal = 内部服务器错误，请稍后重试。
 
-# 领域错误消息（17 个 key）
+# 领域错误消息（18 个 key）
 
 domain-error-crawl-config = 爬虫配置错误：{ $message }
 domain-error-depth-exceeded = 爬取深度超出限制：最大深度 { $max }，请求深度 { $requested }。
@@ -36,6 +36,7 @@ domain-error-robots-forbidden = URL 被 robots.txt 禁止：{ $url }
 domain-error-webhook-delivery-failed = Webhook 投递失败。
 domain-error-invalid-webhook-url = 无效的 Webhook URL：{ $url }
 domain-error-llm-extraction-failed = LLM 提取失败。
+domain-error-llm-carrier-not-injected = LLM 未接入承载方：crawlrs 不再内置 LLM 供应商访问，请经宿主注入 LLMServiceTrait 实现。
 domain-error-invalid-css-selector = CSS 选择器无效：{ $selector }
 domain-error-validation = 验证错误：{ $field } - { $message }
 

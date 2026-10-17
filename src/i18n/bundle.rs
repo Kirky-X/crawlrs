@@ -360,7 +360,7 @@ impl I18nBundle {
             "sdk-url-empty",
         ]);
 
-        // domain-error keys (17 keys)
+        // domain-error keys (18 keys)
         keys.extend([
             "domain-error-crawl-config",
             "domain-error-depth-exceeded",
@@ -377,6 +377,7 @@ impl I18nBundle {
             "domain-error-webhook-delivery-failed",
             "domain-error-invalid-webhook-url",
             "domain-error-llm-extraction-failed",
+            "domain-error-llm-carrier-not-injected",
             "domain-error-invalid-css-selector",
             "domain-error-validation",
         ]);

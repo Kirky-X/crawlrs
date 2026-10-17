@@ -143,7 +143,7 @@ pub struct CrawlRsState {
     pub rerank_provider: Option<Arc<dyn RerankProvider>>,
     /// Content extraction facade
     ///
-    /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLMService，按 Trafilatura→DomSmoothie→CssRule
+    /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLM 承载，按 Trafilatura→DomSmoothie→CssRule
     /// 优先级路由，`confidence < 0.7` 时触发 LLM 回退。由 `scrape_worker` 提取路径使用。
     pub content_extractor: Arc<ContentExtractionFacade>,
     /// 高级缓存服务

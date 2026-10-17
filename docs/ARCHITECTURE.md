@@ -501,12 +501,12 @@ domain/
 │   ├── audit_service.rs
 │   ├── audit_log_builder.rs
 │   ├── geo_location.rs
-│   ├── llm_provider_strategy.rs  # ProviderStrategy 策略模式（OllamaStrategy）
 │   ├── id_service.rs                 # NebulaId ID 生成服务
 │   ├── rag_strategy.rs               # RAG 语义分块 + 向量检索提取
 │   ├── rerank.rs                     # 重排策略
-│   ├── llm/                       # LLM 子模块（mod, prompt_builder, provider_adapter,
-│   │                              #  chunker, provenance, vision_adapter）
+│   ├── llm/                       # LLM 边界（mod: trait + ExplicitErrorCarrier；
+│   │                              #  prompt_builder, chunker, provenance；
+│   │                              #  vision_adapter 由 engine-mllm 门控）
 │   ├── content_extractor/         # 正文提取（trafilatura/dom_smoothie/css_rule/quality_gate/facade）
 │   ├── markdown_service.rs
 │   ├── relevance_scorer.rs
@@ -899,6 +899,7 @@ pub struct CrawlRsState {
     pub create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait>,
     pub search_client: Arc<SearchClient>,
     pub search_service: Arc<dyn SearchServiceTrait>,
+    // 默认 ExplicitErrorCarrier；宿主经 pub 字段/工厂/from_kit 注入 carrier
     pub llm_service: Arc<dyn LLMServiceTrait>,
     pub extraction_service: Arc<dyn ExtractionServiceTrait>,
     // RAG：rag.enabled=false 或未配置时为 None（Option，非 cfg 门控）
@@ -985,6 +986,8 @@ auth    = ["dep:garrison", "dep:inventory"]   # 0.2.0: garrison v0.9.0-rc.2 接�
 rate-limit = []            # 空数组：只门控装配选择，limiteron crate 始终编译
 webhook = []
 full    = ["standard", "engine-flaresolverr", "extractors", "llm"]
+llm     = []                # trait + 编排 + ExplicitErrorCarrier，零外部依赖
+engine-mllm = ["engine-playwright", "llm", "dep:genai"]  # genai 仅随视觉面保留
 
 # sitemap（0.2.0 起并入 platform）：
 sitemap = ["dep:quick-xml"]
@@ -1093,7 +1096,7 @@ When a feature is off, the corresponding endpoints return **404** (not 401/403) 
 [engines.mllm]          # MLLM autonomous navigation (feature-gated)
 [webhook]               # Secret, max_retries, batch_size
 [bing_search]           # Bing Search API key (via env var)
-[llm]                   # API key, provider, model, timeout, provenance
+[llm]                   # model, timeout, provenance（供应商访问已移交宿主 carrier）
 [llm.chunking]          # Token window chunking settings
 [content_extraction]    # Min word count, replacement ratio, prose gates
 [rag]                   # Embedding + rerank providers, local/remote settings
@@ -1494,6 +1497,14 @@ gated `trafilatura`/`dom-smoothie`/`extractors`：
 - `trafilatura_extractor.rs`（主路径）→ `dom_smoothie_extractor.rs`（回退）→ `css_rule_extractor.rs`（兆底）
 - `facade.rs`：`ContentExtractionFacade` 按优先级路由，`confidence<0.7` 触发 LLM 回退
 
+### LLM Carrier Boundary (`src/domain/services/llm/`)
+
+- `mod.rs` 的 `LLMServiceTrait` 是 crawlrs 唯一 LLM 边界：`extract_data` / `extract_data_chunked` / `extract_data_with_provenance`，接口签名对宿主稳定。
+- 供应商访问不自持：`LLMService` / `provider_adapter` / `llm_provider_strategy` 已删除；`genai` 仅随 `engine-mllm` 的 `GenaiVisionAdapter` 保留（`vision_adapter` 由 `engine-mllm` 门控）。
+- 默认装配 `ExplicitErrorCarrier`：未注入 carrier 时三入口均返回 i18n 双语结构化错误（`domain-error-llm-carrier-not-injected`），不 panic、不静默降级。
+- 宿主注入三路径：`Services.llm_service` pub 字段、`init_llm_service` 工厂替换、`CrawlRsState::from_kit`。
+- 编排工具保留：`prompt_builder` / `chunker`（F8）/ `provenance`（F9）以公开模块形式供注入 carrier 复用；`[llm]` 只保留 `model` / `request_timeout_secs` / `chunking` / `provenance_*`。
+
 ### URL Normalization & Layered Dedup (`src/utils/url_normalizer.rs` + `src/utils/dedup/`)
 
 - `url_normalizer.rs`：小写 host/去 fragment/统一 trailing slash/query 排序/可选去 query/`permutations`
@@ -1612,7 +1623,7 @@ pub struct PostgresTaskQueue {
 }
 ```
 
-The `TaskRepository` provides `acquire_next(worker_id)` which uses `FOR UPDATE SKIP LOCKED` semantics for safe concurrent worker access. Ordering is `priority ASC, created_at ASC`（数值越小越优先），由 `migrations/003` 的两个 partial index（`idx_tasks_acquire_queued` / `idx_tasks_acquire_stale`）支撑有序取任务。详见 [Queue Architecture](queue-architecture.md)。
+The `TaskRepository` provides `acquire_next(worker_id)` which uses `FOR UPDATE SKIP LOCKED` semantics for safe concurrent worker access. Ordering is `priority ASC, created_at ASC`（数值越小越优先），由 `migrations/003` 的两个 partial index（`idx_tasks_acquire_queued` / `idx_tasks_acquire_stale`）支撑有序取任务。详见 [Queue Architecture](#-queue-system)。
 
 ### Worker Types
 

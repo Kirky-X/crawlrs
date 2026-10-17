@@ -100,34 +100,19 @@ fn default_request_timeout_secs() -> u64 {
 
 /// LLM 配置设置
 ///
-/// 配置 LLM（大语言模型）服务的参数
+/// 配置 LLM 提取编排参数。供应商访问语义（provider / api_key / api_base_url）
+/// 已随手写供应商栈退役——承载实现由宿主注入，供应商凭据不进入 crawlrs 配置。
 ///
 /// # 字段说明
 ///
-/// * `api_key` - LLM API 密钥（敏感信息，仅 crate 可见）
-/// * `model` - 使用的模型名称，默认 "gpt-3.5-turbo"
-/// * `api_base_url` - LLM API 基础 URL，默认 <https://api.openai.com/v1>
-///
-/// # 安全提示
-///
-/// `api_key` 字段包含 LLM API 密钥，泄露可能导致未经授权的访问。
-/// 该字段仅对 crate 可见，外部模块应使用 `api_key()` 方法访问。
-#[derive(Clone, Deserialize, Serialize, confers::Config)]
+/// * `model` - 使用的模型名称，默认 "gpt-3.5-turbo"（宿主 carrier 可读取）
+/// * `chunking` / `provenance_*` - 提取编排参数（对注入的 carrier 同样生效）
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__LLM__")]
 pub struct LLMSettings {
-    /// LLM 提供商 (openai, ollama, anthropic, etc)
-    pub provider: Option<String>,
-
-    /// LLM API 密钥 (敏感信息)
-    pub(crate) api_key: Option<String>,
-
     /// 使用的模型名称
     #[config(default = Some("gpt-3.5-turbo".to_string()))]
     pub model: Option<String>,
-
-    /// LLM API 基础 URL
-    #[config(default = Some("https://api.openai.com/v1".to_string()))]
-    pub api_base_url: Option<String>,
 
     /// LLM 提取 token 窗口分块配置（F8）
     ///
@@ -159,29 +144,6 @@ pub struct LLMSettings {
     #[serde(default = "default_provenance_min_coverage")]
     #[config(default = 0.75)]
     pub provenance_min_coverage: f64,
-}
-
-impl std::fmt::Debug for LLMSettings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LLMSettings")
-            .field("provider", &self.provider)
-            .field("api_key", &"[REDACTED]")
-            .field("model", &self.model)
-            .field("api_base_url", &self.api_base_url)
-            .finish()
-    }
-}
-
-impl LLMSettings {
-    /// 获取 LLM API 密钥
-    ///
-    /// # 安全提示
-    ///
-    /// 此方法返回 LLM API 密钥，调用者应谨慎处理，
-    /// 不要记录到日志或暴露给用户。
-    pub fn api_key(&self) -> Option<&str> {
-        self.api_key.as_deref()
-    }
 }
 
 #[cfg(test)]
@@ -231,7 +193,7 @@ mod tests {
     #[test]
     fn test_llm_settings_without_chunking_section_defaults() {
         let toml = r#"
-            provider = "openai"
+            model = "qwen3:1.7b"
         "#;
         let s: LLMSettings = toml::from_str(toml).expect("deserialize");
         assert!(!s.chunking.enabled);
@@ -253,7 +215,6 @@ mod tests {
     #[test]
     fn test_llm_provenance_settings_toml_parses() {
         let toml = r#"
-            provider = "openai"
             provenance_enabled = true
             provenance_min_coverage = 0.8
         "#;
@@ -266,29 +227,11 @@ mod tests {
     #[test]
     fn test_llm_settings_without_provenance_keys_defaults() {
         let toml = r#"
-            provider = "openai"
+            model = "qwen3:1.7b"
         "#;
         let s: LLMSettings = toml::from_str(toml).expect("deserialize");
         assert!(!s.provenance_enabled);
         assert!((s.provenance_min_coverage - 0.75).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_llm_default_api_key_is_none() {
-        let settings = LLMSettings::default();
-        assert!(
-            settings.api_key().is_none(),
-            "default api_key should be None"
-        );
-    }
-
-    #[test]
-    fn test_llm_default_provider_is_none() {
-        let settings = LLMSettings::default();
-        assert!(
-            settings.provider.is_none(),
-            "default provider should be None"
-        );
     }
 
     #[test]
@@ -301,67 +244,19 @@ mod tests {
         );
     }
 
+    /// 供应商语义配置已退役：旧配置里的 provider/api_key/api_base_url 键不再解析
     #[test]
-    fn test_llm_default_api_base_url() {
-        let settings = LLMSettings::default();
-        assert_eq!(
-            settings.api_base_url.as_deref(),
-            Some("https://api.openai.com/v1"),
-            "default api_base_url should be OpenAI endpoint"
-        );
-    }
-
-    #[test]
-    fn test_llm_api_key_returns_some_value() {
-        let settings = LLMSettings {
-            provider: Some("openai".to_string()),
-            api_key: Some("sk-secret-key".to_string()),
-            model: Some("gpt-4".to_string()),
-            api_base_url: Some("https://api.openai.com/v1".to_string()),
-            chunking: LlmChunkingSettings::default(),
-            provenance_enabled: false,
-            request_timeout_secs: 120,
-            provenance_min_coverage: 0.75,
-        };
-        assert_eq!(settings.api_key(), Some("sk-secret-key"));
-    }
-
-    #[test]
-    fn test_llm_api_key_returns_none_when_not_set() {
-        let settings = LLMSettings {
-            provider: None,
-            api_key: None,
-            model: None,
-            api_base_url: None,
-            chunking: LlmChunkingSettings::default(),
-            provenance_enabled: false,
-            request_timeout_secs: 120,
-            provenance_min_coverage: 0.75,
-        };
-        assert!(settings.api_key().is_none());
-    }
-
-    #[test]
-    fn test_llm_serde_roundtrip_with_key() {
-        let settings = LLMSettings {
-            provider: Some("anthropic".to_string()),
-            api_key: Some("key-abc".to_string()),
-            model: Some("claude-3".to_string()),
-            api_base_url: Some("https://api.anthropic.com".to_string()),
-            chunking: LlmChunkingSettings::default(),
-            provenance_enabled: false,
-            request_timeout_secs: 120,
-            provenance_min_coverage: 0.75,
-        };
-        let json = serde_json::to_string(&settings).expect("serialize");
-        let back: LLMSettings = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(back.provider.as_deref(), Some("anthropic"));
-        assert_eq!(back.api_key(), Some("key-abc"));
-        assert_eq!(back.model.as_deref(), Some("claude-3"));
-        assert_eq!(
-            back.api_base_url.as_deref(),
-            Some("https://api.anthropic.com")
-        );
+    fn test_llm_retired_provider_keys_are_ignored() {
+        let toml = r#"
+            model = "host-carrier-model"
+            provider = "ollama"
+            api_key = "legacy-secret"
+            api_base_url = "http://localhost:11434/v1"
+        "#;
+        let settings: LLMSettings = toml::from_str(toml).expect("deserialize");
+        // 旧供应商键被 serde 忽略，只有保留的编排键生效
+        assert_eq!(settings.model.as_deref(), Some("host-carrier-model"));
+        assert!(!settings.provenance_enabled);
     }
 
     #[test]
@@ -369,56 +264,37 @@ mod tests {
         let settings = LLMSettings::default();
         let json = serde_json::to_string(&settings).expect("serialize");
         let back: LLMSettings = serde_json::from_str(&json).expect("deserialize");
-        assert!(back.api_key().is_none());
-        assert!(back.provider.is_none());
         assert_eq!(back.model.as_deref(), settings.model.as_deref());
         assert_eq!(
-            back.api_base_url.as_deref(),
-            settings.api_base_url.as_deref()
+            back.chunking.model_context_tokens,
+            settings.chunking.model_context_tokens
         );
+        assert_eq!(back.provenance_enabled, settings.provenance_enabled);
     }
 
     #[test]
-    fn test_llm_clone_preserves_api_key() {
+    fn test_llm_clone_preserves_fields() {
         let settings = LLMSettings {
-            provider: Some("ollama".to_string()),
-            api_key: Some("cloned-key".to_string()),
             model: Some("llama2".to_string()),
-            api_base_url: Some("http://localhost:11434".to_string()),
             chunking: LlmChunkingSettings::default(),
-            provenance_enabled: false,
-            request_timeout_secs: 120,
-            provenance_min_coverage: 0.75,
+            provenance_enabled: true,
+            request_timeout_secs: 90,
+            provenance_min_coverage: 0.8,
         };
         let cloned = settings.clone();
-        assert_eq!(cloned.provider, settings.provider);
-        assert_eq!(cloned.api_key(), Some("cloned-key"));
         assert_eq!(cloned.model, settings.model);
-        assert_eq!(cloned.api_base_url, settings.api_base_url);
+        assert_eq!(cloned.provenance_enabled, settings.provenance_enabled);
+        assert_eq!(cloned.request_timeout_secs, 90);
     }
 
     #[test]
-    fn test_llm_debug_does_not_panic() {
+    fn test_llm_debug_contains_model() {
         let settings = LLMSettings {
-            provider: Some("openai".to_string()),
-            api_key: Some("debug-key".to_string()),
             model: Some("gpt-4".to_string()),
-            api_base_url: Some("https://api.openai.com/v1".to_string()),
-            chunking: LlmChunkingSettings::default(),
-            provenance_enabled: false,
-            request_timeout_secs: 120,
-            provenance_min_coverage: 0.75,
+            ..LLMSettings::default()
         };
         let debug = format!("{:?}", settings);
-        assert!(
-            debug.contains("LLMSettings"),
-            "Debug should contain struct name"
-        );
-        // api_key must be redacted in Debug output
-        assert!(debug.contains("[REDACTED]"), "Debug should redact api_key");
-        assert!(
-            !debug.contains("debug-key"),
-            "Debug must not contain actual api_key value"
-        );
+        assert!(debug.contains("LLMSettings"));
+        assert!(debug.contains("gpt-4"));
     }
 }

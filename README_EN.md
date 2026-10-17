@@ -99,7 +99,7 @@ cargo build --release
 # Recommended for production: default + Playwright engine + metrics + content processing
 cargo build --release --features standard
 
-# Everything (standard + FlareSolverr + content extraction + LLM)
+# Everything except vision/MLLM (standard + FlareSolverr + content extraction + LLM boundary)
 cargo build --release --features full
 ```
 
@@ -162,7 +162,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 |------|----------|----------|----------|
 | Default | `cargo build --release` | `platform` (teams + auth + rate-limit + webhook + metrics + content + sitemap) + `db-postgres` | Full platform out of the box |
 | `standard` | `cargo build --release --features standard` | Default + `engine-playwright` + `sitemap` | Recommended for production (JS rendering + metrics + content processing + sitemap) |
-| `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | Everything |
+| `full` | `cargo build --release --features full` | `standard` + `engine-flaresolverr` + `extractors` + `llm` | Everything except vision/MLLM (add `engine-mllm`) |
 | `no-default` | `cargo build --release --no-default-features` | Pure core scraping stack | Single-tenant/unauthenticated deployments, embedding |
 | `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | Minimal agent/embedded library surface |
 
@@ -182,9 +182,9 @@ The table below is a major subset of the `[features]` section of `Cargo.toml` (f
 | `engine-playwright` | chromiumoxide browser automation engine | ❌ |
 | `engine-flaresolverr` | FlareSolverr anti-bot engine (Full/Cdp/Tls modes) | ❌ |
 | `engine-tls-fingerprint` | WreqEngine TLS fingerprint masking (BoringSSL JA3/JA4) | ❌ |
-| `engine-mllm` | MLLM vision-LLM autonomous navigation engine (implies `engine-playwright` + `llm`) | ❌ |
+| `engine-mllm` | MLLM vision-LLM autonomous navigation engine (implies `engine-playwright` + `llm`; keeps `genai` for the vision surface) | ❌ |
 | `trafilatura` / `dom-smoothie` / `extractors` | Content extraction main path / performance fallback / all enabled | ❌ |
-| `llm` | genai LLM extraction | ❌ |
+| `llm` | LLM extraction boundary (trait + orchestration; provider access injected by the host carrier) | ❌ |
 | `sitemap` | Sitemap generation (`/v1/map` endpoint) | ✅ (platform/standard) |
 | `rag-local` | Local RAG embedding and reranking (vecboost) | ❌ |
 | `rag-remote` | Remote RAG embedding (rig-core) | ❌ |
@@ -213,9 +213,19 @@ crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"]
 |---------|-------------|:----------:|
 | `db-postgres` | PostgreSQL backend (primary embedding storage path) | ✅ already in default |
 | `extractors` | Content extraction (`trafilatura` + `dom-smoothie`) | Explicit |
-| `llm` | LLM structured extraction (`genai`) | Explicit |
+| `llm` | LLM structured extraction boundary (trait + orchestration, no provider access; carrier injected by the host) | Explicit |
 
 > RAG (`vecboost`, via `rag-local`/`rag-remote`) and the TLS-fingerprint engine (`wreq`, via `engine-tls-fingerprint`) are **not** part of the supported default embedding combination—they pull extra local sibling path dependencies or the BoringSSL build chain and must be validated per their own features.
+
+### LLM carrier injection model
+
+crawlrs no longer bundles any LLM provider access (the former `LLMService` / `provider_adapter` / `llm_provider_strategy` are deleted); `LLMServiceTrait` is the only LLM boundary. The host injects its own implementation (e.g. fluxgate's `FluxgateLLMCarrier`) through any of these public assembly paths:
+
+1. assign the `Services.llm_service` public field directly;
+2. replace `init_llm_service` with a host factory;
+3. inject through the `CrawlRsState::from_kit` assembly surface.
+
+Without injection the default assembly is `ExplicitErrorCarrier`: every LLM call returns an i18n bilingual structured error (`domain-error-llm-carrier-not-injected`) — no panic, no silent degradation. The `prompt_builder` / `chunker` (F8) / `provenance` (F9) orchestration modules remain available for injected carriers to reuse.
 
 ### Unified dependency version baseline
 
@@ -295,7 +305,7 @@ The server listens on `8899` by default (configurable via `CRAWLRS__SERVER__PORT
 
 crawlrs follows Domain-Driven Design with a four-layer architecture — `presentation → application → domain → infrastructure`: Axum handles HTTP and middleware, use cases orchestrate business logic, the domain layer defines capability contracts via traits such as `ScraperEngine`, and the infrastructure layer reaches PostgreSQL through dbnexus (Sea-ORM) and multi-level caching through oxcache. The scraping data path is: request passes pre-check SSRF validation → `EngineRouter` selects an engine by strategy (anti-bot detection can dynamically re-dispatch to a browser engine) → worker pool executes → results are persisted and webhooks fire.
 
-The consumption surface of the in-house library matrix (same-author shared rc chain): garrison carries authentication and health probes (gated by `auth`); limiteron carries rate limiting and the engine circuit-breaker state machine (a thin `ManualCircuitBreaker` wrapper plus an `AtomicU8` synchronous mirror); oxcache carries the cache itself (memory + `serialization` + `metrics`) and the URL-deduplication Bloom filter (`bloom` feature, replacing the in-house MmapBloom); sdforge carries DTO validation and HTTP error status-code mapping (`unified::http_status_for`). The in-house library gap register is documented in the [🏗️ Architecture Document · 自研库反向需求](docs/ARCHITECTURE.md).
+The consumption surface of the in-house library matrix (same-author shared rc chain): garrison carries authentication and health probes (gated by `auth`); limiteron carries rate limiting and the engine circuit-breaker state machine (a thin `ManualCircuitBreaker` wrapper plus an `AtomicU8` synchronous mirror); oxcache carries the cache itself (memory + `serialization` + `metrics`) and the URL-deduplication Bloom filter (`bloom` feature, replacing the in-house MmapBloom); sdforge carries DTO validation and HTTP error status-code mapping (`unified::http_status_for`). The in-house library gap register is documented in the [🏗️ Architecture Document · In-House Library Reverse Requirements](docs/ARCHITECTURE.md).
 
 For layer responsibilities, engine routing details, all enhancement modules, queue/cache/rate-limit design and deployment topologies, see the [🏗️ Architecture Document](docs/ARCHITECTURE.md).
 
@@ -351,7 +361,7 @@ scripts/pre-commit-check.sh all
 
 ### 📊 Test Scale
 
-As of 0.2.0-rc.2: 6,310 inline test attributes in `src/` (408 source files, 206,781 lines), 967 tests in `tests/` (116 `.rs` files, incl. 70 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · 统计汇总](docs/TEST_SCENARIOS.md).
+As of 0.2.0-rc.2: 6,310 inline test attributes in `src/` (408 source files, 206,781 lines), 967 tests in `tests/` (116 `.rs` files, incl. 70 unit-test files under `tests/unit/` and the real-PostgreSQL integration suite), 9 Criterion benchmark groups, and 5 Python suites under `tests/python/` (`scripts/run-tests.sh local` mode runs 3 of them: api_endpoints / performance / error_handling); the coverage gate is line coverage ≥ 80%, enforced by CI. For itemized statistics see the [🧪 Test Scenario Matrix · Statistics Summary](docs/TEST_SCENARIOS.md).
 
 ---
 
@@ -464,7 +474,7 @@ crawlrs stands on the shoulders of these excellent open-source projects:
 | [chromiumoxide](https://crates.io/crates/chromiumoxide) | Chrome CDP browser automation |
 | [wreq](https://crates.io/crates/wreq) | BoringSSL TLS fingerprint masking |
 | [scraper](https://crates.io/crates/scraper) | HTML parsing |
-| [genai](https://crates.io/crates/genai) | Multi-model LLM access |
+| [genai](https://crates.io/crates/genai) | Vision-model access (`engine-mllm` MLLM engine) |
 | [htmd](https://crates.io/crates/htmd) | HTML→Markdown conversion |
 | [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | Content extraction |
 | [criterion](https://crates.io/crates/criterion) | Benchmarking |

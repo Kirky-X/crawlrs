@@ -75,7 +75,9 @@ openapi = ["http", "sdforge/openapi", "dep:utoipa"]
 standard = ["engine-playwright", "metrics", "content", "sitemap"]
 full = ["standard", "engine-flaresolverr", "extractors", "llm"]
 
-llm = ["dep:genai"]
+# `llm`：LLM 边界（trait + 编排 + ExplicitErrorCarrier），零外部依赖；
+# 供应商访问移交宿主 carrier 注入，genai 仅随 vision 面（engine-mllm）保留。
+llm = []
 
 # --- RAG 能力特性（嵌入 + 重排，最小引入：不入 default / full） ---
 # rag-local: vecboost 进程内本地推理（Candle CPU；嵌入与重排共用一个 bi-encoder 模型）
@@ -92,8 +94,8 @@ engine-flaresolverr = []
 # 注意：wreq-util（Emulation 便捷枚举）为 GPL-3.0，违反 deny.toml license 白名单，
 # 故 TlsEmulation 由本项目自有枚举映射到 wreq 的 EmulationProvider（Apache-2.0 API），不引入 wreq-util。
 engine-tls-fingerprint = ["dep:wreq"]
-# MLLM 自主导航爬取引擎依赖浏览器引擎 + 视觉 LLM
-engine-mllm = ["engine-playwright", "llm"]
+# MLLM 自主导航爬取引擎依赖浏览器引擎 + 视觉 LLM（genai 仅经此面保留）
+engine-mllm = ["engine-playwright", "llm", "dep:genai"]
 
 # --- 内容处理特性（content-processing） ---
 # aho-corasick: Tier2 通用词字面量集的多模式匹配（AC 自动机）
