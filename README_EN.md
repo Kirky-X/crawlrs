@@ -60,7 +60,7 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 
 <table style="width:100%; border-collapse: collapse">
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>Unified Search</b><br><span style="color:#64748B">Aggregated results from Bing, Baidu and Sogou with RRF fusion ranking and SimHash cross-engine deduplication; Exa / Tavily register automatically when credentials are configured</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>Unified Search</b><br><span style="color:#64748B">Aggregated results from Bing, Baidu and Sogou with RRF fusion ranking and SimHash cross-engine deduplication; Exa / Tavily register automatically when credentials are configured; an opt-in SearXNG public-instance pool can be enabled by configuration</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🎯 <b>Single-Page Scraping</b><br><span style="color:#64748B">Uniform scraping of static HTML and JS-rendered pages, with screenshots, form interactions, custom headers and sync-wait; the Playwright engine can capture background XHR/Fetch responses</span></td>
 </tr>
 <tr>
@@ -150,6 +150,16 @@ curl -X POST http://localhost:8899/v1/scrape \
 - **Four run modes**: one binary, dispatched by subcommand (`src/main.rs`) — `crawlrs` or `crawlrs api` (default) starts the API server, `crawlrs worker` consumes the task queue in worker mode, `crawlrs bootstrap` initializes the default team and an admin API key, and `crawlrs migrate` applies `migrations/*.sql` in order.
 - **DDD four layers**: `presentation → application → domain → infrastructure`, wired by trait-kit's capability Modules (`SettingsModule`/`CacheModule`/`EngineModule` etc.) for DI.
 - **Configuration**: powered by confers — TOML files plus `CRAWLRS__`-prefixed environment variables (`__` separates nesting, e.g. `CRAWLRS__DATABASE__URL`).
+- **SearXNG meta search (opt-in)**: `search.searxng.enabled = false` by default. When enabled, public instances are collected from searx.space into the `searxng_instances` registry, periodically probed to maintain an in-process pool (target: 3 usable instances), and failed requests fail over to another instance up to `max_failover_attempts` times.
+
+  ```toml
+  [search.searxng]
+  enabled = true                                # spawns collector + health workers
+  pool_target = 3
+  seed_urls = ["https://searx.example.org"]     # fallback when the dataset is unreachable
+  ```
+
+  **Privacy disclosure**: once enabled, user queries are sent in plaintext to third-party public SearXNG instances that this deployment does not control. Being disabled by default is the mitigation; governance views are `GET /v1/searxng/instances` and `GET /v1/searxng/pool`.
 - **Feature gating**: when business capabilities (teams/auth/rate-limit/webhook) are off, Noop implementations are injected automatically — single-tenant/unauthenticated deployments need zero business-logic changes.
 
 ---

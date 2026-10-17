@@ -561,6 +561,7 @@ fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> 
         ),
         cache_service: Arc::new(MockCacheService) as Arc<dyn CacheService>,
         shutdown_coordinator: Arc::new(crawlrs::workers::shutdown::ShutdownCoordinator::default()),
+        searxng_instances: None,
     }
 }
 

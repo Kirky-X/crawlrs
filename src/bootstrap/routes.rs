@@ -207,6 +207,8 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     #[cfg(feature = "webhook")]
     let webhook_event_repo = state.webhook_event_repo();
     let search_engine_service = state.search_client();
+    // SearXNG 管理 API：服务为 None（disabled）时 handler 返回 503
+    let searxng_instances = state.searxng_instances();
     // teams 相关字段在 teams-off 时不编译
     #[cfg(feature = "teams")]
     let team_service = state.team_service.clone();
@@ -252,6 +254,7 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .merge(management_routes::register_extract_routes())
         .merge(management_routes::register_teams_routes())
         .merge(management_routes::register_audit_routes())
+        .merge(management_routes::register_searxng_routes())
         .merge(management_routes::register_admin_routes());
     // F11：/v1/map（sitemap 流式站点图）与其他 v1 保护路由同批装配，
     // 共享下方 auth 中间件层（漏挂即成未鉴权写接口）
@@ -348,7 +351,9 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .layer(Extension(search_engine_service))
         .layer(Extension(state.search_service.clone()))
         .layer(Extension(crawl_handler_state)) // CrawlHandlerState for crawl handlers
-        .layer(Extension(credits_repo));
+        .layer(Extension(credits_repo))
+        // SearXNG 管理 API 的 Option 包装形态（None = disabled，handler 返回 503）
+        .layer(Extension(searxng_instances));
 
     // F11：map 用例 Extension（sitemap-off 时不装配）
     #[cfg(feature = "sitemap")]

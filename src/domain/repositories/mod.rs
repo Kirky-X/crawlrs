@@ -23,6 +23,7 @@ pub mod crawl_repository;
 pub mod credits_repository;
 pub mod geo_restriction_repository;
 pub mod scrape_result_repository;
+pub mod searxng_instance_repository;
 pub mod task_repository;
 pub mod tasks_backlog_repository;
 pub mod team_repository;

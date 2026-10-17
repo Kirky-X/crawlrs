@@ -6,6 +6,7 @@ use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
+use crate::domain::services::searxng::SearxngInstanceService;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 use crate::domain::services::webhook_service::WebhookService;
 use crate::engines::engine_client::EngineClient;
@@ -56,6 +57,8 @@ pub struct WorkerManager {
     settings: Arc<Settings>,
     default_concurrency_limit: usize,
     handles: Vec<JoinHandle<()>>,
+    /// SearXNG 实例生命周期服务（disabled 时 None，不拉起周期 worker）
+    searxng_instances: Option<Arc<dyn SearxngInstanceService>>,
     extraction_service:
         Arc<dyn crate::domain::services::extraction_service::ExtractionServiceTrait>,
     /// 带质量门的内容提取 Facade（所有 worker 共享同一实例）
@@ -114,6 +117,8 @@ pub struct WorkerManagerDeps {
     pub cache_service: Arc<dyn CacheService>,
     /// 优雅退出协调器
     pub shutdown_coordinator: Arc<ShutdownCoordinator>,
+    /// SearXNG 实例生命周期服务（`search.searxng.enabled = false` 时为 None）
+    pub searxng_instances: Option<Arc<dyn SearxngInstanceService>>,
 }
 
 /// Worker Manager Configuration
@@ -180,6 +185,7 @@ impl WorkerManager {
             )),
             // 所有 worker 共享 CacheService 实例
             cache_service: deps.cache_service,
+            searxng_instances: deps.searxng_instances,
             shutdown_coordinator: deps.shutdown_coordinator,
             worker_ids: parking_lot::Mutex::new(Vec::new()),
         }
@@ -300,6 +306,34 @@ impl WorkerManager {
         self.handles.push(tokio::spawn(async move {
             expiration_worker.run().await;
         }));
+
+        // SearXNG 双周期 worker（enabled 门控与 spawn_common_workers 一致）：
+        // 采集轮 PG advisory lock 防重、探活幂等，api/worker 双进程并发安全。
+        if let Some(searxng) = self.searxng_instances.clone() {
+            let collector = AbstractWorker::new(
+                Arc::new(
+                    crate::workers::searxng_collector_worker::SearxngCollectorWorker::new(
+                        searxng.clone(),
+                    ),
+                ),
+                std::time::Duration::from_secs(
+                    self.settings.search.searxng.collector.interval_seconds,
+                ),
+            );
+            self.handles.push(tokio::spawn(async move {
+                collector.run().await;
+            }));
+
+            let health = AbstractWorker::new(
+                Arc::new(crate::workers::searxng_health_worker::SearxngHealthWorker::new(searxng)),
+                std::time::Duration::from_secs(
+                    self.settings.search.searxng.health.interval_seconds,
+                ),
+            );
+            self.handles.push(tokio::spawn(async move {
+                health.run().await;
+            }));
+        }
 
         // 定期调度 RequestCoalescer::purge_stale
         //
@@ -1227,6 +1261,7 @@ mod tests {
             ),
             cache_service: Arc::new(NoopCacheService) as Arc<dyn CacheService>,
             shutdown_coordinator: Arc::new(ShutdownCoordinator::default()),
+            searxng_instances: None,
         }
     }
 

@@ -89,6 +89,13 @@ pub struct SearchSettings {
     #[serde(default)]
     pub tavily: TavilyEngineSettings,
 
+    /// SearXNG 元搜索配置（实例生命周期 + 引擎注册）
+    ///
+    /// `serde(default)` 兼容旧 config/default.toml 缺段：缺段等价于 `enabled = false`
+    /// （不构造实例服务、不注册引擎、不拉起周期 worker）。
+    #[serde(default)]
+    pub searxng: SearxngSearchSettings,
+
     /// Fallback 搜索引擎配置
     pub fallback: SearchFallbackConfig,
 }
@@ -185,6 +192,117 @@ impl TavilyEngineSettings {
     pub fn base_url(&self) -> Option<&str> {
         self.base_url.as_deref()
     }
+}
+
+/// SearXNG 元搜索配置
+///
+/// 公共 SearXNG 实例生态的完整生命周期配置：采集（searx.space 数据集）、
+/// 探活（JSON API 端到端探测）、热池（进程内可用实例缓存）、熔断与故障切换。
+///
+/// 默认 `enabled = false`（opt-in）：启用后会拉起两个周期 worker 并对外探测第三方实例。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__SEARCH__SEARXNG__")]
+// 容器级 serde(default)：缺字段回落到 `Default`（confers 按 `#[config(default)]` 生成），
+// 保证旧配置里半截 `[search.searxng]` 段也能反序列化
+#[serde(default)]
+pub struct SearxngSearchSettings {
+    /// 是否启用 SearXNG 元搜索（默认关闭；关闭时不构造实例服务、不注册引擎）
+    #[config(default = false)]
+    pub enabled: bool,
+
+    /// 热池目标成员数（控制回路尽力目标，非对外部第三方的硬保证）
+    #[config(default = 3)]
+    pub pool_target: usize,
+
+    /// 单次搜索内最多切换的实例数（故障切换上限）
+    #[config(default = 2)]
+    pub max_failover_attempts: u32,
+
+    /// 手工引导实例（数据源不可达时的兜底；采集器永不因数据集缺席退役它们）
+    #[config(default = Vec::<String>::new())]
+    pub seed_urls: Vec<String>,
+
+    /// 探测与搜索请求统一 User-Agent
+    #[config(default = "crawlrs-searxng/0.1 (+https://github.com/Kirky-X/crawlrs)".to_string())]
+    pub user_agent: String,
+
+    /// 采集器配置
+    #[serde(default)]
+    pub collector: SearxngCollectorSettings,
+
+    /// 健康探活配置
+    #[serde(default)]
+    pub health: SearxngHealthSettings,
+
+    /// 熔断器配置
+    #[serde(default)]
+    pub breaker: SearxngBreakerSettings,
+}
+
+/// SearXNG 实例采集器配置
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__SEARCH__SEARXNG__COLLECTOR__")]
+#[serde(default)]
+pub struct SearxngCollectorSettings {
+    /// 采集周期（秒），默认 6 小时
+    #[config(default = 21600)]
+    pub interval_seconds: u64,
+
+    /// searx.space 数据集 URL（可指向镜像/缓存副本）
+    #[config(default = "https://searx.space/data/instances.json".to_string())]
+    pub data_url: String,
+
+    /// 数据集拉取超时（秒）
+    #[config(default = 30)]
+    pub request_timeout_seconds: u64,
+
+    /// 准入的最低日在线率（百分比）
+    #[config(default = 95.0)]
+    pub min_uptime_day: f64,
+
+    /// 连续缺席数据集多少轮后退役（仅 `searx_space` 来源）
+    #[config(default = 4)]
+    pub retire_miss_cycles: i32,
+}
+
+/// SearXNG 实例健康探活配置
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__SEARCH__SEARXNG__HEALTH__")]
+#[serde(default)]
+pub struct SearxngHealthSettings {
+    /// 探活周期（秒）
+    #[config(default = 300)]
+    pub interval_seconds: u64,
+
+    /// 单实例探测超时（秒）
+    #[config(default = 8)]
+    pub probe_timeout_seconds: u64,
+
+    /// 探测查询词（走真实 JSON API 路径）
+    #[config(default = "crawlrs".to_string())]
+    pub probe_query: String,
+
+    /// 每轮探测的候选实例上限（礼貌性约束）
+    #[config(default = 10)]
+    pub candidate_batch: u64,
+
+    /// 连续探活失败多少轮后退役（cooldown → retired）
+    #[config(default = 5)]
+    pub failure_retire_threshold: i32,
+}
+
+/// SearXNG 专属熔断器配置
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__SEARCH__SEARXNG__BREAKER__")]
+#[serde(default)]
+pub struct SearxngBreakerSettings {
+    /// 连续失败阈值（跳闸）
+    #[config(default = 3)]
+    pub failure_threshold: u32,
+
+    /// 熔断打开后的冷却时长（秒）
+    #[config(default = 120)]
+    pub recovery_timeout_seconds: u64,
 }
 
 /// Fallback 搜索引擎配置
@@ -390,6 +508,7 @@ mod tests {
             engines: SearchEnginesSettings::default(),
             exa: ExaEngineSettings::default(),
             tavily: TavilyEngineSettings::default(),
+            searxng: SearxngSearchSettings::default(),
             fallback: SearchFallbackConfig::default(),
         };
         let json = serde_json::to_string(&settings).expect("serialize");
@@ -418,6 +537,7 @@ mod tests {
             engines: SearchEnginesSettings::default(),
             exa: ExaEngineSettings::default(),
             tavily: TavilyEngineSettings::default(),
+            searxng: SearxngSearchSettings::default(),
             fallback: SearchFallbackConfig::default(),
         };
         let cloned = settings.clone();
@@ -605,5 +725,98 @@ mod tests {
         let back: SearchSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(back.exa.api_key().is_none());
         assert!(back.tavily.api_key().is_none());
+    }
+
+    // ========== SearxngSearchSettings tests ==========
+
+    #[test]
+    fn test_searxng_settings_defaults() {
+        let settings = SearxngSearchSettings::default();
+        assert!(!settings.enabled, "searxng must be opt-in (enabled=false)");
+        assert_eq!(settings.pool_target, 3);
+        assert_eq!(settings.max_failover_attempts, 2);
+        assert!(settings.seed_urls.is_empty());
+        assert!(!settings.user_agent.trim().is_empty());
+    }
+
+    #[test]
+    fn test_searxng_sub_settings_defaults() {
+        let settings = SearxngSearchSettings::default();
+        assert_eq!(settings.collector.interval_seconds, 21600);
+        assert_eq!(
+            settings.collector.data_url,
+            "https://searx.space/data/instances.json"
+        );
+        assert_eq!(settings.collector.request_timeout_seconds, 30);
+        assert_eq!(settings.collector.min_uptime_day, 95.0);
+        assert_eq!(settings.collector.retire_miss_cycles, 4);
+
+        assert_eq!(settings.health.interval_seconds, 300);
+        assert_eq!(settings.health.probe_timeout_seconds, 8);
+        assert_eq!(settings.health.probe_query, "crawlrs");
+        assert_eq!(settings.health.candidate_batch, 10);
+        assert_eq!(settings.health.failure_retire_threshold, 5);
+
+        assert_eq!(settings.breaker.failure_threshold, 3);
+        assert_eq!(settings.breaker.recovery_timeout_seconds, 120);
+    }
+
+    #[test]
+    fn test_searxng_settings_serde_roundtrip() {
+        let settings = SearxngSearchSettings {
+            enabled: true,
+            pool_target: 5,
+            max_failover_attempts: 4,
+            seed_urls: vec!["https://searx.example.org/".to_string()],
+            collector: SearxngCollectorSettings {
+                min_uptime_day: 90.0,
+                ..SearxngCollectorSettings::default()
+            },
+            health: SearxngHealthSettings {
+                failure_retire_threshold: 7,
+                ..SearxngHealthSettings::default()
+            },
+            breaker: SearxngBreakerSettings {
+                failure_threshold: 2,
+                ..SearxngBreakerSettings::default()
+            },
+            ..SearxngSearchSettings::default()
+        };
+
+        let json = serde_json::to_string(&settings).expect("serialize");
+        let back: SearxngSearchSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(back.enabled);
+        assert_eq!(back.pool_target, 5);
+        assert_eq!(back.max_failover_attempts, 4);
+        assert_eq!(back.seed_urls, vec!["https://searx.example.org/"]);
+        assert_eq!(back.collector.min_uptime_day, 90.0);
+        assert_eq!(back.health.failure_retire_threshold, 7);
+        assert_eq!(back.breaker.failure_threshold, 2);
+    }
+
+    #[test]
+    fn test_searxng_settings_missing_section_equals_default() {
+        // 旧配置文件缺 `[search.searxng]` 段→ 反序列化为默认值（enabled=false）
+        let back: SearxngSearchSettings = serde_json::from_str("{}").expect("deserialize");
+        let default = SearxngSearchSettings::default();
+        assert_eq!(back.enabled, default.enabled);
+        assert_eq!(back.pool_target, default.pool_target);
+        assert_eq!(back.max_failover_attempts, default.max_failover_attempts);
+        assert_eq!(back.collector.data_url, default.collector.data_url);
+        assert_eq!(
+            back.health.interval_seconds,
+            default.health.interval_seconds
+        );
+        assert_eq!(
+            back.breaker.failure_threshold,
+            default.breaker.failure_threshold
+        );
+    }
+
+    #[test]
+    fn test_search_settings_default_searxng_disabled() {
+        let settings = SearchSettings::default();
+        assert!(!settings.searxng.enabled);
+        assert_eq!(settings.searxng.pool_target, 3);
     }
 }

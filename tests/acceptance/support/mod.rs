@@ -298,6 +298,7 @@ impl SharedHarness {
             content_extractor: app_state.content_extractor(),
             cache_service: app_state.cache_service(),
             shutdown_coordinator: coordinator,
+            searxng_instances: app_state.searxng_instances(),
         };
         let worker_config = crawlrs::workers::manager::WorkerManagerConfig {
             settings: settings.clone(),

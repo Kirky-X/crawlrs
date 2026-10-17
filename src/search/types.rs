@@ -12,6 +12,7 @@ pub enum SearchEngineType {
     Smart,
     Exa,
     Tavily,
+    Searxng,
 }
 
 impl SearchEngineType {
@@ -23,6 +24,7 @@ impl SearchEngineType {
             SearchEngineType::Smart => "Smart",
             SearchEngineType::Exa => "Exa",
             SearchEngineType::Tavily => "Tavily",
+            SearchEngineType::Searxng => "Searxng",
         }
     }
 
@@ -34,6 +36,7 @@ impl SearchEngineType {
             "Smart" | "smart" => Some(SearchEngineType::Smart),
             "Exa" | "exa" => Some(SearchEngineType::Exa),
             "Tavily" | "tavily" => Some(SearchEngineType::Tavily),
+            "Searxng" | "searxng" => Some(SearchEngineType::Searxng),
             _ => None,
         }
     }
@@ -70,6 +73,7 @@ mod tests {
         assert_eq!(SearchEngineType::Smart.name(), "Smart");
         assert_eq!(SearchEngineType::Exa.name(), "Exa");
         assert_eq!(SearchEngineType::Tavily.name(), "Tavily");
+        assert_eq!(SearchEngineType::Searxng.name(), "Searxng");
     }
 
     // ========== SearchEngineType::from_name tests ==========
@@ -100,6 +104,10 @@ mod tests {
             SearchEngineType::from_name("Tavily"),
             Some(SearchEngineType::Tavily)
         );
+        assert_eq!(
+            SearchEngineType::from_name("Searxng"),
+            Some(SearchEngineType::Searxng)
+        );
     }
 
     #[test]
@@ -127,6 +135,10 @@ mod tests {
         assert_eq!(
             SearchEngineType::from_name("tavily"),
             Some(SearchEngineType::Tavily)
+        );
+        assert_eq!(
+            SearchEngineType::from_name("searxng"),
+            Some(SearchEngineType::Searxng)
         );
     }
 
@@ -159,6 +171,7 @@ mod tests {
             SearchEngineType::Smart,
             SearchEngineType::Exa,
             SearchEngineType::Tavily,
+            SearchEngineType::Searxng,
         ] {
             let name = variant.name();
             assert_eq!(
@@ -194,6 +207,7 @@ mod tests {
             SearchEngineType::Smart,
             SearchEngineType::Exa,
             SearchEngineType::Tavily,
+            SearchEngineType::Searxng,
         ] {
             let json = serde_json::to_string(&variant).expect("serialize");
             let back: SearchEngineType = serde_json::from_str(&json).expect("deserialize");

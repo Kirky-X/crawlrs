@@ -13,6 +13,7 @@ pub mod credits;
 pub mod credits_transactions;
 pub mod geo_restriction_log;
 pub mod scrape_result;
+pub mod searxng_instance;
 pub mod task;
 pub mod tasks_backlog;
 pub mod team;

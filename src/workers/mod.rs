@@ -36,6 +36,10 @@ pub mod scheduler;
 pub mod scrape_executor;
 pub mod scrape_response_builder;
 pub mod scrape_worker;
+/// SearXNG 实例采集周期 worker（`search.searxng.enabled = true` 时拉起）
+pub mod searxng_collector_worker;
+/// SearXNG 实例健康探活周期 worker（`search.searxng.enabled = true` 时拉起）
+pub mod searxng_health_worker;
 /// 优雅退出协调器
 ///
 /// 提供 SIGTERM/SIGINT 监听与 worker 循环的关闭编排。

@@ -91,6 +91,7 @@ fn start_testcontainers_pg() -> String {
                     "migrations/003_add_acquire_next_indexes.sql",
                     "migrations/004_drop_feature_flags.sql",
                     "migrations/005_deprecate_legacy_api_keys.sql",
+                    "migrations/008_add_searxng_instances.sql",
                 ];
                 for file in &migration_files {
                     let sql = std::fs::read_to_string(file)

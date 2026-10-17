@@ -9,7 +9,8 @@ use crate::infrastructure::dns::DnsCacheService;
 use crate::infrastructure::oxcache::{create_cache, CacheService, OxcacheService, SearchCache};
 use crate::infrastructure::repositories::{
     crawl_repo_impl::CrawlRepositoryImpl, credits_repo_impl::CreditsRepositoryImpl,
-    scrape_result_repo_impl::ScrapeResultRepositoryImpl, task_repo_impl::TaskRepositoryImpl,
+    scrape_result_repo_impl::ScrapeResultRepositoryImpl,
+    searxng_instance_repo_impl::SearxngInstanceRepositoryImpl, task_repo_impl::TaskRepositoryImpl,
     tasks_backlog_repo_impl::TasksBacklogRepositoryImpl,
     webhook_event_repo_impl::WebhookEventRepoImpl, webhook_repo_impl::WebhookRepoImpl,
 };
@@ -44,6 +45,8 @@ pub struct Repositories {
     pub geo_restriction_repo: Arc<DatabaseGeoRestrictionRepository>,
     /// Tasks backlog repository for backlog processing.
     pub tasks_backlog_repo: Arc<TasksBacklogRepositoryImpl>,
+    /// SearXNG instance registry (public instance lifecycle source of truth).
+    pub searxng_instance_repo: Arc<SearxngInstanceRepositoryImpl>,
 }
 
 /// Initialize database connection pool.
@@ -159,6 +162,7 @@ pub fn init_repositories(db: Arc<DatabasePool>, settings: &Settings) -> Reposito
     #[cfg(feature = "teams")]
     let geo_restriction_repo = Arc::new(DatabaseGeoRestrictionRepository::new(db.inner().clone()));
     let tasks_backlog_repo = Arc::new(TasksBacklogRepositoryImpl::new(db.inner().clone()));
+    let searxng_instance_repo = Arc::new(SearxngInstanceRepositoryImpl::new(db.inner().clone()));
 
     Repositories {
         task_repo,
@@ -170,6 +174,7 @@ pub fn init_repositories(db: Arc<DatabasePool>, settings: &Settings) -> Reposito
         #[cfg(feature = "teams")]
         geo_restriction_repo,
         tasks_backlog_repo,
+        searxng_instance_repo,
     }
 }
 

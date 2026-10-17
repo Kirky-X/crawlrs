@@ -7,6 +7,8 @@
 use crate::config::settings::Settings;
 use crate::di::CrawlRsState;
 use crate::di::CrawlRsStateExt;
+use crate::workers::searxng_collector_worker::SearxngCollectorWorker;
+use crate::workers::searxng_health_worker::SearxngHealthWorker;
 use crate::workers::{AbstractWorker, Worker};
 use std::sync::Arc;
 
@@ -52,6 +54,26 @@ pub async fn spawn_common_workers(
     handles.push(tokio::spawn(async move {
         expiration_worker.run().await;
     }));
+
+    // SearXNG 双周期 worker：仅在实例生命周期服务存在（enabled=true）时拉起。
+    // api 与 worker 双进程都会拉起：采集轮由 PG advisory lock 防重，探活幂等。
+    if let Some(searxng) = app_state.searxng_instances() {
+        let collector = AbstractWorker::new(
+            Arc::new(SearxngCollectorWorker::new(searxng.clone())),
+            std::time::Duration::from_secs(settings.search.searxng.collector.interval_seconds),
+        );
+        handles.push(tokio::spawn(async move {
+            collector.run().await;
+        }));
+
+        let health = AbstractWorker::new(
+            Arc::new(SearxngHealthWorker::new(searxng)),
+            std::time::Duration::from_secs(settings.search.searxng.health.interval_seconds),
+        );
+        handles.push(tokio::spawn(async move {
+            health.run().await;
+        }));
+    }
 
     handles
 }
