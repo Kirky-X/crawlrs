@@ -38,6 +38,7 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 - [✨ Features](#-features)
 - [🚀 Quick Start](#-quick-start)
 - [🎨 Feature Flags](#-feature-flags)
+- [🔌 As a Library Dependency](#-as-a-library-dependency)
 - [📚 Documentation](#-documentation)
 - [💻 Examples](#-examples)
 - [🚢 Deployment](#-deployment)
@@ -192,6 +193,56 @@ The table below is a major subset of the `[features]` section of `Cargo.toml` (f
 | `test-mocks` | Test-only mock gating (integration tests must enable explicitly) | ❌ |
 
 > For the feature-combination compile matrix (22 combinations) and how it is verified, see the [🧪 Test Scenario Matrix](docs/TEST_SCENARIOS.md); for the gating implementation pattern, see [🏗️ Architecture Document · Feature Gate Architecture](docs/ARCHITECTURE.md).
+
+---
+
+## 🔌 As a Library Dependency
+
+crawlrs can be embedded by downstream projects (e.g. gateway applications) as a library via a **path dependency**, gaining scraping engines / content extraction / RAG capabilities. The supported embedding path is described below.
+
+### Embedding feature combination
+
+When pulling crawlrs in via a path dependency, declare the feature combination below (the default engine set comes along with `default-features`, bringing in `platform` + `db-postgres`):
+
+```toml
+[dependencies]
+crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"] }
+```
+
+| feature | Description | In default |
+|---------|-------------|:----------:|
+| `db-postgres` | PostgreSQL backend (primary embedding storage path) | ✅ already in default |
+| `extractors` | Content extraction (`trafilatura` + `dom-smoothie`) | Explicit |
+| `llm` | LLM structured extraction (`genai`) | Explicit |
+
+> RAG (`vecboost`, via `rag-local`/`rag-remote`) and the TLS-fingerprint engine (`wreq`, via `engine-tls-fingerprint`) are **not** part of the supported default embedding combination—they pull extra local sibling path dependencies or the BoringSSL build chain and must be validated per their own features.
+
+### Unified dependency version baseline
+
+The embedding side and crawlrs share the same nexus-family dependencies; cargo unifies an `x.y.z-rc.N` requirement to the highest rc within the same minor. crawlrs has raised its manifest minimum versions to the baseline below, making "single-repo CI baseline = embedding compile target" and preventing "green in one repo, red when embedded" from recurring on upstream upgrades:
+
+| Dependency | Unified baseline | Embedding role |
+|-----------|-----------------|---------------|
+| `dbnexus` | `0.6.0-rc.9` | Database abstraction (over sea-orm) |
+| `inklog` | `0.3.0-rc.9` | Logging (`log::` facade backend) |
+| `limiteron` | `0.3.0-rc.7` | Rate limiting / circuit breaking / backoff |
+| `confers` | `0.6.0-rc.10` | Configuration loading |
+| `trait-kit` | `0.5.0-rc.9` | Async DI (AsyncKit) |
+| `oxcache` | `0.5.0-rc.8` | Multi-tier caching |
+| `garrison` | `0.9.0-rc.3` | Authentication engine (pulled via default's `auth`) |
+
+> The embedding side must not rely on `[patch.crates-io]` to force version alignment—patch is a local development-state mechanism and is disallowed on the published surface (a path version coexisting with a registry version causes trait identity splitting). Raising versions only guarantees "equivalent compile and test pass under the same version" and does not change runtime behavior.
+
+### Embedding probe gate
+
+`scripts/embed-probe.sh` reproduces the embedding compile path via a path dependency in a temporary directory (`cargo new` a probe crate → `cargo add --path <repo-root> --features "db-postgres,extractors,llm"` → `cargo check`), so embedding breakage is caught inside the repo; the CI `embed-probe` job runs this script serially and blocks merging on failure.
+
+```bash
+scripts/embed-probe.sh              # auto-locate repo root (derived from the script's own path)
+scripts/embed-probe.sh <repo-root>  # specify repo root explicitly (cross-machine / CI)
+```
+
+Exit code `0` means the embedding compile surface is healthy; a non-zero exit prints the failing step name to stderr (`root` / `new` / `add` / `check`). Probe build artifacts land in the `mktemp` temporary directory, never polluting the repo working tree, and it is safe to run repeatedly.
 
 ---
 

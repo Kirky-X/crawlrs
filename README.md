@@ -38,6 +38,7 @@
 - [✨ 功能特性](#-功能特性)
 - [🚀 快速开始](#-快速开始)
 - [🎨 特性标志](#-特性标志)
+- [🔌 作为库依赖](#-作为库依赖)
 - [📚 文档](#-文档)
 - [💻 示例](#-示例)
 - [🚢 部署](#-部署)
@@ -192,6 +193,56 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `test-mocks` | 测试专用 mock 门控（集成测试需显式启用） | ❌ |
 
 > 特性组合的编译矩阵（22 组合）与验证方式见 [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md)；特性门控的实现模式见 [🏗️ 架构文档 · Feature Gate Architecture](docs/ARCHITECTURE.md)。
+
+---
+
+## 🔌 作为库依赖
+
+crawlrs 可作为库被下游项目（如网关类应用）以 **path 依赖**嵌入，获得抓取引擎 / 正文提取 / RAG 能力。受支持的嵌入方式如下。
+
+### 嵌入 feature 组合
+
+以 path 依赖引入 crawlrs 时，按下表声明 feature 组合（引擎默认集随 `default-features` 自动带入 `platform` + `db-postgres`）：
+
+```toml
+[dependencies]
+crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"] }
+```
+
+| feature | 说明 | 是否 default |
+|---------|------|:-----------:|
+| `db-postgres` | PostgreSQL 后端（嵌入主存储路径） | ✅ default 已含 |
+| `extractors` | 正文提取（`trafilatura` + `dom-smoothie`） | 显式声明 |
+| `llm` | LLM 结构化提取（`genai`） | 显式声明 |
+
+> RAG（`vecboost`，走 `rag-local`/`rag-remote`）与 TLS 指纹引擎（`wreq`，走 `engine-tls-fingerprint`）**不在**受支持的默认嵌入组合内——它们会引入额外的本地 sibling 路径依赖或 BoringSSL 构建链，需按各自 feature 单独验证。
+
+### 依赖版本统一基线
+
+嵌入方与 crawlrs 共享同一组 nexus 家族依赖，cargo 会将 `x.y.z-rc.N`  requirement 统一到同 minor 内的最高 rc。crawlrs 的 manifest 最低版本已抬升至下表基线，使「单仓 CI 基线 = 嵌入编译目标」，避免「单仓绿、嵌入红」在上游升级时复发：
+
+| 依赖 | 统一基线 | 嵌入角色 |
+|------|---------|---------|
+| `dbnexus` | `0.6.0-rc.9` | 数据库抽象（sea-orm 之上） |
+| `inklog` | `0.3.0-rc.9` | 日志（`log::` facade 后端） |
+| `limiteron` | `0.3.0-rc.7` | 限流 / 熔断 / 退避 |
+| `confers` | `0.6.0-rc.10` | 配置加载 |
+| `trait-kit` | `0.5.0-rc.9` | 异步 DI（AsyncKit） |
+| `oxcache` | `0.5.0-rc.8` | 多级缓存 |
+| `garrison` | `0.9.0-rc.3` | 认证引擎（经 default 的 `auth` 引入） |
+
+> 嵌入方不得依赖 `[patch.crates-io]` 强制对齐版本——patch 属本地开发态机制，发布面禁用（path 版与 registry 版并存会触发 trait 身份分裂）。抬版本只保证「同一版本下编译与测试等价通过」，不改变运行行为。
+
+### 嵌入探针门禁
+
+`scripts/embed-probe.sh` 在临时目录以 path 依赖复现嵌入编译路径（`cargo new` 探针 crate → `cargo add --path <仓库根> --features "db-postgres,extractors,llm"` → `cargo check`），嵌入破坏在仓内即可发现；CI 的 `embed-probe` job 会串行执行该脚本并阻塞合并。
+
+```bash
+scripts/embed-probe.sh              # 自动定位仓库根（由脚本自身位置推导）
+scripts/embed-probe.sh <repo-root>  # 显式指定仓库根（跨机器 / CI）
+```
+
+退出码 `0` 表示嵌入编译面完好；非零时 stderr 打印失败步骤名（`root` / `new` / `add` / `check`）。探针构建产物落在 `mktemp` 临时目录，不污染仓库工作区，可重复执行。
 
 ---
 

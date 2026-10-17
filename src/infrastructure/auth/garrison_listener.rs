@@ -759,6 +759,84 @@ fn event_to_audit_entry(event: &GarrisonEvent) -> GarrisonResult<AuditLogEntry> 
             .with_metadata("code", serde_json::Value::String(truncate_string(code, 64)));
             return Ok(entry.build());
         }
+        // rc.3 新增事件：重哈希与扫码登录，与同类 auth.* 事件同构处理（携 request_context）。
+        // PasswordRehashed 无特殊 metadata，走下方通用路径；携 login_id。
+        GarrisonEvent::PasswordRehashed { login_id, .. } => (
+            "auth.password_rehashed",
+            AuditDecision::Allow,
+            None,
+            Some(login_id.as_str()),
+        ),
+        // 扫码会话 ID 已由 garrison 构造点脱敏（前 8 字符 + ***），仍截断防溢出；
+        // Created 无登录主体，login_id 置 None。
+        GarrisonEvent::QrLoginCreated { qr_id, .. } => {
+            let entry = build_entry(
+                "auth.qr_login_created",
+                AuditDecision::Allow,
+                None,
+                None,
+                event,
+            )
+            .with_metadata(
+                "qr_id",
+                serde_json::Value::String(truncate_string(qr_id, 64)),
+            );
+            return Ok(entry.build());
+        }
+        GarrisonEvent::QrLoginScanned {
+            qr_id,
+            app_login_id,
+            ..
+        } => {
+            let entry = build_entry(
+                "auth.qr_login_scanned",
+                AuditDecision::Allow,
+                None,
+                Some(app_login_id.as_str()),
+                event,
+            )
+            .with_metadata(
+                "qr_id",
+                serde_json::Value::String(truncate_string(qr_id, 64)),
+            );
+            return Ok(entry.build());
+        }
+        GarrisonEvent::QrLoginConfirmed {
+            qr_id,
+            app_login_id,
+            ..
+        } => {
+            let entry = build_entry(
+                "auth.qr_login_confirmed",
+                AuditDecision::Allow,
+                None,
+                Some(app_login_id.as_str()),
+                event,
+            )
+            .with_metadata(
+                "qr_id",
+                serde_json::Value::String(truncate_string(qr_id, 64)),
+            );
+            return Ok(entry.build());
+        }
+        GarrisonEvent::QrLoginCancelled {
+            qr_id,
+            app_login_id,
+            ..
+        } => {
+            let entry = build_entry(
+                "auth.qr_login_cancelled",
+                AuditDecision::Allow,
+                None,
+                Some(app_login_id.as_str()),
+                event,
+            )
+            .with_metadata(
+                "qr_id",
+                serde_json::Value::String(truncate_string(qr_id, 64)),
+            );
+            return Ok(entry.build());
+        }
     };
 
     // 通用路径（无特殊 metadata 处理的变体）
@@ -922,6 +1000,21 @@ fn extract_request_context(event: &GarrisonEvent) -> Option<&RequestContext> {
             request_context, ..
         }
         | GarrisonEvent::Replaced {
+            request_context, ..
+        }
+        | GarrisonEvent::PasswordRehashed {
+            request_context, ..
+        }
+        | GarrisonEvent::QrLoginCreated {
+            request_context, ..
+        }
+        | GarrisonEvent::QrLoginScanned {
+            request_context, ..
+        }
+        | GarrisonEvent::QrLoginConfirmed {
+            request_context, ..
+        }
+        | GarrisonEvent::QrLoginCancelled {
             request_context, ..
         } => request_context.as_ref(),
         // 邀请事件不携带 RequestContext

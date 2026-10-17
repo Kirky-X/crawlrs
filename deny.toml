@@ -12,9 +12,11 @@ yanked = "deny"
 # （原 RUSTSEC-2026-0173 proc-macro-error2 已不再出现于依赖树，ignore 已移除。）
 #
 # RUSTSEC-2026-0285: rustls TLS 1.3 握手消息跨加密层边界被错误接受（crypto-failure，
-# CVSS 5.3 MEDIUM，官方 patched >=0.23.45，2026-09-14 发布）。复查（2026-09-15）：
-# 依赖树 rustls 已锁定 0.23.45 = 修复版本，`cargo deny check` 报告 advisories ok，
-# 无需 ignore 也无需进一步升级。后续 rustls 相关依赖变更时随 `cargo deny check` 一并复核。
+# CVSS 5.3 MEDIUM，官方 patched >=0.23.45，2026-09-14 发布）。
+# 追加（2026-10-17 embed-readiness）：RUSTSEC-2026-0346/0347/0348/0349（rustls Debug 泄漏
+# TLS secret、ECH 拒绝后外发缓冲、Brotli 证书解压 1GiB 预分配、未认证 ServerHello 降级）
+# patched >=0.23.46。已将 rustls 升至此版本（cargo update -p rustls --precise 0.23.46），
+# `cargo deny check` 无 rustls 告警，无需 ignore。后续 rustls 相关变更随门禁一并复核。
 #
 # 以下 advisory 为传递依赖中已停止维护的 crate，无可用升级版本，待上游迁移后移除：
 # - RUSTSEC-2024-0436: paste（vecboost → candle-core/gemm 传递依赖，编译期 proc-macro，
@@ -22,7 +24,13 @@ yanked = "deny"
 #   --all-features 才会扫到）
 # - RUSTSEC-2025-0119: number_prefix（vecboost → hf-hub → indicatif 传递依赖，
 #   仅进度条数字格式化，无运行时攻击面）
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119"]
+# - RUSTSEC-2024-0449: unsafe-libyaml（confers/dbnexus → serde_yaml_ng 传递依赖，
+#   为 libyaml C 代码的机器翻译，官方已归档、patched 为空 = 永久无修复版；informational
+#   unmaintained 非漏洞，无已知 CVE，运行时仅做 YAML 解析。待家族侧 yaml 引擎迁移后移除）
+#
+# 注：RUSTSEC-2026-0367/0368/0369（zip 8.6.0）不靠 ignore 处理——已整体移除死依赖
+# chromiumoxide_fetcher（见 Cargo.toml），zip 退出依赖树，告警自动消除。
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119", "RUSTSEC-2024-0449"]
 
 [licenses]
 allow = [
