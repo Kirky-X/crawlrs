@@ -452,20 +452,37 @@ impl EngineRouter {
                     if !attempt_request.needs_js {
                         let verdict = check_js_upgrade_probe(&response);
                         if verdict.upgrade {
-                            self.update_engine_stats(engine_name, false, response_time);
-                            self.metrics.record_engine_failure(
-                                engine_name,
-                                &format!("js-upgrade-probe: {}", verdict.reason),
-                            );
-                            debug!(
-                                "Engine {} returned SPA shell (probe score={}, reason={}); \
-                                 re-routing with needs_js=true to dispatch browser engine",
-                                engine_name, verdict.score, verdict.reason
-                            );
-
                             let mut js_request = request.clone();
                             js_request.needs_js = true;
-                            return Box::pin(self.route_internal(&js_request)).await;
+
+                            // 死端预检：以 needs_js=true 重选引擎为空（部署未注册
+                            // 任何 JS-capable 引擎）时，递归只会返回
+                            // `No suitable engines available` 并丢弃这份已成功的响应。
+                            // probe 仅是启发式，此时降级返回原始响应：跳过本次 probe
+                            // 的失败记账，控制流落入下方成功收尾段（stats 成功记账 /
+                            // 熔断 record_success / host 纪律 / session Cookie 捕获
+                            // 均按成功语义原样执行）。
+                            if self.select_optimal_engines(&js_request).is_empty() {
+                                warn!(
+                                    "JS upgrade probe hit (score={}, reason={}) but no \
+                                     JS-capable engine is registered for the needs_js \
+                                     re-route; degrading to the original HTTP response \
+                                     for {}",
+                                    verdict.score, verdict.reason, request.url
+                                );
+                            } else {
+                                self.update_engine_stats(engine_name, false, response_time);
+                                self.metrics.record_engine_failure(
+                                    engine_name,
+                                    &format!("js-upgrade-probe: {}", verdict.reason),
+                                );
+                                debug!(
+                                    "Engine {} returned SPA shell (probe score={}, reason={}); \
+                                     re-routing with needs_js=true to dispatch browser engine",
+                                    engine_name, verdict.score, verdict.reason
+                                );
+                                return Box::pin(self.route_internal(&js_request)).await;
+                            }
                         }
                     }
 

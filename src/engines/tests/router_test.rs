@@ -2360,7 +2360,7 @@ use crate::config::settings::SessionSettings;
 use crate::engines::provider::ProxyProvider;
 use crate::engines::proxy_pool::ProxyPool;
 use crate::engines::session::SessionManager;
-use crate::utils::host_discipline::{ObserveOutcome, PolitenessOptions};
+use crate::utils::host_discipline::{HostDiscipline, ObserveOutcome, PolitenessOptions};
 use crate::utils::ua_pool::UaPool;
 
 /// 每次引擎调用的观测快照（route 实际下发的三件套 header + 代理）
@@ -2633,4 +2633,205 @@ async fn test_session_cookie_captured_then_injected() {
         "2xx 成功后同 session 保持同一身份（不轮换）"
     );
     assert_eq!(obs[0].proxy, obs[1].proxy, "2xx 成功后代理粘性保持");
+}
+
+// =============================================================================
+// js-upgrade 重路由死端降级（R-engine-router-001 / 002）
+// =============================================================================
+
+/// 触发 `JsUpgradeProbe` 的 HTML fixture：10 个非追踪 `<script src>`（弱信号
+/// score=10 恰好达阈值），同时保留足够可见文本（>50 字符）与 body 体积
+/// （>200 字节），避免被 antibot Tier3 / near-empty 误判为挑战页。
+fn spa_shell_fixture(prefix: &str) -> String {
+    let mut body =
+        String::from("<!DOCTYPE html><html><head><title>Ticket Search</title></head><body>");
+    for i in 0..10 {
+        body.push_str(&format!(
+            r#"<script src="/assets/{prefix}-{i:02}.js"></script>"#
+        ));
+    }
+    body.push_str(
+        "<p>Legacy multi-page document that embeds many external scripts but still renders \
+         its content server-side; the original HTTP response already carries the payload \
+         that callers need when no JavaScript execution is required.</p>",
+    );
+    body.push_str("</body></html>");
+    body
+}
+
+/// 按 `needs_js` 返回不同 support_score 的计数引擎（真实 trait impl）
+struct JsUpgradeMockEngine {
+    name: &'static str,
+    content: String,
+    http_score: u8,
+    js_score: u8,
+    calls: std::sync::atomic::AtomicU32,
+}
+
+#[async_trait]
+impl ScraperEngine for JsUpgradeMockEngine {
+    async fn scrape(
+        &self,
+        _request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut headers = HashMap::new();
+        headers.insert(
+            "content-type".to_string(),
+            "text/html; charset=utf-8".to_string(),
+        );
+        Ok(InternalScrapeResponse {
+            captured_responses: Vec::new(),
+            status_code: 200,
+            content: self.content.clone(),
+            screenshot: None,
+            content_type: "text/html".to_string(),
+            headers,
+            response_time_ms: 5,
+            final_url: None,
+        })
+    }
+
+    fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
+        if request.needs_js {
+            self.js_score
+        } else {
+            self.http_score
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
+fn js_upgrade_request() -> InternalScrapeRequest {
+    InternalScrapeRequest {
+        url: "http://1.1.1.1/otn/leftTicket/init".to_string(),
+        method: crate::engines::engine_client::HttpMethod::Get,
+        headers: HashMap::new(),
+        timeout: Duration::from_secs(10),
+        needs_js: false,
+        needs_screenshot: false,
+        screenshot_config: None,
+        mobile: false,
+        proxy: None,
+        skip_tls_verification: false,
+        needs_tls_fingerprint: false,
+        use_fire_engine: false,
+        actions: Vec::new(),
+        body: None,
+        sync_wait_ms: 0,
+        block_ads: false,
+        block_media: false,
+        session_id: None,
+        wait_for: None,
+        needs_mllm: false,
+    }
+}
+
+/// R-engine-router-001 / 002：仅注册 HTTP 引擎时 probe 命中 → 降级返回原始响应，
+/// 不递归重派（scrape 恰 1 次），且统计按成功记账（probe 失败口径不残留）。
+#[tokio::test]
+async fn test_js_upgrade_dead_end_degrades_to_original_response() {
+    let engine = Arc::new(JsUpgradeMockEngine {
+        name: "http-only",
+        content: spa_shell_fixture("app"),
+        http_score: 100,
+        js_score: 10,
+        calls: std::sync::atomic::AtomicU32::new(0),
+    });
+    let router = EngineRouter::new(vec![engine.clone() as Arc<dyn ScraperEngine>]);
+
+    let response = router
+        .route(&js_upgrade_request())
+        .await
+        .expect("dead-end js upgrade must degrade instead of failing");
+
+    assert_eq!(response.content, engine.content, "原始响应体必须逐字节返回");
+    assert_eq!(response.status_code, 200);
+    assert_eq!(
+        engine.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "死端降级不得递归重派（scrape 恰 1 次）"
+    );
+
+    let stats = router.get_engine_stats();
+    let stat = stats.get("http-only").expect("engine stats 必须存在");
+    assert_eq!(stat.usage_count, 1, "降级只记一次成功口径");
+    assert!(
+        stat.success_rate > 0.99,
+        "probe 命中的失败口径不得残留，success_rate={}",
+        stat.success_rate
+    );
+    assert!(stat.last_used.is_some());
+    assert!(
+        !router.host_needs_browser("1.1.1.1"),
+        "降级不得写入 needs_js host 提示"
+    );
+}
+
+/// R-engine-router-003：注册 JS-capable 引擎时 probe 命中 → 升级递归照旧改派，
+/// 最终响应来自 JS 引擎，HTTP 引擎该次按失败记账。
+#[tokio::test]
+async fn test_js_upgrade_reroute_dispatches_browser_when_available() {
+    let http = Arc::new(JsUpgradeMockEngine {
+        name: "http-reqwest",
+        content: spa_shell_fixture("legacy"),
+        http_score: 100,
+        js_score: 10,
+        calls: std::sync::atomic::AtomicU32::new(0),
+    });
+    let browser = Arc::new(JsUpgradeMockEngine {
+        name: "browser-playwright",
+        content: "<html><body>This is the fully rendered content from the browser engine \
+                  after JavaScript execution completed successfully.</body></html>"
+            .to_string(),
+        http_score: 10,
+        js_score: 100,
+        calls: std::sync::atomic::AtomicU32::new(0),
+    });
+    // min_interval=1ms：递归重路由会再次经过同 host 纪律 gate，避免默认 1s 等待。
+    let router = EngineRouter::with_host_discipline(
+        vec![
+            http.clone() as Arc<dyn ScraperEngine>,
+            browser.clone() as Arc<dyn ScraperEngine>,
+        ],
+        HostDiscipline::new(Duration::from_millis(1), Duration::from_secs(60), 3),
+    );
+
+    let response = router
+        .route(&js_upgrade_request())
+        .await
+        .expect("probe 命中且存在 JS 引擎时必须升级成功");
+
+    assert!(
+        response.content.contains("fully rendered"),
+        "最终响应必须来自 JS 引擎，got: {}",
+        response.content
+    );
+    assert_eq!(
+        http.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "HTTP 引擎恰被调用 1 次"
+    );
+    assert_eq!(
+        browser.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "JS 引擎恰被调用 1 次（升级改派）"
+    );
+
+    let stats = router.get_engine_stats();
+    let http_stat = stats.get("http-reqwest").expect("http stats 必须存在");
+    assert_eq!(http_stat.usage_count, 1, "HTTP 引擎该次按失败计 1 次 usage");
+    assert!(
+        http_stat.success_rate < 0.95,
+        "HTTP 引擎失败记账必须保留，success_rate={}",
+        http_stat.success_rate
+    );
+    let browser_stat = stats
+        .get("browser-playwright")
+        .expect("browser stats 必须存在");
+    assert_eq!(browser_stat.usage_count, 1);
+    assert!(browser_stat.success_rate > 0.99);
 }

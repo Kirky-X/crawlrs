@@ -1426,6 +1426,7 @@ All three modes share the same FlareSolverr API client implementation, differing
 - 强信号（score+=10）：`__NUXT_DATA__`/`__NEXT_DATA__`/`window.__INITIAL_STATE__`/空 root+hydration
 - 弱信号（score+=1）：非追踪 `<script src>`（排除 ga/gtm/analytics/pixel）
 - `score>=threshold` 时 `EngineRouter` 以 `needs_js=true` 重新改派 Playwright
+- 升级死端降级：`needs_js=true` 重选引擎为空（未注册任何 JS-capable 引擎，如仅 reqwest 的嵌入形态）时，降级返回已抓取的原始 HTTP 响应并 `warn!`（含 probe score/reason/URL），按成功语义记账（stats/熔断/host 纪律/session Cookie 捕获）——不再以 `No suitable engines available` 硬失败并丢弃响应
 
 ### Memory-aware Scheduler (`src/workers/scheduler/`)
 
