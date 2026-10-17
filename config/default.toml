@@ -169,6 +169,35 @@ endpoint = "https://api.tavily.com"
 # api_key defaults to None
 # base_url = ""  # Optional base URL override, set via CRAWLRS__SEARCH__TAVILY__BASE_URL
 
+# SearXNG meta search (public instance lifecycle + engine registration)
+# Opt-in: enabling it spawns two periodic workers (collector/health) and probes
+# third-party public instances. Queries are sent in plaintext to those instances.
+[search.searxng]
+enabled = false
+pool_target = 3
+max_failover_attempts = 2
+seed_urls = []
+user_agent = "crawlrs-searxng/0.1 (+https://github.com/Kirky-X/crawlrs)"
+
+[search.searxng.collector]
+interval_seconds = 21600        # 6h
+# Configurable so a mirror / cached copy can be pointed at when searx.space is unreachable
+data_url = "https://searx.space/data/instances.json"
+request_timeout_seconds = 30
+min_uptime_day = 95.0
+retire_miss_cycles = 4
+
+[search.searxng.health]
+interval_seconds = 300
+probe_timeout_seconds = 8
+probe_query = "crawlrs"
+candidate_batch = 10
+failure_retire_threshold = 5
+
+[search.searxng.breaker]
+failure_threshold = 3
+recovery_timeout_seconds = 120
+
 # Engine Configuration
 [engines]
 # 响应体大小上限（字节）：超出中断抓取，防止超大/恶意页面 OOM

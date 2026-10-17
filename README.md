@@ -60,7 +60,7 @@
 
 <table style="width:100%; border-collapse: collapse">
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>统一搜索</b><br><span style="color:#64748B">Bing、百度、搜狗多引擎聚合，RRF 融合排序 + SimHash 跨引擎去重，Exa / Tavily 按凭据自动注册，结果统一格式</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🔍 <b>统一搜索</b><br><span style="color:#64748B">Bing、百度、搜狗多引擎聚合，RRF 融合排序 + SimHash 跨引擎去重，Exa / Tavily 按凭据自动注册，SearXNG 公共实例池按配置启用（opt-in），结果统一格式</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🎯 <b>单页抓取</b><br><span style="color:#64748B">静态 HTML 与 JS 渲染页面统一抓取，支持截图、表单交互、自定义请求头与同步等待；Playwright 引擎可捕获页面 XHR/Fetch 后台响应</span></td>
 </tr>
 <tr>
@@ -150,6 +150,16 @@ curl -X POST http://localhost:8899/v1/scrape \
 - **四种运行形态**：同一二进制按子命令分派（`src/main.rs`）——`crawlrs` 或 `crawlrs api`（默认）启动 API 服务，`crawlrs worker` 以 Worker 模式消费任务队列，`crawlrs bootstrap` 初始化默认团队与 admin API Key，`crawlrs migrate` 按序应用 `migrations/*.sql`。
 - **DDD 四层**：`presentation → application → domain → infrastructure`，DI 由 trait-kit 的各 capability Module（`SettingsModule`/`CacheModule`/`EngineModule` 等）装配。
 - **配置管理**：基于 confers，TOML 文件 + `CRAWLRS__` 前缀环境变量（`__` 分隔嵌套，如 `CRAWLRS__DATABASE__URL`）。
+- **SearXNG 元搜索（opt-in）**：默认 `search.searxng.enabled = false`；启用后从 searx.space 采集公共实例写入 `searxng_instances` 登记簿，周期探活维护进程内热池（目标 3 个可用实例），请求失败自动熔断换实例；同一搜索请求最多换 `max_failover_attempts` 个实例。
+
+  ```toml
+  [search.searxng]
+  enabled = true                                # 启用后拉起采集/探活两个周期 worker
+  pool_target = 3
+  seed_urls = ["https://searx.example.org"]     # 数据源不可达时的兜底实例
+  ```
+
+  **隐私披露**：启用后用户查询明文会发送给第三方公共 SearXNG 实例（非本部署控制）。默认关闭即为缓解；实例治理视图见 `GET /v1/searxng/instances` 与 `GET /v1/searxng/pool`。
 - **特性门控**：业务能力（teams/auth/rate-limit/webhook）关闭时自动注入 Noop 实现，单租户/无认证部署零业务逻辑改动。
 
 ---

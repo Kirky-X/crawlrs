@@ -11,6 +11,7 @@ pub mod credits_repo_impl;
 pub mod database_geo_restriction_repo;
 pub mod macros;
 pub mod scrape_result_repo_impl;
+pub mod searxng_instance_repo_impl;
 pub mod task_repo_impl;
 pub mod tasks_backlog_repo_impl;
 pub mod webhook_event_repo_impl;

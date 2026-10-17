@@ -44,6 +44,8 @@ use crate::domain::services::rag_strategy::EmbeddingProvider;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::domain::services::rerank::RerankProvider;
 use crate::domain::services::search_service::SearchServiceTrait;
+// SearXNG 实例生命周期端口（disabled 时为 None）
+use crate::domain::services::searxng::SearxngInstanceService;
 use crate::domain::services::team_semaphore::TeamSemaphore;
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
@@ -132,6 +134,11 @@ pub struct CrawlRsState {
     pub search_client: Arc<SearchClient>,
     /// Search service (trait object for DI)
     pub search_service: Arc<dyn SearchServiceTrait>,
+    /// SearXNG 实例生命周期服务
+    ///
+    /// `search.searxng.enabled = false` 时为 None（管理 API 返回 disabled 形态，
+    /// 引擎未注册）。
+    pub searxng_instances: Option<Arc<dyn SearxngInstanceService>>,
     /// LLM service for LLM operations
     pub llm_service: Arc<dyn LLMServiceTrait>,
     /// Extraction service for data extraction
@@ -274,6 +281,7 @@ impl CrawlRsState {
             create_scrape_use_case: services.create_scrape_use_case.clone(),
             search_client,
             search_service: services.search_service.clone(),
+            searxng_instances: services.searxng_instances.clone(),
             llm_service: services.llm_service.clone(),
             extraction_service: services.extraction_service.clone(),
             embedding_provider: services.embedding_provider.clone(),
@@ -339,6 +347,10 @@ pub trait CrawlRsStateExt {
     fn search_client(&self) -> Arc<SearchClient>;
     /// Get search service
     fn search_service(&self) -> Arc<dyn SearchServiceTrait>;
+    /// Get SearXNG instance lifecycle service
+    ///
+    /// `search.searxng.enabled = false` 时返回 None。
+    fn searxng_instances(&self) -> Option<Arc<dyn SearxngInstanceService>>;
     /// Get LLM service
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait>;
     /// Get cache service
@@ -454,6 +466,10 @@ impl CrawlRsStateExt for CrawlRsState {
 
     fn search_service(&self) -> Arc<dyn SearchServiceTrait> {
         self.search_service.clone()
+    }
+
+    fn searxng_instances(&self) -> Option<Arc<dyn SearxngInstanceService>> {
+        self.searxng_instances.clone()
     }
 
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait> {
@@ -602,6 +618,10 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
 
     fn search_service(&self) -> Arc<dyn SearchServiceTrait> {
         self.as_ref().search_service()
+    }
+
+    fn searxng_instances(&self) -> Option<Arc<dyn SearxngInstanceService>> {
+        self.as_ref().searxng_instances.clone()
     }
 
     fn llm_service(&self) -> Arc<dyn LLMServiceTrait> {

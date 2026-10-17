@@ -1,0 +1,63 @@
+{
+  "instances": {
+    "https://searx.working.example": {
+      "network_type": "normal",
+      "version": "2024.1.1",
+      "api": true,
+      "http": { "status_code": 200, "grade": "A+" },
+      "tls": { "grade": "A+" },
+      "cdn": { "grade": "A" },
+      "uptime": { "day": 99.5, "month": 98.2 }
+    },
+    "https://searx.api-detail.example": {
+      "network_type": "normal",
+      "version": "2024.7.0",
+      "api": { "status_code": 200, "grade": "A" },
+      "http": { "status_code": 200, "grade": "A" },
+      "tls": { "grade": "A" },
+      "uptime": { "day": 97.0, "month": 96.4 }
+    },
+    "https://searx.api-off.example": {
+      "network_type": "normal",
+      "api": false,
+      "http": { "status_code": 200, "grade": "A" },
+      "uptime": { "day": 99.9 }
+    },
+    "http://searx.plain-http.example": {
+      "network_type": "normal",
+      "api": true,
+      "uptime": { "day": 99.9 }
+    },
+    "https://searx.unstable.example": {
+      "network_type": "normal",
+      "api": true,
+      "uptime": { "day": 42.0, "month": 60.0 }
+    },
+    "https://searx.tor.example": {
+      "network_type": "tor",
+      "api": true,
+      "uptime": { "day": 99.0 }
+    },
+    "https://127.0.0.1:8888": {
+      "network_type": "normal",
+      "api": true,
+      "uptime": { "day": 100.0 }
+    },
+    "https://searx.minimal.example": {
+      "network_type": "normal"
+    },
+    "https://searx.unknown-fields.example": {
+      "network_type": "normal",
+      "api": true,
+      "uptime": { "day": 99.0, "week": 98.0, "year": 97.0 },
+      "extra_metric": { "nested": [1, 2, 3] },
+      "html": { "grade": "A" }
+    },
+    "https://searx.bad-metadata.example": {
+      "network_type": "normal",
+      "http": 200,
+      "api": true,
+      "uptime": { "day": 99.0 }
+    }
+  }
+}

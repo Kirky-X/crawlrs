@@ -23,6 +23,8 @@ pub mod scrape_commands;
 pub mod scrape_handler;
 pub mod scrape_queries;
 pub mod search_handler;
+/// SearXNG 实例生命周期管理 API（auth 保护路由组）
+pub mod searxng_handler;
 pub mod task_commands;
 pub mod task_handler;
 pub mod task_queries;

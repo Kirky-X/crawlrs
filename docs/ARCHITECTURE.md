@@ -739,6 +739,7 @@ search/                    # Search subsystem
 │   ├── exa.rs             # Exa search engine (API)
 │   ├── sogou.rs           # Sogou search engine
 │   ├── tavily.rs          # Tavily search engine (API)
+│   ├── searxng.rs         # SearXNG adapter (public instance JSON API)
 │   ├── html_parser.rs     # Shared Google-style HTML parser
 │   └── shared_utils.rs    # Shared search utilities
 ├── dedup.rs               # ResultDeduplicator (SimHash)
@@ -1087,6 +1088,10 @@ When a feature is off, the corresponding endpoints return **404** (not 401/403) 
 [search.fallback.tavily]   # Tavily API key + endpoint
 [search.exa]            # Exa single-engine credentials
 [search.tavily]         # Tavily single-engine credentials
+[search.searxng]        # SearXNG opt-in: enabled/pool_target/max_failover_attempts/seed_urls/user_agent
+[search.searxng.collector] # Dataset url/timeouts/min_uptime_day/retire_miss_cycles
+[search.searxng.health]    # Probe interval/timeout/query/candidate_batch/failure_retire_threshold
+[search.searxng.breaker]   # Per-instance breaker threshold/recovery_timeout_seconds
 [engines]               # max_response_body_bytes
 [engines.playwright]     # XHR/Fetch capture settings
 [engines.flaresolverr]  # FlareSolverr Full mode
@@ -1403,7 +1408,31 @@ All three modes share the same FlareSolverr API client implementation, differing
 **职责分层：**
 
 - **smart 层** (`src/search/smart/mod.rs`)：`SmartSearchEngine` 并发聚合——`tokio::join!` 同时查询 Baidu/Bing/Sogou 三引擎，经 SimHash 去重（`ResultDeduplicator`）→ RRF 融合（`RRFFuser`，k=60）→ `RelevanceScorer`（TF-IDF + 新鲜度）评分排序；单引擎 fan-out 超时按失败降级（部分结果容忍），出站 per-engine 最小间隔 gate 防止触发搜索引擎封禁
-- **client 层** (`src/search/client/{baidu,bing,exa,sogou,tavily}.rs`)：各引擎实现（HTML 解析、URL 提取、XSS 防护、CSS 选择器管理），`html_parser.rs` 提供共享的 Google 风格 `HtmlParser`（`once_cell::sync::Lazy` 全局单例，避免重复编译 CSS 选择器）
+- **client 层** (`src/search/client/{baidu,bing,exa,sogou,tavily,searxng}.rs`)：各引擎实现（HTML 解析、URL 提取、XSS 防护、CSS 选择器管理），`html_parser.rs` 提供共享的 Google 风格 `HtmlParser`（`once_cell::sync::Lazy` 全局单例，避免重复编译 CSS 选择器）；`searxng.rs` 是公共实例 JSON API 适配器（实例从实例服务端口获取，不直连 DB）
+
+#### SearXNG 实例生命周期
+
+`search.searxng.enabled = true` 时启用（默认关闭）。登记簿 `searxng_instances` 是唯一共享真相，进程内热池只是缓存：
+
+```mermaid
+flowchart LR
+    DS[searx.space<br/>instances.json] -->|采集轮<br/>advisory lock 防重| C[准入谓词<br/>HTTPS / 非内网 / normal / uptime]
+    C -->|upsert 幂等| REG[(searxng_instances)]
+    SEED[seed_urls] -->|upsert_seed| REG
+    REG -->|候选/冷却| PROBE[探活<br/>GET /search?format=json]
+    PROBE -->|200 + results[]| POOL[热池<br/>target=3]
+    PROBE -->|失败| CD[cooldown]
+    CD -->|连续失败达阈值| RET[retired]
+    POOL -->|搜索请求失败| CB[熔断 searxng:url]
+    CB -->|逐出 + 异步晋升| PROBE
+    POOL --> SE[引擎/搜索路径]
+```
+
+- **采集**：周期拉取 `collector.data_url` → 宽容 serde（全字段可缺）→ 准入谓词 → 幂等 upsert；缺席数据集的 `searx_space` 实例累计 `dataset_miss_count`，超 `retire_miss_cycles` 转 `retired`（`seed` 来源永不因缺席退役）
+- **探活**：热池全体 + 冷却期满的 `cooldown` + 前 `candidate_batch` 个候选，按状态机 `candidate → active → cooldown → retired` 迁移（`retired` 重新出现在数据集并探活通过可回 `active`）
+- **熔断与故障切换**：专属 `CircuitBreaker` 实例（键 `searxng:<url>`），失败达阈值/熔断开 → 逐出 + 转 `cooldown` → 异步探测替补回池；单次搜索最多换 `max_failover_attempts` 个实例
+- **降级口径**：池满 `Healthy`、非空不足 `Degraded`（+warn）、空 `Unhealthy`；「3 实例」是控制回路目标，非对外部第三方的硬保证
+- **管理 API**：`GET /v1/searxng/instances` / `GET /v1/searxng/pool` / `POST /v1/searxng/instances/collect`（auth 保护组，见 `src/presentation/handlers/searxng_handler.rs`）
 
 ---
 

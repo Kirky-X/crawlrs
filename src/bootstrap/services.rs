@@ -45,6 +45,10 @@ use crate::domain::services::rate_limiting_service::{
 };
 use crate::domain::services::rerank::{RerankProvider, SearchReranker};
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
+// SearXNG 实例生命周期服务（`search.searxng.enabled = false` 时为 None）
+use crate::domain::services::searxng::{
+    ReqwestSearxngTransport, SearxngInstanceService, SearxngInstanceServiceImpl,
+};
 // RAG provider 实现：local/remote 由 rag-local / rag-remote feature 门控，
 // http（通用 REST 重排）无条件可用
 #[cfg(feature = "teams")]
@@ -127,6 +131,11 @@ pub struct ServicesComponents {
     pub search_engine_service: Arc<dyn SearchEngine>,
     /// Search service.
     pub search_service: Arc<dyn SearchServiceTrait>,
+    /// SearXNG 实例生命周期服务。
+    ///
+    /// `search.searxng.enabled = false` 时为 `None`：不构造服务、不注册引擎、
+    /// 不拉起周期 worker，管理 API 返回 disabled 错误形态。
+    pub searxng_instances: Option<Arc<dyn SearxngInstanceService>>,
     /// Task queue.
     pub queue: Arc<dyn TaskQueue>,
     /// Audit service.
@@ -334,11 +343,13 @@ pub async fn init_rate_limiting_service(
 ///
 /// Returns a SmartSearchEngine that concurrently queries Baidu/Bing/Sogou,
 /// deduplicates via SimHash, fuses with RRF, and applies relevance scoring.
+/// 传入 `searxng_engine` 时，SearXNG 与三个基础引擎并发 fan-out 并参与 RRF 融合。
 ///
 /// # Arguments
 ///
 /// * `engine_client` - Engine client for making requests
 /// * `settings` - Application settings（`search.timeout_seconds` 注入单引擎 fan-out 超时）
+/// * `searxng_engine` - SearXNG 适配器（`search.searxng.enabled = false` 时为 None）
 ///
 /// # Returns
 ///
@@ -346,12 +357,16 @@ pub async fn init_rate_limiting_service(
 pub fn init_search_engine(
     engine_client: Arc<EngineClient>,
     settings: &Settings,
+    searxng_engine: Option<Arc<dyn SearchEngine>>,
 ) -> Arc<dyn SearchEngine> {
     info!("Initializing SmartSearchEngine (concurrent Baidu+Bing+Sogou + RRF fusion)");
-    Arc::new(
-        smart_search::SmartSearchEngine::new(engine_client)
-            .with_engine_timeout(settings.search.timeout_seconds),
-    )
+    let mut engine = smart_search::SmartSearchEngine::new(engine_client)
+        .with_engine_timeout(settings.search.timeout_seconds);
+    if let Some(extra) = searxng_engine {
+        info!("SearXNG joins smart aggregation fan-out (RRF)");
+        engine = engine.with_additional_engine(extra);
+    }
+    Arc::new(engine)
 }
 
 /// Initialize search service.
@@ -893,9 +908,49 @@ pub async fn init_services(
     // 符合 SSOT（Single Source of Truth）原则。search_engine_service 与 search_client
     // 共享同一份 EngineHealthMonitor 状态。
 
+    // SearXNG 实例生命周期（必须在 SearchClient 之前构造：引擎注册与 smart 聚合依赖服务存在性）。
+    // enabled=false → None（不构造服务、不拉起 worker、不注册引擎）。
+    let searxng_instances: Option<Arc<dyn SearxngInstanceService>> =
+        if settings.search.searxng.enabled {
+            let transport = Arc::new(ReqwestSearxngTransport::new(
+                http_client.clone(),
+                settings.search.searxng.user_agent.clone(),
+            ));
+            let concrete = Arc::new(SearxngInstanceServiceImpl::new(
+                repositories.searxng_instance_repo.clone(),
+                transport,
+                settings.search.searxng.clone(),
+            ));
+            // 启动期：seed 引导 + 后台热池重建（不阻塞就绪；完成前 health() = Degraded）
+            concrete.spawn_bootstrap();
+            info!(
+                "SearXNG instance service enabled (pool_target={})",
+                settings.search.searxng.pool_target
+            );
+            Some(concrete as Arc<dyn SearxngInstanceService>)
+        } else {
+            info!("SearXNG disabled by config (search.searxng.enabled=false)");
+            None
+        };
+
+    // SearXNG 适配器：smart 聚合 fan-out 与 SearchClient 单引擎路径共用同一实例服务
+    let searxng_search_engine: Option<Arc<dyn SearchEngine>> =
+        searxng_instances.as_ref().map(|service| {
+            let transport = Arc::new(ReqwestSearxngTransport::new(
+                http_client.clone(),
+                settings.search.searxng.user_agent.clone(),
+            ));
+            Arc::new(crate::search::client::searxng::SearxngSearchEngine::new(
+                service.clone(),
+                transport,
+                std::time::Duration::from_secs(settings.search.timeout_seconds),
+                settings.search.searxng.max_failover_attempts,
+            )) as Arc<dyn SearchEngine>
+        });
+
     // Initialize search engine (for backward compatibility)
     let search_engine_service: Arc<dyn SearchEngine> =
-        init_search_engine(engine_client.clone(), settings);
+        init_search_engine(engine_client.clone(), settings, searxng_search_engine);
 
     // Initialize search client (wraps search engines)
     // 按配置装配引擎：bing/baidu/sogou 恒注册；exa/tavily 配置了 api_key 才注册
@@ -904,6 +959,7 @@ pub async fn init_services(
             engine_client.clone(),
             http_client.clone(),
             &settings.search,
+            searxng_instances.clone(),
         ),
     );
 
@@ -1056,6 +1112,7 @@ pub async fn init_services(
         robots_checker,
         search_engine_service,
         search_service,
+        searxng_instances,
         queue,
         audit_service,
         http_client,
@@ -1321,7 +1378,7 @@ mod tests {
     fn test_init_search_engine_creates_instance() {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let engine_client = make_engine_client();
-        let search_engine = init_search_engine(engine_client, &settings);
+        let search_engine = init_search_engine(engine_client, &settings, None);
         assert!(
             Arc::strong_count(&search_engine) >= 1,
             "init_search_engine should return a valid Arc<dyn SearchEngine>"
@@ -1332,7 +1389,7 @@ mod tests {
     fn test_init_search_engine_with_ab_test_disabled() {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let engine_client = make_engine_client();
-        let _search_engine = init_search_engine(engine_client, &settings);
+        let _search_engine = init_search_engine(engine_client, &settings, None);
         // Should create without panic; SmartSearchEngine is always used
     }
 
@@ -1340,7 +1397,7 @@ mod tests {
     fn test_init_search_engine_with_ab_test_enabled() {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let engine_client = make_engine_client();
-        let _search_engine = init_search_engine(engine_client, &settings);
+        let _search_engine = init_search_engine(engine_client, &settings, None);
         // SmartSearchEngine is always used regardless of ab_test settings
     }
 

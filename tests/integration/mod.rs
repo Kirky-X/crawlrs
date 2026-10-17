@@ -14,6 +14,10 @@ pub mod auth_garrison_test;
 pub mod garrison_lock;
 pub mod helpers;
 pub mod repositories;
+/// SearXNG 生命周期端到端集成测试（真实 PostgreSQL）
+pub mod searxng_lifecycle_test;
+/// SearXNG 实例登记簿仓储集成测试（真实 PostgreSQL）
+pub mod searxng_repo_test;
 
 /// WreqEngine JA3/JA4 指纹端到端测试。
 ///

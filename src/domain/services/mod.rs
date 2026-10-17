@@ -64,6 +64,8 @@ pub mod relevance_scorer;
 pub mod rerank;
 pub mod retry_handler;
 pub mod search_service;
+/// SearXNG 元搜索：实例采集 / 登记簿 / 探活 / 热池 / 熔断（见模块文档）
+pub mod searxng;
 pub mod team_semaphore;
 pub mod team_service;
 pub mod webhook_event_builder;

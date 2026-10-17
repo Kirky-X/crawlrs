@@ -30,7 +30,10 @@ pub use engines::{
 pub use logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 
 pub use search::BingSearchSettings;
-pub use search::{ExaEngineSettings, SearchEnginesSettings, SearchSettings, TavilyEngineSettings};
+pub use search::{
+    ExaEngineSettings, SearchEnginesSettings, SearchSettings, SearxngBreakerSettings,
+    SearxngCollectorSettings, SearxngHealthSettings, SearxngSearchSettings, TavilyEngineSettings,
+};
 
 pub use llm::LLMSettings;
 

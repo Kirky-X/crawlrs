@@ -160,6 +160,7 @@ mod app {
             content_extractor: app_state.content_extractor(),
             cache_service: app_state.cache_service(),
             shutdown_coordinator: coordinator.clone(),
+            searxng_instances: app_state.searxng_instances(),
         };
 
         let config = WorkerManagerConfig {

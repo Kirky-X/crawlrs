@@ -49,6 +49,8 @@ pub struct SmartSearchEngine {
     engine_timeout: Duration,
     /// 出站 per-engine 最小间隔 gate（F4）：防止把搜索引擎自己打进封禁
     gates: [OutboundGate; 3],
+    /// 附加引擎（如 SearXNG）：与三个基础引擎并发 fan-out 并参与 RRF 融合
+    extra_engine: Option<Arc<dyn SearchEngine>>,
 }
 
 /// 出站请求节流 gate：每引擎维护上次请求时刻，wait_turn 睡到到期。
@@ -146,7 +148,18 @@ impl SmartSearchEngine {
                 OutboundGate::new(Duration::from_secs(2)), // baidu
                 OutboundGate::new(Duration::from_secs(2)), // sogou
             ],
+            extra_engine: None,
         }
+    }
+
+    /// 注入一个附加引擎参与聚合（如启用 SearXNG 时的 `SearxngSearchEngine`）。
+    ///
+    /// 附加引擎与 bing/baidu/sogou 并发 fan-out，逐引擎去重后一并交给 RRF
+    /// 融合；“至少一个引擎返回结果”的判定同样纳入它。
+    #[must_use]
+    pub fn with_additional_engine(mut self, engine: Arc<dyn SearchEngine>) -> Self {
+        self.extra_engine = Some(engine);
+        self
     }
 
     /// 注入单引擎 fan-out 超时（秒，来自 `SearchSettings.timeout_seconds`）
@@ -289,11 +302,20 @@ impl SearchEngine for SmartSearchEngine {
             }};
         }
 
-        // 并发查询三个基础引擎
-        let (bing_result, baidu_result, sogou_result) = tokio::join!(
+        // 并发查询三个基础引擎 + 可选附加引擎（SearXNG）
+        let extra_future = async {
+            match &self.extra_engine {
+                Some(engine) => {
+                    Some(with_timeout(self.engine_timeout, engine.search(&base_request)).await)
+                }
+                None => None,
+            }
+        };
+        let (bing_result, baidu_result, sogou_result, extra_result) = tokio::join!(
             async { engine_with_timeout!(GATE_BING, self.bing_engine.search(&base_request)) },
             async { engine_with_timeout!(GATE_BAIDU, self.baidu_engine.search(&base_request)) },
             async { engine_with_timeout!(GATE_SOGOU, self.sogou_engine.search(&base_request)) },
+            extra_future,
         );
 
         // 收集各引擎结果，记录来源和排名顺序
@@ -343,17 +365,54 @@ impl SearchEngine for SmartSearchEngine {
             }
         }
 
+        // 附加引擎结果（启用 SearXNG 时参与融合）
+        let mut extra_results: Vec<SearchResult> = Vec::new();
+        if let Some(result) = extra_result {
+            match result {
+                Ok(response) => {
+                    info!(
+                        "{} returned {} results",
+                        self.extra_engine
+                            .as_ref()
+                            .map(|e| e.name())
+                            .unwrap_or("extra engine"),
+                        response.items.len()
+                    );
+                    extra_results = response
+                        .items
+                        .iter()
+                        .map(Self::item_to_search_result)
+                        .collect();
+                }
+                Err(e) => {
+                    warn!(
+                        "{} search failed: {}",
+                        self.extra_engine
+                            .as_ref()
+                            .map(|e| e.name())
+                            .unwrap_or("extra engine"),
+                        e
+                    );
+                }
+            }
+        }
+
         // 至少一个引擎需要返回结果
-        if bing_results.is_empty() && baidu_results.is_empty() && sogou_results.is_empty() {
+        if bing_results.is_empty()
+            && baidu_results.is_empty()
+            && sogou_results.is_empty()
+            && extra_results.is_empty()
+        {
             error!("All search engines failed or returned empty results");
             return Err(SearchError::AllEnginesFailed);
         }
 
         info!(
-            "Collected results: bing={}, baidu={}, sogou={}",
+            "Collected results: bing={}, baidu={}, sogou={}, extra={}",
             bing_results.len(),
             baidu_results.len(),
-            sogou_results.len()
+            sogou_results.len(),
+            extra_results.len()
         );
 
         // Step 1: SimHash + URL 去重（每个引擎内部先去重）
@@ -363,11 +422,16 @@ impl SearchEngine for SmartSearchEngine {
         baidu_results = deduplicator.deduplicate(baidu_results);
         deduplicator.reset();
         sogou_results = deduplicator.deduplicate(sogou_results);
+        deduplicator.reset();
+        extra_results = deduplicator.deduplicate(extra_results);
 
         // Step 2: RRF 融合（跨引擎去重 + 排名融合）
-        let mut fused = self
-            .rrf_fuser
-            .fuse(vec![bing_results, baidu_results, sogou_results]);
+        let mut fused = self.rrf_fuser.fuse(vec![
+            bing_results,
+            baidu_results,
+            sogou_results,
+            extra_results,
+        ]);
 
         info!("RRF fused {} unique results", fused.len());
 
@@ -696,5 +760,74 @@ mod tests {
             waited + Duration::from_millis(1) >= expected,
             "second turn must wait out the min interval (waited {waited:?}, expected ≥ {expected:?})"
         );
+    }
+
+    // ==== T019：附加引擎（SearXNG）参与并发 fan-out + RRF 融合 ====
+
+    /// 固定返回结果的附加引擎替身
+    struct StubExtraEngine {
+        engine_type: SearchEngineType,
+        name: &'static str,
+        items: Vec<ResponseItem>,
+    }
+
+    #[async_trait]
+    impl SearchEngine for StubExtraEngine {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn engine_type(&self) -> SearchEngineType {
+            self.engine_type
+        }
+
+        fn health(&self) -> EngineHealth {
+            EngineHealth::Healthy
+        }
+
+        async fn search(
+            &self,
+            _request: &SearchRequest,
+        ) -> Result<Response<ResponseItem>, SearchError> {
+            Ok(Response {
+                items: self.items.clone(),
+                total_results: Some(self.items.len() as u64),
+                engine: self.engine_type,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_additional_engine_participates_in_fusion() {
+        let stub = StubExtraEngine {
+            engine_type: SearchEngineType::Searxng,
+            name: "SearxNG",
+            items: vec![ResponseItem {
+                title: "SearXNG result".to_string(),
+                url: "https://searx-result.example/1".to_string(),
+                description: "from the extra engine".to_string(),
+                engine: SearchEngineType::Searxng,
+            }],
+        };
+
+        let engine = SmartSearchEngine::new(Arc::new(EngineClient::new()))
+            .with_engine_timeout(1)
+            .with_additional_engine(Arc::new(stub));
+
+        // 三个内置引擎在无引擎路由的 EngineClient 下失败，仅附加引擎有结果：
+        // 聚合仍应成功，证明附加引擎既是“至少一个引擎有结果”的判定成员，也进入了融合。
+        let response = engine
+            .search(&SearchRequest::new("rust").with_limit(5))
+            .await
+            .expect("aggregation must succeed with the extra engine only");
+
+        assert_eq!(response.engine, SearchEngineType::Smart);
+        let fused = response
+            .items
+            .iter()
+            .find(|item| item.url == "https://searx-result.example/1")
+            .expect("extra engine result must be fused");
+        assert_eq!(fused.engine, SearchEngineType::Searxng);
+        assert_eq!(fused.title, "SearXNG result");
     }
 }

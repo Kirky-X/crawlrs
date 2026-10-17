@@ -5,7 +5,7 @@
 //!
 //! 包含所有 feature-gated 路由（webhook、teams、auth）和通用管理路由（audit）。
 
-use crate::presentation::handlers::{audit_handler, extract_handler};
+use crate::presentation::handlers::{audit_handler, extract_handler, searxng_handler};
 use axum::{routing::get, Router};
 
 // webhook-off 时不导入
@@ -86,6 +86,22 @@ pub fn register_audit_routes() -> Router {
     Router::new()
         .route("/v1/audit/logs", get(audit_handler::get_audit_logs))
         .route("/v1/audit/denied", get(audit_handler::get_denied_requests))
+}
+
+/// 注册 SearXNG 实例生命周期管理路由（auth 保护组）。
+///
+/// 服务为 None（`search.searxng.enabled = false`）时三端点统一返回 503。
+pub fn register_searxng_routes() -> Router {
+    Router::new()
+        .route(
+            "/v1/searxng/instances",
+            get(searxng_handler::list_instances),
+        )
+        .route("/v1/searxng/pool", get(searxng_handler::get_pool))
+        .route(
+            "/v1/searxng/instances/collect",
+            axum::routing::post(searxng_handler::trigger_collect),
+        )
 }
 
 /// 注册 admin 路由（auth feature-gated）。

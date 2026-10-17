@@ -68,6 +68,15 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 
 **kill-switch（危险）**：`CRAWLRS_DISABLE_SSRF_PROTECTION` 一经设置即旁路 SSRF 校验（生效点 `src/infrastructure/services/config_service.rs:222` 的 `ssrf_protection_disabled`；判定逻辑 `src/infrastructure/security/ssrf/mod.rs:345`）。该开关**仅限开发/测试环境调试**；生产环境启动时 `src/bootstrap/config/config_validator.rs` 会输出显著 warn 告警（非阻断，**仅启动时一次**，运行期无持续告警）。生产部署必须删除此环境变量。变量清单与注释见 [.env.example](../.env.example)。
 
+### 第三方数据流出面：SearXNG 公共实例
+
+`search.searxng.enabled = true` 时（**默认关闭**，opt-in）：
+
+- **查询明文外发**：用户搜索词会以明文发送给第三方公共 SearXNG 实例（`GET {instance}/search?q=…&format=json`）。这些实例不属本部署控制，其日志/留存策略不受本仓约束。默认关闭即为缓解；对隐私敏感部署保持关闭。
+- **出站目标来源**：实例来自 searx.space 数据集或 `seed_urls`，准入强制 HTTPS 并过 `is_internal_url` 静态 SSRF 校验（拒绝环回/内网/链路本地地址）；出站复用全局 `reqwest::Client`（带逐跳 SSRF 重定向校验）。
+- **主动探测面**：启用后会拉起采集（默认 6h）与探活（默认 5min，每轮 ≤ `candidate_batch` 个候选）两个周期 worker，对外发起真实请求；流量节奏为保守默认值，高频部署仍可能被实例限流（429 → 失败计数 + 冷却）。
+- **治理视图**：`GET /v1/searxng/instances`（登记簿）与 `GET /v1/searxng/pool`（热池 + 熔断镜像态）位于 auth 保护组；disabled 时统一返回 503。
+
 ### 请求完整性与密钥安全
 
 - Webhook 投递使用 [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks) 规范签名，验签采用 `subtle` crate 恒时比较，防时序侧信道。

@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::config::SearchSettings;
+use crate::domain::services::searxng::{ReqwestSearxngTransport, SearxngInstanceService};
 use crate::engines::engine_client::EngineClient;
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::{
     engine_trait::{SearchEngine, SearchRequest},
@@ -16,6 +18,7 @@ pub mod baidu;
 pub mod bing;
 pub mod exa;
 pub mod html_parser;
+pub mod searxng;
 pub mod shared_utils;
 pub mod sogou;
 pub mod tavily;
@@ -23,6 +26,7 @@ pub mod tavily;
 pub use baidu::BaiduSearchEngine;
 pub use bing::BingSearchEngine;
 pub use exa::{ExaConfig, ExaSearchEngine};
+pub use searxng::SearxngSearchEngine;
 pub use shared_utils::{parse_first_selector, safe_parse_selector};
 pub use sogou::SogouSearchEngine;
 pub use tavily::{TavilyConfig, TavilySearchEngine};
@@ -96,12 +100,16 @@ impl SearchClient {
     /// - Exa: `search.exa.api_key`（env: `CRAWLRS__SEARCH__EXA__API_KEY`）
     /// - Tavily: `search.tavily.api_key`（env: `CRAWLRS__SEARCH__TAVILY__API_KEY`）
     ///
+    /// SearXNG 仅在 `search.searxng.enabled == true` **且**实例生命周期服务存在时注册
+    /// （两条件任一不满足即跳过，显式 `engine="searxng"` 得到 `NoEngineAvailable`）。
+    ///
     /// 未配置凭据不是错误——跳过注册并输出 info 日志；此后显式请求
     /// `engine="exa"` / `engine="tavily"` 会得到 `SearchError::NoEngineAvailable`。
     pub fn with_configured_engines(
         engine_client: Arc<EngineClient>,
         http_client: Arc<reqwest::Client>,
         settings: &SearchSettings,
+        searxng_instances: Option<Arc<dyn SearxngInstanceService>>,
     ) -> Self {
         let mut inner = SearchClientInner {
             engines: Vec::new(),
@@ -153,6 +161,36 @@ impl SearchClient {
                 log::info!("{}", crate::i18n::tr_log("search-tavily-registered"));
             }
             None => log::info!("{}", crate::i18n::tr_log("search-tavily-skipped")),
+        }
+
+        // SearXNG：enabled && 实例服务存在时才注册（否则单引擎路径显性 NoEngineAvailable）
+        match (settings.searxng.enabled, searxng_instances) {
+            (true, Some(service)) => {
+                let transport: Arc<dyn crate::domain::services::searxng::SearxngTransport> =
+                    Arc::new(ReqwestSearxngTransport::new(
+                        http_client.clone(),
+                        settings.searxng.user_agent.clone(),
+                    ));
+                inner.engines.push(Arc::new(SearxngSearchEngine::new(
+                    service,
+                    transport,
+                    Duration::from_secs(settings.timeout_seconds),
+                    settings.searxng.max_failover_attempts,
+                )) as Arc<dyn SearchEngine>);
+                log::info!(
+                    "SearXNG search engine registered (pool_target={})",
+                    settings.searxng.pool_target
+                );
+            }
+            (true, None) => {
+                log::warn!(
+                    "search.searxng.enabled=true but instance service is absent; \
+                     SearXNG engine not registered"
+                );
+            }
+            (false, _) => {
+                log::info!("SearXNG search engine skipped (search.searxng.enabled=false)");
+            }
         }
 
         inner.default_engine =
@@ -540,9 +578,28 @@ mod tests {
     // ========== with_configured_engines tests ==========
 
     fn build_configured_client(settings: &SearchSettings) -> SearchClient {
+        build_configured_client_with_searxng(settings, None)
+    }
+
+    fn build_configured_client_with_searxng(
+        settings: &SearchSettings,
+        searxng: Option<Arc<dyn SearxngInstanceService>>,
+    ) -> SearchClient {
         let engine_client = Arc::new(EngineClient::new());
         let http_client = Arc::new(reqwest::Client::new());
-        SearchClient::with_configured_engines(engine_client, http_client, settings)
+        SearchClient::with_configured_engines(engine_client, http_client, settings, searxng)
+    }
+
+    fn test_searxng_service() -> Arc<dyn SearxngInstanceService> {
+        use crate::domain::services::searxng::test_support::{
+            shared_repo, test_settings, ScriptedTransport,
+        };
+        use crate::domain::services::searxng::SearxngInstanceServiceImpl;
+        Arc::new(SearxngInstanceServiceImpl::new(
+            shared_repo(),
+            Arc::new(ScriptedTransport::new(vec![])),
+            test_settings(),
+        ))
     }
 
     fn registered_engine_types(client: &SearchClient) -> Vec<SearchEngineType> {
@@ -627,6 +684,61 @@ mod tests {
 
         let client = build_configured_client(&settings);
         assert_eq!(client.default_engine(), SearchEngineType::Bing);
+    }
+
+    #[test]
+    fn test_with_configured_engines_with_searxng_enabled_registers_engine() {
+        let mut settings = SearchSettings::default();
+        settings.searxng.enabled = true;
+
+        let client = build_configured_client_with_searxng(&settings, Some(test_searxng_service()));
+        let types = registered_engine_types(&client);
+
+        assert_eq!(client.inner.engines.len(), 4);
+        assert!(
+            types.contains(&SearchEngineType::Searxng),
+            "searxng should register when enabled and the service exists"
+        );
+        assert_eq!(
+            SearchEngineType::from_name("searxng"),
+            Some(SearchEngineType::Searxng)
+        );
+        // 按名称可寻址（单引擎路径）
+        assert!(client.inner.engines.iter().any(|e| e.name() == "SearxNG"));
+    }
+
+    #[test]
+    fn test_with_configured_engines_searxng_disabled_skips_engine() {
+        let settings = SearchSettings::default(); // enabled=false
+        let client = build_configured_client_with_searxng(&settings, Some(test_searxng_service()));
+        assert!(!registered_engine_types(&client).contains(&SearchEngineType::Searxng));
+    }
+
+    #[test]
+    fn test_with_configured_engines_searxng_without_service_skips_engine() {
+        let mut settings = SearchSettings::default();
+        settings.searxng.enabled = true;
+        let client = build_configured_client(&settings);
+        assert!(
+            !registered_engine_types(&client).contains(&SearchEngineType::Searxng),
+            "enabled without an instance service must not register the engine"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_searxng_single_engine_path_is_addressable() {
+        let mut settings = SearchSettings::default();
+        settings.searxng.enabled = true;
+        let client = build_configured_client_with_searxng(&settings, Some(test_searxng_service()));
+
+        // 引擎已注册（单引擎路径可寻址）；空池时返回 NoEngineAvailable 而非找不到引擎
+        let result = client
+            .search_with_engine("test", SearchEngineType::Searxng)
+            .await;
+        match result {
+            Err(SearchError::NoEngineAvailable) => {}
+            other => panic!("expected NoEngineAvailable from an empty pool, got {other:?}"),
+        }
     }
 
     #[test]
