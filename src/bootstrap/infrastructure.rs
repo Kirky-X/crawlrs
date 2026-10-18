@@ -113,7 +113,7 @@ pub fn init_http_client(
     // 双重注入会导致代理配置冲突：http_client 级别 + ReqwestEngine 级别同时生效。
     let client = reqwest::Client::builder()
         .timeout(timeout)
-        .connect_timeout(Duration::from_secs(15))
+        .connect_timeout(crate::utils::http_client::connect_timeout_for(timeout))
         .pool_idle_timeout(Duration::from_secs(90))
         .local_address(Some(Ipv4Addr::UNSPECIFIED.into()))
         .dns_resolver(resolver)

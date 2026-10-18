@@ -360,6 +360,9 @@ impl WreqEngine {
             .emulation(emulation_provider(TlsEmulation::Chrome131))
             .redirect(create_ssrf_safe_wreq_redirect_policy(5))
             .timeout(Duration::from_secs(timeout_seconds))
+            .connect_timeout(crate::utils::http_client::connect_timeout_for(
+                Duration::from_secs(timeout_seconds),
+            ))
             .cookie_store(true)
             .build()
             .map_err(|e| EngineError::Internal(format!("wreq client build failed: {e}")))
@@ -388,6 +391,9 @@ impl WreqEngine {
             .redirect(create_ssrf_safe_wreq_redirect_policy(5))
             .proxy(proxy)
             .timeout(Duration::from_secs(timeout_seconds))
+            .connect_timeout(crate::utils::http_client::connect_timeout_for(
+                Duration::from_secs(timeout_seconds),
+            ))
             .cookie_store(true)
             .build()
         {
@@ -520,6 +526,9 @@ impl WreqEngine {
             .emulation(emulation_provider(emulation))
             .redirect(create_ssrf_safe_wreq_redirect_policy(5))
             .timeout(Duration::from_secs(timeout_seconds))
+            .connect_timeout(crate::utils::http_client::connect_timeout_for(
+                Duration::from_secs(timeout_seconds),
+            ))
             .cookie_store(true);
 
         // SSRF resolve 覆盖：hostname → 验证过的 IP

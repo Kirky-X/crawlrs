@@ -266,6 +266,9 @@ impl ReqwestEngine {
         // 避免代理路径下 DNS 解析仍走系统默认 getaddrinfo 返回 IPv6
         let mut builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout_seconds))
+            .connect_timeout(crate::utils::http_client::connect_timeout_for(
+                Duration::from_secs(timeout_seconds),
+            ))
             .cookie_store(true)
             .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
             .dns_resolver(crate::infrastructure::dns::create_ipv4_only_resolver())
@@ -519,6 +522,9 @@ impl ScraperEngine for ReqwestEngine {
         let ssrf_client = if !host.is_empty() && !host.parse::<std::net::IpAddr>().is_ok() {
             let mut b = reqwest::Client::builder()
                 .timeout(Duration::from_secs(self.timeout_seconds))
+                .connect_timeout(crate::utils::http_client::connect_timeout_for(
+                    Duration::from_secs(self.timeout_seconds),
+                ))
                 .cookie_provider(Arc::clone(&request_cookie_jar))
                 .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
                 .dns_resolver(crate::infrastructure::dns::create_ipv4_only_resolver())
@@ -552,6 +558,9 @@ impl ScraperEngine for ReqwestEngine {
                 if need_tls_bypass {
                     let mut b = reqwest::Client::builder()
                         .timeout(Duration::from_secs(self.timeout_seconds))
+                        .connect_timeout(crate::utils::http_client::connect_timeout_for(
+                            Duration::from_secs(self.timeout_seconds),
+                        ))
                         .cookie_provider(Arc::clone(&request_cookie_jar))
                         .redirect(crate::utils::http_client::create_ssrf_safe_redirect_policy(
                             5,

@@ -30,6 +30,22 @@ const DEFAULT_POOL_IDLE_TIMEOUT: u64 = 90;
 pub(crate) const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const DEFAULT_MAX_REDIRECTS: u8 = 10;
 
+/// TCP 连接建立阶段超时上限。
+///
+/// 注意覆盖范围：reqwest/hyper 的 connect_timeout 只包住 TCP `socket.connect()`
+/// （多地址按地址数均分预算）；DNS 解析在其前、TLS 握手在其后，均不在覆盖内，
+/// 仍由总超时兜底。
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 从请求总超时推导连接超时：`min(总超时, 上限)`。
+///
+/// 只设总超时时，TCP 不可达（丢包黑洞）会耗满总超时才失败。连接超时独立
+/// 封顶后连接失败快速暴露，剩余预算留给上层重试；取 `min` 保证连接超时
+/// 永不长于总超时。
+pub(crate) fn connect_timeout_for(total_timeout: Duration) -> Duration {
+    total_timeout.min(DEFAULT_CONNECT_TIMEOUT)
+}
+
 /// Create an HTTP client with custom timeout.
 ///
 /// This client has SSRF-safe redirect policy enabled.
@@ -81,6 +97,7 @@ pub fn create_http_client_no_redirects() -> Client {
     Client::builder()
         .user_agent(DEFAULT_USER_AGENT)
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT))
+        .connect_timeout(connect_timeout_for(Duration::from_secs(DEFAULT_TIMEOUT)))
         .pool_max_idle_per_host(DEFAULT_POOL_MAX_IDLE_PER_HOST)
         .pool_idle_timeout(Duration::from_secs(DEFAULT_POOL_IDLE_TIMEOUT))
         .redirect(reqwest::redirect::Policy::none())
@@ -100,6 +117,7 @@ fn create_client(timeout_secs: u64, max_redirects: u8) -> Client {
     Client::builder()
         .user_agent(DEFAULT_USER_AGENT)
         .timeout(Duration::from_secs(timeout_secs))
+        .connect_timeout(connect_timeout_for(Duration::from_secs(timeout_secs)))
         .pool_max_idle_per_host(DEFAULT_POOL_MAX_IDLE_PER_HOST)
         .pool_idle_timeout(Duration::from_secs(DEFAULT_POOL_IDLE_TIMEOUT))
         .redirect(redirect_policy)
@@ -361,6 +379,29 @@ mod tests {
         assert_eq!(DEFAULT_POOL_IDLE_TIMEOUT, 90);
         assert_eq!(DEFAULT_MAX_REDIRECTS, 10);
         assert!(!DEFAULT_USER_AGENT.is_empty());
+    }
+
+    #[test]
+    fn connect_timeout_capped_at_upper_bound() {
+        // 总超时高于上限时，连接超时封顶（不可达目标 10s 内失败，而非耗满总超时）。
+        assert_eq!(
+            connect_timeout_for(Duration::from_secs(30)),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            connect_timeout_for(Duration::from_secs(60)),
+            Duration::from_secs(10)
+        );
+    }
+
+    #[test]
+    fn connect_timeout_never_exceeds_total() {
+        // 总超时低于上限时连接超时跟随总超时，绝不长于它。
+        assert_eq!(
+            connect_timeout_for(Duration::from_secs(5)),
+            Duration::from_secs(5)
+        );
+        assert_eq!(connect_timeout_for(Duration::ZERO), Duration::ZERO);
     }
 
     #[test]

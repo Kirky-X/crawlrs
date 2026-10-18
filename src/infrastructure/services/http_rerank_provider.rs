@@ -120,6 +120,9 @@ impl HttpRerankProvider {
 
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout_seconds.max(1)))
+            .connect_timeout(crate::utils::http_client::connect_timeout_for(
+                Duration::from_secs(timeout_seconds.max(1)),
+            ))
             .build()
             .map_err(|e| RerankError::Provider(format!("failed to build http client: {e}")))?;
 
