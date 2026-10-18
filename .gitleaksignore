@@ -1,0 +1,31 @@
+# gitleaks 指纹忽略清单（.gitleaksignore）
+# 格式：{commit}:{file}:{rule-id}:{startline}；逐条为已核实的 src 内联测试夹具/占位（非真实凭据），
+# surgical 逐行忽略，不放行整份文件。目录级噪声由同目录 .gitleaks.toml 处理。
+23579984ebbfab78996c6c0698ab338c96053bb5:src/infrastructure/security/env_var_security.rs:generic-api-key:947
+2688dba5a22298245439eea4bd8e74fbcbdf5863:src/common/error.rs:generic-api-key:559
+287b47bc6be9233ba53cb055ef4ec5ec1fb7a363:src/common/error.rs:generic-api-key:559
+29bf830c431dd4ae8d342bd9d6d7baa260f5134c:src/common/error.rs:generic-api-key:559
+3beab46d9879c9edda4ade060423d281ffa0766b:src/infrastructure/security/api_key_hash.rs:generic-api-key:128
+3beab46d9879c9edda4ade060423d281ffa0766b:src/infrastructure/security/api_key_hash.rs:generic-api-key:153
+5be2326019367a6a7eee50697ebe11672915a0e1:k8s/secrets.yaml:kubernetes-secret-yaml:2
+99c4dea43466780e33c790df9a77ecf03ae60fd9:src/infrastructure/security/env_var_security.rs:generic-api-key:1388
+99c4dea43466780e33c790df9a77ecf03ae60fd9:src/infrastructure/security/env_var_security.rs:generic-api-key:1437
+99c4dea43466780e33c790df9a77ecf03ae60fd9:src/infrastructure/security/env_var_security.rs:generic-api-key:1438
+99c4dea43466780e33c790df9a77ecf03ae60fd9:src/infrastructure/security/env_var_security.rs:generic-api-key:1439
+b36fd574fbfa8fb41c006b899bcc88fd2f0dfe6c:src/infrastructure/auth/garrison_listener.rs:generic-api-key:1001
+b36fd574fbfa8fb41c006b899bcc88fd2f0dfe6c:src/infrastructure/auth/garrison_listener.rs:generic-api-key:1217
+b36fd574fbfa8fb41c006b899bcc88fd2f0dfe6c:src/infrastructure/auth/garrison_listener.rs:generic-api-key:1693
+b36fd574fbfa8fb41c006b899bcc88fd2f0dfe6c:src/infrastructure/auth/garrison_listener.rs:generic-api-key:1740
+b36fd574fbfa8fb41c006b899bcc88fd2f0dfe6c:src/infrastructure/auth/garrison_listener.rs:generic-api-key:1773
+b36fd574fbfa8fb41c006b899bcc88fd2f0dfe6c:src/infrastructure/auth/garrison_listener.rs:generic-api-key:979
+b36fd574fbfa8fb41c006b899bcc88fd2f0dfe6c:src/infrastructure/auth/garrison_listener.rs:generic-api-key:987
+b58ffbd8f5a02a93b0ceda0773c95776772c854c:src/presentation/handlers/api_key_handler.rs:generic-api-key:1090
+b90561307831c6fbdd71f995182e70e27a0b7a3e:src/infrastructure/security/env_injection.rs:generic-api-key:673
+b90561307831c6fbdd71f995182e70e27a0b7a3e:src/infrastructure/security/env_validation.rs:generic-api-key:461
+b90561307831c6fbdd71f995182e70e27a0b7a3e:src/infrastructure/security/env_validation.rs:generic-api-key:507
+b90561307831c6fbdd71f995182e70e27a0b7a3e:src/infrastructure/security/env_validation.rs:generic-api-key:508
+b90561307831c6fbdd71f995182e70e27a0b7a3e:src/infrastructure/security/env_validation.rs:generic-api-key:509
+d7b8e2a2183149ff957c4cf3fda6cc0459a9bf7d:scripts/api_test.sh:generic-api-key:10
+eecf81341d9d12fec52ee4015b815a2262aee2cb:scripts/pre-commit-check.sh:private-key:474
+fa60ad228966147ec13a681700a6912aeb4a5c74:src/infrastructure/security/mod.rs:generic-api-key:55
+fa60ad228966147ec13a681700a6912aeb4a5c74:src/infrastructure/security/mod.rs:generic-api-key:70
