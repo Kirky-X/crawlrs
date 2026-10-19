@@ -2,9 +2,9 @@
 
 <div align="center">
 
-![Documentation](https://img.shields.io/badge/type-architecture-purple)
-![Version](https://img.shields.io/badge/version-0.2.0--rc.2-blue)
-![License](https://img.shields.io/badge/license-Apache%202.0-green)
+![Documentation](https://img.shields.io/badge/type-architecture-purple?style=for-the-badge)
+![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs?label=version&style=for-the-badge)
+![License](https://img.shields.io/github/license/Kirky-X/crawlrs?label=license&style=for-the-badge)
 
 **Version:** 0.2.0-rc.2 | **Last Updated:** 2026-10-15 | **Author:** Kirky.X
 

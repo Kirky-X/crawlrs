@@ -1,9 +1,9 @@
 # 📖 Crawlrs User Guide
 <div align="center">
 
-![Guide](https://img.shields.io/badge/type-user%20guide-blue)
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
-![License](https://img.shields.io/badge/license-Apache%202.0-green)
+![Guide](https://img.shields.io/badge/type-user%20guide-blue?style=for-the-badge)
+![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs?label=version&style=for-the-badge)
+![License](https://img.shields.io/github/license/Kirky-X/crawlrs?label=license&style=for-the-badge)
 
 **Version:** 0.2.0 | **Last Updated:** 2026-09-15
 
@@ -317,7 +317,7 @@ When `auth` is disabled, the `default_identity_middleware` injects a fixed `Auth
 
 The injected `AuthState` carries `ApiKeyScope::denied()` (read/write/admin all `false`, limits `0`). Protected routes therefore **reject every request with 401** unless `allow_unauthenticated_protected()` is called explicitly; opt-in also yields the denied scope, not full access. Do not expose an auth-off instance to a public network.
 
-Timeline: deny-by-default was introduced in 0.2.0-rc.1, lost during the 0.2.0-rc.2 assembly refactor, and restored in the Unreleased line (see `CHANGELOG.md`, Breaking).
+Timeline: deny-by-default was introduced in 0.2.0-rc.1, lost during the 0.2.0-rc.2 assembly refactor, and restored in the Unreleased line (see `docs/CHANGELOG.md`, Breaking).
 
 ### Noop Service Implementations
 

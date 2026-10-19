@@ -3,9 +3,9 @@
 
 <div align="center">
 
-![API Version](https://img.shields.io/badge/api-0.2.0--rc.2-blue)
-![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8899-green)
-![License](https://img.shields.io/badge/license-Apache%202.0-orange)
+![API Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs?label=api&style=for-the-badge)
+![Base URL](https://img.shields.io/badge/base%20URL-http://localhost:8899-green?style=for-the-badge)
+![License](https://img.shields.io/github/license/Kirky-X/crawlrs?label=license&style=for-the-badge)
 
 **Version:** 0.2.0-rc.2 | **Base URL:** `http://localhost:8899` | **Updated:** 2026-10-13
 

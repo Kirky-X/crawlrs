@@ -2,7 +2,7 @@
 
 <img src="docs/image/crawlrs.png" alt="Crawlrs Logo" width="240">
 
-[![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=build)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![Version](https://img.shields.io/github/v/release/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/releases) [![License](https://img.shields.io/github/license/Kirky-X/crawlrs)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE) ![Rust](https://img.shields.io/badge/rust-1.97%2B-orange)
+[![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97+](https://img.shields.io/badge/Rustc-1.97+-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![release](https://img.shields.io/github/v/release/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/releases) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/crawlrs/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/crawlrs/actions/workflows/ci.yml) [![license](https://img.shields.io/github/license/Kirky-X/crawlrs?style=for-the-badge)](https://github.com/Kirky-X/crawlrs/blob/main/LICENSE)
 
 **中文** | [English](README_EN.md)
 
