@@ -36,7 +36,7 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 ## 📋 Table of Contents
 
 <details open>
-<summary>📑 目录</summary>
+<summary>📑 Table of Contents</summary>
 
 - [✨ Features](#-features)
 - [🚀 Quick Start](#-quick-start)
@@ -95,7 +95,7 @@ Beyond the core capabilities above, crawlrs also provides site mapping, an async
 ### 📦 Installation
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 git clone https://github.com/Kirky-X/crawlrs.git
@@ -120,7 +120,7 @@ Requires Rust 1.97 or later (`rust-version` in `Cargo.toml`, latest stable is fi
 The following example is adapted from the [`config/default.toml`](config/default.toml) template and the startup flow in the [📖 User Guide](docs/USER_GUIDE.md):
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 # 1. Prepare configuration (full template in config/default.toml, env vars in .env.example)
@@ -145,7 +145,7 @@ cargo run --bin crawlrs
 </details>
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 # 4. Verify the installation
@@ -158,7 +158,7 @@ curl http://localhost:8899/health
 Calling the scrape endpoint (authentication and all endpoints: see the [📘 API Reference](docs/API_REFERENCE.md)):
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 curl -X POST http://localhost:8899/v1/scrape \
@@ -178,7 +178,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 - **SearXNG meta search (opt-in)**: `search.searxng.enabled = false` by default. When enabled, public instances are collected from searx.space into the `searxng_instances` registry, periodically probed to maintain an in-process pool (target: 3 usable instances), and failed requests fail over to another instance up to `max_failover_attempts` times.
 
 <details>
-<summary>📄 代码 · toml</summary>
+<summary>📄 Code · toml</summary>
 
   ```toml
   [search.searxng]
@@ -199,7 +199,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 ### 📦 Presets
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | Preset | Build command | Contents | Use case |
 |------|----------|----------|----------|
@@ -216,7 +216,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 The table below is a major subset of the `[features]` section of `Cargo.toml` (full list: see `Cargo.toml`), with `default = ["platform", "db-postgres"]`; the core scraping stack (oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt) is always compiled.
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | Feature | Description | Default |
 |------|------|------|
@@ -255,7 +255,7 @@ crawlrs can be embedded by downstream projects (e.g. gateway applications) as a 
 When pulling crawlrs in via a path dependency, declare the feature combination below (the default engine set comes along with `default-features`, bringing in `platform` + `db-postgres`):
 
 <details>
-<summary>📄 代码 · toml</summary>
+<summary>📄 Code · toml</summary>
 
 ```toml
 [dependencies]
@@ -265,7 +265,7 @@ crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"]
 </details>
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | feature | Description | In default |
 |---------|-------------|:----------:|
@@ -292,7 +292,7 @@ Without injection the default assembly is `ExplicitErrorCarrier`: every LLM call
 The embedding side and crawlrs share the same nexus-family dependencies; cargo unifies an `x.y.z-rc.N` requirement to the highest rc within the same minor. crawlrs has raised its manifest minimum versions to the baseline below, making "single-repo CI baseline = embedding compile target" and preventing "green in one repo, red when embedded" from recurring on upstream upgrades:
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | Dependency | Unified baseline | Embedding role |
 |-----------|-----------------|---------------|
@@ -313,7 +313,7 @@ The embedding side and crawlrs share the same nexus-family dependencies; cargo u
 `scripts/embed-probe.sh` reproduces the embedding compile path via a path dependency in a temporary directory (`cargo new` a probe crate → `cargo add --path <repo-root> --features "db-postgres,extractors,llm"` → `cargo check`), so embedding breakage is caught inside the repo; the CI `embed-probe` job runs this script serially and blocks merging on failure.
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 scripts/embed-probe.sh              # auto-locate repo root (derived from the script's own path)
@@ -329,7 +329,7 @@ Exit code `0` means the embedding compile surface is healthy; a non-zero exit pr
 ## 📚 Documentation
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | Document | Description |
 |------|------|
@@ -353,7 +353,7 @@ Exit code `0` means the embedding compile surface is healthy; a non-zero exit pr
 All 66 runnable examples live in [`examples/`](examples/) (a member crate of the root workspace, `members = ["examples"]` in the root `Cargo.toml`), grouped by domain: search, scrape, crawl, extract, auth, teams, webhooks, cache, config, database, proxy, rate-limiting, sdk, tasks, browser, advanced, etc. (each example is a `[[bin]]` target such as `basic_scrape`). For the categorized list see [examples/README.md](examples/README.md) and [examples/QUICKSTART.md](examples/QUICKSTART.md).
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 cd examples
@@ -370,7 +370,7 @@ cargo build                           # Build all examples
 ## 🚢 Deployment
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 # Build the image (primary Dockerfile lives in docker/)
@@ -407,7 +407,7 @@ The test system spans seven layers: inline unit tests in `src/`, module-organize
 **Identical to CI** (see `.github/workflows/ci.yml`):
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 # Unit tests (CI test job: one round each for standard / full; needs PostgreSQL 16,
@@ -436,7 +436,7 @@ cargo deny check
 **Local extras** (not run by CI):
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 # Benchmarks (Criterion, 9 groups)
@@ -485,7 +485,7 @@ Please do not report security vulnerabilities through public issues — use the 
 ## 🗺️ Roadmap
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">Status</th><th style="text-align:left">Area</th><th style="text-align:left">Items</th></tr>
@@ -546,7 +546,7 @@ Want to contribute code?<br>
 For the full version history see the [📋 Changelog](docs/CHANGELOG.md) (following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), semantic versioning).
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | Version | Date | Highlights |
 |------|------|------|
@@ -572,7 +572,7 @@ This project is licensed under the [Apache License 2.0](LICENSE). Copyright © 2
 crawlrs stands on the shoulders of these excellent open-source projects:
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | Dependency | Purpose |
 |------|------|
