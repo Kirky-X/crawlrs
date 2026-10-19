@@ -16,7 +16,9 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
-        args: ['--maxkb=1000']
+        # 项目 logo（docs/image/crawlrs.png，1254×1254 PNG）约 1.05 MB，改名入库后 git 判定为新增
+        # 而非重命名（新旧图相似度过阈值），会撞原 1000 KB 上限；提到 2000 KB 与 CodeNexus 对齐。
+        args: ['--maxkb=2000']
       - id: detect-private-key
         # scripts/pre-commit-check.sh 是仓库自带的私钥扫描器，其 patterns 数组里存放的正是
         # 它要匹配的 PEM 头字面量（见 docs/SECURITY.md「私钥扫描」），属工具签名而非私钥。
