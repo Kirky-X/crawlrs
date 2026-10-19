@@ -36,7 +36,7 @@ crawlrs 将安全作为平台的核心设计目标。本文档介绍安全策略
 
 ### 如何报告
 
-**请勿通过公开 GitHub Issue 报告安全漏洞。** 请发送邮件至 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)，或通过 GitHub [Security Advisories](https://github.com/Kirky-X/crawlrs/security/advisories/new) 私密披露通道提交。
+**请勿通过公开 GitHub Issue 报告安全漏洞。** 请优先通过 GitHub [Security Advisories](https://github.com/Kirky-X/crawlrs/security/policy) 私密披露通道提交报告（仓库页 **Security → Report a vulnerability**）；仅当该通道不可用时，再发送邮件至 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)（受理人：Kirky.X）。
 
 ### 报告内容
 

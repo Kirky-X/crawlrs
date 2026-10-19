@@ -150,4 +150,4 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 
 - **Bug**：[新建 Issue](https://github.com/Kirky-X/crawlrs/issues/new)，附版本（`/v1/version` 或 release 号）、特性组合、复现步骤与日志（脱敏后）。
 - **功能建议**：[Issue](https://github.com/Kirky-X/crawlrs/issues/new) 描述场景与期望行为；大能力建议先走 specmark propose。
-- **安全漏洞**：邮件 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)，勿公开披露，流程见 [🔒 安全文档](SECURITY.md)。
+- **安全漏洞**：优先走 GitHub [Security Advisories](https://github.com/Kirky-X/crawlrs/security/policy) 私密披露（备选邮件 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)，受理人 Kirky.X），勿公开披露，流程见 [🔒 安全文档](SECURITY.md)。

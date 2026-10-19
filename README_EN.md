@@ -393,7 +393,7 @@ CI consistently runs `cargo deny check` (advisories / licenses / bans / sources)
 
 ### 🚨 Reporting a Vulnerability
 
-Please do not report security vulnerabilities through public issues — email [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com) instead. For the full handling process see [SECURITY.md](docs/SECURITY.md).
+Please do not report security vulnerabilities through public issues — use the GitHub [Security Advisories](https://github.com/Kirky-X/crawlrs/security/policy) private disclosure channel as the primary route (email [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com), handler Kirky.X, only if that channel is unavailable). For the full handling process see [SECURITY.md](docs/SECURITY.md).
 
 ---
 

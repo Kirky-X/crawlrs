@@ -392,7 +392,7 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 ### 🚨 报告安全漏洞
 
-请勿通过公开 issue 报告安全漏洞，请发送邮件至 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)。完整漏洞处理流程见 [SECURITY.md](docs/SECURITY.md)。
+请勿通过公开 issue 报告安全漏洞。请优先使用 GitHub [Security Advisories](https://github.com/Kirky-X/crawlrs/security/policy) 私密披露通道提交报告（不可用时再发送邮件至 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)，受理人 Kirky.X）。完整漏洞处理流程见 [SECURITY.md](docs/SECURITY.md)。
 
 ---
 

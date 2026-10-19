@@ -35,7 +35,7 @@ crawlrs 是一个使用 Rust 构建的自托管企业级网页数据采集平台
 - 使用问题：[📖 用户指南](USER_GUIDE.md) 与本 FAQ；
 - 接口细节：[📘 API 参考](API_REFERENCE.md)；
 - Bug 与建议：[GitHub Issues](https://github.com/Kirky-X/crawlrs/issues)；
-- 安全漏洞：邮件 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)（勿公开披露）。
+- 安全漏洞：优先走 GitHub [Security Advisories](https://github.com/Kirky-X/crawlrs/security/policy) 私密披露，备选邮件 [Kirky-X@outlook.com](mailto:Kirky-X@outlook.com)（受理人 Kirky.X；勿公开披露）。
 
 ---
 
