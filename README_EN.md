@@ -35,6 +35,9 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 
 ## 📋 Table of Contents
 
+<details open>
+<summary>📑 目录</summary>
+
 - [✨ Features](#-features)
 - [🚀 Quick Start](#-quick-start)
 - [🎨 Feature Flags](#-feature-flags)
@@ -53,6 +56,8 @@ Dispatch any task through one unified REST API — engine scheduling, anti-bot a
 - [🙏 Acknowledgments](#-acknowledgments)
 - [📞 Contact & Support](#-contact--support)
 - [⭐ Star History](#-star-history)
+
+</details>
 
 ---
 
@@ -89,6 +94,9 @@ Beyond the core capabilities above, crawlrs also provides site mapping, an async
 
 ### 📦 Installation
 
+<details>
+<summary>📄 代码 · bash</summary>
+
 ```bash
 git clone https://github.com/Kirky-X/crawlrs.git
 cd crawlrs
@@ -103,11 +111,16 @@ cargo build --release --features standard
 cargo build --release --features full
 ```
 
+</details>
+
 Requires Rust 1.97 or later (`rust-version` in `Cargo.toml`, latest stable is fine); the default database backend is PostgreSQL 16+ (`db-postgres`); Docker 20+ is used for integration tests (testcontainers) and containerized deployment.
 
 ### 💡 Minimal Example
 
 The following example is adapted from the [`config/default.toml`](config/default.toml) template and the startup flow in the [📖 User Guide](docs/USER_GUIDE.md):
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 # 1. Prepare configuration (full template in config/default.toml, env vars in .env.example)
@@ -129,13 +142,23 @@ cargo run --bin crawlrs migrate
 cargo run --bin crawlrs
 ```
 
+</details>
+
+<details>
+<summary>📄 代码 · bash</summary>
+
 ```bash
 # 4. Verify the installation
 curl http://localhost:8899/health
 # {"status":"healthy","version":"0.2.0-rc.2"}
 ```
 
+</details>
+
 Calling the scrape endpoint (authentication and all endpoints: see the [📘 API Reference](docs/API_REFERENCE.md)):
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 curl -X POST http://localhost:8899/v1/scrape \
@@ -143,6 +166,8 @@ curl -X POST http://localhost:8899/v1/scrape \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com"}'
 ```
+
+</details>
 
 ### 🧭 Core Concepts
 
@@ -152,12 +177,17 @@ curl -X POST http://localhost:8899/v1/scrape \
 - **Configuration**: powered by confers — TOML files plus `CRAWLRS__`-prefixed environment variables (`__` separates nesting, e.g. `CRAWLRS__DATABASE__URL`).
 - **SearXNG meta search (opt-in)**: `search.searxng.enabled = false` by default. When enabled, public instances are collected from searx.space into the `searxng_instances` registry, periodically probed to maintain an in-process pool (target: 3 usable instances), and failed requests fail over to another instance up to `max_failover_attempts` times.
 
+<details>
+<summary>📄 代码 · toml</summary>
+
   ```toml
   [search.searxng]
   enabled = true                                # spawns collector + health workers
   pool_target = 3
   seed_urls = ["https://searx.example.org"]     # fallback when the dataset is unreachable
   ```
+
+</details>
 
   **Privacy disclosure**: once enabled, user queries are sent in plaintext to third-party public SearXNG instances that this deployment does not control. Being disabled by default is the mitigation; governance views are `GET /v1/searxng/instances` and `GET /v1/searxng/pool`.
 - **Feature gating**: when business capabilities (teams/auth/rate-limit/webhook) are off, Noop implementations are injected automatically — single-tenant/unauthenticated deployments need zero business-logic changes.
@@ -168,6 +198,9 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ### 📦 Presets
 
+<details>
+<summary>📋 表格</summary>
+
 | Preset | Build command | Contents | Use case |
 |------|----------|----------|----------|
 | Default | `cargo build --release` | `platform` (teams + auth + rate-limit + webhook + metrics + content + sitemap) + `db-postgres` | Full platform out of the box |
@@ -176,9 +209,14 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `no-default` | `cargo build --release --no-default-features` | Pure core scraping stack | Single-tenant/unauthenticated deployments, embedding |
 | `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | Minimal agent/embedded library surface |
 
+</details>
+
 ### 📋 Feature Matrix
 
 The table below is a major subset of the `[features]` section of `Cargo.toml` (full list: see `Cargo.toml`), with `default = ["platform", "db-postgres"]`; the core scraping stack (oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt) is always compiled.
+
+<details>
+<summary>📋 表格</summary>
 
 | Feature | Description | Default |
 |------|------|------|
@@ -202,6 +240,8 @@ The table below is a major subset of the `[features]` section of `Cargo.toml` (f
 | `openapi` | OpenAPI 3.1 spec generation (`GET /openapi.json`) | ❌ |
 | `test-mocks` | Test-only mock gating (integration tests must enable explicitly) | ❌ |
 
+</details>
+
 > For the feature-combination compile matrix (22 combinations) and how it is verified, see the [🧪 Test Scenario Matrix](docs/TEST_SCENARIOS.md); for the gating implementation pattern, see [🏗️ Architecture Document · Feature Gate Architecture](docs/ARCHITECTURE.md).
 
 ---
@@ -214,16 +254,26 @@ crawlrs can be embedded by downstream projects (e.g. gateway applications) as a 
 
 When pulling crawlrs in via a path dependency, declare the feature combination below (the default engine set comes along with `default-features`, bringing in `platform` + `db-postgres`):
 
+<details>
+<summary>📄 代码 · toml</summary>
+
 ```toml
 [dependencies]
 crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"] }
 ```
+
+</details>
+
+<details>
+<summary>📋 表格</summary>
 
 | feature | Description | In default |
 |---------|-------------|:----------:|
 | `db-postgres` | PostgreSQL backend (primary embedding storage path) | ✅ already in default |
 | `extractors` | Content extraction (`trafilatura` + `dom-smoothie`) | Explicit |
 | `llm` | LLM structured extraction boundary (trait + orchestration, no provider access; carrier injected by the host) | Explicit |
+
+</details>
 
 > RAG (`vecboost`, via `rag-local`/`rag-remote`) and the TLS-fingerprint engine (`wreq`, via `engine-tls-fingerprint`) are **not** part of the supported default embedding combination—they pull extra local sibling path dependencies or the BoringSSL build chain and must be validated per their own features.
 
@@ -241,6 +291,9 @@ Without injection the default assembly is `ExplicitErrorCarrier`: every LLM call
 
 The embedding side and crawlrs share the same nexus-family dependencies; cargo unifies an `x.y.z-rc.N` requirement to the highest rc within the same minor. crawlrs has raised its manifest minimum versions to the baseline below, making "single-repo CI baseline = embedding compile target" and preventing "green in one repo, red when embedded" from recurring on upstream upgrades:
 
+<details>
+<summary>📋 表格</summary>
+
 | Dependency | Unified baseline | Embedding role |
 |-----------|-----------------|---------------|
 | `dbnexus` | `0.6.0-rc.9` | Database abstraction (over sea-orm) |
@@ -251,22 +304,32 @@ The embedding side and crawlrs share the same nexus-family dependencies; cargo u
 | `oxcache` | `0.5.0-rc.8` | Multi-tier caching |
 | `garrison` | `0.9.0-rc.3` | Authentication engine (pulled via default's `auth`) |
 
+</details>
+
 > The embedding side must not rely on `[patch.crates-io]` to force version alignment—patch is a local development-state mechanism and is disallowed on the published surface (a path version coexisting with a registry version causes trait identity splitting). Raising versions only guarantees "equivalent compile and test pass under the same version" and does not change runtime behavior.
 
 ### Embedding probe gate
 
 `scripts/embed-probe.sh` reproduces the embedding compile path via a path dependency in a temporary directory (`cargo new` a probe crate → `cargo add --path <repo-root> --features "db-postgres,extractors,llm"` → `cargo check`), so embedding breakage is caught inside the repo; the CI `embed-probe` job runs this script serially and blocks merging on failure.
 
+<details>
+<summary>📄 代码 · bash</summary>
+
 ```bash
 scripts/embed-probe.sh              # auto-locate repo root (derived from the script's own path)
 scripts/embed-probe.sh <repo-root>  # specify repo root explicitly (cross-machine / CI)
 ```
+
+</details>
 
 Exit code `0` means the embedding compile surface is healthy; a non-zero exit prints the failing step name to stderr (`root` / `new` / `add` / `check`). Probe build artifacts land in the `mktemp` temporary directory, never polluting the repo working tree, and it is safe to run repeatedly.
 
 ---
 
 ## 📚 Documentation
+
+<details>
+<summary>📋 表格</summary>
 
 | Document | Description |
 |------|------|
@@ -281,11 +344,16 @@ Exit code `0` means the embedding compile surface is healthy; a non-zero exit pr
 | [📋 Changelog](docs/CHANGELOG.md) | Release-by-release change log |
 | [📦 Releases](https://github.com/Kirky-X/crawlrs/releases) | Release page |
 
+</details>
+
 ---
 
 ## 💻 Examples
 
 All 66 runnable examples live in [`examples/`](examples/) (a member crate of the root workspace, `members = ["examples"]` in the root `Cargo.toml`), grouped by domain: search, scrape, crawl, extract, auth, teams, webhooks, cache, config, database, proxy, rate-limiting, sdk, tasks, browser, advanced, etc. (each example is a `[[bin]]` target such as `basic_scrape`). For the categorized list see [examples/README.md](examples/README.md) and [examples/QUICKSTART.md](examples/QUICKSTART.md).
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 cd examples
@@ -295,9 +363,14 @@ cargo run --bin async_batch           # Async batch scraping
 cargo build                           # Build all examples
 ```
 
+</details>
+
 ---
 
 ## 🚢 Deployment
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 # Build the image (primary Dockerfile lives in docker/)
@@ -306,6 +379,8 @@ docker build -t crawlrs:latest -f docker/Dockerfile .
 # One-command startup with Docker Compose (crawlrs + PostgreSQL 16 + FlareSolverr + Chrome + Prometheus)
 docker compose -f docker/docker-compose.yml up -d
 ```
+
+</details>
 
 The server listens on `8899` by default (configurable via `CRAWLRS__SERVER__PORT`); for single-instance and Kubernetes multi-instance topologies, the worker pool and external dependencies see the [🏗️ Architecture Document · Deployment Architecture](docs/ARCHITECTURE.md), and for the production hardening checklist see [🔒 Security Document · Production Hardening](docs/SECURITY.md).
 
@@ -331,6 +406,9 @@ The test system spans seven layers: inline unit tests in `src/`, module-organize
 
 **Identical to CI** (see `.github/workflows/ci.yml`):
 
+<details>
+<summary>📄 代码 · bash</summary>
+
 ```bash
 # Unit tests (CI test job: one round each for standard / full; needs PostgreSQL 16,
 # auto-provisioned locally via testcontainers)
@@ -353,7 +431,12 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 cargo deny check
 ```
 
+</details>
+
 **Local extras** (not run by CI):
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 # Benchmarks (Criterion, 9 groups)
@@ -368,6 +451,8 @@ cargo bench
 # Full pre-commit check (fmt → clippy → check → build → secret scan)
 scripts/pre-commit-check.sh all
 ```
+
+</details>
 
 ### 📊 Test Scale
 
@@ -399,6 +484,9 @@ Please do not report security vulnerabilities through public issues — use the 
 
 ## 🗺️ Roadmap
 
+<details>
+<summary>📋 表格</summary>
+
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">Status</th><th style="text-align:left">Area</th><th style="text-align:left">Items</th></tr>
 <tr><td align="center">✅</td><td>Core platform (0.1.0)</td><td>Five-capability APIs (search/scrape/crawl/extract/map), DDD four layers, multi-tenancy & rate limiting, webhook notifications</td></tr>
@@ -407,6 +495,8 @@ Please do not report security vulnerabilities through public issues — use the 
 <tr><td align="center">📋</td><td>Architecture evolution</td><td>Event-driven internal bus, WebSocket real-time task status, Redis shared cache layer (multi-instance deployments)</td></tr>
 <tr><td align="center">📋</td><td>Performance stewardship</td><td>Routine Criterion baseline (e2e-baseline) regression comparisons, re-measurement of performance figures</td></tr>
 </table>
+
+</details>
 
 ---
 
@@ -455,12 +545,17 @@ Want to contribute code?<br>
 
 For the full version history see the [📋 Changelog](docs/CHANGELOG.md) (following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), semantic versioning).
 
+<details>
+<summary>📋 表格</summary>
+
 | Version | Date | Highlights |
 |------|------|------|
 | 0.2.0-rc.2 | 2026-09-21 | TLS fingerprint engine (WreqEngine), MLLM vision-navigation engine, RAG-augmented extraction, knowledge-graph coverage awareness, DRL adaptive policy, 5 new Prometheus metrics; feature absorption F1–F12 (AutoThrottle, session identity, failure snapshots, sitemap request source, XHR capture, extraction quality gate, LLM chunking & provenance, AIMD memory coupling, soft 404, AX-tree snapshot) |
 | Unreleased | - | auth-off protected routes restore default 401, `web-axum` build surface restored, `crawlrs migrate` subcommand, production route for `POST /v1/scrape/{id}/_cancel`, ScrapeOptionsDto exposing `block_ads`/`block_media`/`needs_mllm`, forge-full staging feature, i18n/Fluent integration, etc. — full list in the [📋 Changelog](docs/CHANGELOG.md) |
 | 0.2.0 | 2026-07-29 | garrison RBAC authentication integration, bootstrap admin key, `DELETE /v1/crawl/{id}`, brute-force protection hardening |
 | 0.1.0 | 2026-07-22 | First public release: five-capability APIs, DDD four-layer architecture, multi-tenancy & rate limiting, unified search |
+
+</details>
 
 ---
 
@@ -476,6 +571,9 @@ This project is licensed under the [Apache License 2.0](LICENSE). Copyright © 2
 
 crawlrs stands on the shoulders of these excellent open-source projects:
 
+<details>
+<summary>📋 表格</summary>
+
 | Dependency | Purpose |
 |------|------|
 | [tokio](https://crates.io/crates/tokio) | Async runtime |
@@ -489,6 +587,8 @@ crawlrs stands on the shoulders of these excellent open-source projects:
 | [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | Content extraction |
 | [criterion](https://crates.io/crates/criterion) | Benchmarking |
 | [testcontainers](https://crates.io/crates/testcontainers) | Integration test infrastructure |
+
+</details>
 
 Same-author in-house foundation components: dbnexus (database abstraction), confers (configuration management), garrison (authentication framework), limiteron (rate limiting & circuit breaking), oxcache (caching), inklog (structured logging), sdforge (SDK generation), trait-kit (dependency injection).
 

@@ -35,6 +35,9 @@
 
 ## 📋 目录
 
+<details open>
+<summary>📑 目录</summary>
+
 - [✨ 功能特性](#-功能特性)
 - [🚀 快速开始](#-快速开始)
 - [🎨 特性标志](#-特性标志)
@@ -53,6 +56,8 @@
 - [🙏 致谢](#-致谢)
 - [📞 联系与支持](#-联系与支持)
 - [⭐ Star 历史](#-star-历史)
+
+</details>
 
 ---
 
@@ -89,6 +94,9 @@
 
 ### 📦 安装
 
+<details>
+<summary>📄 代码 · bash</summary>
+
 ```bash
 git clone https://github.com/Kirky-X/crawlrs.git
 cd crawlrs
@@ -103,11 +111,16 @@ cargo build --release --features standard
 cargo build --release --features full
 ```
 
+</details>
+
 要求 Rust 1.97 及以上（`Cargo.toml` 的 `rust-version`，最新稳定版即可）；默认数据库后端为 PostgreSQL 16+（`db-postgres`）；Docker 20+ 用于集成测试（testcontainers）与容器化部署。
 
 ### 💡 最小示例
 
 以下示例改编自 [`config/default.toml`](config/default.toml) 配置模板与 [📖 用户指南](docs/USER_GUIDE.md) 的启动流程：
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 # 1. 准备配置（完整模板见 config/default.toml，环境变量见 .env.example）
@@ -129,13 +142,23 @@ cargo run --bin crawlrs migrate
 cargo run --bin crawlrs
 ```
 
+</details>
+
+<details>
+<summary>📄 代码 · bash</summary>
+
 ```bash
 # 4. 验证安装
 curl http://localhost:8899/health
 # {"status":"healthy","version":"0.2.0-rc.2"}
 ```
 
+</details>
+
 调用抓取接口（认证与全部端点详见 [📘 API 参考](docs/API_REFERENCE.md)）：
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 curl -X POST http://localhost:8899/v1/scrape \
@@ -143,6 +166,8 @@ curl -X POST http://localhost:8899/v1/scrape \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com"}'
 ```
+
+</details>
 
 ### 🧭 核心概念
 
@@ -152,12 +177,17 @@ curl -X POST http://localhost:8899/v1/scrape \
 - **配置管理**：基于 confers，TOML 文件 + `CRAWLRS__` 前缀环境变量（`__` 分隔嵌套，如 `CRAWLRS__DATABASE__URL`）。
 - **SearXNG 元搜索（opt-in）**：默认 `search.searxng.enabled = false`；启用后从 searx.space 采集公共实例写入 `searxng_instances` 登记簿，周期探活维护进程内热池（目标 3 个可用实例），请求失败自动熔断换实例；同一搜索请求最多换 `max_failover_attempts` 个实例。
 
+<details>
+<summary>📄 代码 · toml</summary>
+
   ```toml
   [search.searxng]
   enabled = true                                # 启用后拉起采集/探活两个周期 worker
   pool_target = 3
   seed_urls = ["https://searx.example.org"]     # 数据源不可达时的兜底实例
   ```
+
+</details>
 
   **隐私披露**：启用后用户查询明文会发送给第三方公共 SearXNG 实例（非本部署控制）。默认关闭即为缓解；实例治理视图见 `GET /v1/searxng/instances` 与 `GET /v1/searxng/pool`。
 - **特性门控**：业务能力（teams/auth/rate-limit/webhook）关闭时自动注入 Noop 实现，单租户/无认证部署零业务逻辑改动。
@@ -168,6 +198,9 @@ curl -X POST http://localhost:8899/v1/scrape \
 
 ### 📦 功能预设
 
+<details>
+<summary>📋 表格</summary>
+
 | 预设 | 构建命令 | 包含内容 | 适用场景 |
 |------|----------|----------|----------|
 | 默认 | `cargo build --release` | `platform`（teams + auth + rate-limit + webhook + metrics + content + sitemap）+ `db-postgres` | 开箱即用的完整平台 |
@@ -176,9 +209,14 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `no-default` | `cargo build --release --no-default-features` | 纯核心抓取栈 | 单租户/无认证部署、嵌入集成 |
 | `agent-lib` | `cargo build --release --no-default-features --features agent-lib` | `content` + `trafilatura` + `dom-smoothie` | agent/嵌入式最小库面 |
 
+</details>
+
 ### 📋 功能矩阵
 
 下表为 `Cargo.toml` `[features]` 的主要特性子集（完整清单见 `Cargo.toml`），`default = ["platform", "db-postgres"]`；核心抓取栈（oxcache / dbnexus / confers / sdforge / inklog / trait-kit + scraper / reqwest / robotstxt）始终编译。
+
+<details>
+<summary>📋 表格</summary>
 
 | 特性 | 说明 | 默认 |
 |------|------|------|
@@ -202,6 +240,8 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `openapi` | OpenAPI 3.1 规范生成（`GET /openapi.json`） | ❌ |
 | `test-mocks` | 测试专用 mock 门控（集成测试需显式启用） | ❌ |
 
+</details>
+
 > 特性组合的编译矩阵（22 组合）与验证方式见 [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md)；特性门控的实现模式见 [🏗️ 架构文档 · Feature Gate Architecture](docs/ARCHITECTURE.md)。
 
 ---
@@ -214,16 +254,26 @@ crawlrs 可作为库被下游项目（如网关类应用）以 **path 依赖**�
 
 以 path 依赖引入 crawlrs 时，按下表声明 feature 组合（引擎默认集随 `default-features` 自动带入 `platform` + `db-postgres`）：
 
+<details>
+<summary>📄 代码 · toml</summary>
+
 ```toml
 [dependencies]
 crawlrs = { path = "../crawlrs", features = ["db-postgres", "extractors", "llm"] }
 ```
+
+</details>
+
+<details>
+<summary>📋 表格</summary>
 
 | feature | 说明 | 是否 default |
 |---------|------|:-----------:|
 | `db-postgres` | PostgreSQL 后端（嵌入主存储路径） | ✅ default 已含 |
 | `extractors` | 正文提取（`trafilatura` + `dom-smoothie`） | 显式声明 |
 | `llm` | LLM 结构化提取边界（trait + 编排，不含供应商访问；carrier 由宿主注入） | 显式声明 |
+
+</details>
 
 > RAG（`vecboost`，走 `rag-local`/`rag-remote`）与 TLS 指纹引擎（`wreq`，走 `engine-tls-fingerprint`）**不在**受支持的默认嵌入组合内——它们会引入额外的本地 sibling 路径依赖或 BoringSSL 构建链，需按各自 feature 单独验证。
 
@@ -241,6 +291,9 @@ crawlrs 不再内置任何 LLM 供应商访问（原 `LLMService` / `provider_ad
 
 嵌入方与 crawlrs 共享同一组 nexus 家族依赖，cargo 会将 `x.y.z-rc.N`  requirement 统一到同 minor 内的最高 rc。crawlrs 的 manifest 最低版本已抬升至下表基线，使「单仓 CI 基线 = 嵌入编译目标」，避免「单仓绿、嵌入红」在上游升级时复发：
 
+<details>
+<summary>📋 表格</summary>
+
 | 依赖 | 统一基线 | 嵌入角色 |
 |------|---------|---------|
 | `dbnexus` | `0.6.0-rc.9` | 数据库抽象（sea-orm 之上） |
@@ -251,22 +304,32 @@ crawlrs 不再内置任何 LLM 供应商访问（原 `LLMService` / `provider_ad
 | `oxcache` | `0.5.0-rc.8` | 多级缓存 |
 | `garrison` | `0.9.0-rc.3` | 认证引擎（经 default 的 `auth` 引入） |
 
+</details>
+
 > 嵌入方不得依赖 `[patch.crates-io]` 强制对齐版本——patch 属本地开发态机制，发布面禁用（path 版与 registry 版并存会触发 trait 身份分裂）。抬版本只保证「同一版本下编译与测试等价通过」，不改变运行行为。
 
 ### 嵌入探针门禁
 
 `scripts/embed-probe.sh` 在临时目录以 path 依赖复现嵌入编译路径（`cargo new` 探针 crate → `cargo add --path <仓库根> --features "db-postgres,extractors,llm"` → `cargo check`），嵌入破坏在仓内即可发现；CI 的 `embed-probe` job 会串行执行该脚本并阻塞合并。
 
+<details>
+<summary>📄 代码 · bash</summary>
+
 ```bash
 scripts/embed-probe.sh              # 自动定位仓库根（由脚本自身位置推导）
 scripts/embed-probe.sh <repo-root>  # 显式指定仓库根（跨机器 / CI）
 ```
+
+</details>
 
 退出码 `0` 表示嵌入编译面完好；非零时 stderr 打印失败步骤名（`root` / `new` / `add` / `check`）。探针构建产物落在 `mktemp` 临时目录，不污染仓库工作区，可重复执行。
 
 ---
 
 ## 📚 文档
+
+<details>
+<summary>📋 表格</summary>
 
 | 文档 | 说明 |
 |------|------|
@@ -281,11 +344,16 @@ scripts/embed-probe.sh <repo-root>  # 显式指定仓库根（跨机器 / CI）
 | [📋 更新日志](docs/CHANGELOG.md) | 每个版本的变更记录 |
 | [📦 Releases](https://github.com/Kirky-X/crawlrs/releases) | 版本发布页面 |
 
+</details>
+
 ---
 
 ## 💻 示例
 
 全部 66 个可运行示例位于 [`examples/`](examples/)（根 workspace 成员 crate，主 `Cargo.toml` 的 `members = ["examples"]`），按功能域分为 search、scrape、crawl、extract、auth、teams、webhooks、cache、config、database、proxy、rate-limiting、sdk、tasks、browser、advanced 等类别（每个示例是 `[[bin]]` 目标，如 `basic_scrape`）。分类清单与说明见 [examples/README.md](examples/README.md) 与 [examples/QUICKSTART.md](examples/QUICKSTART.md)。
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 cd examples
@@ -295,9 +363,14 @@ cargo run --bin async_batch           # 异步批量抓取
 cargo build                           # 编译全部示例
 ```
 
+</details>
+
 ---
 
 ## 🚢 部署
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 # 构建镜像（主 Dockerfile 位于 docker/ 目录）
@@ -306,6 +379,8 @@ docker build -t crawlrs:latest -f docker/Dockerfile .
 # Docker Compose 一键启动（crawlrs + PostgreSQL 16 + FlareSolverr + Chrome + Prometheus）
 docker compose -f docker/docker-compose.yml up -d
 ```
+
+</details>
 
 服务默认监听 `8899`（`CRAWLRS__SERVER__PORT` 可调）；单实例与 Kubernetes 多实例拓扑、Worker 池与外部依赖关系详见 [🏗️ 架构文档 · 部署架构](docs/ARCHITECTURE.md)，生产环境安全加固清单见 [🔒 安全文档 · 生产部署加固](docs/SECURITY.md)。
 
@@ -331,6 +406,9 @@ crawlrs 遵循领域驱动设计（DDD），采用 `presentation → application
 
 **与 CI 一致**（见 `.github/workflows/ci.yml`）：
 
+<details>
+<summary>📄 代码 · bash</summary>
+
 ```bash
 # 单元测试（CI test job：standard / full 各跑一轮；需 PostgreSQL 16，本地由 testcontainers 自动拉起）
 cargo test --features "standard" --lib
@@ -352,7 +430,12 @@ cargo llvm-cov --features "full" --fail-under-lines 80
 cargo deny check
 ```
 
+</details>
+
 **本地附加**（CI 不执行）：
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 # 基准测试（Criterion，9 组）
@@ -367,6 +450,8 @@ cargo bench
 # 提交前完整检查（fmt → clippy → check → build → 私钥扫描）
 scripts/pre-commit-check.sh all
 ```
+
+</details>
 
 ### 📊 测试规模
 
@@ -398,6 +483,9 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 ## 🗺️ 开发路线图
 
+<details>
+<summary>📋 表格</summary>
+
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
 <tr><td align="center">✅</td><td>核心平台（0.1.0）</td><td>搜索/抓取/爬取/提取/映射五大能力 API、DDD 四层、多租户与限流、Webhook 通知</td></tr>
@@ -406,6 +494,8 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 <tr><td align="center">📋</td><td>架构演进</td><td>事件驱动内部总线、WebSocket 实时任务状态、Redis 共享缓存层（多实例部署）</td></tr>
 <tr><td align="center">📋</td><td>性能看护</td><td>Criterion 基线（e2e-baseline）回归对比常态化、性能口径复测</td></tr>
 </table>
+
+</details>
 
 ---
 
@@ -454,12 +544,17 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 完整版本历史见 [📋 更新日志](docs/CHANGELOG.md)（遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 格式，语义化版本）。
 
+<details>
+<summary>📋 表格</summary>
+
 | 版本 | 日期 | 要点 |
 |------|------|------|
 | 0.2.0-rc.2 | 2026-09-21 | TLS 指纹引擎（WreqEngine）、MLLM 视觉导航引擎、RAG 增强提取、知识图谱覆盖感知、DRL 自适应策略、5 个新 Prometheus 指标；功能吸收 F1–F12（AutoThrottle、Session 身份、失败快照、sitemap 请求源、XHR 捕获、提取质量门、LLM 分块与溯源、AIMD 内存联动、软 404、AX 树快照） |
 | Unreleased | - | auth-off 恢复默认 401、`web-axum` 构建面恢复、`crawlrs migrate` 子命令、`POST /v1/scrape/{id}/_cancel` 生产路由、ScrapeOptionsDto 暴露 `block_ads`/`block_media`/`needs_mllm`、forge-full 停机坪、i18n/Fluent 接入等，完整清单见 [📋 更新日志](docs/CHANGELOG.md) |
 | 0.2.0 | 2026-07-29 | garrison RBAC 认证集成、bootstrap admin key、`DELETE /v1/crawl/{id}`、暴力破解防护加固 |
 | 0.1.0 | 2026-07-22 | 首个公开版本：五大能力 API、DDD 四层架构、多租户与限流、统一搜索 |
+
+</details>
 
 ---
 
@@ -475,6 +570,9 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 
 crawlrs 站在以下优秀开源项目的肩膀上：
 
+<details>
+<summary>📋 表格</summary>
+
 | 依赖 | 用途 |
 |------|------|
 | [tokio](https://crates.io/crates/tokio) | 异步运行时 |
@@ -488,6 +586,8 @@ crawlrs 站在以下优秀开源项目的肩膀上：
 | [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | 正文提取 |
 | [criterion](https://crates.io/crates/criterion) | 基准测试 |
 | [testcontainers](https://crates.io/crates/testcontainers) | 集成测试基础设施 |
+
+</details>
 
 同作者自研基座组件：dbnexus（数据库抽象）、confers（配置管理）、garrison（认证框架）、limiteron（限流熔断）、oxcache（缓存）、inklog（结构化日志）、sdforge（SDK 生成）、trait-kit（依赖注入）。
 
