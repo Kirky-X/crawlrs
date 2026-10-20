@@ -20,7 +20,7 @@ use std::collections::HashMap;
 /// confers 内置安全校验器按固定键名读取配置（如 `jwt.secret`、`cors.allowed_origins`），
 /// 与 crawlrs 的键名（`auth.jwt_secret`）不一致，此处做显式键名别名映射：
 ///
-/// - `jwt.secret` ← `settings.auth.jwt_secret()`（仅 `auth` feature 下提供；
+/// - `jwt.secret` ← `settings.auth.jwt_secret`（仅 `auth` feature 下提供；
 ///   auth-off 时 garrison 不读取密钥，无需校验）
 /// - `cors.allowed_origins` ← `settings.cors.allowed_origins`
 /// - `cors.allowed_methods` ← `create_cors_layer` 的实际生效策略
@@ -92,14 +92,14 @@ impl ConfigProvider for SettingsSecurityProvider {
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` if validation passes, or an error with details about
+/// Returns `Ok()` if validation passes, or an error with details about
 /// the security issue.
 pub fn validate_security(settings: &Settings, is_production: bool) -> Result<()> {
     // 说明：
     //
     // 早期版本此函数为空扩展点（confers 0.4 的 #[config(validate)] 绑定 garde，
     // 与 Settings 的 sdforge::validator::Validate 不兼容，故 validator 注解校验留在
-    // `load_settings()` 中）。现接入 confers `security-rules` 注册表，补齐
+    // `load_settings` 中）。现接入 confers `security-rules` 注册表，补齐
     // 密钥强度 / CORS 等 cross-field 业务规则校验。
     debug!("Running security rule validators (confers security-rules)");
 
@@ -165,19 +165,16 @@ pub fn validate_security(settings: &Settings, is_production: bool) -> Result<()>
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` if validation passes, or an error with details about
+/// Returns `Ok()` if validation passes, or an error with details about
 /// security issues.
 pub fn validate_environment(is_production: bool) -> Result<()> {
     info!("Starting environment variable security validation...");
 
-    // Create security monitor and validator
     let monitor = EnvVarSecurityMonitor::default();
     let validator = EnvVarValidator::new(monitor.clone(), vec!["APP_ENVIRONMENT", "DATABASE_URL"]);
 
-    // Log security warnings
     monitor.log_security_warnings();
 
-    // Validate required variables
     if let Err(missing) = validator.validate_required() {
         let error_msg = format!(
             "Missing required environment variables: {}",
@@ -194,7 +191,6 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
         }
     }
 
-    // Generate and check security report
     let report = monitor.generate_security_report();
 
     // 在测试环境中跳过禁止环境变量检查
@@ -235,7 +231,6 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
         );
     }
 
-    // Check security score
     if report.security_score < 70 {
         let msg = format!(
             "Security score {} is below acceptable level (70). Review warnings above.",

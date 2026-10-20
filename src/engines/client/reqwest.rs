@@ -78,7 +78,7 @@ pub struct ReqwestEngine {
     /// 代理 client 缓存
     ///
     /// 按 `proxy_url` 缓存已构建的 `reqwest::Client`，避免每次请求都重建 client
-    /// 导致连接池丢失。`reqwest::Client::clone()` 内部 Arc 共享，克隆开销极低。
+    /// 导致连接池丢失。`reqwest::Client::clone` 内部 Arc 共享，克隆开销极低。
     ///
     /// 仅缓存 proxy_provider 路径下成功构建的 client（`is_fallback=false`）：
     /// - skip_tls 路径不缓存（请求级别配置，每次可能不同）
@@ -244,7 +244,7 @@ impl ReqwestEngine {
     /// 与 init_http_client 保持一致：强制 IPv4 + dns_resolver（HIGH：代理分支缺 dns_resolver）。
     /// - `proxy_url`: 可选代理 URL（None 或空字符串表示不使用代理）
     /// - `skip_tls`: true 时启用 `danger_accept_invalid_certs(true)`（仅开发环境，生产环境由
-    ///   `ScrapeOptions::builder().skip_tls_verification(true)` 在 APP_ENVIRONMENT=production 时拒绝）
+    ///   `ScrapeOptions::builder.skip_tls_verification(true)` 在 APP_ENVIRONMENT=production 时拒绝）
     /// - `timeout_seconds`: 请求超时（秒），从 Settings 注入避免硬编码
     /// - `fallback`: 构建失败时回退到的注入 http_client
     ///
@@ -589,7 +589,6 @@ impl ScraperEngine for ReqwestEngine {
         };
         let effective_client = &ssrf_client;
 
-        // Build headers
         let mut headers = HeaderMap::new();
         for (k, v) in &request.headers {
             if let (Ok(header_name), Ok(header_value)) = (
@@ -605,8 +604,6 @@ impl ScraperEngine for ReqwestEngine {
         // DEFAULT_USER_AGENT 仍保留在 http_client.rs 作为 client 级默认（UaPool 不可用时的回退）
         let profile = self.ua_pool.pick(request.mobile);
 
-        // Create request builder.
-        //
         // Use a real browser User-Agent from UaPool instead of a self-identifying
         // `crawlrs/*` UA: major search engines (Baidu, Sogou, Bing) reject
         // bot-identified requests with a 227-byte JS-redirect error page
@@ -636,7 +633,6 @@ impl ScraperEngine for ReqwestEngine {
             request_builder = request_builder.body(body.clone());
         }
 
-        // Set timeout
         request_builder = request_builder.timeout(request.timeout);
 
         let start = Instant::now();

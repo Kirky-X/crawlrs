@@ -253,7 +253,6 @@ pub async fn init_rate_limiting_service(
             enabled: settings.rate_limiting.enabled,
         };
 
-        // Validate rate limit config
         if let Err(e) = rate_limit_config.validate() {
             log::error!("Rate limit configuration error: {}", e);
         }
@@ -266,7 +265,6 @@ pub async fn init_rate_limiting_service(
             enabled: true,
         };
 
-        // Validate concurrency config
         if let Err(e) = concurrency_config.validate() {
             log::error!("Concurrency configuration error: {}", e);
         }
@@ -817,7 +815,6 @@ pub async fn init_services(
     // F11：按配置初始化软 404 指纹检测器（进程级共享；crawl 路径消费）
     crate::workers::crawl::soft404::init_shared(settings.crawl.soft404_max_fingerprints);
 
-    // Initialize team semaphore
     // 根据 concurrency.adaptive_enabled 选择 Fixed/Adaptive 模式
     let team_semaphore = init_team_semaphore(settings);
 
@@ -976,7 +973,6 @@ pub async fn init_services(
         settings.rag.search_rerank_top_n,
     ));
 
-    // Initialize search service
     let search_service = init_search_service(
         repositories,
         settings,
@@ -1003,11 +999,9 @@ pub async fn init_services(
                  check CRAWLRS__AUTH__JWT_SECRET env var (HS256 requires >=32 bytes)",
         );
 
-    // Initialize task queue
     let queue: Arc<dyn TaskQueue> =
         Arc::new(PostgresTaskQueue::new(repositories.task_repo.clone()));
 
-    // Initialize audit service
     let audit_repo = Arc::new(AuditLogRepositoryImpl::new(
         infrastructure.db.inner().clone(),
     ));
@@ -1081,7 +1075,6 @@ pub async fn init_services(
         crate::utils::retry_policy::RetryPolicy::default(),
     ));
 
-    // Initialize BacklogWorker
     let backlog_worker = Arc::new(crate::workers::backlog_worker::BacklogWorker::new(
         repositories.tasks_backlog_repo.clone(),
         repositories.task_repo.clone(),
@@ -1089,7 +1082,6 @@ pub async fn init_services(
         Arc::new(settings.clone()),
     ));
 
-    // Initialize ExpirationWorker
     let expiration_worker = Arc::new(crate::workers::expiration_worker::ExpirationWorker::new(
         repositories.task_repo.clone(),
         repositories.result_repo.clone(),

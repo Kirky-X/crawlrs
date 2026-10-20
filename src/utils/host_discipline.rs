@@ -5,7 +5,7 @@
 //!
 //! 每个 host 独立维护五件事：
 //! 1. **礼貌限速**：`gate` 在 per-host 预约时刻表上串行发放放行时刻，
-//!    同 host 相邻请求（含并发到达的）间隔 ≥ 步长 `max(current_interval,
+//!    同 host 相邻请求（含并发到达）间隔 ≥ 步长 `max(current_interval,
 //!    crawl_delay)`；AutoThrottle（`autothrottle_enabled`）开启后按成功响应
 //!    延迟 EMA 收敛动态间隔（下界 `min_interval`、上界 `max_interval`）
 //! 2. **429 冷却**：收到 429 后按 `max(retry_after, 指数退避下界)` 进入冷却
@@ -562,8 +562,6 @@ mod tests {
         HostDiscipline::new(Duration::from_millis(100), Duration::from_secs(60), 3)
     }
 
-    // ========== 构造 ==========
-
     #[test]
     #[should_panic(expected = "bare403_threshold must be >= 1")]
     fn new_zero_threshold_panics() {
@@ -576,7 +574,7 @@ mod tests {
         assert!(!d.tls_suspect("never-seen.example.com"));
     }
 
-    // ========== gate：首次不等待 / 有界等待 ==========
+    // gate：首次不等待 / 有界等待
 
     #[tokio::test]
     async fn gate_first_call_does_not_wait() {
@@ -632,7 +630,7 @@ mod tests {
         );
     }
 
-    // ========== 冷却 / 时刻表状态（读内部状态，纯同步） ==========
+    // 冷却 / 时刻表状态（读内部状态，纯同步）
 
     /// host 当前冷却截止剩余时长；无条目或已过期返回 ZERO
     fn cooldown_remaining(d: &HostDiscipline, host: &str) -> Duration {
@@ -738,7 +736,7 @@ mod tests {
         );
     }
 
-    // ========== 裸 403 连击 → tls_suspect → Success 清除 ==========
+    // 裸 403 连击 → tls_suspect → Success 清除
 
     #[test]
     fn bare403_streak_triggers_tls_suspect_then_success_clears() {
@@ -808,7 +806,7 @@ mod tests {
         );
     }
 
-    // ========== 并发间隔语义：批内相邻放行间隔 ≥ min_interval ==========
+    // 并发间隔语义：批内相邻放行间隔 ≥ min_interval
 
     #[tokio::test]
     async fn concurrent_gate_release_times_spaced_by_min_interval() {
@@ -857,7 +855,7 @@ mod tests {
         }
     }
 
-    // ========== 并发冒烟：gate/observe/tls_suspect 混合并发无死锁 ==========
+    // 并发冒烟：gate/observe/tls_suspect 混合并发无死锁
 
     #[tokio::test]
     async fn concurrent_gate_and_observe_no_deadlock() {
@@ -887,7 +885,7 @@ mod tests {
             .expect("concurrent gate/observe/tls_suspect must not deadlock");
     }
 
-    // ==== 评审 LOW：state 惰性清扫 ====
+    // 评审 LOW：state 惰性清扫
 
     /// 过期中性条目被清扫回收；携带纪律信息的条目（tls_suspect/连击/冷却）保留
     #[test]
@@ -950,7 +948,7 @@ mod tests {
         );
     }
 
-    // ========== F1：AutoThrottle 延迟观测收敛 ==========
+    // F1：AutoThrottle 延迟观测收敛
 
     /// AutoThrottle 关闭的参数集（回归现状基准）
     fn opts_throttle_off(min_interval: Duration) -> PolitenessOptions {
@@ -1115,7 +1113,7 @@ mod tests {
         );
     }
 
-    // ========== F1：放行时刻抖动 ==========
+    // F1：放行时刻抖动
 
     /// jitter_ratio=0：放行时刻严格递增、批内间隔恒等于 interval（确定性时刻表）
     ///
@@ -1233,7 +1231,7 @@ mod tests {
         }
     }
 
-    // ========== F5：429 指数连击 ==========
+    // F5：429 指数连击
 
     /// 指数退避参数集（base 可调小以加速测试，公式与生产一致）
     fn opts_backoff(base_ms: u64, max_ms: u64, stalled_threshold: u32) -> PolitenessOptions {
@@ -1378,7 +1376,7 @@ mod tests {
         );
     }
 
-    // ========== F5：robots Crawl-delay 双时钟 ==========
+    // F5：robots Crawl-delay 双时钟
 
     /// set_crawl_delay 首值生效：写入 5s 后再写 1s 不回退
     #[test]
@@ -1457,7 +1455,7 @@ mod tests {
         );
     }
 
-    // ========== F5：停滞检测 ==========
+    // F5：停滞检测
 
     /// 连续 RateLimited 达阈值置 stalled，Success 清除
     #[tokio::test]

@@ -251,13 +251,11 @@ impl WebhookServiceImpl {
         // 避免内联发送期间 webhook-worker 再次认领造成重复投递。
         event.status = WebhookStatus::Processing;
 
-        // Save event to repository
         if let Err(e) = self.repository.create(&event).await {
             error!("Failed to create webhook event for task {}: {}", task.id, e);
             return Err(anyhow!("Failed to create webhook event: {}", e));
         }
 
-        // Send webhook
         match self.send_webhook(&event).await {
             Ok(status) => {
                 // 内联发送成功：终结事件，worker 不再重发
@@ -286,7 +284,7 @@ impl WebhookServiceImpl {
     }
 }
 
-// === Section: WebhookManagementService (扩展接口) ===
+// Section: WebhookManagementService (扩展接口)
 
 /// Webhook 管理服务接口（扩展）
 ///
@@ -318,7 +316,7 @@ pub trait WebhookManagementService: Send + Sync {
     /// * `payload` - 事件负载（JSON）
     ///
     /// # 返回值
-    /// * `Ok(())` - 触发并发送成功
+    /// * `Ok()` - 触发并发送成功
     /// * `Err` - webhook 不存在、事件持久化失败或发送失败
     async fn trigger_webhook(
         &self,
@@ -438,7 +436,7 @@ pub fn verify_webhook_signature_bytes(
 ///
 /// # 返回值
 ///
-/// * `Ok(())` - 签名验证通过
+/// * `Ok()` - 签名验证通过
 /// * `Err(WEBHOOK_AUTH_FAILED)` - 时间戳格式错误或签名不匹配
 ///
 /// # 安全说明

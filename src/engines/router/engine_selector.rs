@@ -50,7 +50,6 @@ impl EngineRouter {
                 }
             }
 
-            // Get support score
             let support_score = engine.support_score(request) as f64;
             if support_score == 0.0 {
                 continue;
@@ -73,7 +72,7 @@ impl EngineRouter {
 
         for (support_score, engine_name, engine) in candidates {
             // 循环内不 clone EngineStats，直接借用 stats HashMap
-            // （原 .cloned().unwrap_or_default() 每次循环都分配 EngineStats）
+            // （原 .cloned.unwrap_or_default 每次循环都分配 EngineStats）
             let engine_stat = stats.get(&engine_name);
             let default_stat;
             let engine_stat_ref: &EngineStats = match engine_stat {
@@ -87,7 +86,6 @@ impl EngineRouter {
             // Apply dynamic threshold factor
             let adjusted_score = support_score * self.dynamic_threshold_factor;
 
-            // Calculate final score
             let final_score = self.calculate_engine_score(adjusted_score, engine_stat_ref);
 
             scored_candidates.push((final_score, engine));

@@ -49,7 +49,7 @@ impl DatabasePool {
     ///
     /// ```ignore
     /// let pool: Arc<DatabasePool> = /* ... */;
-    /// let inner: Arc<DbPool> = pool.clone_inner();
+    /// let inner: Arc<DbPool> = pool.clone_inner;
     /// let repo = MyRepository::new(inner);
     /// ```
     #[inline]
@@ -160,7 +160,6 @@ fn get_permissions_path() -> Option<String> {
         return Some(config_path.to_string_lossy().to_string());
     }
 
-    // Try parent config directory
     let parent_config = std::path::PathBuf::from("../config").join("permissions.yaml");
     if parent_config.exists() {
         return Some(parent_config.to_string_lossy().to_string());
@@ -236,7 +235,6 @@ pub async fn create_pool_with_retry(
 ///
 /// Result containing the pool or a database error
 pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
-    // Configure pool settings
     let max_connections = settings.max_connections.unwrap_or(100);
     let min_connections = settings.min_connections.unwrap_or(10);
     let idle_timeout = settings.idle_timeout.unwrap_or(300);
@@ -247,13 +245,11 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
         max_connections, min_connections, idle_timeout
     );
 
-    // Get permissions path if exists
     let permissions_path = get_permissions_path();
     if let Some(ref path) = permissions_path {
         info!("Loading permissions config from: {:?}", path);
     }
 
-    // Create DbConfig from settings
     let config = DbConfig {
         url: settings.url.clone(),
         pool_config: PoolConfig {
@@ -310,9 +306,7 @@ mod tests {
         }
     }
 
-    // ============================================================
     // DatabasePool construction & trait impls (lazy pool, no DB)
-    // ============================================================
 
     #[test]
     fn test_database_pool_from_arc_dbpool_yields_inner_reference() {
@@ -374,7 +368,7 @@ mod tests {
         let pool = create_test_db_pool();
         let db_pool = DatabasePool::from(pool);
         let stats = db_pool.stats();
-        // DatabasePool::from(Arc<DbPool>) uses PoolStats::default()
+        // DatabasePool::from(Arc<DbPool>) uses PoolStats::default
         assert_eq!(stats.active_connections, 0);
         assert_eq!(stats.idle_connections, 0);
         assert_eq!(stats.total_connections, 0);
@@ -469,9 +463,7 @@ mod tests {
         );
     }
 
-    // ============================================================
     // DatabasePool session methods — all should fail with lazy pool
-    // ============================================================
 
     #[tokio::test]
     async fn test_get_session_succeeds_with_real_db() {
@@ -565,9 +557,7 @@ mod tests {
         );
     }
 
-    // ============================================================
     // create_pool — error paths (no real DB needed)
-    // ============================================================
 
     #[tokio::test]
     async fn test_create_pool_invalid_url_returns_error() {
@@ -641,9 +631,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ============================================================
     // create_pool_with_retry — error paths
-    // ============================================================
 
     #[tokio::test]
     async fn test_create_pool_with_retry_invalid_url_fails_all_retries() {
@@ -704,9 +692,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ============================================================
     // PoolStats — Default / Clone / Debug
-    // ============================================================
 
     #[test]
     fn test_pool_stats_default_is_zero() {
@@ -781,9 +767,7 @@ mod tests {
         assert_eq!(stats.total_connections, u32::MAX);
     }
 
-    // ============================================================
     // Environment variable branches (create_pool sqlx_logging toggle)
-    // ============================================================
 
     /// RAII guard that restores an environment variable on drop.
     struct EnvVarGuard {
@@ -867,9 +851,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ============================================================
     // Original ignored tests requiring a real PostgreSQL instance
-    // ============================================================
 
     #[tokio::test]
     #[ignore = "requires running PostgreSQL; run with: cargo test test_create_pool -- --ignored"]
