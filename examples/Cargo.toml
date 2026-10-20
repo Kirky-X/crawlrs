@@ -14,11 +14,7 @@ default-run = "basic_scrape"
 publish = false
 
 [dependencies]
-# crawlrs 主项目 - 从父目录引用
-# 主项目 default = []，HTTP 抓取栈（原 engine-reqwest）已是非可选依赖，
-# 此处仅显式启用 metrics 以运行 metrics_export 示例
-# http：激活 crawlrs 的 sdforge/http（validator 经 sdforge::validator re-export，
-# DTO 校验代码在非 platform 构建下也需该 feature 才能编译）
+# 从父目录引用主项目；仅显式启用 metrics 以运行 metrics_export 示例
 crawlrs = { path = "..", default-features = false, features = [
     "metrics",
     "engine-playwright",
