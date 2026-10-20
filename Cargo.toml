@@ -22,12 +22,7 @@ exclude = []
 # 默认构建保持现有全功能行为：平台全套（多租户 + 认证 + 限流 + Webhook + metrics + content）
 default = ["platform", "db-postgres"]
 
-# platform：完整平台服务能力面。agent-lib / 嵌入式接入方用 `--no-default-features` 剥离。
-# 挂载 platform 的服务端依赖：dbnexus（DB）、axum（HTTP）、sdforge（SDK 宏）。
-# garrison/inventory（auth 隐含）、sysinfo（metrics 隐含）已分别挂既有 feature。
-# 数据库驱动不在 platform 内——由 db-postgres / db-sqlite / db-mysql 按构建选择。
-# 注：inklog/http 不再挂载——telemetry.rs 的 http_server 恒为 None（有测试固化），
-# 该 feature 只增加编译面无运行时收益。
+# platform：完整平台服务面（DB/HTTP/SDK 宏）；嵌入式接入用 --no-default-features；驱动见 db-*
 platform = [
     "teams", "auth", "rate-limit", "webhook", "metrics", "content",
     "sitemap",
@@ -35,9 +30,7 @@ platform = [
     "http",
 ]
 
-# === 数据库驱动（互斥由 dbnexus 编译期强制：embedded 与 server-side 不可混，postgres/mysql 互斥）===
-# 每组透传全链路驱动选择：dbnexus（DB 抽象）+ garrison（认证存储）+ limiteron（限流存储）+ inklog（日志落库）。
-# runtime-tokio-rustls 为三组共享的 sea-orm 运行时（互斥组内唯一启用）。
+# 数据库驱动（dbnexus 编译期互斥）：各组透传 dbnexus/garrison/limiteron/inklog，共享 runtime-tokio-rustls
 db-postgres = [
     "dbnexus?/postgres", "dbnexus?/runtime-tokio-rustls",
     # replica-routing 必须保留：inklog 的 dbnexus 集成无条件引用 DbConfig.replica_config
@@ -52,37 +45,26 @@ db-mysql = [
     "dbnexus?/mysql", "dbnexus?/runtime-tokio-rustls", "dbnexus?/replica-routing",
     "garrison?/db-mysql", "limiteron/mysql", "inklog/mysql",
 ]
-# sdforge 0.4 `#[forge]` 宏生成 `cfg(feature = "http")` 门控的 HTTP 路由注册代码
-# （inventory submit）。下游 crate 必须显式声明本 feature 才会生成路由。
+# `#[forge]` 生成 cfg(feature="http") 门控路由；下游必须声明本 feature 才会注册
 http = ["sdforge/http"]
-# web-axum：platform 剔除 teams/auth 的等价构建面（auth-off 语义生效面，恢复自 v0.2.0-rc.1）。
-# platform 隐含 auth，auth-off 的 default_identity_middleware / allow_unauthenticated_protected
-# 在现有 feature 矩阵中无法编译；本 feature 供 `--no-default-features --features web-axum --lib`
-# 构建/测试该路径（lib 作用域；平台二进制仍走 platform）。
+# web-axum：platform 的 auth-off 等价构建面（lib 作用域；platform 隐含 auth 无法覆盖该路径）
 web-axum = [
     "rate-limit", "webhook", "metrics", "content",
     "dep:dbnexus", "dep:axum",
     "inklog/http", "inklog/postgres", "http",
 ]
-# forge-full：激活 presentation/forge_api 的 sdforge inventory 注册面（单一注册面迁移停机坪）。
-# 与手写 protected/v2 路由组互斥（inventory 全局收集，并存即启动 panic）——见 presentation/mod.rs 说明。
+# forge-full：inventory 注册面；与手写 protected/v2 路由互斥（全局收集，并存即 panic）
 forge-full = ["http"]
-# OpenAPI 3.1 规范（吸收自研 sdforge `openapi`）：`#[forge]` handler 经
-# `cfg_attr(feature = "openapi", utoipa::path)` 标注，路由元数据经 inventory 聚合，
-# GET /v1/sdk/openapi.json 输出完整 spec。
+# OpenAPI 3.1：#[forge] handler 经 utoipa::path + inventory 聚合，GET /v1/sdk/openapi.json 输出
 openapi = ["http", "sdforge/openapi", "dep:utoipa"]
 
 standard = ["engine-playwright", "metrics", "content", "sitemap"]
 full = ["standard", "engine-flaresolverr", "extractors", "llm"]
 
-# `llm`：LLM 边界（trait + 编排 + ExplicitErrorCarrier），零外部依赖；
-# 供应商访问移交宿主 carrier 注入，genai 仅随 vision 面（engine-mllm）保留。
+# llm：LLM 边界（trait + 编排），零外部依赖；genai 仅随 engine-mllm
 llm = []
 
-# --- RAG 能力特性（嵌入 + 重排，最小引入：不入 default / full） ---
-# rag-local: vecboost 进程内本地推理（Candle CPU；嵌入与重排共用一个 bi-encoder 模型）
-# rag-remote: rig-core 远端嵌入（OpenAI 兼容端点，显式 api_key + base_url）
-# 远端重排走通用 HTTP rerank 适配（仅 reqwest，无需 feature，见 infrastructure/services/http_rerank_provider.rs）
+# RAG 特性（不入 default/full）：rag-local=vecboost 本地推理，rag-remote=rig-core 远端嵌入
 rag-local = ["dep:vecboost"]
 rag-remote = ["dep:rig-core"]
 rag = ["rag-local", "rag-remote"]
@@ -90,43 +72,33 @@ rag = ["rag-local", "rag-remote"]
 # --- 引擎特性 ---
 engine-playwright = ["dep:chromiumoxide"]
 engine-flaresolverr = []
-# TLS 指纹一致性伪装引擎引入 wreq（BoringSSL 后端）实现 WreqEngine。
-# 注意：wreq-util（Emulation 便捷枚举）为 GPL-3.0，违反 deny.toml license 白名单，
-# 故 TlsEmulation 由本项目自有枚举映射到 wreq 的 EmulationProvider（Apache-2.0 API），不引入 wreq-util。
+# TLS 指纹引擎用 wreq（BoringSSL）；wreq-util 为 GPL-3.0，故自建 Emulation 映射
 engine-tls-fingerprint = ["dep:wreq"]
 # MLLM 自主导航爬取引擎依赖浏览器引擎 + 视觉 LLM（genai 仅经此面保留）
 engine-mllm = ["engine-playwright", "llm", "dep:genai"]
 
-# --- 内容处理特性（content-processing） ---
-# aho-corasick: Tier2 通用词字面量集的多模式匹配（AC 自动机）
-# htmd: HTML→Markdown 转换
+# 内容处理：aho-corasick 多模式匹配，htmd 做 HTML→Markdown 转换
 content = ["dep:aho-corasick", "dep:htmd"]
 
-# --- 正文提取特性（content-processing） ---
-# rs-trafilatura: 主路径，移植自 trafilatura，文章正文提取质量最高
+# 正文提取：rs-trafilatura 主路径（移植自 trafilatura，质量最高）
 trafilatura = ["dep:rs-trafilatura"]
 # dom_smoothie: 性能回退，移植自 readability.js，DOM 结构启发式
 dom-smoothie = ["dep:dom_smoothie"]
 # extractors: 聚合两个 extractor，折叠进 `full`（保证 `--features full` 时全可用）
 extractors = ["trafilatura", "dom-smoothie"]
 
-# --- 站点图特性（sitemap） ---
-# quick-xml: sitemap/sitemapindex 流式解析（可背压请求源 + 断点续爬的解析层）
+# sitemap：quick-xml 流式解析（边解析边入 frontier）
 sitemap = ["dep:quick-xml"]
 
-# --- 库面特性（agent-lib：嵌入式/agent 最小库面，不编译 DB/服务端） ---
-# 复用 engines/search/content 既有依赖；不引入新第三方依赖（spec constraint）。
+# agent-lib：嵌入式/agent 最小库面，不编译 DB/服务端，不引入新依赖
 agent-lib = ["content", "trafilatura", "dom-smoothie"]
 
 # --- 基础设施特性 ---
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
 
-# --- 业务能力特性 ---
-# `teams` 隐含 `auth`：多租户需认证识别租户
+# 业务能力：teams 隐含 auth（多租户需认证识别租户）
 teams = ["auth"]
-# `auth` 关闭时走 default_identity_middleware 注入固定 AuthState
-# （DEFAULT_TEAM_ID/DEFAULT_API_KEY_ID 见 src/common/constants.rs::default_identity）
-# auth-on 改由 garrison 提供认证引擎，故 `auth` 隐含 `dep:garrison`
+# auth 关闭时注入固定 AuthState；开启时由 garrison 提供认证引擎（隐含 dep:garrison）
 auth = ["dep:garrison", "dep:inventory"]
 # `rate-limit` 门控限流行为（limiteron 已转非可选：utils/backoff 引擎退避无条件依赖其 retry 原语）；关闭时注入 NoopRateLimitingService
 rate-limit = []
@@ -136,8 +108,7 @@ webhook = []
 # --- 测试特性 ---
 test-mocks = []
 
-# vecboost 修复版（本地一等仓库）：confers 0.6.0-rc.6 加密 API 适配
-# （derive_field_key/decrypt 返回 Zeroizing）。上游发 rc.2 后可移除本段。
+# vecboost 本地补丁：适配 confers 0.6.0-rc.6 加密 API（上游 rc.2 后可移除）
 [patch.crates-io]
 vecboost = { path = "../vecboost" }
 
@@ -166,20 +137,12 @@ subtle = { version = "2.6", default-features = false, features = ["std", "i128"]
 
 # HTTP client and networking
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "cookies", "http2", "charset", "system-proxy", "gzip", "brotli", "stream"] }
-# TLS 指纹引擎 BoringSSL 后端 HTTP 客户端，Apache-2.0。
-# wreq 5.x 稳定版已全部 yanked，暂用 6.0.0-rc.31（唯一可用版本）。
-# EmulationProvider/EmulationProviderFactory/TlsConfig
-# 均为 wreq 自有 API，无需引入 GPL 的 wreq-util。构建需 cmake + C 编译器（BoringSSL）。
-# features：cookies（会话保持）/ gzip / brotli / zstd（解压，accept-encoding 与之一致）/ charset（非 UTF8 解码）
-# / stream（bytes_stream 限长读取）——
-# 缺 cookies 时 Set-Cookie 完全不处理（挑战通过后无法保持会话）；缺解压时服务器强推 gzip 会得到乱码。
+# wreq BoringSSL 客户端（5.x 已 yanked，暂用 6.0.0-rc.31）；cookies/解压/stream 特性缺失会导致会话丢失或乱码
 wreq = { version = "6.0.0-rc.31", default-features = false, features = ["tokio-rt", "cookies", "gzip", "brotli", "zstd", "charset", "stream"], optional = true }
 url = { version = "2.5", default-features = false, features = ["std"] }
 
 # Database
-# dbnexus-macros 已移除（2026-09-19 审计）：src 零引用，宏经 dbnexus re-export。
-# jsonwebtoken 直接声明已移除（2026-10-03 审计）：src 全仓零引用的死依赖，
-# JWT 能力由 garrison(auth feature) 自带；直接声明只会把 rsa 塞进全部消费方依赖树。
+# dbnexus-macros 与 jsonwebtoken 已移除（审计：src 零引用，JWT 由 garrison 提供）
 dbnexus = { workspace = true, optional = true }
 
 # Caching and state management
@@ -195,47 +158,33 @@ dirs = { version = "7.0", default-features = false }
 
 # Logging and observability
 log.workspace = true
-# rc.9：嵌入统一基线（与 fluxgate 顶层链同版本，见 README「作为库依赖」节）。
-# crawlrs 仅启用 cli，不引 fast-masking（registry rc.7 的 fast-masking 曾在日志行上
-# fancy_regex unwrap BacktrackLimitExceeded panic，主仓 sinnan 实证；本仓不涉该路径）。
-# telemetry.rs 的配置映射按当前版本语义编写（未配置 = 内置兜底采样）。
+# inklog rc.9 嵌入基线（与 fluxgate 同链）；仅 cli 特性，不引 fast-masking（曾有 panic 实证）
 inklog = { version = "0.3.0-rc.9", default-features = false, features = ["cli"] }
-# sdforge 非可选：DTO 层 Validate impl（sdforge::validator 重导出）未做 feature 门控，
-# validator 直依赖已移除，基础验证类型恒经 sdforge 提供
+# sdforge 非可选：DTO 层 Validate impl 未做 feature 门控
 sdforge.workspace = true
 metrics = { version = "0.24", default-features = false, optional = true }
 metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"], optional = true }
-# inventory：编译期监听器注册（garrison GarrisonListenerEntry 需要，crawlrs 直接使用以注册 CrawlrsAuditListener）
-# optional：仅 auth feature 启用时引入（auth = ["dep:garrison", "dep:inventory"]）
+# inventory：编译期监听器注册（GarrisonListenerEntry + CrawlrsAuditListener；仅 auth）
 inventory = { version = "0.3", default-features = false, optional = true }
 
 # Web scraping and content processing
 scraper = { version = "0.27", default-features = false, features = ["errors", "main"] }
 robotstxt = { version = "0.3", default-features = false }
 chromiumoxide = { version = "0.9", default-features = false, features = ["bytes"], optional = true }
-# chromiumoxide_fetcher 已移除（死依赖）：全仓无任何代码 import，仅 browser_downloader 的
-# 占位实现注释提及。其唯一传递贡献是 zip 8.x（经 zip8 特性），触发 cargo-deny
-# RUSTSEC-2026-0367/0368/0369（仅在 zip >= 9.0.0 修复，而 fetcher 0.9 的 zip8 硬绑 8.x）。
-# zip8 又不可单剥（fetcher lib.rs 无条件 `pub use zip8::ZipArchive`），故整体移除该依赖，
-# 使 zip 退出依赖树、消除三条漏洞告警且无功能损失（引擎走系统浏览器，下载能力本就未实现）。
-# 未来若实现自动下载，改引支持 zip 9.x 的 fetcher 版本再恢复本依赖。
+# chromiumoxide_fetcher 已移除：死依赖且硬绑 zip8，触发 RUSTSEC-2026-0367/68/69
 
-# Anti-bot detection — gated by `content` feature
-# aho-corasick: Tier2 通用词字面量集的多模式匹配（AC 自动机）
+# aho-corasick：Tier2 通用词多模式匹配（AC 自动机）
 aho-corasick = { version = "1.1", default-features = false, features = ["std", "perf-literal"], optional = true }
 
-# Markdown conversion — gated by `content` feature
-# htmd: HTML→Markdown 转换主路径
+# htmd：HTML→Markdown 转换主路径
 htmd = { version = "0.5", default-features = false, optional = true }
 
-# Content extraction — gated by `trafilatura` / `dom-smoothie` / `extractors` features
-# rs-trafilatura: 主路径，移植自 trafilatura（提取文章正文 + 元数据）
+# rs-trafilatura：正文提取主路径（正文 + 元数据）
 rs-trafilatura = { version = "0.2", default-features = false, optional = true }
 # dom_smoothie: 性能回退，移植自 readability.js（DOM 启发式提取）
 dom_smoothie = { version = "0.18", default-features = false, optional = true }
 
-# Sitemap 流式解析 — gated by `sitemap` feature
-# quick-xml: 流式 pull 解析器（十万级 URL sitemap 边解析边入 frontier，不整树物化）
+# quick-xml：sitemap 流式解析（边解析边入 frontier，不整树物化）
 quick-xml = { version = "0.42", default-features = false, optional = true }
 
 # Text processing and encoding
@@ -273,12 +222,7 @@ limiteron = { version = "0.3.0-rc.7", default-features = false, features = [
     "retry",
 ] }
 
-# Authentication & authorization framework — gated by `auth` feature
-# auth-on 改由 garrison 提供认证引擎
-# 版本与 dbnexus/oxcache/trait-kit/confers/inklog/sdforge/limiteron 同作者对齐（共享 rc 链）
-# rc.3：嵌入统一基线（嵌入方 fresh resolve 取 0.9.x-pre 轨道最新，单仓 lock 同步对齐，
-# 避免「单仓绿 rc.2、嵌入红 rc.3」）；rc.3 GarrisonEvent 新增 PasswordRehashed/QrLogin* 变体，
-# 已在 garrison_listener.rs 两处 match 补齐适配。
+# garrison 认证引擎（auth feature）；rc.3 与自研 rc 链对齐，事件枚举已在 listener 适配
 garrison = { version = "0.9.0-rc.3", default-features = false, features = ["backend-embedded", "web-axum", "cache-memory", "protocol-apikey", "protocol-jwt", "core-advanced", "authorize-api", "listener", "audit-log", "audit-inklog", "firewall", "firewall-bruteforce", "tenant-isolation", "tracing-log", "three-tier-cache", "protocol-zeroize", "db-retry"], optional = true }
 
 # Concurrency and synchronization
@@ -287,11 +231,7 @@ parking_lot = { version = "0.12", default-features = false }
 # Regular expressions
 regex.workspace = true
 
-# Bloom filter & interner — URL 分层去重
-# ahash: bloom 双哈希种子（已存在，复用）
-# hashbrown: spider ListBucket 同款 HashSet，比 std HashSet 性能更好
-# 显式声明所需特性，禁止 default-features = true
-# hashbrown 0.17 的 ahash 通过 default-hasher 特性提供
+# URL 去重：hashbrown HashSet + ahash 双哈希种子（性能优于 std）
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "equivalent", "inline-more"] }
 
 bytes = { version = "1", default-features = false, features = ["std"] }
@@ -299,30 +239,16 @@ genai = { version = "0.6", default-features = false, features = ["rustls-tls"], 
 # llm prompt 模板加载（domain/services/llm/prompt_builder.rs）运行时解析 toml
 toml = { version = "1.1", default-features = false, features = ["std", "parse", "serde"] }
 
-# RAG 能力依赖 — gated by rag-local / rag-remote features（不入 default/full，最小引入）
-# vecboost（自研一等仓库，../vecboost）：进程内本地嵌入/重排推理。
-# default-features = false 剥离 axum/db/auth 服务面；其 inklog sqlite/kit 已在
-# vecboost 侧改为 log-kit/log-sqlite 透传（否则与 db-postgres 触发 dbnexus
-# 嵌入式/服务端互斥 compile_error）。Candle CPU 引擎零额外 feature。
+# vecboost 本地嵌入/重排（rag-local）；关闭服务面避免 dbnexus 互斥 compile_error
 vecboost = { version = "0.3.0-rc.1", optional = true, default-features = false }
-# rig-core：远端嵌入统一客户端（OpenAI 兼容 Client::builder().api_key().base_url()）。
-# 仅用嵌入方向；rig 原生 rerank 只支持 Voyage，远端重排改走自有通用 HTTP 适配。
-# reqwest 0.13 + rustls 与 crawlrs 对齐，feature 联合无重复 TLS 栈。
+# rig-core 远端嵌入（OpenAI 兼容）；仅嵌入方向，远端重排走自有 HTTP 适配
 rig-core = { version = "0.44", optional = true, default-features = false, features = ["reqwest", "rustls"] }
 
 # Dependency Injection
 trait-kit = { version = "0.5.0-rc.9", default-features = false, features = ["async", "confers", "shutdown"] }
-# NebulaId（同作者自研分布式 ID 引擎，../NebulaId 本地路径，不在 crates.io）：
-# crawlrs 全量 ID 生成/处理迁移的目标库。default-features=false 剥离 http/grpc/
-# garrison-auth/postgresql 服务面，仅留 sdk（纯算法 uuid_v8 零 DB/零号段）。其内部
-# dbnexus/sea-orm/uuid/chrono/serde 版本与本仓库 pin 一致，feature 经依赖图并集复用
-# 版本与 dbnexus/oxcache/trait-kit/confers/inklog/sdforge/limiteron 同作者对齐。
-# 本地 sibling 仓库（../NebulaId）未发布到 registry，直接声明为 path 依赖（不走
-# [workspace.dependencies] 间接，避开 cargo-deny 对非成员路径 workspace 依赖的解析限制）。
+# NebulaId 本地 path 依赖（未发布 registry）；仅 sdk 特性，版本与本仓 pin 一致
 nebulaid = { path = "../NebulaId", version = "0.3.0-rc.1", default-features = false, features = ["sdk", "uuid-v8"] }
-# feature 裁剪（hygiene）：macros/batch 在 crawlrs 源码中零使用（已 grep 验证），
-# 保留 memory（L1 缓存）+ serialization（类型化存取）+ metrics（命中统计）
-# + bloom（URL 去重布隆过滤器 utils/dedup）。
+# oxcache 特性裁剪：memory + serialization + metrics + bloom（macros/batch 零使用）
 oxcache = { version = "0.5.0-rc.8", default-features = false, features = ["memory", "serialization", "metrics", "bloom"] }
 ahash = { version = "0.8", default-features = false, features = ["std", "runtime-rng"] }
 
@@ -332,15 +258,11 @@ unic-langid = { version = "0.9", default-features = false }
 # 系统语言检测（unify-rust-i18n 检测链末端：env 链之后探测 OS locale）
 sys-locale = { version = "0.3", default-features = false }
 
-# API Documentation
-# 'openapi' is a cfg flag generated by sdforge_macros, declared in [lints.rust.unexpected_cfgs].
-# 钉 5.5：sdforge 0.5.0-rc.6 依赖并 re-export utoipa 5.5（sdforge lib.rs `pub use utoipa`），
-# 消费方升 6.0 会双 utoipa 共存触发 E0659 歧义；待 sdforge 侧 adopt utoipa 6 后协同升级。
+# 钉 utoipa 5.5（sdforge re-export）；升 6.0 会双版本共存触发 E0659
 utoipa = { version = "5.5", optional = true, default-features = false, features = ["macros"] }
 
 [dev-dependencies]
-# dbnexus 恒可用：test_helpers（cfg(test)）与错误类型测试经 dbnexus::sea_orm
-# re-export 在任意 feature 组合下可编译（2026-09-19 sea-orm 直依赖收敛）。
+# dbnexus 恒可用：test_helpers 经 dbnexus::sea_orm re-export，任意 feature 组合可编译
 dbnexus = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-test = { version = "0.4", default-features = false }
@@ -355,17 +277,14 @@ uuid = { workspace = true, features = ["v4"] }
 # rayon/plotters 为默认携带的报表渲染件，html_reports 走 chart.js 不需要
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support", "html_reports"] }
 
-# 历史钉版保持 0.27：testcontainers-modules 最新稳定版 0.15.0 依赖 testcontainers ^0.27.0，
-# 升 0.28 会使 modules 的 Postgres 容器类型与本仓 testcontainers API 断裂；
-# default-features=false 剥离 ring（aws-lc-rs 可经 rustls 供给，容器走 unix socket 无需 TLS）
+# 钉 testcontainers 0.27（modules 0.15 要求 ^0.27）；default-features 剥离 ring
 testcontainers = { version = "0.27", default-features = false }
 testcontainers-modules = { version = "0.15", default-features = false, features = ["postgres"] }
 
 [[test]]
 name = "integration_tests"
 path = "tests/integration/mod.rs"
-# test-mocks：garrison 全局态重置 API（reset_garrison_global_state_for_integration_test）
-# 经该特性门控，集成测试与生产 clippy 面（--features full）解耦
+# test-mocks：garrison 全局态重置，仅集成测试使用
 required-features = ["full", "test-mocks"]
 
 [[test]]
@@ -384,9 +303,7 @@ name = "route_diag_test"
 path = "tests/route_diag_test.rs"
 required-features = ["platform"]
 
-# BDD 验收套件：cucumber 自管 main（filter_run_and_exit 按标签过滤场景），
-# 必须显式声明 harness=false，否则 auto-discover 挂 libtest 后找不到 #[test]，
-# 二进制编译通过但 0 tests 空转（虚绿）。required-features 与 CI/文档运行口径一致。
+# BDD 套件：cucumber 自管 main，必须 harness=false，否则 0 tests 虚绿
 [[test]]
 name = "acceptance"
 path = "tests/acceptance/main.rs"
@@ -403,9 +320,7 @@ name = "crawlrs"
 path = "src/main.rs"
 required-features = ["platform"]
 
-# =============================================================================
 # Build Optimization Profiles
-# =============================================================================
 
 [profile.release]
 lto = "thin"
@@ -455,9 +370,7 @@ rand = { version = "0.10", default-features = false, features = ["std", "std_rng
 regex = { version = "1.13", default-features = false, features = ["std", "perf", "unicode"] }
 # Encoding（simd-unsafe 为上游默认携带的非对齐读 SIMD，产物裁剪时一并剥离）
 base64 = { version = "0.23", default-features = false, features = ["std"] }
-# Database
-# 驱动与 runtime 特性不在此声明（Cargo feature 只加不减，写死会锁死单一后端），
-# 由 crawlrs 的 db-postgres / db-sqlite / db-mysql 特性组按构建选择
+# 驱动/runtime 特性不在此声明，由 db-postgres/db-sqlite/db-mysql 特性组选择
 dbnexus = { version = "0.6.0-rc.9", default-features = false, features = ["cache", "macros", "migration", "auto-migrate", "config-env", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
 sea-orm = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK

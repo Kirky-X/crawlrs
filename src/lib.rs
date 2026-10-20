@@ -1,12 +1,10 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-// 数据库后端特性说明：
-// - 通过 db-postgres / db-sqlite / db-mysql 三组特性选择后端（每组透传
-//   dbnexus + garrison + limiteron + inklog 的驱动选择），互斥由 dbnexus
-//   编译期强制（embedded 与 server-side 不可混，postgres/mysql 互斥）
-// - platform 面必须恰好启用一个 db-* 特性（default 已附带 db-postgres）
-// - 旧 dbnexus-sqlite 已于早期移除，现经 db-sqlite 组重新支持
+//! Crawlrs：企业级异步爬取平台，提供引擎调度、内容提取、RAG 检索与嵌入式 SDK 服务面。
+//! 数据库后端由 `db-postgres` / `db-sqlite` / `db-mysql` 三组互斥特性选择。
+
+// 数据库后端：db-postgres/db-sqlite/db-mysql 三组互斥特性；platform 面必须恰好启用一个
 
 // platform 无驱动时 Settings/仓储代码无法编译——给出明确的单一错误而非级联报错
 #[cfg(all(
