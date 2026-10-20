@@ -100,7 +100,7 @@ metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
 teams = ["auth"]
 # auth 关闭时注入固定 AuthState；开启时由 garrison 提供认证引擎（隐含 dep:garrison）
 auth = ["dep:garrison", "dep:inventory"]
-# `rate-limit` 门控限流行为（limiteron 已转非可选：utils/backoff 引擎退避无条件依赖其 retry 原语）；关闭时注入 NoopRateLimitingService
+# rate-limit：关闭时注入 NoopRateLimitingService（limiteron 已非可选）
 rate-limit = []
 # `webhook` 关闭时注入 NoopWebhookService 并移除 /v1/webhooks 路由
 webhook = []
