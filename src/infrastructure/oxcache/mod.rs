@@ -65,7 +65,8 @@ pub trait CacheService: Send + Sync {
 
     /// Set key-value pair with TTL (in seconds).
     ///
-    /// If `ttl_seconds` is 0, the entry is stored without expiration.
+    /// If `ttl_seconds` is 0, the entry uses the service's build-time
+    /// default TTL.
     fn set(
         &self,
         key: &str,
@@ -409,6 +410,8 @@ mod tests {
     fn make_test_cache_settings() -> CacheSettings {
         CacheSettings {
             enabled: true,
+            backend: "memory".to_string(),
+            redis_url: String::new(),
             memory: crate::config::settings::MemoryCacheSettings {
                 capacity: 100,
                 ttl_seconds: 60,

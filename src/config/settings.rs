@@ -132,6 +132,10 @@ pub struct Settings {
     pub cache: CacheSettings,
 
     /// WebSocket 连接治理配置（R-ws-task-status-003）
+    ///
+    /// `serde(default)` 兼容旧 config 文件缺 `[websocket]` 节
+    /// （同 `sitemap` 节先例）。
+    #[serde(default)]
     pub websocket: WebSocketSettings,
 
     /// 可信代理配置
@@ -870,11 +874,67 @@ pub struct CacheSettings {
     #[config(default = true)]
     pub enabled: bool,
 
+    /// 缓存后端：`memory`（缺省，进程内）| `redis`（多实例共享）。
+    ///
+    /// `redis` 需编译 `cache-redis` feature 且配置 `redis_url`，缺一即
+    /// 启动拒绝（fail-closed，见 [`CacheSettings::validate_backend`]）。
+    #[serde(default = "default_cache_backend")]
+    #[config(default = "memory".to_string())]
+    pub backend: String,
+
+    /// Redis 连接串（`backend=redis` 时必填；建议 `rediss://`，非 TLS
+    /// 需 `OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS` 显式放行）。
+    #[serde(default)]
+    #[config(default = "".to_string())]
+    pub redis_url: String,
+
     /// L1 内存缓存配置
     pub memory: MemoryCacheSettings,
 
     /// 各缓存类型特定配置
     pub types: CacheTypeSpecificSettings,
+}
+
+/// serde 默认值：缓存后端（与 `#[config(default = "memory")]` 保持一致）
+fn default_cache_backend() -> String {
+    "memory".to_string()
+}
+
+impl CacheSettings {
+    /// 启动期 fail-closed 校验（R-redis-shared-cache-001）。
+    ///
+    /// - `backend=redis` 且 `cache-redis` feature 未编译 → 配置错误；
+    /// - `backend=redis` 且 `redis_url` 缺失 → 配置错误；
+    /// - 未知 backend 值 → 配置错误（不静默回退 memory）；
+    /// - `backend=memory`（缺省）恒通过。
+    pub fn validate_backend(&self) -> Result<(), sdforge::validator::ValidationError> {
+        match self.backend.as_str() {
+            "memory" => Ok(()),
+            "redis" => self.validate_redis_backend(),
+            _ => Err(sdforge::validator::ValidationError::new(
+                "cache_backend_unknown",
+            )),
+        }
+    }
+
+    /// `backend=redis` 的能力校验：编译期能力缺口不能靠配置绕过。
+    #[cfg(not(feature = "cache-redis"))]
+    fn validate_redis_backend(&self) -> Result<(), sdforge::validator::ValidationError> {
+        Err(sdforge::validator::ValidationError::new(
+            "cache_backend_redis_feature_not_compiled",
+        ))
+    }
+
+    /// `backend=redis` 的能力校验：feature 已编译时仅要求 URL 存在。
+    #[cfg(feature = "cache-redis")]
+    fn validate_redis_backend(&self) -> Result<(), sdforge::validator::ValidationError> {
+        if self.redis_url.trim().is_empty() {
+            return Err(sdforge::validator::ValidationError::new(
+                "cache_backend_redis_url_missing",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// L1 内存缓存配置（Moka）
@@ -2095,6 +2155,8 @@ capture_xhr_max_responses = 5
     fn test_cache_settings_default() {
         let settings = CacheSettings::default();
         assert!(settings.enabled);
+        assert_eq!(settings.backend, "memory");
+        assert_eq!(settings.redis_url, "");
         assert_eq!(settings.memory.capacity, 10000);
         assert_eq!(settings.memory.ttl_seconds, 300);
     }
@@ -2123,6 +2185,8 @@ capture_xhr_max_responses = 5
     fn test_cache_settings_serde_roundtrip() {
         let settings = CacheSettings {
             enabled: false,
+            backend: "memory".to_string(),
+            redis_url: String::new(),
             memory: MemoryCacheSettings {
                 capacity: 100,
                 ttl_seconds: 50,
@@ -2145,9 +2209,81 @@ capture_xhr_max_responses = 5
         let json = serde_json::to_string(&settings).expect("serialize");
         let back: CacheSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(!back.enabled);
+        assert_eq!(back.backend, "memory");
         assert_eq!(back.memory.capacity, 100);
         assert_eq!(back.types.search.ttl_seconds, 10);
         assert_eq!(back.types.dns.max_size, 40);
         assert_eq!(back.types.regex.ttl_seconds, 60);
+    }
+
+    /// CacheSettings 缺键兼容：旧 toml 无 `backend`/`redis_url` 键时回退
+    /// serde 默认（memory + 空串），validate_backend 恒通过
+    #[test]
+    fn test_cache_settings_missing_keys_fall_back_to_memory() {
+        let toml = r#"
+            enabled = true
+            [memory]
+            capacity = 100
+            ttl_seconds = 60
+            [types.search]
+            ttl_seconds = 60
+            max_size = 100
+            [types.dns]
+            ttl_seconds = 300
+            max_size = 100
+            [types.regex]
+            ttl_seconds = 600
+            max_size = 50
+        "#;
+        let s: CacheSettings = toml::from_str(toml).expect("deserialize legacy config");
+        assert_eq!(s.backend, "memory");
+        assert_eq!(s.redis_url, "");
+        assert!(s.validate_backend().is_ok());
+    }
+
+    /// validate_backend：缺省 memory 恒通过；未知值拒绝
+    #[test]
+    fn test_validate_backend_memory_and_unknown() {
+        let mut s = CacheSettings::default();
+        assert!(s.validate_backend().is_ok());
+
+        s.backend = "memcached".to_string();
+        let err = s.validate_backend().expect_err("unknown backend");
+        assert_eq!(err.code.to_string(), "cache_backend_unknown");
+    }
+
+    /// validate_backend：backend=redis 在未编译 cache-redis 时拒绝，
+    /// 与 URL 是否配置无关（编译期能力缺口不能靠配置绕过）
+    #[cfg(not(feature = "cache-redis"))]
+    #[test]
+    fn test_validate_backend_redis_rejected_without_feature() {
+        let mut s = CacheSettings::default();
+        s.backend = "redis".to_string();
+        s.redis_url = String::new();
+        let err = s.validate_backend().expect_err("feature not compiled");
+        assert_eq!(
+            err.code.to_string(),
+            "cache_backend_redis_feature_not_compiled"
+        );
+
+        s.redis_url = "rediss://127.0.0.1:6379".to_string();
+        let err = s.validate_backend().expect_err("url cannot bypass feature");
+        assert_eq!(
+            err.code.to_string(),
+            "cache_backend_redis_feature_not_compiled"
+        );
+    }
+
+    /// validate_backend：backend=redis 在已编译 cache-redis 时按 URL 判定
+    #[cfg(feature = "cache-redis")]
+    #[test]
+    fn test_validate_backend_redis_requires_url() {
+        let mut s = CacheSettings::default();
+        s.backend = "redis".to_string();
+        let err = s.validate_backend().expect_err("url missing");
+        assert_eq!(err.code.to_string(), "cache_backend_redis_url_missing");
+
+        s.redis_url = "rediss://127.0.0.1:6379".to_string();
+        assert!(s.validate_backend().is_ok());
     }
 }

@@ -94,6 +94,9 @@ sitemap = ["dep:quick-xml"]
 agent-lib = ["content", "trafilatura", "dom-smoothie"]
 
 # --- 基础设施特性 ---
+# cache-redis：oxcache Redis 后端（多实例共享缓存）。默认不编译：
+# `[cache] backend=redis` 在未编译时启动 fail-closed 拒绝（fail-closed 语义）
+cache-redis = ["oxcache/redis"]
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:sysinfo"]
 
 # 业务能力：teams 隐含 auth（多租户需认证识别租户）

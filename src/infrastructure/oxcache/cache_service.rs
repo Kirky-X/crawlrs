@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::common::metrics_shim::counter;
+#[cfg(feature = "cache-redis")]
+use oxcache::backend::RedisBackend;
 use oxcache::Cache;
 
 use super::CacheService;
@@ -17,25 +19,41 @@ use super::CacheService;
 /// oxcache-backed implementation of [`CacheService`].
 ///
 /// Stores `String` values keyed by `String`. TTL is applied per-entry via
-/// `oxcache::Cache::insert_with_ttl`.
+/// `oxcache::Cache::set_with_ttl`: `ttl_seconds == 0` uses the build-time
+/// default TTL, any other value expires after that many seconds.
 pub struct OxcacheService {
     cache: Arc<Cache<String, String>>,
     /// 缓存类型标签（用于 metric 标签区分 search/dns/regex 等）
     cache_type: &'static str,
+    /// 构建期默认 TTL：`set` 的 `ttl_seconds=0` 落到该值，使 memory
+    /// （moka per-entry TTL）与 redis（`SET PX`）两后端 get/set/ttl
+    /// 语义一致（R-redis-shared-cache-002）。`Duration::ZERO` 表示未配置
+    /// 默认（[`Self::new`] 路径），0 交还后端自身语义。
+    default_ttl: Duration,
 }
 
 impl OxcacheService {
     /// Create a new `OxcacheService` from an existing cache instance.
+    ///
+    /// 该路径未配置默认 TTL（`default_ttl = ZERO`）：`set` 的
+    /// `ttl_seconds=0` 由后端自身语义决定（memory 为 builder 级默认 TTL）。
+    /// 需要 redis 语义一致或默认 TTL 时用 [`Self::build`] /
+    /// [`Self::build_with_backend`]。
     pub fn new(cache: Arc<Cache<String, String>>) -> Self {
         Self {
             cache,
             cache_type: "generic",
+            default_ttl: Duration::ZERO,
         }
     }
 
     /// 创建带类型标签的 OxcacheService（用于 metric 标签区分）
     pub fn with_cache_type(cache: Arc<Cache<String, String>>, cache_type: &'static str) -> Self {
-        Self { cache, cache_type }
+        Self {
+            cache,
+            cache_type,
+            default_ttl: Duration::ZERO,
+        }
     }
 
     /// Build a fresh `OxcacheService` with the given capacity and default TTL.
@@ -49,7 +67,11 @@ impl OxcacheService {
             .build()
             .await
             .map_err(|e| anyhow::anyhow!("failed to build oxcache: {e}"))?;
-        Ok(Self::new(Arc::new(cache)))
+        Ok(Self {
+            cache: Arc::new(cache),
+            cache_type: "generic",
+            default_ttl,
+        })
     }
 
     /// 构建带类型标签的 OxcacheService
@@ -64,7 +86,87 @@ impl OxcacheService {
             .build()
             .await
             .map_err(|e| anyhow::anyhow!("failed to build oxcache: {e}"))?;
-        Ok(Self::with_cache_type(Arc::new(cache), cache_type))
+        Ok(Self {
+            cache: Arc::new(cache),
+            cache_type,
+            default_ttl,
+        })
+    }
+
+    /// 按 `[cache] backend` 配置构建 memory/redis 缓存实例
+    /// （R-redis-shared-cache-002）。
+    ///
+    /// - `memory`（或空串）：进程内 moka 后端，行为与 [`Self::build`] 一致；
+    /// - `redis`：[`oxcache::backend::RedisBackend`]，多实例共享；
+    ///   需编译 `cache-redis` feature 且提供非空 `redis_url`，缺一即
+    ///   返回错误（fail-closed，与启动期 `CacheSettings::validate_backend`
+    ///   同语义，双保险）。
+    ///
+    /// # TLS 约束
+    ///
+    /// `RedisBackend` builder 默认强制 `rediss://`（TLS）。开发环境的非
+    /// TLS `redis://` 连接必须显式设置环境变量
+    /// `OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS`
+    /// （或 `development-only`）放行，否则构建报错。
+    ///
+    /// # Redis 不可用
+    ///
+    /// redis 实例不可达时构建返回 `Err`（连接期失败），上游启动流程
+    /// `init_cache_service` 将其向上传播为启动失败——固定为**拒绝**
+    /// （fail-closed），不降级到 memory 后端。
+    ///
+    /// redis 后端不受 `capacity` 约束（无逐出上限）；`default_ttl` 作为
+    /// `ttl_seconds=0` 的默认值经 `SET PX` 与 memory 后端同语义生效。
+    pub async fn build_with_backend(
+        backend: &str,
+        redis_url: Option<&str>,
+        capacity: u64,
+        default_ttl: Duration,
+    ) -> anyhow::Result<Self> {
+        match backend {
+            "memory" | "" => Self::build(capacity, default_ttl).await,
+            "redis" => {
+                let url = redis_url
+                    .map(str::trim)
+                    .filter(|u| !u.is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("cache backend 'redis' requires a non-empty redis_url")
+                    })?;
+                let cache = Self::build_redis_cache(url).await?;
+                Ok(Self {
+                    cache,
+                    cache_type: "generic",
+                    default_ttl,
+                })
+            }
+            other => Err(anyhow::anyhow!(
+                "unknown cache backend '{other}' (expected 'memory' or 'redis')"
+            )),
+        }
+    }
+
+    /// 构建注入 `RedisBackend` 的 oxcache 实例。
+    #[cfg(not(feature = "cache-redis"))]
+    async fn build_redis_cache(_redis_url: &str) -> anyhow::Result<Arc<Cache<String, String>>> {
+        Err(anyhow::anyhow!(
+            "cache backend 'redis' requires the `cache-redis` feature (not compiled in this build)"
+        ))
+    }
+
+    /// 构建注入 `RedisBackend` 的 oxcache 实例。
+    #[cfg(feature = "cache-redis")]
+    async fn build_redis_cache(redis_url: &str) -> anyhow::Result<Arc<Cache<String, String>>> {
+        let backend = RedisBackend::builder()
+            .connection_string(redis_url)
+            .build()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to build oxcache redis backend: {e}"))?;
+        let cache = Cache::builder()
+            .backend_arc(Arc::new(backend))
+            .build()
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to build oxcache: {e}"))?;
+        Ok(Arc::new(cache))
     }
 }
 
@@ -73,6 +175,7 @@ impl Clone for OxcacheService {
         Self {
             cache: self.cache.clone(),
             cache_type: self.cache_type,
+            default_ttl: self.default_ttl,
         }
     }
 }
@@ -111,17 +214,23 @@ impl CacheService for OxcacheService {
         &self,
         key: &str,
         value: &str,
-        _ttl_seconds: u64,
+        ttl_seconds: u64,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
         let cache = self.cache.clone();
         let key = key.to_string();
         let value = value.to_string();
         Box::pin(async move {
-            // TTL is configured at cache level via Cache::builder().ttl(...).
-            // Per-entry TTL is not supported by oxcache; the _ttl_seconds parameter
-            // is accepted for trait compatibility but uses the cache-wide default.
+            // 逐键 TTL：`ttl_seconds=0` 落到构建期 default_ttl（未配置时
+            // 传 None 交还后端自身语义），否则按秒生效。memory（moka
+            // per-entry TTL）与 redis（`SET PX`）经同一换算保持 get/set/ttl
+            // 语义一致（R-redis-shared-cache-002）。
+            let ttl = if ttl_seconds == 0 {
+                (!self.default_ttl.is_zero()).then_some(self.default_ttl)
+            } else {
+                Some(Duration::from_secs(ttl_seconds))
+            };
             cache
-                .set(&key, &value)
+                .set_with_ttl(&key, &value, ttl)
                 .await
                 .map_err(|e| anyhow::anyhow!("oxcache set error: {e}"))?;
             Ok(())
@@ -272,5 +381,158 @@ mod tests {
         assert!(svc.get("a").await.unwrap().is_some());
         assert!(svc.get("b").await.unwrap().is_none());
         assert!(svc.get("c").await.unwrap().is_some());
+    }
+
+    /// 双后端共享语义场景（R-redis-shared-cache-002）：get/set/ttl 行为
+    /// 在 memory 与 redis 后端下一致。键名带随机后缀，可对共享 redis 实例
+    /// 重复运行。
+    async fn assert_backend_semantics(svc: OxcacheService) {
+        let uid = uuid::Uuid::new_v4().simple().to_string();
+        let key = |suffix: &str| format!("crawlrs_test:{uid}:{suffix}");
+
+        // set/get roundtrip
+        let k = key("roundtrip");
+        svc.set(&k, "bar", 60).await.unwrap();
+        assert_eq!(svc.get(&k).await.unwrap(), Some("bar".to_string()));
+
+        // missing key → None
+        assert_eq!(svc.get(&key("missing")).await.unwrap(), None);
+
+        // exists 语义
+        assert!(svc.exists(&k).await.unwrap());
+        assert!(!svc.exists(&key("missing")).await.unwrap());
+
+        // overwrite
+        svc.set(&k, "new", 60).await.unwrap();
+        assert_eq!(svc.get(&k).await.unwrap(), Some("new".to_string()));
+
+        // delete 移除
+        svc.delete(&k).await.unwrap();
+        assert_eq!(svc.get(&k).await.unwrap(), None);
+
+        // ttl 语义：显式秒数到期消失（两后端同样 1s 后不可读）
+        let k = key("ttl-explicit");
+        svc.set(&k, "gone", 1).await.unwrap();
+        assert!(svc.exists(&k).await.unwrap());
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        assert!(
+            svc.get(&k).await.unwrap().is_none(),
+            "entry with ttl_seconds=1 must expire on both backends"
+        );
+
+        // ttl 语义：ttl_seconds=0 → 构建期默认 TTL（300s），短期内仍可读
+        let k = key("ttl-default");
+        svc.set(&k, "kept", 0).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        assert!(
+            svc.get(&k).await.unwrap().is_some(),
+            "entry with ttl_seconds=0 must use the build-time default TTL on both backends"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_memory_backend_semantics() {
+        let svc = OxcacheService::build_with_backend("memory", None, 64, Duration::from_secs(300))
+            .await
+            .expect("build memory backend");
+        assert_backend_semantics(svc).await;
+    }
+
+    /// redis 后端语义一致性：需 `REDIS_TEST_URL` 指向可达 redis 实例，
+    /// 未设置时跳过（CI 缺省不依赖外部 redis）。
+    #[tokio::test]
+    async fn test_redis_backend_semantics_match_memory() {
+        let Ok(url) = std::env::var("REDIS_TEST_URL") else {
+            eprintln!("skip: REDIS_TEST_URL not set; redis backend semantics not exercised");
+            return;
+        };
+        // 非 TLS 开发连接的显式放行（文档化逃生口；rediss:// 不受影响）
+        std::env::set_var("OXCACHE_ALLOW_INSECURE_REDIS", "development-only");
+
+        let svc =
+            OxcacheService::build_with_backend("redis", Some(&url), 64, Duration::from_secs(300))
+                .await
+                .expect("build redis backend");
+        assert_backend_semantics(svc).await;
+    }
+
+    #[tokio::test]
+    async fn test_build_with_backend_unknown_value_rejected() {
+        let err = match OxcacheService::build_with_backend(
+            "memcached",
+            None,
+            64,
+            Duration::from_secs(300),
+        )
+        .await
+        {
+            Ok(_) => panic!("unknown backend must be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("unknown cache backend"),
+            "got: {err}"
+        );
+    }
+
+    /// 未编译 cache-redis：构造层同样 fail-closed（URL 不能绕过编译期能力）
+    #[cfg(not(feature = "cache-redis"))]
+    #[tokio::test]
+    async fn test_build_with_backend_redis_rejected_without_feature() {
+        let err = match OxcacheService::build_with_backend(
+            "redis",
+            Some("rediss://127.0.0.1:6379"),
+            64,
+            Duration::from_secs(300),
+        )
+        .await
+        {
+            Ok(_) => panic!("redis backend requires the cache-redis feature"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("cache-redis"),
+            "error must mention the cache-redis feature, got: {err}"
+        );
+    }
+
+    /// 已编译 cache-redis：缺 URL 构造拒绝
+    #[cfg(feature = "cache-redis")]
+    #[tokio::test]
+    async fn test_build_with_backend_redis_requires_url() {
+        let err =
+            match OxcacheService::build_with_backend("redis", None, 64, Duration::from_secs(300))
+                .await
+            {
+                Ok(_) => panic!("redis backend requires redis_url"),
+                Err(e) => e,
+            };
+        assert!(
+            err.to_string().contains("redis_url"),
+            "error must mention redis_url, got: {err}"
+        );
+    }
+
+    /// 已编译 cache-redis：redis 不可达时构建拒绝（固定语义：不降级
+    /// memory，R-redis-shared-cache-002）。端口 1 恒为 connection refused，
+    /// 不依赖外部服务。
+    #[cfg(feature = "cache-redis")]
+    #[tokio::test]
+    async fn test_build_with_backend_redis_unreachable_rejected() {
+        let err = match OxcacheService::build_with_backend(
+            "redis",
+            Some("redis://127.0.0.1:1"),
+            64,
+            Duration::from_secs(300),
+        )
+        .await
+        {
+            Ok(_) => panic!("unreachable redis must be rejected at build time"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().to_lowercase().contains("redis"),
+            "error must mention redis, got: {err}"
+        );
     }
 }

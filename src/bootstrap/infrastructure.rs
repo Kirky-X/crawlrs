@@ -253,12 +253,21 @@ pub async fn init_cache_service(settings: &Settings) -> Result<Arc<dyn CacheServ
     }
     let capacity = settings.cache.memory.capacity;
     let ttl = std::time::Duration::from_secs(settings.cache.memory.ttl_seconds);
-    let service = OxcacheService::build(capacity, ttl)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to build cache service: {e}"))?;
+    let service = OxcacheService::build_with_backend(
+        &settings.cache.backend,
+        if settings.cache.redis_url.is_empty() {
+            None
+        } else {
+            Some(settings.cache.redis_url.as_str())
+        },
+        capacity,
+        ttl,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to build cache service: {e}"))?;
     info!(
-        "Cache service initialized (capacity: {}, ttl: {}s)",
-        capacity, settings.cache.memory.ttl_seconds
+        "Cache service initialized (backend: {}, capacity: {}, ttl: {}s)",
+        settings.cache.backend, capacity, settings.cache.memory.ttl_seconds
     );
     Ok(Arc::new(service))
 }

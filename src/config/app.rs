@@ -78,6 +78,9 @@ pub struct DatabaseSettings {
     /// 缺省 false：不执行迁移也不报错（既有语义）。true 时 `create_pool`
     /// 装配 `migrations_dir` + `auto_migrate`；未编译任何 db dialect
     /// feature 时启动显性报错（R-multidb-schema-002/003）。
+    ///
+    /// `serde(default)` 兼容旧 config 文件缺键（同 `fail_closed` 字段先例）。
+    #[serde(default)]
     #[config(default = false)]
     pub auto_migrate: bool,
 }
@@ -327,6 +330,7 @@ mod tests {
             connection_keepalive: Some(30),
             health_check_interval: Some(60),
             prepare_cache_capacity: None,
+            auto_migrate: false,
         };
         assert_eq!(settings.url(), "postgresql://user:pass@localhost/db");
     }
@@ -343,6 +347,7 @@ mod tests {
             connection_keepalive: Some(30),
             health_check_interval: Some(60),
             prepare_cache_capacity: None,
+            auto_migrate: false,
         };
         let debug_str = format!("{:?}", settings);
         assert!(debug_str.contains("***REDACTED***"));

@@ -42,6 +42,13 @@ pub fn load_settings() -> Result<Settings> {
     // Validate cross-field invariants (e.g. mem_pressure < mem_critical)
     settings.concurrency.validate();
 
+    // 缓存后端 fail-closed 校验（R-redis-shared-cache-001）：
+    // backend=redis 在 cache-redis feature 未编译或 redis_url 缺失时启动拒绝
+    settings
+        .cache
+        .validate_backend()
+        .map_err(|e| anyhow::anyhow!("Configuration validation failed: {}", e))?;
+
     info!("Configuration loaded and validated successfully from config sources");
     Ok(settings)
 }
