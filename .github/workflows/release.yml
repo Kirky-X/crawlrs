@@ -79,7 +79,7 @@ jobs:
           shared-key: release-full-deps
       - name: Run database migrations
         run: |
-          for f in migrations/*.sql; do
+          for f in migrations/postgres/*.sql; do
             PGPASSWORD=postgres psql -h localhost -U postgres -d crawlrs_test -f "$f"
           done
       - name: Lib tests

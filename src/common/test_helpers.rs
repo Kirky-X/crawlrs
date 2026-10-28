@@ -28,9 +28,7 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers::ImageExt;
 use testcontainers_modules::postgres::Postgres;
 
-// ---------------------------------------------------------------------------
 // Testcontainers PostgreSQL — process-wide shared container
-// ---------------------------------------------------------------------------
 
 /// Holds the running testcontainers PostgreSQL instance.
 ///
@@ -86,12 +84,12 @@ fn start_testcontainers_pg() -> String {
                     .expect("failed to connect to testcontainers PostgreSQL for migration");
 
                 let migration_files = [
-                    "migrations/001_initial_schema.sql",
-                    "migrations/002_add_crawl_url_fields.sql",
-                    "migrations/003_add_acquire_next_indexes.sql",
-                    "migrations/004_drop_feature_flags.sql",
-                    "migrations/005_deprecate_legacy_api_keys.sql",
-                    "migrations/008_add_searxng_instances.sql",
+                    "migrations/postgres/001_initial_schema.sql",
+                    "migrations/postgres/002_add_crawl_url_fields.sql",
+                    "migrations/postgres/003_add_acquire_next_indexes.sql",
+                    "migrations/postgres/004_drop_feature_flags.sql",
+                    "migrations/postgres/005_deprecate_legacy_api_keys.sql",
+                    "migrations/postgres/008_add_searxng_instances.sql",
                 ];
                 for file in &migration_files {
                     let sql = std::fs::read_to_string(file)
@@ -126,9 +124,7 @@ fn ensure_testcontainers_url() -> Option<&'static str> {
     TC_URL.get().map(|s| s.as_str())
 }
 
-// ---------------------------------------------------------------------------
 // Public API
-// ---------------------------------------------------------------------------
 
 /// Resolve the test database URL from the environment or testcontainers.
 ///
@@ -252,8 +248,8 @@ const TEST_POOL_ACQUIRE_TIMEOUT_MS: u64 = 30_000;
 /// 用法：
 /// ```ignore
 /// #[tokio::test]
-/// async fn test_acquire_next() {
-///     let _guard = acquire_next_test_mutex().lock().await;
+/// async fn test_acquire_next {
+///     let _guard = acquire_next_test_mutex.lock.await;
 ///     // 测试逻辑
 /// }
 /// ```
@@ -272,8 +268,8 @@ pub fn acquire_next_test_mutex() -> &'static Mutex<()> {
 ///
 /// ```ignore
 /// #[tokio::test]
-/// async fn test_init_services() {
-///     let _guard = acquire_garrison_global_state().await;
+/// async fn test_init_services {
+///     let _guard = acquire_garrison_global_state.await;
 ///     // 安全调用 init_services / build_test_state / ServiceModule
 /// }
 /// ```
@@ -287,7 +283,7 @@ pub fn acquire_next_test_mutex() -> &'static Mutex<()> {
 ///
 /// auth feature 关闭时，`garrison_dao`/`garrison_listener` 模块不编译。
 /// 此 guard 与 [`acquire_garrison_global_state`] 在 auth-off 时退化为 no-op
-/// （[`NoopGarrisonGuard`]），调用方 `let _guard = acquire_garrison_global_state().await;`
+/// （[`NoopGarrisonGuard`]），调用方 `let _guard = acquire_garrison_global_state.await;`
 /// 在两种 feature 组合下都能编译，避免散布的 `#[cfg(feature = "auth")]`。
 #[cfg(feature = "auth")]
 pub struct GarrisonGlobalStateGuard {

@@ -21,9 +21,7 @@ use crawlrs::di::CrawlRsStateExt as _;
 use cucumber::{given, then, when};
 use serde_json::Value as Json;
 
-// ---------------------------------------------------------------------------
 // 共享 Harness（进程级单次启动）
-// ---------------------------------------------------------------------------
 
 pub struct SharedHarness {
     pub server: TestServer,
@@ -1295,7 +1293,6 @@ async fn when_delete_template(w: &mut AcceptanceWorld, template: String) {
     w.last_response = Some(request.await);
 }
 
-// ---------------------------------------------------------------------------
 // 测试数据库解析（等价 src/common/test_helpers.rs，但该模块是 lib-test 门控，
 // 验收二进制不可见，故在此自持实现；migrations 覆盖全部 7 个 SQL 文件）
 // ---------------------------------------------------------------------------
@@ -1324,7 +1321,7 @@ fn docker_available() -> bool {
         .unwrap_or(false)
 }
 
-/// 起 PostgreSQL 16 容器并按文件名序执行 migrations/*.sql（进程内一次）。
+/// 起 PostgreSQL 16 容器并按文件名序执行 migrations/postgres/*.sql（进程内一次）。
 fn start_testcontainers_pg() -> String {
     use testcontainers::core::IntoContainerPort;
     use testcontainers::runners::AsyncRunner;
@@ -1365,7 +1362,7 @@ fn start_testcontainers_pg() -> String {
 
                         // 全部 migrations 按文件名序执行（含 006 message_queue、
                         // 007 retention 索引，lib 侧 test_helpers 尚未覆盖）
-                        let mut files: Vec<_> = std::fs::read_dir("migrations")
+                        let mut files: Vec<_> = std::fs::read_dir("migrations/postgres")
                             .expect("read migrations dir")
                             .filter_map(|e| e.ok())
                             .map(|e| e.path())

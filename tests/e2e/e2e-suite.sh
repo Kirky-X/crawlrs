@@ -12,7 +12,7 @@
 #   Stage 2  static       fmt / clippy(default|full|agent-lib) / cargo deny
 #   Stage 3  unit         lib 测试(default|full) + mock 测试(main/sdk/route_diag)
 #   Stage 4  integration  集成测试（PostgreSQL；testcontainers 自动拉起或外部
-#                         TEST_DATABASE_URL，自动应用 migrations/*.sql）
+#                         TEST_DATABASE_URL，自动应用 migrations/postgres/*.sql）
 #   Stage 5  bench        基准测试（首次建立基线，之后对比 e2e-baseline）
 #   Stage 6  liveapi      活体 API E2E（tests/e2e/live-api-e2e.sh：compose DB →
 #                         bootstrap 签发 key → 起服 → 状态码冒烟 + 语义级验证
@@ -28,7 +28,7 @@
 # 中间件：
 #   - 集成测试仅需 PostgreSQL 16。缺省由 testcontainers 动态拉起并自动清理；
 #     设 TEST_DATABASE_URL 时改用外部实例（可用 docker/docker-compose.test.yml），
-#     套件自动应用 migrations/*.sql 并在结束时 down -v 清理。
+#     套件自动应用 migrations/postgres/*.sql 并在结束时 down -v 清理。
 #   - Redis / MySQL / Keycloak OIDC：代码库无集成，无服务轴（见矩阵文档 §1.3）。
 #
 # 退出码：任一阶段失败即非零。日志：test-results/*.log
@@ -177,8 +177,8 @@ start_external_db() {
 
 apply_migrations() {
   # 外部库需手动应用迁移（testcontainers 路径由 src/common/test_helpers.rs 自动应用）
-  log_info "应用 migrations/*.sql 到外部测试库..."
-  for f in "$ROOT"/migrations/*.sql; do
+  log_info "应用 migrations/postgres/*.sql 到外部测试库..."
+  for f in "$ROOT"/migrations/postgres/*.sql; do
     [ -e "$f" ] || { log_fail "未找到迁移文件: $f"; return 1; }
     if ! docker compose -f "$COMPOSE_FILE" exec -T test-db \
         psql -U "${DB_USER:-crawlrs}" -d "${DB_NAME:-crawlrs}_test" -v ON_ERROR_STOP=1 -q < "$f"; then

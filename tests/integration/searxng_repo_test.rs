@@ -7,7 +7,7 @@
 //! 数据集缺席退役（seed 豁免）、探活结果回填。
 //!
 //! 运行：`scripts/run-live-test.sh integration_tests`（自动注入 TEST_DATABASE_URL
-//! 并按序应用 `migrations/*.sql`，含 008 searxng_instances）。
+//! 并按序应用 `migrations/postgres/*.sql`，含 008 searxng_instances）。
 
 use dbnexus::sea_orm::ConnectionTrait;
 

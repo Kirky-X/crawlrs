@@ -43,7 +43,7 @@ fi
 
 # 库为空（无 teams 表）时按序应用迁移；已迁移则跳过，重复运行幂等
 if [ "$(docker exec "${container}" psql -tA -U postgres -d "${db}" -c "SELECT to_regclass('public.teams') IS NOT NULL")" != "t" ]; then
-  for f in "${root}"/migrations/*.sql; do
+  for f in "${root}"/migrations/postgres/*.sql; do
     docker exec -i "${container}" psql -v ON_ERROR_STOP=1 -U postgres -d "${db}" -q -f - < "${f}" >/dev/null
   done
 fi

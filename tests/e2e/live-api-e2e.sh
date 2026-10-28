@@ -141,8 +141,8 @@ fi
 log_pass "测试数据库就绪: $TEST_DATABASE_URL"
 
 # 迁移（幂等，与 e2e-suite 同口径）
-log_info "应用 migrations/*.sql..."
-for f in "$ROOT"/migrations/*.sql; do
+log_info "应用 migrations/postgres/*.sql..."
+for f in "$ROOT"/migrations/postgres/*.sql; do
   [ -e "$f" ] || { log_fail "未找到迁移文件"; exit 1; }
   docker compose -f "$COMPOSE_FILE" exec -T test-db \
     psql -U crawlrs -d crawlrs_test -v ON_ERROR_STOP=1 -q < "$f" \

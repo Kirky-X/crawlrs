@@ -31,7 +31,7 @@ fn parse_service_type(arg: Option<&str>) -> Result<ServiceType, String> {
 
 impl ServiceType {
     /// Parse service type from command line arguments.
-    /// Uses safe `args_os()` + explicit UTF-8 handling instead of `env::args()`,
+    /// Uses safe `args_os` + explicit UTF-8 handling instead of `env::args`,
     /// which panics on non-UTF-8 OS arguments without a user-facing error.
     fn from_args() -> Self {
         use log::error;
@@ -96,10 +96,8 @@ mod app {
         // 启动通用 worker（webhook / backlog / expiration）
         let _common_worker_handles = spawn_common_workers(app_state, &settings).await;
 
-        // Build API app with dependencies
         let app = build_api_app_with_state(app_state, settings.clone());
 
-        // Start the server
         let addr = format!("{}:{}", settings.server.host, settings.server.port);
         let listener = TcpListener::bind(&addr).await?;
         log::info!("Server listening on {}", addr);
@@ -124,9 +122,9 @@ mod app {
         // 优雅退出编排
         //
         // 创建共享 ShutdownCoordinator，spawn 信号监听任务（SIGTERM/SIGINT →
-        // trigger），替换裸 `tokio::signal::ctrl_c().await`：
-        // - `worker_manager.wait_for_shutdown()` 内部经 coordinator 阻塞等待信号，
-        //   随后给进行中任务 ≤ graceful_period 的宽限期完成，再终止剩余句柄；
+        // trigger），替换裸 `tokio::signal::ctrl_c.await`：
+        // - `worker_manager.wait_for_shutdown` 内部经 coordinator 阻塞等待信号，
+        // 随后给进行中任务 ≤ graceful_period 的宽限期完成，再终止剩余句柄；
         // - 宽限期结束后 `rollback_pending_tasks` 把已锁定未完成任务回滚为 Pending。
         let coordinator = Arc::new(crawlrs::workers::shutdown::ShutdownCoordinator::new(
             std::time::Duration::from_secs(settings.workers.graceful_shutdown_seconds),
@@ -170,7 +168,6 @@ mod app {
 
         let mut worker_manager = WorkerManager::new(deps, config);
 
-        // Start workers
         let worker_count = settings.workers.count.resolve();
         log::info!("Starting {} worker(s)", worker_count);
         worker_manager.start_workers(worker_count).await;
@@ -333,11 +330,12 @@ mod app {
     /// Run pending database migrations and exit.
     ///
     /// 生产 schema 初始化入口（文档审计缺陷 #1）：此前 `auto_migrate=false` 且无
-    /// migrate 子命令，生产用户只能按 README 手工逐个 `psql -f migrations/*.sql`。
+    /// migrate 子命令，生产用户只能按 README 手工逐个 `psql -f migrations/postgres/*.sql`。
     /// 迁移目录经 `CRAWLRS_MIGRATIONS_DIR` 覆盖，缺省 `./migrations`。
     async fn start_migrate_service(app_state: &CrawlRsState) -> anyhow::Result<()> {
         let dir = std::path::PathBuf::from(
-            env::var("CRAWLRS_MIGRATIONS_DIR").unwrap_or_else(|_| "migrations".to_string()),
+            env::var("CRAWLRS_MIGRATIONS_DIR")
+                .unwrap_or_else(|_| "migrations/postgres".to_string()),
         );
         if !dir.is_dir() {
             anyhow::bail!(
@@ -366,7 +364,7 @@ mod app {
         let settings = Arc::new(settings);
 
         // 1.5 初始化启动期 i18n 全局束（检测链决议 default_locale）。
-        // 必须先于 kit.build()：RAG 配置校验消息等启动期出口经 Fluent 输出。
+        // 必须先于 kit.build：RAG 配置校验消息等启动期出口经 Fluent 输出。
         // 加载失败（locales 目录缺失）保持未初始化，各出口回退英文规范串。
         if let Some(bundle) = crawlrs::i18n::build_startup_bundle(&settings.i18n) {
             crawlrs::i18n::init_startup_i18n(bundle);
@@ -477,7 +475,7 @@ mod tests {
     #[test]
     fn tc_parse_service_type_invalid_returns_error() {
         let result = parse_service_type(Some("invalid"));
-        // ServiceType 未实现 Debug，使用 match 而非 unwrap_err()
+        // ServiceType 未实现 Debug，使用 match 而非 unwrap_err
         match result {
             Err(msg) => {
                 assert!(msg.contains("Invalid service type"), "got: {}", msg);
@@ -495,7 +493,7 @@ mod tests {
     #[test]
     fn tc_parse_service_type_empty_string_returns_error() {
         let result = parse_service_type(Some(""));
-        // ServiceType 未实现 Debug，使用 match 而非 unwrap_err()
+        // ServiceType 未实现 Debug，使用 match 而非 unwrap_err
         match result {
             Err(msg) => {
                 assert!(msg.contains("Invalid service type"), "got: {}", msg);

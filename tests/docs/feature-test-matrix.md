@@ -51,7 +51,7 @@ engine-tls-fingerprint ──> dep:wreq
   互斥由 dbnexus 编译期强制（embedded 与 server-side 不可混、postgres/mysql 互斥），crawlrs 侧
   `src/lib.rs` 另有 platform 缺驱动 / db-* 混用的清晰 compile_error 守卫。`platform` 不含驱动，
   必须搭配恰好一个 `db-*`。
-  **运行时注意**：`migrations/*.sql` 为 PG 专用 DDL——sqlite/mysql 的测试运行时供给需要独立的
+  **运行时注意**：`migrations/postgres/*.sql` 为 PG 专用 DDL——sqlite/mysql 的测试运行时供给需要独立的
   schema 层（后续工作），当前三驱动轴为编译级覆盖。
 - **Redis / Keycloak OIDC**：代码库无任何客户端集成（全库检索零命中），不设服务轴。
 
