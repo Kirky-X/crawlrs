@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 // 重新导出子模块中的类型
 pub use super::app::{
     ConcurrencySettings, DatabaseSettings, RateLimitingSettings, RetentionSettings, ServerSettings,
+    WebSocketSettings,
 };
 pub use super::engines::{
     EngineSettings, FlareSolverrCdpSettings, FlareSolverrSettings, FlareSolverrTlsSettings,
@@ -129,6 +130,9 @@ pub struct Settings {
 
     /// 缓存配置
     pub cache: CacheSettings,
+
+    /// WebSocket 连接治理配置（R-ws-task-status-003）
+    pub websocket: WebSocketSettings,
 
     /// 可信代理配置
     pub trusted_proxies: TrustedProxySettings,
@@ -1183,6 +1187,7 @@ mod tests {
             crawl: CrawlSettings::default(),
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
+            websocket: WebSocketSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
             observability: ObservabilitySettings::default(),
             auth: AuthSettings::default(),

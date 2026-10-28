@@ -18,13 +18,14 @@ use crate::infrastructure::database::repositories::scrape_result_repo_impl::Scra
 use crate::infrastructure::database::repositories::task_repo_impl::TaskRepositoryImpl;
 #[cfg(feature = "webhook")]
 use crate::infrastructure::database::repositories::webhook_repo_impl::WebhookRepoImpl;
+use crate::infrastructure::events::event_bus::EventBus;
 use crate::presentation::handlers::metrics_handler;
 #[cfg(not(feature = "auth"))]
 use crate::presentation::middleware::auth_types::AuthState;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
 use crate::presentation::middleware::team_semaphore_middleware::team_semaphore_middleware;
 use crate::presentation::routes;
-use crate::presentation::routes::task::task_routes;
+use crate::presentation::routes::task::{task_routes, TaskWsGuard};
 use crate::presentation::state::CrawlHandlerState;
 use axum::{routing::get, Extension, Router};
 use std::sync::Arc;
@@ -129,7 +130,7 @@ pub fn create_public_routes(state: &CrawlRsState) -> Router {
     // overall Unhealthy → 503，K8s 摘流语义由库承载）。与既有 /health、/ready
     // 路径无碰撞；garrison 为 auth 可选依赖（经 platform 隐含），auth-off 构建
     // 不编译这段。merge 置于 with_state 之后：health_routes 返回的 Router 已
-    // 自带 state（Arc<HealthRegistry>），先 merge 会把外层 Router 状态类型钉为 ()。
+    // 自带 state（Arc<HealthRegistry>），先 merge 会把外层 Router 状态类型钉为。
     #[cfg(feature = "auth")]
     {
         router = router.merge(garrison::health::axum_routes::health_routes(
@@ -146,7 +147,7 @@ pub fn create_public_routes(state: &CrawlRsState) -> Router {
 /// - `pool`: 共享 `CrawlRsState` 的 `DbPool`，供下游业务 handler 使用
 /// - `team_id`: `DEFAULT_TEAM_ID`（固定值，单租户标识）
 /// - `api_key_id`: `DEFAULT_API_KEY_ID`（固定值，与 team_id 区分）
-/// - `scope`: `ApiKeyScope::full_access()`（read/write/admin=true、limit=u32::MAX）
+/// - `scope`: `ApiKeyScope::full_access`（read/write/admin=true、limit=u32::MAX）
 ///
 /// 其余字段（`api_key_cache` / `auth_rate_limiter` / `trusted_proxies`）已在 DTO 化中删除，
 /// 单租户降级模式下不查 DB 加载 scope、不做缓存、不做暴力破解防护、不解析 trusted proxies。
@@ -154,14 +155,14 @@ pub fn create_public_routes(state: &CrawlRsState) -> Router {
 /// 此函数仅在三处路由装配点（`create_protected_routes_with_state` /
 /// `create_v2_routes_with_state` / `build_api_app_with_state` 的 SDK 路由）
 /// 调用，构造的模板通过 `from_fn_with_state(template, default_identity_middleware)`
-/// 注入到 `FromFnLayer`，由 layer 在每请求 `Service::call` 内 `clone()` 一次传给
+/// 注入到 `FromFnLayer`，由 layer 在每请求 `Service::call` 内 `clone` 一次传给
 /// `default_identity_middleware`。
 ///
 /// # Security
 ///
 /// 首次调用时通过 `OnceLock` 保证只打印一次 WARNING 日志，告知运维本实例运行在
 /// 无鉴权模式（默认拒绝 401；显式调用
-/// `crawlrs::presentation::middleware::auth_middleware::allow_unauthenticated_protected()`
+/// `crawlrs::presentation::middleware::auth_middleware::allow_unauthenticated_protected`
 /// 可放行）。三处路由装配点都会调用此函数，
 /// 但日志只在第一次调用时输出，避免启动日志噪声。
 #[cfg(not(feature = "auth"))]
@@ -400,7 +401,13 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>
 
     let app = task_routes()
         .layer(Extension(task_repo_impl.clone()))
-        .layer(Extension(result_repo_impl.clone()));
+        .layer(Extension(result_repo_impl.clone()))
+        // ws 任务状态推送：事件总线单例 + 连接治理守卫（R-ws-task-status-001/003）。
+        .layer(Extension(Arc::clone(&state.event_bus) as Arc<dyn EventBus>))
+        .layer(Extension(Arc::new(TaskWsGuard::new(
+            settings.websocket.max_connections,
+            std::time::Duration::from_secs(settings.websocket.idle_timeout_secs),
+        ))));
 
     // team_semaphore_middleware（inner — auth 注入 AuthState 后执行）
     //

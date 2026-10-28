@@ -2105,6 +2105,7 @@ mod tests {
             crawl: CrawlSettings::default(),
             timeouts: TimeoutSettings::default(),
             cache: CacheSettings::default(),
+            websocket: WebSocketSettings::default(),
             trusted_proxies: TrustedProxySettings::default(),
             observability: ObservabilitySettings::default(),
             auth: AuthSettings::default(),

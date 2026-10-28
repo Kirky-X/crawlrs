@@ -115,7 +115,7 @@ vecboost = { path = "../vecboost" }
 [dependencies]
 # Async runtime and web framework
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
-axum = { workspace = true, optional = true }
+axum = { workspace = true, optional = true, features = ["ws"] }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 async-trait = { version = "0.1", default-features = false }
 tower = { version = "0.5", default-features = false, features = ["util"] }
@@ -270,7 +270,7 @@ wiremock = { version = "0.6", default-features = false }
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde_json.workspace = true
 cucumber = { version = "0.23", default-features = false, features = ["macros"] }
-axum-test = { version = "21.1", default-features = false, features = ["pretty-assertions"] }
+axum-test = { version = "21.1", default-features = false, features = ["pretty-assertions", "ws"] }
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 tempfile = { version = "3.27", default-features = false, features = ["getrandom"] }
 uuid = { workspace = true, features = ["v4"] }
@@ -301,6 +301,12 @@ required-features = ["test-mocks"]
 [[test]]
 name = "route_diag_test"
 path = "tests/route_diag_test.rs"
+required-features = ["platform"]
+
+# WebSocket 任务状态端点（spec: ws-task-status；真实 PostgreSQL）
+[[test]]
+name = "ws_task_status"
+path = "tests/ws_task_status.rs"
 required-features = ["platform"]
 
 # BDD 套件：cucumber 自管 main，必须 harness=false，否则 0 tests 虚绿

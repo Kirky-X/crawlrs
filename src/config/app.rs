@@ -136,6 +136,22 @@ pub struct ServerSettings {
     pub enable_port_detection: bool,
 }
 
+/// WebSocket 连接治理配置（R-ws-task-status-003）
+///
+/// `/v1/tasks/{id}/ws` 的连接资源上限：超限新连接被拒（429），
+/// 空闲超时（无事件可推送）后服务端主动关闭连接。
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__WEBSOCKET__")]
+pub struct WebSocketSettings {
+    /// 最大并发 ws 连接数
+    #[config(default = 100)]
+    pub max_connections: usize,
+
+    /// 空闲超时（秒）：窗口内无事件可推送即关闭连接
+    #[config(default = 300)]
+    pub idle_timeout_secs: u64,
+}
+
 /// 速率限制配置设置
 ///
 /// 控制 API 请求的速率限制参数
