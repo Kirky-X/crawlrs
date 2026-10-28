@@ -331,15 +331,27 @@ mod app {
     ///
     /// 生产 schema 初始化入口（文档审计缺陷 #1）：此前 `auto_migrate=false` 且无
     /// migrate 子命令，生产用户只能按 README 手工逐个 `psql -f migrations/postgres/*.sql`。
-    /// 迁移目录经 `CRAWLRS_MIGRATIONS_DIR` 覆盖，缺省 `./migrations`。
+    /// `CRAWLRS_MIGRATIONS_DIR` 覆盖迁移**基目录**（含 `<dialect>/` 子目录），
+    /// 缺省 `./migrations`；实际执行目录按编译 dialect 选择（与
+    /// `create_pool` 的 auto_migrate 同一判定）。
     async fn start_migrate_service(app_state: &CrawlRsState) -> anyhow::Result<()> {
-        let dir = std::path::PathBuf::from(
-            env::var("CRAWLRS_MIGRATIONS_DIR")
-                .unwrap_or_else(|_| "migrations/postgres".to_string()),
+        use crawlrs::infrastructure::database::dbnexus_connection::{
+            dialect_migrations_dir, MIGRATIONS_DIR_ENV,
+        };
+
+        let base = std::path::PathBuf::from(
+            env::var(MIGRATIONS_DIR_ENV).unwrap_or_else(|_| "migrations".to_string()),
         );
+        let dir = dialect_migrations_dir(&base).ok_or_else(|| {
+            anyhow::anyhow!(
+                "no db dialect feature (db-postgres/db-sqlite/db-mysql) compiled; \
+                 cannot select migrations/<dialect>/ under {}",
+                base.display()
+            )
+        })?;
         if !dir.is_dir() {
             anyhow::bail!(
-                "migrations directory not found: {} (set CRAWLRS_MIGRATIONS_DIR to override)",
+                "migrations directory not found: {} (set {MIGRATIONS_DIR_ENV} to override the base dir)",
                 dir.display()
             );
         }

@@ -3631,7 +3631,8 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
         infra.http_client.clone(),
         &settings,
     )
-    .await;
+    .await
+    .expect("init_services");
 
     // 构造 CoalesceCoordinator（共享 task_repo + result_repo + request_coalescer）
     let coalesce_coordinator = make_coalesce_coordinator_with_coalescer(
@@ -3815,7 +3816,8 @@ async fn tc_scrape_worker_builder_builds_full_worker() {
         infra.http_client.clone(),
         &settings,
     )
-    .await;
+    .await
+    .expect("init_services");
 
     // Use ScrapeWorkerBuilder to construct the worker.
     let builder = ScrapeWorkerBuilder::new()

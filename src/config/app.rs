@@ -72,6 +72,14 @@ pub struct DatabaseSettings {
     /// `None` 关闭；`Some(n)` 为缓存容量（默认 128）。
     #[config(default = Some(128))]
     pub prepare_cache_capacity: Option<usize>,
+
+    /// 启动期自动执行迁移（按编译 dialect 选择 `migrations/<dialect>/`）。
+    ///
+    /// 缺省 false：不执行迁移也不报错（既有语义）。true 时 `create_pool`
+    /// 装配 `migrations_dir` + `auto_migrate`；未编译任何 db dialect
+    /// feature 时启动显性报错（R-multidb-schema-002/003）。
+    #[config(default = false)]
+    pub auto_migrate: bool,
 }
 
 impl std::fmt::Debug for DatabaseSettings {
@@ -86,6 +94,7 @@ impl std::fmt::Debug for DatabaseSettings {
             .field("connection_keepalive", &self.connection_keepalive)
             .field("health_check_interval", &self.health_check_interval)
             .field("prepare_cache_capacity", &self.prepare_cache_capacity)
+            .field("auto_migrate", &self.auto_migrate)
             .finish()
     }
 }

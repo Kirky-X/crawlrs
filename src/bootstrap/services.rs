@@ -241,7 +241,7 @@ pub async fn init_rate_limiting_service(
     repositories: &Repositories,
     settings: &Settings,
     db_pool: Option<Arc<DbPool>>,
-) -> Arc<dyn RateLimitingService> {
+) -> anyhow::Result<Arc<dyn RateLimitingService>> {
     #[cfg(feature = "rate-limit")]
     {
         let rate_limit_config = RateLimitConfig {
@@ -276,29 +276,33 @@ pub async fn init_rate_limiting_service(
             rate_limit_ttl_seconds: 3600,
         };
 
-        // 存储后端选择：非法值/缺池回退 memory（限流链路 fail-open 语义）
+        // 存储后端选择：database 路径失败显性报错（R-multidb-schema-003
+        // 禁止「DDL 失败→回退内存」）；未知非法值维持既有 fail-open 语义。
         let storage = match settings.rate_limiting.storage_backend.as_str() {
             "memory" => StorageHandle::Memory,
             "database" => {
-                #[cfg(all(feature = "db-postgres", feature = "platform"))]
+                #[cfg(any(feature = "db-postgres", feature = "db-sqlite", feature = "db-mysql"))]
                 match db_pool {
                     Some(pool) => StorageHandle::Database(pool),
                     None => {
-                        log::warn!(
+                        anyhow::bail!(
                             "rate_limiting.storage_backend=database but no db pool available; \
-                             falling back to memory storage"
+                             refusing to fall back to memory storage (config error)"
                         );
-                        StorageHandle::Memory
                     }
                 }
-                #[cfg(not(all(feature = "db-postgres", feature = "platform")))]
+                #[cfg(not(any(
+                    feature = "db-postgres",
+                    feature = "db-sqlite",
+                    feature = "db-mysql"
+                )))]
                 {
                     let _ = db_pool;
-                    log::warn!(
-                        "rate_limiting.storage_backend=database requires the db-postgres \
-                         build (Postgres dialect DDL); falling back to memory storage"
+                    anyhow::bail!(
+                        "rate_limiting.storage_backend=database requires a compiled db dialect \
+                         (db-postgres/db-sqlite/db-mysql); refusing to fall back to memory \
+                         storage (config error)"
                     );
-                    StorageHandle::Memory
                 }
             }
             other => {
@@ -320,7 +324,7 @@ pub async fn init_rate_limiting_service(
         .await
         .expect("Failed to create LimiteronService");
 
-        Arc::new(service)
+        Ok(Arc::new(service))
     }
     // rate-limit-off 时装配 NoopRateLimitingService
     #[cfg(not(feature = "rate-limit"))]
@@ -333,7 +337,7 @@ pub async fn init_rate_limiting_service(
             "rate-limit feature disabled, using NoopRateLimitingService — \
              all requests are allowed without rate limiting"
         );
-        Arc::new(NoopRateLimitingService::new())
+        Ok(Arc::new(NoopRateLimitingService::new()))
     }
 }
 
@@ -804,12 +808,15 @@ pub fn init_llm_service(
 /// # Returns
 ///
 /// Returns all initialized services.
+///
+/// `Result` 承载启动期配置/迁移错误（如 `storage_backend=database` 缺池或缺
+/// dialect 构建的显性报错，R-multidb-schema-003），禁止静默降级。
 pub async fn init_services(
     infrastructure: &InfrastructureComponents,
     engine_client: Arc<EngineClient>,
     http_client: Arc<reqwest::Client>,
     settings: &Settings,
-) -> ServicesComponents {
+) -> anyhow::Result<ServicesComponents> {
     let repositories = &infrastructure.repositories;
 
     // F11：按配置初始化软 404 指纹检测器（进程级共享；crawl 路径消费）
@@ -831,7 +838,7 @@ pub async fn init_services(
         settings,
         Some(infrastructure.db.clone_inner()),
     )
-    .await;
+    .await?;
 
     // Initialize rate limit middleware
     let rate_limit_middleware = init_rate_limit_middleware(rate_limiting_service.clone());
@@ -1090,7 +1097,7 @@ pub async fn init_services(
 
     info!("Services initialized");
 
-    ServicesComponents {
+    Ok(ServicesComponents {
         rate_limit_middleware,
         team_semaphore,
         request_coalescer,
@@ -1119,7 +1126,7 @@ pub async fn init_services(
         expiration_worker,
         #[cfg(feature = "sitemap")]
         map_use_case,
-    }
+    })
 }
 
 // Note: The following functions are not unit-tested here because they require
@@ -1451,13 +1458,17 @@ mod tests {
 
         // database 后端路径：真实 Postgres 下执行幂等建表 + DBNexus 适配器装配
         settings.rate_limiting.storage_backend = "database".to_string();
-        let service = init_rate_limiting_service(&repos, &settings, Some(db.clone_inner())).await;
+        let service = init_rate_limiting_service(&repos, &settings, Some(db.clone_inner()))
+            .await
+            .expect("init_rate_limiting_service");
         // Verify the service is usable (Arc strong count >= 1).
         assert!(Arc::strong_count(&service) >= 1);
 
         // memory 后端路径：默认配置下同样可装配
         settings.rate_limiting.storage_backend = "memory".to_string();
-        let service = init_rate_limiting_service(&repos, &settings, Some(db.clone_inner())).await;
+        let service = init_rate_limiting_service(&repos, &settings, Some(db.clone_inner()))
+            .await
+            .expect("init_rate_limiting_service");
         assert!(Arc::strong_count(&service) >= 1);
     }
 
@@ -1547,8 +1558,9 @@ mod tests {
         ));
         let engine_client = Arc::new(EngineClient::with_router(engine_router.clone()));
 
-        let services =
-            init_services(&infra, engine_client, infra.http_client.clone(), &settings).await;
+        let services = init_services(&infra, engine_client, infra.http_client.clone(), &settings)
+            .await
+            .expect("init_services");
 
         // Verify all service components are constructed.
         assert!(Arc::strong_count(&services.rate_limiting_service) >= 1);

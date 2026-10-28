@@ -56,7 +56,8 @@ impl AsyncAutoBuilder for ServiceModule {
                 infrastructure.http_client.clone(),
                 &settings,
             )
-            .await;
+            .await
+            .map_err(|e| ModuleBuildError::ServiceInit(e.to_string()))?;
 
             Ok(services)
         })

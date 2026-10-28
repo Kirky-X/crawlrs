@@ -12,8 +12,47 @@ use dbnexus::sea_orm::{ConnAcquireErr, DbErr};
 use dbnexus::{CacheConfig, DbConfig, DbPool, PoolConfig, Session};
 use log::{debug, info, warn};
 use std::ops::Deref;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// 迁移基目录的覆盖环境变量（与 `main.rs` 的 migrate 子命令共用）。
+/// 值为包含 `<dialect>/` 子目录的基目录，而非直接的迁移目录。
+pub const MIGRATIONS_DIR_ENV: &str = "CRAWLRS_MIGRATIONS_DIR";
+
+/// 编译期 db dialect feature → 迁移子目录（R-multidb-schema-002）。
+///
+/// dbnexus 驱动 feature 编译期互斥，任一时刻至多命中一个分支；
+/// 三者皆未编译（嵌入式构建）时返回 `None`。
+pub fn dialect_migrations_dir(base: &Path) -> Option<PathBuf> {
+    #[cfg(feature = "db-postgres")]
+    {
+        let _ = base;
+        #[cfg(feature = "db-sqlite")]
+        compile_error!("db-postgres 与 db-sqlite 互斥（dbnexus 编译期约束）");
+        #[cfg(feature = "db-mysql")]
+        compile_error!("db-postgres 与 db-mysql 互斥（dbnexus 编译期约束）");
+        Some(base.join("postgres"))
+    }
+    #[cfg(all(feature = "db-sqlite", not(feature = "db-postgres")))]
+    {
+        #[cfg(feature = "db-mysql")]
+        compile_error!("db-sqlite 与 db-mysql 互斥（dbnexus 编译期约束）");
+        Some(base.join("sqlite"))
+    }
+    #[cfg(all(
+        feature = "db-mysql",
+        not(any(feature = "db-postgres", feature = "db-sqlite"))
+    ))]
+    {
+        Some(base.join("mysql"))
+    }
+    #[cfg(not(any(feature = "db-postgres", feature = "db-sqlite", feature = "db-mysql")))]
+    {
+        let _ = base;
+        None
+    }
+}
 
 /// Database pool wrapper type with metrics support using dbnexus
 ///
@@ -250,6 +289,29 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
         info!("Loading permissions config from: {:?}", path);
     }
 
+    // R-multidb-schema-002：按编译 dialect 选择迁移目录；auto_migrate 缺省
+    // false（不执行迁移也不报错）。未编译任何 dialect 却要求 auto_migrate
+    // 时显性报错——禁止静默跳过或回退（R-multidb-schema-003）。
+    let migrations_base =
+        std::env::var(MIGRATIONS_DIR_ENV).unwrap_or_else(|_| "migrations".to_string());
+    let migrations_dir = dialect_migrations_dir(Path::new(&migrations_base));
+    if settings.auto_migrate && migrations_dir.is_none() {
+        return Err(DbErr::Custom(
+            "database.auto_migrate=true but no db dialect feature (db-postgres/db-sqlite/\
+             db-mysql) is compiled; cannot select a migrations/<dialect>/ directory"
+                .to_string(),
+        ));
+    }
+    if settings.auto_migrate {
+        info!(
+            "auto_migrate enabled; migrations dir: {}",
+            migrations_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        );
+    }
+
     let config = DbConfig {
         url: settings.url.clone(),
         pool_config: PoolConfig {
@@ -259,8 +321,8 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
             acquire_timeout,
         },
         permissions_path,
-        migrations_dir: None,
-        auto_migrate: false,
+        migrations_dir,
+        auto_migrate: settings.auto_migrate,
         migration_timeout: 300,
         admin_role: "admin".to_string(),
         warmup_timeout: 30,
@@ -291,6 +353,50 @@ mod tests {
     use super::*;
     use crate::common::test_helpers::create_test_db_pool;
 
+    /// R-multidb-schema-002：编译 dialect → 迁移子目录一一对应。
+    /// 默认测试构建启用 db-postgres，应选中 `postgres/`。
+    #[cfg(feature = "db-postgres")]
+    #[test]
+    fn dialect_migrations_dir_maps_postgres_feature() {
+        let dir = dialect_migrations_dir(Path::new("migrations"));
+        assert_eq!(
+            dir.as_deref(),
+            Some(Path::new("migrations/postgres")),
+            "db-postgres build must select migrations/postgres/"
+        );
+    }
+
+    /// R-multidb-schema-002：方言目录必须在仓库中真实存在，
+    /// 否则 auto_migrate=true 会在运行期才失败。
+    #[cfg(feature = "db-postgres")]
+    #[test]
+    fn postgres_migrations_dir_exists_in_repo() {
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let dir =
+            dialect_migrations_dir(&base).expect("db-postgres build must yield a migrations dir");
+        assert!(
+            dir.is_dir(),
+            "missing dialect migrations dir: {}",
+            dir.display()
+        );
+        let count = std::fs::read_dir(&dir)
+            .expect("read migrations/postgres")
+            .filter_map(Result::ok)
+            .filter(|e| e.path().extension().is_some_and(|x| x == "sql"))
+            .count();
+        assert!(
+            count >= 8,
+            "migrations/postgres should carry the 8 PG migrations"
+        );
+    }
+
+    /// R-multidb-schema-002：auto_migrate 缺省 false（不执行迁移也不报错）。
+    #[test]
+    fn database_settings_default_auto_migrate_is_false() {
+        let settings = make_settings("postgresql://localhost/test");
+        assert!(!settings.auto_migrate, "auto_migrate must default to false");
+    }
+
     /// Build DatabaseSettings with the given URL and sensible defaults.
     fn make_settings(url: &str) -> DatabaseSettings {
         DatabaseSettings {
@@ -303,6 +409,7 @@ mod tests {
             connection_keepalive: Some(30),
             health_check_interval: Some(60),
             prepare_cache_capacity: None,
+            auto_migrate: false,
         }
     }
 
@@ -604,6 +711,7 @@ mod tests {
             connection_keepalive: None,
             health_check_interval: None,
             prepare_cache_capacity: None,
+            auto_migrate: false,
         };
         let result = create_pool(&settings).await;
         assert!(result.is_err());
@@ -876,6 +984,7 @@ mod tests {
             connection_keepalive: Some(30),
             health_check_interval: Some(60),
             prepare_cache_capacity: None,
+            auto_migrate: false,
         };
 
         let pool = create_pool(&settings).await;
@@ -903,6 +1012,7 @@ mod tests {
             connection_keepalive: Some(30),
             health_check_interval: Some(60),
             prepare_cache_capacity: None,
+            auto_migrate: false,
         };
 
         let pool = create_pool(&settings).await.unwrap();
