@@ -243,7 +243,7 @@ mod tests {
         headers
     }
 
-    // ========== CreateWebhookRequest tests ==========
+    // CreateWebhookRequest tests
 
     #[test]
     fn test_create_webhook_request_valid() {
@@ -291,7 +291,7 @@ mod tests {
         assert_eq!(deserialized.url, original.url);
     }
 
-    // ========== Webhook to WebhookResponse mapping ==========
+    // Webhook to WebhookResponse mapping
 
     #[test]
     fn test_webhook_to_response_mapping() {
@@ -360,7 +360,7 @@ mod tests {
         assert!(parsed["secret"].is_null());
     }
 
-    // ========== WebhookListResponse serialization ==========
+    // WebhookListResponse serialization
 
     #[test]
     fn test_webhook_list_response_empty() {
@@ -431,7 +431,7 @@ mod tests {
         assert_eq!(response.webhooks.len(), 5);
     }
 
-    // ========== Webhook model construction ==========
+    // Webhook model construction
 
     #[test]
     fn test_webhook_new_constructor() {
@@ -447,7 +447,7 @@ mod tests {
         assert!(webhook.created_at <= Utc::now());
     }
 
-    // ========== Handler test infrastructure ==========
+    // Handler test infrastructure
 
     /// Construct a lazy `DbPool` that does not connect to any database.
     ///
@@ -457,7 +457,7 @@ mod tests {
     /// call — they only read `team_id` / `api_key_id` from `AuthState`.
     ///
     /// The `permission` feature variant of `try_from` internally calls
-    /// `Handle::current().block_on(...)` to build the oxcache policy cache.
+    /// `Handle::current.block_on(...)` to build the oxcache policy cache.
     /// Calling `block_on` from within a `#[tokio::test]` runtime panics with
     /// "Cannot start a runtime from within a runtime", so we construct the pool
     /// on a dedicated OS thread with its own runtime.
@@ -479,7 +479,7 @@ mod tests {
         )
     }
 
-    // ========== MockWebhookRepository ==========
+    // MockWebhookRepository
 
     /// Mock `WebhookRepository` whose `create` / `find_by_team_id` behaviour is
     /// configurable per test via the builder methods.
@@ -542,7 +542,7 @@ mod tests {
         }
     }
 
-    // ========== MockRateLimitingService ==========
+    // MockRateLimitingService
 
     /// Mock `RateLimitingService` with configurable `check_rate_limit` result.
     /// All other trait methods return benign defaults.
@@ -681,7 +681,7 @@ mod tests {
     // 组合 trait（向后兼容，空实现即可）
     impl RateLimitingService for MockRateLimitingService {}
 
-    // ========== create_webhook handler tests ==========
+    // create_webhook handler tests
 
     #[tokio::test]
     async fn test_create_webhook_success() {
@@ -854,7 +854,7 @@ mod tests {
         }
     }
 
-    // ========== list_webhooks handler tests ==========
+    // list_webhooks handler tests
 
     #[tokio::test]
     async fn test_list_webhooks_empty() {
@@ -940,7 +940,7 @@ mod tests {
         }
     }
 
-    // ========== Test logger for covering log::debug! format args ==========
+    // Test logger for covering log::debug! format args
 
     use crate::test_utils::ensure_debug_logger;
 
@@ -985,7 +985,7 @@ mod tests {
         assert_eq!(parsed["data"]["url"], "https://example.com/webhook");
     }
 
-    // ========== webhook signature verification failure tests ==========
+    // webhook signature verification failure tests
 
     /// 辅助：构造带自定义签名的 HeaderMap
     fn make_headers_with_signature_and_timestamp(signature: &str, timestamp: i64) -> HeaderMap {
@@ -1156,7 +1156,7 @@ mod tests {
         let payload_bytes = serde_json::to_vec(&payload).expect("serialize payload");
         let settings = make_test_settings_with_secret(TEST_WEBHOOK_SECRET);
 
-        // 使用错误的签名（不是基于真实 secret 计算的）
+        // 使用错误的签名（不是基于真实 secret 计算）
         let headers =
             make_headers_with_signature_and_timestamp("deadbeefcafebabe", Utc::now().timestamp());
 

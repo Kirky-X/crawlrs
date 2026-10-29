@@ -252,7 +252,7 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
-    // ========== new / with_defaults ==========
+    // new / with_defaults
 
     #[test]
     fn with_defaults_matches_constants() {
@@ -329,7 +329,7 @@ mod tests {
         assert!((ema_ms - 100.0).abs() < 0.01);
     }
 
-    // ========== record_latency: 首样本 ==========
+    // record_latency: 首样本
 
     #[test]
     fn record_first_sample_sets_ema_to_latency() {
@@ -347,7 +347,7 @@ mod tests {
         assert_eq!(c.ema_latency(), Some(Duration::from_millis(100)));
     }
 
-    // ========== record_latency: EMA 递推 ==========
+    // record_latency: EMA 递推
 
     #[test]
     fn record_two_samples_ema_converges() {
@@ -405,7 +405,7 @@ mod tests {
         );
     }
 
-    // ========== p84_threshold ==========
+    // p84_threshold
 
     #[test]
     fn p84_threshold_none_below_min_samples() {
@@ -463,7 +463,7 @@ mod tests {
         );
     }
 
-    // ========== should_hedge ==========
+    // should_hedge
 
     #[test]
     fn should_hedge_false_below_min_samples() {
@@ -506,7 +506,7 @@ mod tests {
         assert!(c.should_hedge(Duration::from_millis(200)));
     }
 
-    // ========== reset ==========
+    // reset
 
     #[test]
     fn reset_clears_state() {
@@ -536,7 +536,7 @@ mod tests {
         assert_eq!(c.sample_count(), 1);
     }
 
-    // ========== 并发安全（Mutex 保证原子性） ==========
+    // 并发安全（Mutex 保证原子性）
 
     #[test]
     fn concurrent_record_latency_no_lost_updates() {
@@ -591,7 +591,7 @@ mod tests {
         );
     }
 
-    // ========== ema_latency / std_dev 边界 ==========
+    // ema_latency / std_dev 边界
 
     #[test]
     fn ema_latency_none_on_empty_controller() {
@@ -616,7 +616,7 @@ mod tests {
         assert!(c.std_dev_ms().is_some());
     }
 
-    // ========== 收敛性 ==========
+    // 收敛性
 
     #[test]
     fn ema_reacts_to_recent_changes_faster_with_higher_alpha() {
@@ -651,7 +651,7 @@ mod tests {
         );
     }
 
-    // ========== 零延迟样本（边界） ==========
+    // 零延迟样本（边界）
 
     #[test]
     fn record_zero_latency_is_valid_sample() {

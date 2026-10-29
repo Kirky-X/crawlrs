@@ -28,7 +28,7 @@ const CSP_STRICT: &str = "default-src 'self'; script-src 'self'; style-src 'self
 /// Allows `img-src data:` for screenshot/preview responses
 const CSP_RELAXED: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 
-/// CSP 策略级别（SEC-006）
+/// CSP 策略级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CspPolicy {
     /// 严格 CSP — API 路由（禁止 `img-src data:`）
@@ -94,7 +94,7 @@ pub async fn security_headers_middleware(req: Request<Body>, next: Next) -> Resp
     );
 
     // Content-Security-Policy
-    // SEC-006: 根据请求路径选择 CSP 策略（API=Strict, SDK/preview=Relaxed）
+    // : 根据请求路径选择 CSP 策略（API=Strict, SDK/preview=Relaxed）
     let csp = CspPolicy::from_path(uri.path());
     response.headers_mut().insert(
         "content-security-policy",
@@ -288,7 +288,6 @@ mod tests {
     #[tokio::test]
     async fn test_hsts_header_present_for_https() {
         let app = test_router();
-        // Build an HTTPS URI
         let response = app
             .oneshot(
                 Request::builder()

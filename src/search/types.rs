@@ -63,7 +63,7 @@ impl EngineHealth {
 mod tests {
     use super::*;
 
-    // ========== SearchEngineType::name tests ==========
+    // SearchEngineType::name tests
 
     #[test]
     fn test_name_all_variants() {
@@ -76,7 +76,7 @@ mod tests {
         assert_eq!(SearchEngineType::Searxng.name(), "Searxng");
     }
 
-    // ========== SearchEngineType::from_name tests ==========
+    // SearchEngineType::from_name tests
 
     #[test]
     fn test_from_name_canonical() {
@@ -183,7 +183,7 @@ mod tests {
         }
     }
 
-    // ========== SearchEngineType trait derivations ==========
+    // SearchEngineType trait derivations
 
     #[test]
     fn test_search_engine_type_clone_copy() {
@@ -215,7 +215,7 @@ mod tests {
         }
     }
 
-    // ========== EngineHealth tests ==========
+    // EngineHealth tests
 
     #[test]
     fn test_engine_health_default_is_healthy() {

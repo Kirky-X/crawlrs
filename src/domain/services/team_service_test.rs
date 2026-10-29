@@ -333,9 +333,7 @@ async fn test_domain_blacklist_disabled_returns_allowed() {
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
 }
 
-// ============================================================
 // Additional tests for improved coverage
-// ============================================================
 
 /// Geo service mock that always returns an error
 #[derive(Debug, Clone)]
@@ -435,7 +433,7 @@ fn make_service(
     TeamService::new(geo, repo)
 }
 
-// ---- get_team_geo_restrictions ----
+// get_team_geo_restrictions
 
 #[tokio::test]
 async fn test_get_team_geo_restrictions_success_returns_config() {
@@ -479,7 +477,7 @@ async fn test_get_team_geo_restrictions_failure_falls_back_to_deny_all() {
     assert!(matches!(verdict, Ok(GeoRestrictionResult::Denied(_))));
 }
 
-// ---- validate_geographic_restriction: country not in allowed list ----
+// validate_geographic_restriction: country not in allowed list
 
 #[tokio::test]
 async fn test_validate_geographic_restriction_country_not_in_allowed_denies() {
@@ -513,7 +511,7 @@ async fn test_validate_geographic_restriction_country_not_in_allowed_denies() {
     }
 }
 
-// ---- validate_geographic_restriction: geo service error ----
+// validate_geographic_restriction: geo service error
 
 #[tokio::test]
 async fn test_validate_geographic_restriction_geo_service_error_propagates() {
@@ -542,7 +540,7 @@ async fn test_validate_geographic_restriction_geo_service_error_propagates() {
     );
 }
 
-// ---- validate_geographic_restriction: IP not in whitelist, then allowed by country ----
+// validate_geographic_restriction: IP not in whitelist, then allowed by country
 
 #[tokio::test]
 async fn test_ip_whitelist_no_match_then_country_allows() {
@@ -571,7 +569,7 @@ async fn test_ip_whitelist_no_match_then_country_allows() {
     );
 }
 
-// ---- validate_geographic_restriction: IP not in whitelist, then blocked by country ----
+// validate_geographic_restriction: IP not in whitelist, then blocked by country
 
 #[tokio::test]
 async fn test_ip_whitelist_no_match_then_country_blocks() {
@@ -601,7 +599,7 @@ async fn test_ip_whitelist_no_match_then_country_blocks() {
     }
 }
 
-// ---- validate_geographic_restriction: both allowed and blocked lists set ----
+// validate_geographic_restriction: both allowed and blocked lists set
 
 #[tokio::test]
 async fn test_both_allowed_and_blocked_countries_allowed_wins_for_unblocked() {
@@ -656,7 +654,7 @@ async fn test_both_allowed_and_blocked_blocked_wins_for_blocked_country() {
     }
 }
 
-// ---- IPv6 handling ----
+// IPv6 handling
 
 #[tokio::test]
 async fn test_ipv6_address_allowed_by_country() {
@@ -727,7 +725,7 @@ async fn test_ipv6_address_not_in_whitelist_blocked_by_country() {
     }
 }
 
-// ---- validate_domain_blacklist ----
+// validate_domain_blacklist
 
 #[tokio::test]
 async fn test_validate_domain_blacklist_no_blacklist_returns_allowed() {
@@ -878,7 +876,7 @@ async fn test_validate_domain_blacklist_url_input_extracts_host() {
     assert!(matches!(result, Ok(GeoRestrictionResult::Denied(_))));
 }
 
-// ---- TeamGeoRestrictions default ----
+// TeamGeoRestrictions default
 
 #[tokio::test]
 async fn test_team_geo_restrictictions_default_all_none() {
@@ -890,7 +888,7 @@ async fn test_team_geo_restrictictions_default_all_none() {
     assert!(default.domain_blacklist.is_none());
 }
 
-// ---- validate_geographic_restriction with invalid CIDR in whitelist ----
+// validate_geographic_restriction with invalid CIDR in whitelist
 
 #[tokio::test]
 async fn test_invalid_cidr_in_whitelist_falls_through_to_country_check() {
@@ -916,7 +914,7 @@ async fn test_invalid_cidr_in_whitelist_falls_through_to_country_check() {
     assert!(matches!(result, Ok(GeoRestrictionResult::Allowed)));
 }
 
-// ---- validate_geographic_restriction: no restrictions configured (all None) ----
+// validate_geographic_restriction: no restrictions configured (all None)
 
 #[tokio::test]
 async fn test_no_restrictions_configured_allows_all() {

@@ -43,7 +43,7 @@ use crawlrs::infrastructure::services::limiteron_service::{
     LimiteronService, RateLimitingConfig, StorageHandle,
 };
 
-// === Mock Task Repository ===
+// Mock Task Repository
 
 struct MockTaskRepository {
     tasks: Arc<std::sync::Mutex<HashMap<crawlrs::domain::id::Id, Task>>>,
@@ -192,7 +192,7 @@ impl TaskRepository for MockTaskRepository {
     }
 }
 
-// === Mock TasksBacklog Repository ===
+// Mock TasksBacklog Repository
 
 struct MockTasksBacklogRepository {
     backlogs: Arc<std::sync::Mutex<Vec<TasksBacklog>>>,
@@ -329,7 +329,7 @@ impl TasksBacklogRepository for MockTasksBacklogRepository {
     }
 }
 
-// === Mock Credits Repository ===
+// Mock Credits Repository
 
 struct MockCreditsRepository {
     balances: Arc<std::sync::Mutex<HashMap<crawlrs::domain::id::Id, i64>>>,
@@ -442,7 +442,7 @@ impl CreditsRepository for MockCreditsRepository {
     }
 }
 
-// === Helpers ===
+// Helpers
 
 fn make_test_task() -> Task {
     Task {
@@ -493,7 +493,7 @@ fn disabled_rate_config() -> RateLimitingConfig {
     config
 }
 
-// === Trait implementation compile-time checks ===
+// Trait implementation compile-time checks
 // These verify that LimiteronService implements all the domain traits.
 
 #[test]
@@ -526,7 +526,7 @@ fn test_limiteron_service_implements_composite_rate_limiting_service() {
     _assert_impl::<LimiteronService>();
 }
 
-// === Construction tests ===
+// Construction tests
 
 #[tokio::test]
 async fn test_new_with_default_config_succeeds() {
@@ -571,7 +571,7 @@ async fn test_new_preserves_config() {
     assert_eq!(cc_config.max_concurrent_per_team, 7);
 }
 
-// === RateLimitService delegation tests ===
+// RateLimitService delegation tests
 
 #[tokio::test]
 async fn test_check_rate_limit_disabled_returns_allowed() {
@@ -672,7 +672,7 @@ async fn test_cleanup_expired_rate_limits_returns_zero() {
     assert_eq!(result.unwrap(), 0);
 }
 
-// === ConcurrencyControlService delegation tests ===
+// ConcurrencyControlService delegation tests
 
 #[tokio::test]
 async fn test_check_team_concurrency_disabled_returns_allowed() {
@@ -916,7 +916,7 @@ async fn test_release_team_concurrency_slot_processes_backlog() {
     assert!(result.is_ok());
 }
 
-// === BacklogService delegation tests ===
+// BacklogService delegation tests
 
 #[tokio::test]
 async fn test_process_backlog_tasks_empty_returns_zero() {
@@ -996,7 +996,7 @@ async fn test_process_backlog_tasks_skips_expired_entries() {
     assert_eq!(result.unwrap(), 0);
 }
 
-// === QuotaService delegation tests ===
+// QuotaService delegation tests
 
 #[tokio::test]
 async fn test_get_quota_balance_returns_stored_balance() {
@@ -1200,7 +1200,7 @@ async fn test_check_and_deduct_quota_zero_amount_succeeds() {
     assert_eq!(balance, 100);
 }
 
-// === Composite RateLimitingService trait delegation tests ===
+// Composite RateLimitingService trait delegation tests
 // Verify that calling through the composite trait object dispatches to LimiteronService.
 
 #[tokio::test]

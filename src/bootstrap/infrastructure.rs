@@ -345,7 +345,7 @@ async fn init_dns_cache_service(settings: &Settings) -> Option<Arc<DnsCacheServi
 mod tests {
     use super::*;
 
-    // ========== init_http_client tests ==========
+    // init_http_client tests
 
     #[test]
     fn test_init_http_client_returns_ok_with_default_settings() {
@@ -382,7 +382,7 @@ mod tests {
         );
     }
 
-    // ========== init_oxcache tests ==========
+    // init_oxcache tests
 
     #[tokio::test]
     async fn test_init_oxcache_returns_ok_when_cache_disabled() {
@@ -401,7 +401,7 @@ mod tests {
         );
     }
 
-    // ========== testcontainers integration tests ==========
+    // testcontainers integration tests
     //
     // The following tests require Docker to be running on the host. They use
     // testcontainers to spin up ephemeral PostgreSQL containers,
@@ -467,7 +467,7 @@ mod tests {
             .expect("pool should be created");
         // Verify the Arc strong count is at least 1.
         assert!(Arc::strong_count(&pool) >= 1);
-        // Verify inner() accessor returns a usable Arc<DbPool>.
+        // Verify inner accessor returns a usable Arc<DbPool>.
         let _inner: Arc<dbnexus::DbPool> = pool.inner().clone();
     }
 

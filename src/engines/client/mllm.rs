@@ -182,7 +182,6 @@ impl ScraperEngine for MllmEngine {
 
         let pool = self.get_pool()?;
 
-        // Wrap in timeout
         tokio::time::timeout(timeout_duration, async {
             // Acquire browser page
             let pooled_page = pool.acquire_page().await?;
@@ -205,7 +204,6 @@ impl ScraperEngine for MllmEngine {
                 .await
                 .map_err(|e| EngineError::BrowserError(format!("Navigation failed: {}", e)))?;
 
-            // Wait for initial page load
             tokio::time::sleep(Duration::from_millis(1500)).await;
 
             // Extract goal from URL or request context
@@ -227,7 +225,6 @@ impl ScraperEngine for MllmEngine {
                     break;
                 }
 
-                // Check timeout budget
                 let elapsed = start.elapsed();
                 if elapsed + Duration::from_secs(10) > timeout_duration {
                     warn!("MLLM engine approaching timeout for {}", request.url);

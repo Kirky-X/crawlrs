@@ -89,7 +89,6 @@ pub async fn create_crawl(
     let team_id = auth_state.team_id;
     let sync_wait_ms = payload.sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
 
-    // 验证 config 字段
     if payload.config.max_depth > 5 {
         return errors::unprocessable_entity("max_depth must be between 0 and 5");
     }
@@ -130,7 +129,6 @@ pub async fn create_crawl(
         }
     }
 
-    // 3. 检查配额
     if let Err(e) = state
         .rate_limiting_service
         .check_and_deduct_quota(
@@ -155,7 +153,6 @@ pub async fn create_crawl(
         .await
     {
         Ok(crawl) => {
-            // 处理同步等待
             let wait_result = if sync_wait_ms > 0 {
                 match state.task_repo.find_by_crawl_id(crawl.id).await {
                     Ok(tasks) => {

@@ -57,7 +57,7 @@ fn test_engine_error_retryable() {
     assert!(!EngineError::SsrfProtection("blocked".to_string()).is_retryable());
 }
 
-// === ScrapeRequest tests ===
+// ScrapeRequest tests
 
 #[test]
 fn test_scrape_request_new_default_options() {
@@ -96,7 +96,7 @@ fn test_scrape_request_chained_builders() {
     assert_eq!(request.options.timeout, Duration::from_secs(90));
 }
 
-// === ScrapeOptions tests ===
+// ScrapeOptions tests
 
 #[test]
 fn test_scrape_options_default() {
@@ -160,7 +160,7 @@ fn test_scrape_options_builder_skip_tls_false() {
     assert!(!options.skip_tls_verification);
 }
 
-// === HttpMethod tests ===
+// HttpMethod tests
 
 #[test]
 fn test_http_method_default() {
@@ -174,7 +174,7 @@ fn test_http_method_equality() {
     assert_ne!(HttpMethod::Get, HttpMethod::Post);
 }
 
-// === ScrollDirection tests ===
+// ScrollDirection tests
 
 #[test]
 fn test_scroll_direction_default() {
@@ -191,7 +191,7 @@ fn test_scroll_direction_equality() {
     assert_ne!(ScrollDirection::Bottom, ScrollDirection::Top);
 }
 
-// === ScreenshotConfig tests ===
+// ScreenshotConfig tests
 
 #[test]
 fn test_screenshot_config_default() {
@@ -217,7 +217,7 @@ fn test_screenshot_config_equality() {
     assert_ne!(c1, c3);
 }
 
-// === ScrapeResponse tests ===
+// ScrapeResponse tests
 
 #[test]
 fn test_scrape_response_new() {
@@ -247,7 +247,7 @@ fn test_scrape_response_is_success_non_2xx() {
     assert!(!ScrapeResponse::new(500, "", "").is_success());
 }
 
-// === to_internal conversion tests ===
+// to_internal conversion tests
 
 #[test]
 fn test_to_internal_basic_fields() {
@@ -388,7 +388,7 @@ fn test_to_internal_page_actions() {
     }
 }
 
-// === InternalScrapeResponse::to_public tests ===
+// InternalScrapeResponse::to_public tests
 
 #[test]
 fn test_internal_response_to_public() {
@@ -488,7 +488,7 @@ fn test_scrape_response_captures_serde() {
     assert_eq!(captures[0]["body"], "{\"ok\":true}");
 }
 
-// === EngineError tests ===
+// EngineError tests
 
 #[test]
 fn test_engine_error_all_retryable_variants() {
@@ -546,7 +546,7 @@ fn test_engine_error_display() {
     assert_eq!(EngineError::Expired.to_string(), "Request expired");
 }
 
-// === EngineHealthStatus tests ===
+// EngineHealthStatus tests
 
 #[test]
 fn test_engine_health_status_default() {
@@ -571,7 +571,7 @@ fn test_engine_health_status_equality() {
     assert_ne!(EngineHealthStatus::Healthy, unavailable);
 }
 
-// === EngineClient tests ===
+// EngineClient tests
 
 #[test]
 fn test_engine_client_new() {
@@ -626,7 +626,7 @@ async fn test_engine_client_scrape_rejects_invalid_scheme() {
     assert!(result.is_err());
 }
 
-// === convert_error tests ===
+// convert_error tests
 
 #[test]
 fn test_convert_error_request_failed() {
@@ -727,7 +727,7 @@ fn test_convert_error_internal() {
     }
 }
 
-// === PageAction tests ===
+// PageAction tests
 
 #[test]
 fn test_page_action_variants() {
@@ -765,7 +765,7 @@ fn test_page_action_variants() {
     }
 }
 
-// === is_retryable comprehensive tests ===
+// is_retryable comprehensive tests
 
 #[test]
 fn test_engine_error_is_retryable_all_variants() {
@@ -782,7 +782,7 @@ fn test_engine_error_is_retryable_all_variants() {
     assert!(!EngineError::Other("err".to_string()).is_retryable());
 }
 
-// === retry_reason() tests ===
+// retry_reason tests
 
 #[test]
 fn test_retry_reason_antibot_detected_maps_to_antibot() {
@@ -808,7 +808,7 @@ fn test_retry_reason_transient_errors_map_to_transient() {
 
 #[test]
 fn test_retry_reason_non_retryable_errors_map_to_transient_placeholder() {
-    // 不可重试错误返回 Transient 占位（调用方应先查 is_retryable()）
+    // 不可重试错误返回 Transient 占位（调用方应先查 is_retryable）
     assert_eq!(
         EngineError::NoEnginesAvailable.retry_reason(),
         RetryReason::Transient
@@ -851,7 +851,7 @@ fn test_convert_error_antibot_detected_passthrough() {
     }
 }
 
-// === EngineError::FeatureToggle tests ===
+// EngineError::FeatureToggle tests
 
 #[test]
 fn test_feature_toggle_is_retryable() {
@@ -893,7 +893,7 @@ fn test_feature_toggle_distinct_from_other_reasons() {
     assert_ne!(ft_err.retry_reason(), tr_err.retry_reason());
 }
 
-// === to_public conversion tests ===
+// to_public conversion tests
 
 #[test]
 fn test_to_public_basic_fields() {
@@ -960,7 +960,7 @@ fn test_to_public_empty_content() {
     assert_eq!(public.final_url, Some(String::new()));
 }
 
-// === EngineClient method tests ===
+// EngineClient method tests
 
 #[test]
 fn test_engine_client_engine_count_zero() {
@@ -975,7 +975,7 @@ fn test_engine_client_registered_engines_empty() {
     assert!(engines.is_empty());
 }
 
-// === Mock EngineRouter for scrape/health_check tests ===
+// Mock EngineRouter for scrape/health_check tests
 
 use crate::engines::router::EngineStats;
 use async_trait::async_trait;
@@ -1056,7 +1056,7 @@ impl EngineRouterTrait for MockEngineRouter {
     }
 }
 
-// === EngineClient::scrape success path ===
+// EngineClient::scrape success path
 
 #[tokio::test]
 async fn test_engine_client_scrape_success() {
@@ -1075,7 +1075,7 @@ async fn test_engine_client_scrape_success() {
     assert_eq!(response.final_url, Some("https://example.com".to_string()));
 }
 
-// === EngineClient::scrape SSRF rejection ===
+// EngineClient::scrape SSRF rejection
 
 #[tokio::test]
 async fn test_engine_client_scrape_ssrf_rejected() {
@@ -1093,7 +1093,7 @@ async fn test_engine_client_scrape_ssrf_rejected() {
     }
 }
 
-// === EngineClient::scrape router error propagation ===
+// EngineClient::scrape router error propagation
 
 /// 走 `client.scrape` 且需**通过 SSRF 校验**抵达 mock router 的用例统一使用该公网 IP
 /// 字面量：SSRF 对 IP 直判公网、免 DNS 解析，避免 `example.com` 依赖活体 DNS 造成的
@@ -1116,7 +1116,7 @@ async fn test_engine_client_scrape_router_error() {
     }
 }
 
-// === EngineClient::scrape no engines available error ===
+// EngineClient::scrape no engines available error
 
 #[tokio::test]
 async fn test_engine_client_scrape_no_engines_error() {
@@ -1136,7 +1136,7 @@ async fn test_engine_client_scrape_no_engines_error() {
     }
 }
 
-// === EngineClient::with_engines ===
+// EngineClient::with_engines
 
 #[test]
 fn test_engine_client_with_engines() {
@@ -1172,7 +1172,7 @@ fn test_engine_client_with_engines() {
     assert_eq!(client.registered_engines(), vec!["mock-engine".to_string()]);
 }
 
-// === EngineClientTrait trait impl tests ===
+// EngineClientTrait trait impl tests
 
 #[tokio::test]
 async fn test_engine_client_trait_scrape_success() {
@@ -1212,7 +1212,7 @@ fn test_engine_client_trait_engine_count_and_registered_engines() {
     assert_eq!(client.registered_engines(), vec!["mock-engine".to_string()]);
 }
 
-// === skip_tls_verification branch coverage ===
+// skip_tls_verification branch coverage
 // Tests all branches: development (allow), production (deny), prod (deny), false (no-op).
 
 #[test]
@@ -1262,7 +1262,7 @@ fn test_skip_tls_verification_all_branches() {
     std::env::remove_var("CRAWLRS_ENV");
 }
 
-// === ScrapeOptions builder with all remaining fields ===
+// ScrapeOptions builder with all remaining fields
 
 #[test]
 fn test_scrape_options_builder_body_sync_wait_tls_fingerprint() {
@@ -1279,14 +1279,14 @@ fn test_scrape_options_builder_body_sync_wait_tls_fingerprint() {
     assert!(options.use_fire_engine);
 }
 
-// === HttpMethod default test ===
+// HttpMethod default test
 
 #[test]
 fn test_http_method_default_is_get() {
     assert_eq!(HttpMethod::default(), HttpMethod::Get);
 }
 
-// === ScrollDirection tests ===
+// ScrollDirection tests
 
 #[test]
 fn test_scroll_direction_default_is_down() {
@@ -1302,7 +1302,7 @@ fn test_scroll_direction_variants() {
     assert_ne!(ScrollDirection::Down, ScrollDirection::Up);
 }
 
-// === EngineClient Clone ===
+// EngineClient Clone
 
 #[test]
 fn test_engine_client_clone() {
@@ -1312,7 +1312,7 @@ fn test_engine_client_clone() {
     assert_eq!(client.registered_engines(), cloned.registered_engines());
 }
 
-// === ScraperEngine trait default method coverage ===
+// ScraperEngine trait default method coverage
 
 #[test]
 fn test_scraper_engine_default_supports_tls_fingerprint_returns_false() {
@@ -1352,7 +1352,7 @@ fn test_scraper_engine_default_supports_tls_fingerprint_returns_false() {
     );
 }
 
-// === EngineClient::health_check Degraded/Unavailable branch coverage ===
+// EngineClient::health_check Degraded/Unavailable branch coverage
 // The public constructors (new / with_router / with_engines) all build the
 // internal health_monitor with either an empty engine list or an empty
 // health_monitor, so the Degraded/Unavailable branches of health_check
@@ -1520,7 +1520,7 @@ async fn test_engine_client_health_check_returns_unavailable() {
     }
 }
 
-// === session_id 校验测试 ===
+// session_id 校验测试
 
 #[test]
 fn test_validate_session_id_accepts_normal_string() {

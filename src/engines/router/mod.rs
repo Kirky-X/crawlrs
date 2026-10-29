@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 pub use crate::engines::router_metrics::{EngineStats, RouterMetrics};
 
-// === Section: EngineRouterTrait Definition ===
+// Section: EngineRouterTrait Definition
 
 /// Trait for EngineRouter - enables dependency injection
 #[async_trait::async_trait]
@@ -112,7 +112,7 @@ pub struct EngineRouter {
     race_mode_enabled: bool,
     /// 动态阈值因子 (根据历史数据调整)
     dynamic_threshold_factor: f64,
-    /// UA 池（原在 route() 内每请求 UaPool::new() 分配 44 个 profile）
+    /// UA 池（原在 route 内每请求 UaPool::new 分配 44 个 profile）
     ///
     /// UaPool 内部全 `&'static str`，构造后只读，可安全跨线程共享（Send+Sync 自动派生）。
     /// 用 `Arc` 是因为 `EngineRouter` 本身可能被 Clone 共享。
@@ -304,18 +304,15 @@ impl EngineRouter {
     fn update_engine_stats(&self, engine_name: &str, success: bool, response_time: Duration) {
         // DashMap::get_mut 返回 RefMut guard，作用域结束自动释放
         if let Some(mut stat) = self.engine_stats.get_mut(engine_name) {
-            // 更新成功率
             let alpha = 0.1; // 平滑因子
             let current_success = if success { 1.0 } else { 0.0 };
             stat.success_rate = stat.success_rate * (1.0 - alpha) + current_success * alpha;
 
-            // 更新平均响应时间
             let current_avg_ns = stat.avg_response_time.as_nanos() as f64;
             let response_ns = response_time.as_nanos() as f64;
             let new_avg_ns = current_avg_ns * (1.0 - alpha) + response_ns * alpha;
             stat.avg_response_time = Duration::from_nanos(new_avg_ns as u64);
 
-            // 更新使用信息
             stat.last_used = Some(Instant::now());
             stat.usage_count += 1;
         }

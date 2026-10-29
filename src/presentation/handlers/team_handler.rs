@@ -37,10 +37,8 @@ pub async fn get_team_info(
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
 
-    // 获取积分余额
     let credits_balance = credits_repo.get_balance(team_id).await.unwrap_or(0);
 
-    // 获取任务统计
     let total_tasks = task_repo
         .find_by_crawl_id(team_id)
         .await
@@ -80,10 +78,8 @@ pub async fn get_team_usage(
 ) -> impl IntoResponse {
     let team_id = auth_state.team_id;
 
-    // 获取积分余额
     let credits_balance = credits_repo.get_balance(team_id).await.unwrap_or(0);
 
-    // 获取团队平均响应时间
     let avg_response_time_ms: f64 = scrape_result_repo
         .get_team_avg_response_time(team_id)
         .await
@@ -155,7 +151,6 @@ where
         Err(ref rej) => return json_rejection_response(rej),
     };
     let team_id = auth_state.team_id;
-    // 验证请求数据
     if let Some(ref countries) = request.allowed_countries {
         for country in countries {
             if country.len() != 2 {
@@ -180,7 +175,6 @@ where
         }
     }
 
-    // 验证IP白名单格式
     if let Some(ref whitelist) = request.ip_whitelist {
         for ip in whitelist {
             if !is_valid_ip_or_cidr(ip) {
@@ -236,7 +230,6 @@ where
 
 /// 验证IP地址或CIDR表示法格式
 fn is_valid_ip_or_cidr(input: &str) -> bool {
-    // 检查是否是有效的IP地址
     if input.parse::<std::net::IpAddr>().is_ok() {
         return true;
     }
@@ -262,7 +255,7 @@ mod tests {
     use super::*;
     use sdforge::validator::Validate;
 
-    // ========== is_valid_ip_or_cidr tests ==========
+    // is_valid_ip_or_cidr tests
 
     #[test]
     fn test_is_valid_ipv4_address() {
@@ -339,7 +332,7 @@ mod tests {
         assert!(!is_valid_ip_or_cidr("not-ip/24"));
     }
 
-    // ========== TeamInfoResponse serialization ==========
+    // TeamInfoResponse serialization
 
     #[test]
     fn test_team_info_response_serialization() {
@@ -386,7 +379,7 @@ mod tests {
         assert_eq!(parsed["credits_balance"], -100);
     }
 
-    // ========== TeamUsageResponse serialization ==========
+    // TeamUsageResponse serialization
 
     #[test]
     fn test_team_usage_response_serialization() {
@@ -449,7 +442,7 @@ mod tests {
         assert_eq!(dto.credits_balance, 100);
     }
 
-    // ========== is_valid_ip_or_cidr additional edge cases ==========
+    // is_valid_ip_or_cidr additional edge cases
 
     #[test]
     fn test_is_valid_loopback_ipv4() {
@@ -579,14 +572,14 @@ mod tests {
         let _ = is_valid_ip_or_cidr("192.168.001.001");
     }
 
-    // ========== Country code validation logic (mirrors handler lines 152-174) ==========
+    // Country code validation logic (mirrors handler lines 152-174)
 
     #[test]
     fn test_country_code_validation_two_letter_passes() {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // Handler: if country.len() != 2 { return error }
+        // Handler: if country.len != 2 { return error }
         let countries = vec!["US".to_string(), "CN".to_string(), "JP".to_string()];
         for country in &countries {
             assert_eq!(country.len(), 2, "country code should be 2 letters");
@@ -634,7 +627,7 @@ mod tests {
         );
     }
 
-    // ========== TeamGeoRestrictionsResponse construction ==========
+    // TeamGeoRestrictionsResponse construction
 
     #[test]
     fn test_team_geo_restrictions_response_with_data() {
@@ -682,7 +675,7 @@ mod tests {
         assert!(parsed["domain_blacklist"].is_null());
     }
 
-    // ========== UpdateTeamGeoRestrictionsRequest deserialization ==========
+    // UpdateTeamGeoRestrictionsRequest deserialization
 
     #[test]
     fn test_update_geo_restrictions_request_minimal() {
@@ -775,7 +768,7 @@ mod tests {
         assert!(req.validate().is_ok());
     }
 
-    // ========== TeamInfoResponse clone and debug ==========
+    // TeamInfoResponse clone and debug
 
     #[test]
     fn test_team_info_response_clone() {
@@ -817,7 +810,7 @@ mod tests {
         assert!(debug.contains("Debug Test"));
     }
 
-    // ========== TeamUsageResponse clone and debug ==========
+    // TeamUsageResponse clone and debug
 
     #[test]
     fn test_team_usage_response_clone() {
@@ -873,7 +866,7 @@ mod tests {
         assert_eq!(response.avg_response_time_ms, 99.9);
     }
 
-    // ========== TeamInfoResponse with extreme values ==========
+    // TeamInfoResponse with extreme values
 
     #[test]
     fn test_team_info_response_max_balance() {
@@ -913,7 +906,7 @@ mod tests {
         assert_eq!(parsed["credits_balance"], i64::MIN);
     }
 
-    // ========== IP whitelist validation logic (mirrors handler lines 177-187) ==========
+    // IP whitelist validation logic (mirrors handler lines 177-187)
 
     #[test]
     fn test_ip_whitelist_validation_all_valid() {
@@ -955,7 +948,7 @@ mod tests {
         assert!(all_invalid, "All entries should be invalid");
     }
 
-    // ========== TeamGeoRestrictions construction (domain type used in handler) ==========
+    // TeamGeoRestrictions construction (domain type used in handler)
 
     #[test]
     fn test_team_geo_restrictions_disabled() {
@@ -989,7 +982,7 @@ mod tests {
         assert_eq!(restrictions.blocked_countries.as_ref().unwrap().len(), 1);
     }
 
-    // ========== Handler test infrastructure ==========
+    // Handler test infrastructure
 
     use crate::domain::auth::ApiKeyScope;
     use crate::domain::models::{
@@ -1037,8 +1030,6 @@ mod tests {
         let dir = format!("{}/locales", env!("CARGO_MANIFEST_DIR"));
         Arc::new(crate::i18n::I18nBundle::load("en-US", &["en-US", "zh-CN"], &dir).unwrap())
     }
-
-    // ========== MockCreditsRepository ==========
 
     struct MockCreditsRepository {
         balance: i64,
@@ -1113,8 +1104,6 @@ mod tests {
             Ok(0)
         }
     }
-
-    // ========== MockTaskRepository ==========
 
     struct MockTaskRepository {
         find_by_crawl_id_result: Mutex<Option<Result<Vec<Task>, RepositoryError>>>,
@@ -1249,8 +1238,6 @@ mod tests {
         }
     }
 
-    // ========== MockScrapeResultRepository ==========
-
     struct MockScrapeResultRepository {
         avg_response_time: f64,
         should_fail: bool,
@@ -1306,8 +1293,6 @@ mod tests {
             Ok(0)
         }
     }
-
-    // ========== MockGeoRestrictionRepository ==========
 
     struct MockGeoRestrictionRepository {
         get_result: Mutex<Option<Result<TeamGeoRestrictions, GeoRestrictionRepositoryError>>>,
@@ -1391,7 +1376,7 @@ mod tests {
         }
     }
 
-    // ========== get_team_info handler tests ==========
+    // get_team_info handler tests
 
     #[tokio::test]
     async fn test_get_team_info_success() {
@@ -1456,7 +1441,7 @@ mod tests {
         .await
         .into_response();
 
-        // find_by_crawl_id failure uses unwrap_or_default() → response still OK
+        // find_by_crawl_id failure uses unwrap_or_default → response still OK
         assert_eq!(response.status(), StatusCode::OK);
     }
 
@@ -1491,7 +1476,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    // ========== get_team_usage handler tests ==========
+    // get_team_usage handler tests
 
     #[tokio::test]
     async fn test_get_team_usage_success() {
@@ -1582,7 +1567,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    // ========== get_team_geo_restrictions handler tests ==========
+    // get_team_geo_restrictions handler tests
 
     #[tokio::test]
     async fn test_get_team_geo_restrictions_success() {
@@ -1671,7 +1656,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    // ========== update_team_geo_restrictions handler tests ==========
+    // update_team_geo_restrictions handler tests
 
     #[tokio::test]
     async fn test_update_team_geo_restrictions_success() {
@@ -1910,12 +1895,12 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    // ========== Test logger for covering log::error! format args ==========
+    // Test logger for covering log::error! format args
 
     use crate::test_utils::ensure_debug_logger;
     use axum::body::to_bytes;
 
-    // ========== Error response body verification tests ==========
+    // Error response body verification tests
 
     #[tokio::test]
     async fn test_get_team_geo_restrictions_failure_body_verified() {

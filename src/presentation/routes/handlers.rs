@@ -153,7 +153,6 @@ pub async fn readiness_check(
     let mut details = serde_json::Map::new();
     let mut all_ready = true;
 
-    // Check PostgreSQL
     let db_check = async {
         let session = db_pool
             .get_session("system")
@@ -181,7 +180,6 @@ pub async fn readiness_check(
     };
     details.insert("database".to_string(), db_status);
 
-    // Check cache
     let cache_check = async {
         cache_service
             .get("__readiness_probe__")

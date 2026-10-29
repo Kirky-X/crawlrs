@@ -80,9 +80,9 @@ pub use self::tab_pool::TabPool;
 /// （无生产代码使用，避免误导用户继续使用旧 API）。
 ///
 /// 使用方式：
-/// - `FlareSolverrEngine::new()` — Full 模式（原 FlareSolverrEngine）
-/// - `FlareSolverrEngine::with_cdp_mode()` — Cdp 模式（原 FireEngineCdp）
-/// - `FlareSolverrEngine::with_tls_mode()` — Tls 模式（原 FireEngineTls）
+/// - `FlareSolverrEngine::new` — Full 模式（原 FlareSolverrEngine）
+/// - `FlareSolverrEngine::with_cdp_mode` — Cdp 模式（原 FireEngineCdp）
+/// - `FlareSolverrEngine::with_tls_mode` — Tls 模式（原 FireEngineTls）
 #[cfg(feature = "engine-flaresolverr")]
 pub use self::flare_solverr::{
     FlareSolverrConfig, FlareSolverrEngine, FlareSolverrEngineBuilder, FlareSolverrMode,

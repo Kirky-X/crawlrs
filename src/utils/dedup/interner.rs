@@ -94,7 +94,7 @@ impl UrlInterner {
     #[inline]
     pub fn insert(&mut self, url: impl AsRef<str>) {
         let url_ref = url.as_ref();
-        // 阈值用 HashSet 精确长度而非 bloom.len()（后者计每次 insert 调用，
+        // 阈值用 HashSet 精确长度而非 bloom.len（后者计每次 insert 调用，
         // 重复插入/remove 流量下会提前触发多余重建）。溢出安全：usize 下安全。
         if self.links_visited.len() * 10 >= self.bloom.capacity() * 9 {
             self.rebuild_bloom_scaled();

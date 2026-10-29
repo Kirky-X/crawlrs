@@ -9,7 +9,7 @@
 
 use chrono::{DateTime, Utc};
 
-// ========== URL validation ==========
+// URL validation
 
 /// Validate that a URL is non-empty and starts with `http://` or `https://`.
 ///
@@ -30,7 +30,7 @@ pub fn validate_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-// ========== Team name validation ==========
+// Team name validation
 
 /// Validate that a team name is non-empty and within length limits.
 ///
@@ -51,7 +51,7 @@ pub fn validate_team_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-// ========== Task state checks ==========
+// Task state checks
 
 /// Check whether a task can be retried based on its retry count and maximum.
 ///
@@ -87,7 +87,7 @@ pub fn is_task_locked(
     lock_token.is_some() && lock_expires_at.is_some_and(|expires_at| Utc::now() < expires_at)
 }
 
-// ========== Credits checks ==========
+// Credits checks
 
 /// Check whether a credits balance is sufficient for a given amount.
 ///
@@ -99,7 +99,7 @@ pub fn has_sufficient_balance(balance: i64, amount: i64) -> bool {
     balance >= amount
 }
 
-// ========== Webhook retry check ==========
+// Webhook retry check
 
 /// Check whether a webhook delivery can be retried.
 ///
@@ -111,7 +111,7 @@ pub fn can_webhook_retry(attempt_count: i32, max_retries: i32) -> bool {
     attempt_count < max_retries
 }
 
-// ========== Crawl status checks ==========
+// Crawl status checks
 
 /// Check whether a crawl is in a finished state (completed, failed, or cancelled).
 ///
@@ -127,7 +127,7 @@ mod tests {
     use super::*;
     use chrono::Duration;
 
-    // ========== validate_url ==========
+    // validate_url
 
     #[test]
     fn test_validate_url_valid_http() {
@@ -158,7 +158,7 @@ mod tests {
         assert!(validate_url("ftp://example.com").is_err());
     }
 
-    // ========== validate_team_name ==========
+    // validate_team_name
 
     #[test]
     fn test_validate_team_name_valid() {
@@ -186,7 +186,7 @@ mod tests {
         assert!(validate_team_name(&max_name).is_ok());
     }
 
-    // ========== can_task_retry ==========
+    // can_task_retry
 
     #[test]
     fn test_can_task_retry_under_limit() {
@@ -209,7 +209,7 @@ mod tests {
         assert!(!can_task_retry(0, 0));
     }
 
-    // ========== is_task_expired ==========
+    // is_task_expired
 
     #[test]
     fn test_is_task_expired_none() {
@@ -228,7 +228,7 @@ mod tests {
         assert!(is_task_expired(past));
     }
 
-    // ========== is_task_locked ==========
+    // is_task_locked
 
     #[test]
     fn test_is_task_locked_no_token() {
@@ -250,7 +250,7 @@ mod tests {
         assert!(!is_task_locked(token, expires));
     }
 
-    // ========== has_sufficient_balance ==========
+    // has_sufficient_balance
 
     #[test]
     fn test_has_sufficient_balance_enough() {
@@ -269,7 +269,7 @@ mod tests {
         assert!(!has_sufficient_balance(0, 1));
     }
 
-    // ========== can_webhook_retry ==========
+    // can_webhook_retry
 
     #[test]
     fn test_can_webhook_retry_under_limit() {
@@ -282,7 +282,7 @@ mod tests {
         assert!(!can_webhook_retry(3, 3));
     }
 
-    // ========== is_crawl_finished ==========
+    // is_crawl_finished
 
     #[test]
     fn test_is_crawl_finished_completed() {

@@ -236,7 +236,6 @@ impl RobotsChecker {
         let cache_key = format!("robots_cache:{}", robots_url);
         if let Some(ref cache_service) = self.cache_service {
             if let Ok(Some(content)) = cache_service.get(&cache_key).await {
-                // Update memory cache
                 let mut cache = self.memory_cache.lock().await;
                 cache.insert(
                     robots_url.clone(),
@@ -431,7 +430,7 @@ mod tests {
     use super::*;
     use crate::infrastructure::security::ssrf::SsrfError;
 
-    // ========== CacheStats tests ==========
+    // CacheStats tests
 
     #[test]
     fn test_cache_stats_default_is_zero() {
@@ -514,7 +513,7 @@ mod tests {
         assert_eq!(stats_b.misses(), 1, "stats_b should have 1 miss");
     }
 
-    // ========== RobotsCheckerError Display tests ==========
+    // RobotsCheckerError Display tests
 
     #[test]
     fn test_robots_checker_error_cache_lock_display() {
@@ -540,7 +539,7 @@ mod tests {
         assert!(msg.contains("invalid input"));
     }
 
-    // ========== From<SsrfError> tests ==========
+    // From<SsrfError> tests
 
     #[test]
     fn test_from_ssrf_error_converts_to_validation_error() {
@@ -574,7 +573,7 @@ mod tests {
         }
     }
 
-    // ========== impl_basic_error_conversions tests ==========
+    // impl_basic_error_conversions tests
 
     #[test]
     fn test_from_string_creates_validation_error() {
@@ -610,7 +609,7 @@ mod tests {
         }
     }
 
-    // ========== RobotsChecker construction & parse_crawl_delay tests ==========
+    // RobotsChecker construction & parse_crawl_delay tests
 
     fn make_checker() -> RobotsChecker {
         let http_client = Arc::new(reqwest::Client::new());
@@ -648,7 +647,7 @@ mod tests {
         assert_eq!(misses, 1);
     }
 
-    // ----- parse_crawl_delay tests -----
+    // parse_crawl_delay tests
 
     #[test]
     fn test_parse_crawl_delay_wildcard_agent() {

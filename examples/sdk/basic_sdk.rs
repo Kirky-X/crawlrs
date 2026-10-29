@@ -7,7 +7,7 @@
 //!
 //! sdforge 基于 axum + tower，通过过程宏自动生成路由注册代码：
 //! - `#[forge(...)]` 标记异步函数为端点处理函数
-//! - 通过 inventory 自动收集路由，`sdforge::http::build()` 返回 axum Router
+//! - 通过 inventory 自动收集路由，`sdforge::http::build` 返回 axum Router
 //! - `#[state]` 参数从 axum Extension 中注入依赖
 //!
 //! 本示例展示 API 用法，不启动服务器；如需运行服务器请参考主项目 main.rs。
@@ -22,9 +22,7 @@ use log::info;
 use sdforge::prelude::*;
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
 // DTO — 请求与响应类型
-// ============================================================================
 
 /// 创建用户请求
 #[derive(Debug, Deserialize)]
@@ -66,9 +64,7 @@ struct ListUsersResponse {
     total: u32,
 }
 
-// ============================================================================
 // 端点定义 — 通过 #[forge] 宏注册 HTTP 路由
-// ============================================================================
 
 /// 创建用户端点
 ///
@@ -155,9 +151,7 @@ async fn get_user(id: String) -> Result<UserResponse, ApiError> {
     })
 }
 
-// ============================================================================
 // 主函数 — 展示如何构建 SDK Router
-// ============================================================================
 
 #[tokio::main]
 async fn main() {
@@ -221,7 +215,6 @@ async fn main() {
     info!("📌 ApiError 自动实现 IntoResponse，转换为标准 HTTP 响应");
     info!("");
 
-    // 5. 构建 Router
     info!("5️⃣  构建 SDK Router");
     info!("-----------------------------");
     info!("📖 调用 sdforge::http::build() 收集所有 #[forge] 注册的端点");

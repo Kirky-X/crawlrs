@@ -93,7 +93,6 @@ impl SemanticChunker {
         let mut chunks = Vec::new();
         let mut chunk_id = 0;
 
-        // 收集顶层语义边界节点
         let boundary_nodes = self.collect_boundary_nodes(&document);
 
         if boundary_nodes.is_empty() {
@@ -238,7 +237,6 @@ impl SemanticChunker {
                 break;
             }
             path_parts.push(tag.to_string());
-            // 获取父元素
             current = el.parent().and_then(scraper::ElementRef::wrap);
             // 防止无限循环
             if path_parts.len() > 10 {
@@ -255,7 +253,7 @@ impl SemanticChunker {
     /// 使用 scraper 的 `text()` 方法提取所有文本节点，
     /// 然后过滤掉 script/style 内容（通过检查父标签）。
     fn extract_visible_text(&self, element: &scraper::ElementRef) -> String {
-        // scraper::ElementRef::text() 递归提取所有文本节点
+        // scraper::ElementRef::text 递归提取所有文本节点
         let texts: Vec<&str> = element.text().collect();
         let joined = texts.join(" ");
         // 去除多余空白
@@ -644,7 +642,7 @@ impl RagExtractionRuntime {
 mod tests {
     use super::*;
 
-    // === Mock Embedding Provider ===
+    // Mock Embedding Provider
 
     struct MockEmbeddingProvider {
         dims: usize,
@@ -676,7 +674,7 @@ mod tests {
         }
     }
 
-    // === 分块测试 ===
+    // 分块测试
 
     #[test]
     fn test_chunk_html_article_boundary() {
@@ -697,7 +695,6 @@ mod tests {
         let chunks = chunker.chunk_html(html).unwrap();
 
         assert!(!chunks.is_empty(), "should produce at least one chunk");
-        // 验证文本被提取
         let all_text: String = chunks
             .iter()
             .map(|c| c.text.as_str())
@@ -782,7 +779,7 @@ mod tests {
         // script/style 内容不应出现（traverse 会包含它们，但这是已知限制）
     }
 
-    // === 余弦相似度测试 ===
+    // 余弦相似度测试
 
     #[test]
     fn test_cosine_similarity_identical() {
@@ -824,7 +821,7 @@ mod tests {
         assert_eq!(cosine_similarity(&a, &b), 0.0);
     }
 
-    // === VectorStore 测试 ===
+    // VectorStore 测试
 
     #[test]
     fn test_vector_store_search() {
@@ -859,7 +856,7 @@ mod tests {
         );
     }
 
-    // === RagExtractionStrategy 集成测试 ===
+    // RagExtractionStrategy 集成测试
 
     #[tokio::test]
     async fn test_rag_index_and_retrieve() {

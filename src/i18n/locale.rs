@@ -26,8 +26,8 @@ const PROJ_LANG_ENV: &str = "CRAWLRS_LANG";
 /// # Examples
 /// ```ignore
 /// let locales = parse_accept_language("en-US,en;q=0.9,zh-CN;q=0.8");
-/// assert_eq!(locales.len(), 3);
-/// assert_eq!(locales[0].to_string(), "en-US");
+/// assert_eq!(locales.len, 3);
+/// assert_eq!(locales[0].to_string, "en-US");
 /// ```
 pub fn parse_accept_language(header: &str) -> Vec<Locale> {
     let mut locales: Vec<(Locale, f32)> = header
@@ -277,9 +277,7 @@ mod tests {
         assert_eq!(result.to_string(), "zh-CN");
     }
 
-    // =========================================================================
     // 系统语言检测链守卫测试（env 注入式纯函数，不触碰进程环境，并行安全）
-    // =========================================================================
 
     /// 空 env 的便捷构造
     fn no_env() -> impl Fn(&str) -> Option<String> {
@@ -409,9 +407,7 @@ mod tests {
         );
     }
 
-    // =========================================================================
     // 启动默认 locale 决议守卫测试
-    // =========================================================================
 
     #[test]
     fn test_resolve_startup_explicit_config_wins() {

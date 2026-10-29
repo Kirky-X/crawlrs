@@ -157,7 +157,6 @@ async fn main() {
     info!("   exclude: [\".pdf\", \".zip\", \".mp3\", \"*.xml\"]");
     info!("");
 
-    // 6. 过滤效果演示
     info!("6️⃣  过滤效果演示");
     info!("-----------------------------");
 
@@ -198,7 +197,6 @@ fn should_include(
     includes: &Option<Vec<String>>,
     excludes: &Option<Vec<String>>,
 ) -> bool {
-    // 检查排除
     if let Some(excl_patterns) = excludes {
         for pattern in excl_patterns {
             if matches_pattern(url, pattern) {
@@ -207,7 +205,6 @@ fn should_include(
         }
     }
 
-    // 检查包含
     if let Some(inc_patterns) = includes {
         if inc_patterns.is_empty() {
             return true;

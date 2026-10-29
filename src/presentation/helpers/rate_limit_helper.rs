@@ -38,7 +38,7 @@ use std::fmt::Display;
 ///
 /// # Returns
 ///
-/// * `Ok(())` - Rate limit check passed
+/// * `Ok()` - Rate limit check passed
 /// * `Err(Response)` - Rate limit exceeded, with appropriate error response
 // Err 载荷(axum Response)体积较大;1.98 result_large_err 提示,重构签名影响面大,
 // 此处显式豁免。

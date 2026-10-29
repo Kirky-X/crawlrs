@@ -73,7 +73,7 @@ pub trait EventBus: Send + Sync {
     ///
     /// # 返回
     ///
-    /// * `Ok(())` - 发布成功（即使无订阅者）
+    /// * `Ok()` - 发布成功（即使无订阅者）
     /// * `Err(EventBusError)` - 发布失败（channel 已关闭）
     fn publish(&self, event: DomainEvent) -> Result<(), EventBusError>;
 

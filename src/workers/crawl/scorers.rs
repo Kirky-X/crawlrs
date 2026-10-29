@@ -16,14 +16,12 @@ use url::Url;
 
 use super::{ScoringContext, UrlScorer};
 
-// =============================================================================
 // KeywordRelevanceScorer
-// =============================================================================
 
 /// 关键词相关性评分器
 ///
 /// 基于 [`ScoringContext::keywords`] 关键词列表，统计在 URL 中命中的比例。
-/// 命中判定为大小写不敏感的子串包含（`url.to_lowercase().contains(keyword)`）。
+/// 命中判定为大小写不敏感的子串包含（`url.to_lowercase.contains(keyword)`）。
 ///
 /// # 评分公式
 ///
@@ -44,8 +42,8 @@ use super::{ScoringContext, UrlScorer};
 /// ```ignore
 /// use crate::workers::crawl::{KeywordRelevanceScorer, ScoringContext, UrlScorer};
 ///
-/// let scorer = KeywordRelevanceScorer::new();
-/// let ctx = ScoringContext::new().with_keywords(vec!["rust".to_string(), "crawler".to_string()]);
+/// let scorer = KeywordRelevanceScorer::new;
+/// let ctx = ScoringContext::new.with_keywords(vec!["rust".to_string, "crawler".to_string]);
 /// assert_eq!(scorer.score("https://example.com/rust-crawler-guide", &ctx), 1.0);
 /// assert_eq!(scorer.score("https://example.com/rust-tutorial", &ctx), 0.5);
 /// assert_eq!(scorer.score("https://example.com/python-guide", &ctx), 0.0);
@@ -66,10 +64,9 @@ impl UrlScorer for KeywordRelevanceScorer {
         // 直接消费 iterator，避免 collect Vec<&String>
         // 原实现每次评分分配 Vec + 对每个 keyword 重复 to_ascii_lowercase
         //
-        // 优化：
         // 1. 用 iterator 直接 count total 与 matched，无 Vec 分配
         // 2. keyword 的 lowercase 在循环内一次性计算（无法在 ScoringContext 预缓存，
-        //    因 ScoringContext 是 trait 约束的输入参数，不能改其结构）
+        // 因 ScoringContext 是 trait 约束的输入参数，不能改其结构）
         let total = context.keywords.iter().filter(|kw| !kw.is_empty()).count();
         // 空关键词列表 → 中性 0.5（无法判定相关性）
         if total == 0 {
@@ -87,9 +84,7 @@ impl UrlScorer for KeywordRelevanceScorer {
     }
 }
 
-// =============================================================================
 // PathDepthScorer
-// =============================================================================
 
 /// 路径深度评分器
 ///
@@ -123,8 +118,8 @@ impl UrlScorer for KeywordRelevanceScorer {
 /// ```ignore
 /// use crate::workers::crawl::{PathDepthScorer, ScoringContext, UrlScorer};
 ///
-/// let scorer = PathDepthScorer::new();
-/// let ctx = ScoringContext::new();
+/// let scorer = PathDepthScorer::new;
+/// let ctx = ScoringContext::new;
 /// assert_eq!(scorer.score("https://example.com/", &ctx), 1.0);
 /// assert_eq!(scorer.score("https://example.com/blog", &ctx), 0.5);
 /// ```
@@ -163,9 +158,7 @@ impl UrlScorer for PathDepthScorer {
     }
 }
 
-// =============================================================================
 // CompositeScorer
-// =============================================================================
 
 /// 组合评分器
 ///
@@ -191,11 +184,11 @@ impl UrlScorer for PathDepthScorer {
 ///     ScoringContext, UrlScorer,
 /// };
 ///
-/// let scorer = CompositeScorer::new()
-///     .with_scorer(KeywordRelevanceScorer::new(), 0.7)
-///     .with_scorer(PathDepthScorer::new(), 0.3);
+/// let scorer = CompositeScorer::new
+///     .with_scorer(KeywordRelevanceScorer::new, 0.7)
+///     .with_scorer(PathDepthScorer::new, 0.3);
 ///
-/// let ctx = ScoringContext::new().with_keywords(vec!["rust".to_string()]);
+/// let ctx = ScoringContext::new.with_keywords(vec!["rust".to_string]);
 /// let score = scorer.score("https://example.com/rust", &ctx);
 /// assert!((0.0..=1.0).contains(&score));
 /// ```
@@ -280,7 +273,7 @@ mod tests {
     use super::*;
     use crate::workers::crawl::ScoringContext;
 
-    // ============ KeywordRelevanceScorer ============
+    // KeywordRelevanceScorer
 
     #[test]
     fn keyword_relevance_all_matched_returns_one() {
@@ -371,7 +364,7 @@ mod tests {
         assert!((score - 2.0 / 3.0).abs() < 1e-6);
     }
 
-    // ============ PathDepthScorer ============
+    // PathDepthScorer
 
     #[test]
     fn path_depth_root_returns_one() {
@@ -459,7 +452,7 @@ mod tests {
         assert!((score - 1.0 / 3.0).abs() < 1e-6);
     }
 
-    // ============ CompositeScorer ============
+    // CompositeScorer
 
     #[test]
     fn composite_empty_returns_neutral() {

@@ -159,7 +159,6 @@ pub async fn create_scrape(
         }
     }
 
-    // 3. 检查配额
     if let Err(e) = rate_limiting_service
         .check_and_deduct_quota(
             team_id,
@@ -265,7 +264,6 @@ pub async fn cancel_scrape(
                 return errors_locale::forbidden(&locale, &bundle, "api-access-denied");
             }
 
-            // Update task status to cancelled
             match repository.mark_cancelled(id).await {
                 Ok(_) => {
                     let response = CancelScrapeResponseDto {

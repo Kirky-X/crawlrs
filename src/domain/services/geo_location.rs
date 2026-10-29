@@ -80,7 +80,7 @@ pub trait GeoLocationService: Send + Sync {
 ///
 /// * `bool` - 如果IP在CIDR范围内返回true，否则返回false
 pub fn is_ip_in_cidr(ip: &IpAddr, cidr: &str) -> bool {
-    // use split_once instead of split().collect::<Vec>()
+    // use split_once instead of split.collect::<Vec>
     let (network_str, prefix_str) = match cidr.split_once('/') {
         Some(pair) => pair,
         None => return false,
@@ -136,14 +136,12 @@ fn is_ipv6_in_cidr(ip: &Ipv6Addr, network: &Ipv6Addr, prefix_length: u8) -> bool
     let full_segments = prefix_length / 16;
     let remaining_bits = prefix_length % 16;
 
-    // 检查完整的段
     for i in 0..full_segments.min(8) {
         if ip_segments[i as usize] != network_segments[i as usize] {
             return false;
         }
     }
 
-    // 检查剩余的位
     if remaining_bits > 0 && full_segments < 8 {
         let mask = (!0u16) << (16 - remaining_bits);
         if (ip_segments[full_segments as usize] & mask)
@@ -207,9 +205,9 @@ mod tests {
     #[test]
     fn test_is_ip_in_cidr_invalid_format_returns_false() {
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
-        // No slash → parts.len() != 2
+        // No slash → parts.len != 2
         assert!(!is_ip_in_cidr(&ip, "192.168.1.0"));
-        // Unparsable network address → parse::<IpAddr>() fails → _ => false
+        // Unparsable network address → parse::<IpAddr> fails → _ => false
         assert!(!is_ip_in_cidr(&ip, "not-an-ip/24"));
     }
 

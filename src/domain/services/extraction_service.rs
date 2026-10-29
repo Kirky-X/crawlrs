@@ -247,7 +247,7 @@ impl ExtractionService {
     }
 }
 
-/// 从 JSON schema 派生检索 query：收集 description 与（嵌套一层的）属性名
+/// 从 JSON schema 派生检索 query：收集 description 与（嵌套一层）属性名
 ///
 /// 检索语义只需要主题词级别，不做完整 schema 序列化——过长的 schema 文本
 /// 会稀释嵌入向量的主题性。
@@ -414,7 +414,7 @@ impl ExtractionService {
                 };
 
                 // 2. LLM Interaction（经 with_provenance 入口：按各自开关接入 F8 分块
-                //    与 F9 溯源；双开关关闭时等价原 extract_data 单发路径）
+                // 与 F9 溯源；双开关关闭时等价原 extract_data 单发路径）
                 match self
                     .llm_service
                     .extract_data_with_provenance(&content_to_process, &schema, format)
@@ -484,7 +484,6 @@ impl ExtractionService {
 
     fn collect_clean_text(node: scraper::ElementRef, text_parts: &mut Vec<String>) {
         let name = node.value().name();
-        // 过滤常见的噪音标签
         if name == "script"
             || name == "style"
             || name == "nav"
@@ -536,8 +535,6 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
-
-    // ========== MockLLMService ==========
 
     /// Mock LLM service for testing ExtractionService without real HTTP calls.
     struct MockLLMService {
@@ -661,7 +658,7 @@ mod tests {
         }
     }
 
-    // ========== ExtractableRule impl ==========
+    // ExtractableRule impl
 
     #[test]
     fn test_extractable_rule_selector_with_value() {
@@ -705,7 +702,7 @@ mod tests {
         assert_eq!(r.description(), "");
     }
 
-    // ========== Validate impl ==========
+    // Validate impl
 
     #[test]
     fn test_extraction_rule_validate_always_ok() {
@@ -719,7 +716,7 @@ mod tests {
         assert!(r.validate().is_ok());
     }
 
-    // ========== ExtractionService::new ==========
+    // ExtractionService::new
 
     #[test]
     fn test_extraction_service_new_creates_instance() {
@@ -727,7 +724,7 @@ mod tests {
         let _service = ExtractionService::new(Arc::new(mock));
     }
 
-    // ========== extract_with_selectors (static CSS extraction) ==========
+    // extract_with_selectors (static CSS extraction)
 
     #[test]
     fn test_extract_with_selectors_single_text_element() {
@@ -1005,7 +1002,7 @@ mod tests {
         assert!(result.as_object().unwrap().is_empty());
     }
 
-    // ========== extract (trait method → extract_data) ==========
+    // extract (trait method → extract_data)
 
     #[tokio::test]
     async fn test_extract_css_only_rules() {
@@ -1361,7 +1358,7 @@ mod tests {
         assert!(result.get("bad").is_none());
     }
 
-    // ========== extract_with_schema ==========
+    // extract_with_schema
 
     #[tokio::test]
     async fn test_extract_with_schema_calls_llm_with_clean_text() {
@@ -1420,7 +1417,7 @@ mod tests {
         assert!(msg.contains("schema extraction failed"));
     }
 
-    // ========== extract_with_rag_auto ==========
+    // extract_with_rag_auto
 
     use crate::domain::services::rag_strategy::{ChunkerConfig, EmbeddingProvider};
 
@@ -1597,7 +1594,7 @@ mod tests {
         assert!(schema_query(&schema).contains("title"));
     }
 
-    // ========== get_clean_text ==========
+    // get_clean_text
 
     #[test]
     fn test_get_clean_text_strips_script_tags() {
@@ -1702,7 +1699,7 @@ mod tests {
         assert!(!text.contains("window.location"));
     }
 
-    // ========== extract_element_value (indirectly tested via extract_with_selectors) ==========
+    // extract_element_value (indirectly tested via extract_with_selectors)
 
     #[test]
     fn test_extract_element_value_text_fallback_when_no_attr() {
@@ -1736,7 +1733,7 @@ mod tests {
         assert_eq!(result["href"], Value::Null);
     }
 
-    // ========== extract (async) CSS selector branch coverage ==========
+    // extract (async) CSS selector branch coverage
 
     #[tokio::test]
     async fn test_extract_async_array_text_extraction() {

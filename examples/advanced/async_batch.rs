@@ -51,7 +51,6 @@ async fn main() {
         });
     }
 
-    // 3. 收集结果
     let mut success_count = 0usize;
     let mut fail_count = 0usize;
 

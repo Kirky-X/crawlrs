@@ -86,7 +86,6 @@ impl BingSearchEngine {
             _ => return url.to_string(),
         };
 
-        // Add padding if needed
         let padding = "=".repeat((4 - encoded.len() % 4) % 4);
         let padded_encoded = format!("{}{}", encoded, padding);
 
@@ -230,7 +229,7 @@ impl SearchEngine for BingSearchEngine {
         );
 
         // 构建请求头
-        // 参考 searxng/searx/engines/bing.py fetch_traits()：
+        // 参考 searxng/searx/engines/bing.py fetch_traits：
         // 完整的浏览器指纹 headers 降低反爬检测概率
         let mut headers = HashMap::with_capacity(8);
         headers.insert(
@@ -332,7 +331,7 @@ mod tests {
         format!("https://www.bing.com/ck/a?!&p=0&u=a1{}&t=1", encoded)
     }
 
-    // ========== get_bing_cookies 测试 ==========
+    // get_bing_cookies 测试
 
     #[test]
     fn test_get_bing_cookies_contains_edge_keys() {
@@ -371,7 +370,7 @@ mod tests {
         assert!(edge_cd.contains("u="));
     }
 
-    // ========== build_params 测试 ==========
+    // build_params 测试
 
     #[test]
     fn test_build_params_page1() {
@@ -421,7 +420,7 @@ mod tests {
         assert_eq!(params.get("FORM"), Some(&"PERE3".to_string()));
     }
 
-    // ========== build_bing_url 测试 ==========
+    // build_bing_url 测试
 
     #[test]
     fn test_build_bing_url_page1() {
@@ -459,7 +458,7 @@ mod tests {
         assert!(url.contains("q=rust+%26+go") || url.contains("q=rust+%26+go"));
     }
 
-    // ========== decode_bing_url 测试 ==========
+    // decode_bing_url 测试
 
     #[test]
     fn test_decode_bing_url_non_bing_url_returned_as_is() {
@@ -510,7 +509,7 @@ mod tests {
         assert!(!decoded.is_empty());
     }
 
-    // ========== parse_search_results 测试 ==========
+    // parse_search_results 测试
 
     #[test]
     fn test_parse_search_results_empty_html_returns_error() {
@@ -640,7 +639,7 @@ mod tests {
         );
     }
 
-    // ========== SearchEngine trait 方法测试 ==========
+    // SearchEngine trait 方法测试
 
     #[test]
     fn test_engine_creation() {
@@ -651,7 +650,7 @@ mod tests {
         assert_eq!(engine.health(), EngineHealth::Healthy);
     }
 
-    // ========== search() test fallback path ==========
+    // search test fallback path
 
     /// Mutex to serialize tests that mutate process-level environment
     /// variables (std::env::set_var is not thread-safe across tests).
@@ -661,7 +660,7 @@ mod tests {
         SearchRequest::new(query)
     }
 
-    // ENV_LOCK must be held across .await because engine.search() reads
+    // ENV_LOCK must be held across .await because engine.search reads
     // BING_TEST_RESULTS during execution; releasing it would let other tests
     // race-modify the env var. Single-threaded tokio runtime => no deadlock risk.
     #[allow(clippy::await_holding_lock)]
@@ -735,7 +734,7 @@ mod tests {
         }
     }
 
-    // ========== decode_bing_url with non-UTF-8 Base64 payload ==========
+    // decode_bing_url with non-UTF-8 Base64 payload
     // This test covers line 98: when Base64 decoding succeeds but the resulting
     // bytes are not valid UTF-8, the original URL should be returned as-is.
 

@@ -322,7 +322,7 @@ mod tests {
         let _ = rx;
     }
 
-    /// release() 语义等价于 drop()
+    /// release 语义等价于 drop
     #[test]
     fn release_is_equivalent_to_drop() {
         let coalescer = RequestCoalescer::new();
@@ -338,7 +338,7 @@ mod tests {
         assert!(!coalescer.is_in_flight("https://example.com/release"));
     }
 
-    /// guard url() 返回正确 URL
+    /// guard url 返回正确 URL
     #[test]
     fn guard_url_returns_correct_url() {
         let coalescer = RequestCoalescer::new();
@@ -451,7 +451,7 @@ mod tests {
         // guards 在此处 Drop，清理 in_flight
     }
 
-    /// Default 等价于 new()
+    /// Default 等价于 new
     #[test]
     fn default_equals_new() {
         let a = RequestCoalescer::new();
@@ -518,7 +518,6 @@ mod tests {
                 sender: tx,
             },
         );
-        // 等待方在 purge 前订阅
         let mut rx = match coalescer.try_start(
             "https://example.com/stale-signal",
             crate::domain::id::Id::generate(),
@@ -543,7 +542,7 @@ mod tests {
             CoalesceResult::Proceed(g) => g,
             _ => panic!("expected Proceed"),
         };
-        // 等待方应读到 leader 的 task_id（而非自己的）
+        // 等待方应读到 leader 的 task_id（而非自己）
         let waiter_id = crate::domain::id::Id::generate();
         match coalescer.try_start(url, waiter_id) {
             CoalesceResult::Wait(_rx, got_leader_id) => {

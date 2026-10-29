@@ -36,7 +36,7 @@ pub fn t(locale: &Locale, bundle: &I18nBundle, key: &str) -> String {
 /// let msg = t_with_args(
 ///     &locale, &bundle, "error-validation",
 ///     &[("message", FluentValue::from("bad input"))],
-/// );
+///);
 /// assert_eq!(msg, "Validation error: bad input");
 /// ```
 pub fn t_with_args(

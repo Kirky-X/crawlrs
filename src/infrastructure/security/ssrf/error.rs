@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_kind_is_sanitized() {
-        // kind() 只返回固定类别名，不得携带任何主机名/IP/URL 细节
+        // kind 只返回固定类别名，不得携带任何主机名/IP/URL 细节
         let cases: Vec<(SsrfError, &'static str)> = vec![
             (
                 SsrfError::PrivateIpAccess {

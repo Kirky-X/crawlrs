@@ -343,7 +343,7 @@ mod tests {
         };
 
         let domain = WebhookEventMapper::to_domain(entity);
-        // When webhook_id is None, it should default to crate::domain::id::Id::nil()
+        // When webhook_id is None, it should default to crate::domain::id::Id::nil
         assert_eq!(domain.webhook_id, crate::domain::id::Id::nil());
     }
 

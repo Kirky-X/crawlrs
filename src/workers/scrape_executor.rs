@@ -47,7 +47,6 @@ pub async fn process_text_encoding<'a>(
         )
     );
 
-    // 创建文本处理集成器
     let text_integration = CrawlTextIntegration::new(false); // Disable by default for now
 
     // 禁用时返回借用引用，避免 clone 整个 content（数 MB）
@@ -63,7 +62,6 @@ pub async fn process_text_encoding<'a>(
         status_code: response.status_code,
     };
 
-    // 处理响应内容
     match text_integration
         .process_scrape_response(
             &input.content,
@@ -358,7 +356,7 @@ mod tests {
         }
     }
 
-    // ========== check_scrape_robots_allowed ==========
+    // check_scrape_robots_allowed
 
     struct FakeRobotsChecker {
         allowed: bool,
@@ -475,7 +473,7 @@ mod tests {
         }
     }
 
-    // ---- Mock types ----
+    // Mock types
 
     #[derive(Default)]
     struct MockResultRepo {
@@ -553,7 +551,7 @@ mod tests {
         }
     }
 
-    // ---- process_text_encoding ----
+    // process_text_encoding
 
     #[tokio::test]
     async fn test_process_text_encoding_returns_borrowed_when_disabled() {
@@ -564,7 +562,7 @@ mod tests {
         assert_eq!(result.as_ref(), "Hello World");
     }
 
-    // ---- save_result ----
+    // save_result
 
     #[tokio::test]
     async fn test_save_result_stores_in_repository() {
@@ -710,7 +708,7 @@ mod tests {
         assert_eq!(repo.save_count.load(Ordering::SeqCst), 1);
     }
 
-    // ---- try_read_scrape_cache ----
+    // try_read_scrape_cache
 
     #[tokio::test]
     async fn test_try_read_scrape_cache_miss_returns_none() {
@@ -726,7 +724,7 @@ mod tests {
         assert_eq!(cache.get_count.load(Ordering::SeqCst), 1);
     }
 
-    // ---- try_write_scrape_cache ----
+    // try_write_scrape_cache
 
     #[tokio::test]
     async fn test_try_write_scrape_cache_writes_serialized_response() {
@@ -778,7 +776,7 @@ mod tests {
         assert!(key.contains("example.com"));
     }
 
-    // ---- Configurable error mocks ----
+    // Configurable error mocks
 
     struct ErrorCacheService {
         get_err: bool,

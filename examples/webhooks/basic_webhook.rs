@@ -124,7 +124,6 @@ async fn main() {
 
     info!("=== 基础 Webhook 配置示例 ===\n");
 
-    // 创建 Webhook 配置
     let mut webhook_config = WebhookConfig::new(
         "https://your-server.com/webhook/crawlrs",
         "whsec_secret_key_here",
@@ -144,7 +143,6 @@ async fn main() {
     // 配置超时
     webhook_config.set_timeout(10000);
 
-    // 创建发送器
     let mut sender = WebhookSender::new(webhook_config);
 
     // 模拟发送 Webhook

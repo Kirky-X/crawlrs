@@ -116,7 +116,7 @@ impl Task {
 
     /// Mark the task as started.
     ///
-    /// MIRROR: the `SET status='active', started_at=NOW(), updated_at=NOW()`
+    /// MIRROR: the `SET status='active', started_at=NOW, updated_at=NOW`
     /// clause in `TaskRepositoryImpl::acquire_next` raw SQL
     /// (`task_repo_impl.rs`). Changes here must be synchronized with the SQL.
     pub fn start(&mut self) {
@@ -155,7 +155,7 @@ impl Task {
 
     /// Acquire lock for this task.
     ///
-    /// MIRROR: the `SET lock_token=$1, lock_expires_at=NOW()+($2*INTERVAL'1 second')`
+    /// MIRROR: the `SET lock_token=$1, lock_expires_at=NOW+($2*INTERVAL'1 second')`
     /// clause in `TaskRepositoryImpl::acquire_next` raw SQL
     /// (`task_repo_impl.rs`). Changes here must be synchronized with the SQL.
     pub fn acquire_lock(
@@ -181,7 +181,7 @@ mod tests {
     use super::*;
     use crate::domain::models::task_domain::{TaskStatus, TaskType};
 
-    // ========== Task::new tests ==========
+    // Task::new tests
 
     #[test]
     fn test_task_new_sets_defaults() {
@@ -226,7 +226,7 @@ mod tests {
         assert_eq!(task.created_at, task.updated_at);
     }
 
-    // ========== can_retry tests ==========
+    // can_retry tests
 
     #[test]
     fn test_can_retry_true_when_below_max() {
@@ -261,7 +261,7 @@ mod tests {
         );
     }
 
-    // ========== is_expired tests ==========
+    // is_expired tests
 
     #[test]
     fn test_is_expired_false_when_no_expiry() {
@@ -289,7 +289,7 @@ mod tests {
         );
     }
 
-    // ========== is_locked tests ==========
+    // is_locked tests
 
     #[test]
     fn test_is_locked_false_when_no_lock_token() {
@@ -322,7 +322,7 @@ mod tests {
         );
     }
 
-    // ========== start / complete / fail / cancel tests ==========
+    // start / complete / fail / cancel tests
 
     #[test]
     fn test_start_sets_active_and_started_at() {
@@ -378,7 +378,7 @@ mod tests {
         assert!(task.updated_at >= before);
     }
 
-    // ========== increment_retry tests ==========
+    // increment_retry tests
 
     #[test]
     fn test_increment_retry_increments_both_counters() {
@@ -404,7 +404,7 @@ mod tests {
         assert_eq!(task.attempt_count, 3);
     }
 
-    // ========== acquire_lock / release_lock tests ==========
+    // acquire_lock / release_lock tests
 
     #[test]
     fn test_acquire_lock_sets_token_and_expiry() {
@@ -448,7 +448,7 @@ mod tests {
         assert!(task.updated_at >= before);
     }
 
-    // ========== serde roundtrip ==========
+    // serde roundtrip
 
     #[test]
     fn test_task_serde_roundtrip() {
@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(task, back, "serde roundtrip should preserve task");
     }
 
-    // ========== Helper ==========
+    // Helper
 
     fn make_task() -> Task {
         Task::new(

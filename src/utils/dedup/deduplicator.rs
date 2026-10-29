@@ -165,7 +165,7 @@ mod tests {
     use super::*;
     use crate::utils::dedup::{DedupError, DedupResult};
 
-    // ========== construction ==========
+    // construction
 
     #[test]
     fn test_new_is_empty() {
@@ -193,7 +193,7 @@ mod tests {
         }
     }
 
-    // ========== check: DefinitelyNew ==========
+    // check: DefinitelyNew
 
     #[test]
     fn test_check_definitely_new_for_unseen_url() {
@@ -213,7 +213,7 @@ mod tests {
         }
     }
 
-    // ========== check: MaybeExisting ==========
+    // check: MaybeExisting
 
     #[test]
     fn test_check_maybe_existing_after_insert() {
@@ -244,7 +244,7 @@ mod tests {
         }
     }
 
-    // ========== equivalence: www/non-www ==========
+    // equivalence: www/non-www
 
     #[test]
     fn test_check_www_and_non_www_are_equivalent() {
@@ -271,7 +271,7 @@ mod tests {
         assert!(matches!(result, DedupResult::MaybeExisting { .. }));
     }
 
-    // ========== error cases ==========
+    // error cases
 
     #[test]
     fn test_check_invalid_url_returns_err() {
@@ -296,7 +296,7 @@ mod tests {
         }
     }
 
-    // ========== insert + check integration ==========
+    // insert + check integration
 
     #[test]
     fn test_insert_then_check_is_maybe_existing() {
@@ -327,7 +327,7 @@ mod tests {
         }
     }
 
-    // ========== check_and_insert (TOCTOU fix) ==========
+    // check_and_insert (TOCTOU fix)
 
     #[test]
     fn test_check_and_insert_atomic_for_definitely_new() {
@@ -367,7 +367,7 @@ mod tests {
         assert!(matches!(result_b, DedupResult::MaybeExisting { .. }));
     }
 
-    // ========== clear ==========
+    // clear
 
     #[test]
     fn test_clear_resets_state() {
@@ -381,7 +381,7 @@ mod tests {
         assert!(matches!(result, DedupResult::DefinitelyNew { .. }));
     }
 
-    // ========== clone ==========
+    // clone
 
     #[test]
     fn test_clone_independence() {
@@ -398,7 +398,7 @@ mod tests {
         assert!(matches!(result_clone, DedupResult::MaybeExisting { .. }));
     }
 
-    // ========== integration: scrape_worker flow simulation ==========
+    // integration: scrape_worker flow simulation
 
     #[test]
     fn test_scrape_flow_simulation() {

@@ -17,8 +17,8 @@ use std::collections::HashMap;
 ///
 /// - `name`: engine name (default `"mock"`)
 /// - `score`: support_score return value (default `50`)
-/// - `response`: optional fixed response to return from `scrape()`
-/// - `error`: optional fixed error to return from `scrape()`
+/// - `response`: optional fixed response to return from `scrape`
+/// - `error`: optional fixed error to return from `scrape`
 /// - `mrt`: max response time (default 30s)
 pub struct MockScraperEngine {
     pub name: &'static str,

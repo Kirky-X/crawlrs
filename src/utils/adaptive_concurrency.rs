@@ -355,9 +355,9 @@ impl Default for AdaptiveSemaphore {
 mod tests {
     use super::*;
 
-    // ========== AIMDController tests ==========
+    // AIMDController tests
 
-    /// new() 创建的默认参数
+    /// new 创建的默认参数
     #[test]
     fn controller_new_default_params() {
         let c = AIMDController::new(10);
@@ -577,7 +577,7 @@ mod tests {
         assert!(c.current_limit() >= 1);
     }
 
-    // ========== 内存压力联动（F10） ==========
+    // 内存压力联动（F10）
 
     /// Pressure 信号冻结 additive-increase：信号存续期（每任务准入续发）成功不累积
     #[test]
@@ -684,7 +684,7 @@ mod tests {
         );
     }
 
-    // ========== AdaptiveSemaphore tests ==========
+    // AdaptiveSemaphore tests
 
     /// new 创建指定许可
     #[test]
@@ -784,7 +784,7 @@ mod tests {
         assert_eq!(s.current_target(), 10);
     }
 
-    /// semaphore() 返回底层 Arc
+    /// semaphore 返回底层 Arc
     #[test]
     fn semaphore_returns_underlying_arc() {
         let s = AdaptiveSemaphore::new(3);

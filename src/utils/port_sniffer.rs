@@ -116,7 +116,6 @@ impl PortSniffer {
                 );
             }
 
-            // 检查下一个端口是否超出范围
             if current_port == 65535 {
                 return Err(PortSnifferError::PortOutOfRange(current_port));
             }
@@ -191,7 +190,7 @@ mod tests {
         assert_eq!(result.port, port);
     }
 
-    // ========== is_port_in_use 边界 ==========
+    // is_port_in_use 边界
 
     #[test]
     fn test_is_port_in_use_returns_false_for_free_port() {
@@ -209,7 +208,7 @@ mod tests {
         );
     }
 
-    // ========== find_available_port: 日志验证 ==========
+    // find_available_port: 日志验证
 
     #[test]
     fn test_find_available_port_logs_start_message() {
@@ -281,7 +280,7 @@ mod tests {
         );
     }
 
-    // ========== find_available_port: success / port 字段 ==========
+    // find_available_port: success / port 字段
 
     #[test]
     fn test_find_available_port_success_is_true() {
@@ -322,7 +321,7 @@ mod tests {
         assert!(result.logs.iter().any(|log| log.contains("in use")));
     }
 
-    // ========== find_available_port: 错误路径 ==========
+    // find_available_port: 错误路径
 
     #[test]
     fn test_find_available_port_zero_attempts_returns_error() {
@@ -387,7 +386,7 @@ mod tests {
         drop(listener);
     }
 
-    // ========== PortSnifferError: Display ==========
+    // PortSnifferError: Display
 
     #[test]
     fn test_port_sniffer_error_port_out_of_range_display() {
@@ -406,7 +405,7 @@ mod tests {
         assert!(msg.contains("no port found in range"), "msg: {}", msg);
     }
 
-    // ========== PortSnifferResult: derive 行为 ==========
+    // PortSnifferResult: derive 行为
 
     #[test]
     fn test_port_sniffer_result_clone() {

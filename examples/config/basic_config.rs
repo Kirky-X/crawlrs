@@ -6,9 +6,9 @@
 //! 演示如何使用 confers 0.4 加载 TOML 配置文件并定义类型安全的配置结构。
 //!
 //! confers 0.4 的关键变化（相对于 0.2.x）：
-//! - `ConfigBuilder` 不再自动发现配置文件，需通过 `.file()` 显式指定
-//! - `#[derive(Config)]` 宏生成 `load_sync()` 与 `load()` 方法
-//! - `EnvSource::with_prefix()` 支持嵌套分隔符
+//! - `ConfigBuilder` 不再自动发现配置文件，需通过 `.file` 显式指定
+//! - `#[derive(Config)]` 宏生成 `load_sync` 与 `load` 方法
+//! - `EnvSource::with_prefix` 支持嵌套分隔符
 //!
 //! 本示例展示 API 用法；如需实际加载，可在 examples 目录下放置 config.toml 文件。
 //!
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 /// 示例配置结构
 ///
-/// 通过 `#[derive(Config)]` 让 confers 自动生成 `load_sync()` / `load()` 方法。
+/// 通过 `#[derive(Config)]` 让 confers 自动生成 `load_sync` / `load` 方法。
 /// `env_prefix` 指定环境变量前缀（与 EnvSource 配合使用）。
 #[derive(Debug, Clone, Deserialize, Serialize, Config)]
 #[config(env_prefix = "APP_")]

@@ -347,7 +347,6 @@ pub fn init_metrics() {
         }
     });
 
-    // Register metrics
     describe_gauge!(
         "system_cpu_usage_ratio",
         "Current CPU usage ratio (0.0 to 1.0)"
@@ -489,7 +488,7 @@ pub fn is_metrics_stale_with_monitor(monitor: &dyn SystemMonitorTrait) -> bool {
 mod tests {
     use super::*;
 
-    // ========== Mock SystemMonitorTrait implementation ==========
+    // Mock SystemMonitorTrait implementation
 
     struct MockSystemMonitor {
         cpu: f64,
@@ -509,7 +508,7 @@ mod tests {
         }
     }
 
-    // ========== get_cpu_usage_with_monitor tests ==========
+    // get_cpu_usage_with_monitor tests
 
     #[test]
     fn test_get_cpu_usage_with_monitor_returns_value() {
@@ -542,7 +541,7 @@ mod tests {
         assert!((get_cpu_usage_with_monitor(&monitor) - 1.0).abs() < f64::EPSILON);
     }
 
-    // ========== get_memory_usage_with_monitor tests ==========
+    // get_memory_usage_with_monitor tests
 
     #[test]
     fn test_get_memory_usage_with_monitor_returns_value() {
@@ -575,7 +574,7 @@ mod tests {
         assert!((get_memory_usage_with_monitor(&monitor) - 1.0).abs() < f64::EPSILON);
     }
 
-    // ========== is_metrics_stale_with_monitor tests ==========
+    // is_metrics_stale_with_monitor tests
 
     #[test]
     fn test_is_metrics_stale_with_monitor_true() {
@@ -597,7 +596,7 @@ mod tests {
         assert!(!is_metrics_stale_with_monitor(&monitor));
     }
 
-    // ========== SystemMonitorComponent tests ==========
+    // SystemMonitorComponent tests
 
     #[test]
     fn test_system_monitor_component_new_initializes_zero() {
@@ -662,9 +661,9 @@ mod tests {
 
     #[test]
     fn test_system_monitor_component_cpu_usage_divides_by_100() {
-        // cpu_usage() returns stored_value / 100.0
+        // cpu_usage returns stored_value / 100.0
         // After refresh, the stored value is the raw CPU percentage (0-100)
-        // So cpu_usage() should return a value in [0, 1]
+        // So cpu_usage should return a value in [0, 1]
         let mut component = SystemMonitorComponent::new();
         component.refresh();
         let cpu = component.cpu_usage();
@@ -672,7 +671,7 @@ mod tests {
         assert!(cpu <= 1.0, "cpu should be at most 1.0, got {}", cpu);
     }
 
-    // ========== SystemMonitor tests ==========
+    // SystemMonitor tests
 
     #[test]
     fn test_system_monitor_new_does_not_panic() {
@@ -716,7 +715,7 @@ mod tests {
         assert!((0.0..=1.0).contains(&cpu2));
     }
 
-    // ========== check_alerts tests ==========
+    // check_alerts tests
 
     #[test]
     fn test_check_alerts_does_not_panic() {
@@ -724,7 +723,7 @@ mod tests {
         check_alerts();
     }
 
-    // ========== SystemMonitorTrait mock integration tests ==========
+    // SystemMonitorTrait mock integration tests
 
     #[test]
     fn test_mock_monitor_implements_trait() {
@@ -753,7 +752,7 @@ mod tests {
         assert!(is_metrics_stale_with_monitor(trait_ref));
     }
 
-    // ========== MutableSystemMonitor tests ==========
+    // MutableSystemMonitor tests
 
     #[test]
     fn test_mutable_system_monitor_new_does_not_panic() {
@@ -810,7 +809,7 @@ mod tests {
         }
     }
 
-    // ========== update_system_metrics tests ==========
+    // update_system_metrics tests
 
     #[test]
     fn test_update_system_metrics_does_not_panic() {
@@ -843,10 +842,8 @@ mod tests {
         assert!((0.0..=1.0).contains(&mem));
     }
 
-    // =========================================================================
     // Mutex poisoning 测试：覆盖所有 mutex poisoned 错误分支
     // 通过在另一个线程中 panic 来 poison mutex，然后验证方法不 panic
-    // =========================================================================
 
     #[test]
     fn test_system_monitor_component_mutex_poisoned_refresh_no_panic() {
@@ -861,7 +858,7 @@ mod tests {
         });
         let _ = handle.join();
 
-        // refresh() should return early without panicking
+        // refresh should return early without panicking
         component.refresh();
         // last_update was never updated (refresh failed), so still stale
         assert!(
@@ -911,7 +908,7 @@ mod tests {
         });
         let _ = handle.join();
 
-        // refresh() should return early without panicking
+        // refresh should return early without panicking
         monitor.refresh();
     }
 
@@ -943,7 +940,7 @@ mod tests {
         assert_eq!(mem, 0.0);
     }
 
-    // ---- init_metrics: 覆盖 tokio::spawn + interval 注册路径 ----
+    // init_metrics: 覆盖 tokio::spawn + interval 注册路径
 
     #[tokio::test]
     async fn test_init_metrics_does_not_panic() {

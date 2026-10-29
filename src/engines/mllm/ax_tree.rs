@@ -244,7 +244,7 @@ mod tests {
         n
     }
 
-    // ===== prune =====
+    // prune
 
     /// ignored 子树整体丢弃（含其后代）
     #[test]
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(pruned.len(), 3, "无名双子容器保留为连接器");
     }
 
-    // ===== serialize =====
+    // serialize
 
     /// 每行匹配 `^\[\d+\] [a-z]+: .+$`（role 小写）
     #[test]

@@ -44,7 +44,6 @@ async fn test_initialize_team_credits_creates_balance() {
         .expect("Failed to initialize team credits");
     assert_eq!(initial, 1000, "Initial balance should be 1000");
 
-    // 验证余额正确
     let balance = repo
         .get_balance(team_id)
         .await
@@ -148,7 +147,6 @@ async fn test_get_transaction_history_returns_records() {
         "Txn2 should be in history"
     );
 
-    // 验证交易类型映射正确
     let txn1 = history
         .iter()
         .find(|t| t.id == txn1_id)
@@ -214,7 +212,6 @@ async fn test_deduct_credits_decreases_balance() {
     let repo = CreditsRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    // 初始化 1000 积分
     repo.initialize_team_credits(team_id, 1000)
         .await
         .expect("Failed to init credits");
@@ -360,7 +357,6 @@ async fn tc_get_balance_returns_existing_without_reinitialize() {
     let repo = CreditsRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    // 初始化为 500
     repo.initialize_team_credits(team_id, 500)
         .await
         .expect("Failed to init credits");
@@ -440,7 +436,6 @@ async fn tc_get_balance_multiple_teams_independent() {
     assert_eq!(balance1, 1000, "Team1 balance should be 1000");
     assert_eq!(balance2, 200, "Team2 balance should be 200");
 
-    // 清理 team2
     let _ = credits::Entity::delete_many()
         .filter(credits::Column::TeamId.eq(team2_id))
         .exec(conn)

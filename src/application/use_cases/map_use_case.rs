@@ -284,7 +284,7 @@ impl MapUseCase {
                 // 仍失败则按既有语义放弃该子 sitemap 的内容（不计为整体失败）
                 let fetched = match self.fetcher.fetch(&child).await {
                     Ok(f) => Some(f),
-                    // 连接级瞬态错误重试一次（ok() 语义：仍失败则放弃该子 sitemap）
+                    // 连接级瞬态错误重试一次（ok 语义：仍失败则放弃该子 sitemap）
                     Err(MapError::TargetUnreachable(_)) | Err(MapError::SitemapStatus(_)) => {
                         self.fetcher.fetch(&child).await.ok()
                     }
@@ -365,7 +365,7 @@ impl MapUseCase {
                             .await
                             .expect("semaphore has capacity");
                         // 连接级瞬态错误重试一次，仍失败放弃该子 sitemap
-                        // （ok() 语义，对齐 execute 的子 sitemap 处理）
+                        // （ok 语义，对齐 execute 的子 sitemap 处理）
                         let stream = match fetcher
                             .fetch_streaming(&child, options.channel_capacity)
                             .await
@@ -499,7 +499,7 @@ mod tests {
     use async_trait::async_trait;
     use std::collections::HashMap;
 
-    // ========== Mock Fetcher ==========
+    // Mock Fetcher
 
     struct MockFetcher {
         /// url → (status, body)
@@ -550,7 +550,7 @@ mod tests {
 
     const ORIGIN: &str = "https://a.com";
 
-    // ========== parse_locs ==========
+    // parse_locs
 
     /// R-map-002：urlset 多 `<loc>` 解析保序。
     #[test]
@@ -568,7 +568,7 @@ mod tests {
         assert!(parse_locs(&urlset(&[])).is_empty());
     }
 
-    // ========== matches_glob ==========
+    // matches_glob
 
     /// R-map-003：`*`/`?` 通配语义。
     #[test]
@@ -584,7 +584,7 @@ mod tests {
         assert!(matches_glob("https://a.com/*", "https://a.com/"));
     }
 
-    // ========== execute ==========
+    // execute
 
     /// R-map-002：3 个 loc 的 sitemap 保序返回 3 个 link。
     #[tokio::test]
@@ -780,7 +780,7 @@ mod tests {
         assert!(matches!(result, Err(MapError::OriginUnparsable(_))));
     }
 
-    // ========== execute_streaming（F11 流式路径，sitemap feature） ==========
+    // execute_streaming（F11 流式路径，sitemap feature）
 
     #[cfg(feature = "sitemap")]
     mod streaming_tests {

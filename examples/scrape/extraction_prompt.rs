@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .timeout(Duration::from_secs(60))
         .build()?;
 
-    // === 示例 1：使用 extraction_prompt 提取 ===
+    // 示例 1：使用 extraction_prompt 提取
     println!("=== 示例 1：extraction_prompt 提取 ===");
     let request_body = json!({
         "url": "https://example.com",
@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result: serde_json::Value = response.json().await?;
     println!("响应: {}", serde_json::to_string_pretty(&result)?);
 
-    // === 示例 2：使用 extraction_schema 提取 ===
+    // 示例 2：使用 extraction_schema 提取
     println!("\n=== 示例 2：extraction_schema 提取 ===");
     let request_body = json!({
         "url": "https://example.com",
@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result: serde_json::Value = response.json().await?;
     println!("响应: {}", serde_json::to_string_pretty(&result)?);
 
-    // === 示例 3：extraction_rules + extraction_prompt 同时设置 ===
+    // 示例 3：extraction_rules + extraction_prompt 同时设置
     // 注意：extraction_rules 优先级更高，extraction_prompt 会被忽略
     println!("\n=== 示例 3：优先级演示（rules > prompt > schema）===");
     let request_body = json!({

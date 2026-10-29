@@ -10,11 +10,11 @@
 //! ```ignore
 //! use crawlrs::search::SearchClient;
 //!
-//! let results = SearchClient::global()
+//! let results = SearchClient::global
 //!     .search("Rust programming")
-//!     .bing()
+//!     .bing
 //!     .limit(10)
-//!     .execute()
+//!     .execute
 //!     .await?;
 //! ```
 

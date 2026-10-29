@@ -14,14 +14,14 @@
 //! ```rust,ignore
 //! use crate::infrastructure::database::transaction::TransactionManager;
 //!
-//! let tx_manager = TransactionManager::new(pool.clone());
+//! let tx_manager = TransactionManager::new(pool.clone);
 //!
 //! // Simple transaction
-//! tx_manager.begin().await?;
+//! tx_manager.begin.await?;
 //! tx_manager.savepoint("sp1").await?;
 //! // ... operations ...
 //! tx_manager.release_savepoint("sp1").await?;
-//! tx_manager.commit().await?;
+//! tx_manager.commit.await?;
 //! ```
 
 use dbnexus::sea_orm::{ConnectionTrait, DbErr};
@@ -255,9 +255,9 @@ impl TransactionManager {
     ///
     /// ```rust,ignore
     /// let tx_manager = TransactionManager::new(pool);
-    /// tx_manager.begin().await?;
+    /// tx_manager.begin.await?;
     /// // ... perform operations ...
-    /// tx_manager.commit().await?;
+    /// tx_manager.commit.await?;
     /// ```
     pub async fn begin(&self) -> Result<(), TransactionError> {
         debug!("transaction_begin");
@@ -400,14 +400,14 @@ impl TransactionManager {
     /// # Example
     ///
     /// ```rust,ignore
-    /// tx_manager.begin().await?;
+    /// tx_manager.begin.await?;
     /// tx_manager.savepoint("before_critical_operation").await?;
     /// // ... critical operation ...
     /// if something_failed {
     ///     tx_manager.rollback_to_savepoint("before_critical_operation").await?;
     /// }
     /// tx_manager.release_savepoint("before_critical_operation").await?;
-    /// tx_manager.commit().await?;
+    /// tx_manager.commit.await?;
     /// ```
     #[allow(clippy::await_holding_lock)]
     pub async fn savepoint(&self, name: &str) -> Result<crate::domain::id::Id, TransactionError> {
@@ -665,9 +665,7 @@ mod tests {
     use super::*;
     use crate::common::test_helpers::create_test_db_pool;
 
-    // ============================================================
     // Config & Error variant tests
-    // ============================================================
 
     #[test]
     fn test_transaction_config_default() {
@@ -784,9 +782,7 @@ mod tests {
         assert!(tx_err.to_string().contains("custom db error"));
     }
 
-    // ============================================================
     // Manager construction & state inspection (no DB needed)
-    // ============================================================
 
     #[test]
     fn test_new_creates_manager_without_active_transaction() {
@@ -849,9 +845,7 @@ mod tests {
         assert_eq!(manager.savepoint_count(), 0);
     }
 
-    // ============================================================
     // Savepoint name validation (pure logic, no DB needed)
-    // ============================================================
     //
     // The following tests exercise the free function `validate_savepoint_name`
     // directly, with no `DbPool` and no `TransactionManager`. They run in CI
@@ -1060,20 +1054,18 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // 验证 Ok 变体是 unit ()，而非其他类型
+        // 验证 Ok 变体是 unit，而非其他类型
         let result = validate_savepoint_name("valid_sp");
         assert!(result.is_ok());
-        // 显式确认 Ok 携带的值是 unit ()
+        // 显式确认 Ok 携带的值是 unit
         assert!(matches!(result, Ok(())));
     }
 
-    // ============================================================
     // Savepoint name validation via TransactionManager (integration)
     // — requires TEST_DATABASE_URL because TransactionManager::new
-    // internally constructs a real DbPool via create_test_db_pool().
+    // internally constructs a real DbPool via create_test_db_pool.
     // These tests verify the wiring (validate → NoActiveTransaction path)
     // on top of the pure function above.
-    // ============================================================
 
     #[tokio::test]
     async fn test_savepoint_empty_name_rejected_before_active_check() {
@@ -1266,9 +1258,7 @@ mod tests {
         assert!(matches!(result, Err(TransactionError::NoActiveTransaction)));
     }
 
-    // ============================================================
     // Error path tests with lazy pool (no real DB connection)
-    // ============================================================
 
     #[tokio::test]
     async fn test_begin_succeeds_with_real_db() {
@@ -1336,9 +1326,7 @@ mod tests {
         assert!(matches!(result, Err(TransactionError::NoActiveTransaction)));
     }
 
-    // ============================================================
     // TransactionGuard tests
-    // ============================================================
 
     #[test]
     fn test_guard_new_creates_uncommitted_guard() {
@@ -1393,9 +1381,7 @@ mod tests {
         assert!(!manager.is_active());
     }
 
-    // ============================================================
     // Drop behavior tests
-    // ============================================================
 
     #[test]
     fn test_drop_without_active_transaction_does_not_panic() {
@@ -1422,10 +1408,8 @@ mod tests {
         assert_eq!(arc_manager.savepoint_count(), 0);
     }
 
-    // ============================================================
     // Additional From<DbErr> variant coverage
     // 覆盖 dbnexus::sea_orm::DbErr 各变体到 TransactionError::DatabaseError 的转换
-    // ============================================================
 
     #[test]
     fn test_from_dberr_record_not_found_to_transaction_error() {
@@ -1607,9 +1591,7 @@ mod tests {
         assert!(tx_err.to_string().contains("version"));
     }
 
-    // ============================================================
     // TransactionError Display — 精确消息内容验证
-    // ============================================================
 
     #[test]
     fn test_transaction_error_begin_failed_display_contains_prefix() {
@@ -1740,9 +1722,7 @@ mod tests {
         assert_eq!(err.to_string(), "Transaction already active");
     }
 
-    // ============================================================
     // TransactionError Debug 实现
-    // ============================================================
 
     #[test]
     fn test_transaction_error_implements_debug_for_all_variants() {
@@ -1778,9 +1758,7 @@ mod tests {
         }
     }
 
-    // ============================================================
     // TransactionIsolation / TransactionAccess — Default / Copy
-    // ============================================================
 
     #[test]
     fn test_transaction_isolation_default_is_read_committed() {
@@ -1840,9 +1818,7 @@ mod tests {
         }
     }
 
-    // ============================================================
     // TransactionConfig — Clone / Debug
-    // ============================================================
 
     #[test]
     fn test_transaction_config_clone_preserves_all_fields() {
@@ -1877,9 +1853,7 @@ mod tests {
         assert!(debug.contains("true"));
     }
 
-    // ============================================================
     // Savepoint name validation — additional boundary cases
-    // ============================================================
 
     #[tokio::test]
     async fn test_savepoint_name_single_char_passes_validation_no_tx() {
@@ -2005,9 +1979,7 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("too long"));
     }
 
-    // ============================================================
     // release_savepoint / rollback_to_savepoint — 额外边界
-    // ============================================================
 
     #[tokio::test]
     async fn test_release_savepoint_too_long_name_rejected() {
@@ -2069,9 +2041,7 @@ mod tests {
         ));
     }
 
-    // ============================================================
     // begin_with_config — 不同配置组合的失败路径
-    // ============================================================
 
     #[tokio::test]
     async fn test_begin_with_config_savepoints_disabled_succeeds_with_real_db() {
@@ -2141,9 +2111,7 @@ mod tests {
         assert!(!manager.is_active());
     }
 
-    // ============================================================
     // TransactionGuard — 额外边界
-    // ============================================================
 
     #[test]
     fn test_guard_drop_in_inner_scope_does_not_panic() {
@@ -2194,9 +2162,7 @@ mod tests {
         // guard 已经被 consume（commit takes self by value）
     }
 
-    // ============================================================
     // Drop 行为 — 无活动事务时不触发警告
-    // ============================================================
 
     #[test]
     fn test_drop_with_configured_manager_no_active_transaction_no_panic() {
@@ -2227,9 +2193,7 @@ mod tests {
         drop(manager);
     }
 
-    // ============================================================
     // validate_savepoint_name 直接单元测试 + savepoint_count 边界
-    // ============================================================
 
     #[test]
     fn test_validate_savepoint_name_valid_names_direct() {

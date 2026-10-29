@@ -4,14 +4,14 @@
 //! Noop Webhook 服务实现（webhook feature 关闭时使用）
 //!
 //! - 当 `webhook` feature 关闭时，`init_services`
-//! 装配此 `NoopWebhookService` 替代 `WebhookServiceImpl`，所有方法返回 `Ok(())`，
+//! 装配此 `NoopWebhookService` 替代 `WebhookServiceImpl`，所有方法返回 `Ok()`，
 //! 保证 handler 内 `trigger_completion`/`trigger_failure` 调用经 trait 走 Noop 放行。
 //!
 //! # 契约
 //!
-//! - `send_webhook` → `Ok(())`（不发送）
-//! - `trigger_completion` → `Ok(())`（不触发完成通知）
-//! - `trigger_failure` → `Ok(())`（不触发失败通知）
+//! - `send_webhook` → `Ok()`（不发送）
+//! - `trigger_completion` → `Ok()`（不触发完成通知）
+//! - `trigger_failure` → `Ok()`（不触发失败通知）
 //! - 无副作用（不写日志、不写 DB、不发送 HTTP）
 
 use anyhow::Result;
@@ -23,7 +23,7 @@ use crate::domain::services::webhook_service::WebhookService;
 /// Noop Webhook 服务
 ///
 /// webhook feature 关闭时的 webhook 服务实现。
-/// 所有方法返回 `Ok(())`，保证业务逻辑在无 webhook 投递时正常运转。
+/// 所有方法返回 `Ok()`，保证业务逻辑在无 webhook 投递时正常运转。
 #[derive(Debug, Clone, Default)]
 pub struct NoopWebhookService;
 

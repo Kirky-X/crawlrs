@@ -90,7 +90,7 @@ pub fn build_garrison_config(jwt_secret: &str) -> Result<GarrisonConfig, Garriso
     config.token_style = "jwt".to_string();
     config.jwt_algorithm = "HS256".to_string();
     // protocol-zeroize feature 启用时 jwt_secret 字段为 Zeroizing<String>，
-    // 用 .into() 兼容 String 和 Zeroizing<String> 两种类型（CWE-316 防护）。
+    // 用 .into 兼容 String 和 Zeroizing<String> 两种类型（CWE-316 防护）。
     config.jwt_secret = jwt_secret.to_string().into();
     // 前后端分离：仅从 Authorization Header 读取 token，不读写 Cookie
     config.is_read_cookie = false;

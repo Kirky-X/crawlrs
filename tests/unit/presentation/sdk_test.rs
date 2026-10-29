@@ -4,7 +4,7 @@
 //! External unit tests for presentation::sdk public API.
 //!
 //! Tests the SDK-specific DTOs (request/response serialization) and the
-//! `build_sdk_router()` construction function. The sdforge `#[forge]` macro
+//! `build_sdk_router` construction function. The sdforge `#[forge]` macro
 //! generates the HTTP endpoints; these tests verify the data contracts and
 //! router assembly without spinning up a full server.
 //!
@@ -16,9 +16,7 @@ use crawlrs::presentation::sdk::{
     SdkSearchResponse, SdkSearchResult,
 };
 
-// =============================================================================
 // SdkSearchRequest deserialization
-// =============================================================================
 
 #[test]
 fn tc_sdk_search_request_minimal() {
@@ -58,9 +56,7 @@ fn tc_sdk_search_request_deserialize_with_limit() {
     assert_eq!(req.limit, Some(20));
 }
 
-// =============================================================================
 // SdkSearchResponse serialization
-// =============================================================================
 
 #[test]
 fn tc_sdk_search_response_empty_results() {
@@ -111,9 +107,7 @@ fn tc_sdk_search_result_with_none_description() {
     assert!(parsed["description"].is_null());
 }
 
-// =============================================================================
 // SdkCreateTaskRequest deserialization
-// =============================================================================
 
 #[test]
 fn tc_sdk_create_task_request_scrape() {
@@ -153,9 +147,7 @@ fn tc_sdk_create_task_request_invalid_task_type_still_parses() {
     assert_eq!(req.task_type, "unknown");
 }
 
-// =============================================================================
 // SdkCreateTaskResponse serialization
-// =============================================================================
 
 #[test]
 fn tc_sdk_create_task_response_serialization() {
@@ -172,9 +164,7 @@ fn tc_sdk_create_task_response_serialization() {
     assert_eq!(parsed["status"], "Queued");
 }
 
-// =============================================================================
 // SdkScrapeRequest / SdkScrapeResponse
-// =============================================================================
 
 #[test]
 fn tc_sdk_scrape_request_deserialization() {
@@ -203,9 +193,7 @@ fn tc_sdk_scrape_response_serialization() {
     assert_eq!(parsed["url"], "https://scrape.example.com");
 }
 
-// =============================================================================
 // SdkCreateCrawlRequest / SdkCrawlResponse
-// =============================================================================
 
 #[test]
 fn tc_sdk_create_crawl_request_deserialization() {
@@ -252,13 +240,11 @@ fn tc_sdk_crawl_response_serialization() {
     assert_eq!(parsed["url"], "https://crawl.example.com");
 }
 
-// =============================================================================
 // build_sdk_router construction
-// =============================================================================
 
 #[test]
 fn tc_build_sdk_router_returns_router() {
-    // build_sdk_router() must return a valid axum::Router without panicking.
+    // build_sdk_router must return a valid axum::Router without panicking.
     // sdforge collects routes via its inventory system at compile time.
     let _router = build_sdk_router();
 }

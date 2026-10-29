@@ -131,7 +131,7 @@ fn test_engine_score_calculation() {
     assert!(score > 0.8 && score <= 1.0);
 }
 
-// === Mock engine with controllable support score ===
+// Mock engine with controllable support score
 
 struct MockEngine {
     engine_name: &'static str,
@@ -192,7 +192,7 @@ fn make_request() -> InternalScrapeRequest {
     }
 }
 
-// === should_filter_by_feature tests ===
+// should_filter_by_feature tests
 
 #[test]
 fn test_should_filter_by_feature_screenshot_low_score() {
@@ -290,7 +290,7 @@ fn test_should_filter_by_feature_no_special_needs() {
     assert!(result.is_none());
 }
 
-// === sort_candidates_by_strategy tests ===
+// sort_candidates_by_strategy tests
 
 #[test]
 fn test_sort_round_robin_preserves_order() {
@@ -473,7 +473,7 @@ fn test_sort_smart_hybrid_combined() {
     assert_eq!(candidates[0].1.name(), "e2");
 }
 
-// === update_engine_stats tests ===
+// update_engine_stats tests
 
 #[test]
 fn test_update_engine_stats_success() {
@@ -511,7 +511,7 @@ fn test_update_engine_stats_nonexistent() {
     // Should not panic
 }
 
-// === get_next_round_robin_index tests ===
+// get_next_round_robin_index tests
 
 #[test]
 fn test_get_next_round_robin_index_wraps() {
@@ -533,7 +533,7 @@ fn test_get_next_round_robin_index_single() {
     assert_eq!(idx, 0);
 }
 
-// === reset_engine_stats tests ===
+// reset_engine_stats tests
 
 #[test]
 fn test_reset_engine_stats() {
@@ -559,7 +559,7 @@ fn test_reset_engine_stats_nonexistent() {
     // Should not panic
 }
 
-// === register_engine tests ===
+// register_engine tests
 
 #[test]
 fn test_register_engine() {
@@ -574,7 +574,7 @@ fn test_register_engine() {
     assert_eq!(router.registered_engines(), vec!["new-engine".to_string()]);
 }
 
-// === RouterMetrics tests ===
+// RouterMetrics tests
 
 #[test]
 fn test_router_metrics_new() {
@@ -611,7 +611,7 @@ fn test_router_metrics_record_engine_selection() {
 #[test]
 fn test_router_metrics_record_engine_latency() {
     let metrics = RouterMetrics::new();
-    // record_engine_latency 自带 entry().or_insert() 自动初始化，
+    // record_engine_latency 自带 entry.or_insert 自动初始化，
     // 不再依赖 record_engine_selection 预初始化 latencies=0
     metrics.record_engine_latency("engine1", Duration::from_millis(100));
     metrics.record_engine_latency("engine1", Duration::from_millis(200));
@@ -628,7 +628,7 @@ fn test_router_metrics_record_engine_latency() {
 #[test]
 fn test_router_metrics_record_engine_success() {
     let metrics = RouterMetrics::new();
-    // record_engine_success 自带 entry().or_insert() 自动初始化，
+    // record_engine_success 自带 entry.or_insert 自动初始化，
     // 不再需要测试手动 insert 0 预初始化
     metrics.record_engine_success("engine1");
     metrics.record_engine_success("engine1");
@@ -639,7 +639,7 @@ fn test_router_metrics_record_engine_success() {
 #[test]
 fn test_router_metrics_record_engine_failure() {
     let metrics = RouterMetrics::new();
-    // record_engine_failure 自带 entry().or_insert() 自动初始化
+    // record_engine_failure 自带 entry.or_insert 自动初始化
     // failure_count 和 failure_classification 都不再需要测试手动 insert 0 预初始化
     metrics.record_engine_failure("engine1", "timeout error");
     metrics.record_engine_failure("engine1", "network error");
@@ -730,7 +730,7 @@ fn test_router_metrics_record_engine_success_initializes_to_one() {
     );
 }
 
-// === calculate_engine_score edge cases ===
+// calculate_engine_score edge cases
 
 #[test]
 fn test_calculate_engine_score_zero_success_rate() {
@@ -778,7 +778,7 @@ fn test_calculate_engine_score_high_usage_penalty() {
     assert!(score < perfect_score);
 }
 
-// === Setter tests ===
+// Setter tests
 
 #[test]
 fn test_set_max_engine_attempts() {
@@ -855,7 +855,7 @@ fn test_metrics_accessor() {
     let _metrics = router.metrics();
 }
 
-// === with_circuit_breaker_and_strategy constructor test ===
+// with_circuit_breaker_and_strategy constructor test
 
 #[test]
 fn test_with_circuit_breaker_and_strategy() {
@@ -873,7 +873,7 @@ fn test_with_circuit_breaker_and_strategy() {
     assert!(router.get_engine_stats().contains_key("test"));
 }
 
-// === get_engines test ===
+// get_engines test
 
 #[test]
 fn test_get_engines() {
@@ -892,7 +892,7 @@ fn test_get_engines() {
     assert_eq!(engines[1].name(), "e2");
 }
 
-// === EngineStats default test ===
+// EngineStats default test
 
 #[test]
 fn test_engine_stats_default() {
@@ -903,7 +903,7 @@ fn test_engine_stats_default() {
     assert_eq!(stats.usage_count, 0);
 }
 
-// === 路由成功路径测试 ===
+// 路由成功路径测试
 
 #[tokio::test]
 async fn test_route_success_path() {
@@ -921,7 +921,7 @@ async fn test_route_success_path() {
     assert!(response.content.contains("Mock Response"));
 }
 
-// === SSRF 保护测试 ===
+// SSRF 保护测试
 
 #[tokio::test]
 async fn test_route_ssrf_protection() {
@@ -939,7 +939,7 @@ async fn test_route_ssrf_protection() {
     assert!(matches!(err, EngineError::SsrfProtection(_)));
 }
 
-// === 不可重试错误测试 ===
+// 不可重试错误测试
 
 #[tokio::test]
 async fn test_route_non_retryable_error() {
@@ -969,7 +969,7 @@ async fn test_route_non_retryable_error() {
     assert!(matches!(err, EngineError::InvalidUrl(_)));
 }
 
-// === 最大重试次数测试 ===
+// 最大重试次数测试
 
 #[tokio::test]
 async fn test_route_max_retries_reached() {
@@ -1000,7 +1000,7 @@ async fn test_route_max_retries_reached() {
     assert!(matches!(err, EngineError::Timeout(_)));
 }
 
-// === 竞速模式测试 ===
+// 竞速模式测试
 
 #[tokio::test]
 async fn test_route_race_mode_success() {

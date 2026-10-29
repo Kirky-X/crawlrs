@@ -136,7 +136,7 @@ mod tests {
         assert!(!is_blocked_hostname("8.8.8.8"));
     }
 
-    // ========== SSRF edge cases ==========
+    // SSRF edge cases
 
     #[tokio::test]
     async fn test_validate_url_ssrf_double_encoded_blocked() {

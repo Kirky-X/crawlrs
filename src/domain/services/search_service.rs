@@ -393,7 +393,7 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Mutex;
 
-    // ========== Mocks ==========
+    // Mocks
 
     /// Configurable mock for CreditsRepository.
     struct MockCreditsRepo {
@@ -872,7 +872,7 @@ mod tests {
         }
     }
 
-    // ========== P12：smart 引擎路由 ==========
+    // P12：smart 引擎路由
 
     fn make_service_with_smart(
         search_client: MockSearchClient,
@@ -972,7 +972,7 @@ mod tests {
         }
     }
 
-    // ========== Helpers ==========
+    // Helpers
 
     fn make_service(credits: Arc<dyn CreditsRepository>) -> SearchService {
         SearchService {
@@ -1129,7 +1129,7 @@ mod tests {
         assert!(results.iter().all(|r| r.score.is_none()));
     }
 
-    // ========== SearchQuery tests ==========
+    // SearchQuery tests
 
     #[test]
     fn test_search_query_construction_with_all_fields() {
@@ -1168,7 +1168,7 @@ mod tests {
         assert!(query.query.is_empty());
     }
 
-    // ========== SearchCrawlConfig tests ==========
+    // SearchCrawlConfig tests
 
     #[test]
     fn test_search_crawl_config_default_values() {
@@ -1224,7 +1224,7 @@ mod tests {
         assert_eq!(config.strategy, back.strategy);
     }
 
-    // ========== SearchResult tests ==========
+    // SearchResult tests
 
     #[test]
     fn test_search_result_construction() {
@@ -1255,7 +1255,7 @@ mod tests {
         assert!(result.description.is_none());
     }
 
-    // ========== SearchResponse tests ==========
+    // SearchResponse tests
 
     #[test]
     fn test_search_response_construction_with_crawl() {
@@ -1289,7 +1289,7 @@ mod tests {
         assert!(response.crawl_id.is_none());
     }
 
-    // ========== SearchServiceError From conversions ==========
+    // SearchServiceError From conversions
 
     #[test]
     fn test_search_service_error_from_string() {
@@ -1352,7 +1352,7 @@ mod tests {
         assert!(msg.contains("timeout"));
     }
 
-    // ========== search() pre-validation tests ==========
+    // search pre-validation tests
 
     #[tokio::test]
     async fn test_search_empty_query_returns_validation_error() {
@@ -1440,15 +1440,15 @@ mod tests {
         assert_eq!(resp.credits_used, 1, "search cost is 1 credit");
     }
 
-    // ========== engine_param branch tests ==========
-    // These tests exercise the sources/engine parameter handling logic in search().
+    // engine_param branch tests
+    // These tests exercise the sources/engine parameter handling logic in search.
     // perform_search succeeds with the injected MockSearchEngine (default Bing),
     // so each test asserts Ok, proving the code reached perform_search and that the
     // engine_param branches did not short-circuit into ValidationError/InsufficientCredits.
 
     #[tokio::test]
     async fn test_search_with_single_source_passes_source_as_engine() {
-        // sources.len() == 1 → engine_param = Some(sources[0]) = Some("bing")
+        // sources.len == 1 → engine_param = Some(sources[0]) = Some("bing")
         // MockSearchEngine (Bing) handles the request successfully.
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(10)));
         let query = SearchQuery {
@@ -1471,7 +1471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_with_multiple_sources_uses_aggregator() {
-        // sources.len() > 1 → engine_param = None (aggregator)
+        // sources.len > 1 → engine_param = None (aggregator)
         // perform_search falls back to the default (Bing) mock engine and succeeds.
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(10)));
         let query = SearchQuery {
@@ -1523,7 +1523,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_with_limit_specified_passes_to_perform_search() {
         // Exercise the query.limit.unwrap_or(10) branch with explicit limit.
-        // MockSearchClient::new() returns 2 items, so limit=5 yields 2 results.
+        // MockSearchClient::new returns 2 items, so limit=5 yields 2 results.
         let service = make_service(Arc::new(MockCreditsRepo::with_balance(10)));
         let query = SearchQuery {
             limit: Some(5),
@@ -1598,7 +1598,7 @@ mod tests {
         }
     }
 
-    // ========== SearchServiceTrait forwarding test ==========
+    // SearchServiceTrait forwarding test
 
     #[tokio::test]
     async fn test_search_service_trait_forwards_empty_query_error() {
@@ -1619,7 +1619,7 @@ mod tests {
         }
     }
 
-    // ========== perform_search success path tests ==========
+    // perform_search success path tests
     //
     // These tests rely on MockSearchEngine (injected via SearchClient::new_with_engines)
     // to exercise the success branch of `perform_search` and the downstream crawl/credit
@@ -1880,9 +1880,9 @@ mod tests {
         assert_eq!(resp.results.len(), 2);
     }
 
-    // ========== Mock stub contract tests ==========
+    // Mock stub contract tests
     //
-    // search() only exercises `create` on the task/crawl repos and
+    // search only exercises `create` on the task/crawl repos and
     // `get_balance`/`deduct_credits` on the credits repo. The remaining methods
     // are stubs that return safe defaults. Calling them here documents the stub
     // contract and keeps coverage accounting honest for the mock implementations.
@@ -2045,7 +2045,7 @@ mod tests {
 
     #[test]
     fn test_mock_search_engine_name_engine_type_health_all_variants() {
-        // Named branches in name(): Google, Bing, Baidu, Sogou
+        // Named branches in name: Google, Bing, Baidu, Sogou
         for engine_type in [
             SearchEngineType::Bing,
             SearchEngineType::Bing,
@@ -2060,7 +2060,7 @@ mod tests {
                 crate::search::types::EngineHealth::Healthy
             ));
         }
-        // Catch-all branch in name(): Smart, Exa, Tavily
+        // Catch-all branch in name: Smart, Exa, Tavily
         for engine_type in [
             SearchEngineType::Smart,
             SearchEngineType::Exa,
@@ -2144,7 +2144,7 @@ mod tests {
         ));
     }
 
-    // ========== crawl_config custom path tests ==========
+    // crawl_config custom path tests
 
     #[tokio::test]
     async fn test_search_with_crawl_results_and_custom_crawl_config() {
@@ -2249,7 +2249,7 @@ mod tests {
         );
     }
 
-    // ========== SearchServiceError display tests for remaining variants ==========
+    // SearchServiceError display tests for remaining variants
 
     #[test]
     fn test_search_service_error_display_repository() {

@@ -24,7 +24,7 @@ mod engine_client_tests {
 
     use std::time::Duration;
 
-    // === Mock EngineRouterTrait ===
+    // Mock EngineRouterTrait
 
     struct MockEngineRouter {
         route_result: Option<Result<InternalScrapeResponse, EngineError>>,
@@ -134,7 +134,7 @@ mod engine_client_tests {
         }
     }
 
-    // === ScrapeRequest Tests ===
+    // ScrapeRequest Tests
 
     #[test]
     fn test_scrape_request_new() {
@@ -171,7 +171,7 @@ mod engine_client_tests {
         assert_eq!(request.options.timeout, DEFAULT_TEST_TIMEOUT);
     }
 
-    // === ScrapeOptions Tests ===
+    // ScrapeOptions Tests
 
     #[test]
     fn test_scrape_options_default() {
@@ -245,7 +245,7 @@ mod engine_client_tests {
         assert_eq!(options.screenshot_config, Some(config));
     }
 
-    // === ScreenshotConfig Tests ===
+    // ScreenshotConfig Tests
 
     #[test]
     fn test_screenshot_config_default() {
@@ -256,7 +256,7 @@ mod engine_client_tests {
         assert_eq!(config.format, Some("jpeg".to_string()));
     }
 
-    // === PageAction Tests ===
+    // PageAction Tests
 
     #[test]
     fn test_page_action_wait() {
@@ -304,14 +304,14 @@ mod engine_client_tests {
         }
     }
 
-    // === ScrollDirection Tests ===
+    // ScrollDirection Tests
 
     #[test]
     fn test_scroll_direction_default() {
         assert_eq!(ScrollDirection::default(), ScrollDirection::Down);
     }
 
-    // === ScrapeResponse Tests ===
+    // ScrapeResponse Tests
 
     #[test]
     fn test_scrape_response_new() {
@@ -342,7 +342,7 @@ mod engine_client_tests {
         assert!(!server_error.is_success());
     }
 
-    // === EngineError Tests ===
+    // EngineError Tests
 
     #[test]
     fn test_engine_error_is_retryable() {
@@ -368,7 +368,7 @@ mod engine_client_tests {
         assert_eq!(format!("{}", ssrf_error), "SSRF protection: internal URL");
     }
 
-    // === EngineHealthStatus Tests ===
+    // EngineHealthStatus Tests
 
     #[test]
     fn test_engine_health_status_default() {
@@ -415,7 +415,7 @@ mod engine_client_tests {
         }
     }
 
-    // === EngineClient Tests ===
+    // EngineClient Tests
 
     #[test]
     fn test_engine_client_default() {
@@ -436,7 +436,7 @@ mod engine_client_tests {
         assert!(engines.is_empty());
     }
 
-    // === Integration-style Tests (Async) ===
+    // Integration-style Tests (Async)
 
     #[tokio::test]
     #[ignore] // Skip: Test requires specific features or has private field access
@@ -453,7 +453,7 @@ mod engine_client_tests {
         }
     }
 
-    // === URL Validation Tests ===
+    // URL Validation Tests
 
     #[tokio::test]
     #[ignore] // Skip: Test requires specific features or has private field access
@@ -498,7 +498,7 @@ mod engine_client_tests {
         }
     }
 
-    // === Edge Cases ===
+    // Edge Cases
 
     #[test]
     fn test_empty_url_in_scrape_request() {
@@ -550,7 +550,7 @@ mod engine_client_tests {
         assert_eq!(actions.len(), 3);
     }
 
-    // === EngineClient::with_engines Tests ===
+    // EngineClient::with_engines Tests
 
     #[test]
     fn test_engine_client_with_engines_creates_client() {
@@ -559,7 +559,7 @@ mod engine_client_tests {
         assert!(client.registered_engines().is_empty());
     }
 
-    // === EngineClient::with_router Tests ===
+    // EngineClient::with_router Tests
 
     #[test]
     fn test_engine_client_with_router_creates_client() {
@@ -582,7 +582,7 @@ mod engine_client_tests {
         assert!(engines.contains(&"engine2".to_string()));
     }
 
-    // === EngineClient::scrape Success Path Tests ===
+    // EngineClient::scrape Success Path Tests
 
     #[tokio::test]
     async fn test_engine_client_scrape_success_returns_response() {
@@ -626,7 +626,7 @@ mod engine_client_tests {
         assert_eq!(response.screenshot, Some("base64screenshot".to_string()));
     }
 
-    // === EngineClient::scrape Error Path Tests (via router) ===
+    // EngineClient::scrape Error Path Tests (via router)
 
     #[tokio::test]
     async fn test_engine_client_scrape_router_error_request_failed_propagates() {
@@ -746,7 +746,7 @@ mod engine_client_tests {
         }
     }
 
-    // === EngineClientTrait Implementation Tests ===
+    // EngineClientTrait Implementation Tests
 
     #[tokio::test]
     async fn test_engine_client_trait_scrape_delegates_to_inherent() {
@@ -798,7 +798,7 @@ mod engine_client_tests {
         assert_eq!(engines.len(), 2);
     }
 
-    // === EngineClient Clone Tests ===
+    // EngineClient Clone Tests
 
     #[test]
     fn test_engine_client_clone_preserves_router() {

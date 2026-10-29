@@ -5,7 +5,7 @@
 //!
 //! 实现要点：
 //!
-//! - **手动重定向循环**（`redirect(Policy::none())`），每跳（含重定向）先经
+//! - **手动重定向循环**（`redirect(Policy::none)`），每跳（含重定向）先经
 //!   [`super::EgressGuard`] 裁决，deny 立即返回 [`AgentLibError::EgressDenied`]
 //!   且未发起连接（A004）。
 //! - **SSRF 防护**：每跳用 [`SsrfValidator`] 做 DNS 校验 + 解析结果 pinning

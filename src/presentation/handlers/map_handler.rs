@@ -149,7 +149,7 @@ mod tests {
     use std::collections::HashMap;
     use tower::ServiceExt;
 
-    // ========== Mock fetcher / rate limiter ==========
+    // Mock fetcher / rate limiter
 
     struct MockFetcher {
         /// url → (status, body)
@@ -314,7 +314,7 @@ mod tests {
         )
     }
 
-    // ========== map_core（HTTP 层冒烟语义） ==========
+    // map_core（HTTP 层冒烟语义）
 
     /// POST /v1/map 聚合语义：200 且 links 保序去重（默认 limit=1000）
     #[tokio::test]
@@ -451,7 +451,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    // ========== 路由装配（注册与依赖注入接线） ==========
+    // 路由装配（注册与依赖注入接线）
 
     fn test_router(use_case: Arc<MapUseCase>) -> Router {
         crate::bootstrap::route_groups::map_routes::register_map_routes()

@@ -181,7 +181,7 @@ mod tests {
         assert_eq!(set.len(), 2);
     }
 
-    // === RetryTracker tests ===
+    // RetryTracker tests
 
     #[test]
     fn tracker_default_initial_counts_zero() {

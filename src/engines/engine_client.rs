@@ -57,7 +57,7 @@ pub enum EngineError {
     /// 反爬虫检测命中（1.7）
     ///
     /// 携带 `antibot::classifier::classify` 给出的 `Detection::reason` 字符串。
-    /// 可重试：`is_retryable()=true`，`retry_reason()=AntiBot`，
+    /// 可重试：`is_retryable=true`，`retry_reason=AntiBot`，
     /// 路由层据此切身份（UA/代理/stealth）+ 强制浏览器/FlareSolverr 引擎改派。
     #[error("Anti-bot detected: {0}")]
     AntiBotDetected(String),
@@ -66,7 +66,7 @@ pub enum EngineError {
     ///
     /// 当引擎降级或特性切换（如 Chrome → HTTP、JS 渲染失败回退到静态抓取）时触发。
     /// 携带描述信息（如 "chrome_degraded_to_http"）。
-    /// 可重试：`is_retryable()=true`，`retry_reason()=FeatureToggle`，
+    /// 可重试：`is_retryable=true`，`retry_reason=FeatureToggle`，
     /// 路由层据此换引擎重试，并按 `RetryDirective` 立即轮换 UA（attempt=0 特例）。
     #[error("Feature toggle: {0}")]
     FeatureToggle(String),
@@ -80,7 +80,7 @@ pub enum EngineError {
     /// 区别于 `Timeout`（请求整体超时），此变体表示单引擎在 MRT（Maximum Response Time）
     /// 内未完成，router 触发瀑布式 fallback 切换到下一引擎。
     ///
-    /// 可重试：`is_retryable()=true`，`retry_reason()=Transient`（同引擎可重试，
+    /// 可重试：`is_retryable=true`，`retry_reason=Transient`（同引擎可重试，
     /// 但 router 会优先切下一引擎而非重试同引擎）。
     #[error("Engine {engine} exceeded MRT of {mrt:?}")]
     EngineMrtExceeded {
@@ -204,7 +204,7 @@ pub trait ScraperEngine: Send + Sync {
     /// 引擎级最大响应时间（MRT, Maximum Response Time）。
     ///
     /// 用于 router 顺序 fallback 路径瀑布式超时：单引擎调用以
-    /// `min(remaining_timeout, engine.max_response_time())` 包裹，
+    /// `min(remaining_timeout, engine.max_response_time)` 包裹，
     /// 超 MRT 即切下一引擎（不切整体失败）。race 模式不受影响。
     ///
     /// # 默认实现
@@ -349,12 +349,10 @@ impl EngineClient {
     /// * `Ok(ScrapeResponse)` on success
     /// * `Err(EngineError)` on failure
     pub async fn scrape(&self, request: &ScrapeRequest) -> Result<ScrapeResponse, EngineError> {
-        // Validate URL first
         if let Err(e) = validate_url(&request.url).await {
             return Err(EngineError::SsrfProtection(e.to_string()));
         }
 
-        // Convert to internal request format
         let internal_request = request.to_internal();
 
         // Route to appropriate engine

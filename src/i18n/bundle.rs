@@ -125,7 +125,6 @@ impl I18nBundle {
     /// 查找指定 locale 的翻译，如果 key 不存在则回退到 default_locale。
     /// 如果 default_locale 也不存在，返回 key 本身。
     pub fn translate(&self, locale: &Locale, key: &str) -> String {
-        // 尝试请求的 locale
         if let Some(bundle) = self.bundles.get(locale) {
             if let Some(msg) = bundle.get_message(key) {
                 if let Some(pattern) = msg.value() {
@@ -183,7 +182,6 @@ impl I18nBundle {
             Some(args.iter().map(|(k, v)| (*k, v.clone())).collect())
         };
 
-        // 尝试请求的 locale
         if let Some(bundle) = self.bundles.get(locale) {
             if let Some(msg) = bundle.get_message(key) {
                 if let Some(pattern) = msg.value() {
@@ -252,7 +250,6 @@ impl I18nBundle {
 
             let locale_keys = self.get_message_keys(locale);
 
-            // 检查缺少的 key
             for key in &default_keys {
                 if !locale_keys.contains(key) {
                     warnings.push(format!(
@@ -262,7 +259,6 @@ impl I18nBundle {
                 }
             }
 
-            // 检查多余的 key
             for key in &locale_keys {
                 if !default_keys.contains(key) {
                     warnings.push(format!(
@@ -280,7 +276,7 @@ impl I18nBundle {
     fn get_message_keys(&self, locale: &Locale) -> HashSet<String> {
         let mut keys = HashSet::new();
         if let Some(bundle) = self.bundles.get(locale) {
-            // FluentBundle 没有直接的 keys() 迭代 API，
+            // FluentBundle 没有直接的 keys 迭代 API，
             // 通过已知 FTL 文件中的 key 列表来验证
             // 这里我们遍历所有已知的 key 前缀来收集
             for entry in self.ftl_entries() {
@@ -382,7 +378,7 @@ impl I18nBundle {
             "domain-error-validation",
         ]);
 
-        // rag.ftl (11 keys) — RagSettings::validate_providers() 配置校验消息
+        // rag.ftl (11 keys) — RagSettings::validate_providers 配置校验消息
         keys.extend([
             "rag-config-embedding-provider-local-feature",
             "rag-config-embedding-provider-remote-feature",
@@ -397,7 +393,7 @@ impl I18nBundle {
             "rag-config-rag-top-k",
         ]);
 
-        // workers.ftl (5 keys) — BacklogWorker::process_backlog() 运维日志
+        // workers.ftl (5 keys) — BacklogWorker::process_backlog 运维日志
         keys.extend([
             "backlog-processing-started",
             "backlog-none-pending",
@@ -561,7 +557,7 @@ impl I18nBundle {
             "aimd-target-changed",
         ]);
 
-        // errors.ftl 追加 (16 keys) — SearchError::user_message_locale()
+        // errors.ftl 追加 (16 keys) — SearchError::user_message_locale
         keys.extend([
             "search-error-network",
             "search-error-timeout",

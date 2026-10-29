@@ -108,12 +108,10 @@ impl CreditsManager {
         );
     }
 
-    // 获取余额
     pub fn get_balance(&self) -> i64 {
         self.balance
     }
 
-    // 获取交易历史
     pub fn get_history(&self, limit: usize) -> &[CreditTransaction] {
         &self.transactions[..std::cmp::min(limit, self.transactions.len())]
     }
@@ -146,7 +144,6 @@ async fn main() {
     info!("3. 使用 LLM 提取 (50 credits)");
     let _ = manager.consume(50, "LLM extraction: product data");
 
-    // 尝试超出余额的消费
     info!("4. 尝试大额消费 (20000 credits)");
     if let Err(e) = manager.consume(20000, "Large batch operation") {
         warn!("Failed: {}", e);

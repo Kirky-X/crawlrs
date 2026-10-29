@@ -326,7 +326,7 @@ mod tests {
             .with_timezone(&FixedOffset::east_opt(0).expect("valid offset"))
     }
 
-    // ========== construction ==========
+    // construction
 
     #[test]
     fn test_new_creates_repository_instance() {
@@ -553,7 +553,7 @@ mod tests {
             return;
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        // Empty ids: update_many with IN () — Postgres returns Ok(0 rows affected).
+        // Empty ids: update_many with IN  — Postgres returns Ok(0 rows affected).
         let result = repo
             .update_status_batch(&[], TasksBacklogStatus::Completed)
             .await;
@@ -565,7 +565,7 @@ mod tests {
         assert_eq!(result.unwrap(), 0, "empty ids should affect 0 rows");
     }
 
-    // ========== RepositoryError variant display exhaustive ==========
+    // RepositoryError variant display exhaustive
 
     #[test]
     fn test_repository_error_database_display() {
@@ -587,7 +587,7 @@ mod tests {
         assert_eq!(format!("{}", err), "Record not found");
     }
 
-    // ========== From<dbnexus::sea_orm::DbErr> exhaustive ==========
+    // From<dbnexus::sea_orm::DbErr> exhaustive
 
     #[test]
     fn test_repository_error_from_dberr_record_not_found() {
@@ -644,7 +644,7 @@ mod tests {
         }
     }
 
-    // ========== Production conversion path: dbnexus::DbError -> anyhow -> RepositoryError ==========
+    // Production conversion path: dbnexus::DbError -> anyhow -> RepositoryError
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_connection_path() {
@@ -708,7 +708,7 @@ mod tests {
         assert!(msg.contains("Database error"));
     }
 
-    // ========== TasksBacklogStatus Display exhaustive ==========
+    // TasksBacklogStatus Display exhaustive
 
     #[test]
     fn test_tasks_backlog_status_pending_display() {
@@ -750,7 +750,7 @@ mod tests {
         assert_eq!(format!("{}", TasksBacklogStatus::Expired), "expired");
     }
 
-    // ========== TasksBacklogStatus FromStr exhaustive ==========
+    // TasksBacklogStatus FromStr exhaustive
 
     #[test]
     fn test_tasks_backlog_status_from_str_pending() {
@@ -831,7 +831,7 @@ mod tests {
         assert!(err.contains("unknown"));
     }
 
-    // ========== From<tasks_backlog::Model> for TasksBacklog ==========
+    // From<tasks_backlog::Model> for TasksBacklog
 
     #[test]
     fn test_from_model_converts_all_fields() {
@@ -932,10 +932,8 @@ mod tests {
         assert!(domain.processed_at.is_none());
     }
 
-    // ============================================================
     // Additional From<dbnexus::sea_orm::DbErr> variant coverage (exhaustive)
     // 覆盖 dbnexus::sea_orm::DbErr 所有未在前面测试的变体到 RepositoryError::Database 的转换
-    // ============================================================
 
     #[test]
     fn test_repository_error_from_dberr_connection_acquire_closed() {
@@ -1161,12 +1159,10 @@ mod tests {
         assert!(matches!(repo_err, RepositoryError::Database(_)));
     }
 
-    // ============================================================
     // Additional boundary tests — nil UUIDs, multiple IDs, all status variants
     // These tests use new_v4 UUIDs to ensure isolation under concurrent
     // test execution. nil UUIDs are only used for read-only / idempotent
     // operations to avoid UNIQUE / PRIMARY KEY collisions.
-    // ============================================================
 
     #[tokio::test]
     async fn test_find_by_id_with_nil_uuid_returns_ok() {
@@ -1197,7 +1193,6 @@ mod tests {
             return;
         }
         let repo = TasksBacklogRepositoryImpl::new(create_test_db_pool());
-        // delete_by_id is idempotent: returns Ok(()) even when no row matches.
         let result = repo.delete(crate::domain::id::Id::nil()).await;
         assert!(result.is_ok(), "delete failed: {:?}", result.err());
     }
@@ -1402,9 +1397,7 @@ mod tests {
         let _ = repo.delete(backlog.id).await;
     }
 
-    // ============================================================
     // RepositoryError Display — 精确消息内容验证
-    // ============================================================
 
     #[test]
     fn test_repository_error_database_display_exact() {

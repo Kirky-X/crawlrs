@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 /// TLS 指纹模拟类型
 ///
 /// 决定抓取时使用的浏览器 TLS/JA4 + HTTP/2 指纹模板。映射到 `wreq::EmulationProvider`
-/// （`src/engines/client/wreq_engine.rs::emulation_provider()`），由 WreqEngine 消费。
+/// （`src/engines/client/wreq_engine.rs::emulation_provider`），由 WreqEngine 消费。
 ///
 /// 变体覆盖现有 44 个 UA profile 的浏览器家族；非精确版本映射到最近可用变体
 /// （如 Chrome 125/127/128 → `Chrome120`，Firefox 128/130/131 → `Firefox133`）。
@@ -208,9 +208,7 @@ impl Default for UaPool {
     }
 }
 
-// =============================================================================
 // 内置 profile 表
-// =============================================================================
 
 /// 桌面 profile — 22 个，覆盖 Chrome/Firefox/Safari/Edge × Windows/macOS/Linux
 #[must_use]
@@ -233,7 +231,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
     const SEC_NONE: &str = "";
 
     vec![
-        // === Chrome on Windows ===
+        // Chrome on Windows
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             tls_emulation: TlsEmulation::Chrome131,
@@ -261,7 +259,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
             viewport: (1536, 864),
             mobile: false,
         },
-        // === Chrome on macOS ===
+        // Chrome on macOS
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             tls_emulation: TlsEmulation::Chrome131,
@@ -289,7 +287,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
             viewport: (1680, 1050),
             mobile: false,
         },
-        // === Chrome on Linux ===
+        // Chrome on Linux
         UaProfile {
             ua: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             tls_emulation: TlsEmulation::Chrome131,
@@ -308,7 +306,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
             viewport: (1366, 768),
             mobile: false,
         },
-        // === Firefox on Windows ===
+        // Firefox on Windows
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
             tls_emulation: TlsEmulation::Firefox133,
@@ -327,7 +325,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
             viewport: (1366, 768),
             mobile: false,
         },
-        // === Firefox on macOS ===
+        // Firefox on macOS
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0",
             tls_emulation: TlsEmulation::Firefox133,
@@ -346,7 +344,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
             viewport: (1280, 800),
             mobile: false,
         },
-        // === Firefox on Linux ===
+        // Firefox on Linux
         UaProfile {
             ua: "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0",
             tls_emulation: TlsEmulation::Firefox133,
@@ -365,7 +363,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
             viewport: (1280, 800),
             mobile: false,
         },
-        // === Safari on macOS (无 sec-ch-ua) ===
+        // Safari on macOS (无 sec-ch-ua)
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
             tls_emulation: TlsEmulation::Safari17,
@@ -393,7 +391,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
             viewport: (1280, 800),
             mobile: false,
         },
-        // === Edge on Windows ===
+        // Edge on Windows
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
             tls_emulation: TlsEmulation::Edge131,
@@ -412,7 +410,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
             viewport: (1366, 768),
             mobile: false,
         },
-        // === Edge on macOS ===
+        // Edge on macOS
         UaProfile {
             ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
             tls_emulation: TlsEmulation::Edge131,
@@ -431,7 +429,7 @@ fn desktop_profiles() -> Vec<UaProfile> {
             viewport: (1280, 800),
             mobile: false,
         },
-        // === Chrome on Windows (补充至 22) ===
+        // Chrome on Windows (补充至 22)
         UaProfile {
             ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
             tls_emulation: TlsEmulation::Chrome120,
@@ -462,7 +460,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
     const SEC_NONE: &str = "";
 
     vec![
-        // === Chrome on Android ===
+        // Chrome on Android
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
             tls_emulation: TlsEmulation::Chrome131,
@@ -499,7 +497,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
             viewport: (360, 800),
             mobile: true,
         },
-        // === Chrome on iOS (iPhone) ===
+        // Chrome on iOS (iPhone)
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/131.0.6778.73 Mobile/15E148 Safari/604.1",
             tls_emulation: TlsEmulation::Chrome131,
@@ -520,7 +518,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
             viewport: (390, 844),
             mobile: true,
         },
-        // === Safari on iOS (iPhone) ===
+        // Safari on iOS (iPhone)
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
             tls_emulation: TlsEmulation::Safari17,
@@ -557,7 +555,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
             viewport: (390, 844),
             mobile: true,
         },
-        // === Safari on iPad ===
+        // Safari on iPad
         UaProfile {
             ua: "Mozilla/5.0 (iPad; CPU OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
             tls_emulation: TlsEmulation::Safari17,
@@ -576,7 +574,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
             viewport: (1024, 1366),
             mobile: true,
         },
-        // === Firefox on Android ===
+        // Firefox on Android
         UaProfile {
             ua: "Mozilla/5.0 (Android 14; Mobile; rv:133.0) Gecko/133.0 Firefox/133.0",
             tls_emulation: TlsEmulation::Firefox133,
@@ -604,7 +602,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
             viewport: (360, 780),
             mobile: true,
         },
-        // === Firefox on iOS ===
+        // Firefox on iOS
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/133.0 Mobile/15E148 Safari/605.1.15",
             tls_emulation: TlsEmulation::Firefox133,
@@ -623,7 +621,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
             viewport: (393, 852),
             mobile: true,
         },
-        // === Edge on Android ===
+        // Edge on Android
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 14; SM-S928U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36 EdgA/131.0.0.0",
             tls_emulation: TlsEmulation::Edge131,
@@ -642,7 +640,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
             viewport: (412, 915),
             mobile: true,
         },
-        // === Edge on iOS ===
+        // Edge on iOS
         UaProfile {
             ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/131.0.2592.73 Mobile/15E148 Safari/605.1.15",
             tls_emulation: TlsEmulation::Edge131,
@@ -654,7 +652,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
             viewport: (390, 844),
             mobile: true,
         },
-        // === Chrome on Android Tablet ===
+        // Chrome on Android Tablet
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 13; SM-X910N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
             tls_emulation: TlsEmulation::Chrome130,
@@ -664,7 +662,7 @@ fn mobile_profiles() -> Vec<UaProfile> {
             viewport: (800, 1280),
             mobile: true,
         },
-        // === Samsung Internet on Android ===
+        // Samsung Internet on Android
         UaProfile {
             ua: "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
             tls_emulation: TlsEmulation::Chrome120,
@@ -677,15 +675,13 @@ fn mobile_profiles() -> Vec<UaProfile> {
     ]
 }
 
-// =============================================================================
 // Tests — TDD: 验证验收标准
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // === P03：TLS 仿真的 Chromium 家族过滤 ===
+    // P03：TLS 仿真的 Chromium 家族过滤
 
     #[test]
     fn test_is_chromium_family_classification() {
@@ -714,7 +710,7 @@ mod tests {
         }
     }
 
-    // === profile 数量 ≥ 20 ===
+    // profile 数量 ≥ 20
 
     #[test]
     fn test_desktop_pool_has_at_least_20_profiles() {
@@ -736,7 +732,7 @@ mod tests {
         );
     }
 
-    // === 桌面 profile 不配移动 viewport / mobile 标志 ===
+    // 桌面 profile 不配移动 viewport / mobile 标志
 
     #[test]
     fn test_desktop_profiles_have_mobile_false() {
@@ -780,7 +776,7 @@ mod tests {
         }
     }
 
-    // === 移动 profile mobile=true 且 viewport 合理 ===
+    // 移动 profile mobile=true 且 viewport 合理
 
     #[test]
     fn test_mobile_profiles_have_mobile_true() {
@@ -826,7 +822,7 @@ mod tests {
         }
     }
 
-    // === 浏览器覆盖度（Chrome/Firefox/Safari/Edge）===
+    // 浏览器覆盖度（Chrome/Firefox/Safari/Edge）
 
     #[test]
     fn test_desktop_pool_covers_all_major_browsers() {
@@ -869,7 +865,7 @@ mod tests {
         assert!(has_edge, "mobile pool must cover Edge");
     }
 
-    // === 平台覆盖度（Windows/macOS/Linux/iOS/Android）===
+    // 平台覆盖度（Windows/macOS/Linux/iOS/Android）
 
     #[test]
     fn test_desktop_pool_covers_major_platforms() {
@@ -890,7 +886,7 @@ mod tests {
         assert!(platforms.contains("Android"), "must cover Android");
     }
 
-    // === sec-ch-ua 一致性（Chromium→非空，Firefox/Safari→空）===
+    // sec-ch-ua 一致性（Chromium→非空，Firefox/Safari→空）
 
     #[test]
     fn test_sec_ch_ua_consistency_chromium() {
@@ -946,7 +942,7 @@ mod tests {
         }
     }
 
-    // === viewport 与 platform 一致 ===
+    // viewport 与 platform 一致
 
     #[test]
     fn test_ios_profiles_have_ios_viewport() {
@@ -982,7 +978,7 @@ mod tests {
         }
     }
 
-    // === pick() 返回有效 profile ===
+    // pick 返回有效 profile
 
     #[test]
     fn test_pick_desktop_returns_desktop_profile() {
@@ -1014,7 +1010,7 @@ mod tests {
         );
     }
 
-    // === pick_seeded() 同 seed 稳定返回 ===
+    // pick_seeded 同 seed 稳定返回
 
     #[test]
     fn test_pick_seeded_is_deterministic_same_seed() {
@@ -1073,7 +1069,7 @@ mod tests {
 
     #[test]
     fn test_pick_seeded_wraps_around_pool_size() {
-        // seed 超过 pool.len() 时应 wrap（取模），不 panic
+        // seed 超过 pool.len 时应 wrap（取模），不 panic
         let pool = UaPool::new();
         let _ = pool.pick_seeded(u64::MAX, false);
         let _ = pool.pick_seeded(u64::MAX, true);
@@ -1081,7 +1077,7 @@ mod tests {
         let _ = pool.pick_seeded(0, true);
     }
 
-    // === 辅助方法测试 ===
+    // 辅助方法测试
 
     #[test]
     fn test_count_returns_correct_size() {
@@ -1101,7 +1097,7 @@ mod tests {
         assert_eq!(a.mobile[0].ua, b.mobile[0].ua);
     }
 
-    // === 一致性验证：UA / sec_ch_ua / platform 不矛盾 ===
+    // 一致性验证：UA / sec_ch_ua / platform 不矛盾
 
     #[test]
     fn test_all_profiles_have_consistent_platform_in_ua() {
@@ -1143,7 +1139,7 @@ mod tests {
         }
     }
 
-    // === tls_emulation 与 UA 浏览器家族一致性 ===
+    // tls_emulation 与 UA 浏览器家族一致性
 
     /// 从 UA 字符串推导期望的 `TlsEmulation`（与 `tls_emulation` 字段赋值逻辑镜像）。
     ///

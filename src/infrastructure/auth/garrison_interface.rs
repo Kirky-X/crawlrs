@@ -73,7 +73,7 @@ use std::collections::HashSet;
 /// # fn demo(pool: dbnexus::DbPool) {
 /// let interface: Arc<dyn GarrisonInterface> = Arc::new(
 ///     CrawlrsGarrisonInterface::new(pool)
-/// );
+///);
 /// # }
 /// ```
 pub struct CrawlrsGarrisonInterface {

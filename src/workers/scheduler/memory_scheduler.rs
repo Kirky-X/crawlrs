@@ -199,7 +199,7 @@ impl MemoryScheduler {
     ///
     /// 返回 `JoinHandle` 供调用方在关闭时 await，防止任务泄漏。
     ///
-    /// 返回 (`watch::Receiver<bool>`, `JoinHandle<()>`)：
+    /// 返回 (`watch::Receiver<bool>`, `JoinHandle<>`)：
     /// - receiver 供调用方监听关闭信号
     /// - JoinHandle 供关闭时 await 确保监控任务退出
     pub fn spawn_monitor(self: Arc<Self>) -> (watch::Receiver<bool>, tokio::task::JoinHandle<()>) {
@@ -220,9 +220,7 @@ impl MemoryScheduler {
     }
 }
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -298,7 +296,7 @@ mod tests {
         make_scheduler(memory, pressure, critical, timeout).0
     }
 
-    // ========== MemoryState 映射测试 ==========
+    // MemoryState 映射测试
 
     #[test]
     fn test_state_normal_below_pressure_threshold() {
@@ -343,7 +341,7 @@ mod tests {
         assert_eq!(scheduler.state(), MemoryState::Normal);
     }
 
-    // ========== 状态转移与 critical_since 单调性 ==========
+    // 状态转移与 critical_since 单调性
 
     #[test]
     fn test_state_transition_critical_to_normal_clears_critical_since() {
@@ -379,7 +377,7 @@ mod tests {
         );
     }
 
-    // ========== admit 决策测试 ==========
+    // admit 决策测试
 
     #[tokio::test]
     async fn test_admit_proceed_when_normal() {
@@ -418,7 +416,7 @@ mod tests {
         assert_eq!(scheduler.admit().await, Admission::Reschedule);
     }
 
-    // ========== check_critical_timeout 测试 ==========
+    // check_critical_timeout 测试
 
     #[test]
     fn test_check_critical_timeout_false_when_not_critical() {
@@ -442,7 +440,7 @@ mod tests {
         assert!(scheduler.check_critical_timeout());
     }
 
-    // ========== shutdown_signal 测试 ==========
+    // shutdown_signal 测试
 
     #[tokio::test]
     async fn test_shutdown_signal_initially_false() {

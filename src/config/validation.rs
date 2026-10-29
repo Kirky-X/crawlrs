@@ -9,7 +9,6 @@ use super::settings::Settings;
 ///
 /// 验证配置值的有效性
 pub fn validate_values(settings: &Settings) -> Result<(), sdforge::validator::ValidationError> {
-    // 验证端口范围
     if settings.server.port == 0 {
         return Err(sdforge::validator::ValidationError::new("invalid_port"));
     }

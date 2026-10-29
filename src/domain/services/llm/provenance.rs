@@ -474,7 +474,7 @@ pub fn slice_char_range(source: &str, interval: &CharInterval) -> String {
 mod tests {
     use super::*;
 
-    // ===== tokenize =====
+    // tokenize
 
     #[test]
     fn tokenize_lowercases_and_reports_char_offsets() {
@@ -502,7 +502,7 @@ mod tests {
         );
     }
 
-    // ===== align：精确子串（含 CJK）=====
+    // align：精确子串（含 CJK）
 
     #[test]
     fn align_exact_ascii_substring_returns_correct_interval() {
@@ -531,7 +531,7 @@ mod tests {
         assert_eq!(slice_char_range(source, &m.interval), "今天天气很好");
     }
 
-    // ===== align：词序扰动（LLM 改写虚词）=====
+    // align：词序扰动（LLM 改写虚词）
 
     #[test]
     fn align_tolerates_reworded_excerpt_when_coverage_passes_gate() {
@@ -556,7 +556,7 @@ mod tests {
         assert_eq!(slice_char_range(source, &m.interval), "alpha beta delta");
     }
 
-    // ===== align：乱序/幻觉 =====
+    // align：乱序/幻觉
 
     #[test]
     fn align_scattered_tokens_fail_density_gate() {
@@ -583,7 +583,7 @@ mod tests {
         .is_none());
     }
 
-    // ===== align：覆盖率门边界 =====
+    // align：覆盖率门边界
 
     /// 100 词摘录：74 词命中 → coverage 0.74 拒绝；75 词命中 → 0.75 通过
     #[test]
@@ -613,7 +613,7 @@ mod tests {
         assert!(miss.is_none(), "0.74 must be rejected by coverage gate");
     }
 
-    // ===== align：密度门边界 =====
+    // align：密度门边界
 
     #[test]
     fn align_density_gate_boundary() {
@@ -626,7 +626,7 @@ mod tests {
         assert_eq!(slice_char_range(dense, &m.interval), "alpha x beta");
     }
 
-    // ===== align：重复词歧义 =====
+    // align：重复词歧义
 
     #[test]
     fn align_duplicate_phrase_takes_first_monotone_interval() {
@@ -636,7 +636,7 @@ mod tests {
         assert_eq!(m.interval.start, 4, "首个单调可行区间（确定性）");
     }
 
-    // ===== align：空输入与超长源 =====
+    // align：空输入与超长源
 
     #[test]
     fn align_empty_inputs_return_none_without_panic() {
@@ -678,7 +678,7 @@ mod tests {
         );
     }
 
-    // ===== provenance_map =====
+    // provenance_map
 
     #[test]
     fn provenance_map_nested_object_and_array_paths() {
@@ -725,7 +725,7 @@ mod tests {
         assert!(map["text"].is_object());
     }
 
-    // ===== attach / apply =====
+    // attach / apply
 
     #[test]
     fn attach_provenance_merges_alongside_business_fields() {
@@ -778,7 +778,7 @@ mod tests {
         assert_eq!(map, json!({}));
     }
 
-    // ===== slice_char_range =====
+    // slice_char_range
 
     #[test]
     fn slice_char_range_is_cjk_safe() {
@@ -799,7 +799,7 @@ mod tests {
         );
     }
 
-    // ===== ProvenanceConfig =====
+    // ProvenanceConfig
 
     #[test]
     fn provenance_config_default_is_disabled_with_spec_gate() {
@@ -820,7 +820,7 @@ mod tests {
         assert!((cfg.min_coverage - 0.6).abs() < f64::EPSILON);
     }
 
-    // ===== helpers =====
+    // helpers
 
     /// 门限内允许不命中词元数（与 align 内部换算一致，供测试构造用例）
     #[allow(dead_code)]

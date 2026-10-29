@@ -30,7 +30,7 @@ mod tests {
     use std::net::SocketAddr;
     use std::sync::Arc;
 
-    // ========== From<CrawlUseCaseError> mapping tests ==========
+    // From<CrawlUseCaseError> mapping tests
 
     #[test]
     fn test_validation_error_maps_to_bad_request() {
@@ -101,7 +101,7 @@ mod tests {
         assert!(msg.contains("with additional context"));
     }
 
-    // ========== CrawlRequestDto construction tests ==========
+    // CrawlRequestDto construction tests
 
     #[test]
     fn test_crawl_request_dto_minimal() {
@@ -194,7 +194,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========== max_depth validation logic ==========
+    // max_depth validation logic
 
     #[test]
     fn test_max_depth_at_boundary_passes() {
@@ -264,7 +264,7 @@ mod tests {
         assert!(config.max_depth <= 5);
     }
 
-    // ========== CrawlConfigDto clone and serialization ==========
+    // CrawlConfigDto clone and serialization
 
     #[test]
     fn test_crawl_config_dto_clone() {
@@ -347,7 +347,7 @@ mod tests {
         assert!(debug.contains("1"));
     }
 
-    // ========== CrawlRequestDto validation ==========
+    // CrawlRequestDto validation
 
     #[test]
     fn test_crawl_request_dto_validate_success() {
@@ -473,7 +473,7 @@ mod tests {
         assert!(dto.validate().is_ok());
     }
 
-    // ========== SyncWaitResult construction ==========
+    // SyncWaitResult construction
 
     #[test]
     fn test_sync_wait_result_timeout() {
@@ -501,7 +501,7 @@ mod tests {
         assert!(!result.is_timeout);
     }
 
-    // ========== Status code selection logic ==========
+    // Status code selection logic
 
     #[test]
     fn test_status_code_accepted_when_timeout() {
@@ -557,7 +557,7 @@ mod tests {
         assert_eq!(status_code, StatusCode::CREATED);
     }
 
-    // ========== Additional From<CrawlUseCaseError> tests ==========
+    // Additional From<CrawlUseCaseError> tests
 
     #[test]
     fn test_validation_error_empty_message() {
@@ -599,7 +599,7 @@ mod tests {
         assert!(msg.contains("30s"));
     }
 
-    // ========== CRAWL_TASK_CREDITS_COST constant ==========
+    // CRAWL_TASK_CREDITS_COST constant
 
     #[test]
     fn test_crawl_task_credits_cost_value() {
@@ -617,7 +617,7 @@ mod tests {
         assert_eq!(DEFAULT_TIMEOUT_MS, 5000);
     }
 
-    // ========== sync_wait_ms default logic (mirrors handler line 41) ==========
+    // sync_wait_ms default logic (mirrors handler line 41)
 
     // The `None` literal here is intentional — we are testing the None-arm of
     // `unwrap_or`. clippy::unnecessary_literal_unwrap would have us delete the
@@ -655,7 +655,7 @@ mod tests {
         assert_eq!(sync_wait_ms, 0);
     }
 
-    // ========== max_depth validation logic (mirrors handler line 44) ==========
+    // max_depth validation logic (mirrors handler line 44)
 
     #[test]
     fn test_max_depth_six_fails_handler_check() {
@@ -694,7 +694,7 @@ mod tests {
         assert!(max_depth <= 5);
     }
 
-    // ========== CrawlRequestDto with expires_at ==========
+    // CrawlRequestDto with expires_at
 
     #[test]
     fn test_crawl_request_dto_with_expires_at() {
@@ -728,7 +728,7 @@ mod tests {
         assert_eq!(dto.name.as_deref(), Some("My Crawl Task"));
     }
 
-    // ========== CrawlConfigDto with all optional fields None ==========
+    // CrawlConfigDto with all optional fields None
 
     #[test]
     fn test_crawl_config_dto_minimal() {
@@ -779,7 +779,7 @@ mod tests {
         assert_eq!(config.proxy.as_deref(), Some("socks5://proxy:1080"));
     }
 
-    // ========== CrawlUseCaseError Display trait ==========
+    // CrawlUseCaseError Display trait
 
     #[test]
     fn test_crawl_use_case_error_validation_display() {
@@ -822,7 +822,7 @@ mod tests {
         assert!(display.contains("something went wrong"));
     }
 
-    // ========== SyncWaitResult default values in handler ==========
+    // SyncWaitResult default values in handler
 
     #[test]
     fn test_sync_wait_result_default_when_no_tasks() {
@@ -866,7 +866,7 @@ mod tests {
         assert!(result.is_timeout);
     }
 
-    // ========== Combined status code + sync_wait logic ==========
+    // Combined status code + sync_wait logic
 
     #[test]
     fn test_no_sync_wait_returns_created() {
@@ -923,7 +923,7 @@ mod tests {
         assert_eq!(status_code, StatusCode::CREATED);
     }
 
-    // ========== CrawlConfigDto with extraction_rules ==========
+    // CrawlConfigDto with extraction_rules
 
     #[test]
     fn test_crawl_config_dto_with_empty_extraction_rules() {
@@ -939,7 +939,7 @@ mod tests {
         assert_eq!(config.extraction_rules.as_ref().unwrap().len(), 0);
     }
 
-    // ========== CrawlRequestDto serialization ==========
+    // CrawlRequestDto serialization
 
     #[test]
     fn test_crawl_request_dto_serialization_roundtrip() {
@@ -1010,7 +1010,7 @@ mod tests {
         assert!(!json.contains("validated_url"));
     }
 
-    // ========== Handler function tests ==========
+    // Handler function tests
     //
     // The following tests verify the HTTP-layer behavior of the four handler
     // functions: status code mapping, request validation, sync-wait handling,
@@ -1050,8 +1050,6 @@ mod tests {
     #[cfg(feature = "teams")]
     use std::net::IpAddr;
     use std::sync::Mutex;
-
-    // --- MockCrawlRepository ---
 
     struct MockCrawlRepository {
         stored_crawl: Mutex<Option<Crawl>>,
@@ -1170,8 +1168,6 @@ mod tests {
             Ok(0)
         }
     }
-
-    // --- MockTaskRepository ---
 
     struct MockTaskRepository {
         /// Tasks returned by `find_by_crawl_id` and `query_tasks` (filtered by task_ids).
@@ -1329,7 +1325,7 @@ mod tests {
         }
     }
 
-    // --- MockWebhookRepository ---
+    // MockWebhookRepository
     // webhook feature 关闭时不编译此 mock
 
     #[cfg(feature = "webhook")]
@@ -1353,8 +1349,6 @@ mod tests {
             Ok(vec![])
         }
     }
-
-    // --- MockScrapeResultRepository ---
 
     struct MockScrapeResultRepository {
         results: Vec<ScrapeResult>,
@@ -1417,7 +1411,7 @@ mod tests {
         }
     }
 
-    // --- MockGeoRestrictionRepository ---
+    // MockGeoRestrictionRepository
     // teams feature 关闭时不编译此 mock
 
     #[cfg(feature = "teams")]
@@ -1471,7 +1465,7 @@ mod tests {
         }
     }
 
-    // --- MockGeoLocationService ---
+    // MockGeoLocationService
     // teams feature 关闭时不编译此 mock
 
     #[cfg(feature = "teams")]
@@ -1483,8 +1477,6 @@ mod tests {
             Ok(GeoLocation::default())
         }
     }
-
-    // --- MockRateLimitingService ---
 
     struct MockRateLimitingService {
         rate_limit_result: RateLimitResult,
@@ -1633,7 +1625,7 @@ mod tests {
 
     impl RateLimitingService for MockRateLimitingService {}
 
-    // --- Helper functions ---
+    // Helper functions
     // `make_db_pool` 已集中到 `src/common/test_helpers.rs::create_test_db_pool`。
 
     fn make_auth_state() -> AuthState {
@@ -1803,7 +1795,7 @@ mod tests {
         ))
     }
 
-    // ========== create_crawl tests ==========
+    // create_crawl tests
 
     /// F11：主开关关闭（默认）时 sitemap_seed=true 必须显式拒绝（422），
     /// 禁止静默忽略降级为普通 crawl
@@ -2224,7 +2216,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    // ========== get_crawl tests ==========
+    // get_crawl tests
 
     #[tokio::test]
     async fn test_get_crawl_success_returns_ok() {
@@ -2336,7 +2328,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    // ========== get_crawl_results tests ==========
+    // get_crawl_results tests
 
     #[tokio::test]
     async fn test_get_crawl_results_success_returns_ok() {
@@ -2424,7 +2416,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    // ========== cancel_crawl tests ==========
+    // cancel_crawl tests
 
     #[tokio::test]
     async fn test_cancel_crawl_success_returns_no_content() {
@@ -2535,7 +2527,6 @@ mod tests {
         .await
         .into_response();
 
-        // Already completed → use_case returns Ok(()) → 204
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
 

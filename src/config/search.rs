@@ -348,7 +348,7 @@ pub struct FallbackEngineConfig {
 mod tests {
     use super::*;
 
-    // ========== BingSearchSettings tests ==========
+    // BingSearchSettings tests
 
     #[test]
     fn test_bing_default_api_key_is_none() {
@@ -430,7 +430,7 @@ mod tests {
         );
     }
 
-    // ========== SearchSettings tests ==========
+    // SearchSettings tests
 
     #[test]
     fn test_search_default_timeout_seconds() {
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(cloned.max_results, settings.max_results);
     }
 
-    // ========== SearchFallbackConfig tests ==========
+    // SearchFallbackConfig tests
 
     #[test]
     fn test_fallback_default_disabled() {
@@ -621,7 +621,7 @@ mod tests {
         assert_eq!(settings.fallback.engines.len(), 3);
     }
 
-    // ========== ExaEngineSettings tests ==========
+    // ExaEngineSettings tests
 
     #[test]
     fn test_exa_engine_settings_default_is_none() {
@@ -666,7 +666,7 @@ mod tests {
         assert!(back.base_url().is_none());
     }
 
-    // ========== TavilyEngineSettings tests ==========
+    // TavilyEngineSettings tests
 
     #[test]
     fn test_tavily_engine_settings_default_is_none() {
@@ -703,7 +703,7 @@ mod tests {
         assert_eq!(back.base_url(), Some("https://api.tavily.com"));
     }
 
-    // ========== SearchSettings exa/tavily integration tests ==========
+    // SearchSettings exa/tavily integration tests
 
     #[test]
     fn test_search_settings_default_engine_credentials_are_none() {
@@ -727,7 +727,7 @@ mod tests {
         assert!(back.tavily.api_key().is_none());
     }
 
-    // ========== SearxngSearchSettings tests ==========
+    // SearxngSearchSettings tests
 
     #[test]
     fn test_searxng_settings_defaults() {

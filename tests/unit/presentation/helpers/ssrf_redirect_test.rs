@@ -18,9 +18,7 @@
 
 use crawlrs::infrastructure::security::ssrf::{RedirectPolicy, RedirectValidator, SsrfError};
 
-// ============================================================
 // RedirectValidator::would_validate max_redirects 超限路径
-// ============================================================
 
 #[test]
 fn tc_would_validate_max_redirects_exceeded() {
@@ -50,9 +48,7 @@ fn tc_would_validate_max_redirects_exceeded_high_count() {
     }
 }
 
-// ============================================================
 // RedirectValidator::would_validate same-host 违规路径
-// ============================================================
 
 #[test]
 fn tc_would_validate_same_host_violation() {
@@ -80,9 +76,7 @@ fn tc_would_validate_same_host_allowed() {
     assert!(result.is_ok(), "same-host redirect should be allowed");
 }
 
-// ============================================================
 // RedirectValidator::would_validate redirects 禁用路径
-// ============================================================
 
 #[test]
 fn tc_would_validate_redirects_disabled() {
@@ -97,9 +91,7 @@ fn tc_would_validate_redirects_disabled() {
     }
 }
 
-// ============================================================
 // RedirectValidator::would_validate 内部 URL 拦截
-// ============================================================
 
 #[test]
 fn tc_would_validate_internal_url_blocked() {
@@ -115,9 +107,7 @@ fn tc_would_validate_internal_url_blocked() {
     }
 }
 
-// ============================================================
 // RedirectValidator::would_validate 循环检测
-// ============================================================
 
 #[test]
 fn tc_would_validate_loop_detected() {
@@ -135,9 +125,7 @@ fn tc_would_validate_loop_detected() {
     }
 }
 
-// ============================================================
 // RedirectValidator: 无 original_host 时的 same-host 验证
-// ============================================================
 
 #[test]
 fn tc_validate_same_host_without_original_host_skips_check() {
@@ -151,9 +139,7 @@ fn tc_validate_same_host_without_original_host_skips_check() {
     );
 }
 
-// ============================================================
 // RedirectValidator: 多次 validate 后 visited_hosts 累积
-// ============================================================
 
 #[test]
 fn tc_validate_multiple_redirects_accumulate_visited_hosts() {
@@ -172,21 +158,17 @@ fn tc_validate_multiple_redirects_accumulate_visited_hosts() {
     assert_eq!(visited.len(), 4, "should have 4 visited hosts");
 }
 
-// ============================================================
 // RedirectValidator: reset 后重新使用
-// ============================================================
 
 #[test]
 fn tc_reset_clears_state_and_allows_reuse() {
     let mut validator = RedirectValidator::with_policy(RedirectPolicy::follow_with_validation(5))
         .with_original_url("http://example.com");
 
-    // 添加状态
     validator.validate("http://example.com/page1", 0).unwrap();
     validator.validate("http://example.com/page2", 1).unwrap();
     assert!(!validator.redirect_chain().is_empty());
 
-    // Reset
     validator.reset();
     assert!(validator.redirect_chain().is_empty());
     assert!(validator.visited_hosts().is_empty());

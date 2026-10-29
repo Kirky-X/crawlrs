@@ -219,7 +219,7 @@ mod tests {
         }
     }
 
-    // ========== construction ==========
+    // construction
 
     #[test]
     fn test_new_creates_repository_instance() {
@@ -231,7 +231,7 @@ mod tests {
         let _clone = repo.clone();
     }
 
-    // ========== CRUD against real DB ==========
+    // CRUD against real DB
 
     #[tokio::test]
     async fn test_create_inserts_record() {
@@ -329,7 +329,7 @@ mod tests {
         let _count = result.unwrap();
     }
 
-    // ========== AuditRepositoryError variant display exhaustive ==========
+    // AuditRepositoryError variant display exhaustive
 
     #[test]
     fn test_audit_repository_error_database_error_display() {
@@ -353,7 +353,7 @@ mod tests {
         assert_eq!(format!("{}", err), "Audit log not found");
     }
 
-    // ========== From<dbnexus::sea_orm::DbErr> exhaustive via #[from] ==========
+    // From<dbnexus::sea_orm::DbErr> exhaustive via #[from]
 
     #[test]
     fn test_audit_repository_error_from_dberr_record_not_found() {
@@ -410,7 +410,7 @@ mod tests {
         }
     }
 
-    // ========== From<dbnexus::DbError> exhaustive coverage ==========
+    // From<dbnexus::DbError> exhaustive coverage
 
     #[test]
     fn test_audit_repository_error_from_dbnexus_db_error_connection() {
@@ -531,7 +531,7 @@ mod tests {
         }
     }
 
-    // ========== AuditDecision display ==========
+    // AuditDecision display
 
     #[test]
     fn test_audit_decision_allow_display() {
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(format!("{}", AuditDecision::Deny), "DENY");
     }
 
-    // ========== AuditLogEntry construction ==========
+    // AuditLogEntry construction
 
     #[test]
     fn test_audit_log_entry_construction_does_not_panic() {

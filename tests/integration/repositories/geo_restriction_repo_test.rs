@@ -16,7 +16,7 @@ use crawlrs::infrastructure::database::entities::geo_restriction_log;
 use crawlrs::infrastructure::repositories::database_geo_restriction_repo::DatabaseGeoRestrictionRepository;
 use dbnexus::sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
-// ==================== DatabaseGeoRestrictionRepository 测试 ====================
+// DatabaseGeoRestrictionRepository 测试
 
 /// tc_database_get_unknown_team_returns_team_not_found: 未知 team_id 返回 TeamNotFound
 #[tokio::test]
@@ -96,7 +96,6 @@ async fn tc_database_update_then_get_roundtrip() {
         .await
         .expect("update should succeed");
 
-    // 读取验证
     let updated = repo
         .get_team_restrictions(team_id)
         .await
@@ -149,7 +148,6 @@ async fn tc_database_log_geo_restriction_action_persists() {
     .await
     .expect("log action should succeed");
 
-    // 验证日志已写入数据库
     let session = app
         .db_pool
         .get_session("admin")
@@ -177,7 +175,6 @@ async fn tc_database_log_geo_restriction_action_persists() {
     assert_eq!(log.restriction_type, "allowed");
     assert_eq!(log.reason, "IP matches whitelist");
 
-    // 清理
     let _ = geo_restriction_log::Entity::delete_many()
         .filter(geo_restriction_log::Column::TeamId.eq(team_id))
         .exec(conn)
@@ -204,7 +201,6 @@ async fn tc_database_log_multiple_actions_all_persist() {
             .expect("log action should succeed");
     }
 
-    // 验证所有日志都已写入
     let session = app
         .db_pool
         .get_session("admin")
@@ -235,7 +231,6 @@ async fn tc_database_log_multiple_actions_all_persist() {
         assert!(found, "log entry for ip={} should be persisted", ip);
     }
 
-    // 清理
     let _ = geo_restriction_log::Entity::delete_many()
         .filter(geo_restriction_log::Column::TeamId.eq(team_id))
         .exec(conn)
@@ -285,7 +280,6 @@ async fn tc_database_update_partial_restrictions() {
         "domain_blacklist should be None"
     );
 
-    // 清理
     let reset = TeamGeoRestrictions::default();
     repo.update_team_restrictions(team_id, &reset)
         .await

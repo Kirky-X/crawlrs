@@ -52,7 +52,7 @@ impl From<url::ParseError> for ScrapeWorkerError {
 mod tests {
     use super::*;
 
-    // ========== Display / error message tests ==========
+    // Display / error message tests
 
     #[test]
     fn test_regex_error_display() {
@@ -100,7 +100,7 @@ mod tests {
         assert!(msg.contains("task failed"));
     }
 
-    // ========== Debug tests ==========
+    // Debug tests
 
     #[test]
     fn test_regex_error_debug() {
@@ -142,7 +142,7 @@ mod tests {
         );
     }
 
-    // ========== From<String> tests ==========
+    // From<String> tests
 
     #[test]
     fn test_from_string_creates_task_error() {
@@ -174,7 +174,7 @@ mod tests {
         }
     }
 
-    // ========== From<regex::Error> tests ==========
+    // From<regex::Error> tests
 
     #[test]
     #[allow(clippy::invalid_regex)]
@@ -193,7 +193,7 @@ mod tests {
         }
     }
 
-    // ========== From<url::ParseError> tests ==========
+    // From<url::ParseError> tests
 
     #[test]
     fn test_from_url_parse_error_creates_task_error() {
@@ -210,7 +210,7 @@ mod tests {
         }
     }
 
-    // ========== std::error::Error source tests ==========
+    // std::error::Error source tests
 
     #[test]
     fn test_regex_error_is_std_error() {

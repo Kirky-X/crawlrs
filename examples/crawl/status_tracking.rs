@@ -134,7 +134,6 @@ async fn main() {
     progress.display();
     info!("");
 
-    // 开始执行
     info!("🚀 任务开始执行:");
     progress.status = CrawlStatus::Running;
     progress.total_pages = 100;

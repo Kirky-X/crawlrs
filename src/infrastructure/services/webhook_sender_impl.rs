@@ -88,13 +88,11 @@ impl WebhookSenderImpl {
 
         let mut request_builder = self.client.post(url).body(payload_str);
 
-        // 设置默认 headers
         request_builder = request_builder.header(
             "Content-Type",
             reqwest::header::HeaderValue::from_static("application/json"),
         );
 
-        // 添加自定义 headers
         if let Some(custom_headers) = headers {
             for (key, value) in custom_headers {
                 if let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) {
@@ -165,7 +163,6 @@ impl WebhookSender for WebhookSenderImpl {
         // 添加超时
         let request_builder = request_builder.timeout(self.timeout);
 
-        // 发送请求
         let response = match request_builder.send().await {
             Ok(resp) => resp,
             Err(e) => {
@@ -182,7 +179,6 @@ impl WebhookSender for WebhookSenderImpl {
 
         let status = response.status().as_u16();
 
-        // 检查响应状态
         if Self::is_success_status(status) {
             // Prometheus webhook 投递指标
             counter!(
@@ -359,7 +355,7 @@ mod tests {
         );
     }
 
-    // ========== SSRF 出站校验测试 (CWE-918) ==========
+    // SSRF 出站校验测试 (CWE-918)
     //
     // 守卫开启时，loopback/私网/云元数据目标必须在发起任何网络请求之前被拒绝；
     // 错误消息只含脱敏类别（kind），不泄漏具体 IP/主机名。

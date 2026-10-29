@@ -24,7 +24,7 @@
 //!
 //! # 保真度说明（rule 12 显性化）
 //!
-//! 引擎当前将全部 [`TlsEmulation`] 变体解析为 `wreq::EmulationProvider::default()`
+//! 引擎当前将全部 [`TlsEmulation`] 变体解析为 `wreq::EmulationProvider::default`
 //! （wreq 内置 Chrome 系 BoringSSL/HTTP2 指纹模板）。因此本测试**不硬编码断言**
 //! "精确等于 Chrome 131 的 JA4"——该值依赖 wreq 各版本内置模板与上游 BoringSSL，
 //! 编造一个未被实测确认的 JA4 断言反而会在任何上游指纹升级时假失败。

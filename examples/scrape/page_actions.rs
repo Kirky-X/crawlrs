@@ -36,7 +36,6 @@ async fn main() {
     info!("🎮 目标页面: {}", url);
     info!("");
 
-    // 1. 等待操作
     info!("1️⃣  等待操作（Wait）");
     info!("-----------------------------");
     info!("   场景: 等待页面加载完成或等待指定时间");
@@ -58,7 +57,6 @@ async fn main() {
     info!("   支持方向: Up, Down, Bottom, Top");
     info!("");
 
-    // 4. 输入操作
     info!("4️⃣  输入操作（Input）");
     info!("-----------------------------");
     info!("   场景: 在输入框中输入文本");
@@ -69,21 +67,17 @@ async fn main() {
     info!("5️⃣  完整交互序列示例");
     info!("-----------------------------");
 
-    // 构建交互动作序列
     let actions = vec![
-        // 等待页面初始加载
         PageAction::Wait { milliseconds: 2000 },
         // 向下滚动以加载更多内容
         PageAction::Scroll {
             direction: crawlrs::engines::engine_client::ScrollDirection::Down,
         },
-        // 等待加载
         PageAction::Wait { milliseconds: 1000 },
         // 再次滚动
         PageAction::Scroll {
             direction: crawlrs::engines::engine_client::ScrollDirection::Down,
         },
-        // 等待加载完成
         PageAction::Wait { milliseconds: 1000 },
         // 滚动回顶部
         PageAction::Scroll {
@@ -111,7 +105,7 @@ async fn main() {
     let options = ScrapeOptionsBuilder::default()
         .timeout(Duration::from_secs(120))
         .build();
-    // ScrapeOptionsBuilder doesn't have an actions() method;
+    // ScrapeOptionsBuilder doesn't have an actions method;
     // set the actions field directly on the built options.
     let mut options = options;
     options.actions = actions;

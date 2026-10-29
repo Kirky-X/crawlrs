@@ -25,9 +25,7 @@ pub mod cache_service;
 
 pub use cache_service::OxcacheService;
 
-// =============================================================================
 // CacheService Trait
-// =============================================================================
 
 /// Abstract cache service interface.
 ///
@@ -43,12 +41,12 @@ pub use cache_service::OxcacheService;
 /// ```rust,ignore
 /// use crate::infrastructure::oxcache::CacheService;
 ///
-/// async fn example(cache: &dyn CacheService) -> anyhow::Result<()> {
+/// async fn example(cache: &dyn CacheService) -> anyhow::Result<> {
 ///     cache.set("key", "value", 3600).await?;     // TTL = 3600s
 ///     let val = cache.get("key").await?;           // `Option<String>`
 ///     assert!(cache.exists("key").await?);
 ///     cache.delete("key").await?;
-///     Ok(())
+///     Ok()
 /// }
 /// ```
 #[async_trait::async_trait]
@@ -76,7 +74,7 @@ pub trait CacheService: Send + Sync {
 
     /// Delete a key.
     ///
-    /// Returns `Ok(())` even if the key did not exist.
+    /// Returns `Ok()` even if the key did not exist.
     fn delete(
         &self,
         key: &str,
@@ -89,9 +87,7 @@ pub trait CacheService: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + '_>>;
 }
 
-// =============================================================================
 // Cache Types
-// =============================================================================
 
 /// Search result cache type
 pub type SearchCache = Cache<String, Vec<SearchResult>>;
@@ -109,9 +105,7 @@ pub struct DnsCacheEntry {
 /// DNS cache type
 pub type DnsCache = Cache<String, DnsCacheEntry>;
 
-// =============================================================================
 // Concurrency Control (using Semaphore)
-// =============================================================================
 
 /// Semaphore-based concurrency controller
 #[derive(Clone)]
@@ -167,9 +161,7 @@ impl Drop for ConcurrencyPermit {
     }
 }
 
-// =============================================================================
 // Key Generation Utilities
-// =============================================================================
 
 /// Generate cache key from prefix and parameters
 pub fn generate_key(prefix: &str, params: &[(&str, &str)]) -> String {
@@ -221,9 +213,7 @@ pub fn generate_regex_key(pattern: &str) -> String {
     format!("regex:{:x}", hash)
 }
 
-// =============================================================================
 // Cache Initialization
-// =============================================================================
 
 /// Create a new oxcache instance with the given settings
 pub async fn create_cache(
@@ -270,9 +260,7 @@ pub async fn create_tiered_cache(
     create_cache(settings).await
 }
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -322,9 +310,7 @@ mod tests {
         assert!(controller.try_acquire().await.is_none());
     }
 
-    // =========================================================================
     // ConcurrencyController
-    // =========================================================================
 
     #[tokio::test]
     async fn test_concurrency_controller_available_and_max_permits() {
@@ -375,9 +361,7 @@ mod tests {
         assert!(again.is_some());
     }
 
-    // =========================================================================
     // DnsCacheEntry serde
-    // =========================================================================
 
     #[test]
     fn test_dns_cache_entry_serde_roundtrip() {
@@ -403,9 +387,7 @@ mod tests {
         assert_eq!(decoded.remaining_ttl_secs, 0);
     }
 
-    // =========================================================================
     // Cache 初始化函数
-    // =========================================================================
 
     fn make_test_cache_settings() -> CacheSettings {
         CacheSettings {
@@ -457,7 +439,6 @@ mod tests {
         let cache = create_dns_cache(50, 120).await;
         assert!(cache.is_ok(), "create_dns_cache should succeed");
         let cache = cache.unwrap();
-        // 验证可用
         let key = "dns:example.com:80".to_string();
         let entry = DnsCacheEntry {
             ips: vec!["1.2.3.4".parse().unwrap()],
@@ -507,9 +488,7 @@ mod tests {
         assert!(got.is_ok());
     }
 
-    // =========================================================================
     // generate_search_key: None 参数路径
-    // =========================================================================
 
     #[test]
     fn test_generate_search_key_without_lang_and_country() {

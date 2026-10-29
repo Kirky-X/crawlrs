@@ -49,7 +49,7 @@
 //!   [`AuditLogEntry`]，仅在 metadata 中记录前 8 字符前缀（与 garrison
 //!   `mask_audit_token` 一致）。短 token（< 16 字符）直接脱敏为 `***…`，
 //!   避免完整原文落入 metadata
-//! - **失败不传播**：`on_event` 失败仅 `log::warn!`，返回 `Ok(())`
+//! - **失败不传播**：`on_event` 失败仅 `log::warn!`，返回 `Ok()`
 //!   （与 garrison `AuditLogListener` 行为一致：监听器失败不中断主流程）
 //! - **异步写入**：通过 [`JoinSet`] 异步执行避免阻塞 garrison 主流程
 //! - **字段长度限制（CWE-400 防 DoS）**：所有 metadata 字段均截断到上限：
@@ -171,7 +171,7 @@ static AUDIT_SEMAPHORE: LazyLock<Semaphore> =
 /// 全局 inflight audit task 集合，用于 shutdown 时优雅等待。
 ///
 /// `on_event` 通过 `JoinSet::spawn` 创建 task（由 JoinSet 持有 JoinHandle），
-/// [`wait_audit_tasks`] 供 shutdown 时 `join_all().await` 等待完成。
+/// [`wait_audit_tasks`] 供 shutdown 时 `join_all.await` 等待完成。
 ///
 /// 使用 `std::sync::Mutex` 而非 `tokio::sync::Mutex` 的理由：
 /// - `spawn` 是同步方法，不跨 await 持有锁
@@ -205,7 +205,7 @@ static TEST_MUTEX: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
 ///
 /// # 返回
 ///
-/// - `Ok(())` — 注入成功（先前为 None）
+/// - `Ok()` — 注入成功（先前为 None）
 /// - `Err(service)` — 已有实例被注入（返回传入的 service 让调用方处理）
 ///
 /// # Spec
@@ -253,7 +253,7 @@ fn get_audit_service() -> Option<Arc<dyn AuditServiceTrait>> {
 
 /// 等待所有 inflight audit task 完成（shutdown 时调用）。
 ///
-/// 取出全局 [`JoinSet`] 并 `join_all().await`，超时后返回（不阻塞 shutdown）。
+/// 取出全局 [`JoinSet`] 并 `join_all.await`，超时后返回（不阻塞 shutdown）。
 /// 取出后新事件会创建新的空 JoinSet（shutdown 期间不再有新事件，安全）。
 ///
 /// # 参数
@@ -263,7 +263,7 @@ fn get_audit_service() -> Option<Arc<dyn AuditServiceTrait>> {
 /// # 行为
 ///
 /// - 取出 JoinSet（`std::mem::take`），立即释放 `Mutex` 锁
-/// - `join_all().await` 等待所有 inflight task 完成
+/// - `join_all.await` 等待所有 inflight task 完成
 /// - 超时后返回未完成的 task 被 abort（JoinSet drop 时自动 abort）
 ///
 /// # Race Condition 说明
@@ -291,7 +291,7 @@ fn get_audit_service() -> Option<Arc<dyn AuditServiceTrait>> {
 /// - shutdown 时优雅等待 inflight audit task
 pub async fn wait_audit_tasks(timeout: Duration) {
     let mut join_set = std::mem::take(&mut *AUDIT_TASKS.lock().expect("AUDIT_TASKS poisoned"));
-    // 逐个 join 而非 `join_all()`：`join_all` 遇到被取消的 task 会直接 panic
+    // 逐个 join 而非 `join_all()`：`join_all()` 遇到被取消的 task 会直接 panic
     // （"task was cancelled"）。取消场景真实存在——跨 tokio runtime 的测试
     // 环境里，spawn 方 runtime 先行销毁会取消其 task；shutdown 路径的等待方
     // 绝不应因此 panic。Cancelled 视为已完成；task 自身 panic 记录日志
@@ -302,7 +302,7 @@ pub async fn wait_audit_tasks(timeout: Duration) {
                 if e.is_panic() {
                     log::error!("audit task panicked during shutdown wait: {e}");
                 }
-                // is_cancelled()：spawn 方 runtime 已销毁，无需处理
+                // is_cancelled：spawn 方 runtime 已销毁，无需处理
             }
         }
     })
@@ -349,7 +349,7 @@ impl GarrisonListener for CrawlrsAuditListener {
     ///
     /// 1. 调用 `event_to_audit_entry` 将 [`GarrisonEvent`] 转换为 [`AuditLogEntry`]
     /// 2. 通过 `get_audit_service` 读取全局 audit_service
-    ///    - 未注入：`log::warn!` 后返回 `Ok(())`（不阻塞 garrison 主流程）
+    ///    - 未注入：`log::warn!` 后返回 `Ok()`（不阻塞 garrison 主流程）
     /// 3. 通过 [`Semaphore::try_acquire`] 获取 inflight permit（背压）
     ///    - 满时 drop 事件 + warn + metrics counter（避免 DB 异常时 task 雪崩 OOM）
     /// 4. 通过 [`JoinSet::spawn`] 异步调用 `audit_service.log(entry)`
@@ -1065,7 +1065,6 @@ fn mask_token(token: &str) -> String {
     format!("{}\u{2026}", &token[..prefix_byte_end])
 }
 
-// ============================================================================
 // 编译期监听器注册（inventory）
 // ============================================================================
 
@@ -1084,7 +1083,6 @@ inventory::submit! {
     }
 }
 
-// ============================================================================
 // 测试
 // ============================================================================
 
@@ -1106,7 +1104,6 @@ mod tests {
         test_mutex().lock().await
     }
 
-    // ============================================================
     // mask_token 测试
     // ============================================================
 
@@ -1148,7 +1145,6 @@ mod tests {
         assert_eq!(masked, "***\u{2026}");
     }
 
-    // ============================================================
     // event_to_audit_entry 测试（覆盖关键变体）
     // ============================================================
 
@@ -1454,7 +1450,6 @@ mod tests {
         assert!(entry.api_key_id.is_none());
     }
 
-    // ============================================================
     // metadata 字段截断测试
     // ============================================================
 
@@ -1554,7 +1549,6 @@ mod tests {
         }
     }
 
-    // ============================================================
     // IP 解析失败记录原始字符串测试
     // ============================================================
 
@@ -1638,7 +1632,6 @@ mod tests {
         }
     }
 
-    // ============================================================
     // truncate_string UTF-8 边界测试
     // ============================================================
 
@@ -1686,7 +1679,6 @@ mod tests {
         assert_eq!(result, "\u{2026}");
     }
 
-    // ============================================================
     // Mock AuditServiceTrait — 捕获 log() 调用用于验证
     // ============================================================
 
@@ -1797,7 +1789,6 @@ mod tests {
         }
     }
 
-    // ============================================================
     // set_audit_service 测试
     // ============================================================
 
@@ -1842,7 +1833,6 @@ mod tests {
         reset_audit_service_for_test();
     }
 
-    // ============================================================
     // CrawlrsAuditListener::on_event 测试（真实集成路径）
     // ============================================================
 
@@ -1993,7 +1983,6 @@ mod tests {
         }
     }
 
-    // ============================================================
     // factory 函数测试
     // ============================================================
 

@@ -42,9 +42,9 @@ pub struct ExtractResponseDto {
 // extract 函数签名按 teams feature 分裂
 //
 // teams-on：保留 GR 泛型 + geo_restriction_repo + team_service 参数 + 地理限制块
-//   （获取限制 → validate_geographic_restriction → log_geo_restriction_action）
+// （获取限制 → validate_geographic_restriction → log_geo_restriction_action）
 // teams-off：移除 GR 泛型 + geo_restriction_repo + team_service 参数 + 地理限制块
-//   （单租户降级，无地理限制概念，直接建 Task 入队）
+// （单租户降级，无地理限制概念，直接建 Task 入队）
 //
 // 路由装配（bootstrap::routes）：
 //   teams-on: `post(extract_handler::extract::<DatabaseGeoRestrictionRepository>)`
@@ -71,7 +71,6 @@ where
         Err(ref rej) => return json_rejection_response(rej),
     };
     let team_id = auth_state.team_id;
-    // Validate the request
     if payload.urls.is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "At least one URL is required");
     }
@@ -121,7 +120,6 @@ where
         .await
     {
         Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
-            // 记录允许的访问日志
             if let Err(e) = geo_restriction_repo
                 .log_geo_restriction_action(
                     team_id,
@@ -136,7 +134,6 @@ where
             }
         }
         Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
-            // 记录拒绝的访问日志
             if let Err(e) = geo_restriction_repo
                 .log_geo_restriction_action(
                     team_id,
@@ -194,7 +191,6 @@ where
 
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
-            // 处理同步等待逻辑
             let sync_wait_ms = payload
                 .sync_wait_ms
                 .unwrap_or(crawl_task::DEFAULT_TIMEOUT_MS as u32);
@@ -203,7 +199,6 @@ where
             if sync_wait_ms > 0 {
                 let wait_start = std::time::Instant::now();
 
-                // 调用智能轮询等待函数
                 match wait_for_tasks_completion(
                     task_repository.as_ref(),
                     &[task.id],
@@ -282,7 +277,6 @@ pub async fn extract(
         Err(ref rej) => return json_rejection_response(rej),
     };
     let team_id = auth_state.team_id;
-    // Validate the request
     if payload.urls.is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "At least one URL is required");
     }
@@ -341,7 +335,6 @@ pub async fn extract(
 
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
-            // 处理同步等待逻辑
             let sync_wait_ms = payload
                 .sync_wait_ms
                 .unwrap_or(crawl_task::DEFAULT_TIMEOUT_MS as u32);
@@ -350,7 +343,6 @@ pub async fn extract(
             if sync_wait_ms > 0 {
                 let wait_start = std::time::Instant::now();
 
-                // 调用智能轮询等待函数
                 match wait_for_tasks_completion(
                     task_repository.as_ref(),
                     &[task.id],
@@ -529,7 +521,7 @@ mod tests {
         Arc::new(MockAllAllowRateLimitingService)
     }
 
-    // ========== ExtractResponseDto tests ==========
+    // ExtractResponseDto tests
 
     #[test]
     fn test_extract_response_dto_serialization() {
@@ -573,7 +565,7 @@ mod tests {
         assert_eq!(parsed["status"], "accepted");
     }
 
-    // ========== ExtractRequestDto validation ==========
+    // ExtractRequestDto validation
 
     #[test]
     fn test_extract_request_dto_minimal_with_prompt() {
@@ -629,7 +621,7 @@ mod tests {
         assert!(dto.urls.is_empty());
     }
 
-    // ========== MAX_SYNC_WAIT_MS constant ==========
+    // MAX_SYNC_WAIT_MS constant
 
     #[test]
     fn test_max_sync_wait_ms_value() {
@@ -655,7 +647,7 @@ mod tests {
         assert_eq!(crawl_task::BASE_POLL_INTERVAL_MS, 1000);
     }
 
-    // ========== ExtractResponseDto additional tests ==========
+    // ExtractResponseDto additional tests
 
     #[test]
     fn test_extract_response_dto_clone() {
@@ -704,7 +696,7 @@ mod tests {
         assert_eq!(original.status, deserialized.status);
     }
 
-    // ========== ExtractRequestDto edge cases ==========
+    // ExtractRequestDto edge cases
 
     #[test]
     fn test_extract_request_dto_with_rules() {
@@ -813,7 +805,7 @@ mod tests {
         assert_eq!(dto.sync_wait_ms, Some(0));
     }
 
-    // ========== Validation logic tests ==========
+    // Validation logic tests
     // These test the validation conditions used in the extract handler
 
     #[test]
@@ -829,7 +821,7 @@ mod tests {
             rules: None,
             sync_wait_ms: None,
         };
-        // This mirrors the handler's validation: payload.urls.is_empty()
+        // This mirrors the handler's validation: payload.urls.is_empty
         assert!(dto.urls.is_empty(), "empty urls should trigger BAD_REQUEST");
     }
 
@@ -846,7 +838,7 @@ mod tests {
             rules: None,
             sync_wait_ms: None,
         };
-        // This mirrors: prompt.is_none() && schema.is_none() && rules.is_none()
+        // This mirrors: prompt.is_none && schema.is_none && rules.is_none
         let has_extraction_method =
             dto.prompt.is_some() || dto.schema.is_some() || dto.rules.is_some();
         assert!(
@@ -947,7 +939,7 @@ mod tests {
         }
     }
 
-    // ========== Task construction logic ==========
+    // Task construction logic
 
     #[test]
     fn test_task_construction_for_extract() {
@@ -986,7 +978,7 @@ mod tests {
         assert_eq!(task.max_retries, 3);
     }
 
-    // ========== Constants additional tests ==========
+    // Constants additional tests
 
     #[test]
     fn test_extract_task_credits_cost() {
@@ -1012,7 +1004,7 @@ mod tests {
         assert_eq!(crawl_task::CRAWL_TASK_CREDITS_COST, 10);
     }
 
-    // ========== error_response function test ==========
+    // error_response function test
 
     #[tokio::test]
     async fn test_error_response_builds_correct_status() {
@@ -1053,7 +1045,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
-    // ========== Handler tests (calling extract function directly) ==========
+    // Handler tests (calling extract function directly)
 
     use crate::domain::auth::ApiKeyScope;
     use crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepositoryError;
@@ -1068,8 +1060,6 @@ mod tests {
     use std::net::IpAddr;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
-
-    // ============ MockTaskQueue ============
 
     struct MockTaskQueue {
         enqueue_should_fail: bool,
@@ -1123,8 +1113,6 @@ mod tests {
             Ok(())
         }
     }
-
-    // ============ MockTaskRepository ============
 
     struct MockTaskRepository {
         created_count: AtomicU32,
@@ -1280,8 +1268,6 @@ mod tests {
         }
     }
 
-    // ============ MockGeoRestrictionRepository ============
-
     struct MockGeoRestrictionRepository {
         restrictions: Mutex<TeamGeoRestrictions>,
         get_should_fail: bool,
@@ -1358,8 +1344,6 @@ mod tests {
         }
     }
 
-    // ============ MockGeoLocationService ============
-
     struct MockGeoLocationService {
         should_fail: bool,
         country_code: String,
@@ -1394,7 +1378,7 @@ mod tests {
         }
     }
 
-    // ============ Helpers ============
+    // Helpers
 
     /// Construct a lazy `DbPool` that does not connect to any database.
     /// Reuses the pattern from webhook_handler tests: spawns a dedicated OS
@@ -1455,7 +1439,7 @@ mod tests {
         serde_json::from_slice(&bytes).expect("response body is not valid JSON")
     }
 
-    // ============ Handler test cases ============
+    // Handler test cases
 
     #[tokio::test]
     async fn test_extract_empty_urls_returns_bad_request() {
@@ -2084,19 +2068,19 @@ mod tests {
         assert_eq!(json["data"]["status"], "pending");
     }
 
-    // ========== CapturingLogger for covering log::error! format args ==========
+    // CapturingLogger for covering log::error! format args
     //
     // The log crate's `error!` macro only evaluates its format arguments when
-    // `max_level() >= Error` AND a logger is installed. Without a logger, the
-    // `enabled()` check returns false and the format args (including `{:?}` of
+    // `max_level >= Error` AND a logger is installed. Without a logger, the
+    // `enabled` check returns false and the format args (including `{:?}` of
     // error values) are never evaluated, leaving the `error!` line partially
     // uncovered. We install a no-op CapturingLogger at Error level so the
     // format args are evaluated (and thus counted as covered).
 
     use crate::test_utils::ensure_debug_logger;
 
-    // ========== Log-evaluated handler tests ==========
-    // These tests call `ensure_debug_logger()` so that `log::error!` format
+    // Log-evaluated handler tests
+    // These tests call `ensure_debug_logger` so that `log::error!` format
     // args are evaluated, covering the error! lines (72, 107, 122, 131, 193)
     // and the surrounding error_response lines in the handler.
 

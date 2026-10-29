@@ -12,7 +12,7 @@ use thiserror::Error;
 /// 表示外部系统交互失败，如数据库、缓存等
 #[derive(Error, Debug)]
 pub enum InfrastructureError {
-    // ==================== 数据库错误 ====================
+    // 数据库错误
     // platform 门控：sea-orm 仅随 platform 编译（2026-09-19 审计）；该变体在
     // errors.rs 外无引用，门控安全。
     #[cfg(feature = "platform")]
@@ -28,14 +28,14 @@ pub enum InfrastructureError {
     #[error("Record already exists: {table}, key: {key}")]
     DuplicateRecord { table: String, key: String },
 
-    // ==================== 缓存错误 ====================
+    // 缓存错误
     #[error("Cache miss: {key}")]
     CacheMiss { key: String },
 
     #[error("Cache serialization failed: {0}")]
     CacheSerialization(#[from] serde_json::Error),
 
-    // ==================== 网络错误 ====================
+    // 网络错误
     #[error("HTTP request failed: {url}, status: {status}")]
     HttpRequestFailed { url: String, status: u16 },
 
@@ -45,7 +45,7 @@ pub enum InfrastructureError {
     #[error("Connection timeout: {host}, timeout: {timeout_seconds}s")]
     ConnectionTimeout { host: String, timeout_seconds: u64 },
 
-    // ==================== 配置错误 ====================
+    // 配置错误
     #[error("Missing configuration: {key}")]
     ConfigMissing { key: String },
 

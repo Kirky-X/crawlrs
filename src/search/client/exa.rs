@@ -265,7 +265,6 @@ impl ExaSearchEngine {
                 continue;
             }
 
-            // 尝试解析为 JSON 数组
             if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(text) {
                 for item in &items {
                     if let Some(result) = parse_generic_result_item(item) {
@@ -387,19 +386,17 @@ impl SearchEngine for ExaSearchEngine {
         // 确保 MCP 会话已初始化
         self.ensure_initialized().await?;
 
-        // 构造搜索请求
         let body = self.build_search_request(&request.query, request.limit);
         let session_id = self.session.lock().session_id.clone();
 
         let (response, new_session_id) =
             self.send_mcp_request(&body, session_id.as_deref()).await?;
 
-        // 更新 session ID（如果服务器返回了新的）
+        // 更新 session ID（如果服务器返回了新）
         if let Some(new_sid) = new_session_id {
             self.session.lock().session_id = Some(new_sid);
         }
 
-        // 检查 JSON-RPC 错误
         if let Some(error) = response.get("error") {
             return Err(SearchError::EngineFailed(format!(
                 "Exa JSON-RPC error: {}",
@@ -427,9 +424,7 @@ impl SearchEngine for ExaSearchEngine {
     }
 }
 
-// =============================================================================
 // 内部数据结构
-// =============================================================================
 
 #[derive(Debug, Serialize, Deserialize)]
 struct McpResult {
@@ -487,9 +482,7 @@ fn parse_generic_result_item(item: &Value) -> Option<ExaSearchResult> {
     })
 }
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -503,7 +496,7 @@ mod tests {
         ExaSearchEngine::new(Client::new(), test_config())
     }
 
-    // ========== 请求构造 ==========
+    // 请求构造
 
     #[test]
     fn test_build_request_structure() {
@@ -537,7 +530,7 @@ mod tests {
         );
     }
 
-    // ========== 文本格式解析 ==========
+    // 文本格式解析
 
     #[test]
     fn test_parse_text_results_single() {
@@ -576,7 +569,7 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // ========== SSE 解析 ==========
+    // SSE 解析
 
     #[test]
     fn test_parse_sse_to_json() {
@@ -592,7 +585,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========== MCP 响应提取 ==========
+    // MCP 响应提取
 
     #[test]
     fn test_extract_results_text_format() {
@@ -644,7 +637,7 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // ========== trait 方法 ==========
+    // trait 方法
 
     #[test]
     fn test_engine_name() {
@@ -664,7 +657,7 @@ mod tests {
         assert_eq!(engine.health(), EngineHealth::Healthy);
     }
 
-    // ========== 集成测试（wiremock） ==========
+    // 集成测试（wiremock）
 
     #[tokio::test]
     async fn test_extract_results_from_real_exa_response() {
@@ -716,7 +709,7 @@ mod tests {
         }
     }
 
-    // ========== parse_generic_result_item ==========
+    // parse_generic_result_item
 
     #[test]
     fn test_parse_generic_result_item_with_all_fields() {
@@ -750,7 +743,7 @@ mod tests {
         assert_eq!(r.description, "from snippet");
     }
 
-    // ========== extract_results JSON array fallback ==========
+    // extract_results JSON array fallback
 
     #[test]
     fn test_extract_results_json_array_format() {
@@ -779,7 +772,7 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // ========== 描述截断 ==========
+    // 描述截断
 
     #[test]
     fn test_parse_text_results_description_truncated_at_500() {
@@ -797,7 +790,7 @@ mod tests {
         assert!(results[0].description.ends_with("..."));
     }
 
-    // ========== SSE 解析：多 data 行取最后一条 ==========
+    // SSE 解析：多 data 行取最后一条
 
     #[test]
     fn test_parse_sse_multiple_data_lines_takes_last() {

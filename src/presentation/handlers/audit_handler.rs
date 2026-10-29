@@ -154,7 +154,7 @@ pub async fn get_denied_requests(
 mod tests {
     use super::*;
 
-    // ========== AuditLogsQuery deserialization tests ==========
+    // AuditLogsQuery deserialization tests
 
     #[test]
     fn test_audit_logs_query_empty() {
@@ -239,7 +239,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========== AuditLogsResponseDto serialization ==========
+    // AuditLogsResponseDto serialization
 
     #[test]
     fn test_audit_logs_response_dto_empty() {
@@ -283,7 +283,7 @@ mod tests {
         assert_eq!(parsed["logs"][1]["action"], "write");
     }
 
-    // ========== DeniedRequestsResponseDto serialization ==========
+    // DeniedRequestsResponseDto serialization
 
     #[test]
     fn test_denied_requests_response_dto_empty() {
@@ -316,7 +316,7 @@ mod tests {
         assert_eq!(parsed["denied_requests"][1]["reason"], "forbidden");
     }
 
-    // ========== server_config constants ==========
+    // server_config constants
 
     #[test]
     fn test_default_page_limit_value() {
@@ -343,7 +343,7 @@ mod tests {
         assert!(server_config::DEFAULT_PAGE_LIMIT < server_config::MAX_PAGE_LIMIT);
     }
 
-    // ========== Handler function tests ==========
+    // Handler function tests
     //
     // The following tests verify the HTTP-layer behavior of get_audit_logs and
     // get_denied_requests: branch selection, pagination clamping, error mapping,
@@ -520,7 +520,7 @@ mod tests {
         }
     }
 
-    // ========== Branch selection logic ==========
+    // Branch selection logic
 
     #[test]
     fn test_branch_selects_api_key_when_api_key_id_present() {
@@ -593,7 +593,7 @@ mod tests {
         }
     }
 
-    // ========== get_audit_logs handler tests ==========
+    // get_audit_logs handler tests
 
     #[tokio::test]
     async fn test_get_audit_logs_by_api_key_id() {
@@ -848,7 +848,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    // ========== IDOR 防护测试 (CWE-862) ==========
+    // IDOR 防护测试 (CWE-862)
     //
     // 非 Admin 用户只能查询自身 api_key_id 或所属 team_id 的审计日志。
     // 跨 key/team 查询需要 Admin 权限，否则返回 403 FORBIDDEN。
@@ -1059,7 +1059,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
-    // ========== get_denied_requests handler tests ==========
+    // get_denied_requests handler tests
 
     #[tokio::test]
     async fn test_get_denied_requests_success() {

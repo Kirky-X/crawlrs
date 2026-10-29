@@ -376,9 +376,7 @@ pub fn access_denied() -> Response {
     errors::forbidden("Access denied")
 }
 
-// =============================================================================
 // Locale-aware error helpers
-// =============================================================================
 
 /// Locale-aware error response
 ///
@@ -532,7 +530,7 @@ mod tests {
         assert!(diff < 2);
     }
 
-    // ========== PaginationMeta tests ==========
+    // PaginationMeta tests
 
     #[test]
     fn test_pagination_meta_new_with_zero_items() {
@@ -612,7 +610,7 @@ mod tests {
         assert!(!meta.has_next);
     }
 
-    // ========== IntoResponse status code mapping ==========
+    // IntoResponse status code mapping
 
     #[tokio::test]
     async fn test_into_response_success_returns_200() {
@@ -698,7 +696,7 @@ mod tests {
         assert_eq!(http_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    // ========== JSON serialization structure ==========
+    // JSON serialization structure
 
     #[tokio::test]
     async fn test_success_response_json_structure() {
@@ -746,7 +744,7 @@ mod tests {
         assert_eq!(json["meta"]["has_previous"], true);
     }
 
-    // ========== error_response function ==========
+    // error_response function
 
     #[tokio::test]
     async fn test_error_response_bad_request() {
@@ -871,7 +869,7 @@ mod tests {
         assert_eq!(json["error"]["code"], "INTERNAL_ERROR");
     }
 
-    // ========== error_response_with_code function ==========
+    // error_response_with_code function
 
     #[tokio::test]
     async fn test_error_response_with_code_custom() {
@@ -893,7 +891,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
-    // ========== success_response function ==========
+    // success_response function
 
     #[tokio::test]
     async fn test_success_response_with_data() {
@@ -918,7 +916,7 @@ mod tests {
         assert_eq!(json["data"], "created");
     }
 
-    // ========== success_response_with_meta function ==========
+    // success_response_with_meta function
 
     #[tokio::test]
     async fn test_success_response_with_meta_includes_pagination() {
@@ -934,7 +932,7 @@ mod tests {
         assert_eq!(json["data"], serde_json::json!([1, 2, 3, 4, 5]));
     }
 
-    // ========== errors module ==========
+    // errors module
 
     #[tokio::test]
     async fn test_errors_internal_server_error() {
@@ -1041,7 +1039,7 @@ mod tests {
         assert_eq!(json["error"]["code"], "QUOTA_EXCEEDED");
     }
 
-    // ========== validation_error & resource_not_found & access_denied ==========
+    // validation_error & resource_not_found & access_denied
 
     #[tokio::test]
     async fn test_validation_error_prepends_prefix() {
@@ -1079,7 +1077,7 @@ mod tests {
         assert_eq!(json["error"]["message"], "Access denied");
     }
 
-    // ========== RateLimitErrorResponse ==========
+    // RateLimitErrorResponse
 
     #[test]
     fn test_rate_limit_error_response_fields() {
@@ -1101,7 +1099,7 @@ mod tests {
         assert_eq!(json["retry_after_seconds"], 120);
     }
 
-    // ========== ApiError struct ==========
+    // ApiError struct
 
     #[test]
     fn test_api_error_serialization() {
@@ -1122,7 +1120,7 @@ mod tests {
         assert_eq!(err.message, "msg");
     }
 
-    // ========== ApiResponse round-trip deserialization ==========
+    // ApiResponse round-trip deserialization
 
     #[test]
     fn test_api_response_round_trip_success() {
@@ -1146,7 +1144,7 @@ mod tests {
         assert_eq!(deserialized.has_previous, original.has_previous);
     }
 
-    // ========== RateLimitErrorResponse 反序列化 ==========
+    // RateLimitErrorResponse 反序列化
 
     #[test]
     fn test_rate_limit_error_response_deserialization() {

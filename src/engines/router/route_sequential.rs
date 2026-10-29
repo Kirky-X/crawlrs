@@ -126,7 +126,6 @@ impl EngineRouter {
         // 选择最优引擎
         let mut candidates = self.select_optimal_engines(&request);
 
-        // 记录候选引擎数量
         self.metrics.record_candidates(candidates.len());
 
         if candidates.is_empty() {
@@ -178,7 +177,6 @@ impl EngineRouter {
             total_attempts += 1;
             let engine_name = engine.name();
 
-            // 记录引擎选择
             self.metrics.record_engine_selection(engine_name);
             self.metrics.record_attempt();
 
@@ -198,7 +196,7 @@ impl EngineRouter {
             // 计算本次 attempt 的身份升级指令
             // - 首次尝试（total_attempts=1）用 default（无升级）
             // - 第 N 次重试（total_attempts=N+1, N>=1）基于上次失败 reason 升级
-            //   directive_attempt = total_attempts - 2（0-indexed：0=首次重试、1=第二次重试...）
+            // directive_attempt = total_attempts - 2（0-indexed：0=首次重试、1=第二次重试...）
             let mut directive = if total_attempts == 1 {
                 RetryDirective::default()
             } else {

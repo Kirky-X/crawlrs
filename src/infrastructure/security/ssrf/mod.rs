@@ -136,9 +136,9 @@ impl SsrfValidator {
     /// ```ignore
     /// use crate::infrastructure::security::ssrf::SsrfValidator;
     ///
-    /// let validator = SsrfValidator::new();
+    /// let validator = SsrfValidator::new;
     /// let result = validator.validate("https://example.com").await;
-    /// assert!(result.is_ok());
+    /// assert!(result.is_ok);
     /// ```
     pub async fn validate(&self, url_str: &str) -> Result<ValidatedUrl, SsrfError> {
         // Step 1: URL length check
@@ -370,7 +370,7 @@ pub(crate) fn ssrf_protection_disabled() -> bool {
 ///
 /// # Returns
 ///
-/// * `Ok(())` - Domain is not in blacklist
+/// * `Ok()` - Domain is not in blacklist
 /// * `Err(SsrfError)` - Domain is in blacklist
 pub fn validate_domain_blacklist(url_str: &str, blacklist: &[String]) -> Result<(), SsrfError> {
     let url = Url::parse(url_str).map_err(|e| SsrfError::InvalidUrl {
@@ -628,7 +628,7 @@ mod tests {
         assert!(matches!(result, Err(SsrfError::MissingHost { .. })));
     }
 
-    // ========== Constructor tests with DNS cache ==========
+    // Constructor tests with DNS cache
 
     async fn make_dns_cache() -> Arc<DnsCacheService> {
         let cache: Arc<crate::infrastructure::oxcache::DnsCache> = Arc::new(

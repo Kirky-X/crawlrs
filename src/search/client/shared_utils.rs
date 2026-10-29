@@ -70,7 +70,7 @@ pub fn escape_html_text(text: &str) -> String {
 
 /// Build a URL query string from key-value pairs.
 ///
-/// 使用 `fold` 累积构建查询字符串，避免 `collect::<Vec<_>>().join("&")` 的中间 Vec
+/// 使用 `fold` 累积构建查询字符串，避免 `collect::<Vec<_>>.join("&")` 的中间 Vec
 /// 分配（性能 URL 构建优化）。统一 google.rs/smart/mod.rs 中 5 处重复的
 /// query string 构建逻辑。
 ///
@@ -129,7 +129,7 @@ mod tests {
         f(&element)
     }
 
-    // ========== safe_parse_selector tests ==========
+    // safe_parse_selector tests
 
     #[test]
     fn test_safe_parse_selector_valid_simple() {
@@ -181,7 +181,7 @@ mod tests {
         assert!(result.is_none(), "a bare pseudo-class should not parse");
     }
 
-    // ========== parse_first_selector tests ==========
+    // parse_first_selector tests
 
     #[test]
     fn test_parse_first_selector_returns_first_valid() {
@@ -229,7 +229,7 @@ mod tests {
         assert!(result.is_some(), "a single valid selector should parse");
     }
 
-    // ========== extract_clean_text_from_element tests ==========
+    // extract_clean_text_from_element tests
 
     #[test]
     fn test_extract_clean_text_simple() {
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn test_extract_clean_text_preserves_inner_whitespace() {
-        // ElementRef::text() concatenates text nodes without collapsing inner
+        // ElementRef::text concatenates text nodes without collapsing inner
         // whitespace; trim only removes leading/trailing whitespace.
         let text = with_element("<div>Hello\n  World</div>", "div", |element| {
             extract_clean_text_from_element(element)
@@ -290,7 +290,7 @@ mod tests {
         assert_eq!(text, "Hello");
     }
 
-    // ========== escape_html_text tests ==========
+    // escape_html_text tests
 
     #[test]
     fn test_escape_html_text_plain_text_unchanged() {
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(escape_html_text("  trimmed content  "), "trimmed content");
     }
 
-    // ========== build_query_string tests ==========
+    // build_query_string tests
 
     #[test]
     fn test_build_query_string_single_param() {

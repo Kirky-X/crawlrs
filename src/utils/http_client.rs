@@ -151,7 +151,6 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
     use std::net::ToSocketAddrs;
 
     reqwest::redirect::Policy::custom(move |attempt| {
-        // Check redirect count
         if attempt.previous().len() >= max_redirects as usize {
             log::warn!(
                 "Redirect limit ({}) exceeded, stopping redirect chain",
@@ -160,7 +159,6 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
             return attempt.stop();
         }
 
-        // Get redirect URL
         let redirect_url = attempt.url();
 
         // 1) 只允许 http/https
@@ -182,9 +180,9 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
         }
 
         // 3) DNS 级检查：重定向目标 hostname 解析出的全部 IP 必须是公网地址。
-        //    阻断「302 → 攻击者域名 → 解析到 169.254.169.254/内网 IP」的绕过
-        //    （该路径不受初始请求 resolve_to_addrs pin 的约束）。策略闭包为同步
-        //    上下文，使用阻塞式解析；解析失败按 fail-closed 拒绝跟随。
+        // 阻断「302 → 攻击者域名 → 解析到 169.254.169.254/内网 IP」的绕过
+        // （该路径不受初始请求 resolve_to_addrs pin 的约束）。策略闭包为同步
+        // 上下文，使用阻塞式解析；解析失败按 fail-closed 拒绝跟随。
         if let Some(host) = redirect_url.host_str() {
             let port = redirect_url.port_or_known_default().unwrap_or(
                 if redirect_url.scheme() == "https" {
@@ -226,7 +224,6 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
             }
         }
 
-        // Log redirect for debugging
         log::debug!(
             "Following redirect {} -> {}",
             attempt
@@ -301,7 +298,7 @@ where
 ///    （覆盖 chunked 传输无 Content-Length 或声明值不实的情况）。
 ///
 /// 编码：优先按 `Content-Type` 的 `charset` 参数解码（encoding_rs），缺省或无法
-/// 识别时回退 UTF-8 lossy（与 reqwest `.text()` 行为一致）。
+/// 识别时回退 UTF-8 lossy（与 reqwest `.text` 行为一致）。
 pub async fn read_body_limited(
     resp: reqwest::Response,
     max_bytes: usize,
@@ -451,11 +448,11 @@ mod tests {
     fn test_no_redirect_client_follows_no_redirects() {
         // The no-redirect client must report that it won't follow redirects.
         // We verify this indirectly by ensuring the client builds with the
-        // none() redirect policy without panicking.
+        // none redirect policy without panicking.
         let _client = create_http_client_no_redirects();
     }
 
-    // ========== SSRF-safe redirect policy behavior tests (wiremock) ==========
+    // SSRF-safe redirect policy behavior tests (wiremock)
 
     #[tokio::test]
     async fn test_ssrf_safe_redirect_policy_blocks_redirect_to_internal_url() {
@@ -485,7 +482,7 @@ mod tests {
             .expect("request should succeed");
 
         // The redirect target is 127.0.0.1 which is_internal_url returns true,
-        // so the policy calls attempt.stop() and returns the 302 response.
+        // so the policy calls attempt.stop and returns the 302 response.
         assert_eq!(
             response.status().as_u16(),
             302,
@@ -618,7 +615,7 @@ mod tests {
         );
     }
 
-    // ========== Supplementary tests: edge cases and parameter coverage ==========
+    // Supplementary tests: edge cases and parameter coverage
 
     #[tokio::test]
     async fn test_ssrf_safe_redirect_policy_blocks_redirect_to_172_16() {
@@ -942,11 +939,11 @@ mod tests {
         let _ = c4.clone();
     }
 
-    // ========== Test logger for covering log::warn!/log::debug! in redirect policy ==========
+    // Test logger for covering log::warn!/log::debug! in redirect policy
 
     use crate::test_utils::ensure_debug_logger;
 
-    // ========== log::warn! coverage tests for SSRF redirect policy ==========
+    // log::warn! coverage tests for SSRF redirect policy
 
     #[tokio::test]
     async fn test_ssrf_block_logs_warning_with_logger_initialized() {
@@ -1072,14 +1069,14 @@ mod tests {
         assert_eq!(response.status().as_u16(), 302);
     }
 
-    // ========== redirect follow 分支覆盖测试 ==========
+    // redirect follow 分支覆盖测试
 
     #[tokio::test]
     async fn test_ssrf_safe_redirect_policy_follows_external_redirect() {
         // 当 redirect 目标是外部 URL（is_internal_url 返回 false）时，
-        // policy 应执行 log::debug!（行 141-149）和 attempt.follow()（行 152）。
+        // policy 应执行 log::debug!（行 141-149）和 attempt.follow（行 152）。
         // 使用 TEST-NET-1 (192.0.2.1, RFC 5737) 端口 1，确保不可达，
-        // 触发 attempt.follow() 后连接失败返回错误。
+        // 触发 attempt.follow 后连接失败返回错误。
         ensure_debug_logger();
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1100,14 +1097,14 @@ mod tests {
         let url = format!("{}/redirect-external-follow", mock_server.uri());
         let result = client.get(&url).send().await;
 
-        // redirect 目标不可达，send() 应返回错误（覆盖 attempt.follow() 分支）
+        // redirect 目标不可达，send 应返回错误（覆盖 attempt.follow 分支）
         assert!(
             result.is_err(),
             "redirect to unreachable external URL should fail after attempt.follow()"
         );
     }
 
-    // ========== read_body_limited 上限测试 ==========
+    // read_body_limited 上限测试
 
     #[tokio::test]
     async fn test_read_body_limited_within_limit() {

@@ -63,7 +63,6 @@ async fn test_sync_wait_returns_result_immediately_with_real_repo() {
     let task_id = crawlrs::domain::id::Id::generate();
     let team_id = crawlrs::domain::id::Id::generate();
 
-    // 创建一个已完成的任务
     let completed_task = create_test_task(task_id, team_id, TaskStatus::Completed);
     let _saved_task = task_repo
         .create(&completed_task)
@@ -107,7 +106,6 @@ async fn test_sync_wait_timeout_with_uncompleted_tasks_real_repo() {
     let task_id = crawlrs::domain::id::Id::generate();
     let team_id = crawlrs::domain::id::Id::generate();
 
-    // 创建一个未完成的任务
     let active_task = create_test_task(task_id, team_id, TaskStatus::Active);
     let _saved_task = task_repo
         .create(&active_task)
@@ -162,7 +160,6 @@ async fn test_sync_wait_multiple_tasks_real_repo() {
     let task_ids = vec![crawlrs::domain::id::Id::generate(), crawlrs::domain::id::Id::generate(), crawlrs::domain::id::Id::generate()];
     let team_id = crawlrs::domain::id::Id::generate();
 
-    // 创建多个已完成的任务
     for &task_id in &task_ids {
         let completed_task = create_test_task(task_id, team_id, TaskStatus::Completed);
         let _saved_task = task_repo

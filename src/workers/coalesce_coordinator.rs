@@ -19,7 +19,7 @@
 //!
 //! # 信号语义
 //!
-//! 原代码 `rx.recv().await` 无超时且不区分信号来源，leader panic / 死锁会导致等待方
+//! 原代码 `rx.recv.await` 无超时且不区分信号来源，leader panic / 死锁会导致等待方
 //! 永久挂起或误判完成。现等待方区分 leader 正常完成与异常消失：正常完成才按
 //! leader task_id 查询结果；异常（Purged/Closed/超时）一律走自身重排，避免误杀
 //! leader 任务或无条件 purge 全表。
@@ -87,7 +87,7 @@ impl CoalesceCoordinator {
     ///
     /// - `Ok(Some(guard))`：获得执行权，调用方应继续抓取，guard Drop 时广播
     /// - `Ok(None)`：已被其他 worker 处理（等待方从 result_repo 读到结果，或被延后重排），
-    ///   调用方应直接返回 Ok(())
+    ///   调用方应直接返回 Ok()
     /// - `Err(e)`：协调失败（超时 / 仓储错误），调用方应失败处理
     pub async fn try_coalesce(
         &self,
@@ -107,7 +107,7 @@ impl CoalesceCoordinator {
                 // 45s 选择依据：
                 // - 大于浏览器引擎 MRT（30s）+ 缓冲，留足 leader 完成时间
                 // - 短于 RequestCoalescer::STALE_TIMEOUT（120s），超时后由 purge_stale
-                //   兜底清理 in-flight 条目并广播 Purged
+                // 兜底清理 in-flight 条目并广播 Purged
                 //
                 // 信号语义
                 // - Completed → 按 leader task_id 查询落库结果

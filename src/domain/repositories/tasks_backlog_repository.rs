@@ -209,7 +209,7 @@ pub trait TasksBacklogRepository: Send + Sync {
 mod tests {
     use super::*;
 
-    // ========== TasksBacklogStatus Display tests ==========
+    // TasksBacklogStatus Display tests
 
     #[test]
     fn test_status_display_pending() {
@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(TasksBacklogStatus::Expired.to_string(), "expired");
     }
 
-    // ========== TasksBacklogStatus FromStr tests ==========
+    // TasksBacklogStatus FromStr tests
 
     #[test]
     fn test_status_from_str_pending() {
@@ -293,7 +293,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========== TasksBacklogStatus clone/serialize ==========
+    // TasksBacklogStatus clone/serialize
 
     #[test]
     fn test_status_copy() {
@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(a, b);
     }
 
-    // ========== TasksBacklog::new tests ==========
+    // TasksBacklog::new tests
 
     #[test]
     fn test_tasks_backlog_new_defaults() {
@@ -383,7 +383,7 @@ mod tests {
         assert_ne!(b1.id, b2.id);
     }
 
-    // ========== mark_processing tests ==========
+    // mark_processing tests
 
     #[test]
     fn test_mark_processing_from_pending_succeeds() {
@@ -430,7 +430,7 @@ mod tests {
         assert!(backlog.mark_processing().is_err());
     }
 
-    // ========== mark_completed tests ==========
+    // mark_completed tests
 
     #[test]
     fn test_mark_completed_from_processing_succeeds() {
@@ -478,7 +478,7 @@ mod tests {
         assert!(backlog.mark_completed().is_err());
     }
 
-    // ========== mark_failed tests ==========
+    // mark_failed tests
 
     #[test]
     fn test_mark_failed_from_any_state() {
@@ -509,7 +509,7 @@ mod tests {
         assert_eq!(backlog.status, TasksBacklogStatus::Failed);
     }
 
-    // ========== mark_expired tests ==========
+    // mark_expired tests
 
     #[test]
     fn test_mark_expired_from_pending() {
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(backlog.status, TasksBacklogStatus::Expired);
     }
 
-    // ========== increment_retry_count tests ==========
+    // increment_retry_count tests
 
     #[test]
     fn test_increment_retry_count_increments() {
@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(backlog.retry_count, 2);
     }
 
-    // ========== is_expired tests ==========
+    // is_expired tests
 
     #[test]
     fn test_is_expired_no_expiry_returns_false() {
@@ -602,7 +602,7 @@ mod tests {
         assert!(backlog.is_expired());
     }
 
-    // ========== can_retry tests ==========
+    // can_retry tests
 
     #[test]
     fn test_can_retry_below_max() {
@@ -649,7 +649,7 @@ mod tests {
         assert!(!backlog.can_retry());
     }
 
-    // ========== full lifecycle test ==========
+    // full lifecycle test
 
     #[test]
     fn test_full_lifecycle_pending_to_completed() {

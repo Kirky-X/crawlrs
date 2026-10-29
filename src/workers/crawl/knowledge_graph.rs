@@ -124,7 +124,7 @@ pub struct KnowledgeGraphAccumulator {
     relations: Vec<Relation>,
     /// 实体类型计数：type_label → count
     type_counts: HashMap<String, usize>,
-    /// 已知的所有实体类型（包括未发现的）
+    /// 已知的所有实体类型（包括未发现）
     known_entity_types: HashSet<String>,
     /// 已知的所有关系类型
     known_relation_types: HashSet<String>,
@@ -189,7 +189,6 @@ impl KnowledgeGraphAccumulator {
     ) {
         self.crawled_urls.insert(source_url.to_string());
 
-        // 检查是否已存在相同关系
         let exists = self.relations.iter().any(|r| {
             r.source_id == source_id
                 && r.target_id == target_id
@@ -197,7 +196,6 @@ impl KnowledgeGraphAccumulator {
         });
 
         if exists {
-            // 更新 source_urls
             if let Some(r) = self.relations.iter_mut().find(|r| {
                 r.source_id == source_id
                     && r.target_id == target_id
@@ -250,7 +248,7 @@ impl KnowledgeGraphAccumulator {
             }
         }
 
-        // 3. 缺失的关系类型（已知类型中未出现的）
+        // 3. 缺失的关系类型（已知类型中未出现）
         for rel_type in &self.known_relation_types {
             let has_any = self
                 .relations
@@ -433,7 +431,7 @@ impl Default for KnowledgeGraphAccumulator {
 mod tests {
     use super::*;
 
-    // === KG 构建测试 ===
+    // KG 构建测试
 
     #[test]
     fn test_add_entity_and_count() {
@@ -563,7 +561,7 @@ mod tests {
         assert_eq!(neighbors[0].1, "works_at");
     }
 
-    // === Chao1 覆盖率估计测试 ===
+    // Chao1 覆盖率估计测试
 
     #[test]
     fn test_estimate_coverage_all_types_well_represented() {
@@ -655,7 +653,7 @@ mod tests {
         );
     }
 
-    // === URL 优先级提升测试 ===
+    // URL 优先级提升测试
 
     #[test]
     fn test_url_priority_boost_no_holes() {

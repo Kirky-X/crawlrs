@@ -21,9 +21,7 @@ use crawlrs::di::modules::{
 };
 use crawlrs::di::CrawlRsState;
 
-// =============================================================================
 // ModuleMeta::NAME 常量校验
-// =============================================================================
 
 #[test]
 fn settings_module_name() {
@@ -65,9 +63,7 @@ fn service_module_name() {
     assert_eq!(ServiceModule::NAME, "services");
 }
 
-// =============================================================================
-// ModuleMeta::dependencies() 依赖图校验
-// =============================================================================
+// ModuleMeta::dependencies 依赖图校验
 
 /// 辅助：断言依赖列表中包含指定 (name, TypeId) 对。
 fn assert_dep_contains(
@@ -158,9 +154,7 @@ fn service_module_depends_on_three_modules() {
     assert_dep_contains(deps, SettingsModule::NAME, TypeId::of::<SettingsModule>());
 }
 
-// =============================================================================
 // 依赖图拓扑完整性 — 所有引用的依赖名必须有对应模块（无悬挂引用）
-// =============================================================================
 
 #[test]
 fn dependency_graph_has_no_dangling_references() {
@@ -198,9 +192,7 @@ fn dependency_graph_has_no_dangling_references() {
     }
 }
 
-// =============================================================================
 // AsyncKit 注册/解析行为 — 非 Docker 模块
-// =============================================================================
 
 /// SettingsModule 可注册、构建并解析，返回 Arc<Settings>。
 #[tokio::test]
@@ -324,7 +316,7 @@ async fn settings_module_without_config_errors() {
     kit.register::<SettingsModule>()
         .expect("Failed to register SettingsModule");
 
-    // build() 会立即构建所有已注册模块；SettingsModule 缺少 config 时返回 SettingsNotConfigured，
+    // build 会立即构建所有已注册模块；SettingsModule 缺少 config 时返回 SettingsNotConfigured，
     // kit 将其包装为 BuildFailed { context: "settings", source: SettingsNotConfigured(...) }
     let result: Result<_, TraitKitError> = kit.build().await;
     assert!(
@@ -343,9 +335,7 @@ async fn settings_module_without_config_errors() {
     );
 }
 
-// =============================================================================
 // ModuleBuildError Display impl 校验
-// =============================================================================
 
 #[test]
 fn module_build_error_display_settings_not_configured() {
@@ -425,9 +415,7 @@ fn module_build_error_display_dependency_missing() {
     );
 }
 
-// =============================================================================
 // TraitKitError → ModuleBuildError 转换
-// =============================================================================
 
 #[test]
 fn traitkit_error_converts_to_dependency_missing() {
@@ -449,17 +437,15 @@ fn traitkit_error_converts_to_dependency_missing() {
     );
 }
 
-// =============================================================================
-// CrawlRsState::from_kit() 错误路径（非 Docker 依赖）
-// =============================================================================
+// CrawlRsState::from_kit 错误路径（非 Docker 依赖）
 //
 // 要求"测试覆盖 CrawlRsStateExt trait 方法"。28 个 accessor 方法
 // 已由 src/di/axum_state.rs 内联 3 个 tc_ 测试覆盖（Docker 依赖）。这里补充
-// 非 Docker 路径：from_kit() 在 InfrastructureModule 未注册时返回错误。
+// 非 Docker 路径：from_kit 在 InfrastructureModule 未注册时返回错误。
 //
 // InfrastructureModule 依赖 DatabaseModule（需 PostgreSQL），故无法在非 Docker
-// 环境构建 InfrastructureModule。但可验证 from_kit() 在缺少该模块时返回
-// ModuleBuildError::DependencyMissing，覆盖 from_kit() 第一个 require 调用
+// 环境构建 InfrastructureModule。但可验证 from_kit 在缺少该模块时返回
+// ModuleBuildError::DependencyMissing，覆盖 from_kit 第一个 require 调用
 // 的错误分支。
 
 /// 空 kit（无任何模块注册）调用 from_kit 应返回错误，提及 InfrastructureModule。

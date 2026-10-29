@@ -144,7 +144,6 @@ fn benchmark_json_serialization(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("json_serialization");
 
-    // 创建测试任务
     let task = Task::new(
         crawlrs::domain::id::Id::generate(),
         TaskType::Scrape,
@@ -228,9 +227,7 @@ fn benchmark_uuid_generation(c: &mut Criterion) {
     group.finish();
 }
 
-// =============================================================================
 // URL 验证基准测试
-// =============================================================================
 
 /// 生成测试 URL 集合
 fn generate_test_urls(count: usize) -> Vec<String> {
@@ -308,16 +305,13 @@ fn benchmark_ssrf_detection(c: &mut Criterion) {
     group.finish();
 }
 
-// =============================================================================
 // 缓存命中/未命中基准测试
-// =============================================================================
 
 /// RegexCache get_or_insert 性能（命中 vs 未命中）
 fn benchmark_regex_cache(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("regex_cache");
 
-    // 创建 RegexCache
     let cache: Arc<RegexCacheType> = Arc::new(rt.block_on(async {
         Cache::builder()
             .capacity(1000)
@@ -358,9 +352,7 @@ fn benchmark_regex_cache(c: &mut Criterion) {
     group.finish();
 }
 
-// =============================================================================
 // 引擎路由决策基准测试
-// =============================================================================
 
 /// 基准测试用 Mock 引擎
 struct BenchMockEngine {

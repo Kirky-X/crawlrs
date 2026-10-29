@@ -27,7 +27,7 @@ use std::sync::Arc;
 // (`tests/sdk_api_test.rs`) 通过 `cargo test --features test-mocks` 启用；
 // production binary 默认不启用 `test-mocks`，mocks 完全不参与编译。
 
-// ============ Test environment helpers ============
+// Test environment helpers
 
 /// 检查 TEST_DATABASE_URL 是否设置；未设置时测试应早期返回。
 /// sdk 测试需要 AuthState，而 AuthState 需要 DbPool，DbPool 构造需要真实 DB URL。
@@ -48,7 +48,7 @@ fn make_auth_state() -> AuthState {
     )
 }
 
-// ============ Shared mock implementations ============
+// Shared mock implementations
 //
 // Mock structs now live in `src/presentation/sdk/mocks.rs` (compiled only
 // under `#[cfg(test)]`). Both this unit-test module and the integration
@@ -61,7 +61,7 @@ use super::mocks::{
     MockTaskQueue, MockTaskQueueError,
 };
 
-// ============ TestServer builders ============
+// TestServer builders
 
 /// 构造测试用 i18n bundle（en-US 固定，断言不受宿主系统语言影响）
 fn make_test_i18n() -> (Locale, Arc<I18nBundle>) {
@@ -143,7 +143,7 @@ fn make_server_crawl_repo_error() -> TestServer {
     TestServer::new(app)
 }
 
-// ============ sdk_search tests ============
+// sdk_search tests
 
 /// sdk_search happy path：合法 query 应返回 200 + 搜索结果。
 /// 覆盖 SearchQuery 构造、search_service.search 调用、响应映射。
@@ -169,7 +169,7 @@ async fn test_sdk_search_happy_path() {
 }
 
 /// sdk_search 空 query（trim 后为空）应返回 400 InvalidInput。
-/// 覆盖 query.trim().is_empty() 分支。
+/// 覆盖 query.trim.is_empty 分支。
 #[tokio::test]
 async fn test_sdk_search_empty_query_returns_400() {
     if skip_if_no_db() {
@@ -212,7 +212,7 @@ async fn test_sdk_search_service_error_returns_500() {
     assert_eq!(res.status_code().as_u16(), 500);
 }
 
-// ============ sdk_create_task tests ============
+// sdk_create_task tests
 
 /// sdk_create_task happy path（task_type=scrape）：应返回 200 + status=Queued。
 /// 覆盖 task_type 匹配、Task 构造、enqueue、响应映射。
@@ -255,7 +255,7 @@ async fn test_sdk_create_task_crawl_happy_path() {
 }
 
 /// sdk_create_task 空 url 应返回 400 InvalidInput。
-/// 覆盖 url.trim().is_empty() 分支。
+/// 覆盖 url.trim.is_empty 分支。
 #[tokio::test]
 async fn test_sdk_create_task_empty_url_returns_400() {
     if skip_if_no_db() {
@@ -299,7 +299,7 @@ async fn test_sdk_create_task_queue_error_returns_500() {
     assert_eq!(res.status_code().as_u16(), 500);
 }
 
-// ============ sdk_scrape tests ============
+// sdk_scrape tests
 
 /// sdk_scrape happy path：应返回 200 + id + url。
 /// 覆盖 Task 构造、enqueue、响应映射。
@@ -318,7 +318,7 @@ async fn test_sdk_scrape_happy_path() {
 }
 
 /// sdk_scrape 空 url 应返回 400 InvalidInput。
-/// 覆盖 url.trim().is_empty() 分支。
+/// 覆盖 url.trim.is_empty 分支。
 #[tokio::test]
 async fn test_sdk_scrape_empty_url_returns_400() {
     if skip_if_no_db() {
@@ -343,7 +343,7 @@ async fn test_sdk_scrape_queue_error_returns_500() {
     assert_eq!(res.status_code().as_u16(), 500);
 }
 
-// ============ sdk_create_crawl tests ============
+// sdk_create_crawl tests
 
 /// sdk_create_crawl happy path：应返回 200 + status=Queued + url。
 /// 覆盖 Crawl::new、crawl_repo.create、响应映射。
@@ -367,7 +367,7 @@ async fn test_sdk_create_crawl_happy_path() {
 }
 
 /// sdk_create_crawl 空 url 应返回 400 InvalidInput。
-/// 覆盖 url.trim().is_empty() 分支。
+/// 覆盖 url.trim.is_empty 分支。
 #[tokio::test]
 async fn test_sdk_create_crawl_empty_url_returns_400() {
     if skip_if_no_db() {

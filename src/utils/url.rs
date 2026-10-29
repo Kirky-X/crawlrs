@@ -163,7 +163,7 @@ mod tests {
         );
     }
 
-    // ========== SafeUrl construction tests ==========
+    // SafeUrl construction tests
 
     #[test]
     fn test_safe_url_new_https() {
@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(url.port(), None);
     }
 
-    // ========== SafeUrl Display tests ==========
+    // SafeUrl Display tests
 
     #[test]
     fn test_safe_url_display() {
@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(format!("{}", url), url.as_str());
     }
 
-    // ========== SafeUrl FromStr tests ==========
+    // SafeUrl FromStr tests
 
     #[test]
     fn test_safe_url_from_str_valid() {
@@ -286,7 +286,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========== SafeUrl equality/hash tests ==========
+    // SafeUrl equality/hash tests
 
     #[test]
     fn test_safe_url_equality() {
@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(map.get(&url2), Some(&42));
     }
 
-    // ========== SafeUrl serde tests ==========
+    // SafeUrl serde tests
 
     #[test]
     fn test_safe_url_serialize() {
@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(url, back);
     }
 
-    // ========== SafeUrl Debug test ==========
+    // SafeUrl Debug test
 
     #[test]
     fn test_safe_url_debug() {
@@ -359,7 +359,7 @@ mod tests {
         assert!(dbg.contains("SafeUrl"));
     }
 
-    // ========== resolve_url edge cases ==========
+    // resolve_url edge cases
 
     #[test]
     fn test_resolve_url_with_query_string() {
@@ -421,7 +421,7 @@ mod tests {
         );
     }
 
-    // ========== UrlError tests ==========
+    // UrlError tests
 
     #[test]
     fn test_url_error_display() {
@@ -430,13 +430,13 @@ mod tests {
         assert!(err.to_string().contains("bad url"));
     }
 
-    // ========== Visitor::expecting 方法覆盖测试 ==========
+    // Visitor::expecting 方法覆盖测试
 
     #[test]
     fn test_safe_url_deserialize_number_triggers_expecting() {
         // 反序列化数字类型触发 Visitor::expecting 方法（行 111, 114-115）。
         // serde_json 看到 number，调用 Visitor::visit_u64（未定义），
-        // 默认实现返回 invalid_type 错误，错误消息使用 expecting() 输出。
+        // 默认实现返回 invalid_type 错误，错误消息使用 expecting 输出。
         let json = "123";
         let result: Result<SafeUrl, _> = serde_json::from_str(json);
         assert!(result.is_err());

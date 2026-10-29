@@ -44,9 +44,7 @@ pub enum AntiBotTech {
     Unknown,
 }
 
-// -----------------------------------------------------------------------------
 // Tier1：高置信 WAF 结构标记（regex，任意页大小）
-// -----------------------------------------------------------------------------
 
 /// Tier1 单条模式：`(正则模式, 命中后归属的反爬技术)`
 ///
@@ -55,7 +53,7 @@ pub enum AntiBotTech {
 ///
 /// 注：少量模式含 backreference（如 `Reference\s*#(\d+)`），故整体走 regex 而非 AC。
 pub static TIER1_PATTERNS: &[(&str, AntiBotTech)] = &[
-    // --- Cloudflare ---
+    // Cloudflare
     (r"(?i)/cdn-cgi/challenge-platform/", AntiBotTech::Cloudflare),
     (r"(?i)cf-browser-verification", AntiBotTech::Cloudflare),
     (r"(?i)cf-challenge", AntiBotTech::Cloudflare),
@@ -66,37 +64,37 @@ pub static TIER1_PATTERNS: &[(&str, AntiBotTech)] = &[
         r"(?i)cloudflare[\s\-_]?browser[\s\-_]?check",
         AntiBotTech::Cloudflare,
     ),
-    // --- Akamai ---
+    // Akamai
     (r"(?i)reference\s*#(\d+)", AntiBotTech::Akamai),
     (r"(?i)akamai_bmbl", AntiBotTech::Akamai),
     // Bot Manager cookie 标志：_abck（传感器）、ak_bmsc（遥测）、bm_sv（会话）。
-    // 注意不能用 `_back\b` 之类宽泛词——go_back()/btn_back 等正常 JS/CSS
+    // 注意不能用 `_back\b` 之类宽泛词——go_back/btn_back 等正常 JS/CSS
     // 命名会造成大面积误报，把正常 200 页升级到浏览器引擎。
     (r"(?i)\b_abck\b", AntiBotTech::Akamai),
     (r"(?i)\bak_bmsc\b", AntiBotTech::Akamai),
     (r"(?i)\bbm_sv\b", AntiBotTech::Akamai),
     (r"(?i)pardon our interruption", AntiBotTech::Akamai),
-    // --- PerimeterX ---
+    // PerimeterX
     (r"(?i)px-captcha", AntiBotTech::PerimeterX),
     (r"(?i)perimeterx", AntiBotTech::PerimeterX),
     (r"(?i)_pxhd\b", AntiBotTech::PerimeterX),
     (r"(?i)px-cdn\.net", AntiBotTech::PerimeterX),
-    // --- DataDome ---
+    // DataDome
     (r"(?i)datadome", AntiBotTech::DataDome),
     (r"(?i)captcha-delivery\.com", AntiBotTech::DataDome),
     (r"(?i)ct\.captcha-delivery", AntiBotTech::DataDome),
-    // --- Imperva / Incapsula ---
+    // Imperva / Incapsula
     (r"(?i)incap_ses", AntiBotTech::Imperva),
     (r"(?i)visid_incap", AntiBotTech::Imperva),
     (r"(?i)incapsula", AntiBotTech::Imperva),
-    // --- Sucuri ---
+    // Sucuri
     (r"(?i)sucuri_cloudproxy", AntiBotTech::Sucuri),
     (r"(?i)x-sucuri-id", AntiBotTech::Sucuri),
     (r"(?i)sucuri[\s\-_]?firewall", AntiBotTech::Sucuri),
-    // --- Kasada ---
+    // Kasada
     (r"(?i)kasada", AntiBotTech::Kasada),
     (r"(?i)pointdefense", AntiBotTech::Kasada),
-    // --- AWS WAF ---
+    // AWS WAF
     (r"(?i)aws-waf", AntiBotTech::AwsWaf),
     (r"(?i)captcha\.awswaf\.com", AntiBotTech::AwsWaf),
     (r"(?i)awsWafCookie", AntiBotTech::AwsWaf),
@@ -113,9 +111,7 @@ pub static TIER1_REGEXES: Lazy<Vec<(Regex, AntiBotTech)>> = Lazy::new(|| {
         .collect()
 });
 
-// -----------------------------------------------------------------------------
 // Tier2：通用词字面量集（aho-corasick 自动机，仅 <10KB 页扫描）
-// -----------------------------------------------------------------------------
 
 /// Tier2 通用反爬提示词字面量表（小写匹配，使用 AC 自动机）
 ///
@@ -158,9 +154,7 @@ pub static TIER2_AUTOMATON: Lazy<AhoCorasick> = Lazy::new(|| {
 /// Tier2 触发的 body 大小上限（10 KB）
 pub const TIER2_BODY_SIZE_LIMIT: usize = 10 * 1024;
 
-// -----------------------------------------------------------------------------
 // Tier3：结构完整性正则
-// -----------------------------------------------------------------------------
 
 /// Tier3-1：HTML 缺失 `<body>` 标签（任意大小写）
 pub static TIER3_NO_BODY: Lazy<Regex> =
@@ -203,7 +197,7 @@ mod tests {
             == Some(expected)
     }
 
-    // -------- Tier1：每个 WAF 至少 1 个标记测试（共 8 个 WAF） --------
+    // Tier1：每个 WAF 至少 1 个标记测试（共 8 个 WAF）
 
     #[test]
     fn tier1_cloudflare_challenge_platform() {
@@ -306,7 +300,7 @@ mod tests {
         let _ = Lazy::force(&TIER1_REGEXES);
     }
 
-    // -------- Tier2：AhoCorasick 自动机 --------
+    // Tier2：AhoCorasick 自动机
 
     #[test]
     fn tier2_automaton_matches_blocked() {
@@ -337,7 +331,7 @@ mod tests {
         assert_eq!(TIER2_BODY_SIZE_LIMIT, 10 * 1024);
     }
 
-    // -------- Tier3：结构正则 --------
+    // Tier3：结构正则
 
     #[test]
     fn tier3_no_body_detects_missing_body_tag() {

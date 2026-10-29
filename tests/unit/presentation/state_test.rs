@@ -33,9 +33,7 @@ use crawlrs::presentation::state::{CrawlHandlerState, HandlerState};
 // 使用 tests/common/mocks 统一 mock
 use crate::common::mocks::{MockCrawlRepository, MockScrapeResultRepository, MockTaskRepository};
 
-// =============================================================================
 // No-op mock implementations (feature-gated only — basic repos use shared mocks)
-// =============================================================================
 
 // MockCrawlRepository, MockTaskRepository, MockScrapeResultRepository
 // 已迁移到 tests/common/mocks/mock_repositories.rs
@@ -253,9 +251,7 @@ fn build_test_state() -> CrawlHandlerState {
     )
 }
 
-// =============================================================================
 // CrawlHandlerState::new — construction and field access
-// =============================================================================
 
 #[test]
 fn tc_new_construction_all_fields_populated() {
@@ -281,7 +277,7 @@ fn tc_new_construction_all_fields_populated() {
 #[test]
 fn tc_new_injected_repositories_are_returned_by_trait() {
     let state = build_test_state();
-    // Trait accessors must return the same Arcs injected via new().
+    // Trait accessors must return the same Arcs injected via new.
     assert!(Arc::ptr_eq(&state.crawl_repo, &state.crawl_repo()));
     assert!(Arc::ptr_eq(&state.task_repo, &state.task_repo()));
     assert!(Arc::ptr_eq(&state.scrape_result_repo, &state.result_repo()));
@@ -314,9 +310,7 @@ fn tc_new_injected_services_are_returned_by_trait() {
     }
 }
 
-// =============================================================================
 // HandlerState trait — all accessor methods
-// =============================================================================
 
 #[test]
 fn tc_handler_state_task_repo_returns_injected() {
@@ -334,7 +328,7 @@ fn tc_handler_state_crawl_repo_returns_injected() {
 
 #[test]
 fn tc_handler_state_result_repo_returns_scrape_result_repo() {
-    // result_repo() must return the scrape_result_repo field (different name).
+    // result_repo must return the scrape_result_repo field (different name).
     let state = build_test_state();
     assert!(Arc::ptr_eq(&state.result_repo(), &state.scrape_result_repo));
 }
@@ -375,9 +369,7 @@ fn tc_handler_state_rate_limiting_service_returns_injected() {
     ));
 }
 
-// =============================================================================
 // CrawlHandlerState::create_use_case
-// =============================================================================
 
 #[test]
 fn tc_create_use_case_returns_crawl_use_case() {
@@ -395,9 +387,7 @@ fn tc_create_use_case_does_not_panic_on_multiple_calls() {
     let _ = state.create_use_case();
 }
 
-// =============================================================================
 // CrawlHandlerState Clone semantics
-// =============================================================================
 
 #[test]
 fn tc_clone_shares_all_underlying_arcs() {

@@ -329,7 +329,7 @@ impl TeamSemaphore {
     /// # 性能权衡
     ///
     /// 线性扫描 `DashMap`，最坏 O(n)（n = max_teams，默认 10000）。
-    /// 仅在 `semaphores.len() >= max_teams` 时触发，即团队数达上限时。
+    /// 仅在 `semaphores.len >= max_teams` 时触发，即团队数达上限时。
     /// 触发频率：每个新团队首次插入时一次（之后 lookup 命中 fast path）。
     ///
     /// 不优化为 LRU/空闲队列的理由：
@@ -471,8 +471,8 @@ impl TeamSemaphore {
     ///   消除「门控在暂停派发、AIMD 却在加并发」的矛盾
     /// - `critical=true`（Critical）：CAS 半减 clamp min（复用 `record_failure` 不变式）
     ///
-    /// 调用时机：scrape_worker 在 `memory_scheduler.update_state()` 之后、
-    /// `admit()` 之前，Pressure/Critical 状态下每次任务准入续发信号；
+    /// 调用时机：scrape_worker 在 `memory_scheduler.update_state` 之后、
+    /// `admit` 之前，Pressure/Critical 状态下每次任务准入续发信号；
     /// Normal 状态不发信号，AIMD 自然恢复 +1（无粘滞）。
     ///
     /// # 返回值
@@ -684,7 +684,6 @@ mod tests {
         let _permit_a = sem.try_acquire(team_a).expect("first acquire");
         let _handle_b = sem.get_or_create(team_b);
         drop(_handle_b);
-        // 创建 team_c 触发驱逐
         let _handle_c = sem.get_or_create(team_c);
 
         // team_a 仍持有 permit 不应被驱逐，team_b 空闲应被驱逐
@@ -918,7 +917,7 @@ mod tests {
         );
     }
 
-    // ========== 自适应模式测试 ==========
+    // 自适应模式测试
 
     /// with_adaptive 创建 Adaptive 模式实例
     #[test]
@@ -1229,7 +1228,7 @@ mod tests {
         assert!(sem.semaphores.contains_key(&team_id));
     }
 
-    // ========== 内存压力联动（F10） ==========
+    // 内存压力联动（F10）
 
     /// Fixed 模式 on_memory_pressure 为 no-op（无 panic，许可不变）
     #[tokio::test]

@@ -194,7 +194,6 @@ impl ResultDeduplicator {
             word.hash(&mut hasher);
             let word_hash = hasher.finish();
 
-            // 更新位向量
             for (i, bit) in hash_bits
                 .iter_mut()
                 .enumerate()
@@ -208,7 +207,6 @@ impl ResultDeduplicator {
             }
         }
 
-        // 生成最终指纹
         let mut fingerprint = 0u64;
         for (i, &bit) in hash_bits
             .iter()
@@ -296,7 +294,6 @@ impl ResultDeduplicator {
             };
 
             if !is_duplicate {
-                // 添加到已见集合
                 self.seen_urls.insert(normalized_url.clone());
                 self.seen_titles.insert(normalized_title.clone());
 
@@ -457,7 +454,7 @@ mod tests {
         );
     }
 
-    // ========== normalize_url 补充测试 ==========
+    // normalize_url 补充测试
 
     #[test]
     fn test_normalize_url_empty_string() {
@@ -515,7 +512,7 @@ mod tests {
         );
     }
 
-    // ========== normalize_title 测试 ==========
+    // normalize_title 测试
 
     #[test]
     fn test_normalize_title_whitespace_collapsed() {
@@ -555,7 +552,7 @@ mod tests {
         assert_eq!(dedup.normalize_title(""), "");
     }
 
-    // ========== generate_fingerprint 测试 ==========
+    // generate_fingerprint 测试
 
     #[test]
     fn test_generate_fingerprint_deterministic() {
@@ -604,7 +601,7 @@ mod tests {
         assert_eq!(fp1, fp2, "Hash algorithm should be deterministic");
     }
 
-    // ========== hamming_distance 测试 ==========
+    // hamming_distance 测试
 
     #[test]
     fn test_hamming_distance_identical_hashes() {
@@ -627,7 +624,7 @@ mod tests {
         assert_eq!(ResultDeduplicator::hamming_distance(0u64, u64::MAX), 64);
     }
 
-    // ========== deduplicate 边界情况 ==========
+    // deduplicate 边界情况
 
     #[test]
     fn test_deduplicate_empty_input() {
@@ -660,7 +657,7 @@ mod tests {
         assert_eq!(deduplicated.len(), 1);
     }
 
-    // ========== reset 测试 ==========
+    // reset 测试
 
     #[test]
     fn test_reset_clears_all_state() {
@@ -689,7 +686,7 @@ mod tests {
         );
     }
 
-    // ========== get_stats 测试 ==========
+    // get_stats 测试
 
     #[test]
     fn test_get_stats_after_deduplication() {
@@ -707,7 +704,7 @@ mod tests {
         assert_eq!(stats.seen_titles_count, 2, "should have 2 unique titles");
     }
 
-    // ========== deduplicate_multi_engine 测试 ==========
+    // deduplicate_multi_engine 测试
 
     #[test]
     fn test_deduplicate_multi_engine_merges_and_deduplicates() {
@@ -736,12 +733,11 @@ mod tests {
             3,
             "should have 3 unique results after cross-engine dedup"
         );
-        // 验证引擎名被正确设置
         assert_eq!(deduplicated[0].engine, "google");
         assert_eq!(deduplicated[2].engine, "bing");
     }
 
-    // ========== 策略组合测试 ==========
+    // 策略组合测试
 
     #[test]
     fn test_url_and_title_strategy() {
@@ -763,7 +759,7 @@ mod tests {
         );
     }
 
-    // ========== is_similar_by_fingerprint: hamming distance 路径 ==========
+    // is_similar_by_fingerprint: hamming distance 路径
 
     #[test]
     fn test_smart_deduplication_similar_by_hamming_distance() {
@@ -808,7 +804,7 @@ mod tests {
         );
     }
 
-    // ========== HTTP vs HTTPS and www normalization tests ==========
+    // HTTP vs HTTPS and www normalization tests
 
     #[test]
     fn test_normalize_url_strips_trailing_slash() {
@@ -903,7 +899,7 @@ mod tests {
         );
     }
 
-    // ==== r2 复查：baidu /link 归一化豁免 ====
+    // r2 复查：baidu /link 归一化豁免
 
     /// 百度中转链接的真实 URL 编码在 query 里——剥除 query 会让全部结果
     /// 坍缩为同一 key（每查询最多存活 1 条）。豁免后各中转链接互异，

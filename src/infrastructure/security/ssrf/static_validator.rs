@@ -85,7 +85,7 @@ pub fn is_internal_url(url_str: &str) -> bool {
         return true;
     }
 
-    // === IPv4 Checks ===
+    // IPv4 Checks
 
     // Localhost variants
     if is_localhost(host) {
@@ -112,7 +112,7 @@ pub fn is_internal_url(url_str: &str) -> bool {
         return true;
     }
 
-    // === IPv6 Checks ===
+    // IPv6 Checks
 
     // IPv6 localhost
     if host == "::1" {

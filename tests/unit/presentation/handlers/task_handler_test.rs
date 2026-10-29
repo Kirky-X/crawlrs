@@ -27,9 +27,7 @@ use crawlrs::presentation::handlers::task_queries::{
     TaskQueryResponseMeta,
 };
 
-// =============================================================================
 // Mock TaskRepository
-// =============================================================================
 
 /// Configurable mock whose `query_tasks` returns a stored snapshot of tasks.
 /// All other trait methods return benign defaults — only `query_tasks` is
@@ -210,9 +208,7 @@ fn make_queued_task(id: crawlrs::domain::id::Id, team_id: crawlrs::domain::id::I
     }
 }
 
-// =============================================================================
 // TaskQueryResponseMeta serialization
-// =============================================================================
 
 #[test]
 fn tc_task_query_response_meta_serialization_round_trip() {
@@ -256,9 +252,7 @@ fn tc_task_query_response_meta_clone_preserves_values() {
     assert_eq!(cloned.response_time_ms, meta.response_time_ms);
 }
 
-// =============================================================================
 // SyncWaitResult construction
-// =============================================================================
 
 #[test]
 fn tc_sync_wait_result_zero_wait_not_timeout() {
@@ -290,9 +284,7 @@ fn tc_sync_wait_result_timeout_set() {
     assert_eq!(result.waited_time_ms, 5000);
 }
 
-// =============================================================================
 // handle_sync_wait_and_get_status — zero / empty paths
-// =============================================================================
 
 #[tokio::test]
 async fn tc_handle_sync_wait_zero_ms_returns_immediately() {
@@ -394,9 +386,7 @@ async fn tc_wait_for_tasks_completion_repo_error_propagates() {
     );
 }
 
-// =============================================================================
 // wait_for_tasks_completion — direct function tests
-// =============================================================================
 
 #[tokio::test]
 async fn tc_wait_for_tasks_completion_empty_ids_returns_immediately() {
@@ -538,9 +528,7 @@ async fn tc_wait_for_tasks_completion_partial_completion_still_waits() {
     assert!(result.is_ok(), "partial completion must not error");
 }
 
-// =============================================================================
 // Constants sanity
-// =============================================================================
 
 #[test]
 fn tc_base_poll_interval_ms_is_1000() {

@@ -13,9 +13,7 @@ use crawlrs::application::dto::webhook_request::{
 };
 use crawlrs::domain::models::Webhook;
 
-// =============================================================================
 // CreateWebhookRequest deserialization
-// =============================================================================
 
 #[test]
 fn tc_create_webhook_request_valid_url() {
@@ -69,9 +67,7 @@ fn tc_create_webhook_request_with_path_and_query() {
     assert!(req.url.contains("token=abc"));
 }
 
-// =============================================================================
 // WebhookResponse serialization
-// =============================================================================
 
 #[test]
 fn tc_webhook_response_serialization_with_secret() {
@@ -144,9 +140,7 @@ fn tc_webhook_response_clone_preserves_fields() {
     assert_eq!(response.secret, cloned.secret);
 }
 
-// =============================================================================
 // WebhookListResponse serialization
-// =============================================================================
 
 #[test]
 fn tc_webhook_list_response_empty() {
@@ -211,9 +205,7 @@ fn tc_webhook_list_response_total_matches_count() {
     assert_eq!(response.webhooks.len(), 3);
 }
 
-// =============================================================================
 // Webhook model construction
-// =============================================================================
 
 #[test]
 fn tc_webhook_new_constructor() {

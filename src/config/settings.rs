@@ -29,9 +29,7 @@ pub use super::search::{
     SearchSettings, TavilyEngineSettings,
 };
 
-// =============================================================================
 // 主配置结构
-// =============================================================================
 
 /// 应用程序配置设置
 ///
@@ -42,10 +40,10 @@ pub use super::search::{
 /// ```ignore
 /// use crawlrs::config::Settings;
 ///
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let settings = Settings::load()?;
+/// fn main -> Result<, Box<dyn std::error::Error>> {
+///     let settings = Settings::load?;
 ///     println!("Server will run on {}:{}", settings.server.host, settings.server.port);
-///     Ok(())
+///     Ok()
 /// }
 /// ```
 #[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
@@ -166,9 +164,7 @@ pub struct Settings {
     pub id: IdSettings,
 }
 
-// =============================================================================
 // ID 生成配置（NebulaId）
-// =============================================================================
 
 /// NebulaId ID 生成配置。
 ///
@@ -193,9 +189,7 @@ pub struct IdSettings {
     pub group: String,
 }
 
-// =============================================================================
 // CORS 配置
-// =============================================================================
 
 /// robots.txt 遵从配置
 ///
@@ -367,9 +361,7 @@ pub struct CorsSettings {
     pub allowed_origins: String,
 }
 
-// =============================================================================
 // Webhook 配置
-// =============================================================================
 
 /// Webhook配置设置
 ///
@@ -411,9 +403,7 @@ impl WebhookSettings {
     }
 }
 
-// =============================================================================
 // 认证配置
-// =============================================================================
 
 /// 认证配置设置。
 ///
@@ -464,9 +454,7 @@ impl AuthSettings {
     }
 }
 
-// =============================================================================
 // 代理配置
-// =============================================================================
 
 /// 代理轮换策略
 ///
@@ -559,9 +547,7 @@ impl ProxySettings {
     }
 }
 
-// =============================================================================
 // Worker 配置
-// =============================================================================
 
 /// Worker配置设置
 ///
@@ -620,9 +606,7 @@ impl WorkerCount {
     }
 }
 
-// =============================================================================
 // Sitemap 与 Crawl 配置（F11）
-// =============================================================================
 
 /// Sitemap 流式请求源配置（吸收点 F11）
 ///
@@ -711,9 +695,7 @@ fn default_soft404_max_fingerprints() -> usize {
     10_000
 }
 
-// =============================================================================
 // 超时配置
-// =============================================================================
 
 /// 超时配置设置
 ///
@@ -721,8 +703,8 @@ fn default_soft404_max_fingerprints() -> usize {
 ///
 /// # 安全验证
 ///
-/// `engines` 字段添加 `#[validate(nested)]`，使 `Settings::validate()` 递归
-/// 调用 `EngineTimeoutSettings::validate()`，覆盖所有 `#[validate(range(min=1, max=600))]`
+/// `engines` 字段添加 `#[validate(nested)]`，使 `Settings::validate` 递归
+/// 调用 `EngineTimeoutSettings::validate`，覆盖所有 `#[validate(range(min=1, max=600))]`
 /// 约束。其余子结构（workers/retry/cache）无 range 约束，不需要 nested。
 #[derive(Debug, Clone, Deserialize, Serialize, Validate, confers::Config)]
 #[validate(crate = "sdforge::validator")]
@@ -852,9 +834,7 @@ pub struct CacheTimeoutSettings {
     pub memory_ttl_seconds: u64,
 }
 
-// =============================================================================
 // Cache Configuration
-// =============================================================================
 
 /// 缓存类型配置
 #[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
@@ -963,9 +943,7 @@ pub struct CacheTypeSpecificSettings {
     pub regex: CacheTypeSettings,
 }
 
-// =============================================================================
 // 可信代理配置
-// =============================================================================
 
 /// 可信代理配置设置
 ///
@@ -1029,13 +1007,11 @@ impl TrustedProxySettings {
         use std::str::FromStr;
 
         for proxy in &self.proxies {
-            // 尝试解析为 CIDR
             if let Ok(network) = ipnetwork::IpNetwork::from_str(proxy) {
                 if network.contains(*ip) {
                     return true;
                 }
             } else {
-                // 尝试解析为单个 IP
                 if let Ok(trusted_ip) = proxy.parse::<IpAddr>() {
                     if trusted_ip == *ip {
                         return true;
@@ -1047,9 +1023,7 @@ impl TrustedProxySettings {
     }
 }
 
-// =============================================================================
 // 可观测性配置
-// =============================================================================
 
 /// 可观测性配置设置（吸收点 F4，参考 Crawlee ErrorSnapshotter）
 ///
@@ -1079,9 +1053,7 @@ fn default_failure_snapshot_max_total() -> usize {
     200
 }
 
-// =============================================================================
 // 国际化配置（i18n）
-// =============================================================================
 
 /// 国际化配置设置
 ///
@@ -1155,9 +1127,7 @@ pub fn validate_i18n(settings: &I18nSettings) -> Result<(), sdforge::validator::
     Ok(())
 }
 
-// =============================================================================
 // 提取降级重试阶梯质量门配置
-// =============================================================================
 
 /// 提取降级重试阶梯质量门配置（吸收点 F7；消费方 `ContentExtractionFacade`）
 ///
@@ -1210,14 +1180,10 @@ fn default_content_extraction_prose_max_link_density() -> f64 {
     0.7
 }
 
-// =============================================================================
 // 自定义验证函数已拆分到子模块：`config::security::validate_security`、
 // `config::validation::validate_values`。
-// =============================================================================
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -1563,7 +1529,7 @@ mod tests {
         assert!(!settings.is_trusted(&ip));
     }
 
-    // ========== WorkerCount tests ==========
+    // WorkerCount tests
 
     #[test]
     fn test_worker_count_fixed_resolve() {
@@ -1623,7 +1589,7 @@ mod tests {
         assert!(matches!(count, WorkerCount::Auto(_)));
     }
 
-    // ========== CorsSettings tests ==========
+    // CorsSettings tests
 
     #[test]
     fn test_cors_settings_default_allowed_origins() {
@@ -1658,7 +1624,7 @@ mod tests {
         assert_eq!(back.allowed_origins, "https://roundtrip.com");
     }
 
-    // ========== ProxySettings tests ==========
+    // ProxySettings tests
 
     #[test]
     fn test_proxy_settings_default_empty_urls_and_round_robin_strategy() {
@@ -1773,7 +1739,7 @@ mod tests {
         assert!(s.enabled);
     }
 
-    // ========== WorkerSettings tests ==========
+    // WorkerSettings tests
 
     #[test]
     fn test_worker_settings_default_uses_auto() {
@@ -1820,7 +1786,7 @@ mod tests {
         assert!(enabled.dedup_warmup_include_results, "显式 true 生效");
     }
 
-    // ========== SitemapSettings tests（F11） ==========
+    // SitemapSettings tests（F11）
 
     /// SitemapSettings 默认值与 config/default.toml `[sitemap]` 节及
     /// 蓝图 configKeys 一一对应
@@ -1861,7 +1827,7 @@ mod tests {
         assert_eq!(s.max_urls, 50_000);
     }
 
-    // ========== CrawlSettings tests（F11） ==========
+    // CrawlSettings tests（F11）
 
     /// CrawlSettings 默认值与 config/default.toml `[crawl]` 节及
     /// 蓝图 configKeys 一一对应
@@ -1890,7 +1856,7 @@ mod tests {
         assert_eq!(fallback.soft404_max_fingerprints, 10_000);
     }
 
-    // ========== TimeoutSettings tests ==========
+    // TimeoutSettings tests
 
     #[test]
     fn test_timeout_settings_default() {
@@ -1906,7 +1872,7 @@ mod tests {
         assert_eq!(settings.cache.memory_ttl_seconds, 600);
     }
 
-    // ========== PlaywrightEngineSettings tests ==========
+    // PlaywrightEngineSettings tests
 
     #[test]
     fn test_playwright_engine_settings_default_capture_off() {
@@ -2149,7 +2115,7 @@ capture_xhr_max_responses = 5
         assert_eq!(settings.memory_ttl_seconds, 200);
     }
 
-    // ========== CacheSettings tests ==========
+    // CacheSettings tests
 
     #[test]
     fn test_cache_settings_default() {

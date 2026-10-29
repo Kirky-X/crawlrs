@@ -51,7 +51,6 @@ async fn main() {
     info!("   auto_migrate: {}", config.auto_migrate);
     info!("");
 
-    // 2. 创建连接池
     info!("2️⃣  创建连接池");
     info!("-----------------------------");
     info!("📖 通过 DbPool::with_config 异步创建连接池");
@@ -61,7 +60,6 @@ async fn main() {
     info!("   let pool = DbPool::with_config(config).await?;");
     info!("");
 
-    // 3. 获取会话
     info!("3️⃣  获取 Session 执行查询");
     info!("-----------------------------");
     info!("📖 Session 是数据库会话句柄，按角色分配权限");
@@ -93,7 +91,7 @@ async fn main() {
 }
 
 /// 构造示例 DbConfig（不连接数据库）
-// `..Default::default()` 用于兜底 dbnexus feature 门控字段（retry/failover/
+// `..Default::default` 用于兜底 dbnexus feature 门控字段（retry/failover/
 // replica-routing）；当这些 feature 全部关闭时字面量已穷举→clippy 报
 // needless_update。此处按 feature 组合双关保留，故局部允许该 lint。
 #[allow(clippy::needless_update)]
@@ -116,7 +114,7 @@ fn build_sample_config() -> DbConfig {
         cache_config: CacheConfig::default(),
         // retry_policy / failover_config / replica_config 由 dbnexus 的
         // retry/failover/replica-routing feature 门控；examples 未启用，
-        // 用 `..Default::default()` 兜底，避免对 feature 组合的硬编码。
+        // 用 `..Default::default` 兜底，避免对 feature 组合的硬编码。
         ..Default::default()
     }
 }
@@ -151,10 +149,8 @@ fn print_crud_snippets() {
     info!("   task::Entity::delete_by_id(id).exec(conn).await?;");
 }
 
-// ============================================================================
 // 实际 CRUD 函数示例（不被 main 调用，仅展示 API 模式）
 // 这些函数接受 Session 参数，便于在真实环境中复用。
-// ============================================================================
 
 /// 通过原生 SQL 插入记录
 #[allow(dead_code)]
@@ -196,14 +192,12 @@ async fn delete_task_raw(session: &Session, task_id: &str) -> Result<u64, dbnexu
 
 /// 通过 SeaORM 连接执行实体查询的模板
 ///
-/// `session.connection()` 返回 `&DatabaseConnection`，可用于 SeaORM Entity API。
+/// `session.connection` 返回 `&DatabaseConnection`，可用于 SeaORM Entity API。
 /// 以下示例需要为 `task` 表定义 SeaORM 实体（参考主项目 `src/infrastructure/database/entities/`）。
 #[allow(dead_code)]
 async fn read_via_sea_orm(session: &Session) -> Result<(), dbnexus::DbError> {
     let _conn = session.connection()?;
     // 实际使用（需引入实体模块）：
-    //   use sea_orm::EntityTrait;
-    //   let task = task::Entity::find_by_id(id).one(conn).await?;
     Ok(())
 }
 

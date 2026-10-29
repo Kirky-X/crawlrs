@@ -68,7 +68,6 @@ async fn main() {
 
     info!("=== 基础团队管理示例 ===\n");
 
-    // 创建团队
     let mut team = Team::new("Acme Corp", 10000);
     info!("Created team: {} (ID: {})", team.name, team.id);
 

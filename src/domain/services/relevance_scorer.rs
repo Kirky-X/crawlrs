@@ -170,7 +170,7 @@ impl RelevanceScorer {
             .collect();
 
         // Calculate TF-IDF-like weights for query terms
-        // single-pass HashMap counting instead of O(N²) iter().filter().count()
+        // single-pass HashMap counting instead of O(N²) iter.filter.count
         let total_terms = terms.len();
         let mut term_counts: HashMap<&String, f64> = HashMap::new();
         for term in &terms {
@@ -362,12 +362,12 @@ mod tests {
         );
     }
 
-    // ---- Factory methods ----
+    // Factory methods
 
     #[test]
     fn test_new_filters_short_terms() {
         let scorer = RelevanceScorer::new("a be the rust programming");
-        // filter is term.len() > 2, so "a" (1) and "be" (2) are filtered,
+        // filter is term.len > 2, so "a" (1) and "be" (2) are filtered,
         // but "the" (3) passes. Result: "the", "rust", "programming"
         assert_eq!(scorer.query_terms.len(), 3);
         assert!(scorer.query_terms.contains(&"the".to_string()));
@@ -409,7 +409,7 @@ mod tests {
         assert_ne!(rust_weight, prog_weight);
     }
 
-    // ---- calculate_score ----
+    // calculate_score
 
     #[test]
     fn test_calculate_score_empty_query_returns_zero_baseline() {
@@ -496,7 +496,7 @@ mod tests {
         assert!(score > 0.0, "title match alone should yield positive score");
     }
 
-    // ---- has_word_boundary_match (private but exercised via calculate_score) ----
+    // has_word_boundary_match (private but exercised via calculate_score)
 
     #[test]
     fn test_word_boundary_match_with_cache() {
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn test_word_boundary_match_cache_error_falls_back_to_contains() {
-        // Mock cache that always errors - should fall back to contains()
+        // Mock cache that always errors - should fall back to contains
         struct ErrorRegexCache;
         impl RegexCacheTrait for ErrorRegexCache {
             fn get_or_insert(&self, _pattern: &str) -> Result<Regex, String> {
@@ -555,13 +555,13 @@ mod tests {
         assert!(cache.get_or_compile(r"\btest\b").is_err());
 
         let scorer = RelevanceScorer::new_with_cache("rust", Some(cache));
-        // Should not panic; falls back to contains() which matches "rusting" too
+        // Should not panic; falls back to contains which matches "rusting" too
         let score = scorer.calculate_score("rusting away", None, "https://x.io");
         // With fallback, "rust" is contained in "rusting" so we still get word_boundary bonus
         assert!(score > 0.0, "fallback contains() should still match");
     }
 
-    // ---- is_authoritative_domain (exercised via calculate_score) ----
+    // is_authoritative_domain (exercised via calculate_score)
 
     #[test]
     fn test_authoritative_domain_various() {
@@ -592,7 +592,7 @@ mod tests {
         }
     }
 
-    // ---- DateParserComponent ----
+    // DateParserComponent
 
     #[test]
     fn test_date_parser_default_equals_new() {
@@ -690,7 +690,7 @@ mod tests {
         assert_eq!(date.format("%Y-%m-%d").to_string(), "2024-01-15");
     }
 
-    // ---- extract_published_date_with_parser ----
+    // extract_published_date_with_parser
 
     #[test]
     fn test_extract_published_date_with_parser_no_date() {
@@ -699,7 +699,7 @@ mod tests {
         assert!(date.is_none());
     }
 
-    // ---- calculate_freshness_score buckets ----
+    // calculate_freshness_score buckets
 
     #[test]
     fn test_freshness_score_within_one_day() {
@@ -762,7 +762,7 @@ mod tests {
         }
     }
 
-    // ---- RelevanceScorerError From impls ----
+    // RelevanceScorerError From impls
 
     #[test]
     fn test_relevance_scorer_error_from_string() {

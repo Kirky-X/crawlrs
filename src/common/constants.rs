@@ -105,33 +105,33 @@ pub mod env_vars {
     /// 应用程序环境（备用名称）
     pub const APP_ENVIRONMENT: &str = "APP_ENVIRONMENT";
 
-    // === 速率限制相关 ===
+    // 速率限制相关
     /// 禁用速率限制
     pub const RATE_LIMITING_ENABLED: &str = "CRAWLRS_RATE_LIMITING_ENABLED";
 
-    // === SSRF 保护相关 ===
+    // SSRF 保护相关
     /// 禁用 SSRF 保护
     pub const DISABLE_SSRF_PROTECTION: &str = "CRAWLRS_DISABLE_SSRF_PROTECTION";
     /// 启用网络测试
     pub const ENABLE_NETWORK_TESTS: &str = "CRAWLRS_ENABLE_NETWORK_TESTS";
 
-    // === 代理相关 ===
+    // 代理相关
     /// 代理 URL
     pub const PROXY_URL: &str = "CRAWLRS_PROXY_URL";
 
-    // === 测试相关 ===
+    // 测试相关
     /// 测试模式：不复用浏览器
     pub const TEST_NO_BROWSER_REUSE: &str = "CRAWLRS_TEST_NO_BROWSER_REUSE";
 
-    // === 调试相关 ===
+    // 调试相关
     /// 调试：保存 HTML
     pub const DEBUG_SAVE_HTML: &str = "DEBUG_SAVE_HTML";
 
-    // === 健康检查相关 ===
+    // 健康检查相关
     /// 健康检查 URL
     pub const HEALTH_CHECK_URL: &str = "CRAWLRS_HEALTH_CHECK_URL";
 
-    // === 搜索引擎测试结果 ===
+    // 搜索引擎测试结果
     /// 百度测试结果
     pub const BAIDU_TEST_RESULTS: &str = "BAIDU_TEST_RESULTS";
     /// 必应测试结果
@@ -143,17 +143,17 @@ pub mod env_vars {
     /// 使用测试数据
     pub const USE_TEST_DATA: &str = "USE_TEST_DATA";
 
-    // === 跳过测试 ===
+    // 跳过测试
     /// 跳过搜索测试
     pub const SKIP_SEARCH_TESTS: &str = "SKIP_SEARCH_TESTS";
     /// 跳过浏览器测试
     pub const SKIP_BROWSER_TESTS: &str = "SKIP_BROWSER_TESTS";
 
-    // === 浏览器远程调试 ===
+    // 浏览器远程调试
     /// Chromium 远程调试 URL
     pub const CHROMIUM_REMOTE_DEBUGGING_URL: &str = "CHROMIUM_REMOTE_DEBUGGING_URL";
 
-    // === Fire 引擎相关 ===
+    // Fire 引擎相关
     /// Fire 引擎 CDP URL
     pub const FIRE_ENGINE_CDP_URL: &str = "FIRE_ENGINE_CDP_URL";
     /// Fire 引擎 TLS URL
@@ -161,11 +161,11 @@ pub mod env_vars {
     /// Fire 引擎基础 URL
     pub const FIRE_ENGINE_URL: &str = "FIRE_ENGINE_URL";
 
-    // === FlareSolverr ===
+    // FlareSolverr
     /// FlareSolverr URL
     pub const FLARESOLVERR_URL: &str = "FLARESOLVERR_URL";
 
-    // === 测试用环境变量 ===
+    // 测试用环境变量
     /// 测试数据库 URL
     pub const TEST_DATABASE_URL: &str = "TEST_DATABASE_URL";
     /// 测试数据库密码

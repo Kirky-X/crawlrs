@@ -3,7 +3,7 @@
 
 //! 环境变量安全模块（向后兼容 re-export shim）
 //!
-//! SEC-005：实际实现已拆分至：
+//!：实际实现已拆分至：
 //! - [`super::env_injection`] — 注入检测、白名单、脱敏、报告
 //! - [`super::env_validation`] — 值验证、过滤、安全审计
 

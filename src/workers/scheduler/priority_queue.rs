@@ -177,9 +177,7 @@ impl Default for PriorityQueue {
     }
 }
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -192,7 +190,7 @@ mod tests {
         ScheduledTask::with_enqueued_at(base_priority, enqueued_at)
     }
 
-    // ========== 基础出队顺序 ==========
+    // 基础出队顺序
 
     #[test]
     fn test_pop_returns_highest_base_priority_when_no_aging() {
@@ -241,7 +239,7 @@ mod tests {
         assert_eq!(q.len(), 1);
     }
 
-    // ========== 老化机制：低优先级任务等待足够久后反超 ==========
+    // 老化机制：低优先级任务等待足够久后反超
 
     #[test]
     fn test_aging_promotes_low_priority_task_after_long_wait() {
@@ -285,13 +283,13 @@ mod tests {
         assert_eq!(first.base_priority, 1);
     }
 
-    // ========== 自定义 aging_factor ==========
+    // 自定义 aging_factor
 
     #[test]
     fn test_custom_aging_factor_accelerates_promotion() {
         // 同一入队时刻（5s 前），不同 aging_factor：
-        //   低优先级 aging=1.0：base=1 + 5/1   = 6.0
-        //   高优先级 aging=10.0：base=5 + 5/10 = 5.5
+        // 低优先级 aging=1.0：base=1 + 5/1 = 6.0
+        // 高优先级 aging=10.0：base=5 + 5/10 = 5.5
         // 小 aging_factor 加速提升，低优先级反超
         let mut q = PriorityQueue::new();
         let enqueued_at = Instant::now() - Duration::from_secs(5);
@@ -305,8 +303,8 @@ mod tests {
     #[test]
     fn test_custom_aging_factor_slows_promotion() {
         // 同一入队时刻（60s 前），同一 aging_factor=100：
-        //   低优先级：base=1 + 60/100 = 1.6
-        //   高优先级：base=5 + 60/100 = 5.6
+        // 低优先级：base=1 + 60/100 = 1.6
+        // 高优先级：base=5 + 60/100 = 5.6
         // 大 aging_factor 减缓提升，高优先级保持优势
         let mut q = PriorityQueue::new();
         let enqueued_at = Instant::now() - Duration::from_secs(60);
@@ -323,7 +321,7 @@ mod tests {
         let _ = ScheduledTask::with_aging_factor(1, 0.0);
     }
 
-    // ========== 公平性回归：长流量下低优先级必能出队 ==========
+    // 公平性回归：长流量下低优先级必能出队
 
     #[test]
     fn test_low_priority_eventually_dispatched_under_high_priority_stream() {
@@ -343,7 +341,7 @@ mod tests {
         assert_eq!(first.base_priority, 1);
     }
 
-    // ========== effective_priority 单调性 ==========
+    // effective_priority 单调性
 
     #[test]
     fn test_effective_priority_increases_with_wait_time() {
@@ -355,7 +353,7 @@ mod tests {
         assert!(p1 - p0 < 1.0, "50ms 内提升幅度应远小于 1.0");
     }
 
-    // ========== with_aging_factor ==========
+    // with_aging_factor
 
     #[test]
     fn test_with_aging_factor_valid_value() {
@@ -371,7 +369,7 @@ mod tests {
         assert!((task.cached_priority - 10.0).abs() < 0.01);
     }
 
-    // ========== refresh_priority ==========
+    // refresh_priority
 
     #[test]
     fn test_refresh_priority_updates_cached_value() {
@@ -385,7 +383,7 @@ mod tests {
         );
     }
 
-    // ========== PartialEq / Eq ==========
+    // PartialEq / Eq
 
     #[test]
     fn test_partial_eq_same_priority() {
@@ -401,7 +399,7 @@ mod tests {
         assert_ne!(a, b, "不同 base_priority 的任务不应相等");
     }
 
-    // ========== with_capacity / Default ==========
+    // with_capacity / Default
 
     #[test]
     fn test_priority_queue_with_capacity() {

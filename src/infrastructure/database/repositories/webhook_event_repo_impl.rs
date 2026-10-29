@@ -262,7 +262,7 @@ mod tests {
         )
     }
 
-    // ========== construction ==========
+    // construction
 
     #[test]
     fn test_new_creates_repository_instance() {
@@ -274,7 +274,7 @@ mod tests {
         let _clone = repo.clone();
     }
 
-    // ========== CRUD against real DB ==========
+    // CRUD against real DB
 
     #[tokio::test]
     async fn test_create_inserts_record() {
@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(result.unwrap(), 0, "unknown team_id should return 0");
     }
 
-    // ========== RepositoryError variant display exhaustive ==========
+    // RepositoryError variant display exhaustive
 
     #[test]
     fn test_repository_error_database_display() {
@@ -404,7 +404,7 @@ mod tests {
         assert_eq!(format!("{}", err), "Record not found");
     }
 
-    // ========== From<dbnexus::sea_orm::DbErr> exhaustive ==========
+    // From<dbnexus::sea_orm::DbErr> exhaustive
 
     #[test]
     fn test_repository_error_from_dberr_record_not_found() {
@@ -461,14 +461,14 @@ mod tests {
         }
     }
 
-    // ========== Production conversion path: dbnexus::DbError -> anyhow -> RepositoryError ==========
+    // Production conversion path: dbnexus::DbError -> anyhow -> RepositoryError
 
     #[test]
     fn test_repository_error_from_dbnexus_db_error_connection_path() {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // Mirrors the production `.map_err(|e| RepositoryError::Database(e.into()))` path
+        // Mirrors the production `.map_err(|e| RepositoryError::Database(e.into))` path
         let inner =
             dbnexus::sea_orm::DbErr::ConnectionAcquire(dbnexus::sea_orm::ConnAcquireErr::Timeout);
         let db_err = dbnexus::DbError::Connection(inner);

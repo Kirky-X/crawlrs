@@ -21,9 +21,7 @@ use crawlrs::domain::repositories::task_repository::{
     RepositoryError, TaskQueryParams, TaskRepository,
 };
 
-// ============================================================================
 // MockTaskRepository
-// ============================================================================
 
 /// Noop `TaskRepository` — all methods return Ok with default values.
 pub struct MockTaskRepository;
@@ -123,9 +121,7 @@ impl TaskRepository for MockTaskRepository {
     }
 }
 
-// ============================================================================
 // MockScrapeResultRepository
-// ============================================================================
 
 /// Noop `ScrapeResultRepository` — all methods return Ok with default values.
 pub struct MockScrapeResultRepository;
@@ -159,9 +155,7 @@ impl ScrapeResultRepository for MockScrapeResultRepository {
     }
 }
 
-// ============================================================================
 // MockCrawlRepository
-// ============================================================================
 
 /// Noop `CrawlRepository` — all methods return Ok with default values.
 pub struct MockCrawlRepository;
@@ -221,9 +215,7 @@ impl CrawlRepository for MockCrawlRepository {
     }
 }
 
-// ============================================================================
 // MockCreditsRepository
-// ============================================================================
 
 /// Noop `CreditsRepository` — returns default balance (100), deductions are discarded.
 pub struct MockCreditsRepository;

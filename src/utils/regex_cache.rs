@@ -244,7 +244,7 @@ mod tests {
         let _: &RegexCacheComponent = &regex_cache;
     }
 
-    // ========== cache.set 失败时 warn! 分支覆盖测试 ==========
+    // cache.set 失败时 warn! 分支覆盖测试
 
     use async_trait::async_trait;
     use oxcache::backend::{BackendKind, CacheConnector, CacheReader, CacheWriter};
@@ -341,14 +341,14 @@ mod tests {
         assert!(regex.is_match("hello"));
     }
 
-    // ========== 并发安全回归测试 ==========
+    // 并发安全回归测试
     // 之前 bug: 同步方法用 futures::executor::block_on 访问 tokio::sync::RwLock，
     // 在多线程并发下会死锁。修复后改用 std::sync::RwLock，无 async/block_on 调用。
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_concurrent_get_or_insert_no_deadlock() {
         // 回归测试：多个线程并发调用同步方法 get_or_insert，必须不死锁。
-        // 之前用 futures::executor::block_on(tokio::sync::RwLock.read()) 会在
+        // 之前用 futures::executor::block_on(tokio::sync::RwLock.read) 会在
         // 异步多线程环境下死锁（block_on 阻塞当前线程，无法让持锁任务释放）。
         //
         // 此测试只验证「不死锁 + 编译成功」，不验证 regex 匹配语义

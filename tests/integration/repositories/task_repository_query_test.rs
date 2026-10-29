@@ -53,7 +53,7 @@ async fn cleanup_tasks_by_prefix(app: &super::super::helpers::test_app::TestApp,
         .await;
 }
 
-// ==================== query_tasks 测试 ====================
+// query_tasks 测试
 
 /// tc_query_tasks_by_team_only_success: 仅按 team_id 过滤，返回该团队所有任务
 #[tokio::test]
@@ -70,7 +70,6 @@ async fn tc_query_tasks_by_team_only_success() {
         crawlrs::domain::id::Id::generate()
     );
 
-    // 创建 2 个任务
     let mut t1 = make_task(team_id, api_key_id, "");
     t1.url = format!("{}1.text.npr.org", cleanup_prefix);
     let mut t2 = make_task(team_id, api_key_id, "");
@@ -339,7 +338,6 @@ async fn tc_query_tasks_pagination_limit_offset() {
         page2.len()
     );
 
-    // 验证分页不重复
     let p1_ids: Vec<_> = page1.iter().map(|t| t.id).collect();
     for t in &page2 {
         assert!(
@@ -440,7 +438,7 @@ async fn tc_query_tasks_combined_filters() {
     cleanup_tasks_by_prefix(&app, &cleanup_prefix).await;
 }
 
-// ==================== batch_cancel 测试 ====================
+// batch_cancel 测试
 
 /// tc_batch_cancel_empty_list_returns_empty: 空列表应返回空 cancelled 和 errors
 #[tokio::test]
@@ -563,14 +561,12 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
         crawlrs::domain::id::Id::generate()
     );
 
-    // 创建属于当前团队的任务
     let mut own_task = make_task(team_id, api_key_id, "");
     own_task.url = format!("{}own.text.npr.org", cleanup_prefix);
     repo.create(&own_task)
         .await
         .expect("create own_task failed");
 
-    // 创建属于另一个团队的任务
     let other_team_id = crawlrs::domain::id::Id::generate();
     let other_api_key_id = crawlrs::domain::id::Id::generate();
     {
@@ -634,7 +630,6 @@ async fn tc_batch_cancel_team_mismatch_in_errors() {
         "other_task should remain Queued"
     );
 
-    // 清理
     cleanup_tasks_by_prefix(&app, &cleanup_prefix).await;
     // 清理 other_team 的任务和创建的 team/api_key
     let session = app

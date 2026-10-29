@@ -661,7 +661,7 @@ mod tests {
         assert!(results[0].score > 0.0);
     }
 
-    // ==== r2：F1 超时降级 / F2 locale 贯通 / F3 跨引擎去重 / F4 出站限速 ====
+    // r2：F1 超时降级 / F2 locale 贯通 / F3 跨引擎去重 / F4 出站限速
 
     /// F1：超时 future 映射 SmartRoutingTimeout，正常 future 原样透传
     #[tokio::test]
@@ -762,7 +762,7 @@ mod tests {
         );
     }
 
-    // ==== T019：附加引擎（SearXNG）参与并发 fan-out + RRF 融合 ====
+    // 附加引擎（SearXNG）参与并发 fan-out + RRF 融合
 
     /// 固定返回结果的附加引擎替身
     struct StubExtraEngine {

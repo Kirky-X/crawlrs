@@ -143,9 +143,9 @@ impl CacheContext {
     #[must_use]
     pub fn is_cacheable(&self) -> bool {
         // 1. URL scheme 检查：不可缓存 scheme 黑名单（扩展）
-        //    用字节切片 + eq_ignore_ascii_case 零分配比较，
-        //    替代原 to_ascii_lowercase() 的 String 分配（热路径每次请求一次）。
-        //    URL scheme 按 RFC 3986 为 ASCII，字节切片安全。
+        // 用字节切片 + eq_ignore_ascii_case 零分配比较，
+        // 替代原 to_ascii_lowercase 的 String 分配（热路径每次请求一次）。
+        // URL scheme 按 RFC 3986 为 ASCII，字节切片安全。
         for scheme in UNCACHEABLE_SCHEMES {
             if self.url.len() >= scheme.len()
                 && self.url[..scheme.len()].eq_ignore_ascii_case(scheme)
@@ -161,26 +161,20 @@ impl CacheContext {
     }
 }
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // =========================================================================
     // CacheMode::Default
-    // =========================================================================
 
     #[test]
     fn test_cache_mode_default_is_enabled() {
         assert_eq!(CacheMode::default(), CacheMode::Enabled);
     }
 
-    // =========================================================================
     // should_read: 4 模式覆盖
-    // =========================================================================
 
     #[test]
     fn test_should_read_enabled_returns_true() {
@@ -223,9 +217,7 @@ mod tests {
         assert!(!ctx.should_read());
     }
 
-    // =========================================================================
     // should_write: 4 模式覆盖
-    // =========================================================================
 
     #[test]
     fn test_should_write_enabled_returns_true() {
@@ -270,9 +262,7 @@ mod tests {
         assert!(ctx.should_write());
     }
 
-    // =========================================================================
     // should_read / should_write 组合矩阵（完整覆盖）
-    // =========================================================================
 
     #[test]
     fn test_read_write_matrix_all_modes() {
@@ -305,9 +295,7 @@ mod tests {
         }
     }
 
-    // =========================================================================
     // is_cacheable: URL scheme 检查
-    // =========================================================================
 
     #[test]
     fn test_is_cacheable_https_url_returns_true() {
@@ -349,9 +337,7 @@ mod tests {
         assert!(!ctx.is_cacheable());
     }
 
-    // =========================================================================
     // 扩展 scheme 黑名单测试
-    // =========================================================================
 
     #[test]
     fn test_is_cacheable_javascript_scheme_returns_false() {
@@ -441,9 +427,7 @@ mod tests {
         assert!(!ctx.is_cacheable());
     }
 
-    // =========================================================================
     // is_cacheable: HTTP method 检查
-    // =========================================================================
 
     #[test]
     fn test_is_cacheable_get_method_returns_true() {
@@ -477,9 +461,7 @@ mod tests {
         assert!(!ctx.is_cacheable());
     }
 
-    // =========================================================================
     // is_cacheable 与 mode 无关（独立判断）
-    // =========================================================================
 
     #[test]
     fn test_is_cacheable_independent_of_mode() {
@@ -516,9 +498,7 @@ mod tests {
         assert!(!ctx.is_cacheable());
     }
 
-    // =========================================================================
     // CacheContext 字段访问与构造
-    // =========================================================================
 
     #[test]
     fn test_cache_context_fields_accessible() {
@@ -545,9 +525,7 @@ mod tests {
         assert_eq!(ctx.mode, cloned.mode);
     }
 
-    // =========================================================================
     // CacheMode Copy + PartialEq
-    // =========================================================================
 
     #[test]
     fn test_cache_mode_copy_and_eq() {
@@ -557,9 +535,7 @@ mod tests {
         assert_ne!(CacheMode::ReadOnly, CacheMode::Bypass);
     }
 
-    // =========================================================================
     // Serde 序列化（camelCase）
-    // =========================================================================
 
     #[test]
     fn test_cache_mode_serde_camel_case() {

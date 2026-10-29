@@ -174,7 +174,6 @@ async fn execute_input(page: &Page, selector: &str, text: &str) -> ActionResult 
                 )
                 .await;
 
-            // 输入新文本
             match element.type_str(text).await {
                 Ok(_) => ActionResult::ok(format!("input: {} → {:?}", selector, text)),
                 Err(e) => ActionResult::err(format!("type_str failed for '{}': {}", selector, e)),

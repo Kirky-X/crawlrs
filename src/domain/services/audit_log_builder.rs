@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(builder.scope_used, Some(scope));
     }
 
-    // ---- maybe_with_* methods (preserve None semantics) ----
+    // maybe_with_* methods (preserve None semantics)
 
     #[test]
     fn test_maybe_with_api_key_id_none_preserves_none() {

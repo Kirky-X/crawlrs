@@ -51,7 +51,7 @@ pub mod markdown_service;
 ///
 /// webhook feature 关闭时编译此模块，
 /// 提供 `NoopWebhookService` 替代 `WebhookServiceImpl`，
-/// 所有方法返回 `Ok(())`。
+/// 所有方法返回 `Ok()`。
 #[cfg(not(feature = "webhook"))]
 pub mod noop_webhook_service;
 /// RAG 增强提取策略

@@ -29,9 +29,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use url::Url;
 
-// =============================================================================
 // ScoredUrl
-// =============================================================================
 
 /// 带分数的 URL
 ///
@@ -69,9 +67,9 @@ impl ScoredUrl {
     /// ```ignore
     /// use crate::workers::crawl::frontier::ScoredUrl;
     ///
-    /// let scored = ScoredUrl::new("https://Example.COM/blog/post".to_string(), 0.8)?;
+    /// let scored = ScoredUrl::new("https://Example.COM/blog/post".to_string, 0.8)?;
     /// assert_eq!(scored.domain, "example.com");
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # Ok::<, Box<dyn std::error::Error>>()
     /// ```
     pub fn new(url: String, score: f32) -> Result<Self, FrontierError> {
         let domain = Self::extract_domain(&url)?;
@@ -127,9 +125,7 @@ impl Ord for ScoredUrl {
     }
 }
 
-// =============================================================================
 // Frontier
-// =============================================================================
 
 /// 优先级前沿队列
 ///
@@ -153,13 +149,13 @@ impl Ord for ScoredUrl {
 /// ```ignore
 /// use crate::workers::crawl::frontier::{Frontier, ScoredUrl};
 ///
-/// let frontier = Frontier::new();
-/// frontier.push(ScoredUrl::with_domain("https://a.com/1".to_string(), 0.9, "a.com".to_string()));
-/// frontier.push(ScoredUrl::with_domain("https://b.com/1".to_string(), 0.5, "b.com".to_string()));
+/// let frontier = Frontier::new;
+/// frontier.push(ScoredUrl::with_domain("https://a.com/1".to_string, 0.9, "a.com".to_string));
+/// frontier.push(ScoredUrl::with_domain("https://b.com/1".to_string, 0.5, "b.com".to_string));
 ///
 /// // round-robin: 先弹 a.com（cursor=0），再弹 b.com（cursor=1）
-/// let first = frontier.pop().unwrap();
-/// let second = frontier.pop().unwrap();
+/// let first = frontier.pop.unwrap;
+/// let second = frontier.pop.unwrap;
 /// assert_eq!(first.domain, "a.com");
 /// assert_eq!(second.domain, "b.com");
 /// ```
@@ -173,7 +169,7 @@ struct FrontierInner {
     /// 用 `Arc<str>` 作为 key 替代 `String`，
     /// `Arc::clone` 是 O(1) 原子引用计数加 1（无堆分配），远快于 `String::clone` 的 O(n) memcpy。
     /// 用 `Arc` 而非 `Rc` 是因为 `Frontier` 通过 `Arc<Frontier>` 跨 tokio task 共享，需 `Send + Sync`。
-    /// 同时 `domain_order` 也用 `Arc<str>`，使 `pop` 时 `domain_order[idx].clone()` 也降为 O(1)。
+    /// 同时 `domain_order` 也用 `Arc<str>`，使 `pop` 时 `domain_order[idx].clone` 也降为 O(1)。
     domains: HashMap<Arc<str>, BinaryHeap<ScoredUrl>>,
     /// 域名插入顺序（round-robin 按此顺序轮转）
     domain_order: Vec<Arc<str>>,
@@ -204,7 +200,7 @@ impl Frontier {
     ///
     /// 用 `Arc<str>` 替代 `String` 作为 domain key，
     /// `Arc::clone` 是 O(1) 原子引用计数加 1（无堆分配），原 3 次 String clone 改为 1 次 `Arc::from` 堆分配 + 2 次 O(1) Arc::clone。
-    /// 借用检查器不允许 entry().or_insert_with(closure) 内访问 `inner.domain_order`（双可变借用），
+    /// 借用检查器不允许 entry.or_insert_with(closure) 内访问 `inner.domain_order`（双可变借用），
     /// 故仍用 contains_key + insert 模式，但 Arc\<str\> 已消除主要开销。
     pub fn push(&self, scored: ScoredUrl) {
         let mut inner = self.inner.lock();
@@ -224,7 +220,7 @@ impl Frontier {
     ///
     /// 所有域名为空时返回 `None`。
     ///
-    /// 原 `domain_order[idx].clone()` 是 O(n) String clone，
+    /// 原 `domain_order[idx].clone` 是 O(n) String clone，
     /// 改为 `Arc<str>` 后变为 O(1) 原子引用计数加 1。
     pub fn pop(&self) -> Option<ScoredUrl> {
         let mut inner = self.inner.lock();
@@ -284,9 +280,7 @@ impl Default for Frontier {
     }
 }
 
-// =============================================================================
 // FrontierError
-// =============================================================================
 
 /// Frontier 错误类型
 ///
@@ -306,7 +300,7 @@ pub enum FrontierError {
 mod tests {
     use super::*;
 
-    // ============ ScoredUrl ============
+    // ScoredUrl
 
     #[test]
     fn scored_url_new_extracts_domain() {
@@ -353,7 +347,7 @@ mod tests {
         assert_eq!(a, b); // 同分数即相等
     }
 
-    // ============ Frontier 基本操作 ============
+    // Frontier 基本操作
 
     #[test]
     fn frontier_new_is_empty() {
@@ -422,7 +416,7 @@ mod tests {
         assert_eq!(f.domain_len("a.com"), 3);
     }
 
-    // ============ Frontier 高分优先出队 ============
+    // Frontier 高分优先出队
 
     #[test]
     fn frontier_pop_single_domain_high_score_first() {
@@ -475,7 +469,7 @@ mod tests {
         assert!(f.is_empty());
     }
 
-    // ============ Frontier 域名 round-robin ============
+    // Frontier 域名 round-robin
 
     #[test]
     fn frontier_round_robin_two_domains() {
@@ -618,7 +612,7 @@ mod tests {
         assert_eq!(pop2.domain, "b.com"); // b.com 没有被饥饿
     }
 
-    // ============ Frontier 边界场景 ============
+    // Frontier 边界场景
 
     #[test]
     fn frontier_empty_pop_returns_none() {

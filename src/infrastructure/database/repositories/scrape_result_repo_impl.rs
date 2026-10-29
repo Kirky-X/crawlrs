@@ -311,7 +311,7 @@ mod tests {
         }
     }
 
-    // ========== construction & accessor ==========
+    // construction & accessor
 
     #[test]
     fn test_new_creates_repository_instance() {
@@ -320,12 +320,12 @@ mod tests {
         }
         let pool = create_test_db_pool();
         let repo = ScrapeResultRepositoryImpl::new(pool);
-        // pool() accessor should return the same Arc
+        // pool accessor should return the same Arc
         let pool_ref = repo.pool();
         assert!(Arc::strong_count(pool_ref) >= 1);
     }
 
-    // ========== pure conversion functions ==========
+    // pure conversion functions
 
     #[test]
     fn test_to_active_model_converts_all_fields() {
@@ -335,7 +335,7 @@ mod tests {
         let result = sample_scrape_result();
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
 
-        // ActiveModel fields are Set; extract via unwrap() to verify
+        // ActiveModel fields are Set; extract via unwrap to verify
         assert_eq!(result.id, active.id.unwrap());
         assert_eq!(result.task_id, active.task_id.unwrap());
         assert_eq!(active.url.unwrap(), result.url);
@@ -344,7 +344,7 @@ mod tests {
         assert_eq!(active.content_type.unwrap(), result.content_type);
         assert_eq!(active.response_time_ms.unwrap(), result.response_time_ms);
         assert_eq!(active.screenshot.unwrap(), result.screenshot);
-        // headers/meta_data wrapped in Some()
+        // headers/meta_data wrapped in Some
         assert_eq!(active.headers.unwrap(), Some(result.headers.clone()));
         assert_eq!(active.meta_data.unwrap(), Some(result.meta_data.clone()));
     }
@@ -432,7 +432,7 @@ mod tests {
         assert_eq!(roundtrip.meta_data, original.meta_data);
     }
 
-    // ========== CRUD against real DB ==========
+    // CRUD against real DB
 
     #[tokio::test]
     async fn test_save_creates_record() {
@@ -500,7 +500,7 @@ mod tests {
         );
     }
 
-    // ========== fast-path (no DB access) ==========
+    // fast-path (no DB access)
 
     #[tokio::test]
     async fn test_find_by_task_ids_with_empty_slice_returns_empty_vec() {
@@ -534,7 +534,7 @@ mod tests {
         assert_eq!(result.unwrap(), 0.0);
     }
 
-    // ========== additional boundary variants ==========
+    // additional boundary variants
 
     #[tokio::test]
     async fn test_find_by_task_ids_with_single_id_returns_empty_for_unknown() {
@@ -583,7 +583,7 @@ mod tests {
             return;
         }
         let repo = ScrapeResultRepositoryImpl::new(create_test_db_pool());
-        // Use a fresh random UUID instead of crate::domain::id::Id::nil() to avoid cross-test
+        // Use a fresh random UUID instead of crate::domain::id::Id::nil to avoid cross-test
         // data pollution (other tests may insert records with nil task_id).
         let result = repo
             .find_by_task_id(crate::domain::id::Id::generate())
@@ -622,7 +622,7 @@ mod tests {
         assert_eq!(result.unwrap(), 0.0);
     }
 
-    // ========== list_distinct_urls（F3 seen 预热 keyset 分页） ==========
+    // list_distinct_urls（F3 seen 预热 keyset 分页）
 
     /// 保存一批结果并返回其 URL 列表
     async fn save_results_with_urls(repo: &ScrapeResultRepositoryImpl, urls: &[&str]) {
@@ -695,7 +695,7 @@ mod tests {
         assert_eq!(urls.len(), 1, "limit=1 必须只返回一页一条");
     }
 
-    // ========== cleanup_expired ==========
+    // cleanup_expired
 
     #[tokio::test]
     async fn test_cleanup_expired_disabled_returns_zero() {
@@ -773,7 +773,7 @@ mod tests {
         assert!(recent_alive.is_some(), "recent row must survive cleanup");
     }
 
-    // ========== to_active_model / to_domain additional boundaries ==========
+    // to_active_model / to_domain additional boundaries
 
     #[test]
     fn test_to_active_model_with_empty_content() {
@@ -839,7 +839,7 @@ mod tests {
         result.headers = serde_json::json!({});
         result.meta_data = serde_json::json!({});
         let active = ScrapeResultRepositoryImpl::to_active_model(&result);
-        // headers/meta_data are wrapped in Some()
+        // headers/meta_data are wrapped in Some
         assert_eq!(active.headers.unwrap(), Some(serde_json::json!({})));
         assert_eq!(active.meta_data.unwrap(), Some(serde_json::json!({})));
     }
@@ -915,7 +915,7 @@ mod tests {
         assert_eq!(domain.screenshot, Some("base64data".to_string()));
     }
 
-    // ========== sample_scrape_result boundary verification ==========
+    // sample_scrape_result boundary verification
 
     #[test]
     fn test_sample_scrape_result_construction_values() {

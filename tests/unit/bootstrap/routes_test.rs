@@ -13,7 +13,7 @@
 //! through `trait_kit::AsyncKit`. Following the project convention
 //! ("No mock library — tests use real trait impls" per AGENTS.md), we boot a
 //! real PostgreSQL container via `testcontainers` and construct `CrawlRsState`
-//! through the canonical `AsyncKit::build()` + `CrawlRsState::from_kit()` path —
+//! through the canonical `AsyncKit::build` + `CrawlRsState::from_kit` path —
 //! identical to `src/main.rs` startup.
 //!
 //! Tests skip gracefully when Docker is unavailable.
@@ -47,9 +47,7 @@ use crawlrs::di::{CrawlRsState, CrawlRsStateExt};
 use crawlrs::infrastructure::auth::reset_garrison_global_state_for_integration_test;
 use trait_kit::AsyncKit;
 
-// =============================================================================
 // Test infrastructure helpers
-// =============================================================================
 
 /// Check whether Docker is available on the host.
 ///
@@ -99,7 +97,7 @@ impl PgContainer {
 /// Global mutex serializing environment-variable mutations.
 ///
 /// `CRAWLRS__DATABASE__URL` is process-global; parallel tests that each set
-/// it must hold this lock across `set_var` + `load_settings()` to avoid
+/// it must hold this lock across `set_var` + `load_settings` to avoid
 /// reading another test's URL.
 static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -114,7 +112,7 @@ const TEST_JWT_SECRET: &str = "test-strong-secret-key-for-garrison-integration-3
 ///
 /// `DatabaseSettings.url` is `pub(crate)` (sensitive), so external tests
 /// cannot construct the struct directly. Instead we set the confers env var
-/// `CRAWLRS__DATABASE__URL` before calling `load_settings()`, which the
+/// `CRAWLRS__DATABASE__URL` before calling `load_settings`, which the
 /// confers `Config` derive picks up via `#[config(env_prefix = "CRAWLRS__DATABASE__")]`.
 ///
 /// 同时注入 `CRAWLRS__AUTH__JWT_SECRET`：`auth` feature 启用时 `init_garrison_auth`
@@ -127,7 +125,7 @@ fn settings_with_db_url(db_url: &str) -> anyhow::Result<Arc<crawlrs::config::Set
     Ok(Arc::new(settings))
 }
 
-/// Build a full `CrawlRsState` via `AsyncKit` + `CrawlRsState::from_kit()`.
+/// Build a full `CrawlRsState` via `AsyncKit` + `CrawlRsState::from_kit`.
 ///
 /// Registers every trait-kit module against the testcontainers PostgreSQL
 /// instance — identical to the production startup sequence in `src/main.rs`.
@@ -172,7 +170,7 @@ async fn build_app_state(
 ///
 /// `garrison`'s `GARRISON_DAO` is a process-global singleton that can only
 /// be initialized once (see `src/infrastructure/auth/garrison_dao.rs`).
-/// Parallel tests that each call `build_app_state()` → `init_garrison_auth()`
+/// Parallel tests that each call `build_app_state` → `init_garrison_auth`
 /// race on this singleton: only the first wins, the rest fail with
 /// `GarrisonDao("set_garrison_dao failed: global DAO already injected ...")`.
 ///
@@ -185,7 +183,7 @@ static SHARED_STATE: OnceCell<Option<(CrawlRsState, Arc<crawlrs::config::Setting
 
 /// Initialize (first call) or fetch (subsequent calls) the shared test state.
 ///
-/// Callers should call `docker_available()` first and skip on `false`.
+/// Callers should call `docker_available` first and skip on `false`.
 /// On first call, boots PostgreSQL and builds `CrawlRsState` (initializing
 /// the garrison singleton in the process). On subsequent calls, returns
 /// references to the cached instance — so all tests share one garrison DAO.
@@ -252,9 +250,7 @@ async fn send(router: axum::Router, req: Request<Body>) -> (StatusCode, HeaderMa
     (status, headers, body)
 }
 
-// =============================================================================
 // create_public_routes
-// =============================================================================
 
 #[tokio::test]
 async fn test_public_routes_health_returns_ok() {
@@ -367,9 +363,7 @@ async fn test_public_routes_does_not_include_protected_endpoints() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-// =============================================================================
 // create_protected_routes_with_state
-// =============================================================================
 
 #[tokio::test]
 async fn test_protected_routes_builds_without_panic() {
@@ -647,9 +641,7 @@ async fn test_protected_routes_requires_auth_header() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
-// =============================================================================
 // create_v2_routes_with_state
-// =============================================================================
 
 #[tokio::test]
 async fn test_v2_routes_builds_without_panic() {
@@ -772,9 +764,7 @@ async fn test_v2_routes_requires_auth_header() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
-// =============================================================================
 // build_api_app_with_state (full app)
-// =============================================================================
 
 #[tokio::test]
 async fn test_full_app_builds_without_panic() {
@@ -880,9 +870,7 @@ async fn test_full_app_unknown_route_rejected_by_middleware() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
-// =============================================================================
 // Middleware chain verification on full app
-// =============================================================================
 
 #[tokio::test]
 async fn test_full_app_security_headers_present_on_public_route() {
@@ -1024,10 +1012,10 @@ async fn test_full_app_cors_invalid_origin_falls_back_to_wildcard() {
 
     // Set CORS origins to a value that fails to parse as HeaderValue.
     // Byte 0x7f (DEL) is invalid in HTTP header values and is NOT
-    // whitespace, so `trim()` won't remove it. After split/trim/filter,
+    // whitespace, so `trim` won't remove it. After split/trim/filter,
     // the origin "http://inva\x7flid.com" remains non-empty and non-"*",
     // but HeaderValue::from_str rejects it, triggering the
-    // `origins.is_empty()` fallback branch in `create_cors_layer`.
+    // `origins.is_empty` fallback branch in `create_cors_layer`.
     let mut modified = (*settings).clone();
     modified.cors.allowed_origins = "http://inva\x7flid.com".to_string();
     let modified_settings = Arc::new(modified);
@@ -1105,11 +1093,9 @@ async fn test_full_app_body_limit_accepts_normal_payload() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
-// =============================================================================
 // CrawlRsState wiring sanity checks (proves the CrawlRsState passed to route builders
 // has all required Arc<dyn Trait> fields populated, exercising the
 // CrawlRsStateExt trait methods used inside the route builders).
-// =============================================================================
 
 #[tokio::test]
 async fn test_app_state_accessors_return_valid_arcs() {

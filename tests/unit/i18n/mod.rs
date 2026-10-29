@@ -13,9 +13,7 @@ use crawlrs::i18n::{
 use fluent_bundle::FluentValue;
 use std::sync::Arc;
 
-// ===========================================================================
 // 辅助函数
-// ===========================================================================
 
 fn locales_dir() -> String {
     format!("{}/locales", env!("CARGO_MANIFEST_DIR"))
@@ -33,9 +31,7 @@ fn zh_locale() -> Locale {
     "zh-CN".parse().unwrap()
 }
 
-// ===========================================================================
 // 1. Locale 文件加载
-// ===========================================================================
 
 #[test]
 fn test_load_both_locales() {
@@ -56,9 +52,7 @@ fn test_load_invalid_locale_string() {
     assert!(result.is_err());
 }
 
-// ===========================================================================
 // 2. 基本翻译（无参数）
-// ===========================================================================
 
 #[test]
 fn test_translate_en_us() {
@@ -129,9 +123,7 @@ fn test_translate_domain_error_keys() {
     );
 }
 
-// ===========================================================================
 // 3. 参数替换
-// ===========================================================================
 
 #[test]
 fn test_translate_with_args_en() {
@@ -206,9 +198,7 @@ fn test_domain_error_args() {
     assert!(msg.contains("10"), "Expected '10' in: {msg}");
 }
 
-// ===========================================================================
 // 4. 回退链
-// ===========================================================================
 
 #[test]
 fn test_fallback_unknown_locale_to_default() {
@@ -237,9 +227,7 @@ fn test_fallback_with_args_unknown_locale() {
     assert!(msg.starts_with("Validation error:"));
 }
 
-// ===========================================================================
 // 5. 缺失 key 处理
-// ===========================================================================
 
 #[test]
 fn test_missing_key_returns_key_itself() {
@@ -263,9 +251,7 @@ fn test_missing_key_with_args_returns_key_itself() {
     assert_eq!(msg, "also-nonexistent");
 }
 
-// ===========================================================================
 // 6. Accept-Language 解析与协商
-// ===========================================================================
 
 #[test]
 fn test_parse_accept_language_standard() {
@@ -334,9 +320,7 @@ fn test_negotiate_priority_order() {
     assert_eq!(result.to_string(), "zh-CN");
 }
 
-// ===========================================================================
 // 7. Key 一致性验证
-// ===========================================================================
 
 #[test]
 fn test_key_consistency_no_warnings() {
@@ -348,9 +332,7 @@ fn test_key_consistency_no_warnings() {
     );
 }
 
-// ===========================================================================
 // 8. CrawlRsError::user_message_locale 集成测试
-// ===========================================================================
 
 #[test]
 fn test_crawlrs_error_locale_database_en() {
@@ -451,9 +433,7 @@ fn test_crawlrs_error_locale_all_simple_variants_en() {
     }
 }
 
-// ===========================================================================
 // 9. DomainError::user_message_locale 集成测试
-// ===========================================================================
 
 #[test]
 fn test_domain_error_locale_crawl_config_en() {
@@ -537,16 +517,13 @@ fn test_domain_error_locale_validation_en() {
     );
 }
 
-// ===========================================================================
 // 10. Arc<I18nBundle> 线程安全验证
-// ===========================================================================
 
 #[test]
 fn test_bundle_is_send_sync() {
     let bundle = test_bundle();
     let arc_bundle: Arc<I18nBundle> = Arc::new(bundle);
 
-    // 验证可以在线程间共享
     let handle = std::thread::spawn(move || {
         let locale: Locale = "en-US".parse().unwrap();
         arc_bundle.translate(&locale, "error-database")
@@ -577,9 +554,7 @@ fn test_concurrent_translation() {
     }
 }
 
-// ===========================================================================
 // 11. 系统语言检测链与启动默认 locale 决议（unify-rust-i18n 守卫）
-// ===========================================================================
 
 #[test]
 fn test_detect_chain_zh_cn_utf8_resolves_zh_cn() {

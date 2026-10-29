@@ -12,9 +12,7 @@ use crawlrs::utils::text_processing::encoding::{
     TextEncodingProcessor, TextProcessorStats,
 };
 
-// ===========================================================================
 // Non-UTF-8 short text → triggers detect_and_convert_encoding via process_short_text
-// ===========================================================================
 
 #[test]
 fn tc_short_gbk_text_triggers_encoding_detection() {
@@ -78,9 +76,7 @@ fn tc_short_windows_1252_text_triggers_detection() {
     }
 }
 
-// ===========================================================================
 // Non-UTF-8 long text → caches detection, exercises apply_cached_conversion non-UTF-8 branch
-// ===========================================================================
 
 #[test]
 fn tc_long_gbk_text_caches_detection_result() {
@@ -183,9 +179,7 @@ fn tc_long_euc_kr_text_caches_and_reuses() {
     assert_eq!(processor.get_stats().cache_size, 1);
 }
 
-// ===========================================================================
 // Custom threshold → long text path with small input
-// ===========================================================================
 
 #[test]
 fn tc_with_config_small_threshold_routes_to_long_text_path() {
@@ -198,9 +192,7 @@ fn tc_with_config_small_threshold_routes_to_long_text_path() {
     assert_eq!(stats.short_text_threshold, 10);
 }
 
-// ===========================================================================
 // Free function wrappers with non-UTF-8 input
-// ===========================================================================
 
 #[test]
 fn tc_process_with_processor_handles_non_utf8_gbk() {
@@ -243,9 +235,7 @@ fn tc_process_batch_with_processor_all_non_utf8() {
     }
 }
 
-// ===========================================================================
 // Edge cases
-// ===========================================================================
 
 #[test]
 fn tc_empty_input_returns_empty_string() {
@@ -301,9 +291,7 @@ fn tc_trim_newlines_single_leading_and_trailing() {
     assert_eq!(processor.trim_newlines("\nhello\n"), "hello");
 }
 
-// ===========================================================================
 // Struct Clone/Debug trait verification
-// ===========================================================================
 
 #[test]
 fn tc_encoding_detection_clone_preserves_all_fields() {
@@ -362,9 +350,7 @@ fn tc_text_processor_stats_debug_format() {
     assert!(debug.contains("cache_size"));
 }
 
-// ===========================================================================
 // Unicode escape sequences in various contexts
-// ===========================================================================
 
 #[test]
 fn tc_process_text_with_unicode_escape_in_short_text() {
@@ -410,9 +396,7 @@ fn tc_process_text_with_chinese_unicode_escape() {
     assert_eq!(result, "世界");
 }
 
-// ===========================================================================
 // Error variant display
-// ===========================================================================
 
 #[test]
 fn tc_text_encoding_error_detection_failed_display() {

@@ -21,9 +21,7 @@ use url::Url;
 use crate::common::CacheContext;
 use crate::engines::engine_client::{CapturedResponse, ScrapeOptions, ScrapeResponse};
 
-// =============================================================================
 // cache key 生成
-// =============================================================================
 
 /// 生成抓取结果缓存 key
 ///
@@ -122,9 +120,7 @@ fn options_fingerprint(options: &ScrapeOptions) -> String {
     format!("{:016x}", hash)
 }
 
-// =============================================================================
 // URL 日志脱敏
-// =============================================================================
 
 /// URL 日志最大长度（防日志膨胀）
 const MAX_URL_LOG_LEN: usize = 200;
@@ -163,9 +159,7 @@ pub fn redact_url_for_log(url: &str) -> String {
     }
 }
 
-// =============================================================================
 // 敏感响应头过滤
-// =============================================================================
 
 /// 敏感响应头集合
 ///
@@ -199,14 +193,12 @@ pub fn filter_sensitive_headers(headers: &mut HashMap<String, String>) {
     });
 }
 
-// =============================================================================
 // 性能 borrowed 序列化结构体，避免完整克隆 ScrapeResponse
-// =============================================================================
 
 /// 过滤后用于序列化的借用结构体（性能）
 ///
 /// 原 `try_write_scrape_cache` 实现：
-/// 1. `let mut sanitized = response.clone();` —— 完整克隆 ScrapeResponse
+/// 1. `let mut sanitized = response.clone;` —— 完整克隆 ScrapeResponse
 ///    （包含 `content: String` 可能数 MB、`screenshot: Option<String>` 可能 100KB+）
 /// 2. `filter_sensitive_headers(&mut sanitized.headers);` —— 原地过滤
 /// 3. `serde_json::to_string(&sanitized)` —— 序列化
@@ -292,9 +284,7 @@ where
     map.end()
 }
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -310,7 +300,7 @@ mod tests {
         }
     }
 
-    // ============ generate_scrape_cache_key ============
+    // generate_scrape_cache_key
 
     #[test]
     fn test_generate_scrape_cache_key_format() {
@@ -339,7 +329,7 @@ mod tests {
         assert_ne!(key1, key2);
     }
 
-    // ===== options 影响字段串扰防护 =====
+    // options 影响字段串扰防护
 
     #[test]
     fn test_cache_key_differs_by_headers() {
@@ -450,7 +440,7 @@ mod tests {
         assert_eq!(key_a, key_b, "headers order must not affect cache key");
     }
 
-    // ============ redact_url_for_log ============
+    // redact_url_for_log
 
     #[test]
     fn test_redact_url_for_log_strips_query_and_fragment() {
@@ -474,7 +464,7 @@ mod tests {
         assert!(redacted.len() <= MAX_URL_LOG_LEN + 3); // +3 for "..."
     }
 
-    // ============ filter_sensitive_headers ============
+    // filter_sensitive_headers
 
     #[test]
     fn test_filter_sensitive_headers_removes_known_sensitive() {
@@ -511,7 +501,7 @@ mod tests {
         assert!(headers.is_empty());
     }
 
-    // ============ SanitizedScrapeResponse（性能） ============
+    // SanitizedScrapeResponse（性能）
 
     #[test]
     fn test_sanitized_serialize_skips_sensitive_headers() {

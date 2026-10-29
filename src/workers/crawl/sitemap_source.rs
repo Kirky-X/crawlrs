@@ -423,7 +423,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    // ========== mocks ==========
+    // mocks
 
     /// 内存 CacheService：记录 set/delete 调用（指针持久化断言用）
     #[derive(Default)]
@@ -764,7 +764,7 @@ mod tests {
 
     const SITEMAP_URL: &str = "https://a.com/sitemap.xml";
 
-    // ========== tests ==========
+    // tests
 
     /// 基础喂入：5 个 loc 全部入队为 depth=1 的 crawl Task 行，指针删除（完成）
     #[tokio::test]
@@ -1244,7 +1244,7 @@ mod tests {
         assert!(cache.deleted.lock().contains(&key));
     }
 
-    // ========== derive_sitemap_url ==========
+    // derive_sitemap_url
 
     #[test]
     fn derive_sitemap_url_from_seed() {

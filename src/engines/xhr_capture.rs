@@ -218,7 +218,7 @@ pub fn url_matches_capture_patterns(url: &str, patterns: &[String]) -> bool {
 mod tests {
     use super::*;
 
-    // === glob_match ===
+    // glob_match
 
     #[test]
     fn glob_match_star_spans_path_separators() {
@@ -268,7 +268,7 @@ mod tests {
         assert!(!glob_match("https://x.com/*", "https://x.com"));
     }
 
-    // === url_matches_capture_patterns ===
+    // url_matches_capture_patterns
 
     #[test]
     fn empty_patterns_capture_all() {
@@ -318,7 +318,7 @@ mod tests {
         ));
     }
 
-    // === XhrCaptureBuffer ===
+    // XhrCaptureBuffer
 
     fn pending(id: &str) -> PendingXhr {
         PendingXhr {
@@ -439,7 +439,7 @@ mod tests {
         assert_eq!(stats.overflow_skipped, 0);
     }
 
-    // === process_body ===
+    // process_body
 
     #[test]
     fn process_body_plain_text_under_limit_kept() {

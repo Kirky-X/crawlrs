@@ -26,9 +26,7 @@ use crawlrs::presentation::handlers::task_queries::SyncWaitResult;
 use crawlrs::presentation::handlers::{extract_task_ids, tasks_to_id_map};
 use sdforge::validator::Validate;
 
-// ============================================================================
 // Helper: construct a Task with sensible defaults
-// ============================================================================
 
 fn make_task(id: crawlrs::domain::id::Id) -> Task {
     Task::new(
@@ -52,9 +50,7 @@ fn make_task_with_type(id: crawlrs::domain::id::Id, task_type: TaskType) -> Task
     )
 }
 
-// ============================================================================
 // extract_task_ids tests
-// ============================================================================
 
 #[test]
 fn test_extract_task_ids_empty_slice() {
@@ -129,9 +125,7 @@ fn test_extract_task_ids_with_different_task_types() {
     assert_eq!(ids, vec![id1, id2, id3]);
 }
 
-// ============================================================================
 // tasks_to_id_map tests
-// ============================================================================
 
 #[test]
 fn test_tasks_to_id_map_empty_vec() {
@@ -196,9 +190,7 @@ fn test_tasks_to_id_map_lookup_by_id() {
     assert_eq!(found.id, id1);
 }
 
-// ============================================================================
 // From<CrawlUseCaseError> for (StatusCode, String) tests
-// ============================================================================
 
 #[test]
 fn test_validation_error_maps_to_bad_request() {
@@ -262,9 +254,7 @@ fn test_anyhow_error_with_chained_context_preserved() {
     assert!(msg.contains("outer context"));
 }
 
-// ============================================================================
 // CrawlRequestDto construction and validation
-// ============================================================================
 
 #[test]
 fn test_crawl_request_dto_minimal_deserialization() {
@@ -496,9 +486,7 @@ fn test_crawl_request_dto_validated_url_skipped_in_serialization() {
     assert!(!json.contains("validated_url"));
 }
 
-// ============================================================================
 // max_depth validation logic (mirrors handler line 44)
-// ============================================================================
 
 #[test]
 fn test_max_depth_zero_passes_handler_check() {
@@ -518,9 +506,7 @@ fn test_max_depth_six_fails_handler_check() {
     assert!(max_depth > 5);
 }
 
-// ============================================================================
 // Constants tests
-// ============================================================================
 
 #[test]
 fn test_crawl_task_credits_cost_value() {
@@ -532,9 +518,7 @@ fn test_default_timeout_ms_value() {
     assert_eq!(DEFAULT_TIMEOUT_MS, 5000);
 }
 
-// ============================================================================
 // sync_wait_ms default logic (mirrors handler line 41)
-// ============================================================================
 
 #[test]
 fn test_sync_wait_ms_defaults_to_default_timeout_when_none() {
@@ -554,9 +538,7 @@ fn test_sync_wait_ms_zero_uses_zero() {
     assert_eq!(sync_wait_ms, 0);
 }
 
-// ============================================================================
 // SyncWaitResult construction and status code selection
-// ============================================================================
 
 #[test]
 fn test_sync_wait_result_timeout_fields() {
@@ -644,9 +626,7 @@ fn test_sync_wait_result_default_on_error() {
     assert!(!result.is_timeout);
 }
 
-// ============================================================================
 // CrawlConfigDto edge cases
-// ============================================================================
 
 #[test]
 fn test_crawl_config_dto_minimal() {
@@ -738,9 +718,7 @@ fn test_crawl_config_dto_serialization_roundtrip() {
     assert_eq!(deserialized.max_concurrency, config.max_concurrency);
 }
 
-// ============================================================================
 // CrawlUseCaseError Display trait
-// ============================================================================
 
 #[test]
 fn test_crawl_use_case_error_validation_display() {
@@ -764,9 +742,7 @@ fn test_crawl_use_case_error_anyhow_display() {
     assert!(display.contains("something went wrong"));
 }
 
-// ============================================================================
 // HashMap usage pattern verification (mirrors handler logic)
-// ============================================================================
 
 #[test]
 fn test_tasks_to_id_map_returns_hashmap_type() {

@@ -7,7 +7,7 @@
 //!
 //! 全部走 `RouteRegistration` 直注（design D1′）：带 Query DTO 或 JSON body 的
 //! 端点保持原提取器原样组装；同路径多方法资源以单条 MethodRouter 链式组合，
-//! 规避上游 build() 按路径去重的覆盖丢失问题。feature 门控与迁移前的
+//! 规避上游 build 按路径去重的覆盖丢失问题。feature 门控与迁移前的
 //! register_*_routes 完全对应。
 
 use inventory::submit;
@@ -150,7 +150,7 @@ mod teams {
         .into_response())
     }
 
-    // GET+PUT 同路径多方法：单条 RouteRegistration 直注，规避 build() 按路径去重的覆盖丢失
+    // GET+PUT 同路径多方法：单条 RouteRegistration 直注，规避 build 按路径去重的覆盖丢失
     fn team_geo_restrictions_route() -> HttpRoute {
         let method_router = axum::routing::get(
             team_handler::get_team_geo_restrictions::<DatabaseGeoRestrictionRepository>,
@@ -184,7 +184,7 @@ mod webhook {
     use crate::presentation::handlers::webhook_handler;
     use inventory::submit;
 
-    // POST+GET 同路径多方法：单条直注，规避 build() 按路径去重的覆盖丢失
+    // POST+GET 同路径多方法：单条直注，规避 build 按路径去重的覆盖丢失
     fn webhooks_route() -> HttpRoute {
         let method_router = axum::routing::post(webhook_handler::create_webhook::<WebhookRepoImpl>)
             .get(webhook_handler::list_webhooks::<WebhookRepoImpl>);

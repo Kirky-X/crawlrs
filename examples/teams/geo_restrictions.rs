@@ -67,7 +67,7 @@ fn validate_ip_whitelist(ip: IpAddr, whitelist: &Option<Vec<String>>) -> bool {
 }
 
 fn is_ip_in_cidr(ip: IpAddr, cidr: &str) -> bool {
-    // 简化的 CIDR 检查（实际使用 ipnet  crate）
+    // 简化的 CIDR 检查（实际使用 ipnet crate）
     cidr.contains(&format!("{}", ip)) || (ip.is_ipv4() && cidr == "0.0.0.0/0")
 }
 
@@ -97,7 +97,6 @@ async fn main() {
         restrictions.enable_geo_restrictions
     );
 
-    // 验证 IP 白名单
     info!("\n--- IP 白名单验证 ---");
     let test_ips = vec!["192.168.1.100", "10.0.0.1", "8.8.8.8"];
     for ip_str in test_ips {
@@ -113,7 +112,6 @@ async fn main() {
         }
     }
 
-    // 验证域名黑名单
     info!("\n--- 域名黑名单验证 ---");
     let test_domains = vec!["example.com", "malicious.com", "safe-site.org"];
     for domain in test_domains {

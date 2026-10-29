@@ -47,7 +47,6 @@ pub async fn cancel_tasks<T: TaskRepository>(
     };
     let team_id = auth_state.team_id;
 
-    // 验证请求参数
     if let Err(errors) = request.validate() {
         return Err(CrawlRsError::from(anyhow::anyhow!(
             "Validation error: {:?}",
@@ -55,7 +54,6 @@ pub async fn cancel_tasks<T: TaskRepository>(
         )));
     }
 
-    // 验证任务ID列表不为空
     if request.task_ids.is_empty() {
         return Err(CrawlRsError::Validation(
             "Task IDs cannot be empty".to_string(),
@@ -86,7 +84,6 @@ pub async fn cancel_tasks<T: TaskRepository>(
         .await?;
     }
 
-    // 构建取消成功的任务信息
     let cancelled_tasks: Vec<CancelledTaskInfoDto> = cancelled_task_ids
         .into_iter()
         .map(|task_id| CancelledTaskInfoDto {
@@ -96,7 +93,6 @@ pub async fn cancel_tasks<T: TaskRepository>(
         })
         .collect();
 
-    // 构建取消失败的任务信息
     let failed_tasks_info: Vec<FailedTaskInfoDto> = failed_tasks
         .into_iter()
         .map(|(task_id, reason)| FailedTaskInfoDto { task_id, reason })

@@ -628,7 +628,7 @@ mod tests {
         assert_eq!(results.len(), 0);
     }
 
-    // ========== Supplementary tests: long text, cache, non-UTF8 ==========
+    // Supplementary tests: long text, cache, non-UTF8
 
     #[test]
     fn test_long_text_with_unicode_escapes_is_normalized() {
@@ -834,7 +834,7 @@ mod tests {
         assert_eq!(stats.cache_capacity, 1000);
     }
 
-    // ========== Supplementary tests: unicode escape edge cases & cached non-UTF8 path ==========
+    // Supplementary tests: unicode escape edge cases & cached non-UTF8 path
 
     #[test]
     fn test_unicode_escape_surrogate_code_point_falls_back_to_backslash() {
@@ -862,7 +862,7 @@ mod tests {
     #[test]
     fn test_unicode_escape_incomplete_at_end_of_string() {
         // \u41 at end of string: only 2 hex chars available. The loop runs 4
-        // times but chars.next() returns None after 2, so hex_chars = "41".
+        // times but chars.next returns None after 2, so hex_chars = "41".
         // 0x41 = 'A'. This documents the lenient parsing behavior.
         let processor = TextEncodingProcessor::new();
         let input = r"\u41";
@@ -980,7 +980,7 @@ mod tests {
 
     #[test]
     fn test_long_text_processing_caches_detection_only_on_success() {
-        // cache_detection_result is only called when result.is_ok(). Verify
+        // cache_detection_result is only called when result.is_ok. Verify
         // that a failed detection does not populate the cache.
         let processor = TextEncodingProcessor::with_config(100, 2);
         // Use bytes likely to fail detection in a way that produces an error.
@@ -1029,7 +1029,7 @@ mod tests {
         assert_eq!(result, "\\A\\nB");
     }
 
-    // ========== detect_and_convert_encoding / apply_cached_conversion is_utf8=true 分支覆盖 ==========
+    // detect_and_convert_encoding / apply_cached_conversion is_utf8=true 分支覆盖
 
     #[test]
     fn test_detect_and_convert_encoding_utf8_branch_with_chinese_long_text() {

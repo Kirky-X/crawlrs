@@ -9,7 +9,7 @@
 //! 本地类型，实现 sea-orm 的 `Value` 转换无孤儿规则问题。
 //!
 //! 这使仓储层大量 `.filter(Column::Id.eq(id))`、`is_in(ids)`、`Expr::value(id)`
-//! 等查询点无需逐处手写 `.to_uuid_v8()` 即可编译；实体字段/ActiveModel 赋值、
+//! 等查询点无需逐处手写 `.to_uuid_v8` 即可编译；实体字段/ActiveModel 赋值、
 //! `None::<_>` 空值表达式等「Rust 类型必须为 `Uuid`」的边界仍由对应转换承接。
 
 use crate::domain::id::Id;

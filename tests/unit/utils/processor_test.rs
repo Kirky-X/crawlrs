@@ -21,9 +21,7 @@ use crawlrs::utils::text_processing::processor::{
     WebContentError, WebContentProcessor, WebContentProcessorComponent, WebContentProcessorTrait,
 };
 
-// ===========================================================================
 // Mock failing text encoder to exercise process_encoding error path
-// ===========================================================================
 
 struct FailingTextEncoder;
 
@@ -69,9 +67,7 @@ fn tc_web_content_processor_batch_with_failing_encoder_all_errors() {
     }
 }
 
-// ===========================================================================
 // Various content type branches in process_web_content (public API)
-// ===========================================================================
 
 #[test]
 fn tc_process_web_content_xml_with_encoding_declaration() {
@@ -155,9 +151,7 @@ fn tc_process_web_content_content_length_matches_input() {
     assert_eq!(result.content_length, input.len());
 }
 
-// ===========================================================================
 // Language detection via process_web_content (detected_language field)
-// ===========================================================================
 
 #[test]
 fn tc_language_detection_pure_chinese_via_process_web_content() {
@@ -194,9 +188,7 @@ fn tc_language_detection_empty_text_returns_none() {
     assert_eq!(result.detected_language, None);
 }
 
-// ===========================================================================
 // HTML cleaner via process_web_content (exercises extract_text_from_html + clean_text)
-// ===========================================================================
 
 #[test]
 fn tc_html_cleaner_removes_nested_scripts_via_process_web_content() {
@@ -261,9 +253,7 @@ fn tc_html_cleaner_decodes_html_entities_via_process_web_content() {
     assert!(result.extracted_text.contains("<world>"));
 }
 
-// ===========================================================================
 // CrawlTextProcessor tests
-// ===========================================================================
 
 #[test]
 fn tc_crawl_text_processor_process_simple_text_preserves_unicode() {
@@ -355,9 +345,7 @@ fn tc_crawl_text_processor_content_too_large_error() {
     }
 }
 
-// ===========================================================================
 // validate_content_quality paths (public API, exercises calculate_repetitive_ratio internally)
-// ===========================================================================
 
 #[test]
 fn tc_validate_content_quality_excellent_diverse_text() {
@@ -427,7 +415,6 @@ fn tc_validate_content_quality_poor_low_ratio() {
     }
 }
 
-// ===========================================================================
 // Free function wrappers
 // ===========================================================================
 
@@ -472,7 +459,6 @@ fn tc_process_crawled_batch_with_processor_fn_success() {
     assert!(results.iter().all(|r| r.is_ok()));
 }
 
-// ===========================================================================
 // Free functions: init_encoding_patterns and detect_html_structure
 // ===========================================================================
 
@@ -507,7 +493,6 @@ fn tc_detect_html_structure_non_html_returns_false() {
     assert!(!detect_html_structure("just some words"));
 }
 
-// ===========================================================================
 // Trait object tests
 // ===========================================================================
 
@@ -546,7 +531,6 @@ fn tc_web_content_processor_trait_process_batch() {
     assert!(results.iter().all(|r| r.is_ok()));
 }
 
-// ===========================================================================
 // Error variant display
 // ===========================================================================
 
@@ -608,7 +592,6 @@ fn tc_crawl_processing_error_poor_content_quality_display() {
     assert!(err.to_string().contains("bad quality"));
 }
 
-// ===========================================================================
 // ContentQuality enum tests
 // ===========================================================================
 
@@ -633,7 +616,6 @@ fn tc_content_quality_poor_clone_preserves_message() {
     }
 }
 
-// ===========================================================================
 // CrawlProcessorConfig tests
 // ===========================================================================
 
@@ -655,7 +637,6 @@ fn tc_crawl_processor_config_clone_preserves_values() {
     assert_eq!(cloned.max_content_size_mb, 15);
 }
 
-// ===========================================================================
 // ProcessedWebContent and ProcessedCrawlContent struct tests
 // ===========================================================================
 

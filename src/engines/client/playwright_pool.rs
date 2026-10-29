@@ -74,8 +74,8 @@ impl Default for BrowserPoolConfig {
             health_check_interval_secs: 60, // 1 分钟
             create_timeout_secs: 30,
             enable_reuse: true,
-            // SEC-001: 默认不包含 `--no-sandbox`（生产环境安全默认）。
-            // 容器环境使用 `docker_safe_args()` 构造器自动添加。
+            // : 默认不包含 `--no-sandbox`（生产环境安全默认）。
+            // 容器环境使用 `docker_safe_args` 构造器自动添加。
             browser_args: vec![
                 "--disable-gpu".to_string(),
                 "--disable-dev-shm-usage".to_string(),
@@ -87,7 +87,7 @@ impl Default for BrowserPoolConfig {
 }
 
 impl BrowserPoolConfig {
-    /// 创建容器环境安全的配置（SEC-001）
+    /// 创建容器环境安全的配置
     ///
     /// 检测到容器环境（Docker/Kubernetes）时自动添加 `--no-sandbox`。
     /// 非容器环境与 `default()` 行为一致。
@@ -107,7 +107,7 @@ impl BrowserPoolConfig {
     }
 }
 
-/// 检测当前是否运行在容器环境中（SEC-001）
+/// 检测当前是否运行在容器环境中
 ///
 /// 检查 `/.dockerenv` 或 `/proc/1/cgroup` 中的容器标识符。
 fn is_container_environment() -> bool {
@@ -157,7 +157,7 @@ struct PooledBrowser {
     /// 每个 Browser 实例维护独立的 TabPool，避免 Page 跨 Browser 复用导致的
     /// CDP session 失效问题（chromiumoxide Page 持有的 session 与 Browser 绑定）。
     tab_pool: Arc<TabPool>,
-    /// 信号量 permit（SEC-002）
+    /// 信号量 permit
     ///
     /// 持有期间占用一个信号量槽位，drop 时自动释放。
     /// 确保 permit 生命周期与 PooledBrowser 一致，避免双重归还。
@@ -236,7 +236,7 @@ struct BrowserPoolState {
     instance_counter: AtomicU64,
     /// 当前总实例数
     total_instances: AtomicUsize,
-    /// 信号量（限制最大实例数，SEC-002: Arc 包装以支持 acquire_owned）
+    /// 信号量（限制最大实例数，: Arc 包装以支持 acquire_owned）
     semaphore: Arc<Semaphore>,
     /// 下载管理器
     download_manager: Arc<BrowserDownloadManager>,
@@ -306,14 +306,13 @@ impl BrowserPoolState {
     }
 
     async fn acquire(&self) -> Result<(u64, Arc<Browser>), EngineError> {
-        // 检查是否已关闭
         if self.shutdown.load(Ordering::Acquire) {
             return Err(EngineError::Other(
                 "Browser pool is shutting down".to_string(),
             ));
         }
 
-        // SEC-002: 获取 OwnedSemaphorePermit，生命周期绑定到 PooledBrowser
+        // : 获取 OwnedSemaphorePermit，生命周期绑定到 PooledBrowser
         let permit = self
             .semaphore
             .clone()
@@ -321,7 +320,6 @@ impl BrowserPoolState {
             .await
             .map_err(|_| EngineError::Other("Failed to acquire semaphore".to_string()))?;
 
-        // 尝试从可用池中获取实例
         if self.config.enable_reuse {
             if let Some((id, browser)) = self.try_get_available().await {
                 return Ok((id, browser));
@@ -408,7 +406,6 @@ impl BrowserPoolState {
         ));
         pooled.touch();
 
-        // 添加到使用中
         {
             let mut in_use = self.in_use.write().await;
             in_use.insert(instance_id, pooled);
@@ -441,7 +438,6 @@ impl BrowserPoolState {
         };
 
         if let Some(pooled) = pooled {
-            // 检查浏览器是否仍然健康
             let is_healthy = self.check_browser_health(&browser).await;
 
             if is_healthy && self.config.enable_reuse && !self.shutdown.load(Ordering::Acquire) {
@@ -501,7 +497,6 @@ impl BrowserPoolState {
                 EngineError::Other(format!("Failed to connect to remote Chrome: {}", e))
             })?
         } else {
-            // 获取浏览器路径
             let browser_path = self.get_or_download_browser().await?;
 
             // stealth：New Headless（真 Chrome 身份，消除旧 headless 的品牌/制品类
@@ -534,13 +529,11 @@ impl BrowserPoolState {
             info!("Using per-instance browser profile dir: {:?}", profile_dir);
             builder = builder.user_data_dir(&profile_dir);
 
-            // 设置浏览器路径
             if let Some(ref path) = browser_path {
                 info!("Using browser at: {:?}", path);
                 builder = builder.chrome_executable(path);
             }
 
-            // 添加自定义参数
             for arg in &self.config.browser_args {
                 builder = builder.arg(arg.as_str());
             }
@@ -562,7 +555,6 @@ impl BrowserPoolState {
             .map_err(|e| EngineError::Other(format!("Failed to launch browser: {}", e)))?
         };
 
-        // 启动处理器任务
         tokio::spawn(async move {
             while let Some(h) = handler.next().await {
                 if let Err(e) = h {
@@ -586,7 +578,6 @@ impl BrowserPoolState {
                     return Ok(path);
                 }
 
-                // 检查是否已下载
                 if self.download_manager.is_browser_downloaded().await {
                     let path = crate::engines::browser_downloader::get_browser_executable_path(
                         self.download_manager.get_cache_dir(),
@@ -629,7 +620,7 @@ impl BrowserPoolState {
     }
 
     async fn cleanup_idle_instances(&self) {
-        // SEC-002: 三阶段模式避免写锁持有期间执行 I/O（与 health_check_all 统一）
+        // : 三阶段模式避免写锁持有期间执行 I/O（与 health_check_all 统一）
         // 读锁收集空闲实例
         let idle_ids = {
             let available = self.available.read().await;
@@ -660,7 +651,7 @@ impl BrowserPoolState {
     }
 
     async fn health_check_all(&self) {
-        // SEC-002 + PERF-001: 三阶段模式避免写锁持有期间执行 I/O
+        // + PERF-001: 三阶段模式避免写锁持有期间执行 I/O
         // 读锁收集待检查实例（clone Arc 避免持锁）
         let candidates = {
             let available = self.available.read().await;
@@ -933,7 +924,7 @@ impl PooledPage {
             }
         }
         // 2. 销毁隔离 context：cookie/localStorage/indexedDB 随之全部消失。
-        //    失败仅记日志——浏览器连接已坏时归还路径的健康检查会剔除实例兜底。
+        // 失败仅记日志——浏览器连接已坏时归还路径的健康检查会剔除实例兜底。
         if let Some(context_id) = self.context_id.take() {
             if let Some(instance) = self.browser_instance.as_ref() {
                 if let Err(e) = instance.browser().dispose_browser_context(context_id).await {
@@ -951,7 +942,7 @@ impl PooledPage {
 impl Drop for PooledPage {
     fn drop(&mut self) {
         // 1. Page：复用页 spawn 归还 task（TabPool::release 是 async）；隔离页
-        //    直接 drop 客户端句柄（tab 随 context 销毁关闭）
+        // 直接 drop 客户端句柄（tab 随 context 销毁关闭）
         if let Some(page) = self.page.take() {
             if let Some(tab_pool) = self.tab_pool.clone() {
                 // 尝试在当前 runtime spawn 归还 task
@@ -969,7 +960,7 @@ impl Drop for PooledPage {
             }
         }
         // 2. 隔离页：Drop 无法 await dispose——spawn 清理 task 先销毁 context
-        //    再归还 Browser，保证早退/panic/超时路径不泄漏 context
+        // 再归还 Browser，保证早退/panic/超时路径不泄漏 context
         if let Some(context_id) = self.context_id.take() {
             if let Some(instance) = self.browser_instance.take() {
                 match tokio::runtime::Handle::try_current() {
@@ -995,7 +986,7 @@ impl Drop for PooledPage {
             }
         }
         // 3. 复用页：browser_instance 未被 take，字段 drop 触发
-        //    BrowserInstance::drop 经 return channel 归还 Browser
+        // BrowserInstance::drop 经 return channel 归还 Browser
     }
 }
 
@@ -1197,7 +1188,6 @@ impl BrowserPool {
     ///
     /// 定期清理空闲实例和进行健康检查
     pub async fn start_background_tasks(&self) {
-        // 启动清理任务
         {
             let state = self.state.clone();
             let health_check_interval =
@@ -1213,7 +1203,6 @@ impl BrowserPool {
                         break;
                     }
 
-                    // 清理空闲实例
                     state.cleanup_idle_instances().await;
 
                     // 健康检查
@@ -1230,7 +1219,6 @@ impl BrowserPool {
             *task = Some(handle);
         }
 
-        // 启动归还处理任务
         {
             let state = self.state.clone();
             let receiver = self.state.return_receiver.lock().await.take();
@@ -1357,7 +1345,7 @@ mod tests {
             config.context_isolation,
             "context_isolation must default to true"
         );
-        // SEC-001: 默认不包含 --no-sandbox（生产环境安全默认）
+        // : 默认不包含 --no-sandbox（生产环境安全默认）
         assert!(
             !config.browser_args.iter().any(|a| a == "--no-sandbox"),
             "default browser_args should not contain --no-sandbox"
@@ -1381,7 +1369,7 @@ mod tests {
         assert_eq!(isolation_off.tab_pool_max_size, 10);
         assert!(isolation_off.enable_reuse);
 
-        // docker_safe_args() 继承 default → 隔离同样默认开启（容器临时池不降级）
+        // docker_safe_args 继承 default → 隔离同样默认开启（容器临时池不降级）
         assert!(BrowserPoolConfig::docker_safe_args().context_isolation);
     }
 
@@ -1402,7 +1390,7 @@ mod tests {
 
     #[test]
     fn test_browser_pool_config_docker_safe_args() {
-        // docker_safe_args() 在无容器环境下不应添加 --no-sandbox
+        // docker_safe_args 在无容器环境下不应添加 --no-sandbox
         let config = BrowserPoolConfig::docker_safe_args();
         // 在非容器测试环境中，可能不含 --no-sandbox
         // 验证基本配置正确
@@ -1479,7 +1467,6 @@ mod tests {
 
         pool.shutdown().await;
 
-        // 尝试获取实例应该失败
         let result = pool.acquire().await;
         assert!(result.is_err());
     }
@@ -1498,7 +1485,7 @@ mod tests {
         assert_eq!(stats1.total_instances, stats2.total_instances);
     }
 
-    // --- QUAL-001: 并发安全测试 ---
+    // QUAL-001: 并发安全测试
 
     #[tokio::test]
     async fn test_concurrent_shutdown_acquire() {
@@ -1604,7 +1591,7 @@ mod tests {
         assert!(diff < Duration::from_millis(100));
     }
 
-    // ==== P08：池路径代理校验 ====
+    // P08：池路径代理校验
 
     /// 含空白字符的代理串必须被拒绝（argv 注入防护）
     #[test]

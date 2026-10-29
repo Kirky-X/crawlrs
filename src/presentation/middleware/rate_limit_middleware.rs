@@ -208,7 +208,7 @@ fn get_client_ip(req: &Request) -> String {
 ///
 /// # 返回值
 ///
-/// 返回 `Ok(())` 如果请求被允许，返回 `Err(Response)` 如果请求被拒绝
+/// 返回 `Ok()` 如果请求被允许，返回 `Err(Response)` 如果请求被拒绝
 fn apply_ip_rate_limit(client_ip: &str) -> Result<(), Box<Response>> {
     let limiter = &*IP_RATE_LIMITER;
 
@@ -356,7 +356,7 @@ pub async fn rate_limit_middleware(
             next.run(req).await
         }
         Err(e) => {
-            // SEC-003: 可配置的 fail-open/fail-closed 行为
+            // : 可配置的 fail-open/fail-closed 行为
             if *RATE_LIMIT_FAIL_OPEN {
                 // Fail-open: 允许请求通过，但记录严重警告
                 // 注意：这可能导致在服务故障时无法限流

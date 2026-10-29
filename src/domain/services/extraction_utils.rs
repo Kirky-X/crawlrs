@@ -40,7 +40,7 @@ impl ExtractionUtils {
     /// ```ignore
     /// if let (Some(v), Some(b)) = (&val, &base) {
     ///     if attr == "href" || attr == "src" {
-    ///         b.join(v).ok().map(|u| u.to_string()).or(val)
+    ///         b.join(v).ok.map(|u| u.to_string).or(val)
     ///     } else {
     ///         val
     ///     }
@@ -62,8 +62,8 @@ impl ExtractionUtils {
     ///     element,
     ///     "href",
     ///     base_url,
-    ///     || Some(element.text().collect::<Vec<_>>().join(" ").trim().to_string()),
-    /// );
+    ///     || Some(element.text.collect::<Vec<_>>.join(" ").trim.to_string),
+    ///);
     /// ```
     pub fn extract_element_value<F>(
         element: ElementRef,
@@ -94,10 +94,10 @@ impl ExtractionUtils {
     ///
     /// Consolidates the repeated array extraction pattern:
     /// ```ignore
-    /// let mut values = Vec::new();
+    /// let mut values = Vec::new;
     /// for element in document.select(&selector) {
     ///     let value = extract_element_value(...);
-    ///     if let Some(v) = value.filter(|v| !v.is_empty()) {
+    ///     if let Some(v) = value.filter(|v| !v.is_empty) {
     ///         values.push(Value::String(v));
     ///     }
     /// }
@@ -316,7 +316,7 @@ mod tests {
         ));
     }
 
-    // ========== extract_element_value: src attribute path ==========
+    // extract_element_value: src attribute path
 
     #[test]
     fn test_extract_element_value_with_src_attribute() {
@@ -337,7 +337,7 @@ mod tests {
         );
     }
 
-    // ========== extract_element_value: non-href/src attribute path ==========
+    // extract_element_value: non-href/src attribute path
 
     #[test]
     fn test_extract_element_value_non_href_src_attr_returned_as_is() {
@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(result, Some("12345".to_string()));
     }
 
-    // ========== extract_element_value: no attribute, fallback returns None ==========
+    // extract_element_value: no attribute, fallback returns None
 
     #[test]
     fn test_extract_element_value_no_attr_fallback_returns_none() {
@@ -389,7 +389,7 @@ mod tests {
         );
     }
 
-    // ========== extract_element_value: href without base URL ==========
+    // extract_element_value: href without base URL
 
     #[test]
     fn test_extract_element_value_href_without_base_returns_raw() {
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(result, Some("/path/page".to_string()));
     }
 
-    // ========== extract_element_value: href with leading slash stripped ==========
+    // extract_element_value: href with leading slash stripped
 
     #[test]
     fn test_extract_element_value_href_strips_leading_slash_when_joining() {
@@ -428,7 +428,7 @@ mod tests {
         );
     }
 
-    // ========== extract_array_values: text fallback ==========
+    // extract_array_values: text fallback
 
     #[test]
     fn test_extract_array_values_uses_text_fallback_when_attr_missing() {
@@ -451,7 +451,7 @@ mod tests {
         assert_eq!(results[1], Value::String("Item 2".to_string()));
     }
 
-    // ========== extract_array_values: filters empty values ==========
+    // extract_array_values: filters empty values
 
     #[test]
     fn test_extract_array_values_filters_empty_strings() {
@@ -476,7 +476,7 @@ mod tests {
         assert_eq!(results.len(), 2, "empty values should be filtered out");
     }
 
-    // ========== extract_array_values: no matching elements ==========
+    // extract_array_values: no matching elements
 
     #[test]
     fn test_extract_array_values_returns_empty_when_no_elements() {
@@ -493,7 +493,7 @@ mod tests {
         );
     }
 
-    // ========== extract_array_values: mixed attr and fallback ==========
+    // extract_array_values: mixed attr and fallback
 
     #[test]
     fn test_extract_array_values_mixed_attr_and_fallback() {
@@ -526,7 +526,7 @@ mod tests {
         );
     }
 
-    // ========== extract_single_value: attr=None (text extraction) ==========
+    // extract_single_value: attr=None (text extraction)
 
     #[test]
     fn test_extract_single_value_without_attr_extracts_text() {
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(result.expect("ok"), Value::String("".to_string()));
     }
 
-    // ========== extract_single_value: with base URL for href ==========
+    // extract_single_value: with base URL for href
 
     #[test]
     fn test_extract_single_value_with_base_url_joins_href() {
@@ -566,7 +566,7 @@ mod tests {
         );
     }
 
-    // ========== extract_single_value: invalid selector ==========
+    // extract_single_value: invalid selector
 
     #[test]
     fn test_extract_single_value_invalid_selector_returns_error() {
@@ -583,7 +583,7 @@ mod tests {
         }
     }
 
-    // ========== extract_single_value: attr present but empty value ==========
+    // extract_single_value: attr present but empty value
 
     #[test]
     fn test_extract_single_value_attr_present_but_empty_returns_null() {
@@ -602,7 +602,7 @@ mod tests {
         assert_eq!(result.expect("ok"), Value::String("".to_string()));
     }
 
-    // ========== extract_single_value: attr missing falls back to text ==========
+    // extract_single_value: attr missing falls back to text
 
     #[test]
     fn test_extract_single_value_attr_missing_falls_back_to_text() {
@@ -616,7 +616,7 @@ mod tests {
         assert_eq!(result.expect("ok"), Value::String("Click here".to_string()));
     }
 
-    // ========== ExtractionUtilsError Display tests ==========
+    // ExtractionUtilsError Display tests
 
     #[test]
     fn test_extraction_utils_error_invalid_selector_display() {
@@ -652,7 +652,7 @@ mod tests {
         }
     }
 
-    // ========== ExtractableRule trait tests ==========
+    // ExtractableRule trait tests
 
     /// A simple implementation of ExtractableRule for testing
     struct TestRule {
@@ -707,7 +707,7 @@ mod tests {
         assert_eq!(rule.description(), "Extract paragraph text");
     }
 
-    // ========== extract_single_value: non-href attr with base URL ==========
+    // extract_single_value: non-href attr with base URL
 
     #[test]
     fn test_extract_single_value_non_href_attr_with_base_url() {
@@ -726,7 +726,7 @@ mod tests {
         assert_eq!(result.expect("ok"), Value::String("Kirky".to_string()));
     }
 
-    // ========== extract_single_value: href attr without base URL ==========
+    // extract_single_value: href attr without base URL
 
     #[test]
     fn test_extract_single_value_href_without_base_returns_raw() {

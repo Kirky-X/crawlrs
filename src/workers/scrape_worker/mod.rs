@@ -125,13 +125,13 @@ pub struct ScrapeWorker {
     ///
     /// 由 `WorkerManager` 从 `InfrastructureComponents.cache_service` 注入，
     /// 所有 worker 共享同一实例。`process_scrape_task` 在读写缓存前经
-    /// `CacheContext` 门控：`is_cacheable() && should_read()` 查缓存命中直返，
-    /// `is_cacheable() && should_write()` 抓取成功后写回。
+    /// `CacheContext` 门控：`is_cacheable && should_read` 查缓存命中直返，
+    /// `is_cacheable && should_write` 抓取成功后写回。
     cache_service: Arc<dyn CacheService>,
     /// 优雅退出协调器
     ///
-    /// 由 `WorkerManager` 注入，所有 worker 共享同一实例。`run()` 循环开头
-    /// 检查 `is_shutting_down()`，置位后不再 acquire 新任务，完成当前任务即退出。
+    /// 由 `WorkerManager` 注入，所有 worker 共享同一实例。`run` 循环开头
+    /// 检查 `is_shutting_down`，置位后不再 acquire 新任务，完成当前任务即退出。
     shutdown_coordinator: Arc<ShutdownCoordinator>,
 }
 
@@ -253,9 +253,9 @@ impl ScrapeWorker {
     ///
     /// 用于单元测试预填充 Bloom，模拟"URL 已爬"场景：
     /// ```ignore
-    /// let worker = build_mock_worker().await;
+    /// let worker = build_mock_worker.await;
     /// {
-    ///     let mut dedup = worker.deduplicator_for_test().write();
+    ///     let mut dedup = worker.deduplicator_for_test.write;
     ///     dedup.insert("https://example.com/page1");
     /// }
     /// // 现在 page1 在 Bloom 中阳性，调用 extract_and_queue_links 时
@@ -296,7 +296,6 @@ impl ScrapeWorker {
         );
         info!("Processing task");
 
-        // Check Task Expiration
         if let Some(expires_at) = task.expires_at {
             if Utc::now() > expires_at {
                 warn!("Task {} expired at {}", task.id, expires_at);
@@ -322,14 +321,14 @@ impl ScrapeWorker {
         // 内存感知准入检查
         //
         // 在获取并发许可（Team Semaphore）之前先采样内存状态并决定是否放行：
-        // - Normal  → Proceed：进入并发获取流程
+        // - Normal → Proceed：进入并发获取流程
         // - Pressure → Defer：复用现有 backlog 重排逻辑延后（
-        //   不新建持久队列，复用 scheduled_at + Queued 状态机）
+        // 不新建持久队列，复用 scheduled_at + Queued 状态机）
         // - Critical → Reschedule：同样经 backlog 重排，但语义为拒绝当前批次
         //
         // 采样策略：每次 process_task 调用 `update_state()` 读取最新内存使用率。
         // 这与 `MemoryScheduler::spawn_monitor` 的后台 1s 采样互补——后台采样驱动
-        // 优雅关闭信号，此处 per-task 采样保证 admit() 返回最新决策。
+        // 优雅关闭信号，此处 per-task 采样保证 admit 返回最新决策。
         //
         // F10 AIMD 内存联动：update_state 之后、admit 之前把水位广播给
         // TeamSemaphore（Pressure 冻结 additive-increase / Critical CAS 半减），
@@ -425,14 +424,14 @@ impl ScrapeWorker {
         // PERF- 解析一次 payload，dto 与 ScrapeRequest 复用同一份解析结果。
         //
         // 旧实现：
-        //   1) build_scrape_request(&task) 内部 from_value(payload.clone()) 得 dto
-        //   2) handle_scrape_success(&task, &response) 内部再 from_value(payload.clone()) 得 dto
+        // 1) build_scrape_request(&task) 内部 from_value(payload.clone) 得 dto
+        // 2) handle_scrape_success(&task, &response) 内部再 from_value(payload.clone) 得 dto
         // → 每次抓取 clone + 解析 payload 2 次。
         //
         // 新实现：
-        //   1) parse_scrape_request_dto(&task) 得 dto（仅 1 次 clone + 解析）
-        //   2) build_scrape_request_from_dto(&dto) 复用 dto 构造 ScrapeRequest（零额外解析）
-        //   3) handle_scrape_success(&task, dto.as_ref(), &response) 复用 dto 引用（零额外解析）
+        // 1) parse_scrape_request_dto(&task) 得 dto（仅 1 次 clone + 解析）
+        // 2) build_scrape_request_from_dto(&dto) 复用 dto 构造 ScrapeRequest（零额外解析）
+        // 3) handle_scrape_success(&task, dto.as_ref, &response) 复用 dto 引用（零额外解析）
         // → 每次抓取 clone + 解析 payload 1 次。
         let (scrape_request_dto, mut scrape_request) = match Self::parse_scrape_request_dto(&task) {
             Ok(dto) => {
@@ -584,8 +583,8 @@ impl ScrapeWorker {
         // 高级缓存模式门控
         //
         // 构造 `CacheContext`，按 `cache_mode` 决定读写行为：
-        // - 读缓存：`is_cacheable() && should_read()` → 查缓存，命中直返跳过 `engine_client.scrape()`
-        // - 写缓存：`is_cacheable() && should_write()` 且抓取成功 → 序列化写回
+        // - 读缓存：`is_cacheable && should_read` → 查缓存，命中直返跳过 `engine_client.scrape`
+        // - 写缓存：`is_cacheable && should_write` 且抓取成功 → 序列化写回
         //
         // `cache_mode=None`（默认）等价于 `Enabled`（`unwrap_or_default()`）。
         // 不可缓存的请求（data:/blob:/POST）跳过整个缓存流程。
@@ -638,7 +637,7 @@ impl ScrapeWorker {
             Some(cached) => Ok(cached),
             None => {
                 let resp = self.engine_client.scrape(&scrape_request).await;
-                // 写缓存门控：仅抓取成功且 should_write() 时写回
+                // 写缓存门控：仅抓取成功且 should_write 时写回
                 if let Ok(ref r) = resp {
                     if cache_ctx.is_cacheable() && cache_ctx.should_write() {
                         if let Err(e) = try_write_scrape_cache(
@@ -783,7 +782,7 @@ impl ScrapeWorker {
                         t.status = TaskStatus::Failed;
                         t.completed_at = Some(Utc::now());
                         // 直接操作 t.payload，避免 clone 整个 JSON
-                        // （原实现 let mut payload = t.payload.clone() + 后续 t.payload = payload
+                        // （原实现 let mut payload = t.payload.clone + 后续 t.payload = payload
                         // 在失败路径上多分配一次 JSON Value）
                         if let Some(obj) = t.payload.as_object_mut() {
                             obj.insert("error".to_string(), json!(e.to_string()));

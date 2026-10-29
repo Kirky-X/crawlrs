@@ -206,7 +206,6 @@ fn extract_script_src(tag: &str) -> Option<&str> {
     let mut rest = tag;
     while let Some(idx) = rest.find("src") {
         let after = &rest[idx + 3..];
-        // 跳过空格 / = / 制表符
         let bytes = after.as_bytes();
         let mut i = 0;
         while i < bytes.len()

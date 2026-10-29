@@ -51,7 +51,6 @@ async fn test_create_and_find_by_api_key_id() {
         "Created log should be found by api_key_id"
     );
 
-    // 清理
     cleanup_audit_logs(&app, team_id).await;
 }
 
@@ -63,7 +62,6 @@ async fn test_find_by_team_id() {
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
 
-    // 创建多条日志
     let entry1 = AuditLogBuilder::new("search:query", AuditDecision::Allow)
         .with_api_key_id(api_key_id)
         .with_team_id(team_id)
@@ -96,7 +94,6 @@ async fn test_find_by_team_id() {
         "Entry 2 should be found by team_id"
     );
 
-    // 清理
     cleanup_audit_logs(&app, team_id).await;
 }
 
@@ -146,7 +143,6 @@ async fn test_find_denied_for_key() {
         "Allow entry should NOT be in denied results"
     );
 
-    // 清理
     cleanup_audit_logs(&app, team_id).await;
 }
 
@@ -158,7 +154,6 @@ async fn test_cleanup_old_logs() {
     let team_id = app.team_id;
     let api_key_id = app.api_key_id;
 
-    // 创建一条审计日志
     let entry = AuditLogBuilder::new("cleanup:test", AuditDecision::Allow)
         .with_api_key_id(api_key_id)
         .with_team_id(team_id)
@@ -168,7 +163,6 @@ async fn test_cleanup_old_logs() {
         .await
         .expect("Failed to create audit log");
 
-    // 验证日志存在
     let logs_before = repo
         .find_by_api_key_id(api_key_id, 10, 0)
         .await
@@ -195,7 +189,6 @@ async fn test_cleanup_old_logs() {
     .await
     .expect("Failed to update log timestamp");
 
-    // 清理 7 天前的日志
     let deleted = repo
         .cleanup_old_logs(7)
         .await
@@ -207,7 +200,6 @@ async fn test_cleanup_old_logs() {
         deleted
     );
 
-    // 验证日志已被删除
     let logs_after = repo
         .find_by_api_key_id(api_key_id, 10, 0)
         .await
@@ -217,7 +209,6 @@ async fn test_cleanup_old_logs() {
         "Log should be deleted after cleanup"
     );
 
-    // 清理剩余数据
     cleanup_audit_logs(&app, team_id).await;
 }
 
@@ -279,7 +270,6 @@ async fn tc_find_by_api_key_id_with_pagination() {
     let api_key_id = app.api_key_id;
     let team_id = app.team_id;
 
-    // 创建 3 条日志
     let entry1 = AuditLogBuilder::new("page:test1", AuditDecision::Allow)
         .with_api_key_id(api_key_id)
         .with_team_id(team_id)
@@ -310,7 +300,6 @@ async fn tc_find_by_api_key_id_with_pagination() {
         .await
         .expect("Failed to find page 2");
 
-    // 验证分页不重复
     let page1_ids: Vec<_> = page1.iter().map(|l| l.id).collect();
     let page2_ids: Vec<_> = page2.iter().map(|l| l.id).collect();
     for id in &page2_ids {
@@ -320,7 +309,6 @@ async fn tc_find_by_api_key_id_with_pagination() {
         );
     }
 
-    // 验证三条日志都在两页中
     let all_ids: Vec<_> = page1_ids.into_iter().chain(page2_ids.into_iter()).collect();
     assert!(all_ids.contains(&entry1.id), "Entry1 should be in pages");
     assert!(all_ids.contains(&entry2.id), "Entry2 should be in pages");

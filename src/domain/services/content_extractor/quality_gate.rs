@@ -13,7 +13,7 @@
 //! 度量口径说明：
 //! - `word_count` 用空白切词——CJK 文本无空格会被低估，中文站建议调低
 //!   `min_word_count`（见 README 提取能力节）
-//! - 长度比较用字符数（`chars().count()`，对 CJK 公平），由 facade 裁决逻辑使用
+//! - 长度比较用字符数（`chars.count`，对 CJK 公平），由 facade 裁决逻辑使用
 //! - `link_density` 从候选的正文 HTML 测量；`html = None` 时记 0（视为通过）
 
 /// 提取候选的 prose 质量度量
@@ -161,7 +161,7 @@ mod tests {
         vec!["word"; n].join(" ")
     }
 
-    // ===== evaluate =====
+    // evaluate
 
     /// word_count 按空白切词计数
     #[test]
@@ -245,7 +245,7 @@ mod tests {
         assert!(m.link_density > 0.9, "got {}", m.link_density);
     }
 
-    // ===== is_hard_fail =====
+    // is_hard_fail
 
     fn cfg() -> QualityGateConfig {
         QualityGateConfig::active(150, 1.5, 7.0, 0.7)
@@ -294,9 +294,9 @@ mod tests {
         assert!(!is_hard_fail(&m, &cfg()));
     }
 
-    // ===== QualityGateConfig =====
+    // QualityGateConfig
 
-    /// disabled() 配置 enabled=false 且阈值不影响判定入口（由调用方短路）
+    /// disabled 配置 enabled=false 且阈值不影响判定入口（由调用方短路）
     #[test]
     fn disabled_config_has_enabled_false() {
         let c = QualityGateConfig::disabled();
@@ -304,7 +304,7 @@ mod tests {
         assert_eq!(c.min_word_count, 0);
     }
 
-    /// active() 配置按入参启用
+    /// active 配置按入参启用
     #[test]
     fn active_config_enables_gates_with_given_values() {
         let c = QualityGateConfig::active(150, 1.5, 7.0, 0.7);
@@ -315,7 +315,7 @@ mod tests {
         assert!((c.prose_max_link_density - 0.7).abs() < f64::EPSILON);
     }
 
-    /// disabled() 与 active() 的 PartialEq 可区分
+    /// disabled 与 active 的 PartialEq 可区分
     #[test]
     fn configs_compare_by_value() {
         assert_ne!(

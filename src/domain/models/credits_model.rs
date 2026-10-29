@@ -250,7 +250,7 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    // ========== Credits::new tests ==========
+    // Credits::new tests
 
     #[test]
     fn test_credits_new_sets_balance_and_timestamps() {
@@ -295,7 +295,7 @@ mod tests {
         assert_eq!(credits.balance(), -50, "negative initial balance allowed");
     }
 
-    // ========== Credits::with_timestamps tests ==========
+    // Credits::with_timestamps tests
 
     #[test]
     fn test_credits_with_timestamps_preserves_values() {
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(credits.updated_at, updated);
     }
 
-    // ========== has_sufficient_balance tests ==========
+    // has_sufficient_balance tests
 
     #[test]
     fn test_has_sufficient_balance_true_when_enough() {
@@ -358,7 +358,7 @@ mod tests {
         );
     }
 
-    // ========== deduct tests ==========
+    // deduct tests
 
     #[test]
     fn test_deduct_success_reduces_balance() {
@@ -438,7 +438,7 @@ mod tests {
         );
     }
 
-    // ========== add tests ==========
+    // add tests
 
     #[test]
     fn test_add_increases_balance() {
@@ -477,7 +477,7 @@ mod tests {
         );
     }
 
-    // ========== set_balance tests ==========
+    // set_balance tests
 
     #[test]
     fn test_set_balance_overrides() {
@@ -505,7 +505,7 @@ mod tests {
         );
     }
 
-    // ========== CreditsTransaction::new tests ==========
+    // CreditsTransaction::new tests
 
     #[test]
     fn test_credits_transaction_new_sets_fields() {
@@ -549,7 +549,7 @@ mod tests {
         assert!(txn.reference_id.is_none());
     }
 
-    // ========== CreditsTransaction::with_timestamp tests ==========
+    // CreditsTransaction::with_timestamp tests
 
     #[test]
     fn test_credits_transaction_with_timestamp_preserves_ts() {
@@ -577,7 +577,7 @@ mod tests {
         );
     }
 
-    // ========== is_deduction / is_addition tests ==========
+    // is_deduction / is_addition tests
 
     #[test]
     fn test_is_deduction_true_for_negative_amount() {
@@ -621,7 +621,7 @@ mod tests {
         assert!(!txn.is_addition(), "zero amount is not an addition");
     }
 
-    // ========== CreditsTransactionType Display / FromStr tests ==========
+    // CreditsTransactionType Display / FromStr tests
 
     #[test]
     fn test_transaction_type_display_all_variants() {
@@ -704,7 +704,7 @@ mod tests {
         }
     }
 
-    // ========== CreditsError tests ==========
+    // CreditsError tests
 
     #[test]
     fn test_credits_error_insufficient_balance_display() {
@@ -732,7 +732,7 @@ mod tests {
         assert!(err.to_string().contains("conn lost"));
     }
 
-    // ========== Credits / CreditsTransaction serde roundtrip ==========
+    // Credits / CreditsTransaction serde roundtrip
 
     #[test]
     fn test_credits_serde_roundtrip() {

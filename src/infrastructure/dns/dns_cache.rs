@@ -222,9 +222,7 @@ mod tests {
         assert_eq!(key, "dns:example.com:80");
     }
 
-    // =========================================================================
     // 辅助函数：构造真实 oxcache 并包装为 DnsCacheService
-    // =========================================================================
 
     async fn make_service(ttl_seconds: u64) -> DnsCacheService {
         let cache = Arc::new(
@@ -238,9 +236,7 @@ mod tests {
         DnsCacheService::new(cache, ttl_seconds).expect("failed to create DnsCacheService")
     }
 
-    // =========================================================================
     // DnsCacheService::new 与 default_ttl
-    // =========================================================================
 
     #[tokio::test]
     async fn test_new_sets_default_ttl() {
@@ -254,9 +250,7 @@ mod tests {
         assert_eq!(svc.default_ttl.as_secs(), 42);
     }
 
-    // =========================================================================
     // set + lookup_host 缓存命中（不触发真实 DNS）
-    // =========================================================================
 
     #[tokio::test]
     async fn test_set_then_lookup_host_cache_hit() {
@@ -288,9 +282,7 @@ mod tests {
         assert_eq!(resolved_b, ips_b);
     }
 
-    // =========================================================================
     // set 后通过 cache.get 验证条目存在
-    // =========================================================================
 
     #[tokio::test]
     async fn test_set_writes_entry_to_cache() {
@@ -308,9 +300,7 @@ mod tests {
         assert_eq!(entry.remaining_ttl_secs, 120);
     }
 
-    // =========================================================================
     // remove
-    // =========================================================================
 
     #[tokio::test]
     async fn test_remove_deletes_entry() {
@@ -334,10 +324,8 @@ mod tests {
         svc.remove("never-set.example", 9999).await;
     }
 
-    // =========================================================================
     // lookup_host 缓存命中后 remove 再 lookup_host 应走真实 DNS（会失败/Err）
     // 这里只验证 remove 后缓存确实为空，避免真实 DNS 依赖
-    // =========================================================================
 
     #[tokio::test]
     async fn test_lookup_host_after_remove_cache_miss() {
@@ -357,9 +345,7 @@ mod tests {
         assert!(svc.cache.get(&key).await.unwrap().is_none());
     }
 
-    // =========================================================================
     // get_stats
-    // =========================================================================
 
     #[tokio::test]
     async fn test_get_stats_returns_default_ttl() {
@@ -372,7 +358,6 @@ mod tests {
     async fn test_get_stats_fields_after_operations() {
         let svc = make_service(300).await;
 
-        // 执行若干操作
         let ips: Vec<IpAddr> = vec!["203.0.113.20".parse().unwrap()];
         svc.set("stats.example", 80, ips, 300).await;
         let _ = svc.lookup_host("stats.example", 80).await;
@@ -387,9 +372,7 @@ mod tests {
         assert_eq!(stats.default_ttl_seconds, 300);
     }
 
-    // =========================================================================
     // clear
-    // =========================================================================
 
     #[tokio::test]
     async fn test_clear_does_not_panic() {
@@ -401,9 +384,7 @@ mod tests {
         svc.clear().await;
     }
 
-    // =========================================================================
     // DnsCacheStats 字段访问
-    // =========================================================================
 
     #[test]
     fn test_dns_cache_stats_field_access() {
@@ -425,7 +406,6 @@ mod tests {
 
     #[test]
     fn test_dns_cache_stats_default_zeroes() {
-        // 验证全零字段的合理性
         let stats = DnsCacheStats {
             total_entries: 0,
             hit_count: 0,
@@ -442,10 +422,8 @@ mod tests {
         assert_eq!(stats.default_ttl_seconds, 0);
     }
 
-    // =========================================================================
     // lookup_host 真实 DNS 解析路径（缓存未命中 → DNS 解析 → 存储到缓存）
     // 覆盖行 46, 54-57, 69-70, 73, 76, 84
-    // =========================================================================
 
     #[tokio::test]
     async fn test_lookup_host_cache_miss_performs_real_dns_resolution() {
@@ -494,9 +472,7 @@ mod tests {
         assert!(!ips2.is_empty());
     }
 
-    // =========================================================================
     // logger 初始化：覆盖 debug! 宏参数行（line 76, 103, 117, 127）
-    // =========================================================================
 
     use crate::test_utils::ensure_debug_logger;
 
@@ -529,12 +505,10 @@ mod tests {
         assert!(has_loopback, "localhost should resolve to loopback");
     }
 
-    // =========================================================================
     // oxcache 内建 single-flight：同 key 并发查询只放行一个真实解析
     // （自维在飞层已删除，行为改由库 get_or_with_ttl 的 leader/follower 承载；
-    //   hickory Resolver 为具体类型不可注入 fake，故直接在库 API 面上用
-    //  计数 fallback 验证单飞语义，key 加测试唯一后缀避免跨用例串扰。）
-    // =========================================================================
+    // hickory Resolver 为具体类型不可注入 fake，故直接在库 API 面上用
+    // 计数 fallback 验证单飞语义，key 加测试唯一后缀避免跨用例串扰。）
 
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -685,9 +659,7 @@ mod tests {
         );
     }
 
-    // =========================================================================
     // lookup_host：per-entry TTL 记录驱动 + 失败不缓存
-    // =========================================================================
 
     /// R-dns-resolve-002：oxcache 条目 TTL（get_or_with_ttl 写入的 per-entry TTL）
     /// 过期后再次查询必须重新走真实解析，不返回过期条目。

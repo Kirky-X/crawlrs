@@ -299,7 +299,6 @@ async fn test_update_status_batch() {
 
     assert_eq!(affected, 2, "Should affect 2 rows");
 
-    // 验证状态已更新
     let found1 = repo.find_by_id(b1.id).await.expect("Failed to find b1");
     assert_eq!(
         found1.expect("b1").status,
@@ -358,7 +357,7 @@ async fn tc_get_pending_tasks_no_team_no_limit() {
     let b = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
     repo.create(&b).await.expect("Failed to create backlog");
 
-    // 不带 team_id 和 limit 查询：应返回所有 pending（包含我们的）
+    // 不带 team_id 和 limit 查询：应返回所有 pending（包含我们）
     let pending = repo
         .get_pending_tasks(None, None)
         .await
@@ -404,7 +403,6 @@ async fn tc_get_expired_tasks_with_limit() {
     let repo = TasksBacklogRepositoryImpl::new(app.db_pool.clone());
     let team_id = app.team_id;
 
-    // 创建 3 个过期任务
     for _ in 0..3 {
         let mut backlog = make_backlog(team_id, crawlrs::domain::id::Id::generate(), 1);
         backlog.expires_at = Some(chrono::Utc::now() - chrono::Duration::hours(1));
@@ -469,7 +467,7 @@ async fn tc_update_status_batch_with_nonexistent() {
 /// tc_create_with_all_optional_fields_set: 覆盖 create 中 scheduled_at/expires_at 的 Some 分支
 ///
 /// make_backlog 默认 scheduled_at=None，test_get_expired_tasks 只设了 expires_at，
-/// 这里同时设 scheduled_at 和 expires_at，覆盖 create 中两个 Option.map(|dt| dt.into()) 的 Some 分支。
+/// 这里同时设 scheduled_at 和 expires_at，覆盖 create 中两个 Option.map(|dt| dt.into) 的 Some 分支。
 #[tokio::test]
 async fn tc_create_with_all_optional_fields_set() {
     let app = create_test_app_no_worker().await;
@@ -493,7 +491,6 @@ async fn tc_create_with_all_optional_fields_set() {
     assert_eq!(created.task_id, task_id);
     assert_eq!(created.team_id, team_id);
     assert_eq!(created.status, TasksBacklogStatus::Pending);
-    // 验证 Some 字段被持久化
     assert!(
         created.scheduled_at.is_some(),
         "scheduled_at should be Some"
@@ -530,7 +527,7 @@ async fn tc_create_with_all_optional_fields_set() {
 ///
 /// test_update_backlog 只调用 mark_processing，processed_at 仍为 None，
 /// 这里走 mark_processing -> mark_completed 路径，使 processed_at 被设为 Some，
-/// 同时手动设 scheduled_at，覆盖 update 中三个 Option.map(|dt| dt.into()) 的 Some 分支。
+/// 同时手动设 scheduled_at，覆盖 update 中三个 Option.map(|dt| dt.into) 的 Some 分支。
 #[tokio::test]
 async fn tc_update_with_all_optional_fields_set() {
     let app = create_test_app_no_worker().await;

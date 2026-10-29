@@ -8,7 +8,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_telemetry_initialization() {
-        // 初始化遥测系统
         let settings = LoggingSettings::default();
         let _manager = telemetry::init_telemetry(&settings)
             .await

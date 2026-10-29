@@ -90,7 +90,7 @@ mod tests {
         }
     }
 
-    // ---- new ----
+    // new
 
     #[test]
     fn test_new_returns_use_case_with_repo() {
@@ -100,7 +100,7 @@ mod tests {
         assert_eq!(repo.created_count.load(Ordering::SeqCst), 0);
     }
 
-    // ---- execute success ----
+    // execute success
 
     #[tokio::test]
     async fn test_execute_success_returns_webhook_with_provided_fields() {
@@ -147,7 +147,7 @@ mod tests {
         assert_ne!(w1.url, w2.url);
     }
 
-    // ---- execute failure propagation ----
+    // execute failure propagation
 
     #[tokio::test]
     async fn test_execute_propagates_repo_error() {
@@ -175,7 +175,7 @@ mod tests {
         }
     }
 
-    // ---- execute boundaries ----
+    // execute boundaries
 
     #[tokio::test]
     async fn test_execute_with_empty_url_still_creates() {

@@ -37,7 +37,7 @@ mod tests {
     use dbnexus::DbPool;
     use std::sync::{Arc, Mutex};
 
-    // ========== Helper to create test Task ==========
+    // Helper to create test Task
 
     fn make_test_task(id: crate::domain::id::Id, status: TaskStatus) -> Task {
         let now = chrono::Utc::now();
@@ -65,7 +65,7 @@ mod tests {
         }
     }
 
-    // ========== poll_count_exceeded tests ==========
+    // poll_count_exceeded tests
 
     #[test]
     fn test_poll_count_exceeded_true_when_count_equals_max() {
@@ -108,7 +108,7 @@ mod tests {
         assert!(!poll_count_exceeded(0, 1));
     }
 
-    // ========== calculate_completion_rate tests ==========
+    // calculate_completion_rate tests
 
     #[test]
     fn test_completion_rate_empty_task_ids_returns_one() {
@@ -206,7 +206,7 @@ mod tests {
         assert_eq!(calculate_completion_rate(&tasks, &task_ids), 0.75);
     }
 
-    // ========== calculate_next_interval tests ==========
+    // calculate_next_interval tests
 
     #[test]
     fn test_next_interval_no_progress_uses_rate_based() {
@@ -268,7 +268,7 @@ mod tests {
         assert_eq!(interval, 2000);
     }
 
-    // ========== apply_defaults tests ==========
+    // apply_defaults tests
 
     #[test]
     fn test_apply_defaults_all_none() {
@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(limit, server_config::MAX_PAGE_LIMIT);
     }
 
-    // ========== build_task_infos tests ==========
+    // build_task_infos tests
 
     #[test]
     fn test_build_task_infos_empty() {
@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(result[0].task_type, TaskType::Crawl);
     }
 
-    // ========== SyncWaitResult struct tests ==========
+    // SyncWaitResult struct tests
 
     #[test]
     fn test_sync_wait_result_no_wait() {
@@ -436,7 +436,7 @@ mod tests {
         assert!(!result.is_timeout);
     }
 
-    // ========== TaskQueryResponseMeta serialization ==========
+    // TaskQueryResponseMeta serialization
 
     #[test]
     fn test_task_query_response_meta_serialization() {
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(parsed["status"], "sync_timeout");
     }
 
-    // ========== validate_request tests ==========
+    // validate_request tests
 
     #[test]
     fn test_validate_request_valid() {
@@ -556,7 +556,7 @@ mod tests {
         assert!(validate_request(&request).is_ok());
     }
 
-    // ========== handle_sync_wait_and_get_status edge cases ==========
+    // handle_sync_wait_and_get_status edge cases
 
     #[tokio::test]
     async fn test_handle_sync_wait_zero_ms_returns_immediately() {
@@ -850,7 +850,7 @@ mod tests {
         assert!(!result.is_timeout);
     }
 
-    // ========== build_scrape_result_json tests ==========
+    // build_scrape_result_json tests
 
     // 构造测试用 ScrapeResult
     fn make_test_scrape_result(
@@ -972,7 +972,7 @@ mod tests {
         assert!(dto.metadata.unwrap().is_null());
     }
 
-    // ========== build_task_infos with results_map tests ==========
+    // build_task_infos with results_map tests
 
     #[test]
     fn test_build_task_infos_with_matching_result() {
@@ -1078,7 +1078,7 @@ mod tests {
         assert!(!result_dto.content.contains("<b>"));
     }
 
-    // ========== Handler test infrastructure ==========
+    // Handler test infrastructure
 
     /// Construct a lazy `DbPool` that does not connect to any database.
     ///
@@ -1086,7 +1086,7 @@ mod tests {
     /// a connection. The connection is only established on `get_session()`, which
     /// handlers under test never call (they only read `team_id` / `api_key_id`
     /// from `AuthState`). Since `try_from` internally calls
-    /// `Handle::current().block_on(...)`, we construct the pool on a dedicated
+    /// `Handle::current.block_on(...)`, we construct the pool on a dedicated
     /// OS thread to avoid runtime-in-runtime panics.
     fn make_test_db_pool() -> Arc<DbPool> {
         // 统一走共享 helper：每调用独立池（min=0 无预热、max=4），
@@ -1109,7 +1109,7 @@ mod tests {
         Arc::new(ScrapeResultRepositoryImpl::new(make_test_db_pool()))
     }
 
-    // ========== MockTaskRepository ==========
+    // MockTaskRepository
 
     /// Mock `TaskRepository` with configurable `query_tasks` and `batch_cancel`.
     ///
@@ -1320,7 +1320,7 @@ mod tests {
         }
     }
 
-    // ========== query_tasks handler tests ==========
+    // query_tasks handler tests
 
     #[tokio::test]
     async fn test_query_tasks_handler_success() {
@@ -1585,7 +1585,7 @@ mod tests {
         assert!(data.tasks[0].result.is_none());
     }
 
-    // ========== cancel_tasks handler tests ==========
+    // cancel_tasks handler tests
 
     #[tokio::test]
     async fn test_cancel_tasks_handler_success() {
@@ -1753,7 +1753,7 @@ mod tests {
         assert_eq!(data.total_cancelled, 1);
     }
 
-    // ========== wait_for_tasks_completion tests ==========
+    // wait_for_tasks_completion tests
 
     #[tokio::test]
     async fn test_wait_for_tasks_completion_already_completed() {
@@ -1807,7 +1807,7 @@ mod tests {
         assert!(result.is_err(), "query error should propagate");
     }
 
-    // ========== handle_sync_wait_and_get_status tests ==========
+    // handle_sync_wait_and_get_status tests
 
     #[tokio::test]
     async fn test_handle_sync_wait_and_get_status_success() {
@@ -1846,7 +1846,7 @@ mod tests {
         assert!(result.is_ok(), "should return Ok even on wait error");
     }
 
-    // ========== Direct function tests ==========
+    // Direct function tests
 
     #[tokio::test]
     async fn test_query_tasks_for_poll_success() {
@@ -1982,7 +1982,7 @@ mod tests {
         );
     }
 
-    // ========== Additional edge case tests ==========
+    // Additional edge case tests
 
     #[tokio::test]
     async fn test_query_tasks_handler_include_results_with_empty_tasks_skips_fetch() {
@@ -2067,11 +2067,11 @@ mod tests {
         assert!(result.is_ok(), "force=None should default to false");
     }
 
-    // ========== Test logger for covering log::debug!/log::error! ==========
+    // Test logger for covering log::debug!/log::error!
 
     use crate::test_utils::ensure_debug_logger;
 
-    // ========== log::debug!/log::error! coverage tests ==========
+    // log::debug!/log::error! coverage tests
 
     #[test]
     fn test_poll_count_exceeded_logs_debug_with_logger() {

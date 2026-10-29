@@ -207,7 +207,7 @@ fn make_service(
     WebhookServiceImpl::new(sender, secret.to_string(), repo)
 }
 
-// ---- extract_webhook_url ----
+// extract_webhook_url
 
 #[tokio::test]
 async fn test_extract_webhook_url() {
@@ -252,12 +252,12 @@ fn test_extract_webhook_url_returns_none_when_webhook_not_string() {
     let service = WebhookServiceImpl::new(webhook_sender, "secret".to_string(), repo);
 
     let mut task = create_test_task();
-    // webhook field is a number, not a string -> as_str() returns None
+    // webhook field is a number, not a string -> as_str returns None
     task.payload = serde_json::json!({"webhook": 123});
     assert!(service.extract_webhook_url(&task).is_none());
 }
 
-// ---- get_event_type / get_failed_event_type ----
+// get_event_type / get_failed_event_type
 
 #[test]
 fn test_get_event_type_scrape() {
@@ -349,7 +349,7 @@ fn test_get_failed_event_type_extract_returns_custom() {
     );
 }
 
-// ---- generate_signature (method) ----
+// generate_signature (method)
 
 #[test]
 fn test_generate_signature_method_returns_standardwebhooks_format() {
@@ -429,7 +429,7 @@ fn test_generate_signature_method_with_empty_secret_returns_signature() {
     );
 }
 
-// ---- send_webhook ----
+// send_webhook
 
 #[tokio::test]
 async fn test_send_webhook_success() {
@@ -517,7 +517,7 @@ async fn test_send_webhook_includes_signature_and_timestamp_headers() {
     );
 }
 
-// ---- trigger_completion ----
+// trigger_completion
 
 #[tokio::test]
 async fn test_no_webhook_no_trigger() {
@@ -571,7 +571,7 @@ async fn test_trigger_completion_for_extract_task_uses_custom_event() {
     assert_eq!(sender.sent_count.load(Ordering::SeqCst), 1);
 }
 
-// ---- trigger_failure ----
+// trigger_failure
 
 #[tokio::test]
 async fn test_trigger_failure_no_webhook_returns_ok() {
@@ -632,7 +632,7 @@ async fn test_trigger_failure_for_extract_task_uses_custom_event() {
     assert_eq!(sender.sent_count.load(Ordering::SeqCst), 1);
 }
 
-// ---- send_task_webhook failure paths ----
+// send_task_webhook failure paths
 
 #[tokio::test]
 async fn test_send_task_webhook_repo_failure_propagates() {
@@ -773,7 +773,7 @@ async fn test_trigger_completion_payload_has_completed_status() {
     assert_eq!(payload["task_id"], json!(task.id));
 }
 
-// ---- validate_timestamp (free fn) ----
+// validate_timestamp (free fn)
 
 #[test]
 fn test_validate_timestamp_now_is_valid() {
@@ -803,7 +803,7 @@ fn test_validate_timestamp_far_past() {
     assert!(!validate_timestamp(now - 86_400 * 30)); // 30 days ago
 }
 
-// ---- generate_signature (free fn) ----
+// generate_signature (free fn)
 
 #[test]
 fn test_generate_signature_free_fn_returns_hex() {
@@ -831,7 +831,7 @@ fn test_generate_signature_free_fn_changes_with_secret() {
     assert_ne!(s1, s2);
 }
 
-// ---- verify_webhook_signature ----
+// verify_webhook_signature
 
 #[test]
 fn test_verify_webhook_signature_valid() {
@@ -918,7 +918,7 @@ fn test_verify_webhook_signature_correct_signature_succeeds_at_boundary() {
     ));
 }
 
-// ---- verify_webhook_signature_from_parts ----
+// verify_webhook_signature_from_parts
 
 /// 合法签名 + 合法时间戳字符串 → Ok
 #[test]
@@ -1059,7 +1059,7 @@ async fn test_failing_webhook_sender_send_with_status_returns_error() {
     assert!(result.is_err());
 }
 
-// ============ WebhookManagementService mocks ============
+// WebhookManagementService mocks
 
 /// 可配置的 Webhook 仓库 mock（内存存储）
 #[derive(Default)]
@@ -1291,7 +1291,7 @@ fn make_test_webhook(team_id: crate::domain::id::Id, url: &str) -> Webhook {
     Webhook::new(crate::domain::id::Id::generate(), team_id, url.to_string())
 }
 
-// ---- register_webhook ----
+// register_webhook
 
 #[tokio::test]
 async fn test_register_webhook_success_returns_webhook() {
@@ -1374,7 +1374,7 @@ async fn test_register_webhook_repo_failure_propagates() {
     );
 }
 
-// ---- trigger_webhook ----
+// trigger_webhook
 
 #[tokio::test]
 async fn test_trigger_webhook_success_sends_event() {
@@ -1456,7 +1456,7 @@ async fn test_trigger_webhook_send_failure_propagates() {
     );
 }
 
-// ---- trigger_webhook 状态回写可靠性 ----
+// trigger_webhook 状态回写可靠性
 
 #[tokio::test]
 async fn test_trigger_webhook_writeback_fails_once_then_retry_succeeds() {
@@ -1551,7 +1551,7 @@ async fn test_trigger_webhook_event_create_failure_propagates() {
     );
 }
 
-// ---- retry_failed ----
+// retry_failed
 
 #[tokio::test]
 async fn test_retry_failed_no_pending_returns_zero() {
@@ -1702,7 +1702,7 @@ async fn test_retry_failed_updates_event_status_on_success() {
     assert_eq!(updated.attempt_count, 1, "attempt_count should be 1");
 }
 
-// ---- list_webhooks ----
+// list_webhooks
 
 #[tokio::test]
 async fn test_list_webhooks_empty_returns_empty_vec() {

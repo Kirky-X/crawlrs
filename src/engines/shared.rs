@@ -60,7 +60,7 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
                     .map(|v4| is_private_ip(IpAddr::V4(v4)))
                     .unwrap_or(false)
                 // IPv4-compatible IPv6 (x.x.x.x, RFC 4291 deprecated) - bypass risk
-                // to_ipv4_mapped() does NOT cover this form; must check explicitly.
+                // to_ipv4_mapped does NOT cover this form; must check explicitly.
                 // Exclude ::/128 (unspecified) and ::1 (loopback) - already handled above.
                 || (segs[0..6] == [0, 0, 0, 0, 0, 0]
                     && (segs[6] != 0 || segs[7] != 0)
@@ -116,7 +116,7 @@ pub fn is_blocked_hostname(host: &str) -> bool {
         return true;
     }
 
-    // IPv6 host from url::Url::host_str() comes wrapped in brackets (e.g. "[::1]").
+    // IPv6 host from url::Url::host_str comes wrapped in brackets (e.g. "[::1]").
     // Strip brackets before parsing to IpAddr, otherwise parse fails and IPv6
     // IP checks are silently skipped (SSRF bypass vector).
     let host_for_parse = host_lower
@@ -213,7 +213,6 @@ mod tests {
     fn test_is_blocked_hostname() {
         let _blocked = get_blocked_hostnames();
 
-        // Check blocked hostnames
         assert!(is_blocked_hostname("localhost"));
         assert!(is_blocked_hostname("127.0.0.1"));
         assert!(is_blocked_hostname("169.254.169.254"));
@@ -223,7 +222,7 @@ mod tests {
         assert!(is_blocked_hostname("LOCALHOST"));
         assert!(is_blocked_hostname("LocalHost"));
 
-        // IPv6 hosts from url::Url::host_str() come bracketed; must still be detected
+        // IPv6 hosts from url::Url::host_str come bracketed; must still be detected
         assert!(is_blocked_hostname("[::1]"));
         assert!(is_blocked_hostname("[::ffff:127.0.0.1]"));
         assert!(is_blocked_hostname("[::127.0.0.1]"));

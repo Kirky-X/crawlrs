@@ -16,9 +16,7 @@ use url::Url;
 
 use super::{FilterContext, UrlFilter};
 
-// =============================================================================
 // DomainFilter
-// =============================================================================
 
 /// 域名过滤器
 ///
@@ -111,7 +109,7 @@ impl DomainFilter {
     /// - host 为空字符串
     fn extract_domain(url_str: &str) -> Option<String> {
         let parsed = Url::parse(url_str).ok()?;
-        // 使用 host() 而非 host_str()，因为 host_str() 包含端口号。
+        // 使用 host 而非 host_str，因为 host_str 包含端口号。
         // Host::Domain 变体仅返回域名部分（不含端口）。
         let host = match parsed.host()? {
             url::Host::Domain(domain) => domain,
@@ -151,9 +149,7 @@ impl UrlFilter for DomainFilter {
     }
 }
 
-// =============================================================================
 // ContentTypeFilter
-// =============================================================================
 
 /// Content-Type 过滤器
 ///
@@ -177,11 +173,11 @@ impl UrlFilter for DomainFilter {
 /// ```ignore
 /// use crate::workers::crawl::{ContentTypeFilter, FilterContext, UrlFilter};
 ///
-/// let filter = ContentTypeFilter::new(vec!["text/html".to_string()]);
-/// let ctx = FilterContext::new().with_content_type("text/html; charset=utf-8");
+/// let filter = ContentTypeFilter::new(vec!["text/html".to_string]);
+/// let ctx = FilterContext::new.with_content_type("text/html; charset=utf-8");
 /// assert!(filter.accept("https://example.com/page", &ctx));
 ///
-/// let ctx_pdf = FilterContext::new().with_content_type("application/pdf");
+/// let ctx_pdf = FilterContext::new.with_content_type("application/pdf");
 /// assert!(!filter.accept("https://example.com/doc.pdf", &ctx_pdf));
 /// ```
 #[derive(Debug, Clone)]
@@ -237,9 +233,7 @@ impl UrlFilter for ContentTypeFilter {
     }
 }
 
-// =============================================================================
 // UrlPatternFilter
-// =============================================================================
 
 /// URL 模式过滤器
 ///
@@ -394,7 +388,7 @@ mod tests {
     use crate::workers::crawl::{FilterChain, FilterContext};
     use std::sync::Arc;
 
-    // ============ DomainFilter ============
+    // DomainFilter
 
     #[test]
     fn domain_filter_same_domain_accepts_matching() {
@@ -486,7 +480,7 @@ mod tests {
         assert!(!filter.accept("https://FACEBOOK.com/share", &ctx));
     }
 
-    // ============ ContentTypeFilter ============
+    // ContentTypeFilter
 
     #[test]
     fn content_type_filter_html_only_accepts_html_source() {
@@ -537,7 +531,7 @@ mod tests {
         assert!(!filter.accept("https://example.com/api", &ctx_json));
     }
 
-    // ============ UrlPatternFilter ============
+    // UrlPatternFilter
 
     #[test]
     fn url_pattern_include_match_accepts() {
@@ -646,7 +640,7 @@ mod tests {
         assert_eq!(filter.exclude_count(), 1);
     }
 
-    // ============ FilterChain ============
+    // FilterChain
 
     #[test]
     fn filter_chain_empty_accepts_all() {
@@ -747,7 +741,7 @@ mod tests {
         assert!(!chain.accept("https://example.com/blog/post", &ctx_pdf));
     }
 
-    // ============ FilterContext ============
+    // FilterContext
 
     #[test]
     fn filter_context_builder_pattern() {

@@ -48,7 +48,6 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
             .map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string()))?
             .ok_or(GeoRestrictionRepositoryError::TeamNotFound(team_id))?;
 
-        // 解析 JSON 字段
         let allowed_countries = team_model
             .allowed_countries
             .and_then(|json| serde_json::from_value(json).ok());
@@ -125,7 +124,6 @@ impl GeoRestrictionRepository for DatabaseGeoRestrictionRepository {
                 )
             }));
 
-        // 更新记录
         active_model
             .update(conn)
             .await
@@ -249,7 +247,7 @@ mod error_path_tests {
         );
     }
 
-    // ========== GeoRestrictionRepositoryError variants ==========
+    // GeoRestrictionRepositoryError variants
 
     #[test]
     fn test_error_database_display() {
@@ -279,7 +277,7 @@ mod error_path_tests {
         assert_eq!(format!("{}", err), "Other error: something went wrong");
     }
 
-    // ========== TeamGeoRestrictions construction & defaults ==========
+    // TeamGeoRestrictions construction & defaults
 
     #[test]
     fn test_team_geo_restrictions_default() {
@@ -355,7 +353,7 @@ mod error_path_tests {
         assert_eq!(cloned.domain_blacklist, original.domain_blacklist);
     }
 
-    // ========== additional error path variants ==========
+    // additional error path variants
 
     #[tokio::test]
     async fn test_get_team_restrictions_with_nil_uuid_returns_team_not_found() {
@@ -492,7 +490,7 @@ mod error_path_tests {
         );
     }
 
-    // ========== error variant edge cases ==========
+    // error variant edge cases
 
     #[test]
     fn test_error_database_display_with_empty_message() {
@@ -535,8 +533,8 @@ mod error_path_tests {
         assert_eq!(format!("{}", err), "Other error: ");
     }
 
-    // ========== Production conversion path: dbnexus::sea_orm::DbErr -> Database(msg) ==========
-    // 验证 map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string())) 路径
+    // Production conversion path: dbnexus::sea_orm::DbErr -> Database(msg)
+    // 验证 map_err(|e| GeoRestrictionRepositoryError::Database(e.to_string)) 路径
     // 对各种 DbErr 变体的转换行为
 
     #[test]
@@ -890,7 +888,7 @@ mod error_path_tests {
         ));
     }
 
-    // ========== Additional error variant Display tests ==========
+    // Additional error variant Display tests
 
     #[test]
     fn test_error_other_display_with_long_message() {
@@ -933,7 +931,7 @@ mod error_path_tests {
         }
     }
 
-    // ========== Additional boundary tests for repository methods ==========
+    // Additional boundary tests for repository methods
 
     #[tokio::test]
     async fn test_get_team_restrictions_with_max_uuid_returns_team_not_found() {

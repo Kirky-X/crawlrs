@@ -4,7 +4,7 @@
 //! trait-kit 模块定义 — 接管所有 DI 组件的构建。
 //!
 //! 每个模块实现 `ModuleMeta` + `AsyncAutoBuilder`，通过 `AsyncKit` 注册和构建。
-//! 模块间通过 `kit.require::<DepModule>()` 实现依赖注入。
+//! 模块间通过 `kit.require::<DepModule>` 实现依赖注入。
 //!
 //! # 模块依赖图
 //!
@@ -19,9 +19,7 @@
 //!                 └── ServiceModule → ServicesComponents (dep: Infrastructure, Engine, Settings)
 //! ```
 
-// ---------------------------------------------------------------------------
 // 子模块声明
-// ---------------------------------------------------------------------------
 
 pub mod cache_module;
 pub mod database_module;
@@ -33,9 +31,7 @@ pub mod repository_module;
 pub mod service_module;
 pub mod settings_module;
 
-// ---------------------------------------------------------------------------
 // Re-export — 保持所有原有公共路径可用
-// ---------------------------------------------------------------------------
 
 pub use cache_module::CacheModule;
 pub use database_module::DatabaseModule;
@@ -47,9 +43,7 @@ pub use repository_module::RepositoryModule;
 pub use service_module::ServiceModule;
 pub use settings_module::SettingsModule;
 
-// ---------------------------------------------------------------------------
 // 共享类型
-// ---------------------------------------------------------------------------
 
 use trait_kit::TraitKitError;
 
@@ -106,9 +100,7 @@ pub struct CacheComponents {
     pub concurrency_controller: Arc<ConcurrencyController>,
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

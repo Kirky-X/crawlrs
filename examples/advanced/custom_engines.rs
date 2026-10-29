@@ -81,7 +81,6 @@ impl CustomHttpEngine {
     ) -> Result<ScrapeResponse, CustomEngineError> {
         info!("Engine '{}' scraping: {}", self.name, request.url);
 
-        // 验证 URL
         if !request.url.starts_with("http://") && !request.url.starts_with("https://") {
             return Err(CustomEngineError::InvalidUrl(request.url.clone()));
         }
@@ -89,7 +88,6 @@ impl CustomHttpEngine {
         // 模拟异步爬取延迟
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        // 构建响应
         let response = ScrapeResponse {
             url: request.url.clone(),
             status_code: 200,
@@ -118,11 +116,9 @@ async fn main() {
 
     info!("=== 自定义引擎集成示例 ===\n");
 
-    // 创建引擎
     let engine = CustomHttpEngine::new("MyCustomHttp");
     info!("Created engine: {}", engine.name());
 
-    // 创建请求
     let request = ScrapeRequest {
         url: "https://example.com/page1".to_string(),
         timeout_ms: 30000,

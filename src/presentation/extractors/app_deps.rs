@@ -122,7 +122,7 @@ mod tests {
     };
     use crate::queue::task_queue::QueueError;
 
-    // --- Mock types ---
+    // Mock types
 
     struct MockTaskQueue;
 
@@ -357,7 +357,7 @@ mod tests {
     #[async_trait]
     impl RateLimitingService for MockRateLimitService {}
 
-    // --- Helper ---
+    // Helper
 
     fn make_parts_with_extensions() -> Parts {
         let request = Request::builder().body(()).unwrap();
@@ -385,7 +385,7 @@ mod tests {
         parts
     }
 
-    // ========== Tests ==========
+    // Tests
 
     #[tokio::test]
     async fn test_app_deps_extracts_all_fields() {

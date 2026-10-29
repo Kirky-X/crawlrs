@@ -202,7 +202,7 @@ impl std::fmt::Debug for TabPool {
 mod tests {
     use super::*;
 
-    // ============ 构造与基础属性 ============
+    // 构造与基础属性
 
     #[test]
     fn new_pool_is_empty() {
@@ -243,7 +243,7 @@ mod tests {
         assert!(s.contains("10"));
     }
 
-    // ============ clear ============
+    // clear
 
     #[test]
     fn clear_empty_pool_no_op() {
@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(pool.pool_size(), 0);
     }
 
-    // ============ is_full 边界 ============
+    // is_full 边界
 
     #[test]
     fn is_full_when_size_equals_max() {
@@ -276,7 +276,7 @@ mod tests {
         assert!(!pool2.is_full());
     }
 
-    // ============ 常量 ============
+    // 常量
 
     #[test]
     fn reset_navigation_timeout_is_5s() {

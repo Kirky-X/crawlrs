@@ -250,7 +250,6 @@ impl PlaywrightBrowserManagerComponent {
     async fn get_or_init_browser(&self) -> Result<Arc<Browser>, EngineError> {
         let test_mode = self.config.is_test_mode();
 
-        // 尝试获取现有的浏览器实例
         let browser_to_check = {
             let browser_guard = self.browser.lock().expect("Browser mutex poisoned");
             browser_guard.as_ref().map(Arc::clone)
@@ -299,7 +298,7 @@ impl PlaywrightBrowserManagerComponent {
                 //
                 // 1. `validate_proxy_url` 严格校验 URL 格式 + scheme 白名单 + 无空白字符
                 // 2. `arg("--proxy-server").arg(validated)` 分离传递 flag 与值，
-                //    从根本上消除单字符串拼接导致的 argv 拆分风险
+                // 从根本上消除单字符串拼接导致的 argv 拆分风险
                 // 3. `redact_proxy_url` 脱敏日志输出，避免 user:pass 凭证泄露
                 const ALLOWED_PROXY_SCHEMES: &[&str] = &["http", "https", "socks5", "socks4"];
                 let validated = validate_proxy_url(proxy, ALLOWED_PROXY_SCHEMES)
@@ -360,7 +359,6 @@ impl PlaywrightBrowserManagerComponent {
             return Ok(Some(path));
         }
 
-        // 检查是否已下载
         if self.download_manager.is_browser_downloaded().await {
             let path = crate::engines::browser_downloader::get_browser_executable_path(
                 self.download_manager.get_cache_dir(),
@@ -491,13 +489,12 @@ impl PlaywrightEngine {
             return pool.clone();
         }
 
-        // 尝试使用全局池
         if let Some(pool) = get_global_pool() {
             return pool.clone();
         }
 
         // 创建临时池（不推荐，应该使用全局池）
-        // SEC-001: 使用 docker_safe_args() 确保容器环境下自动添加 --no-sandbox
+        // : 使用 docker_safe_args 确保容器环境下自动添加 --no-sandbox
         let config = BrowserPoolConfig::docker_safe_args();
         let browser_config = Arc::new(
             crate::infrastructure::services::config_service::BrowserConfigComponent::default(),
@@ -639,7 +636,6 @@ impl ScraperEngine for PlaywrightEngine {
         let start = Instant::now();
         let timeout_duration = request.timeout;
 
-        // 获取浏览器池
         let pool = self.get_or_init_pool();
 
         // Wrap the entire operation in a timeout
@@ -662,7 +658,6 @@ impl ScraperEngine for PlaywrightEngine {
             // 一套（此前 mllm 裸 goto，是全引擎里唯一没化妆的检测点）
             apply_browser_fingerprint(&page, &self.ua_pool, request.mobile).await?;
 
-            // 设置自定义 Headers
             if !request.headers.is_empty() {
                 // 如果 chromiumoxide 的 API 限制太多，我们暂时记录日志并跳过，
                 // 或在未来版本中寻找更底层的 CDP 调用方式
@@ -778,7 +773,6 @@ impl ScraperEngine for PlaywrightEngine {
                 // Still return the content, let the parser handle it
             }
 
-            // 执行页面交互动作
             for action in &request.actions {
                 match action {
                     InternalPageAction::Wait { milliseconds } => {
@@ -894,7 +888,6 @@ impl ScraperEngine for PlaywrightEngine {
                 headers
             };
 
-            // Handle screenshot if requested
             let mut screenshot: Option<String> = None;
 
             if request.needs_screenshot {
@@ -940,7 +933,7 @@ impl ScraperEngine for PlaywrightEngine {
                 screenshot = Some(BASE64.encode(screenshot_bytes));
             }
 
-            // 不调用 page.close()，让 pooled_page drop 时按归还模式收尾：
+            // 不调用 page.close，让 pooled_page drop 时按归还模式收尾：
             // 复用页归还 TabPool（导航 about:blank 后压栈），隔离页销毁整个
             // BrowserContext。Browser 也在 pooled_page drop 时归还到 BrowserPool
             drop(pooled_page);
@@ -1330,7 +1323,7 @@ mod tests {
         assert_eq!(engine.support_score(&request_basic), 10);
     }
 
-    // === UaPool 集成测试 ===
+    // UaPool 集成测试
 
     #[test]
     fn test_playwright_engine_has_non_empty_ua_pool() {
@@ -1472,7 +1465,7 @@ mod tests {
         );
     }
 
-    // === XHR/Fetch 捕获配置（F6） ===
+    // XHR/Fetch 捕获配置（F6）
 
     #[test]
     fn test_playwright_engine_xhr_capture_disabled_by_default() {
@@ -1496,10 +1489,10 @@ mod tests {
         assert_eq!(config.max_responses, 7);
     }
 
-    // === F6 XHR/Fetch 捕获 e2e（需本机 Chrome，`#[ignore]` 门控） ===
+    // F6 XHR/Fetch 捕获 e2e（需本机 Chrome，`#[ignore]` 门控）
     //
-    // scrape() 入口强制 SSRF 校验（loopback 被拒，属安全设计不可削弱），无法直达
-    // 本地 mock 服务器；因此 e2e 直接驱动 scrape() 内部的 XhrCaptureSession（同一
+    // scrape 入口强制 SSRF 校验（loopback 被拒，属安全设计不可削弱），无法直达
+    // 本地 mock 服务器；因此 e2e 直接驱动 scrape 内部的 XhrCaptureSession（同一
     // 份捕获代码）+ 真实 Chromium 页面，验证 CDP Network 事件流捕获全链路。
     //
     // 运行: cargo test --features full --lib xhr_capture_e2e -- --ignored --test-threads=1

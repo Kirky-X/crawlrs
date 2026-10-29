@@ -14,11 +14,11 @@
 //! use crawlrs::utils::text_processing::{process_web_content, process_crawled_content};
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main -> Result<, Box<dyn std::error::Error>> {
 //!     let html = b"<html><body><p>Hello, World!</p></body></html>";
 //!     let processed = process_web_content(html, Some("text/html"))?;
 //!     println!("Extracted: {}", processed.extracted_text);
-//!     Ok(())
+//!     Ok()
 //! }
 //! ```
 
@@ -49,7 +49,7 @@ pub fn health_check() -> Result<(), String> {
 mod tests {
     use super::*;
 
-    // ========== health_check tests ==========
+    // health_check tests
 
     #[test]
     fn test_health_check_returns_ok_with_valid_content() {
@@ -64,11 +64,11 @@ mod tests {
     fn test_health_check_ok_value_is_unit() {
         let result = health_check();
         assert!(result.is_ok());
-        // Verify the Ok variant carries unit ()
+        // Verify the Ok variant carries unit
         result.expect("health_check should succeed");
     }
 
-    // ========== TextEncodingProcessor (re-exported) tests ==========
+    // TextEncodingProcessor (re-exported) tests
 
     #[test]
     fn test_text_encoding_processor_new_does_not_panic() {
@@ -106,7 +106,7 @@ mod tests {
         assert!(result.is_ok(), "process_text should succeed on empty input");
     }
 
-    // ========== re-exports presence tests ==========
+    // re-exports presence tests
 
     #[test]
     fn test_process_with_processor_is_callable() {

@@ -80,7 +80,7 @@ mod tests {
         }
     }
 
-    // ========== init_telemetry tests ==========
+    // init_telemetry tests
 
     #[tokio::test]
     async fn test_init_telemetry_succeeds_with_console_only() {
@@ -113,7 +113,7 @@ mod tests {
         drop(manager);
     }
 
-    // ========== init_metrics tests ==========
+    // init_metrics tests
 
     #[cfg(feature = "metrics")]
     #[tokio::test]
@@ -123,7 +123,7 @@ mod tests {
         init_metrics();
     }
 
-    // ========== init_all tests ==========
+    // init_all tests
 
     #[tokio::test]
     async fn test_init_all_succeeds_with_console_only() {

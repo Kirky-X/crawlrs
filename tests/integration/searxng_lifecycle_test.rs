@@ -284,7 +284,7 @@ async fn test_full_lifecycle_collect_probe_failover_promote() {
         settings,
     ));
 
-    // ---- 1. 采集：4 个实例进入登记簿（candidate）----
+    // 1. 采集：4 个实例进入登记簿（candidate）
     let report = service.collect().await.expect("collect round");
     assert_eq!(report.fetched, 4);
     assert_eq!(report.admitted_new, 4);
@@ -298,7 +298,7 @@ async fn test_full_lifecycle_collect_probe_failover_promote() {
     }
     assert_eq!(count_test_rows(&app.db_pool).await, 4);
 
-    // ---- 2. 启动期重建：探活通过 3 个入池，D 留作候补 ----
+    // 2. 启动期重建：探活通过 3 个入池，D 留作候补
     service.bootstrap().await;
     let snapshot = service.pool_snapshot().await;
     assert_eq!(snapshot.members.len(), 3, "pool must reach pool_target");
@@ -316,7 +316,7 @@ async fn test_full_lifecycle_collect_probe_failover_promote() {
         "the 4th instance (lowest uptime) must stay a candidate"
     );
 
-    // ---- 3. 搜索引擎：实例 A 注入 429 → 自动切换到 B 并成功 ----
+    // 3. 搜索引擎：实例 A 注入 429 → 自动切换到 B 并成功
     let engine = SearxngSearchEngine::new(
         service.clone(),
         transport.clone(),
@@ -348,7 +348,7 @@ async fn test_full_lifecycle_collect_probe_failover_promote() {
     assert_eq!(a_row.consecutive_failures, 1);
     assert!(a_row.last_error.is_some());
 
-    // ---- 4. A 再失败一次 → 逐出 + cooldown，候补 D 异步晋升回池 ----
+    // 4. A 再失败一次 → 逐出 + cooldown，候补 D 异步晋升回池
     service
         .report(
             &instance_url(HOST_A),
@@ -378,7 +378,7 @@ async fn test_full_lifecycle_collect_probe_failover_promote() {
         "evicted instance must not stay in the pool"
     );
 
-    // ---- 5. 采集轮幂等：数据集未变 → 只更新不新增，行数不增 ----
+    // 5. 采集轮幂等：数据集未变 → 只更新不新增，行数不增
     let second = service.collect().await.expect("second collect");
     assert_eq!(second.admitted_new, 0);
     assert_eq!(second.updated, 4);
@@ -388,7 +388,7 @@ async fn test_full_lifecycle_collect_probe_failover_promote() {
         "idempotent upsert must not create duplicate rows"
     );
 
-    // ---- 6. 状态机终态断言 ----
+    // 6. 状态机终态断言
     assert_eq!(
         instance_state(&repo, HOST_B).await,
         SearxngInstanceState::Active

@@ -19,9 +19,7 @@
 use super::scorers::KeywordRelevanceScorer;
 use super::{ScoringContext, UrlScorer};
 
-// =============================================================================
 // StrategyResult
-// =============================================================================
 
 /// 自适应策略评估结果
 ///
@@ -45,9 +43,7 @@ pub struct StrategyResult {
     pub saturation: f32,
 }
 
-// =============================================================================
 // AdaptiveContext
-// =============================================================================
 
 /// 自适应评估上下文
 ///
@@ -94,9 +90,7 @@ impl AdaptiveContext {
     }
 }
 
-// =============================================================================
 // AdaptiveStrategy
-// =============================================================================
 
 /// 自适应策略
 ///
@@ -114,15 +108,15 @@ impl AdaptiveContext {
 /// ```ignore
 /// use crate::workers::crawl::adaptive::{AdaptiveContext, AdaptiveStrategy};
 ///
-/// let ctx = AdaptiveContext::new()
-///     .with_crawled_urls(vec!["https://example.com/rust".to_string()])
-///     .with_keywords(vec!["rust".to_string(), "crawler".to_string()])
+/// let ctx = AdaptiveContext::new
+///     .with_crawled_urls(vec!["https://example.com/rust".to_string])
+///     .with_keywords(vec!["rust".to_string, "crawler".to_string])
 ///     .with_link_stats(10, 3);
 ///
 /// let result = AdaptiveStrategy::evaluate(&ctx);
 /// assert!(result.confidence > 0.0);
 /// assert!(result.coverage > 0.0);
-/// assert!((result.saturation - 0.3).abs() < 1e-6);
+/// assert!((result.saturation - 0.3).abs < 1e-6);
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct AdaptiveStrategy;
@@ -203,9 +197,7 @@ impl AdaptiveStrategy {
     }
 }
 
-// =============================================================================
 // StopReason
-// =============================================================================
 
 /// 停止原因
 ///
@@ -276,9 +268,7 @@ impl StopReason {
     }
 }
 
-// =============================================================================
 // CrawlStats
-// =============================================================================
 
 /// 爬取统计
 ///
@@ -331,9 +321,7 @@ impl CrawlStats {
     }
 }
 
-// =============================================================================
 // StopCondition
-// =============================================================================
 
 /// 停止条件
 ///
@@ -351,18 +339,18 @@ impl CrawlStats {
 ///     CrawlStats, StopCondition, StrategyResult,
 /// };
 ///
-/// let condition = StopCondition::new()
+/// let condition = StopCondition::new
 ///     .with_max_pages(100)
 ///     .with_min_confidence(0.8)
 ///     .with_saturation_threshold(0.1);
 ///
-/// let stats = CrawlStats::new()
+/// let stats = CrawlStats::new
 ///     .with_pages(50)
 ///     .with_pending(10)
 ///     .with_result(StrategyResult { confidence: 0.9, coverage: 0.8, saturation: 0.3 });
 ///
 /// // confidence >= 0.8 → 停止
-/// assert!(condition.should_stop(&stats).is_some());
+/// assert!(condition.should_stop(&stats).is_some);
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct StopCondition {
@@ -468,9 +456,7 @@ impl StopCondition {
     }
 }
 
-// =============================================================================
 // DRL 配置
-// =============================================================================
 
 /// DRL 策略配置
 ///
@@ -519,7 +505,7 @@ impl DrlConfig {
 mod tests {
     use super::*;
 
-    // ============ AdaptiveStrategy ============
+    // AdaptiveStrategy
 
     #[test]
     fn adaptive_confidence_empty_urls_returns_zero() {
@@ -647,7 +633,7 @@ mod tests {
         assert!((result.saturation - 0.25).abs() < 1e-6);
     }
 
-    // ============ StopCondition ============
+    // StopCondition
 
     #[test]
     fn stop_condition_empty_never_stops() {

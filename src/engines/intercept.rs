@@ -21,8 +21,8 @@
 //! # 集成位置
 //!
 //! 在 [`crate::engines::client::playwright::PlaywrightEngine`] 中：
-//! 1. `page.execute(FetchEnableParams::default())` 启用请求暂停事件
-//! 2. `page.event_listener::<EventRequestPaused>()` 获取事件流
+//! 1. `page.execute(FetchEnableParams::default)` 启用请求暂停事件
+//! 2. `page.event_listener::<EventRequestPaused>` 获取事件流
 //! 3. 对每个事件调用 [`InterceptController::should_block`] 判断是否拦截
 //! 4. 命中则 `page.execute(FailRequestParams::new(..., BlockedByClient))`
 //!    否则 `page.execute(ContinueRequestParams::new(...))`
@@ -164,8 +164,8 @@ pub const MEDIA_RESOURCE_KINDS: &[ResourceKind] =
 /// let ctrl = InterceptController::new(true, false);
 /// assert!(ctrl.should_block_ad_domain("https://doubleclick.net/pixel.gif"));
 /// assert!(!ctrl.should_block_ad_domain("https://example.com/index.html"));
-/// ctrl.record_block();
-/// assert_eq!(ctrl.intercepted_count(), 1);
+/// ctrl.record_block;
+/// assert_eq!(ctrl.intercepted_count, 1);
 /// ```
 #[derive(Debug)]
 pub struct InterceptController {
@@ -287,7 +287,7 @@ pub const BLOCK_REASON: ErrorReason = ErrorReason::BlockedByClient;
 mod tests {
     use super::*;
 
-    // === AD_DOMAIN_BLACKLIST 完整性 ===
+    // AD_DOMAIN_BLACKLIST 完整性
 
     #[test]
     fn ad_domain_blacklist_has_at_least_20_entries() {
@@ -340,7 +340,7 @@ mod tests {
         assert_eq!(dedup_count, 0, "AD_DOMAIN_BLACKLIST has duplicates");
     }
 
-    // === should_block_ad_domain ===
+    // should_block_ad_domain
 
     #[test]
     fn should_block_ad_domain_doubleclick() {
@@ -393,7 +393,7 @@ mod tests {
         assert!(!ctrl.should_block_ad_domain(""));
     }
 
-    // === should_block_media ===
+    // should_block_media
 
     #[test]
     fn should_block_media_image_when_enabled() {
@@ -440,7 +440,7 @@ mod tests {
         assert!(!ctrl.should_block_media(None));
     }
 
-    // === should_block（综合判断）===
+    // should_block（综合判断）
 
     #[test]
     fn should_block_ads_blacklist_hit_returns_true() {
@@ -499,7 +499,7 @@ mod tests {
         ));
     }
 
-    // === record_block / intercepted_count ===
+    // record_block / intercepted_count
 
     #[test]
     fn record_block_increments_count() {
@@ -536,7 +536,7 @@ mod tests {
         assert_eq!(ctrl.intercepted_count(), 400);
     }
 
-    // === new / default / clone ===
+    // new / default / clone
 
     #[test]
     fn new_with_both_disabled() {
@@ -585,7 +585,7 @@ mod tests {
         );
     }
 
-    // === BLOCK_REASON ===
+    // BLOCK_REASON
 
     #[test]
     fn block_reason_is_blocked_by_client() {
@@ -593,7 +593,7 @@ mod tests {
         assert_eq!(BLOCK_REASON, ErrorReason::BlockedByClient);
     }
 
-    // === MEDIA_RESOURCE_KINDS ===
+    // MEDIA_RESOURCE_KINDS
 
     #[test]
     fn media_resource_kinds_contains_image_media_font() {
@@ -603,7 +603,7 @@ mod tests {
         assert_eq!(MEDIA_RESOURCE_KINDS.len(), 3);
     }
 
-    // === 端到端：典型广告请求场景 ===
+    // 端到端：典型广告请求场景
 
     #[test]
     fn end_to_end_doubleclick_pixel_blocked_and_counted() {
@@ -656,7 +656,7 @@ mod tests {
         assert!(ctrl.should_block("https://example.com/product.png", Some(ResourceKind::Image)));
     }
 
-    // === From<ResourceType> for ResourceKind 适配器测试 ===
+    // From<ResourceType> for ResourceKind 适配器测试
 
     #[test]
     fn from_resource_type_maps_known_variants() {

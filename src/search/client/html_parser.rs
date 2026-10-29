@@ -336,7 +336,7 @@ mod tests {
         assert!(!ua2.is_empty());
     }
 
-    // ========== clean_url 边界情况补充 ==========
+    // clean_url 边界情况补充
 
     #[test]
     fn test_clean_url_google_url_no_extra_params() {
@@ -365,7 +365,7 @@ mod tests {
         assert_eq!(HtmlParser::clean_url(url), "https://example.com");
     }
 
-    // ========== escape_html 补充测试 ==========
+    // escape_html 补充测试
 
     #[test]
     fn test_escape_html_plain_text_unchanged() {
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(HtmlParser::escape_html(text), "content with spaces");
     }
 
-    // ========== parse 补充测试 ==========
+    // parse 补充测试
 
     #[test]
     fn test_parse_empty_html_returns_empty() {
@@ -556,7 +556,7 @@ mod tests {
         assert_eq!(results[0].engine, SearchEngineType::Baidu);
     }
 
-    // ========== 百度中转链接（link?url=）解包测试 ==========
+    // 百度中转链接（link?url=）解包测试
 
     #[test]
     fn test_parse_baidu_redirect_unwraps_mu_attribute() {
@@ -684,7 +684,7 @@ mod tests {
         assert_eq!(results[1].url, "http://example.org/another");
     }
 
-    // ========== UserAgentManager 补充测试 ==========
+    // UserAgentManager 补充测试
 
     #[test]
     fn test_user_agent_manager_round_robin_wraps_around() {

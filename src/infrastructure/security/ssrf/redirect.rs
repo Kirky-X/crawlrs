@@ -191,17 +191,15 @@ impl RedirectValidator {
     ///
     /// # Returns
     ///
-    /// * `Ok(())` - Redirect is allowed
+    /// * `Ok()` - Redirect is allowed
     /// * `Err(SsrfError)` - Redirect is blocked
     pub fn validate(&mut self, redirect_url: &str, current_count: u8) -> Result<(), SsrfError> {
-        // Check if redirects are allowed
         if !self.policy.allows_redirects() {
             return Err(SsrfError::ValidationFailed(
                 "Redirects are not allowed by policy".to_string(),
             ));
         }
 
-        // Check redirect count
         let max_redirects = self.policy.max_redirects();
         if current_count >= max_redirects {
             return Err(SsrfError::MaxRedirectsExceeded {
@@ -209,20 +207,17 @@ impl RedirectValidator {
             });
         }
 
-        // Parse redirect URL
         let parsed_url = Url::parse(redirect_url).map_err(|e| SsrfError::InvalidUrl {
             url: redirect_url.to_string(),
             reason: e.to_string(),
         })?;
 
-        // Check for internal URL
         if is_internal_url(redirect_url) {
             return Err(SsrfError::RedirectToInternal {
                 url: redirect_url.to_string(),
             });
         }
 
-        // Check scheme
         match parsed_url.scheme() {
             "http" | "https" => {}
             scheme => {
@@ -232,7 +227,6 @@ impl RedirectValidator {
             }
         }
 
-        // Get redirect host
         let redirect_host = parsed_url
             .host_str()
             .ok_or_else(|| SsrfError::MissingHost {
@@ -410,14 +404,12 @@ mod tests {
     fn test_redirect_validator_reset() {
         let mut validator = RedirectValidator::new();
 
-        // Add some state
         validator.validate("http://example.com", 0).unwrap();
         validator.validate("http://example.org", 1).unwrap();
 
         assert!(!validator.redirect_chain.is_empty());
         assert!(!validator.visited_hosts.is_empty());
 
-        // Reset
         validator.reset();
 
         assert!(validator.redirect_chain.is_empty());
@@ -508,9 +500,7 @@ mod tests {
         assert!(validator.visited_hosts().contains("example.com"));
     }
 
-    // =========================================================================
     // Supplementary tests: validate edge cases, scheme/host validation
-    // =========================================================================
 
     #[test]
     fn test_validate_rejects_invalid_scheme_ftp() {
@@ -567,14 +557,14 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_missing_host() {
-        // "http:///path" parses successfully but host_str() returns Some("")
+        // "http:///path" parses successfully but host_str returns Some("")
         // (empty string) for http/https schemes in the url crate, not None.
         // This means the MissingHost error path is not triggered for
         // http/https URLs. The validate method returns Ok.
         // This test documents the actual behavior: empty-host URLs pass.
         let mut validator = RedirectValidator::new();
         let result = validator.validate("http:///path", 0);
-        // host_str() returns Some(""), so MissingHost is not triggered.
+        // host_str returns Some(""), so MissingHost is not triggered.
         // The validator accepts this URL (empty host is not checked).
         assert!(
             result.is_ok(),
@@ -591,7 +581,7 @@ mod tests {
         // the same-host check is skipped (the `if let Some(ref original)`
         // branch where original is None). Any external URL should be allowed.
         let mut validator = RedirectValidator::with_policy(RedirectPolicy::same_host_only(10));
-        // Note: no with_original_url() call, so original_host is None.
+        // Note: no with_original_url call, so original_host is None.
         let result = validator.validate("http://example.com", 0);
         assert!(
             result.is_ok(),

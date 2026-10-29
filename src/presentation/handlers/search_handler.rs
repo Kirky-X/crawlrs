@@ -217,7 +217,7 @@ mod tests {
     use crate::domain::repositories::credits_repository::CreditsRepositoryError;
     use crate::domain::repositories::task_repository::RepositoryError;
 
-    // ========== From<SearchServiceError> mapping tests ==========
+    // From<SearchServiceError> mapping tests
 
     #[test]
     fn test_validation_error_maps_to_bad_request() {
@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(msg, "rate limited by Google");
     }
 
-    // ========== SearchRequestDto construction tests ==========
+    // SearchRequestDto construction tests
 
     #[test]
     fn test_search_request_dto_minimal() {
@@ -420,7 +420,7 @@ mod tests {
         assert!(config.max_concurrency.is_none());
     }
 
-    // ========== SearchResponseDto construction ==========
+    // SearchResponseDto construction
 
     #[test]
     fn test_search_response_dto_construction() {
@@ -474,7 +474,7 @@ mod tests {
         assert!(parsed["results"][1]["description"].is_null());
     }
 
-    // ========== SearchResultDto tests ==========
+    // SearchResultDto tests
 
     #[test]
     fn test_search_result_dto_serialization() {
@@ -558,7 +558,7 @@ mod tests {
         assert!(result.engine.is_none());
     }
 
-    // ========== SearchQuery construction ==========
+    // SearchQuery construction
 
     #[test]
     fn test_search_query_from_dto_no_crawl_config() {
@@ -722,7 +722,7 @@ mod tests {
         assert!(config.headers.is_some());
     }
 
-    // ========== Additional From<SearchServiceError> tests ==========
+    // Additional From<SearchServiceError> tests
 
     #[test]
     fn test_validation_error_empty_message() {
@@ -801,7 +801,7 @@ mod tests {
         let _ = team_id; // suppress unused warning
     }
 
-    // ========== sync_wait_ms default logic ==========
+    // sync_wait_ms default logic
 
     #[test]
     fn test_sync_wait_ms_default_when_none() {
@@ -869,7 +869,7 @@ mod tests {
         assert_eq!(sync_wait_ms, 0);
     }
 
-    // ========== SearchResponseDto deserialization ==========
+    // SearchResponseDto deserialization
 
     #[test]
     fn test_search_response_dto_deserialization() {
@@ -920,7 +920,7 @@ mod tests {
         assert_eq!(dto.results[1].description, None);
     }
 
-    // ========== SearchResponseDto serialization roundtrip ==========
+    // SearchResponseDto serialization roundtrip
 
     #[test]
     fn test_search_response_dto_serialization_roundtrip() {
@@ -947,7 +947,7 @@ mod tests {
         assert_eq!(deserialized.credits_used, 7);
     }
 
-    // ========== SearchServiceError Display trait ==========
+    // SearchServiceError Display trait
 
     #[test]
     fn test_search_service_error_validation_display() {
@@ -983,7 +983,7 @@ mod tests {
         assert!(display.contains("engine timeout"));
     }
 
-    // ========== SearchRequestDto with empty query ==========
+    // SearchRequestDto with empty query
 
     #[test]
     fn test_search_request_dto_empty_query() {
@@ -1006,7 +1006,7 @@ mod tests {
         assert_eq!(dto.query.len(), 1000);
     }
 
-    // ========== SearchRequestDto with special characters ==========
+    // SearchRequestDto with special characters
 
     #[test]
     fn test_search_request_dto_with_unicode_query() {
@@ -1030,7 +1030,7 @@ mod tests {
         assert!(dto.query.contains("<html>"));
     }
 
-    // ========== SearchRequestDto with limit edge cases ==========
+    // SearchRequestDto with limit edge cases
 
     #[test]
     fn test_search_request_dto_with_limit_zero() {
@@ -1052,7 +1052,7 @@ mod tests {
         assert_eq!(dto.limit, Some(u32::MAX));
     }
 
-    // ========== SearchQuery with all fields None ==========
+    // SearchQuery with all fields None
 
     #[test]
     fn test_search_query_all_none() {
@@ -1074,7 +1074,7 @@ mod tests {
         assert!(search_query.crawl_config.is_none());
     }
 
-    // ========== crawl_config conversion with extraction_rules ==========
+    // crawl_config conversion with extraction_rules
 
     #[test]
     fn test_search_query_from_dto_with_crawl_config_extraction_rules() {
@@ -1134,7 +1134,7 @@ mod tests {
         assert!(config.extraction_rules.is_some());
     }
 
-    // ========== SearchRequestDto with multiple sources ==========
+    // SearchRequestDto with multiple sources
 
     #[test]
     fn test_search_request_dto_with_multiple_sources() {
@@ -1149,7 +1149,7 @@ mod tests {
         assert_eq!(dto.sources.as_ref().unwrap().len(), 4);
     }
 
-    // ========== SearchRequestDto with crawl_results false ==========
+    // SearchRequestDto with crawl_results false
 
     #[test]
     fn test_search_request_dto_crawl_results_false_no_crawl_config() {
@@ -1162,7 +1162,7 @@ mod tests {
         assert!(dto.crawl_config.is_none());
     }
 
-    // ========== From<SearchServiceError> with specific messages ==========
+    // From<SearchServiceError> with specific messages
 
     #[test]
     fn test_validation_error_with_special_characters() {
@@ -1188,7 +1188,7 @@ mod tests {
         assert!(msg.contains("https://google.com"));
     }
 
-    // ========== SearchResponseDto with empty results ==========
+    // SearchResponseDto with empty results
 
     #[test]
     fn test_search_response_dto_empty_results() {
@@ -1206,7 +1206,7 @@ mod tests {
         assert_eq!(parsed["results"].as_array().unwrap().len(), 0);
     }
 
-    // ========== SearchRequestDto serialization ==========
+    // SearchRequestDto serialization
 
     #[test]
     fn test_search_request_dto_serialization() {
@@ -1233,7 +1233,7 @@ mod tests {
         assert_eq!(parsed["sync_wait_ms"], 3000);
     }
 
-    // ========== Handler test infrastructure ==========
+    // Handler test infrastructure
 
     use crate::domain::auth::ApiKeyScope;
     use crate::domain::models::{CreditsTransactionType, Task, TaskStatus, TaskType};
@@ -1336,8 +1336,6 @@ mod tests {
         }
     }
 
-    // ========== MockSearchService ==========
-
     struct MockSearchService {
         search_result: Mutex<Option<Result<DomainSearchResponse, SearchServiceError>>>,
     }
@@ -1377,8 +1375,6 @@ mod tests {
                 .expect("MockSearchService::search called but no result configured")
         }
     }
-
-    // ========== MockTaskRepository ==========
 
     #[allow(clippy::type_complexity)]
     struct MockTaskRepository {
@@ -1538,8 +1534,6 @@ mod tests {
         }
     }
 
-    // ========== MockRateLimitingService ==========
-
     struct MockRateLimitingService {
         rate_limit_result: RateLimitResult,
     }
@@ -1682,7 +1676,7 @@ mod tests {
 
     impl RateLimitingService for MockRateLimitingService {}
 
-    // ========== search handler success path tests ==========
+    // search handler success path tests
 
     #[tokio::test]
     async fn test_search_handler_success_no_crawl_id() {
@@ -1915,7 +1909,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    // ========== search handler rate limiting tests ==========
+    // search handler rate limiting tests
 
     #[tokio::test]
     async fn test_search_handler_rate_limited_denied() {
@@ -1969,7 +1963,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
-    // ========== search handler service error tests ==========
+    // search handler service error tests
 
     #[tokio::test]
     async fn test_search_handler_validation_error() {

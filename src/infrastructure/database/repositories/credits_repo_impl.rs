@@ -235,7 +235,6 @@ impl CreditsRepository for CreditsRepositoryImpl {
             .connection()
             .map_err(|e| CreditsRepositoryError::DatabaseError(e.to_string()))?;
 
-        // Check if credits already exist
         let existing = credits::Entity::find()
             .filter(credits::Column::TeamId.eq(team_id))
             .one(conn)
@@ -246,7 +245,6 @@ impl CreditsRepository for CreditsRepositoryImpl {
             return Ok(credits.balance);
         }
 
-        // Create new credits record
         let credits = credits::ActiveModel {
             id: Set(crate::domain::id::Id::generate().into()),
             team_id: Set(team_id.into()),
@@ -269,9 +267,7 @@ mod tests {
     use super::*;
     use crate::common::test_helpers::create_test_db_pool;
 
-    // ============================================================
     // Construction tests
-    // ============================================================
 
     #[test]
     fn test_new_creates_repository_instance() {
@@ -285,10 +281,8 @@ mod tests {
         let _ = repo;
     }
 
-    // ============================================================
     // CRUD tests — verify get_balance / deduct / add / history /
     // initialize against a real PostgreSQL database.
-    // ============================================================
 
     #[tokio::test]
     async fn test_get_balance_returns_zero_for_unknown_team() {
@@ -424,9 +418,7 @@ mod tests {
         );
     }
 
-    // ============================================================
     // CreditsRepositoryError variant tests
-    // ============================================================
 
     #[test]
     fn test_error_database_error_display() {
@@ -463,10 +455,8 @@ mod tests {
         assert!(err.to_string().contains(&team_id.to_string()));
     }
 
-    // ============================================================
     // Additional tests — cover remaining branches (limit / nil uuid /
     // reference_id / zero amount / quoted description / type variants)
-    // ============================================================
 
     #[tokio::test]
     async fn test_get_transaction_history_with_no_limit() {
@@ -474,7 +464,7 @@ mod tests {
             return;
         }
         let repo = CreditsRepositoryImpl::new(create_test_db_pool());
-        // limit=None exercises the branch where no `.limit()` is applied
+        // limit=None exercises the branch where no `.limit` is applied
         let result = repo
             .get_transaction_history(crate::domain::id::Id::generate(), None)
             .await;
@@ -789,9 +779,7 @@ mod tests {
         );
     }
 
-    // ============================================================
     // CreditsTransactionType — every variant exercised
-    // ============================================================
 
     #[tokio::test]
     async fn test_deduct_credits_with_crawl_type() {
@@ -862,9 +850,7 @@ mod tests {
         assert_eq!(history[0].transaction_type, CreditsTransactionType::Extract);
     }
 
-    // ============================================================
     // CreditsTransactionType display exhaustive
-    // ============================================================
 
     #[test]
     fn test_credits_transaction_type_search_display() {
@@ -928,9 +914,7 @@ mod tests {
         assert_eq!(format!("{}", CreditsTransactionType::Refund), "refund");
     }
 
-    // ============================================================
     // Error variant edge cases
-    // ============================================================
 
     #[test]
     fn test_error_database_error_with_empty_message() {

@@ -27,8 +27,8 @@ use std::sync::Arc;
 
 /// ScrapeWorker 构造依赖集合
 ///
-/// 聚合 `ScrapeWorker::new()` 所需的全部外部依赖，
-/// 由 `ScrapeWorkerBuilder::build()` 或 `WorkerManager` 构造后传入。
+/// 聚合 `ScrapeWorker::new` 所需的全部外部依赖，
+/// 由 `ScrapeWorkerBuilder::build` 或 `WorkerManager` 构造后传入。
 pub struct ScrapeWorkerDeps {
     pub repository: Arc<dyn TaskRepository>,
     pub result_repository: Arc<dyn ScrapeResultRepository>,

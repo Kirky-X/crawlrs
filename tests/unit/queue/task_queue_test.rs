@@ -16,7 +16,7 @@ use crawlrs::domain::repositories::task_repository::{
 };
 use crawlrs::queue::task_queue::{PostgresTaskQueue, QueueError, TaskQueue};
 
-// === Mock Task Repository for Testing ===
+// Mock Task Repository for Testing
 
 /// Mock repository for testing TaskQueue without database
 struct MockTaskRepository {
@@ -248,7 +248,7 @@ impl TaskRepository for MockTaskRepository {
     }
 }
 
-// === Helper Functions ===
+// Helper Functions
 
 fn create_test_task(status: TaskStatus) -> Task {
     Task {
@@ -275,7 +275,7 @@ fn create_test_task(status: TaskStatus) -> Task {
     }
 }
 
-// === QueueError Tests ===
+// QueueError Tests
 
 #[test]
 fn test_queue_error_display() {
@@ -294,7 +294,7 @@ fn test_queue_error_from_repository() {
     assert!(matches!(queue_error, QueueError::Repository(_)));
 }
 
-// === PostgresTaskQueue Creation Tests ===
+// PostgresTaskQueue Creation Tests
 
 #[test]
 fn test_postgres_task_queue_creation() {
@@ -304,7 +304,7 @@ fn test_postgres_task_queue_creation() {
     // Queue created successfully - just verify it doesn't panic
 }
 
-// === Enqueue Tests ===
+// Enqueue Tests
 
 #[tokio::test]
 async fn test_enqueue_task_success() {
@@ -315,7 +315,7 @@ async fn test_enqueue_task_success() {
     let result = queue.enqueue(task.clone()).await;
 
     assert!(result.is_ok());
-    // Note: Cannot access mock_repo.task_count() through Arc<dyn TaskRepository>
+    // Note: Cannot access mock_repo.task_count through Arc<dyn TaskRepository>
 }
 
 #[tokio::test]
@@ -330,7 +330,7 @@ async fn test_enqueue_task_repository_error() {
     assert!(matches!(result.unwrap_err(), QueueError::Repository(_)));
 }
 
-// === Dequeue Tests ===
+// Dequeue Tests
 
 #[tokio::test]
 async fn test_dequeue_task_success() {
@@ -376,7 +376,6 @@ async fn test_dequeue_repository_error() {
 async fn test_dequeue_multiple_workers() {
     let mock_repo = MockTaskRepository::new();
 
-    // Add multiple tasks
     for _ in 0..5 {
         let task = create_test_task(TaskStatus::Queued);
         mock_repo.add_task(task);
@@ -399,7 +398,7 @@ async fn test_dequeue_multiple_workers() {
     assert!(result2.unwrap().is_some());
 }
 
-// === Complete Tests ===
+// Complete Tests
 
 #[tokio::test]
 async fn test_complete_task_success() {
@@ -438,7 +437,7 @@ async fn test_complete_task_repository_error() {
     assert!(result.is_err());
 }
 
-// === Fail Tests ===
+// Fail Tests
 
 #[tokio::test]
 async fn test_fail_task_success() {
@@ -477,7 +476,7 @@ async fn test_fail_task_repository_error() {
     assert!(result.is_err());
 }
 
-// === Cancel Tests ===
+// Cancel Tests
 
 #[tokio::test]
 async fn test_cancel_task_success() {
@@ -520,7 +519,7 @@ async fn test_cancel_task_not_found() {
     assert!(result.is_err());
 }
 
-// === Arc<TaskQueue> Tests ===
+// Arc<TaskQueue> Tests
 
 #[tokio::test]
 async fn test_arc_task_queue_enqueue() {
@@ -561,7 +560,7 @@ async fn test_arc_task_queue_complete() {
     assert!(result.is_ok());
 }
 
-// === Complex Workflow Tests ===
+// Complex Workflow Tests
 
 #[tokio::test]
 async fn test_complete_task_lifecycle() {
@@ -622,7 +621,7 @@ async fn test_task_cancellation_from_queued() {
     // Verify cancellation - just verify it doesn't error
 }
 
-// === Edge Cases ===
+// Edge Cases
 
 #[tokio::test]
 async fn test_dequeue_with_no_tasks_returns_none() {

@@ -57,7 +57,7 @@ pub trait CrawlRepository: Send + Sync {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 成功增加计数
+    /// * `Ok()` - 成功增加计数
     /// * `Err(RepositoryError)` - 操作失败时返回错误
     async fn increment_completed_tasks(
         &self,
@@ -72,7 +72,7 @@ pub trait CrawlRepository: Send + Sync {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 成功增加计数
+    /// * `Ok()` - 成功增加计数
     /// * `Err(RepositoryError)` - 操作失败时返回错误
     async fn increment_failed_tasks(
         &self,
@@ -88,7 +88,7 @@ pub trait CrawlRepository: Send + Sync {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 成功更新状态
+    /// * `Ok()` - 成功更新状态
     /// * `Err(RepositoryError)` - 更新失败时返回错误
     async fn update_status(
         &self,
@@ -104,7 +104,7 @@ pub trait CrawlRepository: Send + Sync {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 成功增加计数
+    /// * `Ok()` - 成功增加计数
     /// * `Err(RepositoryError)` - 操作失败时返回错误
     async fn increment_total_tasks(&self, id: crate::domain::id::Id)
         -> Result<(), RepositoryError>;

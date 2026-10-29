@@ -58,10 +58,8 @@ impl GeoLocationService for GeoLocationServiceImpl {
         let ip_str = ip.to_string();
         debug!("Getting geolocation for IP: {}", ip_str);
 
-        // 构建API请求URL
         let url = format!("{}/{}/json/", self.api_endpoint, ip_str);
 
-        // 发送请求
         let mut headers = std::collections::HashMap::new();
         headers.insert("User-Agent".to_string(), DEFAULT_USER_AGENT.to_string());
 
@@ -222,14 +220,12 @@ fn is_ipv6_in_cidr(ip: &Ipv6Addr, network: &Ipv6Addr, prefix_length: u8) -> bool
     let full_segments = prefix_length / 16;
     let remaining_bits = prefix_length % 16;
 
-    // 检查完整的段
     for i in 0..full_segments.min(8) {
         if ip_segments[i as usize] != network_segments[i as usize] {
             return false;
         }
     }
 
-    // 检查剩余的位
     if remaining_bits > 0 && full_segments < 8 {
         let mask = (!0u16) << (16 - remaining_bits);
         if (ip_segments[full_segments as usize] & mask)
@@ -290,20 +286,18 @@ mod tests {
         assert!(!is_ip_in_cidr(&ip, "2001:db9::/32"));
     }
 
-    // =========================================================================
     // is_ip_in_cidr 边界与异常输入
-    // =========================================================================
 
     #[test]
     fn test_is_ip_in_cidr_no_slash_returns_false() {
-        // 无 "/" → parts.len() != 2 → false
+        // 无 "/" → parts.len != 2 → false
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
         assert!(!is_ip_in_cidr(&ip, "192.168.1.0"));
     }
 
     #[test]
     fn test_is_ip_in_cidr_multiple_slashes_returns_false() {
-        // 多个 "/" → parts.len() > 2 → false
+        // 多个 "/" → parts.len > 2 → false
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
         assert!(!is_ip_in_cidr(&ip, "192.168.1.0/24/16"));
     }
@@ -377,9 +371,7 @@ mod tests {
         assert!(!is_ip_in_cidr(&ip, "not-an-ip/24"));
     }
 
-    // =========================================================================
     // is_ipv4_in_cidr 边界
-    // =========================================================================
 
     #[test]
     fn test_is_ipv4_in_cidr_prefix_zero_always_true() {
@@ -414,9 +406,7 @@ mod tests {
         assert!(!is_ipv4_in_cidr(&out_ip, &network, 24));
     }
 
-    // =========================================================================
     // is_ipv6_in_cidr 边界
-    // =========================================================================
 
     #[test]
     fn test_is_ipv6_in_cidr_prefix_zero_always_true() {
@@ -478,9 +468,7 @@ mod tests {
         assert!(!is_ipv6_in_cidr(&ip, &network_mismatch, 120));
     }
 
-    // =========================================================================
     // GeoLocation::Default
-    // =========================================================================
 
     #[test]
     fn test_geo_location_default_fields() {
@@ -496,9 +484,7 @@ mod tests {
         assert!(geo.org.is_none());
     }
 
-    // =========================================================================
     // GeoLocationServiceImpl 构造器
-    // =========================================================================
 
     #[test]
     fn test_geo_location_service_impl_new_default_endpoint() {
@@ -516,9 +502,7 @@ mod tests {
         assert_eq!(svc.api_endpoint, "https://ip-api.com/json");
     }
 
-    // =========================================================================
     // IpApiResponse serde 反序列化
-    // =========================================================================
 
     #[test]
     fn test_ip_api_response_deserialize_full() {
@@ -601,9 +585,7 @@ mod tests {
         assert_eq!(decoded.error, original.error);
     }
 
-    // =========================================================================
     // GeoLocationServiceImpl::get_locations with empty list
-    // =========================================================================
 
     #[tokio::test]
     async fn test_get_locations_empty_list_returns_empty() {
@@ -623,9 +605,7 @@ mod tests {
         );
     }
 
-    // =========================================================================
     // IpApiResponse additional serde edge cases
-    // =========================================================================
 
     #[test]
     fn test_ip_api_response_deserialize_empty_json() {
@@ -678,9 +658,7 @@ mod tests {
         assert!(decoded.error.is_none());
     }
 
-    // =========================================================================
     // is_ip_in_cidr additional edge cases
-    // =========================================================================
 
     #[test]
     fn test_is_ip_in_cidr_empty_cidr_returns_false() {
@@ -728,9 +706,7 @@ mod tests {
         assert!(!is_ip_in_cidr(&ip, "2001:db9::/32"));
     }
 
-    // =========================================================================
     // is_ipv4_in_cidr additional boundary tests
-    // =========================================================================
 
     #[test]
     fn test_is_ipv4_in_cidr_prefix_1_matches() {
@@ -754,9 +730,7 @@ mod tests {
         assert!(!is_ipv4_in_cidr(&ip3, &network, 31));
     }
 
-    // =========================================================================
     // is_ipv6_in_cidr additional boundary tests
-    // =========================================================================
 
     #[test]
     fn test_is_ipv6_in_cidr_prefix_16_exact_segment_match() {
@@ -778,13 +752,11 @@ mod tests {
         assert!(!is_ipv6_in_cidr(&ip, &network2, 112));
     }
 
-    // =========================================================================
     // GeoLocationServiceImpl additional constructor tests
-    // =========================================================================
 
     #[test]
     fn test_geo_location_service_impl_new_creates_engine_client() {
-        // 验证 new() 创建后 engine_client 不为空（通过可以调用方法间接验证）
+        // 验证 new 创建后 engine_client 不为空（通过可以调用方法间接验证）
         let client = Arc::new(reqwest::Client::new());
         let svc = GeoLocationServiceImpl::new(client);
         // api_endpoint 应为默认值
@@ -808,9 +780,7 @@ mod tests {
         assert_eq!(svc.api_endpoint, "https://api.example.com/");
     }
 
-    // =========================================================================
     // GeoLocation Debug and Clone
-    // =========================================================================
 
     #[test]
     fn test_geo_location_clone_preserves_fields() {
@@ -860,11 +830,9 @@ mod tests {
         assert_eq!(decoded.isp, geo.isp);
     }
 
-    // =========================================================================
     // get_locations 失败路径：使用不可达端点触发 get_location 失败
     // 覆盖行 58-74 (get_location 请求构建 + scrape 错误处理)
     // 覆盖行 135-142 (get_locations 循环 + Err 分支 + 默认 GeoLocation)
-    // =========================================================================
 
     #[tokio::test]
     async fn test_get_locations_unreachable_endpoint_returns_default_on_failure() {
@@ -914,7 +882,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
     // get_location 错误路径测试
     //
     // 注：get_location 的成功路径（行 77-117）在单元测试中无法覆盖。
@@ -925,7 +892,6 @@ mod tests {
     // GeoLocationServiceImpl 接受 EngineClientTrait 才能覆盖。
     //
     // 以下测试覆盖行 72-75：scrape 错误 → map_err → anyhow 错误
-    // =========================================================================
 
     #[tokio::test]
     async fn test_get_location_ssrf_blocked_returns_scrape_error() {

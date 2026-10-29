@@ -80,14 +80,12 @@ impl RobotsTxt {
     }
 
     fn is_allowed(&self, url: &str) -> bool {
-        // 检查是否被disallow
         for disallow in &self.disallow {
             if url.starts_with(disallow) {
                 return false;
             }
         }
 
-        // 检查是否被allow覆盖
         for allow in &self.allow {
             if url.starts_with(allow) {
                 return true;

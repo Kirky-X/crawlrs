@@ -125,7 +125,6 @@ impl EnvVarValidator {
 
     /// 验证环境配置（综合检查）
     pub fn validate(&self) -> Result<EnvVarSecurityReport, String> {
-        // 检查必需变量
         if let Err(missing) = self.validate_required() {
             return Err(format!(
                 "Missing required environment variables: {}",
@@ -641,7 +640,7 @@ mod tests {
         assert!(warning.recommendation.contains("安全"));
     }
 
-    // ========== EnvVarValidator::validate success path ==========
+    // EnvVarValidator::validate success path
 
     #[test]
     fn test_env_var_validator_validate_success_returns_report() {

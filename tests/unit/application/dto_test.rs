@@ -11,9 +11,7 @@ use crawlrs::application::dto::crawl_request::CrawlConfigDto;
 use crawlrs::application::dto::scrape_request::ScrapeRequestDto;
 use serde_json::json;
 
-// =============================================================================
 // ScrapeRequestDto — extraction_prompt / extraction_schema
-// =============================================================================
 
 #[test]
 fn test_scrape_dto_extraction_prompt() {
@@ -75,9 +73,7 @@ fn test_scrape_dto_no_extraction_fields() {
     assert!(dto.extraction_schema.is_none());
 }
 
-// =============================================================================
 // CrawlConfigDto — extraction_prompt / extraction_schema
-// =============================================================================
 
 #[test]
 fn test_crawl_config_dto_extraction_prompt() {

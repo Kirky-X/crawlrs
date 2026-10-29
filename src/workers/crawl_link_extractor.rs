@@ -398,7 +398,7 @@ mod tests {
         }
     }
 
-    // ---- Mock types ----
+    // Mock types
 
     struct MockRobotsChecker {
         allowed: bool,
@@ -550,7 +550,7 @@ mod tests {
         }
     }
 
-    // ---- check_robots_txt ----
+    // check_robots_txt
 
     #[tokio::test]
     async fn test_check_robots_txt_allowed_returns_true() {
@@ -566,7 +566,7 @@ mod tests {
         assert!(!check_robots_txt(&task, &checker, "crawlrs-bot/1.0").await);
     }
 
-    // ---- update_crawl_completion_status ----
+    // update_crawl_completion_status
 
     #[tokio::test]
     async fn test_update_crawl_completion_status_crawl_not_found() {
@@ -576,7 +576,7 @@ mod tests {
         // No assertion needed — just verify it doesn't panic
     }
 
-    // ---- extract_and_queue_links ----
+    // extract_and_queue_links
 
     use crate::application::dto::crawl_request::CrawlConfigDto;
     use crate::domain::repositories::crawl_repository::CrawlRepository;
@@ -979,7 +979,7 @@ mod tests {
         );
     }
 
-    // ---- update_crawl_completion_status (all paths) ----
+    // update_crawl_completion_status (all paths)
 
     #[tokio::test]
     async fn test_update_crawl_completion_status_all_done_marks_completed() {
@@ -1098,7 +1098,7 @@ mod tests {
         // No panic = success
     }
 
-    // ---- DB check path (MaybeExisting → find_existing_urls → second dedup) ----
+    // DB check path (MaybeExisting → find_existing_urls → second dedup)
 
     /// Mock task repo that returns existing URLs from find_existing_urls
     struct ExistingUrlTaskRepo {

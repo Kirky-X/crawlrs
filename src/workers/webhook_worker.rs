@@ -82,7 +82,6 @@ impl WebhookWorker {
             event.id, event.webhook_url, event.attempt_count
         );
 
-        // 尝试发送webhook
         match self.webhook_service.send_webhook(&event).await {
             Ok(status) => {
                 info!(
@@ -377,7 +376,7 @@ mod tests {
         WebhookWorker::with_default_policy(repo, service)
     }
 
-    // ========== name() ==========
+    // name
 
     #[test]
     fn test_worker_name() {
@@ -387,7 +386,7 @@ mod tests {
         assert_eq!(worker.name(), "webhook_worker");
     }
 
-    // ========== new() / with_default_policy() ==========
+    // new / with_default_policy
 
     #[test]
     fn test_new_uses_provided_retry_policy() {
@@ -411,7 +410,7 @@ mod tests {
         assert_eq!(worker.retry_policy.initial_backoff, Duration::from_secs(1));
     }
 
-    // ========== process_pending_webhooks ==========
+    // process_pending_webhooks
 
     #[tokio::test]
     async fn test_process_pending_webhooks_empty() {
@@ -467,7 +466,7 @@ mod tests {
         assert!(err.contains("Failed to claim pending events"));
     }
 
-    // ========== process() (WorkerProcess trait) ==========
+    // process (WorkerProcess trait)
 
     #[tokio::test]
     async fn test_process_returns_completed_on_success() {
@@ -492,7 +491,7 @@ mod tests {
         }
     }
 
-    // ========== webhook failure handling ==========
+    // webhook failure handling
 
     #[tokio::test]
     async fn test_webhook_failure_schedules_retry() {
@@ -557,7 +556,7 @@ mod tests {
         assert_eq!(updated[0].status, WebhookStatus::Dead);
     }
 
-    // ========== response status parsing ==========
+    // response status parsing
 
     #[tokio::test]
     async fn test_webhook_failure_parses_500_status() {
@@ -621,7 +620,7 @@ mod tests {
         assert_eq!(updated[0].response_status, Some(404));
     }
 
-    // ========== mixed success/failure ==========
+    // mixed success/failure
 
     #[tokio::test]
     async fn test_process_pending_webhooks_continues_after_failure() {
@@ -662,7 +661,7 @@ mod tests {
         assert_eq!(updated[1].status, WebhookStatus::Delivered);
     }
 
-    // ========== retry policy behavior ==========
+    // retry policy behavior
 
     #[tokio::test]
     async fn test_retry_policy_fast_changes_retry_behavior() {
@@ -683,30 +682,30 @@ mod tests {
         assert_eq!(policy.max_retries, 5);
     }
 
-    // ========== run() (WebhookWorkerTrait) error and success loop paths ==========
-    // run() is an infinite loop. These tests use tokio::time::timeout to verify that:
+    // run (WebhookWorkerTrait) error and success loop paths
+    // run is an infinite loop. These tests use tokio::time::timeout to verify that:
     // 1. The error branch (error!("Error processing webhook events: {}", e)) is exercised
     //    when process_pending_webhooks returns Err.
     // 2. The success path loops without errors when there are no pending events.
 
     #[tokio::test]
     async fn test_run_logs_error_and_continues_on_repo_failure() {
-        // With a failing repo, process_pending_webhooks returns Err, run() logs the error
+        // With a failing repo, process_pending_webhooks returns Err, run logs the error
         // via error!("Error processing webhook events: {}", e) and continues the loop.
         let repo = Arc::new(MockWebhookRepo::new_failing());
         let service = Arc::new(MockWebhookService::new_success());
         let worker = make_worker(repo, service);
 
-        // run() is an infinite loop; it should not return within the timeout.
+        // run is an infinite loop; it should not return within the timeout.
         let result = tokio::time::timeout(Duration::from_millis(150), worker.run()).await;
 
-        // Should time out because run() keeps looping after logging the error
+        // Should time out because run keeps looping after logging the error
         assert!(result.is_err(), "run() should continue looping after error");
     }
 
     #[tokio::test]
     async fn test_run_loops_successfully_with_empty_repo() {
-        // With an empty repo (no pending events), run() completes iterations without
+        // With an empty repo (no pending events), run completes iterations without
         // errors and continues looping.
         let repo = Arc::new(MockWebhookRepo::new_empty());
         let service = Arc::new(MockWebhookService::new_success());
@@ -722,7 +721,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_with_successful_delivery_continues_looping() {
-        // With a pending event that gets delivered successfully, run() processes it
+        // With a pending event that gets delivered successfully, run processes it
         // and continues looping.
         let event = make_test_event(0);
         let repo = Arc::new(MockWebhookRepo::new(vec![event]));
@@ -731,7 +730,7 @@ mod tests {
 
         let result = tokio::time::timeout(Duration::from_millis(150), worker.run()).await;
 
-        // run() processes the event then sleeps 1s; timeout fires during sleep
+        // run processes the event then sleeps 1s; timeout fires during sleep
         assert!(
             result.is_err(),
             "run() should continue looping after successful delivery"

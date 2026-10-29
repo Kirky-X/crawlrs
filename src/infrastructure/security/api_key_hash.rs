@@ -47,7 +47,7 @@ use sha2::{Digest, Sha256};
 /// use crawlrs::infrastructure::security::hash_api_key;
 ///
 /// let key = "my_secret_api_key";
-/// let hash = hash_api_key(key).unwrap();
+/// let hash = hash_api_key(key).unwrap;
 /// assert!(hash.starts_with("$2b$"));
 /// ```
 pub fn hash_api_key(api_key: &str) -> Result<String> {

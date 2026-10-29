@@ -215,7 +215,6 @@ impl DrlPolicy {
             return CrawlAction::noop();
         }
 
-        // 验证状态
         if let Err(e) = state.validate() {
             log::warn!(
                 "Invalid crawl state for DRL prediction: {}, using default",
@@ -259,7 +258,7 @@ impl DrlPolicy {
 mod tests {
     use super::*;
 
-    // === Mock ONNX Inference ===
+    // Mock ONNX Inference
 
     struct MockInference {
         output: Vec<f32>,
@@ -279,7 +278,7 @@ mod tests {
         }
     }
 
-    // === 测试 ===
+    // 测试
 
     #[test]
     fn test_crawl_state_to_feature_vector() {

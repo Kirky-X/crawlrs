@@ -51,7 +51,6 @@ async fn main() {
     info!("2️⃣  引擎操作后查看指标变化");
     info!("-----------------------------");
 
-    // 执行几次爬取操作产生指标
     let urls = vec!["https://example.com", "https://httpbin.org/html"];
 
     for url in &urls {

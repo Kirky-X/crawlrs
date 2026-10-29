@@ -13,9 +13,7 @@ use crawlrs::application::dto::extract_request::{
 use crawlrs::common::constants::crawl_task;
 use crawlrs::presentation::handlers::extract_handler::ExtractResponseDto as HandlerExtractResponseDto;
 
-// =============================================================================
 // ExtractRequestDto deserialization
-// =============================================================================
 
 #[test]
 fn tc_extract_request_dto_minimal_urls_only() {
@@ -107,9 +105,7 @@ fn tc_extract_request_dto_serialization_round_trip() {
     assert_eq!(parsed.sync_wait_ms, original.sync_wait_ms);
 }
 
-// =============================================================================
 // ExtractResponseDto (application DTO) serialization
-// =============================================================================
 
 #[test]
 fn tc_extract_response_dto_empty_results() {
@@ -149,9 +145,7 @@ fn tc_extract_response_dto_with_error_result() {
     assert_eq!(parsed["results"][0]["error"], "timeout");
 }
 
-// =============================================================================
 // ExtractResultDto serialization
-// =============================================================================
 
 #[test]
 fn tc_extract_result_dto_success_no_error() {
@@ -178,9 +172,7 @@ fn tc_extract_result_dto_with_error() {
     assert_eq!(parsed.error, Some("connection refused".to_string()));
 }
 
-// =============================================================================
 // Handler-level ExtractResponseDto (id + status wrapper)
-// =============================================================================
 
 #[test]
 fn tc_handler_extract_response_dto_serialization() {
@@ -224,9 +216,7 @@ fn tc_handler_extract_response_dto_debug_format() {
     assert!(debug.contains("queued"));
 }
 
-// =============================================================================
 // Constants validation
-// =============================================================================
 
 #[test]
 fn tc_max_sync_wait_ms_constant_value() {
@@ -253,9 +243,7 @@ fn tc_sync_wait_ms_above_max_is_invalid() {
     assert!(over > crawl_task::MAX_SYNC_WAIT_MS);
 }
 
-// =============================================================================
 // ExtractRequestDto serde alias tests
-// =============================================================================
 
 #[test]
 fn test_extract_request_alias_extraction_rules() {

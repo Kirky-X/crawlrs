@@ -33,9 +33,7 @@ use testcontainers_modules::postgres::Postgres;
 
 use crate::common::helpers::db_pool::create_test_pool_or_panic;
 
-// ============================================================
 // 辅助函数
-// ============================================================
 
 /// 检查 Docker 是否可用（通过 `docker info` 探测守护进程）。
 async fn docker_available() -> bool {
@@ -121,11 +119,9 @@ async fn setup_real_db_pool(url: &str) -> Option<DbPool> {
     }
 }
 
-// ============================================================
 // create_pool 测试
-// ============================================================
 
-// ---------- 纯逻辑测试（不需要 Docker） ----------
+// 纯逻辑测试（不需要 Docker）
 
 #[tokio::test]
 async fn test_create_pool_invalid_url_returns_error() {
@@ -149,7 +145,7 @@ async fn test_create_pool_unreachable_host_returns_error() {
     );
 }
 
-// ---------- testcontainers 测试 ----------
+// testcontainers 测试
 
 #[tokio::test]
 async fn tc_create_pool_valid_url_succeeds() {
@@ -184,11 +180,9 @@ async fn tc_create_pool_returns_working_pool() {
     );
 }
 
-// ============================================================
 // create_pool_with_retry 测试
-// ============================================================
 
-// ---------- 纯逻辑测试（不需要 Docker） ----------
+// 纯逻辑测试（不需要 Docker）
 
 #[tokio::test]
 async fn test_create_pool_with_retry_invalid_url_all_retries_fail() {
@@ -207,7 +201,7 @@ async fn test_create_pool_with_retry_zero_retries_returns_timeout_error() {
     // retry_count=0 时循环不执行，返回默认的 Timeout 错误
     let result = create_pool_with_retry(&settings, 0, 0).await;
     // 验证错误类型为 ConnectionAcquire(Timeout)（因为 last_error 为 None 时的默认值）
-    // 使用 match 而非 unwrap_err()，因为 DbPool 未实现 Debug
+    // 使用 match 而非 unwrap_err，因为 DbPool 未实现 Debug
     match result {
         Err(dbnexus::sea_orm::DbErr::ConnectionAcquire(
             dbnexus::sea_orm::ConnAcquireErr::Timeout,
@@ -228,7 +222,7 @@ async fn test_create_pool_with_retry_one_retry_invalid_url_fails() {
     );
 }
 
-// ---------- testcontainers 测试 ----------
+// testcontainers 测试
 
 #[tokio::test]
 async fn tc_create_pool_with_retry_valid_url_succeeds_first_try() {
@@ -253,9 +247,7 @@ async fn tc_create_pool_with_retry_valid_url_succeeds_first_try() {
     );
 }
 
-// ============================================================
 // DatabasePool 构造与结构方法测试（使用 lazy pool，不需要 Docker）
-// ============================================================
 
 #[test]
 fn test_database_pool_from_arc_dbpool() {
@@ -274,7 +266,7 @@ fn test_database_pool_stats_returns_clone() {
     let db_pool: DatabasePool = pool.into();
     let stats1 = db_pool.stats();
     let stats2 = db_pool.stats();
-    // stats() 返回克隆，两个实例应相等
+    // stats 返回克隆，两个实例应相等
     assert_eq!(stats1.active_connections, stats2.active_connections);
     assert_eq!(stats1.idle_connections, stats2.idle_connections);
     assert_eq!(stats1.total_connections, stats2.total_connections);
@@ -285,7 +277,7 @@ fn test_database_pool_inner_returns_reference() {
     let pool = create_test_pool_or_panic();
     let db_pool: DatabasePool = pool.clone().into();
     let inner_ref = db_pool.inner();
-    // 验证 inner() 返回的是同一个 Arc 的引用
+    // 验证 inner 返回的是同一个 Arc 的引用
     assert!(Arc::ptr_eq(inner_ref, &pool));
 }
 
@@ -294,7 +286,7 @@ fn test_database_pool_clone_inner_returns_new_arc() {
     let pool = create_test_pool_or_panic();
     let db_pool: DatabasePool = pool.clone().into();
     let cloned = db_pool.clone_inner();
-    // 验证 clone_inner() 返回的 Arc 指向同一个 DbPool
+    // 验证 clone_inner 返回的 Arc 指向同一个 DbPool
     assert!(Arc::ptr_eq(&cloned, &pool));
     // 验证引用计数增加（original + cloned + db_pool.inner）
     assert!(Arc::strong_count(&pool) >= 2);
@@ -351,9 +343,7 @@ fn test_database_pool_clone_preserves_inner() {
     assert!(Arc::ptr_eq(db_pool.inner(), cloned_pool.inner()));
 }
 
-// ============================================================
 // DatabasePool session 方法测试（使用 testcontainers）
-// ============================================================
 
 #[tokio::test]
 async fn tc_database_pool_get_session_admin_succeeds() {
@@ -426,7 +416,7 @@ async fn tc_database_pool_get_readonly_session_without_permissions_returns_error
     let session = db_pool.get_readonly_session().await;
     // 没有 permissions.yaml 时，"readonly" 角色未配置，应返回错误。
     // 错误被映射为 ConnectionAcquire(ConnectionClosed)。
-    // 使用 match 而非 unwrap_err()，因为 Session 未实现 Debug。
+    // 使用 match 而非 unwrap_err，因为 Session 未实现 Debug。
     match session {
         Err(dbnexus::sea_orm::DbErr::ConnectionAcquire(
             dbnexus::sea_orm::ConnAcquireErr::ConnectionClosed,
@@ -463,9 +453,7 @@ async fn tc_database_pool_get_pool_stats_returns_valid_stats() {
     );
 }
 
-// ============================================================
 // DatabasePool session 方法测试（使用真实 pool，需要 TEST_DATABASE_URL）
-// ============================================================
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL"]
@@ -522,9 +510,7 @@ async fn test_database_pool_get_readonly_session_rejected_without_permission_con
     );
 }
 
-// ============================================================
 // DatabasePool get_pool_stats 测试（使用真实 pool，需要 TEST_DATABASE_URL）
-// ============================================================
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL"]
@@ -541,9 +527,7 @@ async fn test_database_pool_get_pool_stats_with_real_pool_returns_values() {
     );
 }
 
-// ============================================================
 // PoolStats 测试
-// ============================================================
 
 #[test]
 fn test_pool_stats_default_is_all_zeros() {

@@ -43,7 +43,6 @@ impl Webhook {
             return Err(WebhookError::InvalidUrl("URL cannot be empty".to_string()));
         }
 
-        // Check for valid URL scheme
         if !self.url.starts_with("http://") && !self.url.starts_with("https://") {
             return Err(WebhookError::InvalidUrl(
                 "URL must start with http:// or https://".to_string(),
@@ -327,7 +326,7 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    // ========== Webhook tests ==========
+    // Webhook tests
 
     #[test]
     fn test_webhook_new_sets_fields_and_timestamp() {
@@ -412,7 +411,7 @@ mod tests {
         }
     }
 
-    // ========== WebhookEvent::new tests ==========
+    // WebhookEvent::new tests
 
     #[test]
     fn test_webhook_event_new_defaults() {
@@ -461,7 +460,7 @@ mod tests {
         );
     }
 
-    // ========== WebhookEvent::with_all_fields tests ==========
+    // WebhookEvent::with_all_fields tests
 
     #[test]
     fn test_webhook_event_with_all_fields_sets_everything() {
@@ -512,7 +511,7 @@ mod tests {
         assert_eq!(event.delivered_at, Some(delivered));
     }
 
-    // ========== WebhookEvent::can_retry tests ==========
+    // WebhookEvent::can_retry tests
 
     #[test]
     fn test_can_retry_true_when_attempts_below_max_and_not_delivered() {
@@ -550,7 +549,7 @@ mod tests {
         );
     }
 
-    // ========== WebhookEvent::record_attempt tests ==========
+    // WebhookEvent::record_attempt tests
 
     #[test]
     fn test_record_attempt_success_marks_delivered() {
@@ -620,7 +619,7 @@ mod tests {
         assert_eq!(event.error_message, Some("boom".to_string()));
     }
 
-    // ========== WebhookEvent::mark_delivered tests ==========
+    // WebhookEvent::mark_delivered tests
 
     #[test]
     fn test_mark_delivered_sets_status_and_response() {
@@ -646,7 +645,7 @@ mod tests {
         assert!(event.response_body.is_none());
     }
 
-    // ========== WebhookEvent::mark_failed tests ==========
+    // WebhookEvent::mark_failed tests
 
     #[test]
     fn test_mark_failed_with_retries_left_sets_failed() {
@@ -680,7 +679,7 @@ mod tests {
         assert_eq!(event.error_message, Some("exhausted".to_string()));
     }
 
-    // ========== WebhookEventType Display / FromStr tests ==========
+    // WebhookEventType Display / FromStr tests
 
     #[test]
     fn test_webhook_event_type_display_all_variants() {
@@ -745,7 +744,7 @@ mod tests {
         }
     }
 
-    // ========== WebhookStatus Display / FromStr tests ==========
+    // WebhookStatus Display / FromStr tests
 
     #[test]
     fn test_webhook_status_display_all_variants() {
@@ -790,7 +789,7 @@ mod tests {
         assert_eq!(WebhookStatus::default(), WebhookStatus::Pending);
     }
 
-    // ========== WebhookError tests ==========
+    // WebhookError tests
 
     #[test]
     fn test_webhook_error_display_messages() {
@@ -805,7 +804,7 @@ mod tests {
         assert!(db.to_string().contains("Database error"));
     }
 
-    // ========== Helper ==========
+    // Helper
 
     fn make_event() -> WebhookEvent {
         WebhookEvent::new(

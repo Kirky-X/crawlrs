@@ -12,7 +12,7 @@
 //!
 //! ## 字段可见性
 //!
-//! `used_proxy_url` 改为 `pub(crate)`，外部模块通过只读访问器 `used_proxy_url()`
+//! `used_proxy_url()` 改为 `pub(crate)`，外部模块通过只读访问器 `used_proxy_url()`
 //! 获取，避免外部代码直接修改字段状态。
 //!
 //! ## 失败显性化

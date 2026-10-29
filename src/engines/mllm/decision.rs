@@ -91,7 +91,6 @@ pub fn parse_decision(json: &str) -> Result<MllmDecision, String> {
 fn extract_json(response: &str) -> String {
     let trimmed = response.trim();
 
-    // 尝试直接解析
     if trimmed.starts_with('{') {
         return trimmed.to_string();
     }
@@ -104,10 +103,8 @@ fn extract_json(response: &str) -> String {
         }
     }
 
-    // 尝试从 ``` 代码块中提取
     if let Some(start) = trimmed.find("```") {
         let after_marker = &trimmed[start + 3..];
-        // 跳过可能的语言标识符行
         let json_start = after_marker
             .find('\n')
             .map(|i| &after_marker[i + 1..])

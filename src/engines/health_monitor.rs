@@ -162,7 +162,6 @@ impl EngineHealthMonitor {
         let engine_name = engine.name().to_string();
         let start_time = std::time::Instant::now();
 
-        // 创建测试请求
         let test_request = InternalScrapeRequest {
             url: self.config.target_url.clone(),
             method: crate::engines::engine_client::HttpMethod::Get,
@@ -323,9 +322,7 @@ pub enum AggregateHealthStatus {
     Unavailable,
 }
 
-// =============================================================================
 // garrison 健康面吸收（S2，`auth` feature 门控）
-// =============================================================================
 //
 // 职责划分：探活逻辑（HTTP 探测 target_url + timeout、响应时长/状态码阈值判定、
 // 连续失败计数）保留在本模块——这是引擎领域逻辑，库不提供；状态登记/聚合/
@@ -465,7 +462,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    // === Test helper: mock engines ===
+    // Test helper: mock engines
 
     /// A mock engine that always succeeds with a 200 response
     struct MockOkEngine {
@@ -553,7 +550,7 @@ mod tests {
         }
     }
 
-    // === EngineHealth enum tests ===
+    // EngineHealth enum tests
 
     #[test]
     fn test_engine_health_equality() {
@@ -572,7 +569,7 @@ mod tests {
         assert_eq!(h1, h2);
     }
 
-    // === AggregateHealthStatus tests ===
+    // AggregateHealthStatus tests
 
     #[test]
     fn test_aggregate_health_status_default() {
@@ -600,7 +597,7 @@ mod tests {
         );
     }
 
-    // === HealthCheckConfig tests ===
+    // HealthCheckConfig tests
 
     #[test]
     fn test_health_check_config_fields() {
@@ -613,7 +610,7 @@ mod tests {
         assert_eq!(config.target_url, "https://example.com");
     }
 
-    // === EngineHealthMonitor creation tests ===
+    // EngineHealthMonitor creation tests
 
     #[tokio::test]
     async fn test_monitor_new_initializes_health_status() {
@@ -667,7 +664,7 @@ mod tests {
         assert!(status.is_empty());
     }
 
-    // === get_engine_health tests ===
+    // get_engine_health tests
 
     #[tokio::test]
     async fn test_get_engine_health_existing() {
@@ -690,7 +687,7 @@ mod tests {
         assert!(health.is_none());
     }
 
-    // === determine_health_status tests ===
+    // determine_health_status tests
 
     #[tokio::test]
     async fn test_determine_health_status_healthy() {
@@ -779,7 +776,7 @@ mod tests {
         );
     }
 
-    // === perform_health_check tests ===
+    // perform_health_check tests
 
     #[tokio::test]
     async fn test_perform_health_check_success() {
@@ -856,7 +853,7 @@ mod tests {
         assert_eq!(health.health, EngineHealth::Healthy);
     }
 
-    // === get_healthy_engines tests ===
+    // get_healthy_engines tests
 
     #[tokio::test]
     async fn test_get_healthy_engines_all_healthy() {
@@ -892,7 +889,7 @@ mod tests {
         assert!(healthy.is_empty());
     }
 
-    // === get_available_engines tests ===
+    // get_available_engines tests
 
     #[tokio::test]
     async fn test_get_available_engines_includes_degraded() {
@@ -927,7 +924,7 @@ mod tests {
         assert_eq!(available[0].name(), "healthy_engine");
     }
 
-    // === get_aggregate_status tests ===
+    // get_aggregate_status tests
 
     #[tokio::test]
     async fn test_get_aggregate_status_all_healthy() {
@@ -1005,7 +1002,7 @@ mod tests {
         assert_eq!(status, AggregateHealthStatus::Healthy);
     }
 
-    // === ScraperEngine trait impl tests ===
+    // ScraperEngine trait impl tests
 
     #[tokio::test]
     async fn test_health_monitor_scrape_returns_error() {
@@ -1077,9 +1074,9 @@ mod tests {
         assert_eq!(monitor.name(), "health_monitor");
     }
 
-    // === Recovery scenario test ===
+    // Recovery scenario test
 
-    // === HealthCheckConfig::default() tests ===
+    // HealthCheckConfig::default tests
 
     #[test]
     fn test_health_check_config_default_uses_google_url() {
@@ -1199,10 +1196,8 @@ mod tests {
         assert!(health.avg_response_time_ms.is_some());
     }
 
-    // =========================================================================
     // garrison 健康面吸收（S2，auth 面）：EngineHealthCheck / HealthRegistry /
     // map_report 口径一致性 + 库 check_timeout 护栏 + health_routes 端点语义
-    // =========================================================================
 
     #[cfg(feature = "auth")]
     #[tokio::test]

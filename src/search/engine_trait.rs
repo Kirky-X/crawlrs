@@ -95,7 +95,7 @@ pub trait SearchEngine: Send + Sync {
 mod tests {
     use super::*;
 
-    // ========== SearchRequest::new tests ==========
+    // SearchRequest::new tests
 
     #[test]
     fn test_search_request_new_sets_query() {
@@ -119,7 +119,7 @@ mod tests {
         assert_eq!(req.query, "");
     }
 
-    // ========== SearchRequest::default tests ==========
+    // SearchRequest::default tests
 
     #[test]
     fn test_search_request_default_empty_query() {
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(req.offset, 0);
     }
 
-    // ========== SearchRequest builder tests ==========
+    // SearchRequest builder tests
 
     #[test]
     fn test_search_request_with_engine() {
@@ -201,7 +201,7 @@ mod tests {
         assert_eq!(req.country, Some("CN".to_string()));
     }
 
-    // ========== SearchRequest chained builder tests ==========
+    // SearchRequest chained builder tests
 
     #[test]
     fn test_search_request_chained_builders() {
@@ -236,7 +236,7 @@ mod tests {
         assert!(dbg.contains("test"));
     }
 
-    // ========== Mock SearchEngine implementation tests ==========
+    // Mock SearchEngine implementation tests
 
     struct MockSearchEngine;
 
@@ -361,7 +361,7 @@ mod tests {
         assert!(items.is_empty());
     }
 
-    // ========== FailingSearchEngine for error propagation tests ==========
+    // FailingSearchEngine for error propagation tests
 
     struct FailingSearchEngine;
 

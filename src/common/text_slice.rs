@@ -8,7 +8,7 @@
 
 /// 按**字符数**截断字符串：最多保留 `max_chars` 个字符。
 ///
-/// 与 `str::chars().take(n).collect()` 等价但避免额外分配语义上的歧义；
+/// 与 `str::chars.take(n).collect` 等价但避免额外分配语义上的歧义；
 /// `max_chars` 为 0 返回空串。
 pub fn truncate_chars(s: &str, max_chars: usize) -> String {
     s.chars().take(max_chars).collect()

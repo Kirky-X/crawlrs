@@ -37,9 +37,7 @@ use crate::domain::services::search_service::{
 };
 use crate::queue::task_queue::{QueueError, TaskQueue};
 
-// ============================================================================
 // Success mocks
-// ============================================================================
 
 /// Success `SearchServiceTrait` mock — returns a fixed `SearchResponse`.
 pub struct MockSearchService;
@@ -147,9 +145,7 @@ impl CrawlRepository for MockCrawlRepository {
     }
 }
 
-// ============================================================================
 // Error mocks
-// ============================================================================
 
 /// Error `SearchServiceTrait` mock — `search` always returns `SearchEngine` error.
 #[allow(dead_code)]

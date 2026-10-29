@@ -183,7 +183,7 @@ impl JsInjector {
     /// # 错误
     ///
     /// 任一脚本注册失败立即返回 [`EngineError::BrowserError`]。
-    /// 空脚本列表 no-op 返回 `Ok(())`。
+    /// 空脚本列表 no-op 返回 `Ok()`。
     pub async fn apply_before_document(&self, page: &Page) -> Result<(), EngineError> {
         use chromiumoxide::cdp::browser_protocol::page::AddScriptToEvaluateOnNewDocumentParams;
 
@@ -217,7 +217,7 @@ impl Default for JsInjector {
 mod tests {
     use super::*;
 
-    // === stealth 构造函数 ===
+    // stealth 构造函数
 
     #[test]
     fn stealth_contains_navigator_overrider_in_before() {
@@ -292,7 +292,7 @@ mod tests {
         );
     }
 
-    // === cleanup 构造函数 ===
+    // cleanup 构造函数
 
     #[test]
     fn cleanup_contains_three_scripts_in_after() {
@@ -359,7 +359,7 @@ mod tests {
         }
     }
 
-    // === new / default ===
+    // new / default
 
     #[test]
     fn new_creates_empty_injector() {
@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(a.after_scripts().len(), b.after_scripts().len());
     }
 
-    // === add_before / add_after 扩展接口 ===
+    // add_before / add_after 扩展接口
 
     #[test]
     fn add_before_extends_before_scripts() {
@@ -423,7 +423,7 @@ mod tests {
         assert_eq!(injector.after_scripts().len(), 1);
     }
 
-    // === InjectPhase ===
+    // InjectPhase
 
     #[test]
     fn inject_phase_display_before_load() {
@@ -449,7 +449,7 @@ mod tests {
         assert_eq!(phase, cloned);
     }
 
-    // === clone 行为 ===
+    // clone 行为
 
     #[test]
     fn clone_preserves_scripts() {
@@ -469,7 +469,7 @@ mod tests {
         }
     }
 
-    // === apply 错误路径 ===
+    // apply 错误路径
     //
     // 注：chromiumoxide::Page 难以在单测中 mock（需要 CDP 连接），apply 失败路径
     // 的端到端测试放在集成测试中。这里通过 Empty scripts 验证空列表不调用 evaluate。
@@ -487,7 +487,7 @@ mod tests {
         // apply 在空 scripts 上不会执行任何 evaluate，等价于 no-op。
     }
 
-    // === 综合场景 ===
+    // 综合场景
 
     #[test]
     fn stealth_then_add_cleanup_yields_combined_injector() {

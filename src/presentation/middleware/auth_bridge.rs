@@ -151,11 +151,11 @@ pub fn map_perms_to_scope(perms: &[String]) -> ApiKeyScope {
 /// ```ignore
 /// use crawlrs::presentation::middleware::auth_bridge::extract_bearer;
 ///
-/// let mut req = axum::http::Request::builder()
+/// let mut req = axum::http::Request::builder
 ///     .header("authorization", "Bearer ak_test_123")
-///     .body(axum::body::Body::empty())
-///     .unwrap();
-/// let token = extract_bearer(&req).unwrap();
+///     .body(axum::body::Body::empty)
+///     .unwrap;
+/// let token = extract_bearer(&req).unwrap;
 /// assert_eq!(token, "ak_test_123");
 /// ```
 pub fn extract_bearer(req: &Request<Body>) -> Result<String, AuthError> {
@@ -239,7 +239,7 @@ mod tests {
     use super::*;
     use crate::domain::auth::ScopePermission;
 
-    // ========== map_perms_to_scope 测试 ==========
+    // map_perms_to_scope 测试
 
     /// admin 权限 → read/write/admin 全 true
     #[test]
@@ -358,7 +358,7 @@ mod tests {
         assert_eq!(BEARER_PREFIX, "Bearer ");
     }
 
-    // ========== extract_bearer 测试 ==========
+    // extract_bearer 测试
 
     /// 构造测试用 Request（含指定 Authorization header）
     fn make_request(auth_header: Option<&str>) -> Request<Body> {
@@ -458,7 +458,7 @@ mod tests {
         assert_eq!(result.unwrap(), "ak.test_key=123");
     }
 
-    // ========== bridge_to_auth_state 测试 ==========
+    // bridge_to_auth_state 测试
 
     /// 构造测试用 `Arc<DbPool>`（跳过 `TEST_DATABASE_URL` 缺失场景）。
     ///
@@ -580,7 +580,7 @@ mod tests {
         assert!(!auth_state.scope.admin);
     }
 
-    // ========== AuthError::from_garrison 测试 ==========
+    // AuthError::from_garrison 测试
 
     /// 401 错误 → InvalidKey
     #[test]

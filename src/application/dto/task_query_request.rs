@@ -167,7 +167,7 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    // ============ TaskQueryRequestDto ============
+    // TaskQueryRequestDto
 
     #[test]
     fn test_task_query_request_default_values() {
@@ -288,7 +288,7 @@ mod tests {
         assert!(dto.validate().is_ok(), "None values should skip validation");
     }
 
-    // ============ TaskCancelRequestDto ============
+    // TaskCancelRequestDto
 
     #[test]
     fn test_task_cancel_request_serde_and_validation() {
@@ -319,7 +319,7 @@ mod tests {
         assert!(dto.validate().is_err(), "sync_wait_ms=30001 should fail");
     }
 
-    // ============ Response DTOs serialization ============
+    // Response DTOs serialization
 
     #[test]
     fn test_task_query_data_dto_serialization() {
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(value["result"]["metadata"]["key"], "value");
     }
 
-    // ============ ScrapeResultInfoDto ============
+    // ScrapeResultInfoDto
 
     #[test]
     fn test_scrape_result_info_dto_roundtrip() {
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(dto.content, cloned.content);
     }
 
-    // ============ Cancel response DTOs ============
+    // Cancel response DTOs
 
     #[test]
     fn test_task_cancel_data_dto_serialization() {

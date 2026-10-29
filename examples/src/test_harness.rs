@@ -13,9 +13,9 @@
 //! use crawlrs::engines::engine_client::EngineClient;
 //! use std::sync::Arc;
 //!
-//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! # tokio::runtime::Runtime::new.unwrap.block_on(async {
 //! let harness = SearchTestHarness::new("Bing", 60, 10);
-//! let engine = BingSearchEngine::new(Arc::new(EngineClient::new()));
+//! let engine = BingSearchEngine::new(Arc::new(EngineClient::new));
 //! let result = harness.run_engine_test_with_timeout(engine).await;
 //! # });
 //! ```

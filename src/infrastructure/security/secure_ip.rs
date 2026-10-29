@@ -76,13 +76,11 @@ impl TrustedProxyConfig {
         use std::str::FromStr;
 
         for proxy in &self.proxies {
-            // 尝试解析为 CIDR
             if let Ok(network) = ipnetwork::IpNetwork::from_str(proxy) {
                 if network.contains(*ip) {
                     return true;
                 }
             } else {
-                // 尝试解析为单个 IP
                 if let Ok(trusted_ip) = proxy.parse::<IpAddr>() {
                     if &trusted_ip == ip {
                         return true;
@@ -169,7 +167,6 @@ impl SecureIpExtractor {
                 .or_else(|| direct_ip.map(|ip| ip.to_string()));
         }
 
-        // 获取直接连接的 IP
         let direct_ip = match direct_ip {
             Some(ip) => ip,
             None => {
@@ -230,7 +227,6 @@ impl SecureIpExtractor {
             }
         }
 
-        // 检查 X-Real-IP 头
         if let Some(real_ip) = req.headers().get("x-real-ip") {
             if let Ok(ip_str) = real_ip.to_str() {
                 let trimmed = ip_str.trim();
@@ -729,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_extract_from_forwarded_headers_non_utf8_x_forwarded_for_falls_to_x_real_ip() {
-        // X-Forwarded-For 头包含非 ASCII 字节 → to_str() 失败 → 回退到 X-Real-IP
+        // X-Forwarded-For 头包含非 ASCII 字节 → to_str 失败 → 回退到 X-Real-IP
         let extractor = SecureIpExtractor::new(TrustedProxyConfig::default());
 
         let mut req = HttpRequest::builder()

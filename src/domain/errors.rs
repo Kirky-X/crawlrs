@@ -15,7 +15,7 @@ use crate::i18n::{I18nBundle, Locale};
 /// 应该由调用方处理（如返回给用户）
 #[derive(Error, Debug)]
 pub enum DomainError {
-    // ==================== 爬虫配置错误 ====================
+    // 爬虫配置错误
     #[error("Crawler configuration error: {message}")]
     CrawlConfigError {
         message: String,
@@ -29,7 +29,7 @@ pub enum DomainError {
     #[error("URL path excluded by filter rules: {path}")]
     PathFiltered { path: String },
 
-    // ==================== 任务错误 ====================
+    // 任务错误
     #[error("Task not found: {task_id}")]
     TaskNotFound { task_id: crate::domain::id::Id },
 
@@ -42,7 +42,7 @@ pub enum DomainError {
         timeout_seconds: u64,
     },
 
-    // ==================== 团队和配额错误 ====================
+    // 团队和配额错误
     #[error("Team not found: {team_id}")]
     TeamNotFound { team_id: crate::domain::id::Id },
 
@@ -52,7 +52,7 @@ pub enum DomainError {
     #[error("Team concurrency limit: current {current}, limit {limit}")]
     ConcurrencyLimitExceeded { current: usize, limit: usize },
 
-    // ==================== URL验证错误 ====================
+    // URL验证错误
     #[error("Invalid URL: {url}")]
     InvalidUrl { url: String },
 
@@ -62,21 +62,21 @@ pub enum DomainError {
     #[error("URL is forbidden by robots.txt: {url}")]
     RobotsForbidden { url: String },
 
-    // ==================== Webhook错误 ====================
+    // Webhook错误
     #[error("Webhook delivery failed: {url}, status {status}")]
     WebhookDeliveryFailed { url: String, status: u16 },
 
     #[error("Invalid webhook URL: {url}")]
     InvalidWebhookUrl { url: String },
 
-    // ==================== 提取错误 ====================
+    // 提取错误
     #[error("LLM extraction failed: model {model}, error: {message}")]
     LLMExtractionFailed { model: String, message: String },
 
     #[error("Invalid CSS selector: {selector}")]
     InvalidCssSelector { selector: String },
 
-    // ==================== 验证错误 ====================
+    // 验证错误
     #[error("Validation failed: {field} - {message}")]
     ValidationError { field: String, message: String },
 }
@@ -580,7 +580,7 @@ mod tests {
         }
     }
 
-    // ============ user_message_locale tests ============
+    // user_message_locale tests
 
     fn make_test_locale() -> Locale {
         "en-US".parse().unwrap()

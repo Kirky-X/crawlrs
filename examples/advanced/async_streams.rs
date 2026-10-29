@@ -89,7 +89,6 @@ async fn main() {
         }
     }
 
-    // 等待生产者完成
     let _ = producer.await;
 
     info!("");

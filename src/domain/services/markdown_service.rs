@@ -169,7 +169,7 @@ mod tests {
         );
     }
 
-    /// Default 实现应等价于 new()
+    /// Default 实现应等价于 new
     #[test]
     fn default_equals_new() {
         let a = HtmdMarkdownService::new();

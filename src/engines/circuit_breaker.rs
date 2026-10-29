@@ -234,7 +234,7 @@ impl CircuitBreaker {
     /// 镜像 Open 且冷却期满时同步迁移为 HalfOpen（与库 `state()` 惰性
     /// 迁移同规则），返回 false 放行。
     pub fn is_open(&self, engine_name: &str) -> bool {
-        // 使用 get() 而非 entry().or_insert_with()，
+        // 使用 get 而非 entry.or_insert_with，
         // 避免为每个查询的 engine_name 创建条目导致内存泄漏。
         // 未找到镜像时视为新引擎，返回 false（默认关闭）。
         let Some(mirror) = self
@@ -392,7 +392,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    // === Config tests ===
+    // Config tests
 
     #[test]
     fn test_circuit_config_default() {
@@ -415,7 +415,7 @@ mod tests {
         assert_eq!(config.failure_window, cloned.failure_window);
     }
 
-    // === CircuitBreaker creation tests ===
+    // CircuitBreaker creation tests
 
     #[test]
     fn test_circuit_breaker_new() {
@@ -473,7 +473,7 @@ mod tests {
         assert!(!cb.is_open("other")); // 1 < 5, still closed
     }
 
-    // === Closed state tests ===
+    // Closed state tests
 
     #[test]
     fn test_closed_state_not_open() {
@@ -503,7 +503,7 @@ mod tests {
         assert!(!stats.is_open);
     }
 
-    // === Open state tests ===
+    // Open state tests
 
     #[tokio::test]
     async fn test_open_state_after_threshold() {
@@ -549,7 +549,7 @@ mod tests {
         assert!(cb.is_open("engine"));
     }
 
-    // === Half-open state tests ===
+    // Half-open state tests
 
     #[tokio::test]
     async fn test_half_open_after_recovery_timeout() {
@@ -581,7 +581,6 @@ mod tests {
         cb.record_failure("engine").await;
         assert!(cb.is_open("engine"));
 
-        // Wait for recovery timeout
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // Trigger transition to half-open
@@ -608,7 +607,6 @@ mod tests {
         cb.record_failure("engine").await;
         assert!(cb.is_open("engine"));
 
-        // Wait for recovery timeout
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // Trigger transition to half-open
@@ -634,7 +632,7 @@ mod tests {
         assert!(cb.is_open("engine"));
     }
 
-    // === Failure window tests ===
+    // Failure window tests
 
     /// 行为变化标注（S6 库化）：统计窗口仍淘汰旧失败戳（failure_count == 1），
     /// 但库状态机为**累计比例触发**（计数不随窗口衰减）——第 3 次失败后
@@ -685,7 +683,7 @@ mod tests {
         assert_eq!(stats.failure_count, 3);
     }
 
-    // === Statistics tests ===
+    // Statistics tests
 
     #[tokio::test]
     async fn test_get_stats_unknown_engine() {
@@ -729,7 +727,7 @@ mod tests {
         assert!(stats_after.is_open);
     }
 
-    // === Multiple engine isolation tests ===
+    // Multiple engine isolation tests
 
     #[tokio::test]
     async fn test_multiple_engines_are_isolated() {
@@ -760,7 +758,7 @@ mod tests {
         assert_eq!(stats_b.total_failures, 1);
     }
 
-    // === Concurrent access tests ===
+    // Concurrent access tests
 
     #[tokio::test]
     async fn test_concurrent_record_failures() {
@@ -863,7 +861,7 @@ mod tests {
         assert_eq!(stats.total_successes, 100);
     }
 
-    // === Full lifecycle test ===
+    // Full lifecycle test
 
     #[tokio::test]
     async fn test_full_lifecycle_closed_open_half_open_closed() {
@@ -925,7 +923,7 @@ mod tests {
         assert_eq!(stats.total_failures, 3);
     }
 
-    // === Status enum tests ===
+    // Status enum tests
 
     /// 镜像原子值与库 `state()` 在 record 完成后一致（S6 验收：一致性断言）
     #[tokio::test]
@@ -987,7 +985,7 @@ mod tests {
         assert_eq!(s1, s2);
     }
 
-    // === CircuitStats default test ===
+    // CircuitStats default test
 
     #[test]
     fn test_circuit_stats_default() {
@@ -999,7 +997,7 @@ mod tests {
         assert_eq!(stats.total_successes, 0);
     }
 
-    // === record_failure on already-open breaker ===
+    // record_failure on already-open breaker
 
     #[tokio::test]
     async fn test_record_failure_on_open_breaker_is_noop_status() {
@@ -1026,7 +1024,7 @@ mod tests {
         assert_eq!(stats.total_requests, 2);
     }
 
-    // === record_success on closed breaker (no state change) ===
+    // record_success on closed breaker (no state change)
 
     #[tokio::test]
     async fn test_record_success_on_closed_breaker_does_not_change_state() {
@@ -1043,7 +1041,7 @@ mod tests {
         assert_eq!(stats.total_requests, 2);
     }
 
-    // === CircuitBreaker Clone ===
+    // CircuitBreaker Clone
 
     #[tokio::test]
     async fn test_circuit_breaker_clone_shares_state() {
@@ -1062,10 +1060,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_open_returns_false_when_already_half_open() {
-        // Cover line 202: `Status::HalfOpen => false` in is_open().
+        // Cover line 202: `Status::HalfOpen => false` in is_open.
         // Existing tests only cover the Open -> HalfOpen transition
         // (lines 192-194) which returns false immediately. To hit line 202,
-        // is_open() must be called when the state is ALREADY HalfOpen
+        // is_open must be called when the state is ALREADY HalfOpen
         // (set by a previous is_open call after recovery timeout).
         let cb = CircuitBreaker::with_default_config(CircuitConfig {
             failure_threshold: 1,

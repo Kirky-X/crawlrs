@@ -405,7 +405,7 @@ mod tests {
         assert_eq!(mock.expire_calls(), 1);
     }
 
-    // ========== process() with count = 1 (minimum non-zero) ==========
+    // process with count = 1 (minimum non-zero)
 
     #[tokio::test]
     async fn test_process_with_count_one() {
@@ -416,7 +416,7 @@ mod tests {
         assert_eq!(mock.expire_calls(), 1);
     }
 
-    // ========== process() with large count ==========
+    // process with large count
 
     #[tokio::test]
     async fn test_process_with_large_count() {
@@ -427,7 +427,7 @@ mod tests {
         assert_eq!(mock.expire_calls(), 1);
     }
 
-    // ========== process() error then success on second call ==========
+    // process error then success on second call
 
     #[tokio::test]
     async fn test_process_error_then_success_on_retry() {
@@ -448,7 +448,7 @@ mod tests {
         assert_eq!(mock.expire_calls(), 2);
     }
 
-    // ========== multiple process cycles all complete ==========
+    // multiple process cycles all complete
 
     #[tokio::test]
     async fn test_process_multiple_cycles_all_complete() {
@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(mock.expire_calls(), 3);
     }
 
-    // ========== cleanup_expired_tasks with zero count ==========
+    // cleanup_expired_tasks with zero count
 
     #[tokio::test]
     async fn test_cleanup_expired_tasks_zero_count() {
@@ -474,7 +474,7 @@ mod tests {
         assert_eq!(mock.expire_calls(), 1);
     }
 
-    // ========== new() returns worker with correct name ==========
+    // new returns worker with correct name
 
     #[test]
     fn test_new_returns_worker_with_correct_name() {
@@ -484,7 +484,7 @@ mod tests {
         assert_eq!(worker.name(), "expiration-worker");
     }
 
-    // ========== process() preserves repository across calls ==========
+    // process preserves repository across calls
 
     #[tokio::test]
     async fn test_process_preserves_repository_across_calls() {
@@ -500,7 +500,7 @@ mod tests {
         assert_eq!(mock.expire_calls(), 2);
     }
 
-    // ========== scrape result retention ==========
+    // scrape result retention
 
     #[tokio::test]
     async fn test_process_cleans_expired_results_and_completes() {

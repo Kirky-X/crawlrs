@@ -56,7 +56,7 @@ pub struct RagSettings {
     #[config(default = String::new())]
     pub rerank_provider: String,
 
-    // --- local（vecboost）---
+    // local（vecboost）
     /// 本地模型目录（须含 config.json / tokenizer.json / model.safetensors）。
     /// 指向不存在的路径时按 HF repo id 在线拉取（需网络）。
     /// 模型获取：vecboost 仓库 `cargo run -p vecboost-examples --bin download_model -- --small`
@@ -75,7 +75,7 @@ pub struct RagSettings {
     #[config(default = 256)]
     pub local_cache_size: usize,
 
-    // --- remote（rig，OpenAI 兼容）---
+    // remote（rig，OpenAI 兼容）
     /// 远端嵌入模型名
     #[config(default = "text-embedding-3-small".to_string())]
     pub remote_embed_model: String,
@@ -93,7 +93,7 @@ pub struct RagSettings {
     /// 远端嵌入 API 密钥（敏感信息）
     pub(crate) remote_api_key: Option<String>,
 
-    // --- http（通用 rerank REST）---
+    // http（通用 rerank REST）
     /// 重排端点完整 URL（如 `https://api.jina.ai/v1/rerank`、TEI `http://host/rerank`）
     #[config(default = String::new())]
     pub rerank_endpoint: String,
@@ -113,7 +113,7 @@ pub struct RagSettings {
     #[config(default = 10)]
     pub rerank_timeout_seconds: u64,
 
-    // --- 行为 ---
+    // 行为
     /// 搜索重排送入 provider 的最大文档数（按当前顺序取前 N，防止长尾延迟）
     #[config(default = 25)]
     pub search_rerank_top_n: usize,

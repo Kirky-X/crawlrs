@@ -28,9 +28,7 @@ fn make_test_task_with_unique_url() -> Task {
     task
 }
 
-// ============================================================
 // Construction tests (real DB pool)
-// ============================================================
 
 #[test]
 fn test_new_creates_repository_instance() {
@@ -43,10 +41,8 @@ fn test_new_creates_repository_instance() {
     let _ = repo;
 }
 
-// ============================================================
 // CRUD tests — verify create / find / update / state transitions
 // against a real PostgreSQL database.
-// ============================================================
 
 #[tokio::test]
 async fn test_create_with_real_db_succeeds() {
@@ -650,9 +646,7 @@ async fn test_batch_cancel_with_real_db_cancels_owned_tasks() {
     assert_eq!(found2.status, TaskStatus::Cancelled);
 }
 
-// ============================================================
 // RepositoryError variant tests
-// ============================================================
 
 #[test]
 fn test_error_database_display() {
@@ -684,9 +678,7 @@ fn test_from_dberr_to_repository_error() {
     assert!(repo_err.to_string().contains("query failed"));
 }
 
-// ============================================================
 // Additional construction & accessor tests
-// ============================================================
 
 #[test]
 fn test_pool_accessor_returns_reference_to_same_pool() {
@@ -747,11 +739,9 @@ fn test_task_query_params_default() {
     assert_eq!(params.offset, 0);
 }
 
-// ============================================================
 // query_tasks — exercise optional filter branches.
 // Each test verifies that filter combinations are accepted and
 // return Ok with an empty result set against a fresh team_id.
-// ============================================================
 
 #[tokio::test]
 async fn test_query_tasks_with_crawl_id_returns_empty() {
@@ -829,9 +819,7 @@ async fn test_query_tasks_with_all_optional_filters_returns_empty() {
     assert_eq!(total, 0);
 }
 
-// ============================================================
 // Additional boundary tests for existing methods
-// ============================================================
 
 #[tokio::test]
 async fn test_find_existing_urls_with_multiple_urls_returns_empty_for_unknown() {
@@ -943,9 +931,7 @@ async fn test_exists_by_url_with_empty_string_returns_false() {
     let _exists = result.unwrap();
 }
 
-// ============================================================
 // Additional From<dbnexus::sea_orm::DbErr> variant coverage
-// ============================================================
 
 #[test]
 fn test_from_dberr_record_not_found_to_repository_error() {
@@ -992,9 +978,7 @@ fn test_from_dberr_query_runtime_to_repository_error() {
     assert!(repo_err.to_string().contains("syntax error"));
 }
 
-// ============================================================
 // TaskType / TaskStatus display exhaustive
-// ============================================================
 
 #[test]
 fn test_task_type_scrape_display() {
@@ -1060,10 +1044,8 @@ fn test_task_status_cancelled_display() {
     assert_eq!(format!("{}", TaskStatus::Cancelled), "cancelled");
 }
 
-// ============================================================
 // Additional From<dbnexus::sea_orm::DbErr> variant coverage (exhaustive)
 // 覆盖 dbnexus::sea_orm::DbErr 所有未在前面测试的变体到 RepositoryError::Database 的转换
-// ============================================================
 
 #[test]
 fn test_from_dberr_connection_acquire_closed_to_repository_error() {
@@ -1289,9 +1271,7 @@ fn test_from_dberr_primary_key_not_set_to_repository_error() {
     assert!(matches!(repo_err, RepositoryError::Database(_)));
 }
 
-// ============================================================
 // RepositoryError Display — 精确消息内容验证
-// ============================================================
 
 #[test]
 fn test_repository_error_database_display_exact() {
@@ -1336,9 +1316,7 @@ fn test_repository_error_implements_debug() {
     assert!(!debug2.is_empty());
 }
 
-// ============================================================
 // Additional boundary tests for URL-based methods
-// ============================================================
 
 #[tokio::test]
 async fn test_exists_by_url_with_unicode_returns_false_for_unknown() {
@@ -1413,9 +1391,7 @@ async fn test_find_existing_urls_with_mixed_empty_and_nonempty_returns_only_matc
     );
 }
 
-// ============================================================
 // Additional boundary tests for UUID-based methods
-// ============================================================
 
 #[tokio::test]
 async fn test_find_by_id_with_nil_uuid_returns_none() {
@@ -1434,7 +1410,6 @@ async fn test_mark_completed_with_nil_uuid_succeeds_silently() {
     if crate::common::test_helpers::skip_if_no_test_db() {
         return;
     }
-    // mark_completed silently returns Ok(()) when the task is not found
     // (this is the current implementation behavior).
     let repo = TaskRepositoryImpl::new(create_test_db_pool(), Duration::minutes(5));
     let result = repo
@@ -1534,9 +1509,7 @@ async fn test_batch_cancel_with_nil_uuids_returns_errors() {
     );
 }
 
-// ============================================================
 // query_tasks boundary — extreme limit/offset values
-// ============================================================
 
 #[tokio::test]
 async fn test_query_tasks_with_zero_limit_offset_returns_empty() {
@@ -1629,9 +1602,7 @@ async fn test_query_tasks_with_empty_task_types_vec_returns_empty() {
     assert_eq!(total, 0);
 }
 
-// ============================================================
 // Repository clone — verify Clone preserves pool identity
-// ============================================================
 
 #[test]
 fn test_repository_clone_preserves_pool_identity() {

@@ -38,9 +38,7 @@ use crawlrs::queue::task_queue::{QueueError, TaskQueue};
 use crawlrs::utils::robots::RobotsCheckerTrait;
 use crawlrs::workers::manager::{WorkerManager, WorkerManagerConfig, WorkerManagerDeps};
 
-// =============================================================================
 // Mock implementations
-// =============================================================================
 
 /// Mock TaskRepository that tracks expire_tasks and reset_stuck_tasks calls.
 struct MockTaskRepository {
@@ -537,9 +535,7 @@ impl CacheService for MockCacheService {
     }
 }
 
-// =============================================================================
 // Helper functions
-// =============================================================================
 
 fn make_deps(queue: Arc<dyn TaskQueue>, repository: Arc<dyn TaskRepository>) -> WorkerManagerDeps {
     WorkerManagerDeps {
@@ -572,9 +568,7 @@ fn make_config(concurrency_limit: usize) -> WorkerManagerConfig {
     }
 }
 
-// =============================================================================
 // WorkerManager construction tests
-// =============================================================================
 
 #[test]
 fn test_worker_manager_new_constructs_successfully() {
@@ -607,9 +601,7 @@ fn test_worker_manager_new_with_large_concurrency() {
     let _manager = WorkerManager::new(deps, config);
 }
 
-// =============================================================================
 // start_workers tests
-// =============================================================================
 
 #[tokio::test]
 async fn test_start_workers_zero_spawns_expiration_worker_only() {
@@ -718,9 +710,7 @@ async fn test_start_workers_called_multiple_times_accumulates() {
     drop(manager);
 }
 
-// =============================================================================
 // Drop behavior tests
-// =============================================================================
 
 #[tokio::test]
 async fn test_drop_aborts_all_workers() {
@@ -804,9 +794,7 @@ async fn test_drop_after_start_workers_zero_aborts_expiration_worker() {
     );
 }
 
-// =============================================================================
 // Concurrency and configuration tests
-// =============================================================================
 
 #[tokio::test]
 async fn test_worker_manager_with_zero_concurrency_limit() {
@@ -846,9 +834,7 @@ async fn test_worker_manager_settings_are_shared() {
     );
 }
 
-// =============================================================================
 // WorkerManagerDeps construction tests
-// =============================================================================
 
 #[test]
 fn test_worker_manager_deps_can_be_constructed_with_all_mocks() {
@@ -877,9 +863,7 @@ fn test_worker_manager_deps_with_shared_repository() {
     assert_eq!(Arc::strong_count(&repo), 3); // original + deps + coalesce_coordinator
 }
 
-// =============================================================================
 // Send + Sync verification
-// =============================================================================
 
 #[test]
 fn test_worker_manager_is_send() {
@@ -905,9 +889,7 @@ fn test_worker_manager_config_is_send_sync() {
     assert_send_sync::<WorkerManagerConfig>();
 }
 
-// =============================================================================
 // needs_drop verification (Drop impl exists)
-// =============================================================================
 
 #[test]
 fn test_worker_manager_needs_drop() {

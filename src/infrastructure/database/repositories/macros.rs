@@ -60,7 +60,7 @@ macro_rules! repository_new {
 ///     pub fn new(
 ///         db: Arc<DatabaseConnection>,
 ///         lock_duration: chrono::Duration,
-///     ) -> Self {
+///) -> Self {
 ///         Self { db, lock_duration }
 ///     }
 /// }

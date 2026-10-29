@@ -3,7 +3,7 @@
 
 //! MLLM 自主导航爬取示例
 //!
-//! 演示如何使用 `needs_mllm()` 标记发起 MLLM（多模态大语言模型）自主导航爬取请求。
+//! 演示如何使用 `needs_mllm` 标记发起 MLLM（多模态大语言模型）自主导航爬取请求。
 //! MLLM 引擎通过视觉模型分析页面截图，自主决定导航动作（点击/滚动/输入），
 //! 直到提取到目标内容或达到最大迭代次数。
 //!
@@ -37,7 +37,7 @@ async fn main() {
     let client = EngineClient::new();
 
     // 示例 1: 基础 MLLM 爬取
-    // 使用 needs_mllm() 标记，引擎路由器会自动选择 MLLM 引擎
+    // 使用 needs_mllm 标记，引擎路由器会自动选择 MLLM 引擎
     info!("📋 示例 1: 基础 MLLM 爬取");
     let request = ScrapeRequest::new("https://example.com")
         .needs_mllm()

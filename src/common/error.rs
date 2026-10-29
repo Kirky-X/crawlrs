@@ -318,9 +318,7 @@ impl From<CrawlRsError> for ApiErrorResponse {
     }
 }
 
-// =============================================================================
 // 错误信息脱敏函数
-// =============================================================================
 
 /// 检查是否应该显示详细错误信息
 ///
@@ -409,9 +407,7 @@ fn sanitize_engine_error(error: &str) -> String {
     sanitized
 }
 
-// =============================================================================
 // IntoResponse 实现
-// =============================================================================
 
 /// 为 CrawlRsError 实现 IntoResponse trait
 ///
@@ -425,7 +421,6 @@ impl IntoResponse for CrawlRsError {
         let error_code = self.error_code();
         let detailed_msg = self.detailed_message();
 
-        // 记录详细错误到服务器日志
         error!(
             "Request error occurred error_code={:?} status_code={} error_details={}",
             error_code,
@@ -526,9 +521,7 @@ impl From<crate::engines::engine_client::EngineError> for CrawlRsError {
     }
 }
 
-// =============================================================================
 // 通用错误转换宏（从 utils/errors.rs 迁移）
-// =============================================================================
 
 /// 为错误类型生成标准 From 转换（`From<String>` / `From<&str>` / `From<anyhow::Error>`)
 ///
@@ -556,9 +549,7 @@ macro_rules! impl_basic_error_conversions {
     };
 }
 
-// =============================================================================
 // 仓库层错误类型（从 utils/errors.rs 迁移）
-// =============================================================================
 
 /// 通用仓库层错误类型
 ///
@@ -582,9 +573,7 @@ pub enum RepositoryError {
     InternalError(String),
 }
 
-// =============================================================================
 // Worker 错误类型（从 utils/errors.rs 迁移）
-// =============================================================================
 
 /// Worker 错误类型
 #[derive(Debug, thiserror::Error)]
@@ -624,9 +613,7 @@ impl From<RepositoryError> for WorkerError {
     }
 }
 
-// =============================================================================
 // From<RepositoryError> for CrawlRsError（通用仓库错误 → 应用错误）
-// =============================================================================
 
 impl From<RepositoryError> for CrawlRsError {
     fn from(err: RepositoryError) -> Self {
@@ -649,9 +636,7 @@ impl From<RepositoryError> for CrawlRsError {
     }
 }
 
-// =============================================================================
 // From<task_repository::RepositoryError> for CrawlRsError（任务仓库错误 → 应用错误）
-// =============================================================================
 
 impl From<crate::domain::repositories::task_repository::RepositoryError> for CrawlRsError {
     fn from(err: crate::domain::repositories::task_repository::RepositoryError) -> Self {
@@ -666,9 +651,7 @@ impl From<crate::domain::repositories::task_repository::RepositoryError> for Cra
     }
 }
 
-// =============================================================================
 // From<confers::ConfigError> for CrawlRsError
-// =============================================================================
 
 impl From<confers::ConfigError> for CrawlRsError {
     fn from(err: confers::ConfigError) -> Self {
@@ -676,9 +659,7 @@ impl From<confers::ConfigError> for CrawlRsError {
     }
 }
 
-// =============================================================================
 // From<RobotsCheckerError> for CrawlRsError
-// =============================================================================
 
 impl From<crate::utils::robots::RobotsCheckerError> for CrawlRsError {
     fn from(err: crate::utils::robots::RobotsCheckerError) -> Self {
@@ -689,9 +670,7 @@ impl From<crate::utils::robots::RobotsCheckerError> for CrawlRsError {
 // 为 CrawlRsError 生成 From<String> / From<&str> / From<anyhow::Error>（映射到 Other 变体）
 impl_basic_error_conversions!(CrawlRsError, Other);
 
-// =============================================================================
 // RepositoryResultExt —— 消除重复的 .map_err(|e| WorkerError::RepositoryError(...))
-// =============================================================================
 
 /// 将任意 Display 错误结果转换为 WorkerError::RepositoryError 的扩展 trait
 pub trait RepositoryResultExt<T> {
@@ -777,9 +756,7 @@ mod tests {
         assert_eq!(response.message, "Not found: User not found");
     }
 
-    // =============================================================================
     // 错误信息脱敏测试
-    // =============================================================================
 
     #[test]
     fn test_user_message_sanitization() {
@@ -942,9 +919,7 @@ mod tests {
         assert!(sanitized.contains("[REDACTED]"));
     }
 
-    // =============================================================================
     // 完整的状态码映射测试 - 覆盖所有变体
-    // =============================================================================
 
     #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[test]
@@ -1003,9 +978,7 @@ mod tests {
         );
     }
 
-    // =============================================================================
     // 完整的错误代码映射测试 - 覆盖所有变体
-    // =============================================================================
 
     #[test]
     fn test_error_code_all_variants() {
@@ -1065,9 +1038,7 @@ mod tests {
         );
     }
 
-    // =============================================================================
     // 完整的 user_message 测试 - 覆盖所有变体
-    // =============================================================================
 
     #[test]
     fn test_user_message_all_variants() {
@@ -1133,9 +1104,7 @@ mod tests {
         assert!(!msg.contains("/home/dev/"));
     }
 
-    // =============================================================================
     // From<CrawlRsError> for ApiErrorResponse 测试
-    // =============================================================================
 
     #[test]
     fn test_from_app_error_to_api_error_response() {
@@ -1153,9 +1122,7 @@ mod tests {
         assert!(response.message.contains("timeout"));
     }
 
-    // =============================================================================
     // IntoResponse 测试 - 生产环境和开发环境
-    // =============================================================================
 
     #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[tokio::test]
@@ -1233,9 +1200,7 @@ mod tests {
         assert!(json.get("timestamp").is_some());
     }
 
-    // =============================================================================
     // From<EngineError> 测试 - 覆盖所有 EngineError 变体
-    // =============================================================================
 
     #[test]
     fn test_from_engine_error_request_failed() {
@@ -1363,9 +1328,7 @@ mod tests {
         }
     }
 
-    // =============================================================================
     // From<reqwest::Error> 测试
-    // =============================================================================
 
     #[test]
     fn test_from_reqwest_error_conversion() {
@@ -1381,9 +1344,7 @@ mod tests {
         }
     }
 
-    // =============================================================================
     // 迁移自 utils/errors.rs：WorkerError / RepositoryError / RepositoryResultExt
-    // =============================================================================
 
     #[test]
     fn test_worker_error_from_string() {
@@ -1421,7 +1382,7 @@ mod tests {
         assert!(matches!(err, CrawlRsError::Other(msg) if msg.contains("db timeout")));
     }
 
-    // ========== From<RepositoryError> for WorkerError ==========
+    // From<RepositoryError> for WorkerError
 
     #[test]
     fn test_worker_error_from_repository_database_error() {
@@ -1453,7 +1414,7 @@ mod tests {
         assert!(matches!(err, WorkerError::InternalError(msg) if msg == "oops"));
     }
 
-    // ========== From<RepositoryError> for CrawlRsError ==========
+    // From<RepositoryError> for CrawlRsError
 
     #[test]
     fn test_app_error_from_repository_database_error() {
@@ -1490,7 +1451,7 @@ mod tests {
         assert!(matches!(err, CrawlRsError::Other(msg) if msg == "oops"));
     }
 
-    // ========== From<task_repository::RepositoryError> for CrawlRsError ==========
+    // From<task_repository::RepositoryError> for CrawlRsError
 
     #[test]
     fn test_app_error_from_task_repo_database_error() {
@@ -1506,7 +1467,7 @@ mod tests {
         assert!(matches!(err, CrawlRsError::NotFound(msg) if msg.contains("not found")));
     }
 
-    // ========== From<RobotsCheckerError> for CrawlRsError ==========
+    // From<RobotsCheckerError> for CrawlRsError
 
     #[test]
     fn test_app_error_from_robots_checker_error() {
@@ -1516,7 +1477,7 @@ mod tests {
         assert!(matches!(err, CrawlRsError::Other(msg) if msg.contains("blocked")));
     }
 
-    // ========== RepositoryResultExt ==========
+    // RepositoryResultExt
 
     #[test]
     fn test_repository_result_ext_ok() {
@@ -1531,7 +1492,7 @@ mod tests {
         assert!(matches!(err, WorkerError::RepositoryError(msg) if msg.contains("disk failure")));
     }
 
-    // ========== 新变体 Authentication / ServiceUnavailable 的 IntoResponse ==========
+    // 新变体 Authentication / ServiceUnavailable 的 IntoResponse
 
     #[cfg(any(feature = "platform", feature = "web-axum"))]
     #[tokio::test]

@@ -115,7 +115,7 @@ impl TaskQueue for PostgresTaskQueue {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 成功
+    /// * `Ok()` - 成功
     /// * `Err(QueueError)` - 失败
     async fn complete(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         // 无锁身份（None）：队列级 complete 仅允许终结未被认领的任务；
@@ -132,7 +132,7 @@ impl TaskQueue for PostgresTaskQueue {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 成功
+    /// * `Ok()` - 成功
     /// * `Err(QueueError)` - 失败
     async fn fail(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         // 无锁身份（None）：语义同 complete
@@ -148,7 +148,7 @@ impl TaskQueue for PostgresTaskQueue {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 成功
+    /// * `Ok()` - 成功
     /// * `Err(QueueError)` - 失败
     async fn cancel(&self, task_id: crate::domain::id::Id) -> Result<(), QueueError> {
         self.repository.mark_cancelled(task_id).await?;
@@ -413,7 +413,7 @@ mod tests {
         PostgresTaskQueue::new(mock)
     }
 
-    // ========== PostgresTaskQueue::new ==========
+    // PostgresTaskQueue::new
 
     #[test]
     fn test_new_stores_repository() {
@@ -423,7 +423,7 @@ mod tests {
         assert!(Arc::ptr_eq(&queue.repository, &mock));
     }
 
-    // ========== enqueue happy path ==========
+    // enqueue happy path
 
     #[tokio::test]
     async fn test_enqueue_returns_created_task() {
@@ -452,7 +452,7 @@ mod tests {
         assert_eq!(mock.enqueue_calls.load(Ordering::SeqCst), 1);
     }
 
-    // ========== dequeue happy path and empty queue ==========
+    // dequeue happy path and empty queue
 
     #[tokio::test]
     async fn test_dequeue_empty_returns_none() {
@@ -493,11 +493,11 @@ mod tests {
         assert_eq!(mock.dequeue_calls.load(Ordering::SeqCst), 1);
     }
 
-    // ========== Test logger for covering debug! macro in dequeue ==========
+    // Test logger for covering debug! macro in dequeue
 
     use crate::test_utils::ensure_debug_logger;
 
-    // ========== debug! coverage tests ==========
+    // debug! coverage tests
 
     #[tokio::test]
     async fn test_dequeue_logs_debug_with_task() {
@@ -523,7 +523,7 @@ mod tests {
         assert_eq!(mock.dequeue_calls.load(Ordering::SeqCst), 1);
     }
 
-    // ========== complete / fail / cancel happy paths ==========
+    // complete / fail / cancel happy paths
 
     #[tokio::test]
     async fn test_complete_calls_repository_and_returns_ok() {
@@ -558,7 +558,7 @@ mod tests {
         assert_eq!(*mock.last_task_id.lock(), Some(task_id));
     }
 
-    // ========== complete / fail / cancel error propagation ==========
+    // complete / fail / cancel error propagation
 
     #[tokio::test]
     async fn test_complete_propagates_repository_error() {
@@ -587,7 +587,7 @@ mod tests {
         assert_eq!(mock.cancel_calls.load(Ordering::SeqCst), 1);
     }
 
-    // ========== QueueError variants ==========
+    // QueueError variants
 
     #[test]
     fn test_queue_error_repository_display() {
@@ -613,7 +613,7 @@ mod tests {
         }
     }
 
-    // ========== Arc<T> delegation impl ==========
+    // Arc<T> delegation impl
 
     #[tokio::test]
     async fn test_arc_delegation_enqueue() {
@@ -666,7 +666,7 @@ mod tests {
         assert_eq!(mock.cancel_calls.load(Ordering::SeqCst), 1);
     }
 
-    // ========== Integration: enqueue then dequeue ==========
+    // Integration: enqueue then dequeue
 
     #[tokio::test]
     async fn test_enqueue_then_dequeue_full_cycle() {
@@ -714,7 +714,7 @@ mod tests {
         assert_eq!(*mock.last_task_id.lock(), Some(id3));
     }
 
-    // ========== Arc<dyn TaskQueue> delegation tests ==========
+    // Arc<dyn TaskQueue> delegation tests
     // These tests cover the `impl<T: TaskQueue + ?Sized> TaskQueue for Arc<T>`
     // delegation methods (lines 148-164). Unlike `Arc<PostgresTaskQueue>` which
     // resolves to the direct impl via Deref, `Arc<dyn TaskQueue>` forces calls

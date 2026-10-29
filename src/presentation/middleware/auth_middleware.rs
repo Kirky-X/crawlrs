@@ -500,7 +500,7 @@ pub async fn scope_middleware(req: Request<Body>, next: Next) -> Result<Response
         if !auth_state.scope.has_permission(required) {
             // scope denied 是预期事件（合法的授权拒绝），非攻击信号。
             // api_key_id 是 UUID（非敏感），但生产 log level 设为 warn 会产生噪音，改为 info。
-            // 详细拒绝事件已通过 audit_service.log_deny() 入审计。
+            // 详细拒绝事件已通过 audit_service.log_deny 入审计。
             log::info!(
                 "Scope denied: API Key {} lacks {:?} for {} {}",
                 auth_state.api_key_id,
@@ -575,7 +575,7 @@ pub fn test_auth_state(
 mod tests {
     use super::*;
 
-    // ===== is_path_prefix tests =====
+    // is_path_prefix tests
 
     #[test]
     fn test_is_path_prefix_exact_match() {
@@ -597,7 +597,7 @@ mod tests {
         assert!(!is_path_prefix("/v1/search", "/api/v1/teams"));
     }
 
-    // ===== determine_required_scope tests =====
+    // determine_required_scope tests
 
     #[test]
     fn test_determine_required_scope_teams_admin() {
@@ -666,7 +666,7 @@ mod tests {
         );
     }
 
-    // ===== hash_token tests (CWE-532) =====
+    // hash_token tests (CWE-532)
     #[cfg(feature = "auth")]
     mod hash_token_tests {
         use super::*;
@@ -708,7 +708,7 @@ mod tests {
         }
     }
 
-    // ===== team_id cache tests =====
+    // team_id cache tests
     #[cfg(feature = "auth")]
     mod team_id_cache_tests {
         use super::*;
@@ -732,7 +732,7 @@ mod tests {
         }
     }
 
-    // ===== default_identity_middleware tests (feature-gate: `auth` off) =====
+    // default_identity_middleware tests (feature-gate: `auth` off)
     //
     // 这些测试仅在 `--no-default-features`（关闭 `auth` feature）下编译运行，
     // 验证 `default_identity_middleware` 的契约。

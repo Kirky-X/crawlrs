@@ -20,7 +20,7 @@ mod browser_downloader_tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
-    // === Helper: create a fake browser executable in a temp dir ===
+    // Helper: create a fake browser executable in a temp dir
 
     fn create_fake_browser_executable(temp_dir: &tempfile::TempDir) -> std::path::PathBuf {
         let exe_path = get_browser_executable_path(temp_dir.path());
@@ -36,7 +36,7 @@ mod browser_downloader_tests {
         exe_path
     }
 
-    // === download_browser: "already downloaded" path ===
+    // download_browser: "already downloaded" path
 
     #[tokio::test]
     async fn test_download_browser_finds_cached_browser_when_no_system_browser() {
@@ -94,7 +94,7 @@ mod browser_downloader_tests {
         );
     }
 
-    // === get_or_download_browser with cached browser ===
+    // get_or_download_browser with cached browser
 
     #[tokio::test]
     async fn test_get_or_download_browser_with_cached_browser_returns_path() {
@@ -125,7 +125,7 @@ mod browser_downloader_tests {
         assert_eq!(status, DownloadStatus::Downloaded);
     }
 
-    // === download_browser: directory creation failure ===
+    // download_browser: directory creation failure
 
     #[tokio::test]
     async fn test_download_browser_directory_creation_failure_returns_error() {
@@ -171,7 +171,7 @@ mod browser_downloader_tests {
         }
     }
 
-    // === download_browser: no browser available returns DownloadFailed ===
+    // download_browser: no browser available returns DownloadFailed
 
     #[tokio::test]
     async fn test_download_browser_no_browser_available_returns_download_failed() {
@@ -213,7 +213,7 @@ mod browser_downloader_tests {
         }
     }
 
-    // === is_browser_downloaded with actual file ===
+    // is_browser_downloaded with actual file
 
     #[tokio::test]
     async fn test_is_browser_downloaded_returns_true_when_executable_exists() {
@@ -250,14 +250,13 @@ mod browser_downloader_tests {
         );
     }
 
-    // === cleanup after download ===
+    // cleanup after download
 
     #[tokio::test]
     async fn test_cleanup_after_successful_download_removes_dir() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_path = temp_dir.path().to_path_buf();
 
-        // Create a fake browser
         create_fake_browser_executable(&temp_dir);
 
         let config = BrowserDownloadConfig {
@@ -285,7 +284,7 @@ mod browser_downloader_tests {
         assert_eq!(status, DownloadStatus::NotDownloaded);
     }
 
-    // === BrowserDownloadConfig edge cases ===
+    // BrowserDownloadConfig edge cases
 
     #[test]
     fn test_browser_download_config_with_custom_timeout() {

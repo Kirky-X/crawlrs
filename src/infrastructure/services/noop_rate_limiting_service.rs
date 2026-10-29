@@ -11,7 +11,7 @@
 //!
 //! - `check_rate_limit` → `Allowed`（不限流）
 //! - `check_team_concurrency` → `Allowed`（不限制并发）
-//! - `check_and_deduct_quota` → `Ok(())`（不扣配额）
+//! - `check_and_deduct_quota` → `Ok()`（不扣配额）
 //! - `get_quota_balance` → `Ok(i64::MAX)`（无限配额）
 //! - `process_backlog_tasks` → `Ok(0)`（幂等空转，不处理积压）
 //! - 其余方法返回合理默认值（配置/计数器等）

@@ -180,7 +180,7 @@ mod tests {
         assert_eq!(domain.url, back_to_domain.url);
     }
 
-    // ========== to_domain: TaskType 映射 ==========
+    // to_domain: TaskType 映射
 
     #[test]
     fn test_to_domain_scrape_type() {
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_to_domain_invalid_task_type_falls_back_to_default() {
-        // 解析失败应 fallback 到 TaskType::default() = Scrape
+        // 解析失败应 fallback 到 TaskType::default = Scrape
         for bad in ["unknown", "", "SCRAPE", "search", "scrape "].iter() {
             let mut entity = make_entity();
             entity.task_type = bad.to_string();
@@ -222,7 +222,7 @@ mod tests {
         }
     }
 
-    // ========== to_domain: TaskStatus 映射 ==========
+    // to_domain: TaskStatus 映射
 
     #[test]
     fn test_to_domain_queued_status() {
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_to_domain_invalid_status_falls_back_to_default() {
-        // 解析失败应 fallback 到 TaskStatus::default() = Queued
+        // 解析失败应 fallback 到 TaskStatus::default = Queued
         for bad in ["unknown", "", "QUEUED", "running", "expired"].iter() {
             let mut entity = make_entity();
             entity.status = bad.to_string();
@@ -275,7 +275,7 @@ mod tests {
         }
     }
 
-    // ========== to_entity: 字段映射 ==========
+    // to_entity: 字段映射
 
     #[test]
     fn test_to_entity_maps_all_fields() {
@@ -326,7 +326,7 @@ mod tests {
         assert!(entity.lock_expires_at.is_none());
     }
 
-    // ========== to_domain_list ==========
+    // to_domain_list
 
     #[test]
     fn test_to_domain_list_empty() {
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(result[2].url, e3.url);
     }
 
-    // ========== to_active_model: ActiveValue 状态 ==========
+    // to_active_model: ActiveValue 状态
 
     #[test]
     fn test_to_active_model_id_is_unchanged() {
@@ -484,7 +484,7 @@ mod tests {
         assert_eq!(active.max_retries.as_ref(), &4);
     }
 
-    // ========== null/optional 字段 ==========
+    // null/optional 字段
 
     #[test]
     fn test_to_domain_all_optional_fields_none() {
@@ -523,7 +523,7 @@ mod tests {
         assert!(domain.lock_expires_at.is_some());
     }
 
-    // ========== datetime 转换 ==========
+    // datetime 转换
 
     #[test]
     fn test_to_entity_with_scheduled_at_preserves_timestamp() {

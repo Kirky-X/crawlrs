@@ -204,21 +204,16 @@ pub async fn query_tasks<T: TaskRepository>(
     let team_id = auth_state.team_id;
     let start_time = Instant::now();
 
-    // 验证请求参数
     validate_request(&request)?;
 
-    // 设置默认值并提取参数
     let (limit, offset, include_results, sync_wait_ms) = apply_defaults(&request);
 
-    // 克隆过滤条件供后续使用
     let task_types_clone = request.task_types.clone();
     let statuses_clone = request.statuses.clone();
 
-    // 执行任务查询
     let (mut tasks, total) =
         execute_task_query(task_repo.as_ref(), team_id, &request, limit, offset).await?;
 
-    // 处理同步等待模式
     let sync_mode = sync_wait_ms > 0 && !tasks.is_empty();
     let _waited_time_ms;
 
@@ -240,10 +235,8 @@ pub async fn query_tasks<T: TaskRepository>(
         None
     };
 
-    // 构建任务信息列表
     let task_infos = build_task_infos(&tasks, task_id_to_result.as_ref());
 
-    // 构建并返回响应
     let has_more = (offset + limit) < total as u32;
 
     Ok(Json(ApiResponse::success(TaskQueryDataDto {

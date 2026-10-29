@@ -94,7 +94,6 @@ impl EventSubscription {
     }
 
     pub fn matches(&self, event: &TaskEvent) -> bool {
-        // 检查事件类型是否匹配
         let event_status = match event {
             TaskEvent::Created { .. } => TaskStatus::Pending,
             TaskEvent::Started { .. } => TaskStatus::Running,
@@ -149,10 +148,8 @@ async fn main() {
 
     info!("=== 任务事件订阅示例 ===\n");
 
-    // 创建事件路由器
     let mut router = EventRouter::new();
 
-    // 创建订阅
     let mut completion_sub = EventSubscription::new(
         "Completion Notifications",
         "https://api.example.com/webhooks/completions",
@@ -167,7 +164,6 @@ async fn main() {
     progress_sub.subscribe_to(TaskStatus::Running);
     progress_sub.add_filter("url_pattern", "https://example.com/*");
 
-    // 添加订阅
     router.add_subscription(&completion_sub);
     router.add_subscription(&progress_sub);
 

@@ -222,7 +222,7 @@ async fn test_aggregate_partial_failure() {
     assert_eq!(response.content, "Result 2");
 }
 
-// === 反爬挑战页改派浏览器引擎 ===
+// 反爬挑战页改派浏览器引擎
 //
 // 验证：HTTP 引擎返回 Cloudflare 挑战页 HTML（status=200），被 antibot::classify 判
 // needs_browser=true，路由将其视为失败、强制后续 attempt needs_js=true，由浏览器引擎

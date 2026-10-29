@@ -191,7 +191,7 @@ async fn test_save_with_screenshot() {
     cleanup_scrape_results(&app, task_id).await;
 }
 
-/// tc_pool_returns_database_pool: pool() getter 返回与构造时相同的 pool 引用
+/// tc_pool_returns_database_pool: pool getter 返回与构造时相同的 pool 引用
 #[tokio::test]
 async fn tc_pool_returns_database_pool() {
     let app = create_test_app_no_worker().await;

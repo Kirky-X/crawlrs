@@ -179,7 +179,7 @@ pub enum ConcurrencyResult {
     Queued { backlog_id: crate::domain::id::Id },
 }
 
-// === 拆分后的接口 ===
+// 拆分后的接口
 
 /// 限流服务接口（核心限流功能）
 #[async_trait]
@@ -336,7 +336,7 @@ pub enum ValidationError {
 mod tests {
     use super::*;
 
-    // ========== RateLimitStrategy tests ==========
+    // RateLimitStrategy tests
 
     #[test]
     fn test_rate_limit_strategy_serde_all_variants() {
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(s1, s3);
     }
 
-    // ========== ConcurrencyStrategy tests ==========
+    // ConcurrencyStrategy tests
 
     #[test]
     fn test_concurrency_strategy_serde_all_variants() {
@@ -408,7 +408,7 @@ mod tests {
         );
     }
 
-    // ========== RateLimitConfig::default tests ==========
+    // RateLimitConfig::default tests
 
     #[test]
     fn test_rate_limit_config_default_values() {
@@ -432,7 +432,7 @@ mod tests {
         assert!(config.enabled);
     }
 
-    // ========== RateLimitConfig::validate tests ==========
+    // RateLimitConfig::validate tests
 
     #[test]
     fn test_rate_limit_config_validate_success() {
@@ -570,7 +570,7 @@ mod tests {
         assert_eq!(back.enabled, config.enabled);
     }
 
-    // ========== ConcurrencyConfig::default tests ==========
+    // ConcurrencyConfig::default tests
 
     #[test]
     fn test_concurrency_config_default_values() {
@@ -588,7 +588,7 @@ mod tests {
         assert!(config.validate().is_ok(), "default config should be valid");
     }
 
-    // ========== ConcurrencyConfig::validate tests ==========
+    // ConcurrencyConfig::validate tests
 
     #[test]
     fn test_concurrency_config_validate_success() {
@@ -701,7 +701,7 @@ mod tests {
         assert_eq!(back.enabled, config.enabled);
     }
 
-    // ========== RateLimitResult tests ==========
+    // RateLimitResult tests
 
     #[test]
     fn test_rate_limit_result_allowed_equality() {
@@ -746,7 +746,7 @@ mod tests {
         );
     }
 
-    // ========== ConcurrencyResult tests ==========
+    // ConcurrencyResult tests
 
     #[test]
     fn test_concurrency_result_allowed_equality() {
@@ -788,7 +788,7 @@ mod tests {
         );
     }
 
-    // ========== RateLimitingError Display tests ==========
+    // RateLimitingError Display tests
 
     #[test]
     fn test_rate_limiting_error_rate_limit_exceeded_display() {
@@ -832,7 +832,7 @@ mod tests {
         assert!(err.to_string().contains("something broke"));
     }
 
-    // ========== ValidationError Display tests ==========
+    // ValidationError Display tests
 
     #[test]
     fn test_validation_error_zero_rate_display() {
@@ -864,7 +864,7 @@ mod tests {
         assert!(err.to_string().contains("mismatch"));
     }
 
-    // ========== RateLimitingError From<anyhow::Error> test ==========
+    // RateLimitingError From<anyhow::Error> test
 
     #[test]
     fn test_rate_limiting_error_from_anyhow_preserves_message() {

@@ -5,13 +5,13 @@
 //!
 //! Two flavors are provided:
 //!
-//! - `create_test_pool_or_panic()` — builds a real `DbPool` via `DbPool::with_config(cfg)`
+//! - `create_test_pool_or_panic` — builds a real `DbPool` via `DbPool::with_config(cfg)`
 //!   reading URL from `TEST_DATABASE_URL` env var. Panics if env is not set, forcing
 //!   CI/local to configure explicitly. The name reflects actual behavior: dbnexus 0.4
 //!   with `permission` feature no longer supports sync `DbPool::try_from`, so every
 //!   test requiring a `DbPool` must establish a real DB connection.
 //!
-//! - `create_real_test_pool()` — alias of `create_test_pool_or_panic()` retained for
+//! - `create_real_test_pool` — alias of `create_test_pool_or_panic` retained for
 //!   call sites that explicitly document "I need a real DB connection".
 //!
 //! **No credential is hardcoded.** Previously (pre-Task9 follow-up) a hardcoded

@@ -31,9 +31,7 @@ use crawlrs::presentation::middleware::rate_limit_middleware::{
     rate_limit_middleware, RateLimitMiddleware, RateLimiter,
 };
 
-// =============================================================================
 // Mock RateLimitingService
-// =============================================================================
 
 enum MockBehavior {
     Allowed,
@@ -206,9 +204,7 @@ fn build_app(state: Arc<dyn RateLimitingService>) -> axum::Router {
         .layer(middleware::from_fn_with_state(state, middleware_wrapper))
 }
 
-// =============================================================================
 // RateLimiter::new / new_for_ip_limit
-// =============================================================================
 
 #[test]
 fn tc_rate_limiter_new_default_window() {
@@ -253,9 +249,7 @@ fn tc_rate_limiter_new_with_one_limit() {
     assert!(!limiter.check_rate_limit(key)); // 1 >= 1 blocked
 }
 
-// =============================================================================
 // RateLimiter::check_rate_limit — key isolation
-// =============================================================================
 
 #[test]
 fn tc_check_rate_limit_independent_keys() {
@@ -277,9 +271,7 @@ fn tc_check_rate_limit_same_key_blocks_at_limit() {
     assert!(!limiter.check_rate_limit(key));
 }
 
-// =============================================================================
 // RateLimiter::get_status
-// =============================================================================
 
 #[test]
 fn tc_get_status_no_record_returns_zero_and_full() {
@@ -323,9 +315,7 @@ fn tc_get_status_after_rejection_keeps_count() {
     assert_eq!(count, 1);
 }
 
-// =============================================================================
 // RateLimiter::cleanup_expired
-// =============================================================================
 
 #[test]
 fn tc_cleanup_expired_empty_map_does_not_panic() {
@@ -357,9 +347,7 @@ fn tc_cleanup_expired_with_multiple_entries() {
     }
 }
 
-// =============================================================================
 // RateLimitMiddleware::new + Clone
-// =============================================================================
 
 #[test]
 fn tc_rate_limit_middleware_new_stores_service() {
@@ -378,9 +366,7 @@ fn tc_rate_limit_middleware_clone_is_shallow() {
     let _ = cloned.clone();
 }
 
-// =============================================================================
 // rate_limit_middleware — public endpoint bypass
-// =============================================================================
 
 #[tokio::test]
 async fn tc_middleware_public_endpoint_health_skips_rate_limit() {
@@ -422,9 +408,7 @@ async fn tc_middleware_public_endpoint_metrics_skips_rate_limit() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-// =============================================================================
 // rate_limit_middleware — Allowed path
-// =============================================================================
 
 #[tokio::test]
 async fn tc_middleware_allowed_passes_request_through() {
@@ -443,9 +427,7 @@ async fn tc_middleware_allowed_passes_request_through() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-// =============================================================================
 // rate_limit_middleware — Denied path
-// =============================================================================
 
 #[tokio::test]
 async fn tc_middleware_denied_returns_429_with_json_body() {
@@ -474,9 +456,7 @@ async fn tc_middleware_denied_returns_429_with_json_body() {
     assert_eq!(json["message"], "quota exceeded");
 }
 
-// =============================================================================
 // rate_limit_middleware — RetryAfter path
-// =============================================================================
 
 #[tokio::test]
 async fn tc_middleware_retry_after_returns_429_with_retry_after_header() {
@@ -505,9 +485,7 @@ async fn tc_middleware_retry_after_returns_429_with_retry_after_header() {
     assert_eq!(json["message"], "Retry after 60 seconds");
 }
 
-// =============================================================================
 // rate_limit_middleware — service error fail-open
-// =============================================================================
 
 #[tokio::test]
 async fn tc_middleware_service_error_fail_open_allows_request() {
@@ -531,9 +509,7 @@ async fn tc_middleware_service_error_fail_open_allows_request() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-// =============================================================================
 // rate_limit_middleware — IP rate limit (no Bearer token)
-// =============================================================================
 
 #[tokio::test]
 async fn tc_middleware_no_bearer_uses_ip_rate_limit_first_request_allowed() {
@@ -561,14 +537,12 @@ async fn tc_middleware_no_bearer_uses_ip_rate_limit_first_request_allowed() {
     );
 }
 
-// =============================================================================
 // rate_limit_middleware — short API key prefix safety
-// =============================================================================
 
 #[tokio::test]
 async fn tc_middleware_short_api_key_does_not_panic() {
     // API keys shorter than 8 chars must not cause index-out-of-bounds in the
-    // `&api_key[..std::cmp::min(8, api_key.len())]` slicing.
+    // `&api_key[..std::cmp::min(8, api_key.len)]` slicing.
     let app = build_app(mock_arc(MockBehavior::Denied("short key".to_string())));
     let response = app
         .oneshot(
@@ -601,9 +575,7 @@ async fn tc_middleware_single_char_api_key_does_not_panic() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-// =============================================================================
 // rate_limit_middleware — Bearer token extraction edge cases
-// =============================================================================
 
 #[tokio::test]
 async fn tc_middleware_basic_auth_falls_back_to_ip_limit() {
@@ -664,9 +636,7 @@ async fn tc_middleware_bearer_with_trailing_spaces_token_trimmed() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-// =============================================================================
 // rate_limit_middleware — content-type header on 429 responses
-// =============================================================================
 
 #[tokio::test]
 async fn tc_middleware_denied_response_has_application_json_content_type() {

@@ -191,7 +191,7 @@ impl ScrapeWorkerBuilder {
 
     /// 注入带质量门的内容提取 Facade（可选）
     ///
-    /// 不注入时 build() 退化为质量门关闭的默认 Facade。
+    /// 不注入时 build 退化为质量门关闭的默认 Facade。
     #[cfg(feature = "content")]
     pub fn with_content_extractor(
         mut self,

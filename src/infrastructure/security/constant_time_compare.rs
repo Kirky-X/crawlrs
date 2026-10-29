@@ -22,7 +22,7 @@
 //!
 //! # Limitations
 //!
-//! - **Length check is NOT constant-time.** When `a.len() != b.len()` the
+//! - **Length check is NOT constant-time.** When `a.len != b.len` the
 //!   function returns `false` immediately. This is acceptable for the
 //!   current call sites because the expected length is fixed and publicly
 //!   known (SHA-256 hex digest = 64 ASCII chars); length is not a secret.
@@ -47,7 +47,7 @@ use subtle::ConstantTimeEq;
 
 /// Constant-time comparison of two equal-length strings.
 ///
-/// Returns `false` immediately if `a.len() != b.len()` (length is not a
+/// Returns `false` immediately if `a.len != b.len` (length is not a
 /// secret — see module docs). Otherwise performs a constant-time byte
 /// comparison via `subtle::ConstantTimeEq::ct_eq`.
 ///

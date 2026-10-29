@@ -18,12 +18,12 @@
 //! # 关于 savepoint 测试
 //!
 //! transaction.rs 的 `savepoint/release_savepoint/rollback_to_savepoint` 通过
-//! `session.connection().execute_unprepared()` 执行 SQL，但 dbnexus 0.2.0 的
-//! `Session::connection()` 返回连接池句柄而非事务句柄（`state.transaction`）。
+//! `session.connection.execute_unprepared` 执行 SQL，但 dbnexus 0.2.0 的
+//! `Session::connection` 返回连接池句柄而非事务句柄（`state.transaction`）。
 //! 这导致 `SAVEPOINT` SQL 不在事务块中执行，PostgreSQL 报错
 //! "SAVEPOINT can only be used in transaction blocks"。
 //!
-//! 这是源码 bug（应改用 `session.execute_raw()` 走事务句柄），但任务约束禁止修改源码。
+//! 这是源码 bug（应改用 `session.execute_raw` 走事务句柄），但任务约束禁止修改源码。
 //! 因此 savepoint 测试验证当前实际行为（SQL 执行路径被触发但返回 SavepointFailed），
 //! 而非 happy path。这仍覆盖了 savepoint 方法的 SQL 执行和错误处理代码路径。
 
@@ -33,9 +33,7 @@ use crawlrs::infrastructure::database::transaction::{
     TransactionManager,
 };
 
-// ============================================================
 // Helpers
-// ============================================================
 
 /// 生成唯一的 savepoint 名称（仅 alphanumeric + underscore，符合校验规则）
 fn unique_sp_name() -> String {
@@ -59,9 +57,7 @@ fn admin_config(
     }
 }
 
-// ============================================================
 // 1. 基本事务流程 (happy path)
-// ============================================================
 
 /// 基本 begin → commit 流程
 #[tokio::test]
@@ -101,9 +97,7 @@ async fn test_begin_rollback_basic() {
     assert_eq!(manager.savepoint_count(), 0);
 }
 
-// ============================================================
 // 2. begin_with_config — 所有 isolation_level 与 access_mode 组合
-// ============================================================
 
 #[tokio::test]
 async fn test_begin_with_config_read_committed() {
@@ -198,9 +192,7 @@ async fn test_begin_with_config_savepoints_disabled() {
     manager.commit().await.expect("commit should succeed");
 }
 
-// ============================================================
-// 3. with_config 构造器 — 验证默认 config 被 begin() 使用
-// ============================================================
+// 3. with_config 构造器 — 验证默认 config 被 begin 使用
 
 #[tokio::test]
 async fn test_with_config_constructor_begin_uses_default_config() {
@@ -211,7 +203,7 @@ async fn test_with_config_constructor_begin_uses_default_config() {
         false,
     );
     let manager = TransactionManager::with_config(app.db_pool.clone(), config);
-    // begin() 应使用 with_config 设置的默认 config
+    // begin 应使用 with_config 设置的默认 config
     manager
         .begin()
         .await
@@ -244,14 +236,12 @@ async fn test_with_config_constructor_savepoints_disabled_blocks_savepoint() {
     manager.rollback().await.expect("cleanup rollback");
 }
 
-// ============================================================
 // 4. savepoint — SQL 执行路径与错误处理
 //
-// 注意：transaction.rs 用 session.connection().execute_unprepared() 执行 SAVEPOINT，
-// 但 dbnexus 0.2.0 的 connection() 返回连接池句柄而非事务句柄，导致 PostgreSQL 报
+// 注意：transaction.rs 用 session.connection.execute_unprepared 执行 SAVEPOINT，
+// 但 dbnexus 0.2.0 的 connection 返回连接池句柄而非事务句柄，导致 PostgreSQL 报
 // "SAVEPOINT can only be used in transaction blocks"。这是源码 bug，约束禁止修源码，
 // 因此这些测试验证当前实际行为（SQL 执行路径被触发，返回 SavepointFailed）。
-// ============================================================
 
 /// 验证 savepoint 在活动事务中会执行到 SQL 层（返回 SavepointFailed with SQL error，
 /// 而非 NoActiveTransaction）。覆盖 savepoint 方法的 SQL 执行和错误处理代码路径。
@@ -264,7 +254,7 @@ async fn test_savepoint_in_active_tx_executes_sql_path() {
     let sp_name = unique_sp_name();
     let result = manager.savepoint(&sp_name).await;
 
-    // 源码 bug：session.connection() 返回连接池句柄而非事务句柄，
+    // 源码 bug：session.connection 返回连接池句柄而非事务句柄，
     // 导致 SAVEPOINT 不在事务块中执行。验证 SQL 执行路径被触发（返回 SavepointFailed）。
     let err = result.expect_err("savepoint should fail due to source bug");
     assert!(
@@ -370,9 +360,7 @@ async fn test_rollback_to_savepoint_when_no_active_returns_error() {
     assert!(matches!(result, Err(TransactionError::NoActiveTransaction)));
 }
 
-// ============================================================
 // 5. Drop trait — 活动事务时 drop 不 panic
-// ============================================================
 
 #[tokio::test]
 async fn test_drop_with_active_transaction_does_not_panic() {
@@ -388,9 +376,7 @@ async fn test_drop_with_active_transaction_does_not_panic() {
     // 到达这里说明 Drop 未 panic
 }
 
-// ============================================================
 // 6. TransactionGuard — 真实 DB happy path
-// ============================================================
 
 #[tokio::test]
 async fn test_guard_commit_with_real_db() {
@@ -417,9 +403,7 @@ async fn test_guard_rollback_with_real_db() {
     assert!(!manager.is_active());
 }
 
-// ============================================================
 // 7. 错误路径
-// ============================================================
 
 #[tokio::test]
 async fn test_double_begin_returns_transaction_already_active() {
@@ -474,9 +458,7 @@ async fn test_rollback_without_active_returns_error() {
     assert!(matches!(result, Err(TransactionError::NoActiveTransaction)));
 }
 
-// ============================================================
 // 8. 状态查询方法在事务生命周期中的变化
-// ============================================================
 
 #[tokio::test]
 async fn test_state_transitions_during_transaction_lifecycle() {
@@ -518,9 +500,7 @@ async fn test_state_transitions_with_rollback_lifecycle() {
     assert!(!manager.has_transaction());
 }
 
-// ============================================================
 // 9. 同一 manager 上多次顺序事务
-// ============================================================
 
 #[tokio::test]
 async fn test_multiple_sequential_transactions_on_same_manager() {
@@ -581,9 +561,7 @@ async fn test_can_begin_again_after_rollback() {
     manager.commit().await.expect("cleanup commit");
 }
 
-// ============================================================
 // 10. begin_with_config 各种组合 + 后续 commit/rollback 混合
-// ============================================================
 
 #[tokio::test]
 async fn test_begin_with_config_then_rollback() {

@@ -14,7 +14,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 use std::time::Duration;
 
-// ========== MockCacheService ==========
+// MockCacheService
 
 /// 可观测的 MockCacheService 用于缓存门控测试
 ///
@@ -92,7 +92,7 @@ impl CacheService for MockCacheService {
     }
 }
 
-// ========== Helper functions ==========
+// Helper functions
 
 /// Create a Task with the given JSON payload and default remaining fields.
 fn make_task(payload: Value) -> Task {
@@ -179,7 +179,7 @@ fn make_test_memory_scheduler() -> Arc<MemoryScheduler> {
     ))
 }
 
-// ========== redact_url_for_log tests ==========
+// redact_url_for_log tests
 
 #[test]
 fn test_redact_url_for_log_strips_query_params() {
@@ -254,7 +254,7 @@ fn test_redact_url_for_log_empty_query_only() {
     assert!(!redacted.contains("secret"));
 }
 
-// ========== filter_sensitive_headers tests ==========
+// filter_sensitive_headers tests
 // 函数改为原地修改 (&mut HashMap)，测试同步更新
 
 #[test]
@@ -339,7 +339,7 @@ fn test_filter_sensitive_headers_empty_input() {
     assert!(headers.is_empty());
 }
 
-// ========== build_scrape_request: error / edge cases ==========
+// build_scrape_request: error / edge cases
 
 #[test]
 fn test_build_scrape_request_minimal_payload_succeeds() {
@@ -403,7 +403,7 @@ fn test_build_scrape_request_unknown_option_field_fails() {
     assert!(ScrapeWorker::build_scrape_request(&task).is_err());
 }
 
-// ========== build_scrape_request: options.timeout ==========
+// build_scrape_request: options.timeout
 
 #[test]
 fn test_build_scrape_request_default_timeout_is_30_seconds() {
@@ -422,7 +422,7 @@ fn test_build_scrape_request_custom_timeout() {
     assert_eq!(request.options.timeout, Duration::from_secs(120));
 }
 
-// ========== build_scrape_request: options.headers ==========
+// build_scrape_request: options.headers
 
 #[test]
 fn test_build_scrape_request_string_headers_are_included() {
@@ -481,7 +481,7 @@ fn test_build_scrape_request_empty_headers_map() {
     assert!(request.options.headers.is_empty());
 }
 
-// ========== build_scrape_request: needs_js logic ==========
+// build_scrape_request: needs_js logic
 
 #[test]
 fn test_build_scrape_request_needs_js_false_by_default() {
@@ -542,7 +542,7 @@ fn test_build_scrape_request_needs_js_true_empty_actions_with_js_rendering() {
     assert!(request.options.needs_js);
 }
 
-// ========== build_scrape_request: screenshot options ==========
+// build_scrape_request: screenshot options
 
 #[test]
 fn test_build_scrape_request_screenshot_false_by_default() {
@@ -587,7 +587,7 @@ fn test_build_scrape_request_screenshot_config_full_page_true() {
 
 #[test]
 fn test_build_scrape_request_screenshot_config_full_page_defaults_to_false() {
-    // Note: this differs from ScreenshotConfig::default() which uses true.
+    // Note: this differs from ScreenshotConfig::default which uses true.
     let task = make_task(json!({
         "url": "https://example.com",
         "options": {"screenshot_options": {}}
@@ -617,7 +617,7 @@ fn test_build_scrape_request_screenshot_config_with_selector() {
     assert_eq!(config.selector, Some("#main".to_string()));
 }
 
-// ========== build_scrape_request: other boolean / string options ==========
+// build_scrape_request: other boolean / string options
 
 #[test]
 fn test_build_scrape_request_mobile_true() {
@@ -716,7 +716,7 @@ fn test_build_scrape_request_body_always_none() {
     assert!(request.options.body.is_none());
 }
 
-// ========== build_scrape_request: URL source ==========
+// build_scrape_request: URL source
 
 #[test]
 fn test_build_scrape_request_url_comes_from_payload_not_task() {
@@ -727,7 +727,7 @@ fn test_build_scrape_request_url_comes_from_payload_not_task() {
     assert_eq!(request.url, "https://from-payload.com");
 }
 
-// ========== build_scrape_request: actions mapping ==========
+// build_scrape_request: actions mapping
 
 #[test]
 fn test_build_scrape_request_action_wait_mapped() {
@@ -851,7 +851,7 @@ fn test_build_scrape_request_action_scroll_unknown_direction_defaults_down() {
 
 #[test]
 fn test_build_scrape_request_action_scroll_case_insensitive_direction() {
-    // direction.to_lowercase() is used for matching
+    // direction.to_lowercase is used for matching
     let task = make_task(json!({
         "url": "https://example.com",
         "actions": [{"type": "scroll", "direction": "UP"}]
@@ -971,7 +971,7 @@ fn test_build_scrape_request_all_options_combined() {
     assert_eq!(sc.format, Some("jpeg".to_string()));
 }
 
-// ========== ScrapeWorkerBuilder tests ==========
+// ScrapeWorkerBuilder tests
 
 #[test]
 fn test_builder_default_build_fails_with_repository_required() {
@@ -986,7 +986,7 @@ fn test_builder_default_build_fails_with_repository_required() {
 
 #[test]
 fn test_builder_new_equals_default() {
-    // Both new() and default() produce a builder that fails at the same
+    // Both new and default produce a builder that fails at the same
     // first required field.
     let err_new = match ScrapeWorkerBuilder::new().build() {
         Err(e) => e,
@@ -1002,7 +1002,7 @@ fn test_builder_new_equals_default() {
 
 #[test]
 fn test_builder_with_default_concurrency_limit_does_not_satisfy_required_fields() {
-    // Setting only the concurrency limit should not make build() succeed
+    // Setting only the concurrency limit should not make build succeed
     let err = match ScrapeWorkerBuilder::default()
         .with_default_concurrency_limit(50)
         .build()
@@ -1039,7 +1039,7 @@ fn test_builder_default_concurrency_limit_is_ten_by_default() {
     assert_eq!(err, "repository is required");
 }
 
-// ========== ScrapeWorkerError integration ==========
+// ScrapeWorkerError integration
 
 #[test]
 fn test_scrape_worker_error_from_string_creates_task_error() {
@@ -1072,7 +1072,7 @@ fn test_scrape_worker_error_from_url_parse_error() {
     }
 }
 
-// ========== Mock-based unit tests (no Docker required) ==========
+// Mock-based unit tests (no Docker required)
 //
 // These tests construct a ScrapeWorker with mock/no-op dependencies,
 // allowing pure-logic methods like `should_crawl`, `build_crawl_request`,
@@ -1088,7 +1088,7 @@ use crate::domain::services::extraction_service::ExtractionRule;
 use crate::domain::services::llm::TokenUsage;
 use std::collections::HashSet;
 
-// --- Mock trait implementations ---
+// Mock trait implementations
 
 /// Mock TaskRepository — all methods return Ok with default values.
 struct MockTaskRepository;
@@ -1527,7 +1527,7 @@ async fn build_mock_worker() -> ScrapeWorker {
 
 /// 构造使用指定 MockCacheService 的 worker
 ///
-/// 返回 (worker, cache_arc) —— 调用方通过 cache_arc.get_count()/set_count()
+/// 返回 (worker, cache_arc) —— 调用方通过 cache_arc.get_count/set_count
 /// 验证缓存读/写行为，或通过 cache_arc 预填充数据模拟 cache hit。
 async fn build_mock_worker_with_cache(cache: Arc<MockCacheService>) -> ScrapeWorker {
     let engine_client = Arc::new(EngineClient::new());
@@ -1566,7 +1566,7 @@ async fn build_mock_worker_with_cache(cache: Arc<MockCacheService>) -> ScrapeWor
 
 /// 构造使用 CapturingScrapeResultRepository 的 worker
 ///
-/// 返回 (worker, capturing_repo_arc) —— 调用方通过 capturing_repo_arc.captured()
+/// 返回 (worker, capturing_repo_arc) —— 调用方通过 capturing_repo_arc.captured
 /// 获取 save_result 保存的 ScrapeResult 以断言 meta_data 内容。
 async fn build_mock_worker_with_capturing_repo(
 ) -> (ScrapeWorker, Arc<CapturingScrapeResultRepository>) {
@@ -1607,7 +1607,7 @@ async fn build_mock_worker_with_capturing_repo(
     (worker, capturing_repo)
 }
 
-// --- should_crawl tests ---
+// should_crawl tests
 //
 // 原 should_crawl 方法在生产 impl 块中（虽然 #[cfg(test)] 门控），
 // 违反“生产 impl 块不应保留测试 helper”。已移到 test mod 内独立 impl 块，
@@ -1726,7 +1726,7 @@ async fn test_mock_should_crawl_exclude_fallback_string_match() {
     assert!(worker.should_crawl("https://example.com/other", &config));
 }
 
-// --- build_crawl_request tests ---
+// build_crawl_request tests
 
 #[tokio::test]
 async fn test_mock_build_crawl_request_basic() {
@@ -1894,7 +1894,7 @@ async fn test_mock_build_crawl_request_empty_headers_map() {
     assert!(request.options.headers.is_empty());
 }
 
-// --- build_extract_request tests ---
+// build_extract_request tests
 
 #[tokio::test]
 async fn test_mock_build_extract_request_basic() {
@@ -1929,7 +1929,7 @@ async fn test_mock_build_extract_request_different_urls() {
     }
 }
 
-// --- trigger_webhook tests ---
+// trigger_webhook tests
 
 #[tokio::test]
 async fn test_mock_trigger_webhook_completion_no_error() {
@@ -1949,7 +1949,7 @@ async fn test_mock_trigger_webhook_failure_with_error_msg() {
         .await;
 }
 
-// --- deduct_feature_credits tests ---
+// deduct_feature_credits tests
 
 #[tokio::test]
 async fn test_mock_deduct_feature_credits_screenshot_and_proxy() {
@@ -2006,7 +2006,7 @@ async fn test_mock_deduct_feature_credits_neither() {
         .await;
 }
 
-// --- save_result tests ---
+// save_result tests
 
 #[tokio::test]
 async fn test_mock_save_result_basic() {
@@ -2066,7 +2066,7 @@ async fn test_mock_save_result_with_screenshot() {
     assert!(result.is_ok());
 }
 
-// --- process_text_encoding tests ---
+// process_text_encoding tests
 
 #[tokio::test]
 async fn test_mock_process_text_encoding_basic() {
@@ -2092,7 +2092,7 @@ async fn test_mock_process_text_encoding_basic() {
     }
 }
 
-// --- update_crawl_completion_status tests ---
+// update_crawl_completion_status tests
 
 #[tokio::test]
 async fn test_mock_update_crawl_completion_status_crawl_not_found() {
@@ -2104,7 +2104,7 @@ async fn test_mock_update_crawl_completion_status_crawl_not_found() {
         .await;
 }
 
-// --- parse_crawl_payload tests ---
+// parse_crawl_payload tests
 
 #[tokio::test]
 async fn test_mock_parse_crawl_payload_valid() {
@@ -2150,7 +2150,7 @@ async fn test_mock_parse_crawl_payload_default_depth() {
     assert_eq!(depth, 0);
 }
 
-// --- parse_extract_payload tests ---
+// parse_extract_payload tests
 
 #[tokio::test]
 async fn test_mock_parse_extract_payload_valid() {
@@ -2172,7 +2172,7 @@ async fn test_mock_parse_extract_payload_no_url() {
     assert!(worker.parse_extract_payload(&task).await.is_err());
 }
 
-// --- check_robots_txt tests ---
+// check_robots_txt tests
 
 #[tokio::test]
 async fn test_mock_check_robots_txt_allowed() {
@@ -2183,7 +2183,7 @@ async fn test_mock_check_robots_txt_allowed() {
     assert!(worker.check_robots_txt(&task).await);
 }
 
-// --- handle_rules_extraction tests ---
+// handle_rules_extraction tests
 
 #[tokio::test]
 async fn test_mock_handle_rules_extraction() {
@@ -2219,7 +2219,7 @@ async fn test_mock_handle_rules_extraction() {
     assert_eq!(task.status, TaskStatus::Completed);
 }
 
-// --- handle_prompt_extraction tests ---
+// handle_prompt_extraction tests
 
 #[tokio::test]
 async fn test_mock_handle_prompt_extraction() {
@@ -2248,7 +2248,7 @@ async fn test_mock_handle_prompt_extraction() {
     assert_eq!(task.status, TaskStatus::Completed);
 }
 
-// --- handle_schema_extraction tests ---
+// handle_schema_extraction tests
 
 #[tokio::test]
 async fn test_mock_handle_schema_extraction() {
@@ -2273,7 +2273,7 @@ async fn test_mock_handle_schema_extraction() {
     assert_eq!(task.status, TaskStatus::Completed);
 }
 
-// --- save_extract_result tests ---
+// save_extract_result tests
 
 #[tokio::test]
 async fn test_mock_save_extract_result_with_data() {
@@ -2324,7 +2324,7 @@ async fn test_mock_save_extract_result_without_data() {
     assert_eq!(task.status, TaskStatus::Completed);
 }
 
-// --- extract_and_queue_links tests ---
+// extract_and_queue_links tests
 
 #[tokio::test]
 async fn test_mock_extract_and_queue_links_html_with_links() {
@@ -2421,7 +2421,7 @@ async fn test_mock_extract_and_queue_links_with_include_filter() {
     assert!(result.is_ok());
 }
 
-// --- handle_failure tests ---
+// handle_failure tests
 
 #[tokio::test]
 async fn test_mock_handle_failure() {
@@ -2431,7 +2431,7 @@ async fn test_mock_handle_failure() {
     assert!(result.is_ok());
 }
 
-// --- deduct_token_credits tests ---
+// deduct_token_credits tests
 
 #[tokio::test]
 async fn test_mock_deduct_token_credits_zero_tokens() {
@@ -2465,7 +2465,7 @@ async fn test_mock_deduct_token_credits_with_tokens() {
         .await;
 }
 
-// --- deduction idempotency ---
+// deduction idempotency
 
 #[tokio::test]
 async fn test_deduct_feature_credits_is_idempotent_per_task() {
@@ -2578,7 +2578,7 @@ async fn test_deduct_feature_and_token_credits_are_independent_per_task() {
     );
 }
 
-// --- handle_scrape_success tests ---
+// handle_scrape_success tests
 
 #[tokio::test]
 async fn test_mock_handle_scrape_success_no_extraction_rules() {
@@ -2814,7 +2814,7 @@ async fn test_handle_scrape_success_returns_false_when_guard_lost() {
     );
 }
 
-// --- Markdown 集成测试（gated `markdown` 特性） ---
+// Markdown 集成测试（gated `markdown` 特性）
 
 /// formats 含 "markdown" 时应生成 Markdown 并持久化到 meta_data
 #[cfg(feature = "content")]
@@ -3056,7 +3056,7 @@ async fn test_save_result_without_markdown_does_not_modify_meta_data() {
     );
 }
 
-// --- handle_crawl_success tests ---
+// handle_crawl_success tests
 
 #[tokio::test]
 async fn test_mock_handle_crawl_success_with_link_extraction() {
@@ -3119,7 +3119,7 @@ async fn test_mock_handle_crawl_success_max_depth_no_link_extraction() {
     assert!(result.is_ok());
 }
 
-// --- handle_crawl_failure tests ---
+// handle_crawl_failure tests
 
 #[tokio::test]
 async fn test_mock_handle_crawl_failure_basic() {
@@ -3138,13 +3138,12 @@ async fn test_mock_handle_crawl_failure_basic() {
     assert!(result.is_ok());
 }
 
-// --- process_scrape_task tests (error paths — engine_client has no engines) ---
+// process_scrape_task tests (error paths — engine_client has no engines)
 
 #[tokio::test]
 async fn test_mock_process_scrape_task_engine_error() {
     let worker = build_mock_worker().await;
-    // 有效 payload（含 url）→ 解析成功 → EngineClient::new() 无引擎 → scrape() 报错。
-    // 错误路径内部处理（mark_failed 或 handle_failure），process_scrape_task 返回 Ok(())。
+    // 有效 payload（含 url）→ 解析成功 → EngineClient::new 无引擎 → scrape 报错。
     // 注：畸形 payload 会在解析阶段直接 mark_failed，不再进入引擎，
     // 故此处用有效 payload 才能真正覆盖"引擎错误"路径。
     let task = make_task(json!({"url": "https://example.com"}));
@@ -3152,7 +3151,7 @@ async fn test_mock_process_scrape_task_engine_error() {
     assert!(result.is_ok()); // Error is handled internally, returns Ok(())
 }
 
-// --- malformed payload marks task Failed ---
+// malformed payload marks task Failed
 
 #[tokio::test]
 async fn test_process_scrape_task_malformed_payload_marks_failed() {
@@ -3202,7 +3201,7 @@ async fn test_mock_process_scrape_task_with_valid_payload_engine_error() {
     assert!(result.is_ok());
 }
 
-// --- process_crawl_task tests ---
+// process_crawl_task tests
 
 #[tokio::test]
 async fn test_mock_process_crawl_task_invalid_payload() {
@@ -3227,7 +3226,7 @@ async fn test_mock_process_crawl_task_engine_error() {
     assert!(result.is_ok());
 }
 
-// --- process_extract_task tests ---
+// process_extract_task tests
 
 #[tokio::test]
 async fn test_mock_process_extract_task_engine_error() {
@@ -3258,7 +3257,7 @@ async fn test_mock_process_extract_task_empty_urls() {
     assert!(result.is_err());
 }
 
-// ========== ScrapeWorkerBuilder tests ==========
+// ScrapeWorkerBuilder tests
 
 #[tokio::test]
 async fn test_builder_new_creates_default() {
@@ -3588,7 +3587,7 @@ async fn test_builder_with_custom_concurrency_limit() {
     assert_eq!(worker.default_concurrency_limit, 100);
 }
 
-// ========== testcontainers integration tests ==========
+// testcontainers integration tests
 //
 // These tests construct a full ScrapeWorker with real PostgreSQL +
 // HTTP client via testcontainers, exercising the `new()`
@@ -3641,7 +3640,7 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
         services.request_coalescer.clone(),
     );
 
-    // Construct ScrapeWorker via new().
+    // Construct ScrapeWorker via new.
     let worker = ScrapeWorker::new(ScrapeWorkerDeps {
         repository: infra.repositories.task_repo.clone() as Arc<dyn TaskRepository>,
         result_repository: infra.repositories.result_repo.clone()
@@ -3880,7 +3879,7 @@ async fn tc_scrape_worker_build_crawl_request() {
     assert_eq!(request.url, "https://example.com");
 }
 
-// ========== Additional coverage tests ==========
+// Additional coverage tests
 //
 // These tests target uncovered code paths: extract_data_with_rules,
 // token-credit deduction in handle_scrape_success, process_next_task,
@@ -3911,7 +3910,7 @@ impl TaskQueue for MockTaskQueue {
     }
 }
 
-/// TaskQueue whose dequeue always returns Err — exercises run() Err branch.
+/// TaskQueue whose dequeue always returns Err — exercises run Err branch.
 struct FailingTaskQueue;
 
 #[async_trait::async_trait]
@@ -4024,7 +4023,7 @@ async fn build_mock_worker_with_tokens() -> ScrapeWorker {
     })
 }
 
-// --- Debug impl tests ---
+// Debug impl tests
 
 #[tokio::test]
 async fn test_scrape_worker_debug_impl_outputs_fields() {
@@ -4037,7 +4036,7 @@ async fn test_scrape_worker_debug_impl_outputs_fields() {
     assert!(debug_str.contains(".."));
 }
 
-// --- process_next_task tests ---
+// process_next_task tests
 
 #[tokio::test]
 async fn test_mock_process_next_task_empty_queue_returns_false() {
@@ -4048,7 +4047,7 @@ async fn test_mock_process_next_task_empty_queue_returns_false() {
     assert!(!result.unwrap(), "empty queue should return false");
 }
 
-// --- extract_data_with_rules tests (via handle_crawl_success) ---
+// extract_data_with_rules tests (via handle_crawl_success)
 
 #[tokio::test]
 async fn test_mock_handle_crawl_success_with_extraction_rules() {
@@ -4105,7 +4104,7 @@ async fn test_mock_handle_crawl_success_with_extraction_rules() {
     assert!(result.is_ok());
 }
 
-// --- handle_scrape_success with non-zero token usage ---
+// handle_scrape_success with non-zero token usage
 
 #[tokio::test]
 async fn test_mock_handle_scrape_success_with_token_usage() {
@@ -4141,7 +4140,7 @@ async fn test_mock_handle_scrape_success_with_token_usage() {
     assert!(result.is_ok());
 }
 
-// --- parse_crawl_payload edge cases ---
+// parse_crawl_payload edge cases
 
 #[tokio::test]
 async fn test_mock_parse_crawl_payload_invalid_crawl_id_defaults_to_nil() {
@@ -4152,7 +4151,7 @@ async fn test_mock_parse_crawl_payload_invalid_crawl_id_defaults_to_nil() {
         "config": {"max_depth": 2}
     }));
     let (crawl_id, depth, _) = worker.parse_crawl_payload(&task).await.unwrap();
-    // Invalid UUID string falls back to crate::domain::id::Id::nil() via unwrap_or_default()
+    // Invalid UUID string falls back to crate::domain::id::Id::nil via unwrap_or_default
     assert_eq!(crawl_id, crate::domain::id::Id::nil());
     assert_eq!(depth, 1);
 }
@@ -4181,7 +4180,7 @@ async fn test_mock_parse_crawl_payload_invalid_config_json_fails() {
     assert!(worker.parse_crawl_payload(&task).await.is_err());
 }
 
-// --- should_crawl with empty pattern lists ---
+// should_crawl with empty pattern lists
 
 #[tokio::test]
 async fn test_mock_should_crawl_empty_include_patterns_returns_false() {
@@ -4200,7 +4199,7 @@ async fn test_mock_should_crawl_empty_exclude_patterns_returns_true() {
     assert!(worker.should_crawl("https://example.com/page", &config));
 }
 
-// --- extract_and_queue_links with DFS strategy ---
+// extract_and_queue_links with DFS strategy
 
 #[tokio::test]
 async fn test_mock_extract_and_queue_links_dfs_strategy() {
@@ -4248,7 +4247,7 @@ async fn test_mock_extract_and_queue_links_dfs_strategy() {
     assert!(result.is_ok());
 }
 
-// --- extract_and_queue_links filters self-links and non-http protocols ---
+// extract_and_queue_links filters self-links and non-http protocols
 
 #[tokio::test]
 async fn test_mock_extract_and_queue_links_filters_self_and_non_http() {
@@ -4286,7 +4285,7 @@ async fn test_mock_extract_and_queue_links_filters_self_and_non_http() {
     assert!(result.is_ok());
 }
 
-// --- build_crawl_request with extraction_rules in config ---
+// build_crawl_request with extraction_rules in config
 
 #[tokio::test]
 async fn test_mock_build_crawl_request_with_extraction_rules() {
@@ -4330,7 +4329,7 @@ async fn test_mock_build_crawl_request_with_extraction_rules() {
     assert_eq!(request.options.method, HttpMethod::Get);
 }
 
-// --- parse_extract_payload with rules ---
+// parse_extract_payload with rules
 
 #[tokio::test]
 async fn test_mock_parse_extract_payload_with_rules() {
@@ -4354,7 +4353,7 @@ async fn test_mock_parse_extract_payload_with_rules() {
     assert_eq!(payload.rules.as_ref().unwrap().len(), 1);
 }
 
-// --- handle_*_extraction with non-zero token usage ---
+// handle_*_extraction with non-zero token usage
 
 #[tokio::test]
 async fn test_mock_handle_rules_extraction_with_tokens() {
@@ -4440,7 +4439,7 @@ async fn test_mock_handle_schema_extraction_with_tokens() {
     assert_eq!(task.status, TaskStatus::Completed);
 }
 
-// --- handle_crawl_failure with proxy (credit deduction in failure path) ---
+// handle_crawl_failure with proxy (credit deduction in failure path)
 
 #[tokio::test]
 async fn test_mock_handle_crawl_failure_with_proxy() {
@@ -4472,7 +4471,7 @@ async fn test_mock_handle_crawl_failure_with_proxy() {
     assert!(result.is_ok());
 }
 
-// --- handle_crawl_success with screenshot (credit deduction) ---
+// handle_crawl_success with screenshot (credit deduction)
 
 #[tokio::test]
 async fn test_mock_handle_crawl_success_with_screenshot() {
@@ -4504,7 +4503,7 @@ async fn test_mock_handle_crawl_success_with_screenshot() {
     assert!(result.is_ok());
 }
 
-// --- process_text_encoding with various content types ---
+// process_text_encoding with various content types
 
 #[tokio::test]
 async fn test_mock_process_text_encoding_json_content() {
@@ -4551,7 +4550,7 @@ async fn test_mock_process_text_encoding_empty_content() {
     }
 }
 
-// --- save_result with large content ---
+// save_result with large content
 
 #[tokio::test]
 async fn test_mock_save_result_large_content() {
@@ -4574,7 +4573,7 @@ async fn test_mock_save_result_large_content() {
     assert!(result.is_ok());
 }
 
-// ========== Configurable mocks for error/edge case coverage ==========
+// Configurable mocks for error/edge case coverage
 //
 // These mocks allow configuring return values per-test, enabling
 // coverage of error paths, specific crawl states, robots.txt denial,
@@ -4583,7 +4582,7 @@ async fn test_mock_save_result_large_content() {
 use crate::engines::router::{EngineRouterTrait, EngineStats};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-// --- ConfigurableTaskRepo ---
+// ConfigurableTaskRepo
 
 /// TaskRepository that can be configured to fail specific operations
 /// and track `mark_failed` / `update` call counts.
@@ -4797,7 +4796,7 @@ impl TaskRepository for ConfigurableTaskRepo {
     }
 }
 
-// --- ConfigurableCrawlRepo ---
+// ConfigurableCrawlRepo
 
 /// CrawlRepository that returns a configurable Crawl from find_by_id
 /// and can fail on increment operations.
@@ -4907,8 +4906,6 @@ impl CrawlRepository for ConfigurableCrawlRepo {
     }
 }
 
-// --- FailingScrapeResultRepo ---
-
 /// ScrapeResultRepository that always fails on save.
 struct FailingScrapeResultRepo;
 
@@ -4938,8 +4935,6 @@ impl ScrapeResultRepository for FailingScrapeResultRepo {
     }
 }
 
-// --- FailingWebhookService ---
-
 /// WebhookService that always fails.
 struct FailingWebhookService;
 
@@ -4955,8 +4950,6 @@ impl WebhookService for FailingWebhookService {
         Err(anyhow::anyhow!("Mock trigger_failure error"))
     }
 }
-
-// --- FailingCreditsRepo ---
 
 /// CreditsRepository that always fails on deduct_credits.
 struct FailingCreditsRepo;
@@ -5008,8 +5001,6 @@ impl CreditsRepository for FailingCreditsRepo {
     }
 }
 
-// --- DenyingRobotsChecker ---
-
 /// RobotsChecker that always denies access.
 struct DenyingRobotsChecker;
 
@@ -5022,8 +5013,6 @@ impl RobotsCheckerTrait for DenyingRobotsChecker {
         Ok(None)
     }
 }
-
-// --- DelayingRobotsChecker ---
 
 /// RobotsChecker that always allows but returns a crawl delay.
 struct DelayingRobotsChecker;
@@ -5038,7 +5027,7 @@ impl RobotsCheckerTrait for DelayingRobotsChecker {
     }
 }
 
-// --- ErroringRobotsChecker ---
+// ErroringRobotsChecker
 
 /// RobotsChecker that returns errors for both is_allowed and get_crawl_delay.
 /// is_allowed error should fall back to true (unwrap_or(true)),
@@ -5055,9 +5044,9 @@ impl RobotsCheckerTrait for ErroringRobotsChecker {
     }
 }
 
-// --- MockEngineRouter (for timeout/all_engines_failed paths) ---
+// MockEngineRouter (for timeout/all_engines_failed paths)
 
-/// EngineRouter that returns a configurable EngineError on route().
+/// EngineRouter that returns a configurable EngineError on route.
 struct MockEngineRouter {
     error_factory: Box<dyn Fn() -> EngineError + Send + Sync>,
 }
@@ -5113,7 +5102,7 @@ impl EngineRouterTrait for MockEngineRouter {
     }
 }
 
-// --- TaskQueueWithTask ---
+// TaskQueueWithTask
 
 /// TaskQueue that returns a configured task on the first dequeue,
 /// then None on subsequent calls.
@@ -5148,7 +5137,7 @@ impl TaskQueue for TaskQueueWithTask {
     }
 }
 
-// --- Helper: build worker with configurable deps ---
+// Helper: build worker with configurable deps
 
 /// Build a ScrapeWorker with the given configurable repository, crawl
 /// repository, robots checker, and engine client. All other deps use
@@ -5190,7 +5179,7 @@ async fn build_configurable_worker(
     })
 }
 
-// --- Helper: build worker with configurable credits/webhook/result repos ---
+// Helper: build worker with configurable credits/webhook/result repos
 async fn build_worker_with_failing_deps(
     result_repo: Arc<dyn ScrapeResultRepository>,
     webhook_service: Arc<dyn WebhookService>,
@@ -5228,7 +5217,7 @@ async fn build_worker_with_failing_deps(
     })
 }
 
-// ========== process_task: task expiration tests ==========
+// process_task: task expiration tests
 
 #[tokio::test]
 async fn test_process_task_expired_task_marks_failed_and_triggers_webhook() {
@@ -5286,7 +5275,7 @@ async fn test_process_task_not_expired_proceeds_normally() {
     );
 }
 
-// ========== process_task: concurrency limit exceeded tests ==========
+// process_task: concurrency limit exceeded tests
 
 #[tokio::test]
 async fn test_process_task_concurrency_limit_exceeded_reschedules() {
@@ -5335,7 +5324,7 @@ async fn test_process_task_concurrency_limit_exceeded_reschedules() {
     );
 }
 
-// ========== 内存感知准入检查测试 ==========
+// 内存感知准入检查测试
 
 /// 构造 Critical 状态的 MemoryScheduler，验证 process_task 延后任务而非执行
 #[cfg(feature = "metrics")]
@@ -5407,7 +5396,6 @@ async fn test_process_task_memory_critical_defers_task() {
     let original_scheduled_at = task.scheduled_at;
     let result = worker.process_task(task).await;
 
-    // 延后而非执行：process_task 应返回 Ok(())（reschedule 非错误）
     assert!(
         result.is_ok(),
         "Critical memory should defer task, returning Ok(())"
@@ -5646,7 +5634,7 @@ async fn test_process_task_memory_pressure_defers_task() {
 #[cfg(feature = "metrics")]
 #[tokio::test]
 async fn test_process_task_memory_normal_proceeds() {
-    // Normal 状态调度器由 make_test_memory_scheduler() 提供（内存 0.5 < pressure 0.8）
+    // Normal 状态调度器由 make_test_memory_scheduler 提供（内存 0.5 < pressure 0.8）
     let worker = build_configurable_worker(
         Arc::new(ConfigurableTaskRepo::new()),
         Arc::new(ConfigurableCrawlRepo::new()),
@@ -5657,14 +5645,13 @@ async fn test_process_task_memory_normal_proceeds() {
 
     let task = make_task(json!({"url": "https://example.com"}));
     // Normal 状态下任务应进入并发获取流程；由于 mock engine 会失败，
-    // process_task 返回 Ok(()) 但不触发 reschedule-by-memory。
     // 关键断言：不因内存准入检查而提前 return（update_count == 0 表示未走内存延后路径）
     let _ = worker.process_task(task).await;
     // build_configurable_worker 使用独立的 ConfigurableTaskRepo，无法直接读取 update_count；
     // 此测试仅验证 Normal 状态下不 panic 且流程继续（未在准入检查处短路）。
 }
 
-// ========== process_next_task: success path (dequeue returns a task) ==========
+// process_next_task: success path (dequeue returns a task)
 
 #[tokio::test]
 async fn test_process_next_task_with_task_returns_true() {
@@ -5687,7 +5674,7 @@ async fn test_process_next_task_with_task_returns_true() {
     );
 }
 
-// ========== process_scrape_task: timeout/all_engines_failed error path ==========
+// process_scrape_task: timeout/all_engines_failed error path
 
 #[tokio::test]
 async fn test_process_scrape_task_timeout_error_marks_failed_directly() {
@@ -5791,7 +5778,7 @@ async fn test_process_scrape_task_expired_error_marks_failed() {
     );
 }
 
-// ========== update_crawl_completion_status: all branches ==========
+// update_crawl_completion_status: all branches
 
 #[tokio::test]
 async fn test_update_crawl_completion_status_all_tasks_completed() {
@@ -5892,7 +5879,7 @@ async fn test_update_crawl_completion_status_crawl_repo_error() {
     assert_eq!(crawl_repo.update_status_count(), 0);
 }
 
-// ========== check_robots_txt: denied and delay paths ==========
+// check_robots_txt: denied and delay paths
 
 #[tokio::test]
 async fn test_check_robots_txt_denied_returns_false() {
@@ -5950,7 +5937,7 @@ async fn test_check_robots_txt_error_falls_back_to_allowed() {
     );
 }
 
-// ========== ScrapeWorkerBuilder: remaining missing field tests ==========
+// ScrapeWorkerBuilder: remaining missing field tests
 
 #[tokio::test]
 async fn test_builder_build_missing_credits_repository() {
@@ -6034,7 +6021,7 @@ async fn test_builder_build_missing_robots_checker() {
     assert_eq!(result.unwrap_err(), "robots_checker is required");
 }
 
-// ========== save_extract_result: error paths ==========
+// save_extract_result: error paths
 
 #[tokio::test]
 async fn test_save_extract_result_failing_result_repo_returns_error() {
@@ -6066,7 +6053,7 @@ async fn test_save_extract_result_failing_result_repo_returns_error() {
     );
 }
 
-// ========== handle_failure: error path ==========
+// handle_failure: error path
 
 #[tokio::test]
 async fn test_handle_failure_returns_error_when_repo_update_fails() {
@@ -6094,7 +6081,7 @@ async fn test_handle_failure_returns_error_when_repo_update_fails() {
     );
 }
 
-// ========== trigger_webhook: error path (should not panic) ==========
+// trigger_webhook: error path (should not panic)
 
 #[tokio::test]
 async fn test_trigger_webhook_failure_does_not_propagate_error() {
@@ -6106,7 +6093,7 @@ async fn test_trigger_webhook_failure_does_not_propagate_error() {
     .await;
 
     let task = make_task(json!({}));
-    // trigger_webhook returns () — it logs the error but doesn't propagate
+    // trigger_webhook returns  — it logs the error but doesn't propagate
     worker.trigger_webhook(&task, None).await;
     worker
         .trigger_webhook(&task, Some("error msg".to_string()))
@@ -6114,7 +6101,7 @@ async fn test_trigger_webhook_failure_does_not_propagate_error() {
     // If we reach here, the test passes — no panic
 }
 
-// ========== deduct_feature_credits: error path (should not panic) ==========
+// deduct_feature_credits: error path (should not panic)
 
 #[tokio::test]
 async fn test_deduct_feature_credits_failure_does_not_propagate_error() {
@@ -6136,7 +6123,7 @@ async fn test_deduct_feature_credits_failure_does_not_propagate_error() {
         .await;
 }
 
-// ========== deduct_token_credits: error path (should not panic) ==========
+// deduct_token_credits: error path (should not panic)
 
 #[tokio::test]
 async fn test_deduct_token_credits_failure_does_not_propagate_error() {
@@ -6163,7 +6150,7 @@ async fn test_deduct_token_credits_failure_does_not_propagate_error() {
         .await;
 }
 
-// ========== handle_crawl_success: save_result error path ==========
+// handle_crawl_success: save_result error path
 
 #[tokio::test]
 async fn test_handle_crawl_success_save_result_failure_propagates_error() {
@@ -6229,7 +6216,7 @@ async fn test_handle_crawl_success_save_result_failure_propagates_error() {
     );
 }
 
-// ========== handle_crawl_success: increment_completed_tasks error path ==========
+// handle_crawl_success: increment_completed_tasks error path
 
 #[tokio::test]
 async fn test_handle_crawl_success_increment_completed_error_does_not_propagate() {
@@ -6301,7 +6288,7 @@ async fn test_handle_crawl_success_increment_completed_error_does_not_propagate(
     );
 }
 
-// ========== handle_crawl_failure: increment_failed_tasks error path ==========
+// handle_crawl_failure: increment_failed_tasks error path
 
 #[tokio::test]
 async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
@@ -6355,7 +6342,7 @@ async fn test_handle_crawl_failure_increment_failed_error_does_not_propagate() {
     );
 }
 
-// ========== process_crawl_task: robots.txt denial path ==========
+// process_crawl_task: robots.txt denial path
 
 #[tokio::test]
 async fn test_process_crawl_task_robots_denied_marks_failed() {
@@ -6409,9 +6396,7 @@ async fn test_process_crawl_task_robots_denied_marks_failed() {
     );
 }
 
-// ========== Success-path mocks for process_scrape_task / run() coverage ==========
-
-// --- SuccessEngineRouter ---
+// Success-path mocks for process_scrape_task / run coverage
 
 /// EngineRouter that returns a configurable successful InternalScrapeResponse.
 struct SuccessEngineRouter {
@@ -6464,9 +6449,7 @@ impl EngineRouterTrait for SuccessEngineRouter {
     }
 }
 
-// --- FailingExtractionService ---
-
-/// ExtractionService that always returns an error on extract().
+/// ExtractionService that always returns an error on extract.
 struct FailingExtractionService;
 
 #[async_trait::async_trait]
@@ -6505,7 +6488,7 @@ impl ExtractionServiceTrait for FailingExtractionService {
     }
 }
 
-// --- Helper: build worker with configurable credits + extraction ---
+// Helper: build worker with configurable credits + extraction
 
 async fn build_worker_for_success_tests(
     task_repo: Arc<dyn TaskRepository>,
@@ -6544,7 +6527,7 @@ async fn build_worker_for_success_tests(
     })
 }
 
-// ========== process_scrape_task: success path ==========
+// process_scrape_task: success path
 
 #[tokio::test]
 async fn test_process_scrape_task_success_path_marks_completed() {
@@ -6656,23 +6639,22 @@ async fn test_process_scrape_task_success_handle_scrape_failure_calls_handle_fai
 
     let task = make_task(json!({"url": "https://example.com"}));
     let result = worker.process_scrape_task(task).await;
-    // handle_failure path returns Ok(()) after retry handling
     assert!(result.is_ok(), "handle_failure path should return Ok(())");
 }
 
-// ========== run() infinite loop coverage ==========
+// run infinite loop coverage
 
 #[tokio::test]
 async fn test_run_with_empty_queue_loops_and_sleeps() {
     let worker = build_mock_worker().await;
     let queue = Arc::new(MockTaskQueue) as Arc<dyn TaskQueue>;
 
-    // run() is an infinite loop; with empty queue it sleeps 1s per iteration.
+    // run is an infinite loop; with empty queue it sleeps 1s per iteration.
     // Use timeout to verify it enters the loop without returning.
     let result =
         tokio::time::timeout(Duration::from_millis(150), worker.run(Arc::clone(&queue))).await;
 
-    // Timeout means run() was still looping (expected behavior)
+    // Timeout means run was still looping (expected behavior)
     assert!(
         result.is_err(),
         "run() should loop indefinitely; timeout expected"
@@ -6695,10 +6677,10 @@ async fn test_run_processes_task_then_continues_looping() {
     let task = make_task(json!({"url": "https://example.com"}));
     let queue = Arc::new(TaskQueueWithTask::new(task)) as Arc<dyn TaskQueue>;
 
-    // run() processes the task then loops (sleeping on empty queue)
+    // run processes the task then loops (sleeping on empty queue)
     let result = tokio::time::timeout(Duration::from_millis(500), worker.run(queue)).await;
 
-    // Timeout means run() processed the task and continued looping
+    // Timeout means run processed the task and continued looping
     assert!(
         result.is_err(),
         "run() should loop indefinitely after processing"
@@ -6711,7 +6693,7 @@ async fn test_run_processes_task_then_continues_looping() {
     );
 }
 
-// ========== extract_and_queue_links: find_existing_urls failure path ==========
+// extract_and_queue_links: find_existing_urls failure path
 
 #[tokio::test]
 async fn test_extract_and_queue_links_find_existing_urls_failure_returns_err() {
@@ -6772,7 +6754,7 @@ async fn test_extract_and_queue_links_find_existing_urls_failure_returns_err() {
     );
 }
 
-// ========== handle_scrape_success: extraction failure path ==========
+// handle_scrape_success: extraction failure path
 
 #[tokio::test]
 async fn test_handle_scrape_success_extraction_failure_continues_and_marks_completed() {
@@ -6832,7 +6814,7 @@ async fn test_handle_scrape_success_extraction_failure_continues_and_marks_compl
     );
 }
 
-// ========== process_scrape_task: success path without screenshot/proxy (no extra credits) ==========
+// process_scrape_task: success path without screenshot/proxy (no extra credits)
 
 #[tokio::test]
 async fn test_process_scrape_task_success_without_screenshot_proxy_no_extra_credits() {
@@ -6865,27 +6847,27 @@ async fn test_process_scrape_task_success_without_screenshot_proxy_no_extra_cred
     );
 }
 
-// ========== run() Err path: FailingTaskQueue exercises lines 138-140 ==========
+// run Err path: FailingTaskQueue exercises lines 138-140
 
 #[tokio::test]
 async fn test_run_with_failing_queue_logs_error_and_sleeps() {
     let worker = build_mock_worker().await;
     let queue = Arc::new(FailingTaskQueue) as Arc<dyn TaskQueue>;
 
-    // run() is an infinite loop; with FailingTaskQueue, dequeue returns Err
-    // → process_next_task returns Err → run() hits the Err branch (lines 138-140)
+    // run is an infinite loop; with FailingTaskQueue, dequeue returns Err
+    // → process_next_task returns Err → run hits the Err branch (lines 138-140)
     // and sleeps 1s per iteration. Use timeout to verify it enters the loop.
     let result =
         tokio::time::timeout(Duration::from_millis(150), worker.run(Arc::clone(&queue))).await;
 
-    // Timeout means run() was still looping (expected behavior)
+    // Timeout means run was still looping (expected behavior)
     assert!(
         result.is_err(),
         "run() should loop indefinitely on queue errors; timeout expected"
     );
 }
 
-// ========== process_crawl_task success path: exercises lines 372-374 ==========
+// process_crawl_task success path: exercises lines 372-374
 
 #[tokio::test]
 async fn test_process_crawl_task_success_calls_handle_crawl_success() {
@@ -6920,7 +6902,7 @@ async fn test_process_crawl_task_success_calls_handle_crawl_success() {
     );
 }
 
-// ========== extract_data_with_rules failure path: exercises lines 509-511 ==========
+// extract_data_with_rules failure path: exercises lines 509-511
 
 #[tokio::test]
 async fn test_extract_data_with_rules_failure_returns_none_and_logs() {
@@ -6984,7 +6966,7 @@ async fn test_extract_data_with_rules_failure_returns_none_and_logs() {
     );
 }
 
-// ========== handle_crawl_failure: increment_failed_tasks error (line 540) ==========
+// handle_crawl_failure: increment_failed_tasks error (line 540)
 
 #[tokio::test]
 async fn test_handle_crawl_failure_increment_failed_error_logs_and_continues() {
@@ -7020,7 +7002,7 @@ async fn test_handle_crawl_failure_increment_failed_error_logs_and_continues() {
     );
 }
 
-// ========== update_crawl_completion_status: update_status error (line 569) ==========
+// update_crawl_completion_status: update_status error (line 569)
 
 #[tokio::test]
 async fn test_update_crawl_completion_status_update_status_error_logs_and_continues() {
@@ -7065,7 +7047,7 @@ async fn test_update_crawl_completion_status_update_status_error_logs_and_contin
     );
 }
 
-// ========== process_extract_task: rules path (lines 622, 630-634, 644-647) ==========
+// process_extract_task: rules path (lines 622, 630-634, 644-647)
 
 #[tokio::test]
 async fn test_process_extract_task_with_rules_calls_handle_rules_extraction() {
@@ -7108,7 +7090,7 @@ async fn test_process_extract_task_with_rules_calls_handle_rules_extraction() {
     );
 }
 
-// ========== process_extract_task: prompt path (lines 650-653) ==========
+// process_extract_task: prompt path (lines 650-653)
 
 #[tokio::test]
 async fn test_process_extract_task_with_prompt_calls_handle_prompt_extraction() {
@@ -7141,7 +7123,7 @@ async fn test_process_extract_task_with_prompt_calls_handle_prompt_extraction() 
     );
 }
 
-// ========== process_extract_task: schema path (lines 656-659) ==========
+// process_extract_task: schema path (lines 656-659)
 
 #[tokio::test]
 async fn test_process_extract_task_with_schema_calls_handle_schema_extraction() {
@@ -7174,7 +7156,7 @@ async fn test_process_extract_task_with_schema_calls_handle_schema_extraction() 
     );
 }
 
-// ========== process_extract_task: fallback path (lines 663-664) ==========
+// process_extract_task: fallback path (lines 663-664)
 
 #[tokio::test]
 async fn test_process_extract_task_fallback_saves_raw_result() {
@@ -7206,7 +7188,7 @@ async fn test_process_extract_task_fallback_saves_raw_result() {
     );
 }
 
-// ========== extract_and_queue_links: skip existing URLs (line 849) ==========
+// extract_and_queue_links: skip existing URLs (line 849)
 
 #[tokio::test]
 async fn test_extract_and_queue_links_skips_existing_urls() {
@@ -7323,7 +7305,7 @@ async fn test_extract_and_queue_links_bloom_miss_directly_enqueues() {
     );
 }
 
-// ========== handle_scrape_success: token deduct failure (line 994) ==========
+// handle_scrape_success: token deduct failure (line 994)
 
 #[tokio::test]
 async fn test_handle_scrape_success_token_deduct_failure_logs_error() {
@@ -7383,7 +7365,7 @@ async fn test_handle_scrape_success_token_deduct_failure_logs_error() {
     );
 }
 
-// ========== handle_failure: Failed branch (line 1130) ==========
+// handle_failure: Failed branch (line 1130)
 
 #[tokio::test]
 async fn test_handle_failure_failed_branch_returns_ok() {
@@ -7399,12 +7381,10 @@ async fn test_handle_failure_failed_branch_returns_ok() {
 
     let mut task = make_task(json!({}));
     // attempt_count exceeds max_retries → Failed branch (not Retried)
-    // fail_update is false (default) → update succeeds → Failed → Ok(())
     task.attempt_count = 100;
     task.max_retries = 1;
 
     let result = worker.handle_failure(&mut task, "terminal failure").await;
-    // Failed branch returns Ok(()) — line 1130
     assert!(
         result.is_ok(),
         "handle_failure should return Ok(()) when task exceeds max_retries"
@@ -7416,7 +7396,7 @@ async fn test_handle_failure_failed_branch_returns_ok() {
     );
 }
 
-// ========== ensure_result_row: crawl 结果行不变量 ==========
+// ensure_result_row: crawl 结果行不变量
 
 /// Counting result repo for ensure_result_row tests.
 struct CountingResultRepo {
@@ -7532,7 +7512,7 @@ async fn test_ensure_result_row_skips_write_when_present() {
     );
 }
 
-// ========== should_crawl tests ==========
+// should_crawl tests
 
 /// Build a worker pre-configured for should_crawl unit tests.
 /// All deps use default in-memory mocks.
@@ -7658,11 +7638,9 @@ async fn test_should_crawl_multiple_exclude_patterns_any_blocks() {
     assert!(worker.should_crawl("https://example.com/public/page", &config));
 }
 
-// =========================================================================
 // 高级缓存模式门控测试
-// =========================================================================
 
-// --- generate_scrape_cache_key ---
+// generate_scrape_cache_key
 
 #[test]
 fn test_generate_scrape_cache_key_format() {
@@ -7722,7 +7700,7 @@ fn test_generate_scrape_cache_key_different_urls_produce_different_keys() {
     assert_ne!(key1, key2);
 }
 
-// --- try_read_scrape_cache ---
+// try_read_scrape_cache
 
 #[tokio::test]
 async fn test_try_read_scrape_cache_miss_returns_none() {
@@ -7786,7 +7764,7 @@ async fn test_try_read_scrape_cache_corrupt_data_returns_err() {
     assert_eq!(cache.get_count(), 1, "get should still be called once");
 }
 
-// --- try_write_scrape_cache ---
+// try_write_scrape_cache
 
 #[tokio::test]
 async fn test_try_write_scrape_cache_writes_serialized_response() {
@@ -7833,7 +7811,7 @@ async fn test_try_write_scrape_cache_key_matches_read_key() {
     assert_eq!(resp.content, "written");
 }
 
-// --- process_scrape_task 门控行为（通过 MockCacheService 计数器验证）---
+// process_scrape_task 门控行为（通过 MockCacheService 计数器验证）
 
 /// 辅助：构造带 cache_mode 的 Task payload
 fn make_task_with_cache_mode(url: &str, mode: Option<CacheMode>) -> Task {
@@ -7933,7 +7911,7 @@ async fn test_process_scrape_task_default_mode_reads_cache() {
     assert_eq!(cache.set_count(), 0, "Should not write on scrape failure");
 }
 
-// ==== P22：wait_for 映射 ====
+// P22：wait_for 映射
 
 /// DTO `wait_for`（毫秒）→ DomStable 等待策略；None → None
 #[test]

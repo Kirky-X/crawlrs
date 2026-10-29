@@ -24,11 +24,11 @@ use super::task_model::Task;
 /// # Examples
 ///
 /// ```rust,ignore
-/// let task = TaskBuilder::new()
+/// let task = TaskBuilder::new
 ///     .team_id(team_id)
 ///     .api_key_id(api_key_id)
-///     .url("https://example.com".to_string())
-///     .build();
+///     .url("https://example.com".to_string)
+///     .build;
 /// ```
 #[derive(Debug, Clone)]
 pub struct TaskBuilder {

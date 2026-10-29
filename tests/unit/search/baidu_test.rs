@@ -12,7 +12,7 @@ mod tests {
     use std::sync::Arc;
 
     fn create_test_engine() -> BaiduSearchEngine {
-        // 真实搜索链路：空 EngineClient 未注册任何引擎，search() 必然
+        // 真实搜索链路：空 EngineClient 未注册任何引擎，search 必然
         // "No engines available"。装配 ReqwestEngine（与
         // utils::search_test::build_test_engine_client 同构）。
         let reqwest_engine = ReqwestEngine::new(Arc::new(reqwest::Client::new()));
@@ -165,10 +165,8 @@ mod tests {
             println!();
         }
 
-        // 验证结果
         assert!(!results.is_empty(), "应该找到至少一个结果");
 
-        // 检查是否包含相关关键词
         let has_hongmeng = results.iter().any(|r| {
             r.title.contains("鸿蒙")
                 || r.description.contains("鸿蒙")

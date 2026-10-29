@@ -369,7 +369,7 @@ mod tests {
         }
     }
 
-    // ========== init_engines tests ==========
+    // init_engines tests
 
     #[test]
     fn test_init_engines_returns_non_empty_vec() {
@@ -510,7 +510,7 @@ mod tests {
         );
     }
 
-    // ========== init_engine_components tests ==========
+    // init_engine_components tests
 
     #[test]
     fn test_init_engine_components_populates_all_fields() {

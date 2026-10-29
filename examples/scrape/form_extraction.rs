@@ -56,7 +56,6 @@ async fn main() {
             info!("  内容长度: {} 字节", content.len());
             info!("");
 
-            // 解析表单数据
             let form_data = extract_form_data(content);
 
             info!("📋 检测到的表单字段:");

@@ -149,7 +149,7 @@ mod tests {
             .chain(std::iter::repeat_n(0.0, 1533))
             .map(serde_json::Value::from)
             .collect();
-        // wiremock 的 path() 匹配完整路径（含 base_url 段 /v1）；
+        // wiremock 的 path 匹配完整路径（含 base_url 段 /v1）；
         // 用 partial 匹配契约字段
         Mock::given(method("POST"))
             .and(path("/v1/embeddings"))

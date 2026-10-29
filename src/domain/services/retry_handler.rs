@@ -334,7 +334,7 @@ mod tests {
         task
     }
 
-    // ========== RetryHandler::new / with_default_policy tests ==========
+    // RetryHandler::new / with_default_policy tests
 
     #[test]
     fn test_new_stores_repository_and_policy() {
@@ -353,7 +353,7 @@ mod tests {
         let _ = &handler;
     }
 
-    // ========== handle_failure - retry path ==========
+    // handle_failure - retry path
 
     #[tokio::test]
     async fn test_handle_failure_retries_when_below_max() {
@@ -430,7 +430,7 @@ mod tests {
         assert_eq!(task.retry_count, 1);
     }
 
-    // ========== handle_failure - failed path ==========
+    // handle_failure - failed path
 
     #[tokio::test]
     async fn test_handle_failure_fails_when_max_retries_exceeded() {
@@ -579,7 +579,7 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Failed);
     }
 
-    // ========== handle_failure - error path ==========
+    // handle_failure - error path
 
     #[tokio::test]
     async fn test_handle_failure_returns_error_when_update_fails_on_retry() {
@@ -642,7 +642,7 @@ mod tests {
         assert!(task.completed_at.is_some());
     }
 
-    // ========== HandleFailureResult variant coverage ==========
+    // HandleFailureResult variant coverage
 
     #[test]
     fn test_handle_failure_result_reried_carries_correct_fields() {

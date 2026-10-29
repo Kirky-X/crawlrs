@@ -185,7 +185,7 @@ pub struct CrawlRsState {
     /// i18n 翻译 bundle
     ///
     /// 从配置加载，提供多语言翻译接口。
-    /// 通过 `kit.require::<SettingsModule>()` 获取 i18n 配置并加载 FTL 文件。
+    /// 通过 `kit.require::<SettingsModule>` 获取 i18n 配置并加载 FTL 文件。
     pub i18n_bundle: Arc<I18nBundle>,
     /// 事件总线
     ///
@@ -760,7 +760,7 @@ mod tests {
             )
         })?;
 
-        // 高并行度下 kit.build() 可能因数据库连接失败而报错，用 ? 传播错误让调用方优雅跳过
+        // 高并行度下 kit.build 可能因数据库连接失败而报错，用 ? 传播错误让调用方优雅跳过
         let kit = kit
             .build()
             .await
@@ -939,7 +939,7 @@ mod tests {
         let _ = cloned.task_repo();
     }
 
-    // ========== Non-Docker tests using TEST_DATABASE_URL ==========
+    // Non-Docker tests using TEST_DATABASE_URL
     //
     // These tests provide coverage when Docker is unavailable but a real
     // PostgreSQL test database is provided via `TEST_DATABASE_URL`.

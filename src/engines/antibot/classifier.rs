@@ -265,7 +265,7 @@ pub fn classify(status: u16, body: &str, headers: &HeaderMap, _url: &str) -> Opt
     // Step 5：200 + 近空 body → JS 空壳（StructuralBlock, needs_browser=true）
     //
     // 双条件：body 整体字节少 AND 剥离 script/style + tag 后可见文本也少。
-    // 仅凭 body.len() 会让短小但内容充实的正常页（~100 字可见文本）被误判。
+    // 仅凭 body.len 会让短小但内容充实的正常页（~100 字可见文本）被误判。
     //
     // 复用 stripped_cache，与 tier1_match / tier3_signals
     // 共享同一份 stripped 结果（若已计算则零成本复用）。
@@ -323,7 +323,7 @@ mod tests {
         h
     }
 
-    // -------- Step 1：429 → RateLimited --------
+    // Step 1：429 → RateLimited
 
     #[test]
     fn classify_429_returns_rate_limited_needs_browser() {
@@ -333,7 +333,7 @@ mod tests {
         assert!(det.needs_browser, "rate limited should need browser");
     }
 
-    // -------- Step 1：Retry-After 头解析 --------
+    // Step 1：Retry-After 头解析
 
     #[test]
     fn classify_429_parses_numeric_retry_after() {
@@ -405,7 +405,7 @@ mod tests {
         assert_eq!(det.retry_after_secs, None);
     }
 
-    // -------- Step 1：JSON 响应返回 None --------
+    // Step 1：JSON 响应返回 None
 
     #[test]
     fn classify_json_response_returns_none() {
@@ -414,7 +414,7 @@ mod tests {
         assert!(det.is_none(), "JSON response should not be flagged");
     }
 
-    // -------- Step 0 优先级：429 与响应体格式无关 --------
+    // Step 0 优先级：429 与响应体格式无关
 
     #[test]
     fn classify_429_json_body_returns_rate_limited() {
@@ -434,7 +434,7 @@ mod tests {
         assert!(det.is_none(), "XML response should not be flagged");
     }
 
-    // -------- Step 2：Tier1 命中 --------
+    // Step 2：Tier1 命中
 
     #[test]
     fn classify_cloudflare_tier1_match() {
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn classify_normal_back_wording_not_akamai() {
-        // P05 回归钉：go_back()/btn_back 等正常 JS/CSS 命名曾被 `_back\b` 宽泛
+        // P05 回归钉：go_back/btn_back 等正常 JS/CSS 命名曾被 `_back\b` 宽泛
         // 规则误判为 Akamai，导致正常 200 页被无谓升级到浏览器引擎
         let body = "<html><body><button onclick=\"goBack()\" class=\"btn_back\">返回</button>\
                     <p>This is a normal product page with plenty of visible text so the \

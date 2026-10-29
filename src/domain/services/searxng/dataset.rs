@@ -6,7 +6,7 @@
 // 已知形状建模并全字段宽容（`Option` + `serde(default)`，未知字段忽略，单条目解析
 // 失败降级为默认元数据而非整体崩溃）；运行时以实例 JSON API 探活为权威可用信号，
 // 数据集元数据仅做准入预过滤。真实样本固化后应替换 tests/fixtures/searxng/
-// instances_sample.json 并移除本申报（见 change searxng-meta-search 的 T004）。
+// instances_sample.json 并移除本申报。
 
 //! searx.space 数据集解析与准入谓词
 //!
@@ -253,7 +253,7 @@ mod tests {
         admit(url, entry, 95.0)
     }
 
-    // ========== 解析宽容性 ==========
+    // 解析宽容性
 
     #[test]
     fn test_parse_fixture_collects_all_entries() {
@@ -310,7 +310,7 @@ mod tests {
         ));
     }
 
-    // ========== 准入谓词真伪表 ==========
+    // 准入谓词真伪表
 
     #[test]
     fn test_admit_accepts_healthy_https_instance() {

@@ -247,7 +247,6 @@ impl EnvVarSecurityMonitor {
             };
         }
 
-        // 检查是否为敏感变量
         if self.whitelist.sensitive_vars.contains(name.as_str()) {
             debug!("Sensitive environment variable detected: {}", name);
             return EnvVarCheckResult::Sensitive {
@@ -256,13 +255,11 @@ impl EnvVarSecurityMonitor {
             };
         }
 
-        // 检查是否在允许列表中
         if self.whitelist.allowed_names.contains(name.as_str()) {
             debug!("Allowed environment variable: {}", name);
             return EnvVarCheckResult::Allowed(name.to_string());
         }
 
-        // 检查前缀是否允许
         for prefix in &self.whitelist.allowed_prefixes {
             if name.starts_with(prefix) {
                 debug!("Allowed environment variable by prefix: {}", name);
@@ -420,7 +417,6 @@ impl EnvVarSecurityMonitor {
                     continue;
                 }
 
-                // 检查弱默认值
                 for weak in &weak_defaults {
                     if lower_value.contains(weak) {
                         warnings.push(SensitiveVarWarning {
@@ -436,7 +432,6 @@ impl EnvVarSecurityMonitor {
                     }
                 }
 
-                // 检查测试值模式
                 for pattern in &test_patterns {
                     if lower_value.contains(pattern) {
                         warnings.push(SensitiveVarWarning {

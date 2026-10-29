@@ -109,7 +109,7 @@ async fn check_url_accessible(engine_client: &EngineClient, url: &str) -> bool {
 mod tests {
     use super::*;
 
-    // ========== TestResult::default tests ==========
+    // TestResult::default tests
 
     #[test]
     fn test_test_result_default_total_is_zero() {
@@ -135,7 +135,7 @@ mod tests {
         assert_eq!((r.total, r.accessible, r.inaccessible), (0, 0, 0));
     }
 
-    // ========== TestResult construction tests ==========
+    // TestResult construction tests
 
     #[test]
     fn test_test_result_construction_all_accessible() {
@@ -172,7 +172,7 @@ mod tests {
         assert_eq!(r.inaccessible, 5);
     }
 
-    // ========== TestResult Clone tests ==========
+    // TestResult Clone tests
 
     #[test]
     fn test_test_result_clone_preserves_fields() {
@@ -187,7 +187,7 @@ mod tests {
         assert_eq!(cloned.inaccessible, original.inaccessible);
     }
 
-    // ========== TestResult Debug tests ==========
+    // TestResult Debug tests
 
     #[test]
     fn test_test_result_debug_contains_struct_name() {
@@ -210,7 +210,7 @@ mod tests {
         assert!(dbg.contains("42"), "Debug should contain total value");
     }
 
-    // ========== TestResult field-by-field comparison tests ==========
+    // TestResult field-by-field comparison tests
 
     #[test]
     fn test_test_result_same_values_match_field_by_field() {
@@ -245,7 +245,7 @@ mod tests {
         assert_ne!(a.total, b.total, "different total should differ");
     }
 
-    // ========== TestResult edge cases ==========
+    // TestResult edge cases
 
     #[test]
     fn test_test_result_zero_total() {
@@ -323,7 +323,7 @@ mod tests {
         assert!(dbg_alt.contains("TestResult"));
     }
 
-    // ========== build_test_engine_client tests ==========
+    // build_test_engine_client tests
 
     #[test]
     fn test_build_test_engine_client_returns_some() {
@@ -401,7 +401,7 @@ mod tests {
         );
     }
 
-    // ========== run_engine_test_with_output tests (mock SearchEngine) ==========
+    // run_engine_test_with_output tests (mock SearchEngine)
 
     use crate::search::{EngineHealth, Response, ResponseItem, SearchEngineType, SearchError};
     use async_trait::async_trait;
@@ -613,12 +613,12 @@ mod tests {
         assert_eq!(tr.total, 0);
     }
 
-    // ========== check_url_accessible tests ==========
+    // check_url_accessible tests
 
     #[tokio::test]
     async fn test_check_url_accessible_returns_false_for_internal_url() {
         // Internal URLs (127.0.0.1) are blocked by SSRF validation in
-        // EngineClient::scrape(), so check_url_accessible should return false.
+        // EngineClient::scrape, so check_url_accessible should return false.
         let client = build_test_engine_client().expect("client should be Some");
         let result = check_url_accessible(&client, "http://127.0.0.1:1/nonexistent").await;
         assert!(
@@ -647,7 +647,7 @@ mod tests {
         );
     }
 
-    // ========== log::info! 参数求值覆盖测试 ==========
+    // log::info! 参数求值覆盖测试
 
     use log::{LevelFilter, Log, Metadata, Record};
     use std::sync::Once;

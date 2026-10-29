@@ -122,7 +122,7 @@ impl SearchEngine for TavilySearchEngine {
         }
 
         // 响应体大小上限：content_length 预检 + bytes_stream 累积读取，
-        // 替代「先 `.text()` 全量读入再检查长度」的旧逻辑（防止超大响应先 OOM 再报错）。
+        // 替代「先 `.text` 全量读入再检查长度」的旧逻辑（防止超大响应先 OOM 再报错）。
         let body_text = read_body_limited(response, MAX_RESPONSE_SIZE)
             .await
             .map_err(|e| match e {
@@ -152,9 +152,7 @@ impl SearchEngine for TavilySearchEngine {
     }
 }
 
-// =============================================================================
 // 内部数据结构
-// =============================================================================
 
 struct TavilySearchResult {
     title: String,
@@ -178,9 +176,7 @@ struct TavilyRawResult {
     content: Option<String>,
 }
 
-// =============================================================================
 // Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -194,7 +190,7 @@ mod tests {
         TavilySearchEngine::new(Client::new(), test_config())
     }
 
-    // ========== 请求构造 ==========
+    // 请求构造
 
     #[test]
     fn test_build_request_structure() {
@@ -205,7 +201,7 @@ mod tests {
         assert_eq!(req["max_results"], 10);
     }
 
-    // ========== 响应解析 ==========
+    // 响应解析
 
     #[test]
     fn test_parse_response_success() {
@@ -250,7 +246,7 @@ mod tests {
         assert!(TavilySearchEngine::parse_response(body).is_err());
     }
 
-    // ========== trait 方法 ==========
+    // trait 方法
 
     #[test]
     fn test_engine_name() {
@@ -262,7 +258,7 @@ mod tests {
         assert_eq!(test_engine().engine_type(), SearchEngineType::Tavily);
     }
 
-    // ========== 集成测试（wiremock） ==========
+    // 集成测试（wiremock）
 
     #[tokio::test]
     async fn test_search_keyless_mode() {

@@ -134,7 +134,7 @@ pub struct ProxyPool {
     /// 超限时清理过期绑定；仍超限则拒绝新绑定（降级：返回代理 URL 但不绑定）。
     /// 默认 [`MAX_STICKY_BINDINGS`]，可通过 [`Self::with_sticky_max_capacity`] 调整。
     sticky_max_capacity: usize,
-    /// 上次清理时间（epoch 毫秒，SEC-007 节流）
+    /// 上次清理时间（epoch 毫秒， 节流）
     ///
     /// 防止高并发下频繁触发 `evict_expired_sticky`（DashMap `retain` 需全 shard 锁）。
     /// 仅当 `now - last_cleanup > 60s` 时才执行清理。
@@ -230,7 +230,7 @@ impl ProxyPool {
         }
 
         // 容量限制 — 超限时清理过期绑定
-        // SEC-007: 节流 — 仅当距上次清理 > 60s 时执行（避免高并发下频繁 retain）
+        // : 节流 — 仅当距上次清理 > 60s 时执行（避免高并发下频繁 retain）
         if self.sticky.len() >= self.sticky_max_capacity {
             let now = now_ms();
             let last = self.last_cleanup_millis.load(Ordering::Relaxed);
@@ -240,15 +240,15 @@ impl ProxyPool {
             }
         }
 
-        // 在 entry() 之前检查容量，避免在 entry 锁内调用 len() 导致死锁
-        // （DashMap entry 持有 shard 写锁，len() 需读取所有 shard 的读锁 → 死锁）
-        // 这是一个软限制：检查后到 entry() 之间可能有其他线程插入，偶尔超出几个条目可接受
+        // 在 entry 之前检查容量，避免在 entry 锁内调用 len 导致死锁
+        // （DashMap entry 持有 shard 写锁，len 需读取所有 shard 的读锁 → 死锁）
+        // 这是一个软限制：检查后到 entry 之间可能有其他线程插入，偶尔超出几个条目可接受
         let at_capacity = self.sticky.len() >= self.sticky_max_capacity;
 
         // 2. 使用 entry API 原子 check-and-update
-        //    rr_pick() 在 entry 锁内调用，确保同一 session 只有一个线程
-        //    执行 rr_pick + insert，彻底消除 TOCTOU 竞态。
-        //    修复前：rr_pick 在锁外，多线程各自选不同 idx 后互相覆盖。
+        // rr_pick 在 entry 锁内调用，确保同一 session 只有一个线程
+        // 执行 rr_pick + insert，彻底消除 TOCTOU 竞态。
+        // 修复前：rr_pick 在锁外，多线程各自选不同 idx 后互相覆盖。
         match self.sticky.entry(session_id.to_string()) {
             Entry::Occupied(mut occ) => {
                 // 双重检查：另一线程可能已在锁内完成重选
@@ -333,10 +333,10 @@ impl ProxyPool {
     /// 过滤 `category` + 未冷却，按 `rr` 计数器取候选列表中下一个。
     ///
     /// 避免每次调用都分配 `Vec<usize>`。
-    /// 原实现用 `filter().map().collect()` 收集候选索引到 Vec，
+    /// 原实现用 `filter.map.collect` 收集候选索引到 Vec，
     /// 在高频调用（每次请求都走 `next` / `sticky` 重选）下产生大量短命分配。
-    /// 修复后用 `count()` + `nth()` 替代 `collect()`，零堆分配：
-    /// - 第一遍 `count()` 仅计数（迭代器内部不分配）
+    /// 修复后用 `count()` + `nth` 替代 `collect`，零堆分配：
+    /// - 第一遍 `count` 仅计数（迭代器内部不分配）
     /// - 第二遍 `nth(target)` 直接跳到第 `target` 个候选
     ///
     /// entries 通常 < 100，两遍扫描的成本可接受。
@@ -429,9 +429,7 @@ mod tests {
         ProxyPool::new(entries, sticky_ttl, Duration::from_secs(30))
     }
 
-    // =========================================================================
-    // next() RoundRobin
-    // =========================================================================
+    // next RoundRobin
 
     #[test]
     fn next_round_robin_cycles_through_all_proxies() {
@@ -500,9 +498,7 @@ mod tests {
         assert_eq!(pool.next(ProxyCategory::Media), None);
     }
 
-    // =========================================================================
-    // sticky() 粘性会话
-    // =========================================================================
+    // sticky 粘性会话
 
     #[test]
     fn sticky_returns_same_url_within_ttl() {
@@ -544,7 +540,6 @@ mod tests {
         // TTL 已过期，重选应该返回有效 URL（不 panic，不 None）
         thread::sleep(Duration::from_millis(5));
         let url2 = pool.sticky("session-1").unwrap();
-        // 验证重选后的 URL 在池中
         assert!(
             url2 == "http://a:8080" || url2 == "http://b:8080",
             "reselected url should be one of the pool entries"
@@ -594,9 +589,7 @@ mod tests {
         assert_eq!(pool.sticky("session-1"), None);
     }
 
-    // =========================================================================
     // mark_failure / mark_success
-    // =========================================================================
 
     #[test]
     fn mark_failure_sets_cooldown() {
@@ -636,9 +629,7 @@ mod tests {
         assert_eq!(url, "http://a:8080");
     }
 
-    // =========================================================================
     // from_urls / len / is_empty
-    // =========================================================================
 
     #[test]
     fn from_urls_creates_pool_with_html_category() {
@@ -665,13 +656,11 @@ mod tests {
         assert_eq!(pool.len(), 2);
     }
 
-    // =========================================================================
     // 并发测试（验证 ProxyPool 在多线程并发下不 panic / 不 data race）
-    // =========================================================================
 
     #[test]
     fn concurrent_next_does_not_panic_and_returns_valid_urls() {
-        // 多线程并发调用 next() 验证线程安全
+        // 多线程并发调用 next 验证线程安全
         // ProxyPool 内部用 Atomic* + DashMap，&self 可并发调用
         let pool = std::sync::Arc::new(make_pool(vec![
             "http://a:8080",
@@ -774,9 +763,9 @@ mod tests {
     fn concurrent_sticky_same_session_returns_consistent_url() {
         // 多线程同 session_id 并发调用 sticky 必须返回同一 URL
         // 修复前：sticky 存在 TOCTOU 竞态，多线程同时发现绑定过期时可能各自重选
-        //         并覆盖彼此的绑定，导致同 session_id 返回不同 URL。
+        // 并覆盖彼此的绑定，导致同 session_id 返回不同 URL。
         // 修复后：使用 DashMap entry API 原子 check-and-update，第一个线程插入绑定后，
-        //         其余线程在 entry 锁内重新检查到有效绑定并复用，保证一致性。
+        // 其余线程在 entry 锁内重新检查到有效绑定并复用，保证一致性。
         let pool = std::sync::Arc::new(make_pool(vec![
             "http://a:8080",
             "http://b:8080",
@@ -797,7 +786,6 @@ mod tests {
                 urls
             }));
         }
-        // 收集所有线程返回的 URL
         let mut all_urls: Vec<String> = Vec::new();
         for handle in handles {
             let urls = handle.join().expect("sticky thread should not panic");
@@ -821,9 +809,7 @@ mod tests {
         }
     }
 
-    // =========================================================================
     // sticky 表容量限制
-    // =========================================================================
 
     #[test]
     fn sticky_capacity_limit_evicts_expired_entries() {
@@ -927,9 +913,7 @@ mod tests {
         );
     }
 
-    // =========================================================================
     // sticky TOCTOU 竞态修复（entry API 原子 check-and-update）
-    // =========================================================================
 
     #[test]
     fn concurrent_sticky_touctou_race_all_threads_get_same_url() {
@@ -989,7 +973,6 @@ mod tests {
                 i, url, first
             );
         }
-        // 返回的 URL 应在池中
         assert!(
             first == "http://a:8080"
                 || first == "http://b:8080"

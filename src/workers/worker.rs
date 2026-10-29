@@ -103,7 +103,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    // ========== ProcessResult tests ==========
+    // ProcessResult tests
 
     #[test]
     fn test_process_result_completed_equality() {
@@ -150,7 +150,7 @@ mod tests {
         assert!(dbg.contains("Completed"));
     }
 
-    // ========== MockProcessor for WorkerProcess tests ==========
+    // MockProcessor for WorkerProcess tests
 
     struct MockProcessor {
         name: &'static str,
@@ -184,7 +184,7 @@ mod tests {
         }
     }
 
-    // ========== WorkerProcess trait tests ==========
+    // WorkerProcess trait tests
 
     #[tokio::test]
     async fn test_mock_processor_returns_completed() {
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(p.name(), "named-processor");
     }
 
-    // ========== AbstractWorker tests ==========
+    // AbstractWorker tests
 
     #[test]
     fn test_abstract_worker_name_returns_processor_name() {
@@ -239,7 +239,7 @@ mod tests {
         let worker = AbstractWorker::new(processor.clone(), Duration::from_millis(10));
         // Run the worker briefly; it loops forever, so we use a timeout.
         let _ = tokio::time::timeout(Duration::from_millis(100), worker.run()).await;
-        // At least one process() call should have happened after the first tick.
+        // At least one process call should have happened after the first tick.
         assert!(
             processor.calls() > 0,
             "worker should have processed at least one cycle"
@@ -271,14 +271,14 @@ mod tests {
         );
     }
 
-    // ========== AbstractWorker::run 全路径覆盖测试 ==========
+    // AbstractWorker::run 全路径覆盖测试
     //
-    // 覆盖 lines 78-79 (info! + interval 构造), 82 (tick().await),
-    // 84 (match process()), 86 (Completed debug!), 88-89 (Error error!),
+    // 覆盖 lines 78-79 (info! + interval 构造), 82 (tick.await),
+    // 84 (match process), 86 (Completed debug!), 88-89 (Error error!),
     // 92 (Empty debug!)。使用 spawn + sleep + abort 模式确保 loop 内
     // 所有三个 match 分支均被执行多次，便于覆盖率工具记录。
 
-    /// 处理器在 Completed / Error / Empty 之间循环返回，确保 run() 的
+    /// 处理器在 Completed / Error / Empty 之间循环返回，确保 run 的
     /// 三个 match 分支都被触发。
     struct CyclingProcessor {
         name: &'static str,
@@ -344,14 +344,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_abstract_worker_run_executes_all_match_arms_via_spawn() {
-        // 使用 spawn + sleep + abort 模式，确保 run() 内的 loop 至少执行
+        // 使用 spawn + sleep + abort 模式，确保 run 内的 loop 至少执行
         // 6 次以上（每个 match 分支至少 2 次），覆盖率工具能稳定记录
         // lines 78-79, 82, 84, 86, 88-89, 92。
         let processor = Arc::new(CyclingProcessor::new());
         let processor_clone = processor.clone();
         let worker = AbstractWorker::new(processor_clone, Duration::from_millis(5));
 
-        // 在独立任务中运行 worker.run()（无限循环）
+        // 在独立任务中运行 worker.run（无限循环）
         let handle = tokio::spawn(async move {
             worker.run().await;
         });
@@ -360,7 +360,7 @@ mod tests {
         // 使用 150ms 以在高负载（5700+ 并行测试）下仍稳定通过。
         tokio::time::sleep(Duration::from_millis(150)).await;
 
-        // 中止 worker 任务（run() 是无限循环，必须主动中止）
+        // 中止 worker 任务（run 是无限循环，必须主动中止）
         handle.abort();
         // 让 abort 生效
         tokio::task::yield_now().await;

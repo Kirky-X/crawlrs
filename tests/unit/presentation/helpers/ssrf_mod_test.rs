@@ -4,8 +4,8 @@
 //! ssrf/mod.rs 单元测试
 //!
 //! 补齐 src/presentation/helpers/ssrf/mod.rs 中未覆盖的行：
-//! - SsrfValidator::with_dns_cache() 构造器
-//! - SsrfValidator::with_dns_cache_and_config() 构造器
+//! - SsrfValidator::with_dns_cache 构造器
+//! - SsrfValidator::with_dns_cache_and_config 构造器
 //! - resolve_and_validate_ips 的 DNS cache 分支
 //! - DNS rebinding 检测（混合私有/公网 IP）
 //! - 私有 IP 通过 DNS cache 拦截
@@ -21,9 +21,7 @@ use std::time::Duration;
 use crawlrs::infrastructure::dns::DnsCacheService;
 use crawlrs::infrastructure::security::ssrf::{SsrfConfig, SsrfError, SsrfValidator};
 
-// ============================================================
 // 辅助函数
-// ============================================================
 
 /// 创建一个 DnsCacheService 用于测试。
 ///
@@ -46,9 +44,7 @@ fn ip(s: &str) -> IpAddr {
     s.parse().expect("invalid IP string in test")
 }
 
-// ============================================================
 // SsrfValidator::with_dns_cache 构造器测试
-// ============================================================
 
 #[tokio::test]
 async fn tc_ssrf_validator_with_dns_cache_constructor() {
@@ -79,9 +75,7 @@ async fn tc_ssrf_validator_with_dns_cache_and_config_constructor() {
     }
 }
 
-// ============================================================
 // DNS cache 分支：成功路径（公网 IP）
-// ============================================================
 
 #[tokio::test]
 async fn tc_validate_with_dns_cache_public_ip_succeeds() {
@@ -104,9 +98,7 @@ async fn tc_validate_with_dns_cache_public_ip_succeeds() {
     assert_eq!(validated.resolved_ips[0], ip("203.0.113.5"));
 }
 
-// ============================================================
 // DNS cache 分支：私有 IP 拦截
-// ============================================================
 
 #[tokio::test]
 async fn tc_validate_with_dns_cache_private_ip_blocked() {
@@ -128,9 +120,7 @@ async fn tc_validate_with_dns_cache_private_ip_blocked() {
     }
 }
 
-// ============================================================
 // DNS rebinding 检测：混合私有/公网 IP
-// ============================================================
 
 #[tokio::test]
 async fn tc_validate_dns_rebinding_detected() {
@@ -154,9 +144,7 @@ async fn tc_validate_dns_rebinding_detected() {
     }
 }
 
-// ============================================================
 // DNS cache 分支：多 IP 解析（debug 日志路径）
-// ============================================================
 
 #[tokio::test]
 async fn tc_validate_with_dns_cache_multiple_public_ips() {
@@ -177,9 +165,7 @@ async fn tc_validate_with_dns_cache_multiple_public_ips() {
     assert_eq!(validated.resolved_ips.len(), 2, "should resolve to 2 IPs");
 }
 
-// ============================================================
 // DNS cache 分支：DNS 解析失败（cache miss + 真实 DNS 失败）
-// ============================================================
 
 #[tokio::test]
 async fn tc_validate_with_dns_cache_unresolvable_host_fails() {
@@ -198,9 +184,7 @@ async fn tc_validate_with_dns_cache_unresolvable_host_fails() {
     }
 }
 
-// ============================================================
 // DNS cache + 自定义配置组合测试
-// ============================================================
 
 #[tokio::test]
 async fn tc_validate_with_dns_cache_and_config_applies_config() {
@@ -224,9 +208,7 @@ async fn tc_validate_with_dns_cache_and_config_applies_config() {
     assert_eq!(validated.resolved_ips[0], ip("203.0.113.10"));
 }
 
-// ============================================================
 // 无 DNS cache 的直接 DNS 解析路径（补充覆盖）
-// ============================================================
 
 #[tokio::test]
 async fn tc_validate_without_dns_cache_unresolvable_host_fails() {

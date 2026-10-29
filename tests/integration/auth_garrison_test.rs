@@ -13,7 +13,7 @@
 //! garrison `GarrisonManager::init` 是全局单例，并行测试会污染单例状态。
 //! 本文件所有测试用 `#[ignore]` 标记，仅在 E2E 套件 `--include-ignored`
 //! 或手动运行时执行：`GARRISON_TEST_LOCK` 串行化全部用例，setup 经
-//! `reset_garrison_global_state_for_integration_test()`（test-mocks 门控）
+//! `reset_garrison_global_state_for_integration_test`（test-mocks 门控）
 //! 在每个用例前重置 DAO + AUDIT_SERVICE 全局态，同进程顺序运行安全。
 //!
 //! ## 前置条件
@@ -75,7 +75,7 @@ fn resolve_test_db_url() -> Option<String> {
 }
 
 /// 构造测试用 Settings：通过环境变量 `CRAWLRS__AUTH__JWT_SECRET` 注入强密钥，
-/// 让 confers 在 `load_settings()` 时读取。
+/// 让 confers 在 `load_settings` 时读取。
 ///
 /// `AuthSettings.jwt_secret` 字段是 `pub(crate)`，外部测试无法直接赋值，
 /// 故走环境变量路径（与生产部署一致，符合“惯例优先”原则）。
@@ -123,8 +123,8 @@ async fn setup_garrison_env() -> (
     let settings = make_test_settings();
 
     // 0. 重置 garrison 全局态（GARRISON_TEST_LOCK 已序列化，无并发窗口）：
-    //    同一进程内多个 ignored 用例顺序运行时，前一用例已注入 DAO，
-    //    不重置会让 init_garrison_auth 报 "global DAO already injected"。
+    // 同一进程内多个 ignored 用例顺序运行时，前一用例已注入 DAO，
+    // 不重置会让 init_garrison_auth 报 "global DAO already injected"。
     crawlrs::infrastructure::auth::reset_garrison_global_state_for_integration_test();
 
     // 1. 初始化 garrison 单例（含 GARRISON_DAO 注入 + GarrisonManager::init）
@@ -132,7 +132,6 @@ async fn setup_garrison_env() -> (
         .await
         .expect("init_garrison_auth failed");
 
-    // 2. 创建测试 team
     let team_id = crawlrs::domain::id::Id::generate();
     let session = pool
         .get_session("admin")
@@ -230,9 +229,7 @@ fn build_test_router(pool: Arc<dbnexus::DbPool>) -> Router {
         .layer(axum::middleware::from_fn(inject_connect_info))
 }
 
-// ============================================================================
 // 测试用例（全部 #[ignore] 标记，需手动运行）
-// ============================================================================
 
 /// 有效 API Key 注入正确的 team_id 与 admin scope。
 ///
@@ -313,7 +310,7 @@ async fn test_invalid_key_returns_401() {
 /// # 验证
 ///
 /// - 前 5 次失败请求返回 401
-/// - 第 6 次失败请求返回 429（garrison `BruteForceConfig::default()`：5 次失败/60 秒窗口）
+/// - 第 6 次失败请求返回 429（garrison `BruteForceConfig::default`：5 次失败/60 秒窗口）
 ///
 /// # 注意
 ///

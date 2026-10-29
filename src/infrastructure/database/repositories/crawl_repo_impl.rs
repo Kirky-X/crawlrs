@@ -308,9 +308,7 @@ mod tests {
         )
     }
 
-    // ============================================================
     // Construction tests
-    // ============================================================
 
     #[test]
     fn test_new_creates_repository_instance() {
@@ -324,10 +322,8 @@ mod tests {
         let _ = repo;
     }
 
-    // ============================================================
     // CRUD tests — verify create / find / update / state transitions
     // against a real PostgreSQL database.
-    // ============================================================
 
     #[tokio::test]
     async fn test_create_with_real_db_succeeds() {
@@ -576,9 +572,7 @@ mod tests {
         assert_eq!(result.unwrap(), 2, "should count 2 crawls for team_id");
     }
 
-    // ============================================================
     // RepositoryError variant tests (defined in task_repository)
-    // ============================================================
 
     #[test]
     fn test_error_database_display() {
@@ -610,9 +604,7 @@ mod tests {
         assert!(repo_err.to_string().contains("query failed"));
     }
 
-    // ============================================================
     // Additional construction & accessor tests
-    // ============================================================
 
     #[test]
     fn test_pool_accessor_returns_reference_to_same_pool() {
@@ -636,9 +628,7 @@ mod tests {
         assert_eq!(crawl.root_url, "http://example.com");
     }
 
-    // ============================================================
     // update_status — exercise every CrawlStatus variant against real DB
-    // ============================================================
 
     #[tokio::test]
     async fn test_update_status_to_processing_with_real_db_succeeds() {
@@ -741,9 +731,7 @@ mod tests {
         assert_eq!(found.status, CrawlStatus::Queued);
     }
 
-    // ============================================================
     // find_by_team_id_paginated — boundary values
-    // ============================================================
 
     #[tokio::test]
     async fn test_find_by_team_id_paginated_with_zero_limit_returns_empty() {
@@ -823,9 +811,7 @@ mod tests {
         let _crawls = result.unwrap();
     }
 
-    // ============================================================
     // Additional boundary tests
-    // ============================================================
 
     #[tokio::test]
     async fn test_find_by_id_with_nil_uuid_returns_none() {
@@ -860,7 +846,6 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // increment_completed_tasks silently returns Ok(()) when the crawl is
         // not found (this is the current implementation behavior).
         let repo = CrawlRepositoryImpl::new(create_test_db_pool());
         let result = repo
@@ -905,9 +890,7 @@ mod tests {
         );
     }
 
-    // ============================================================
     // Additional From<dbnexus::sea_orm::DbErr> variant coverage
-    // ============================================================
 
     #[test]
     fn test_from_dberr_record_not_found_to_repository_error() {
@@ -954,9 +937,7 @@ mod tests {
         assert!(repo_err.to_string().contains("syntax error"));
     }
 
-    // ============================================================
     // CrawlStatus display exhaustive
-    // ============================================================
 
     #[test]
     fn test_crawl_status_queued_display() {
@@ -998,9 +979,7 @@ mod tests {
         assert_eq!(format!("{}", CrawlStatus::Cancelled), "cancelled");
     }
 
-    // ============================================================
     // RepositoryError::NotFound display
-    // ============================================================
 
     #[test]
     fn test_error_not_found_display_exact() {
@@ -1011,10 +990,8 @@ mod tests {
         assert_eq!(format!("{}", err), "Record not found");
     }
 
-    // ============================================================
     // Additional From<dbnexus::sea_orm::DbErr> variant coverage (exhaustive)
     // 覆盖 dbnexus::sea_orm::DbErr 所有未在前面测试的变体到 RepositoryError::Database 的转换
-    // ============================================================
 
     #[test]
     fn test_from_dberr_connection_acquire_closed_to_repository_error() {
@@ -1240,9 +1217,7 @@ mod tests {
         assert!(matches!(repo_err, RepositoryError::Database(_)));
     }
 
-    // ============================================================
     // Additional RepositoryError Display tests
-    // ============================================================
 
     #[test]
     fn test_repository_error_database_display_exact() {
@@ -1278,9 +1253,7 @@ mod tests {
         assert!(!debug2.is_empty());
     }
 
-    // ============================================================
     // update_status boundary — all CrawlStatus variants exhaustive
-    // ============================================================
 
     #[tokio::test]
     async fn test_update_status_to_completed_with_real_db_succeeds() {
@@ -1306,9 +1279,7 @@ mod tests {
         assert_eq!(found.status, CrawlStatus::Completed);
     }
 
-    // ============================================================
     // RepositoryImpl accessor — verify pool identity is preserved
-    // ============================================================
 
     #[test]
     fn test_new_with_distinct_pools_do_not_share_identity() {

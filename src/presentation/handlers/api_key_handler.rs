@@ -122,7 +122,6 @@ pub async fn create_api_key(
         );
     }
 
-    // 2. 输入校验
     if let Err(msg) = validate_request(&req) {
         return error_response(StatusCode::BAD_REQUEST, msg);
     }
@@ -188,7 +187,7 @@ pub async fn create_api_key(
 
     // 8. 严格解析 garrison 返回的 `key_id.key_secret` 提取 key_id（公开标识，可安全记录）
     //
-    // 原 `unwrap_or_else(|| plaintext_key.clone())` 在 garrison 返回异常格式
+    // 原 `unwrap_or_else(|| plaintext_key.clone)` 在 garrison 返回异常格式
     // 时会把明文 secret 当作 key_id 写入 DB（CWE-916 违规）。改为严格校验：split_once 失败
     // 返回 500 错误且不写入 DB，并记录原始错误供排查。
     let garrison_key_id = match plaintext_key.split_once('.') {
@@ -300,7 +299,7 @@ fn validate_request(req: &CreateApiKeyRequest) -> Result<(), String> {
 ///
 /// # 失败契约
 ///
-/// - `Ok(())`：team 存在
+/// - `Ok()`：team 存在
 /// - `Err(dbnexus::sea_orm::DbErr)`：DB 查询失败（连接错误等），由调用方映射为 500
 /// - `team_id` 不存在：返回 `Err(DbErr::RecordNotFound("team not found"))`（CWE-862 IDOR 防护）
 async fn check_team_exists(
@@ -390,7 +389,7 @@ mod tests {
     use axum::response::IntoResponse;
     use dbnexus::sea_orm::EntityTrait;
 
-    // ========== 测试辅助 ==========
+    // 测试辅助
 
     /// 构造一个 admin scope 的 AuthState（pool 指向测试 DB）。
     fn make_admin_auth_state() -> AuthState {
@@ -417,7 +416,7 @@ mod tests {
     /// 注入 garrison DAO 全局态（必须先调 `reset_garrison_dao_for_test()` 清理先前状态）。
     ///
     /// 原 `let _ = ...` 丢弃 `Result` 掩盖了「DAO 已注入」错误。
-    /// 改为 panic 显性化失败——`Arc<dyn GarrisonDao>` 不实现 `Debug`，无法用 `.expect()`，
+    /// 改为 panic 显性化失败——`Arc<dyn GarrisonDao>` 不实现 `Debug`，无法用 `.expect`，
     /// 故用 `if let Err(_) = ... { panic!(...) }` 模式。
     async fn inject_test_garrison_dao() {
         let dao = init_garrison_dao()

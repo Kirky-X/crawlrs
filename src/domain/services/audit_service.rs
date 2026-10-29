@@ -52,9 +52,7 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
 
-    // ============================================================
     // AuditService tests
-    // ============================================================
 
     use crate::domain::repositories::audit_log_repository::AuditLogRepository;
     use async_trait::async_trait;
@@ -62,7 +60,7 @@ mod tests {
 
     /// Mock audit log repository that records all interactions.
     struct MockAuditLogRepository {
-        /// All entries passed to create()
+        /// All entries passed to create
         created: Mutex<Vec<AuditLogEntry>>,
         /// Entries to return from find_* methods
         find_results: Mutex<Vec<AuditLogEntry>>,
@@ -195,7 +193,7 @@ mod tests {
             .build()
     }
 
-    // ---- AuditService::new / construction ----
+    // AuditService::new / construction
 
     #[test]
     fn test_audit_service_new_constructs_service() {
@@ -205,7 +203,7 @@ mod tests {
         let _ = service.audit_repo.clone();
     }
 
-    // ---- AuditService::log ----
+    // AuditService::log
 
     #[tokio::test]
     async fn test_audit_service_log_success() {
@@ -232,7 +230,7 @@ mod tests {
         }
     }
 
-    // ---- AuditService::log_allow ----
+    // AuditService::log_allow
 
     #[tokio::test]
     async fn test_audit_service_log_allow_builds_allow_entry() {
@@ -273,7 +271,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ---- AuditService::log_deny ----
+    // AuditService::log_deny
 
     #[tokio::test]
     async fn test_audit_service_log_deny_with_all_fields() {
@@ -309,7 +307,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_service_log_deny_with_none_fields_preserves_none() {
-        // None 字段必须保留为 None（写入数据库 NULL），而非 unwrap_or_default()
+        // None 字段必须保留为 None（写入数据库 NULL），而非 unwrap_or_default
         // 转换为 nil UUID (`00000000-...`)。nil UUID 会被 find_by_api_key_id(nil_uuid) 误匹配，
         // 混淆真实 API key 的审计日志。
         let repo = Arc::new(MockAuditLogRepository::new());
@@ -340,7 +338,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ---- AuditService::get_logs_for_key ----
+    // AuditService::get_logs_for_key
 
     #[tokio::test]
     async fn test_audit_service_get_logs_for_key_returns_results() {
@@ -382,7 +380,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ---- AuditService::get_logs_for_team ----
+    // AuditService::get_logs_for_team
 
     #[tokio::test]
     async fn test_audit_service_get_logs_for_team_returns_results() {
@@ -410,7 +408,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ---- AuditService::get_denied_requests ----
+    // AuditService::get_denied_requests
 
     #[tokio::test]
     async fn test_audit_service_get_denied_requests_returns_only_denied() {
@@ -452,7 +450,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ---- AuditService::cleanup_old_logs ----
+    // AuditService::cleanup_old_logs
 
     #[tokio::test]
     async fn test_audit_service_cleanup_old_logs_returns_count() {
@@ -481,7 +479,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ---- AuditServiceTrait impl ----
+    // AuditServiceTrait impl
 
     #[tokio::test]
     async fn test_audit_service_trait_log_delegates_to_log() {
@@ -577,9 +575,9 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // ---- AuditServiceError From impls ----
+    // AuditServiceError From impls
     // 注意：AuditServiceError 已不再实现 From<dbnexus::sea_orm::DbErr>（分层违规）。
-    // DbErr 必须先经 AuditRepositoryError::DatabaseError 包装，再 .into() 为 AuditServiceError。
+    // DbErr 必须先经 AuditRepositoryError::DatabaseError 包装，再 .into 为 AuditServiceError。
 
     #[test]
     fn test_audit_service_error_from_repository_db_error_to_app_error() {
@@ -646,7 +644,7 @@ mod tests {
         assert!(entry.request_method().is_none());
     }
 
-    // ---- logger initialization to cover debug! macro argument lines ----
+    // logger initialization to cover debug! macro argument lines
 
     use crate::test_utils::ensure_debug_logger;
 

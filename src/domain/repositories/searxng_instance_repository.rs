@@ -371,7 +371,7 @@ pub trait SearxngInstanceRepository: Send + Sync {
 mod tests {
     use super::*;
 
-    // ========== 状态枚举往返 ==========
+    // 状态枚举往返
 
     #[test]
     fn test_state_display_from_str_roundtrip() {
@@ -412,7 +412,7 @@ mod tests {
         assert!(SearxngInstanceSource::from_str("manual").is_err());
     }
 
-    // ========== 状态机合法迁移 ==========
+    // 状态机合法迁移
 
     #[test]
     fn test_legal_transitions() {
@@ -453,7 +453,7 @@ mod tests {
         }
     }
 
-    // ========== URL 规范化 ==========
+    // URL 规范化
 
     #[test]
     fn test_normalize_upgrades_http_and_lowercases_host() {
@@ -512,7 +512,7 @@ mod tests {
         assert!(normalize_instance_url("https://").is_err());
     }
 
-    // ========== 熔断键 ==========
+    // 熔断键
 
     #[test]
     fn test_breaker_key_prefixes_url() {

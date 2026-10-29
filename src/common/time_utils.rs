@@ -82,9 +82,7 @@ mod tests {
         let now = Utc::now();
         let converted = to_db_datetime(now);
 
-        // 验证时间戳相同
         assert_eq!(now.timestamp(), converted.timestamp());
-        // 验证时区是 UTC+0
         assert_eq!(converted.timezone().local_minus_utc(), 0);
     }
 

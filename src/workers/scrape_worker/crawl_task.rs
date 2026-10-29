@@ -91,7 +91,6 @@ impl ScrapeWorker {
             }
         }
 
-        // 3. 构建并执行抓取请求
         let request = build_crawl_request_fn(
             &task,
             &config,
@@ -99,7 +98,6 @@ impl ScrapeWorker {
         );
         let response = self.engine_client.scrape(&request).await;
 
-        // 4. 处理结果
         match response {
             Ok(response) => {
                 self.handle_crawl_success(&task, response, crawl_id, depth, &config, &request)
@@ -603,7 +601,7 @@ impl ScrapeWorker {
 /// 解析 payload 中的 `domain_blacklist`（sitemap 喂入的域名排除约束）
 ///
 /// 键缺失 = 合法空表；键存在但类型/内容损坏 = 约束未知 → `Err`，调用方必须
-/// 显性上报并跳过喂入——禁止 `.ok().unwrap_or_default()` 式静默降级为空
+/// 显性上报并跳过喂入——禁止 `.ok.unwrap_or_default` 式静默降级为空
 /// 黑名单（地理限制域名会随之变为可抓取，限制性控制失效且无证据）。
 #[cfg(feature = "sitemap")]
 fn resolve_domain_blacklist(payload: &serde_json::Value) -> Result<Vec<String>, serde_json::Error> {
@@ -639,7 +637,7 @@ mod tests {
     #[test]
     fn blacklist_broken_type_is_error_not_silent_empty() {
         // 字符串/数字数组而非字符串数组：必须 Err（驱动调用方 error 上报 +
-        // 跳过喂入），禁止回退 .ok().unwrap_or_default() 静默降级
+        // 跳过喂入），禁止回退 .ok.unwrap_or_default 静默降级
         let payload = serde_json::json!({"domain_blacklist": "cn.example.com"});
         assert!(resolve_domain_blacklist(&payload).is_err());
         let payload = serde_json::json!({"domain_blacklist": [1, 2, 3]});

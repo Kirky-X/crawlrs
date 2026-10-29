@@ -39,7 +39,7 @@ pub trait RerankProvider: Send + Sync {
     /// 对 `documents` 按 `query` 相关性评分。
     ///
     /// `top_k` 为 `Some(n)` 时仅要求返回前 n 条（provider 可自由返回更多，
-    /// 由调用方截断）；返回的 `index` 必须落在 `0..documents.len()`。
+    /// 由调用方截断）；返回的 `index` 必须落在 `0..documents.len`。
     async fn rerank(
         &self,
         query: &str,

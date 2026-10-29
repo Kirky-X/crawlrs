@@ -37,9 +37,7 @@ use crawlrs::presentation::middleware::auth_middleware::{self, AuthError, AuthSt
 
 use crate::common::helpers::db_pool::create_test_pool_or_panic;
 
-// ============================================================================
 // Mock Audit Service
-// ============================================================================
 
 /// Mock audit service that counts `log_deny` calls for verifying scope denial logging.
 struct MockAuditService {
@@ -114,9 +112,7 @@ impl AuditServiceTrait for MockAuditService {
     }
 }
 
-// ============================================================================
 // Test Helpers
-// ============================================================================
 
 /// Create a test AuthState with the given scope and random IDs.
 fn make_auth_state(scope: ApiKeyScope) -> AuthState {
@@ -174,9 +170,7 @@ fn build_auth_test_app(pool: Arc<DbPool>) -> Router {
         ))
 }
 
-// ============================================================================
 // AuthState Construction Tests
-// ============================================================================
 
 #[test]
 fn test_auth_state_new_sets_required_fields() {
@@ -212,9 +206,7 @@ fn test_auth_state_clone_preserves_fields() {
     assert_eq!(state.scope, cloned.scope);
 }
 
-// ============================================================================
 // Scope Middleware Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_scope_middleware_no_auth_state_returns_unauthorized() {
@@ -514,9 +506,7 @@ async fn test_scope_middleware_no_audit_service_still_works() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
-// ============================================================================
 // Auth Middleware Integration Tests
-// ============================================================================
 
 #[tokio::test]
 async fn test_auth_middleware_public_endpoint_bypasses_auth() {
@@ -633,9 +623,7 @@ async fn test_auth_middleware_empty_bearer_token_returns_401() {
 // `tests/integration/auth_garrison_test.rs`——需 garrison 单例 + 真实 IP 上下文，
 // 单元测试无法覆盖（参考文件头注释 § 重构）。
 
-// ============================================================================
 // AuthError Tests (additional coverage for error variants)
-// ============================================================================
 
 #[test]
 fn test_auth_error_database_error_display() {

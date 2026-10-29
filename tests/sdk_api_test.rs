@@ -72,9 +72,7 @@ fn make_server() -> TestServer {
 const TEAM_ID: &str = "00000000-0000-0000-0000-000000000001";
 const API_KEY_ID: &str = "00000000-0000-0000-0000-000000000002";
 
-// ============================================================================
 // /api/v1/sdk/search
-// ============================================================================
 
 #[tokio::test]
 async fn test_sdk_search_success() {
@@ -107,9 +105,7 @@ async fn test_sdk_search_empty_query_returns_400() {
     res.assert_status_bad_request();
 }
 
-// ============================================================================
 // /api/v1/sdk/tasks
-// ============================================================================
 
 #[tokio::test]
 async fn test_sdk_create_task_success() {
@@ -141,9 +137,7 @@ async fn test_sdk_create_task_invalid_type_returns_400() {
     res.assert_status_bad_request();
 }
 
-// ============================================================================
 // /api/v1/sdk/scrape
-// ============================================================================
 
 #[tokio::test]
 async fn test_sdk_scrape_success() {
@@ -172,9 +166,7 @@ async fn test_sdk_scrape_empty_url_returns_400() {
     res.assert_status_bad_request();
 }
 
-// ============================================================================
 // /api/v1/sdk/crawl
-// ============================================================================
 
 #[tokio::test]
 async fn test_sdk_create_crawl_success() {

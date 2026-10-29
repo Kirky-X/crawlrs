@@ -150,7 +150,6 @@ async fn test_find_by_team_id_paginated() {
     let team_id = app.team_id;
     let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
-    // 创建 3 个事件
     for i in 0..3 {
         let url = format!("https://{}-{}.text.npr.org/hook", unique_prefix, i);
         let event = make_event(team_id, &url);
@@ -168,7 +167,6 @@ async fn test_find_by_team_id_paginated() {
         .await
         .expect("Failed to find paginated page 2");
 
-    // 验证分页不重复
     let page1_ids: Vec<_> = page1.iter().map(|e| e.id).collect();
     for e in &page2 {
         assert!(
@@ -247,7 +245,6 @@ async fn test_create_with_different_event_types() {
         event_ids.push((event.id, et.clone()));
     }
 
-    // 验证每个事件都能找到
     for (id, expected_type) in &event_ids {
         let found = repo.find_by_id(*id).await.expect("Failed to find event");
         let found = found.expect("Event should be found");

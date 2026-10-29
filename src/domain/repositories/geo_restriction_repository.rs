@@ -49,7 +49,7 @@ pub trait GeoRestrictionRepository: Send + Sync {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 更新成功
+    /// * `Ok()` - 更新成功
     /// * `Err(GeoRestrictionRepositoryError)` - 更新失败时返回错误
     async fn update_team_restrictions(
         &self,
@@ -69,7 +69,7 @@ pub trait GeoRestrictionRepository: Send + Sync {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 记录成功
+    /// * `Ok()` - 记录成功
     /// * `Err(GeoRestrictionRepositoryError)` - 记录失败时返回错误
     async fn log_geo_restriction_action(
         &self,

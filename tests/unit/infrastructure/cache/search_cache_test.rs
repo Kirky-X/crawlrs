@@ -47,7 +47,6 @@ async fn test_cache_set_and_get() {
         published_time: None,
     }];
 
-    // Set cache
     cache
         .set(&key, &results)
         .await
@@ -105,7 +104,6 @@ async fn test_cache_key_differentiation() {
     let key1 = generate_search_key(base_query, 10, Some("en"), Some("US"));
     let key2 = generate_search_key(base_query, 10, Some("en"), Some("US"));
 
-    // Set different cache values
     cache
         .set(&key1, &results1)
         .await
@@ -115,7 +113,6 @@ async fn test_cache_key_differentiation() {
         .await
         .expect("Failed to set cache for key2");
 
-    // Get and verify different results
     let cached1 = cache
         .get(&key1)
         .await

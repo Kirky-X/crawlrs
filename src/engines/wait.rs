@@ -321,7 +321,7 @@ fn escape_js_string(s: &str) -> String {
 mod tests {
     use super::*;
 
-    // ============ escape_js_string ============
+    // escape_js_string
 
     #[test]
     fn escape_plain_string() {
@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(escape_js_string(""), r#""""#);
     }
 
-    // ============ WaitFor 枚举 ============
+    // WaitFor 枚举
 
     #[test]
     fn default_is_network_idle() {
@@ -403,7 +403,7 @@ mod tests {
         assert_eq!(DOM_STABLE_POLL_INTERVAL, Duration::from_millis(100));
     }
 
-    // ============ wait_network_idle（无需真实 Page，内部仅 sleep） ============
+    // wait_network_idle（无需真实 Page，内部仅 sleep）
 
     #[tokio::test]
     async fn network_idle_returns_ok() {
@@ -422,7 +422,7 @@ mod tests {
         assert_eq!(wait, Duration::from_millis(100));
     }
 
-    // ============ NetworkIdleTracker（P07 状态机单测） ============
+    // NetworkIdleTracker（P07 状态机单测）
 
     fn t(ms: u64) -> Instant {
         // 用相对构造的 Instant 序列验证状态机（Instant 只能取 now，

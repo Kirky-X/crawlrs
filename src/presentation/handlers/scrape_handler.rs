@@ -42,7 +42,7 @@ mod tests {
     use sdforge::validator::Validate;
     use std::sync::Arc;
 
-    // ========== ScrapeRequestDto validation tests ==========
+    // ScrapeRequestDto validation tests
 
     #[test]
     fn test_scrape_request_dto_minimal_valid() {
@@ -131,7 +131,7 @@ mod tests {
         assert!(dto.validate().is_ok());
     }
 
-    // ========== ScrapeResponseDto serialization ==========
+    // ScrapeResponseDto serialization
 
     #[test]
     fn test_scrape_response_dto_serialization() {
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(dto.credits_used, 0);
     }
 
-    // ========== ScrapeResultDto serialization ==========
+    // ScrapeResultDto serialization
 
     #[test]
     fn test_scrape_result_dto_serialization() {
@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(parsed["screenshot"], "base64data");
     }
 
-    // ========== ScrapeStatusResponseDto serialization ==========
+    // ScrapeStatusResponseDto serialization
 
     #[test]
     fn test_scrape_status_response_dto_pending() {
@@ -323,7 +323,7 @@ mod tests {
         assert!(parsed["completed_at"].is_string());
     }
 
-    // ========== CancelScrapeResponseDto serialization ==========
+    // CancelScrapeResponseDto serialization
 
     #[test]
     fn test_cancel_scrape_response_dto_serialization() {
@@ -348,7 +348,7 @@ mod tests {
         assert_eq!(dto.message, "done");
     }
 
-    // ========== ScrapeActionDto tag-based deserialization ==========
+    // ScrapeActionDto tag-based deserialization
 
     #[test]
     fn test_scrape_action_wait_deserialization() {
@@ -418,7 +418,7 @@ mod tests {
         }
     }
 
-    // ========== ScrapeActionDto serialization round-trip ==========
+    // ScrapeActionDto serialization round-trip
 
     #[test]
     fn test_scrape_action_wait_serialization_roundtrip() {
@@ -517,7 +517,7 @@ mod tests {
         }
     }
 
-    // ========== ScrapeOptionsDto tests ==========
+    // ScrapeOptionsDto tests
 
     #[test]
     fn test_scrape_options_dto_minimal() {
@@ -603,7 +603,7 @@ mod tests {
         assert_eq!(deserialized.proxy.as_deref(), Some("http://proxy:9090"));
     }
 
-    // ========== ScreenshotOptionsDto tests ==========
+    // ScreenshotOptionsDto tests
 
     #[test]
     fn test_screenshot_options_dto_minimal() {
@@ -658,7 +658,7 @@ mod tests {
         assert_eq!(deserialized.format.as_deref(), Some("png"));
     }
 
-    // ========== MAX_SYNC_WAIT_MS constant ==========
+    // MAX_SYNC_WAIT_MS constant
 
     #[test]
     fn test_max_sync_wait_ms_constant() {
@@ -668,7 +668,7 @@ mod tests {
         assert_eq!(MAX_SYNC_WAIT_MS, 30000);
     }
 
-    // ========== sync_wait_ms validation logic (mirrors handler lines 50-57) ==========
+    // sync_wait_ms validation logic (mirrors handler lines 50-57)
 
     #[test]
     fn test_sync_wait_ms_at_max_passes_handler_check() {
@@ -709,7 +709,7 @@ mod tests {
         assert!(ms <= MAX_SYNC_WAIT_MS);
     }
 
-    // ========== Status code selection logic (mirrors handler lines 153-161) ==========
+    // Status code selection logic (mirrors handler lines 153-161)
 
     #[test]
     fn test_status_code_async_mode_returns_created() {
@@ -771,7 +771,7 @@ mod tests {
         assert_eq!(status_code, StatusCode::CREATED);
     }
 
-    // ========== ScrapeResultDto deserialization ==========
+    // ScrapeResultDto deserialization
 
     #[test]
     fn test_scrape_result_dto_deserialization() {
@@ -816,7 +816,7 @@ mod tests {
         assert!(dto.screenshot.is_none());
     }
 
-    // ========== ScrapeStatusResponseDto deserialization ==========
+    // ScrapeStatusResponseDto deserialization
 
     #[test]
     fn test_scrape_status_response_dto_deserialization() {
@@ -879,7 +879,7 @@ mod tests {
         assert_eq!(result.response_time_ms, 42);
     }
 
-    // ========== ScrapeResponseDto round-trip ==========
+    // ScrapeResponseDto round-trip
 
     #[test]
     fn test_scrape_response_dto_roundtrip() {
@@ -899,14 +899,14 @@ mod tests {
         assert_eq!(deserialized.credits_used, dto.credits_used);
     }
 
-    // ========== TaskStatus Display (used in handler via to_string()) ==========
+    // TaskStatus Display (used in handler via to_string)
 
     #[test]
     fn test_task_status_display_for_scrape_response() {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // The handler uses task.status.to_string() for the status field
+        // The handler uses task.status.to_string for the status field
         assert_eq!(TaskStatus::Queued.to_string(), "queued");
         assert_eq!(TaskStatus::Active.to_string(), "active");
         assert_eq!(TaskStatus::Completed.to_string(), "completed");
@@ -914,7 +914,7 @@ mod tests {
         assert_eq!(TaskStatus::Cancelled.to_string(), "cancelled");
     }
 
-    // ========== Task construction logic (mirrors handler lines 104-125) ==========
+    // Task construction logic (mirrors handler lines 104-125)
 
     #[test]
     fn test_task_construction_for_scrape() {
@@ -958,7 +958,7 @@ mod tests {
         assert!(task.completed_at.is_none());
     }
 
-    // ========== ScrapeRequestDto with options and actions ==========
+    // ScrapeRequestDto with options and actions
 
     #[test]
     fn test_scrape_request_dto_with_options_and_actions() {
@@ -1046,7 +1046,7 @@ mod tests {
         assert!(dto.validate().is_ok());
     }
 
-    // ========== Handler function tests ==========
+    // Handler function tests
 
     use crate::common::test_helpers::create_test_db_pool;
     use crate::domain::auth::ApiKeyScope;
@@ -1061,7 +1061,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Mutex;
 
-    // --- MockTaskQueue ---
+    // MockTaskQueue
 
     type SharedTasks = Arc<Mutex<HashMap<crate::domain::id::Id, Task>>>;
 
@@ -1154,8 +1154,6 @@ mod tests {
             Ok(())
         }
     }
-
-    // --- MockTaskRepository ---
 
     struct MockTaskRepository {
         tasks: SharedTasks,
@@ -1340,8 +1338,6 @@ mod tests {
         }
     }
 
-    // --- MockRateLimitingService ---
-
     struct MockRateLimitingService {
         rate_limit_result: RateLimitResult,
         quota_should_fail: bool,
@@ -1499,8 +1495,6 @@ mod tests {
     #[async_trait]
     impl RateLimitingService for MockRateLimitingService {}
 
-    // --- MockScrapeResultRepository ---
-
     struct MockScrapeResultRepository {
         result: Option<ScrapeResult>,
         should_fail: bool,
@@ -1564,7 +1558,7 @@ mod tests {
         }
     }
 
-    // --- Helper functions ---
+    // Helper functions
     // `make_db_pool` 已集中到 `src/common/test_helpers.rs::create_test_db_pool`。
 
     fn make_auth_state() -> AuthState {
@@ -1653,7 +1647,7 @@ mod tests {
         }
     }
 
-    // ========== create_scrape tests ==========
+    // create_scrape tests
 
     #[tokio::test]
     async fn test_create_scrape_success_async() {
@@ -1951,7 +1945,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
     }
 
-    // ========== cancel_scrape tests ==========
+    // cancel_scrape tests
 
     #[tokio::test]
     async fn test_cancel_scrape_success() {
@@ -2074,7 +2068,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    // ========== get_scrape_status tests ==========
+    // get_scrape_status tests
 
     #[tokio::test]
     async fn test_get_scrape_status_in_progress() {

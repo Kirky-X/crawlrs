@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-// ===== 测试目标真实网站 =====
+// 测试目标真实网站
 // 选择标准：
 // - HTTP 引擎（reqwest/wreq）：SSRF resolve 覆盖保持原始 hostname，TLS SNI 和虚拟主机路由正常。
 // - 浏览器引擎（playwright/flaresolverr）：使用 JS 渲染丰富的站点。
@@ -180,9 +180,7 @@ async fn main() {
             .expect("Failed to build HTTP client"),
     );
 
-    // ================================================================
     // 1. ReqwestEngine（基础 HTTP 引擎，始终可用）
-    // ================================================================
     println!("\n━━━ 1/5 ReqwestEngine（基础 HTTP）━━━");
     {
         let engine = ReqwestEngine::new_with_timeout_and_mrt(
@@ -194,9 +192,7 @@ async fn main() {
         all_results.extend(results);
     }
 
-    // ================================================================
     // 2. PlaywrightEngine（浏览器渲染引擎）
-    // ================================================================
     #[cfg(feature = "engine-playwright")]
     {
         println!("\n━━━ 2/5 PlaywrightEngine（浏览器渲染）━━━");
@@ -208,9 +204,7 @@ async fn main() {
     #[cfg(not(feature = "engine-playwright"))]
     println!("\n━━━ 2/5 PlaywrightEngine — 跳过（未启用 engine-playwright feature）━━━");
 
-    // ================================================================
     // 3. FlareSolverrEngine Full 模式
-    // ================================================================
     #[cfg(feature = "engine-flaresolverr")]
     {
         println!("\n━━━ 3/5 FlareSolverrEngine Full 模式━━━");
@@ -222,9 +216,7 @@ async fn main() {
     #[cfg(not(feature = "engine-flaresolverr"))]
     println!("\n━━━ 3/5 FlareSolverrEngine Full — 跳过（未启用 engine-flaresolverr feature）━━━");
 
-    // ================================================================
     // 4. FlareSolverrEngine CDP 模式
-    // ================================================================
     #[cfg(feature = "engine-flaresolverr")]
     {
         println!("\n━━━ 4/5 FlareSolverrEngine CDP 模式━━━");
@@ -236,9 +228,7 @@ async fn main() {
     #[cfg(not(feature = "engine-flaresolverr"))]
     println!("\n━━━ 4/5 FlareSolverrEngine CDP — 跳过（未启用 engine-flaresolverr feature）━━━");
 
-    // ================================================================
     // 5. FlareSolverrEngine TLS 模式
-    // ================================================================
     #[cfg(feature = "engine-flaresolverr")]
     {
         println!("\n━━━ 5/5 FlareSolverrEngine TLS 模式━━━");
@@ -250,9 +240,7 @@ async fn main() {
     #[cfg(not(feature = "engine-flaresolverr"))]
     println!("\n━━━ 5/5 FlareSolverrEngine TLS — 跳过（未启用 engine-flaresolverr feature）━━━");
 
-    // ================================================================
     // 6. WreqEngine（TLS 指纹引擎）— 可选
-    // ================================================================
     #[cfg(feature = "engine-tls-fingerprint")]
     {
         println!("\n━━━ 6/6 WreqEngine（TLS 指纹）━━━");
@@ -271,9 +259,7 @@ async fn main() {
     #[cfg(not(feature = "engine-tls-fingerprint"))]
     println!("\n━━━ WreqEngine — 跳过（未启用 engine-tls-fingerprint feature）━━━");
 
-    // ================================================================
     // 测试汇总
-    // ================================================================
     println!("\n==========================================================");
     println!(" 测试汇总");
     println!("==========================================================");

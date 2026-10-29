@@ -76,7 +76,7 @@ pub enum FlareSolverrMode {
 }
 
 impl FlareSolverrMode {
-    /// 获取该模式下的引擎名称（用于 ScraperEngine::name()）
+    /// 获取该模式下的引擎名称（用于 ScraperEngine::name）
     pub fn engine_name(&self) -> &'static str {
         match self {
             Self::Full => "flaresolverr",
@@ -755,7 +755,6 @@ impl ScraperEngine for FlareSolverrEngine {
             );
         }
 
-        // Build FlareSolverr request
         let fs_request = FlareSolverrRequest {
             cmd: "request.get".to_string(),
             url: request.url.clone(),
@@ -816,7 +815,6 @@ impl ScraperEngine for FlareSolverrEngine {
 
         debug!("FlareSolverr raw response length: {}", raw_text.len());
 
-        // Try to parse as JSON
         let response: FlareSolverrResponse = serde_json::from_str(&raw_text).map_err(|e| {
             EngineError::RequestFailed(format!(
                 "Failed to parse FlareSolverr response: {} (first 200 chars: {:?})",
@@ -825,7 +823,6 @@ impl ScraperEngine for FlareSolverrEngine {
             ))
         })?;
 
-        // Check response status
         if response.status != "ok" {
             error!("FlareSolverr error: {}", response.message);
             return Err(EngineError::RequestFailed(format!(
@@ -834,7 +831,6 @@ impl ScraperEngine for FlareSolverrEngine {
             )));
         }
 
-        // Get solution
         let solution = response.solution.ok_or_else(|| {
             EngineError::RequestFailed("No solution in FlareSolverr response".to_string())
         })?;
@@ -859,7 +855,6 @@ impl ScraperEngine for FlareSolverrEngine {
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
-        // Build headers from solution
         let mut headers = solution.headers.unwrap_or_default();
 
         // Add content-type if not present
@@ -977,7 +972,7 @@ impl ScraperEngine for FlareSolverrEngine {
     /// - `Cdp` / `Full`：30 秒（`cdp_seconds`，涉及完整浏览器）
     ///
     /// 若构造时注入了 `mrt`，则使用注入值；否则按 mode 默认推导。
-    /// router 顺序 fallback 路径用 `min(remaining, self.mrt())` 包裹单引擎调用，
+    /// router 顺序 fallback 路径用 `min(remaining, self.mrt)` 包裹单引擎调用，
     /// 超 MRT 即切下一引擎（瀑布式）。
     fn max_response_time(&self) -> Duration {
         self.mrt()
@@ -1227,7 +1222,7 @@ mod tests {
         assert_eq!(e.support_score(&mk_req("https://example.com")), 70);
     }
 
-    // === scrape() / session 行为测试（本地 axum mock + 公网 IP 字面量 request.url 过 SSRF）===
+    // scrape / session 行为测试（本地 axum mock + 公网 IP 字面量 request.url 过 SSRF）
 
     /// 公网 IP 字面量：SSRF 校验对非私网 IP 无需 DNS，确定性通过。
     const PUBLIC_TARGET: &str = "http://93.184.216.34";

@@ -37,7 +37,6 @@ impl SogouSearchEngine {
 
         // 处理直接完整URL (仅允许 http/https)
         if url.starts_with("http://") || url.starts_with("https://") {
-            // 验证 URL 格式并检查协议
             if let Ok(parsed) = url::Url::parse(url) {
                 // 只允许 http/https 协议
                 if parsed.scheme() == "http" || parsed.scheme() == "https" {
@@ -187,7 +186,6 @@ impl SearchEngine for SogouSearchEngine {
             1
         };
 
-        // 构建带查询参数的完整 URL
         let full_url = format!(
             "{}?query={}&page={}",
             base_url,
@@ -239,7 +237,7 @@ impl SearchEngine for SogouSearchEngine {
         let html_content = scrape_response.content;
 
         // 反爬检测：Sogou 302 重定向到 antispider 页面
-        // （参考 SearXNG sogou.py response()：resp.next_request.url starts with antispider）
+        // （参考 SearXNG sogou.py response：resp.next_request.url starts with antispider）
         // 由于 EngineClient 自动跟随重定向，最终 content 会是 antispider 页面内容
         if html_content.contains("www.sogou.com/antispider")
             || html_content.contains("antispider") && html_content.contains("验证")
@@ -298,7 +296,7 @@ mod tests {
 
     // safe_parse_selector 已统一到 shared_utils，测试见 shared_utils::tests
 
-    // ========== resolve_url 测试 ==========
+    // resolve_url 测试
 
     #[test]
     fn test_resolve_url_empty() {
@@ -358,7 +356,7 @@ mod tests {
         assert_eq!(engine.resolve_url("just-some-text"), "");
     }
 
-    // ========== parse_search_results 测试 ==========
+    // parse_search_results 测试
 
     #[test]
     fn test_parse_search_results_valid_html() {
@@ -520,7 +518,7 @@ mod tests {
         assert_eq!(results[0].description, "");
     }
 
-    // ========== SearchEngine trait 方法测试 ==========
+    // SearchEngine trait 方法测试
 
     #[test]
     fn test_name() {
@@ -540,7 +538,7 @@ mod tests {
         assert_eq!(engine.health(), EngineHealth::Healthy);
     }
 
-    // ========== search() test fallback path ==========
+    // search test fallback path
 
     /// Mutex to serialize tests that mutate process-level environment
     /// variables (std::env::set_var is not thread-safe across tests).
@@ -550,7 +548,7 @@ mod tests {
         SearchRequest::new(query)
     }
 
-    // ENV_LOCK must be held across .await because engine.search() reads
+    // ENV_LOCK must be held across .await because engine.search reads
     // SOGOU_TEST_RESULTS during execution; releasing it would let other tests
     // race-modify the env var. Single-threaded tokio runtime => no deadlock risk.
     #[allow(clippy::await_holding_lock)]

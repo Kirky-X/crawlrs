@@ -126,9 +126,7 @@ async fn main() {
     info!("   - 迁移失败不会破坏已有数据（每个文件在独立事务中执行）");
 }
 
-// ============================================================================
 // 实际迁移函数示例（不被 main 调用，仅展示 API 模式）
-// ============================================================================
 
 /// 执行指定目录下的迁移文件
 ///
@@ -145,7 +143,7 @@ async fn run_migrations(pool: &DbPool, migrations_dir: &str) -> Result<u32, dbne
 ///
 /// 当 auto_migrate=true 且 migrations_dir 设置时，
 /// DbPool::with_config 会在连接池初始化时自动应用未执行的迁移。
-// `..Default::default()` 兜底 dbnexus feature 门控字段；feature 全关时字面量
+// `..Default::default` 兜底 dbnexus feature 门控字段；feature 全关时字面量
 // 已穷举 → clippy 报 needless_update，按双关组合局部允许。
 #[allow(dead_code, clippy::needless_update)]
 fn build_config_with_auto_migrate(url: &str) -> dbnexus::DbConfig {
@@ -167,7 +165,7 @@ fn build_config_with_auto_migrate(url: &str) -> dbnexus::DbConfig {
         cache_config: dbnexus::CacheConfig::default(),
         // retry_policy / failover_config / replica_config 由 dbnexus 的
         // retry/failover/replica-routing feature 门控；examples 未启用，
-        // 用 `..Default::default()` 兜底。
+        // 用 `..Default::default` 兜底。
         ..Default::default()
     }
 }

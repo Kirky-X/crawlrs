@@ -74,7 +74,7 @@ pub fn validate_proxy_url(
     allowed_schemes: &'static [&'static str],
 ) -> Result<String, ProxyUrlError> {
     // 1. 白名单检查 scheme（先于 parse，避免依赖 url crate 的 scheme 解析行为）
-    //    scheme 必须是 ASCII alpha 开头，由 [a-zA-Z0-9+.-] 组成
+    // scheme 必须是 ASCII alpha 开头，由 [a-zA-Z0-9+.-] 组成
     let scheme_end = proxy_url
         .find("://")
         .ok_or_else(|| ProxyUrlError::InvalidFormat("missing '://' separator".to_string()))?;
@@ -180,9 +180,7 @@ mod tests {
     /// Playwright/Chrome 允许的 proxy scheme 白名单
     const CHROME_ALLOWED: &[&str] = &["http", "https", "socks5", "socks4"];
 
-    // =========================================================================
     // validate_proxy_url 测试
-    // =========================================================================
 
     #[test]
     fn validate_proxy_url_http_passes() {
@@ -348,9 +346,7 @@ mod tests {
         assert!(validate_proxy_url("socks5://x.com", FLARESOLVERR_ALLOWED).is_err());
     }
 
-    // =========================================================================
     // redact_proxy_url 测试（移植自 flare_solverr.rs::redact_proxy_url_tests）
-    // =========================================================================
 
     #[test]
     fn redact_proxy_url_no_credentials() {

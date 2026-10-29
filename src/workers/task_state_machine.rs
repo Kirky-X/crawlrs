@@ -26,13 +26,13 @@
 //! use crate::domain::models::{Task, TaskStatus, TaskType};
 //! use crate::workers::task_state_machine::{TaskStateMachine, TaskStateEvent, TaskStateError};
 //!
-//! let task = Task::default();
+//! let task = Task::default;
 //! let mut state_machine = TaskStateMachine::new(task);
 //!
 //! // Transition from Queued to Active
 //! state_machine.handle_event(TaskStateEvent::Start)?;
 //!
-//! assert_eq!(state_machine.current_status(), TaskStatus::Active);
+//! assert_eq!(state_machine.current_status, TaskStatus::Active);
 //! ```
 
 use crate::domain::models::{Task, TaskStatus};
@@ -115,7 +115,7 @@ impl TaskStateMachine {
     ///
     /// # Returns
     ///
-    /// 成功返回 Ok(()), 失败返回 TaskStateError
+    /// 成功返回 Ok(), 失败返回 TaskStateError
     pub fn handle_event(&mut self, event: TaskStateEvent) -> Result<(), TaskStateError> {
         let current_status = self.task.status;
         let new_status = Self::next_status(current_status, event)?;
@@ -128,7 +128,6 @@ impl TaskStateMachine {
             self.increment_retry();
         }
 
-        // 更新状态和元数据
         self.task.status = new_status;
         self.task.updated_at = Utc::now();
 
@@ -140,7 +139,7 @@ impl TaskStateMachine {
                 }
             }
             // 终态（Completed/Failed/Cancelled）统一设置 completed_at，
-            // 与 Task::complete()、Task::fail()、Task::cancel() 行为一致。
+            // 与 Task::complete、Task::fail、Task::cancel 行为一致。
             TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled => {
                 self.task.completed_at = Some(Utc::now());
             }
@@ -384,7 +383,7 @@ mod tests {
         assert_eq!(state_machine.task.retry_count, 1);
     }
 
-    // ========== task() / task_mut() 访问器测试 ==========
+    // task / task_mut 访问器测试
 
     #[test]
     fn test_task_accessor_returns_reference() {
@@ -403,7 +402,7 @@ mod tests {
         assert_eq!(sm.task().priority, 10);
     }
 
-    // ========== Queued + Retry 测试 ==========
+    // Queued + Retry 测试
 
     #[test]
     fn test_queued_retry_stays_queued() {
@@ -414,7 +413,7 @@ mod tests {
         assert_eq!(sm.current_status(), TaskStatus::Queued);
     }
 
-    // ========== Active + Retry 测试 ==========
+    // Active + Retry 测试
 
     #[test]
     fn test_active_retry_stays_active_and_increments() {
@@ -428,7 +427,7 @@ mod tests {
         assert_eq!(sm.task().attempt_count, 1);
     }
 
-    // ========== can_transition 无副作用测试 ==========
+    // can_transition 无副作用测试
 
     #[test]
     fn test_can_transition_has_no_side_effects_on_retry_count() {
@@ -455,7 +454,7 @@ mod tests {
         assert_eq!(sm.task().retry_count, 1);
     }
 
-    // ========== Active + Start (无效) 测试 ==========
+    // Active + Start (无效) 测试
 
     #[test]
     fn test_active_start_is_invalid() {
@@ -466,7 +465,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========== Failed + 非重试事件测试 ==========
+    // Failed + 非重试事件测试
 
     #[test]
     fn test_failed_start_is_invalid() {
@@ -504,7 +503,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========== Cancelled 状态事件测试 ==========
+    // Cancelled 状态事件测试
 
     #[test]
     fn test_cancelled_all_events_invalid() {
@@ -525,7 +524,7 @@ mod tests {
         }
     }
 
-    // ========== Completed 状态事件测试 ==========
+    // Completed 状态事件测试
 
     #[test]
     fn test_completed_all_events_invalid() {
@@ -546,7 +545,7 @@ mod tests {
         }
     }
 
-    // ========== get_transition_description 测试 ==========
+    // get_transition_description 测试
 
     #[test]
     fn test_get_transition_description_valid() {
@@ -566,7 +565,7 @@ mod tests {
         assert!(desc.contains("Invalid"));
     }
 
-    // ========== handle_event 时间戳更新测试 ==========
+    // handle_event 时间戳更新测试
 
     #[test]
     fn test_handle_event_sets_started_at_on_active() {
@@ -607,17 +606,17 @@ mod tests {
         assert_eq!(sm.task().started_at, Some(original_started));
     }
 
-    // ========== TaskStateMachine::new 默认状态测试 ==========
+    // TaskStateMachine::new 默认状态测试
 
     #[test]
     fn test_new_sets_queued_if_default() {
-        // TaskStatus::default() 返回 Queued，new() 不应改变已有 Queued 状态
+        // TaskStatus::default 返回 Queued，new 不应改变已有 Queued 状态
         let task = create_test_task(TaskStatus::Queued);
         let sm = TaskStateMachine::new(task);
         assert_eq!(sm.current_status(), TaskStatus::Queued);
     }
 
-    // ========== TaskStateValidator::valid_transitions 测试 ==========
+    // TaskStateValidator::valid_transitions 测试
 
     #[test]
     fn test_valid_transitions_queued() {
@@ -655,7 +654,7 @@ mod tests {
         assert!(transitions.is_empty());
     }
 
-    // ========== TaskStateValidator::is_terminal_state 完整测试 ==========
+    // TaskStateValidator::is_terminal_state 完整测试
 
     #[test]
     fn test_is_terminal_state_all_variants() {
@@ -666,7 +665,7 @@ mod tests {
         assert!(!TaskStateValidator::is_terminal_state(TaskStatus::Active));
     }
 
-    // ========== TaskStateValidator::is_valid_transition 完整测试 ==========
+    // TaskStateValidator::is_valid_transition 完整测试
 
     #[test]
     fn test_is_valid_transition_all_pairs() {
@@ -723,7 +722,7 @@ mod tests {
         ));
     }
 
-    // ========== TaskStateError 测试 ==========
+    // TaskStateError 测试
 
     #[test]
     fn test_task_state_error_display_invalid_transition() {

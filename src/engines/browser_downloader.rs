@@ -139,7 +139,6 @@ impl BrowserDownloadManager {
     pub async fn download_browser(&self) -> Result<PathBuf, BrowserDownloadError> {
         info!("{}", tr_log("browser-check-started"));
 
-        // 更新状态为下载中
         {
             let mut status = self.status.write().await;
             *status = DownloadStatus::Downloading;
@@ -152,7 +151,6 @@ impl BrowserDownloadManager {
             return Ok(path);
         }
 
-        // 检查是否已下载
         if self.is_browser_downloaded().await {
             let path = get_browser_executable_path(&self.config.download_dir);
             let mut status = self.status.write().await;
@@ -160,7 +158,6 @@ impl BrowserDownloadManager {
             return Ok(path);
         }
 
-        // 创建下载目录
         if let Err(e) = tokio::fs::create_dir_all(&self.config.download_dir).await {
             let err_msg = format!("Failed to create download directory: {}", e);
             let mut status = self.status.write().await;

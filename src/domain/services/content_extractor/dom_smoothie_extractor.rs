@@ -10,7 +10,7 @@
 //! 特性未启用时由 [`super::facade::ContentExtractionFacade`] 跳过本实现。
 //!
 //! 提取策略：
-//! 1. 调用 `dom_smoothie::Readability::new(html, Some(url), cfg).parse()` 提取文章
+//! 1. 调用 `dom_smoothie::Readability::new(html, Some(url), cfg).parse` 提取文章
 //! 2. `article.title` 作为标题（默认非空字符串）
 //! 3. `article.byline` 作为作者
 //! 4. confidence 由 `text_content` 长度启发式计算（dom_smoothie 不暴露内置 confidence）：

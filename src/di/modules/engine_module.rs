@@ -62,7 +62,7 @@ impl AsyncAutoBuilder for EngineModule {
                 } else {
                     None
                 };
-            // FlareSolverr 单代理：取 urls.first() 作为 fallback（FlareSolverr 暂未接入 ProxyProvider，
+            // FlareSolverr 单代理：取 urls.first 作为 fallback（FlareSolverr 暂未接入 ProxyProvider，
             // 范围外）。proxy.enabled=false 时为 None。
             let proxy_url: Option<String> = if settings.proxy.enabled {
                 settings.proxy.urls.first().cloned()

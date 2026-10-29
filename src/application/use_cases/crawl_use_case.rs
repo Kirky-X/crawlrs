@@ -138,7 +138,6 @@ impl CrawlUseCase {
         // 首先验证爬取任务是否存在且属于该团队
         match self.crawl_repo.find_by_id(crawl_id).await? {
             Some(crawl) => {
-                // 验证资源所有权
                 if crawl.team_id != team_id {
                     return Err(CrawlUseCaseError::NotFound);
                 }
@@ -183,7 +182,6 @@ impl CrawlUseCase {
         dto: CrawlRequestDto,
         client_ip: &str,
     ) -> Result<Crawl, CrawlUseCaseError> {
-        // 1. 验证请求参数
         if let Err(reason) = crawl_state_machine::validate_crawl_config(
             dto.config.max_depth,
             dto.config.max_concurrency,
@@ -198,8 +196,8 @@ impl CrawlUseCase {
         // 单租户降级，无地理限制概念，直接进入任务创建流程。
         //
         // teams-on：执行地理限制检查（获取限制→validate→log），失败则返回 ValidationError。
-        // teams-off：restrictions 变量使用 TeamGeoRestrictions::default() 占位，
-        //   以保证下游 payload 中的 `restrictions.domain_blacklist` 字段类型一致。
+        // teams-off：restrictions 变量使用 TeamGeoRestrictions::default 占位，
+        // 以保证下游 payload 中的 `restrictions.domain_blacklist` 字段类型一致。
         #[cfg(feature = "teams")]
         let restrictions = {
             let r = self
@@ -219,7 +217,6 @@ impl CrawlUseCase {
                 .await
             {
                 Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
-                    // 记录允许的访问日志
                     if let Err(e) = self
                         .geo_restriction_repo
                         .log_geo_restriction_action(
@@ -235,7 +232,6 @@ impl CrawlUseCase {
                     }
                 }
                 Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
-                    // 记录拒绝的访问日志
                     if let Err(e) = self
                         .geo_restriction_repo
                         .log_geo_restriction_action(team_id, client_ip, "", "DENIED", &reason)
@@ -292,17 +288,13 @@ impl CrawlUseCase {
             }
         }
 
-        // 3. 生成新的爬取任务 ID
         let crawl_id = crate::domain::id::Id::generate();
         let now = Utc::now();
 
-        // 3. 创建爬取任务实体
         let crawl = build_crawl_entity(crawl_id, team_id, &dto, now);
 
-        // 4. 保存爬取任务到数据库
         self.crawl_repo.create(&crawl).await?;
 
-        // 5. 创建初始任务
         let initial_task = build_initial_crawl_task(
             team_id,
             api_key_id,
@@ -312,10 +304,8 @@ impl CrawlUseCase {
             now,
         );
 
-        // 6. 保存初始任务到数据库
         self.task_repo.create(&initial_task).await?;
 
-        // 7. 返回创建的爬取任务
         Ok(crawl)
     }
 
@@ -342,7 +332,6 @@ impl CrawlUseCase {
     ) -> Result<Option<Crawl>, CrawlUseCaseError> {
         match self.crawl_repo.find_by_id(crawl_id).await? {
             Some(crawl) => {
-                // 验证资源所有权
                 if crawl.team_id != team_id {
                     return Ok(None); // 返回 None 而非错误，避免信息泄露
                 }
@@ -363,7 +352,7 @@ impl CrawlUseCase {
     ///
     /// # 返回值
     ///
-    /// * `Ok(())` - 成功取消或任务已完成
+    /// * `Ok()` - 成功取消或任务已完成
     /// * `Err(CrawlUseCaseError)` - 失败时返回错误
     ///
     /// # 错误
@@ -391,7 +380,6 @@ impl CrawlUseCase {
                     return Ok(()); // 任务已结束
                 }
 
-                // 更新任务状态为已取消
                 c.status = CrawlStatus::Cancelled;
                 c.updated_at = Utc::now();
                 self.crawl_repo.update(&c).await?;
@@ -427,8 +415,6 @@ mod tests {
     use std::net::IpAddr;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
-
-    // ============ MockCrawlRepository ============
 
     struct MockCrawlRepository {
         stored_crawl: Mutex<Option<Crawl>>,
@@ -574,8 +560,6 @@ mod tests {
             Ok(0)
         }
     }
-
-    // ============ MockTaskRepository ============
 
     struct MockTaskRepository {
         created_count: AtomicU32,
@@ -765,7 +749,7 @@ mod tests {
         }
     }
 
-    // ============ MockWebhookRepository ============
+    // MockWebhookRepository
     //
     // webhook feature 关闭时不编译此 mock
     // （WebhookRepository trait 已门控，mock 也同步门控）
@@ -797,8 +781,6 @@ mod tests {
             Ok(vec![])
         }
     }
-
-    // ============ MockScrapeResultRepository ============
 
     struct MockScrapeResultRepository {
         stored_results: Mutex<Vec<ScrapeResult>>,
@@ -863,7 +845,7 @@ mod tests {
         }
     }
 
-    // ============ MockGeoRestrictionRepository ============
+    // MockGeoRestrictionRepository
     //
     // teams feature 关闭时不编译此 mock
     // （GeoRestrictionRepository trait 已门控，mock 也同步门控）
@@ -947,7 +929,7 @@ mod tests {
         }
     }
 
-    // ============ MockGeoLocationService ============
+    // MockGeoLocationService
     //
     // teams feature 关闭时不编译此 mock
     // （GeoLocationService trait 仅 teams-on 时使用）
@@ -982,7 +964,7 @@ mod tests {
         }
     }
 
-    // ============ Helpers ============
+    // Helpers
 
     fn make_crawl(
         id: crate::domain::id::Id,
@@ -1097,7 +1079,7 @@ mod tests {
         )
     }
 
-    // ============ new ============
+    // new
 
     #[test]
     fn test_new_constructs_without_calling_repos() {
@@ -1110,7 +1092,7 @@ mod tests {
         let _ = &use_case;
     }
 
-    // ============ get_crawl_results ============
+    // get_crawl_results
 
     #[tokio::test]
     async fn test_get_crawl_results_success() {
@@ -1271,7 +1253,7 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // ============ create_crawl ============
+    // create_crawl
 
     #[tokio::test]
     async fn test_create_crawl_success() {
@@ -1597,7 +1579,7 @@ mod tests {
         assert!(err.to_string().contains("create down"));
     }
 
-    // ============ get_crawl ============
+    // get_crawl
 
     #[tokio::test]
     async fn test_get_crawl_found() {
@@ -1683,7 +1665,7 @@ mod tests {
         );
     }
 
-    // ============ cancel_crawl ============
+    // cancel_crawl
 
     #[tokio::test]
     async fn test_cancel_crawl_success() {
@@ -1908,7 +1890,7 @@ mod tests {
         );
     }
 
-    // ============ Mock method coverage tests ============
+    // Mock method coverage tests
 
     #[tokio::test]
     async fn test_mock_crawl_repo_remaining_methods_return_defaults() {

@@ -203,7 +203,7 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    // ========== TaskType::as_str tests ==========
+    // TaskType::as_str tests
 
     #[test]
     fn test_task_type_as_str_all_variants() {
@@ -212,7 +212,7 @@ mod tests {
         assert_eq!(TaskType::Extract.as_str(), "extract");
     }
 
-    // ========== TaskType Display tests ==========
+    // TaskType Display tests
 
     #[test]
     fn test_task_type_display_matches_as_str() {
@@ -221,7 +221,7 @@ mod tests {
         }
     }
 
-    // ========== TaskType FromStr tests ==========
+    // TaskType FromStr tests
 
     #[test]
     fn test_task_type_from_str_valid() {
@@ -263,7 +263,7 @@ mod tests {
         }
     }
 
-    // ========== TaskStatus Display tests ==========
+    // TaskStatus Display tests
 
     #[test]
     fn test_task_status_display_all_variants() {
@@ -274,7 +274,7 @@ mod tests {
         assert_eq!(TaskStatus::Cancelled.to_string(), "cancelled");
     }
 
-    // ========== TaskStatus FromStr tests ==========
+    // TaskStatus FromStr tests
 
     #[test]
     fn test_task_status_from_str_valid() {
@@ -327,7 +327,7 @@ mod tests {
         }
     }
 
-    // ========== DomainError Display tests ==========
+    // DomainError Display tests
 
     #[test]
     fn test_domain_error_invalid_state_transition_display() {
@@ -446,7 +446,7 @@ mod tests {
         assert!(err.to_string().contains("deadlock"));
     }
 
-    // ========== From<anyhow::Error> tests ==========
+    // From<anyhow::Error> tests
 
     #[test]
     fn test_from_anyhow_timeout_keyword_maps_to_timeout_error() {

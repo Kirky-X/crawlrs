@@ -72,7 +72,7 @@ impl UrlNormalizer {
     /// assert_eq!(
     ///     n.normalize("HTTPS://Example.COM/Path/?b=2&a=1#frag").unwrap(),
     ///     "https://example.com/Path?a=1&b=2"
-    /// );
+    ///);
     /// ```
     pub fn normalize(&self, url: &str) -> Result<String, UrlError> {
         // 空串防御
@@ -293,7 +293,7 @@ impl UrlNormalizer {
 mod tests {
     use super::*;
 
-    // ========== normalize: scheme/host lowercase ==========
+    // normalize: scheme/host lowercase
 
     #[test]
     fn test_normalize_lowercase_scheme_and_host() {
@@ -314,7 +314,7 @@ mod tests {
         );
     }
 
-    // ========== normalize: fragment ==========
+    // normalize: fragment
 
     #[test]
     fn test_normalize_strips_fragment() {
@@ -334,7 +334,7 @@ mod tests {
         );
     }
 
-    // ========== normalize: trailing slash ==========
+    // normalize: trailing slash
 
     #[test]
     fn test_normalize_removes_trailing_slash() {
@@ -373,7 +373,7 @@ mod tests {
         );
     }
 
-    // ========== normalize: query sorting ==========
+    // normalize: query sorting
 
     #[test]
     fn test_normalize_sorts_query() {
@@ -404,7 +404,7 @@ mod tests {
         assert_eq!(a, b);
     }
 
-    // ========== normalize: strip_query ==========
+    // normalize: strip_query
 
     #[test]
     fn test_normalize_strip_query_true() {
@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(a, "https://example.com/path");
     }
 
-    // ========== normalize: error cases ==========
+    // normalize: error cases
 
     #[test]
     fn test_normalize_empty_url_returns_err() {
@@ -471,7 +471,7 @@ mod tests {
         }
     }
 
-    // ========== normalize: port handling ==========
+    // normalize: port handling
 
     #[test]
     fn test_normalize_preserves_port() {
@@ -482,7 +482,7 @@ mod tests {
         );
     }
 
-    // ========== normalize: idempotency ==========
+    // normalize: idempotency
 
     #[test]
     fn test_normalize_idempotent() {
@@ -494,7 +494,7 @@ mod tests {
         assert_eq!(once, twice);
     }
 
-    // ========== permutations ==========
+    // permutations
 
     #[test]
     fn test_permutations_includes_original() {
@@ -618,7 +618,7 @@ mod tests {
         );
     }
 
-    // ========== UrlNormalizer construction ==========
+    // UrlNormalizer construction
 
     #[test]
     fn test_new_default_keeps_query() {
@@ -639,7 +639,7 @@ mod tests {
         );
     }
 
-    // ==== r2 F5：已知 tracking 参数剥离 ====
+    // r2 F5：已知 tracking 参数剥离
 
     #[test]
     fn test_strip_tracking_utm_prefixed_keys() {

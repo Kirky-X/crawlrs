@@ -300,7 +300,7 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    // ========== Crawl::new tests ==========
+    // Crawl::new tests
 
     #[test]
     fn test_crawl_new_sets_defaults() {
@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(crawl.created_at, crawl.updated_at);
     }
 
-    // ========== Crawl::with_all_fields tests ==========
+    // Crawl::with_all_fields tests
 
     #[test]
     fn test_crawl_with_all_fields_sets_everything() {
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(crawl.completed_at, Some(completed));
     }
 
-    // ========== progress_percentage tests ==========
+    // progress_percentage tests
 
     #[test]
     fn test_progress_percentage_zero_tasks_returns_100() {
@@ -425,7 +425,7 @@ mod tests {
         );
     }
 
-    // ========== is_finished tests ==========
+    // is_finished tests
 
     #[test]
     fn test_is_finished_true_for_terminal_statuses() {
@@ -457,7 +457,7 @@ mod tests {
         }
     }
 
-    // ========== start / complete / fail / cancel tests ==========
+    // start / complete / fail / cancel tests
 
     #[test]
     fn test_start_sets_processing() {
@@ -505,7 +505,7 @@ mod tests {
         assert!(crawl.updated_at >= before);
     }
 
-    // ========== increment / set task counters ==========
+    // increment / set task counters
 
     #[test]
     fn test_increment_total_tasks() {
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(crawl.progress_percentage(), 100.0, "0 tasks still 100%");
     }
 
-    // ========== CrawlStatus Display / FromStr tests ==========
+    // CrawlStatus Display / FromStr tests
 
     #[test]
     fn test_crawl_status_display_all_variants() {
@@ -618,7 +618,7 @@ mod tests {
         }
     }
 
-    // ========== Crawl serde roundtrip ==========
+    // Crawl serde roundtrip
 
     #[test]
     fn test_crawl_serde_roundtrip() {
@@ -631,7 +631,7 @@ mod tests {
         assert_eq!(crawl, back, "serde roundtrip should preserve crawl");
     }
 
-    // ========== Helper ==========
+    // Helper
 
     fn make_crawl() -> Crawl {
         Crawl::new(

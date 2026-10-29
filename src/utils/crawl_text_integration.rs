@@ -355,8 +355,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_enable_actually_enables_processing() {
-        // After enable() must actually set enabled=true.
-        // Bug was: enable() only logged and did not mutate the enabled flag.
+        // After enable must actually set enabled=true.
+        // Bug was: enable only logged and did not mutate the enabled flag.
         let integration = CrawlTextIntegration::new(false);
         assert!(!integration.is_enabled());
 
@@ -375,8 +375,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_disable_actually_disables_processing() {
-        // After disable() must actually set enabled=false.
-        // Bug was: disable() only logged and did not mutate the enabled flag.
+        // After disable must actually set enabled=false.
+        // Bug was: disable only logged and did not mutate the enabled flag.
         let integration = CrawlTextIntegration::new(true);
         assert!(integration.is_enabled());
 
@@ -489,15 +489,13 @@ mod tests {
         assert_eq!(result.status_code, 500);
     }
 
-    // =========================================================================
     // 错误路径：ContentTooLarge 触发 process_crawled_content 返回 Err
     // 覆盖 process_scrape_response 的 Err 分支（行 87-99）
-    // =========================================================================
 
     #[tokio::test]
     async fn test_process_scrape_response_content_too_large_returns_ok_with_error() {
         let integration = CrawlTextIntegration::new(true);
-        // CrawlTextProcessor::new() 默认 max_content_size = 10 * 1024 * 1024
+        // CrawlTextProcessor::new 默认 max_content_size = 10 * 1024 * 1024
         let oversized: Vec<u8> = vec![0u8; 10 * 1024 * 1024 + 1];
         let result = integration
             .process_scrape_response(&oversized, "http://example.com", Some("text/html"), 200)
@@ -517,10 +515,8 @@ mod tests {
         assert_eq!(result.processed_content.len(), oversized.len());
     }
 
-    // =========================================================================
     // 错误路径：批量处理中单个项目 ContentTooLarge
     // 覆盖 process_batch_scrape_responses 的 Err 分支（行 167-179）
-    // =========================================================================
 
     #[tokio::test]
     async fn test_batch_process_single_item_content_too_large() {
@@ -541,9 +537,7 @@ mod tests {
         assert_eq!(result.status_code, 200);
     }
 
-    // =========================================================================
     // 混合批量：一个正常 + 一个过大，验证错误隔离
-    // =========================================================================
 
     #[tokio::test]
     async fn test_batch_mixed_success_and_error() {

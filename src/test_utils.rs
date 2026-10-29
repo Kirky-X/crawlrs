@@ -1,11 +1,11 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 共享测试工具：CapturingLogger + ensure_debug_logger()
+//! 共享测试工具：CapturingLogger + ensure_debug_logger
 //!
 //! 多个 `#[cfg(test)]` 模块需要安装全局 logger 以覆盖 `log::debug!`/`log::error!`
-//! 等宏的格式化参数求值（代码覆盖率目的）。此模块提供统一的 `CapturingLogger`
-//! 和 `ensure_debug_logger()` 函数，消除 10+ 处重复定义。
+//! 等宏的格式化参数求值（代码覆盖率目）。此模块提供统一的 `CapturingLogger`
+//! 和 `ensure_debug_logger` 函数，消除 10+ 处重复定义。
 //!
 //! # 用法
 //!
@@ -14,8 +14,8 @@
 //! use crate::test_utils::ensure_debug_logger;
 //!
 //! #[test]
-//! fn test_something() {
-//!     ensure_debug_logger();
+//! fn test_something {
+//!     ensure_debug_logger;
 //!     // ... 触发 log::debug! 的代码 ...
 //! }
 //! ```

@@ -69,7 +69,6 @@ impl BacklogWorker {
 
         let batch_size = self.settings.concurrency.default_team_limit as usize;
 
-        // 1. 获取所有待处理的积压任务
         let pending_backlogs = self
             .tasks_backlog_repository
             .get_pending_tasks(None, Some(batch_size as u64))
@@ -112,7 +111,6 @@ impl BacklogWorker {
                 .push(backlog);
         }
 
-        // 3. 处理每个团队的积压任务
         for (team_id, team_backlogs) in backlogs_by_team {
             info!(
                 "{}",
@@ -198,7 +196,6 @@ impl BacklogWorker {
         &self,
         backlog: crate::domain::repositories::tasks_backlog_repository::TasksBacklog,
     ) -> Result<BacklogOutcome, WorkerError> {
-        // 1. 检查任务是否已过期
         if backlog.is_expired() {
             info!(
                 "{}",
@@ -275,9 +272,9 @@ impl BacklogWorker {
                 );
 
                 // 4. 前置状态迁移：Pending → Processing（域状态机守卫，仅 Pending 可迁移）。
-                //    这是修复"成功路径 mark_completed 恒败"的关键——mark_completed 要求
-                //    积压项处于 Processing。迁移失败说明该项已非 Pending（被他方处理），
-                //    跳过该条并继续。
+                // 这是修复"成功路径 mark_completed 恒败"的关键——mark_completed 要求
+                // 积压项处于 Processing。迁移失败说明该项已非 Pending（被他方处理），
+                // 跳过该条并继续。
                 let mut processing_backlog = backlog.clone();
                 if let Err(e) = processing_backlog.mark_processing() {
                     warn!(
@@ -402,7 +399,6 @@ impl BacklogWorker {
             .repo_err()?
             .ok_or_else(|| WorkerError::NotFound(format!("Task {} not found", backlog.task_id)))?;
 
-        // 2. 检查任务状态
         if task.status != TaskStatus::Queued {
             info!(
                 "{}",
@@ -581,7 +577,6 @@ impl WorkerProcess for BacklogWorker {
     }
 
     async fn process(&self) -> ProcessResult {
-        // 处理积压任务
         if let Err(e) = self.process_backlog().await {
             return ProcessResult::Error(tr_log_args(
                 "backlog-process-error",
@@ -619,7 +614,7 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Mutex;
 
-    // ========== Test Settings factory ==========
+    // Test Settings factory
 
     fn make_test_settings(default_team_limit: u64) -> Arc<Settings> {
         use crate::config::settings::*;
@@ -664,7 +659,7 @@ mod tests {
         Arc::new(settings)
     }
 
-    // ========== Mock TasksBacklogRepository ==========
+    // Mock TasksBacklogRepository
 
     struct MockBacklogRepo {
         pending: Mutex<Vec<TasksBacklog>>,
@@ -774,7 +769,7 @@ mod tests {
         }
     }
 
-    // ========== Mock TaskRepository ==========
+    // Mock TaskRepository
 
     struct MockTaskRepo {
         tasks: Mutex<std::collections::HashMap<crate::domain::id::Id, Task>>,
@@ -915,7 +910,7 @@ mod tests {
         }
     }
 
-    // ========== Mock RateLimitingService ==========
+    // Mock RateLimitingService
 
     struct MockRateLimitingService {
         concurrency_result: Mutex<ConcurrencyResult>,
@@ -1076,7 +1071,7 @@ mod tests {
     #[async_trait]
     impl RateLimitingService for MockRateLimitingService {}
 
-    // ========== Helper functions ==========
+    // Helper functions
 
     fn make_backlog(
         team_id: crate::domain::id::Id,
@@ -1159,7 +1154,7 @@ mod tests {
         make_test_settings(10)
     }
 
-    // ========== name() tests ==========
+    // name tests
 
     #[test]
     fn test_worker_name() {
@@ -1172,7 +1167,7 @@ mod tests {
         assert_eq!(worker.name(), "backlog-worker");
     }
 
-    // ========== process() with empty backlog ==========
+    // process with empty backlog
 
     #[tokio::test]
     async fn test_process_empty_backlog_returns_completed() {
@@ -1186,7 +1181,7 @@ mod tests {
         assert_eq!(result, ProcessResult::Completed);
     }
 
-    // ========== process() with repo failure ==========
+    // process with repo failure
 
     #[tokio::test]
     async fn test_process_repo_failure_returns_error() {
@@ -1208,7 +1203,7 @@ mod tests {
         }
     }
 
-    // ========== process() with expired backlog ==========
+    // process with expired backlog
 
     #[tokio::test]
     async fn test_process_expired_backlog_marks_expired() {
@@ -1233,7 +1228,7 @@ mod tests {
         );
     }
 
-    // ========== process() with max retry backlog ==========
+    // process with max retry backlog
 
     #[tokio::test]
     async fn test_process_max_retry_backlog_marks_failed() {
@@ -1258,7 +1253,7 @@ mod tests {
         );
     }
 
-    // ========== process() with concurrency denied ==========
+    // process with concurrency denied
 
     #[tokio::test]
     async fn test_process_concurrency_denied_keeps_backlog() {
@@ -1277,7 +1272,7 @@ mod tests {
         // Denied means no update to the backlog (returns Ok(false) without updating)
     }
 
-    // ========== process() with concurrency queued ==========
+    // process with concurrency queued
 
     #[tokio::test]
     async fn test_process_concurrency_queued_returns_completed() {
@@ -1295,7 +1290,7 @@ mod tests {
         assert_eq!(result, ProcessResult::Completed);
     }
 
-    // ========== process() with concurrency allowed - task not found ==========
+    // process with concurrency allowed - task not found
 
     #[tokio::test]
     async fn test_process_allowed_task_not_found_returns_error() {
@@ -1315,14 +1310,14 @@ mod tests {
         match result {
             ProcessResult::Completed => {}
             ProcessResult::Error(msg) => {
-                // The error is caught in process_backlog's inner loop, so process() returns Completed
+                // The error is caught in process_backlog's inner loop, so process returns Completed
                 panic!("Expected Completed but got Error: {}", msg);
             }
             _ => panic!("Unexpected result: {:?}", result),
         }
     }
 
-    // ========== process() with concurrency allowed - task already completed ==========
+    // process with concurrency allowed - task already completed
 
     #[tokio::test]
     async fn test_process_allowed_task_not_queued_marks_completed() {
@@ -1342,7 +1337,7 @@ mod tests {
         );
         let result = worker.process().await;
         assert_eq!(result, ProcessResult::Completed);
-        // 修复：前置 mark_processing 迁移后 mark_completed 成功，Pending 积压项
+        // 前置 mark_processing 迁移后 mark_completed 成功，Pending 积压项
         // 走完激活路径终态为 Completed（不再退化为 Pending + retry_count 递增）。
         let updated = updated_repo.updated();
         assert_eq!(updated.len(), 1);
@@ -1353,7 +1348,7 @@ mod tests {
         assert_eq!(updated[0].retry_count, 0);
     }
 
-    // ========== process() with concurrency allowed - task queued reactivates ==========
+    // process with concurrency allowed - task queued reactivates
 
     #[tokio::test]
     async fn test_process_allowed_task_queued_reactivates() {
@@ -1372,7 +1367,7 @@ mod tests {
         );
         let result = worker.process().await;
         assert_eq!(result, ProcessResult::Completed);
-        // 修复：前置 mark_processing 迁移后 mark_completed 成功，Pending 积压项
+        // 前置 mark_processing 迁移后 mark_completed 成功，Pending 积压项
         // 走完激活路径终态为 Completed（不再退化为 Pending + retry_count 递增）。
         let updated = updated_repo.updated();
         assert_eq!(updated.len(), 1);
@@ -1383,7 +1378,7 @@ mod tests {
         assert_eq!(updated[0].retry_count, 0);
     }
 
-    // ========== process() with multiple teams ==========
+    // process with multiple teams
 
     #[tokio::test]
     async fn test_process_multiple_teams() {
@@ -1402,7 +1397,7 @@ mod tests {
         assert_eq!(result, ProcessResult::Completed);
     }
 
-    // ========== cleanup cycle counter (every 10th cycle) ==========
+    // cleanup cycle counter (every 10th cycle)
 
     #[tokio::test]
     async fn test_cleanup_runs_on_10th_cycle() {
@@ -1441,7 +1436,7 @@ mod tests {
         assert_eq!(result, ProcessResult::Completed);
     }
 
-    // ========== cleanup_expired_tasks: process_expired_backlog with task not found ==========
+    // cleanup_expired_tasks: process_expired_backlog with task not found
 
     #[tokio::test]
     async fn test_cleanup_expired_backlog_task_not_found() {
@@ -1467,7 +1462,7 @@ mod tests {
         );
     }
 
-    // ========== cleanup_expired_tasks: process_expired_backlog marks Queued task as Failed ==========
+    // cleanup_expired_tasks: process_expired_backlog marks Queued task as Failed
 
     #[tokio::test]
     async fn test_cleanup_expired_with_queued_task_marks_failed() {
@@ -1500,7 +1495,7 @@ mod tests {
         assert_eq!(updated_tasks[0].status, TaskStatus::Failed);
     }
 
-    // ========== cleanup_expired_tasks: process_expired_backlog with non-Queued task ==========
+    // cleanup_expired_tasks: process_expired_backlog with non-Queued task
 
     #[tokio::test]
     async fn test_cleanup_expired_with_non_queued_task_no_task_update() {
@@ -1528,7 +1523,7 @@ mod tests {
         );
     }
 
-    // ========== cleanup_expired_tasks: multiple expired backlogs ==========
+    // cleanup_expired_tasks: multiple expired backlogs
 
     #[tokio::test]
     async fn test_cleanup_multiple_expired_backlogs() {
@@ -1556,7 +1551,7 @@ mod tests {
         }
     }
 
-    // ========== process() success path: backlog in Processing, task Queued, Allowed ==========
+    // process success path: backlog in Processing, task Queued, Allowed
 
     #[tokio::test]
     async fn test_process_success_reactivates_queued_task() {
@@ -1591,7 +1586,7 @@ mod tests {
         assert_eq!(updated_tasks[0].status, TaskStatus::Queued);
     }
 
-    // ========== process() success path: task not Queued marks backlog completed ==========
+    // process success path: task not Queued marks backlog completed
 
     #[tokio::test]
     async fn test_process_task_not_queued_marks_backlog_completed() {
@@ -1621,7 +1616,7 @@ mod tests {
         );
     }
 
-    // ========== non-Pending backlog is skipped (mark_processing guard) ==========
+    // non-Pending backlog is skipped (mark_processing guard)
 
     #[tokio::test]
     async fn test_process_already_processing_backlog_is_skipped() {
@@ -1647,7 +1642,7 @@ mod tests {
         assert_eq!(updated.len(), 0, "skipped backlog must not be updated");
     }
 
-    // ========== process() with concurrency check error ==========
+    // process with concurrency check error
 
     #[tokio::test]
     async fn test_process_concurrency_check_error_returns_completed() {
@@ -1661,12 +1656,12 @@ mod tests {
             Arc::new(MockRateLimitingService::new_error()),
             default_settings(),
         );
-        // The error is caught in process_backlog's inner loop, so process() returns Completed
+        // The error is caught in process_backlog's inner loop, so process returns Completed
         let result = worker.process().await;
         assert_eq!(result, ProcessResult::Completed);
     }
 
-    // ========== process() with mixed backlogs (expired + normal) ==========
+    // process with mixed backlogs (expired + normal)
 
     #[tokio::test]
     async fn test_process_mixed_backlogs_expired_and_normal() {
@@ -1696,12 +1691,12 @@ mod tests {
         );
     }
 
-    // ========== cleanup_expired_tasks: process_expired_backlog error is caught and continues ==========
+    // cleanup_expired_tasks: process_expired_backlog error is caught and continues
     // Covers the Err(e) => error!("清理过期积压任务失败: {}", e) branch in cleanup_expired_tasks.
     // When process_expired_backlog returns Err (e.g. backlog update fails), cleanup_expired_tasks
     // must log the error and continue processing remaining backlogs, ultimately returning Ok.
 
-    /// Mock backlog repo whose update() always fails, used to trigger the error path
+    /// Mock backlog repo whose update always fails, used to trigger the error path
     /// in process_expired_backlog so that cleanup_expired_tasks exercises its catch branch.
     struct FailingUpdateBacklogRepo {
         expired: Mutex<Vec<TasksBacklog>>,
@@ -1810,7 +1805,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ========== cleanup_expired_tasks: empty expired list returns Ok early ==========
+    // cleanup_expired_tasks: empty expired list returns Ok early
     // Covers the early-return Ok path when there are no expired backlogs.
 
     #[tokio::test]

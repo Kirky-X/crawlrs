@@ -23,7 +23,6 @@ async fn main() {
             println!("   Status: {}", response.status_code);
             println!("   Content length: {} bytes\n", response.content.len());
 
-            // Check for CAPTCHA
             let content = &response.content;
             let is_captcha = content.contains("CAPTCHA")
                 || content.contains("captcha")

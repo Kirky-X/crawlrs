@@ -11,7 +11,7 @@ use tokio::time::{sleep, timeout};
 
 use crawlrs::workers::worker::{AbstractWorker, ProcessResult, Worker, WorkerProcess};
 
-// === Test Processors ===
+// Test Processors
 
 /// 成功的测试处理器 - 每次处理返回 Completed
 struct SuccessfulProcessor {
@@ -94,7 +94,7 @@ impl WorkerProcess for ConditionalProcessor {
     }
 }
 
-// === Unit Tests ===
+// Unit Tests
 
 #[test]
 fn test_process_result_equality() {
@@ -229,7 +229,7 @@ fn test_conditional_processor() {
     assert_eq!(state_guard.call_count, 3);
 }
 
-// === Integration Tests ===
+// Integration Tests
 
 #[tokio::test]
 async fn test_abstract_worker_run_multiple_cycles() {
@@ -260,7 +260,6 @@ async fn test_abstract_worker_run_multiple_cycles() {
         .expect("Worker test timed out")
         .expect("Worker task failed");
 
-    // 验证处理器被调用了多次
     let count = call_count.load(std::sync::atomic::Ordering::SeqCst);
     assert!(count >= 5, "Expected at least 5 calls, got {}", count);
 }
@@ -340,19 +339,17 @@ async fn test_multiple_workers_parallel() {
         }
     });
 
-    // 等待所有工作器完成
     let results = tokio::join!(handle1, handle2, handle3);
     assert!(results.0.is_ok());
     assert!(results.1.is_ok());
     assert!(results.2.is_ok());
 
-    // 验证每个工作器都被调用了
     assert_eq!(call_count1.load(std::sync::atomic::Ordering::SeqCst), 3);
     assert_eq!(call_count2.load(std::sync::atomic::Ordering::SeqCst), 3);
     assert_eq!(call_count3.load(std::sync::atomic::Ordering::SeqCst), 3);
 }
 
-// === Edge Cases and Error Handling ===
+// Edge Cases and Error Handling
 
 #[test]
 fn test_process_result_clone() {
@@ -421,12 +418,10 @@ async fn test_worker_concurrent_access() {
         handles.push(handle);
     }
 
-    // 等待所有任务完成
     for handle in handles {
         handle.await.expect("Task failed");
     }
 
-    // 验证所有调用都成功执行
     let count = call_count.load(std::sync::atomic::Ordering::SeqCst);
     assert_eq!(count, 50); // 10 tasks * 5 calls each
 }

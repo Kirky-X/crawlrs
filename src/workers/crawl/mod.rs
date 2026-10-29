@@ -221,11 +221,11 @@ impl ScoringContext {
 /// ```ignore
 /// use crate::workers::crawl::{FilterChain, FilterContext, filters::{DomainFilter, UrlPatternFilter}};
 ///
-/// let chain = FilterChain::new()
+/// let chain = FilterChain::new
 ///     .with_filter(DomainFilter::same_domain("example.com"))
-///     .with_filter(UrlPatternFilter::new(vec!["/blog/.*".to_string()], vec!["/admin/.*".to_string()]));
+///     .with_filter(UrlPatternFilter::new(vec!["/blog/.*".to_string], vec!["/admin/.*".to_string]));
 ///
-/// let ctx = FilterContext::new().with_source_domain("example.com");
+/// let ctx = FilterContext::new.with_source_domain("example.com");
 /// assert!(chain.accept("https://example.com/blog/post-1", &ctx));
 /// assert!(!chain.accept("https://example.com/admin/panel", &ctx));
 /// assert!(!chain.accept("https://other.com/blog/post-1", &ctx));

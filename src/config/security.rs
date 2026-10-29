@@ -45,7 +45,6 @@ pub fn validate_security(settings: &Settings) -> Result<(), sdforge::validator::
         ));
     }
 
-    // 检查数据库密码
     let weak_patterns = ["password=password", "password=postgres", "password=admin"];
     if weak_patterns
         .iter()

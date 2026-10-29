@@ -37,7 +37,6 @@ pub async fn spawn_common_workers(
         }));
     }
 
-    // Start backlog worker
     let backlog_worker = AbstractWorker::new(
         app_state.backlog_worker(),
         std::time::Duration::from_secs(settings.timeouts.workers.backlog_interval_seconds),
@@ -46,7 +45,6 @@ pub async fn spawn_common_workers(
         backlog_worker.run().await;
     }));
 
-    // Start expiration worker
     let expiration_worker = AbstractWorker::new(
         app_state.expiration_worker(),
         std::time::Duration::from_secs(3600), // Run every hour

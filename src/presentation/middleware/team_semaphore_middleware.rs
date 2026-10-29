@@ -113,7 +113,7 @@ mod tests {
 
     fn test_router(semaphore: Arc<TeamSemaphore>) -> Router {
         // Layer order matters: Extension must be outermost (added last) so the
-        // middleware can read it. In axum, the last .layer() is outermost.
+        // middleware can read it. In axum, the last .layer is outermost.
         Router::new()
             .route("/test", get(|| async { "ok" }))
             .layer(axum::middleware::from_fn(team_semaphore_middleware))

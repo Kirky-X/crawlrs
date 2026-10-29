@@ -14,11 +14,9 @@ use crawlrs::domain::models::WebhookEvent;
 use crawlrs::domain::services::webhook_service::WebhookService;
 use crawlrs::infrastructure::oxcache::CacheService;
 
-// ============================================================================
 // MockWebhookService
-// ============================================================================
 
-/// Noop `WebhookService` — all methods return Ok(()).
+/// Noop `WebhookService` — all methods return Ok().
 pub struct MockWebhookService;
 
 #[async_trait::async_trait]
@@ -34,9 +32,7 @@ impl WebhookService for MockWebhookService {
     }
 }
 
-// ============================================================================
 // MockCacheService
-// ============================================================================
 
 /// In-memory `CacheService` mock backed by a `Mutex<HashMap>`.
 pub struct MockCacheService {

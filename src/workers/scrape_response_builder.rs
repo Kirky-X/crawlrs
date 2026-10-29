@@ -164,7 +164,7 @@ mod tests {
         }
     }
 
-    // ---- parse_crawl_payload ----
+    // parse_crawl_payload
 
     #[test]
     fn test_parse_crawl_payload_valid() {
@@ -201,7 +201,7 @@ mod tests {
         assert_eq!(depth, 0);
     }
 
-    // ---- parse_extract_payload ----
+    // parse_extract_payload
 
     #[test]
     fn test_parse_extract_payload_valid() {
@@ -224,7 +224,7 @@ mod tests {
         assert!(parse_extract_payload(&task).is_err());
     }
 
-    // ---- build_crawl_request ----
+    // build_crawl_request
 
     #[test]
     fn test_build_crawl_request_basic() {
@@ -273,7 +273,7 @@ mod tests {
         );
     }
 
-    // ---- build_extract_request ----
+    // build_extract_request
 
     #[test]
     fn test_build_extract_request_basic() {

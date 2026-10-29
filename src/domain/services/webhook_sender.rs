@@ -33,7 +33,7 @@ use std::collections::HashMap;
 ///         url: &str,
 ///         payload: &Value,
 ///         headers: Option<&HashMap<String, String>>,
-///     ) -> Result<()> {
+///) -> Result<> {
 ///         // 实现发送逻辑
 ///     }
 /// }
@@ -50,7 +50,7 @@ pub trait WebhookSender: Send + Sync {
     ///
     /// # Returns
     ///
-    /// * `Ok(())` - 发送成功
+    /// * `Ok()` - 发送成功
     /// * `Err(anyhow::Error)` - 发送失败
     async fn send(
         &self,

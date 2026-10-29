@@ -42,7 +42,7 @@ submit!(RouteRegistration::new(
 ));
 
 // GET+DELETE 同路径多方法：单条 RouteRegistration 直注，
-// 规避 build() 按路径去重的覆盖丢失问题（design D2）。
+// 规避 build 按路径去重的覆盖丢失问题（design D2）。
 fn crawl_by_id_route() -> HttpRoute {
     let method_router =
         axum::routing::get(crawl_handler::get_crawl).delete(crawl_handler::cancel_crawl);

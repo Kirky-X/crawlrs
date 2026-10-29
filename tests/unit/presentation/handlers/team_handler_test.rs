@@ -18,9 +18,7 @@ use crawlrs::application::dto::geo_restriction_request::{
 use crawlrs::domain::services::team_service::TeamGeoRestrictions;
 use crawlrs::presentation::handlers::team_handler::{TeamInfoResponse, TeamUsageResponse};
 
-// =============================================================================
 // TeamInfoResponse serialization
-// =============================================================================
 
 #[test]
 fn tc_team_info_response_serialization_round_trip() {
@@ -94,9 +92,7 @@ fn tc_team_info_response_clone_preserves_fields() {
     assert_eq!(response.credits_balance, cloned.credits_balance);
 }
 
-// =============================================================================
 // TeamUsageResponse serialization
-// =============================================================================
 
 #[test]
 fn tc_team_usage_response_serialization_round_trip() {
@@ -172,9 +168,7 @@ fn tc_team_usage_response_clone_preserves_fields() {
     assert_eq!(response.credits_used, cloned.credits_used);
 }
 
-// =============================================================================
 // TeamGeoRestrictionsResponse serialization
-// =============================================================================
 
 #[test]
 fn tc_team_geo_restrictions_response_with_defaults() {
@@ -240,9 +234,7 @@ fn tc_team_geo_restrictions_response_empty_lists() {
     );
 }
 
-// =============================================================================
 // UpdateTeamGeoRestrictionsRequest deserialization
-// =============================================================================
 
 #[test]
 fn tc_update_team_geo_restrictions_request_valid() {
@@ -287,9 +279,7 @@ fn tc_update_team_geo_restrictions_request_empty_arrays() {
     assert_eq!(req.blocked_countries, Some(vec![]));
 }
 
-// =============================================================================
 // TeamGeoRestrictions default
-// =============================================================================
 
 #[test]
 fn tc_team_geo_restrictions_default_is_empty() {

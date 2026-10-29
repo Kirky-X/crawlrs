@@ -263,7 +263,6 @@ async fn test_find_by_team_id_paginated() {
     let team_id = app.team_id;
     let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
-    // 创建 3 个 crawl
     for i in 0..3 {
         let crawl = Crawl::new(
             crawlrs::domain::id::Id::generate(),
@@ -289,7 +288,6 @@ async fn test_find_by_team_id_paginated() {
         .await
         .expect("Failed to find paginated page 2");
 
-    // 验证分页不重复
     let page1_ids: Vec<_> = page1.iter().map(|c| c.id).collect();
     let page2_ids: Vec<_> = page2.iter().map(|c| c.id).collect();
     for id in &page2_ids {
@@ -362,7 +360,7 @@ async fn test_increment_on_unknown_crawl_is_noop() {
         .expect("update_status on unknown crawl should be noop");
 }
 
-/// tc_pool_returns_database_pool: pool() getter 返回与构造时相同的 pool 引用
+/// tc_pool_returns_database_pool: pool getter 返回与构造时相同的 pool 引用
 #[tokio::test]
 async fn tc_pool_returns_database_pool() {
     let app = create_test_app_no_worker().await;

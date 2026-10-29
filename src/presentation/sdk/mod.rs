@@ -23,13 +23,11 @@ use crate::i18n::{t, I18nBundle, Locale};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
 
-// ============================================================================
 // DTOs — sdk-specific simplified request/response types.
 // Decoupled from application DTOs to avoid coupling and validation complexity.
 // team_id and api_key_id are NOT accepted from the request body — they are
 // extracted from AuthState set by auth_middleware to prevent horizontal
 // privilege escalation.
-// ============================================================================
 
 #[derive(serde::Deserialize)]
 pub struct SdkSearchRequest {
@@ -90,12 +88,10 @@ pub struct SdkCrawlResponse {
     pub url: String,
 }
 
-// ============================================================================
 // Wrapper functions — sdforge #[forge] generates HTTP endpoints.
 //
 // Paths use version="v1" + path="/sdk/..." which sdforge resolves to
 // "/api/v1/sdk/..." (the default prefix is /api/{version}).
-// ============================================================================
 
 #[forge(
     name = "sdk_search",

@@ -168,7 +168,6 @@ impl SearchEngine for BaiduSearchEngine {
         let (url, params) =
             self.build_baidu_url(&request.query, page, BaiduSearchCategory::General);
 
-        // 构建带查询参数的完整 URL
         let full_url = if !params.is_empty() {
             format!(
                 "{}?{}",
@@ -304,7 +303,7 @@ mod tests {
         BaiduSearchEngine::new(engine_client)
     }
 
-    // ========== build_baidu_url 测试 ==========
+    // build_baidu_url 测试
 
     #[test]
     fn test_build_baidu_url_general_page1() {
@@ -381,7 +380,7 @@ mod tests {
         assert_eq!(params.get("wd"), Some(&"".to_string()));
     }
 
-    // ========== parse_baidu_response 测试 ==========
+    // parse_baidu_response 测试
 
     #[test]
     fn test_parse_baidu_response_valid_json() {
@@ -467,7 +466,7 @@ mod tests {
         assert!(!results[0].description.contains("<c>"));
     }
 
-    // ========== parse_search_results 测试 ==========
+    // parse_search_results 测试
 
     #[test]
     fn test_parse_search_results_valid_html() {
@@ -511,7 +510,7 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // ========== SearchEngine trait 方法测试 ==========
+    // SearchEngine trait 方法测试
 
     #[test]
     fn test_engine_creation() {
@@ -522,7 +521,7 @@ mod tests {
         assert_eq!(engine.health(), EngineHealth::Healthy);
     }
 
-    // ========== search() test fallback path ==========
+    // search test fallback path
 
     /// Mutex to serialize tests that mutate process-level environment
     /// variables (std::env::set_var is not thread-safe across tests).
@@ -532,7 +531,7 @@ mod tests {
         SearchRequest::new(query)
     }
 
-    // ENV_LOCK must be held across .await because engine.search() reads
+    // ENV_LOCK must be held across .await because engine.search reads
     // BAIDU_TEST_RESULTS during execution; releasing it would let other tests
     // race-modify the env var. Single-threaded tokio runtime => no deadlock risk.
     #[allow(clippy::await_holding_lock)]

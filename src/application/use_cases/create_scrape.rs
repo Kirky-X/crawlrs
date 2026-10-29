@@ -19,7 +19,7 @@ use crate::engines::engine_client::{
     ScreenshotConfig, ScrollDirection, WaitFor,
 };
 
-// === Section: Use Case Definition ===
+// Section: Use Case Definition
 
 /// Trait for CreateScrapeUseCase - enables dependency injection
 #[async_trait::async_trait]
@@ -32,7 +32,7 @@ pub struct CreateScrapeUseCase {
     engine_client: Arc<EngineClient>,
 }
 
-// === Section: Implementation ===
+// Section: Implementation
 
 impl CreateScrapeUseCase {
     pub fn new(engine_client: Arc<EngineClient>) -> Self {
@@ -193,7 +193,7 @@ impl CreateScrapeUseCaseTrait for CreateScrapeUseCase {
     }
 }
 
-// === Section: Module Organization ===
+// Section: Module Organization
 
 // Note: In a real application, you might have more complex logic here,
 // such as handling different extraction rules, webhooks, etc.
@@ -245,7 +245,7 @@ mod tests {
     use crate::engines::engine_client::{EngineError, PageAction, ScrollDirection};
     use std::sync::Arc;
 
-    // ============ Helpers ============
+    // Helpers
 
     fn make_engine_client() -> Arc<EngineClient> {
         Arc::new(EngineClient::new())
@@ -268,7 +268,7 @@ mod tests {
         }
     }
 
-    // ============ new ============
+    // new
 
     #[test]
     fn test_new_constructs_without_calling_engine() {
@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(use_case.engine_client.engine_count(), 0);
     }
 
-    // ============ map_dto_to_request ============
+    // map_dto_to_request
 
     #[test]
     fn test_map_dto_to_request_minimal_uses_defaults() {
@@ -356,7 +356,7 @@ mod tests {
         );
     }
 
-    // ===== block_ads / block_media / needs_mllm 接线（文档审计缺陷 #4） =====
+    // block_ads / block_media / needs_mllm 接线（文档审计缺陷 #4）
 
     #[test]
     fn test_map_dto_to_request_block_options_wire_through() {
@@ -465,7 +465,7 @@ mod tests {
         assert!(!request.options.needs_mllm);
     }
 
-    // ===== cache_mode / bypass_cache 桥接测试 =====
+    // cache_mode / bypass_cache 桥接测试
 
     #[test]
     fn test_map_dto_to_request_cache_mode_none_defaults_to_none() {
@@ -719,7 +719,7 @@ mod tests {
         assert!(!config.full_page, "full_page should default to false");
     }
 
-    // ============ parse_actions ============
+    // parse_actions
 
     #[test]
     fn test_parse_actions_none_returns_empty() {
@@ -837,7 +837,7 @@ mod tests {
         );
     }
 
-    // ============ parse_headers ============
+    // parse_headers
 
     #[test]
     fn test_parse_headers_none_returns_empty_map() {
@@ -909,7 +909,7 @@ mod tests {
         assert!(headers.is_empty());
     }
 
-    // ============ map_engine_error ============
+    // map_engine_error
 
     #[test]
     fn test_map_engine_error_timeout() {
@@ -1011,7 +1011,7 @@ mod tests {
         }
     }
 
-    // ============ execute (end-to-end) ============
+    // execute (end-to-end)
 
     #[tokio::test]
     async fn test_execute_with_localhost_returns_security_error() {
@@ -1108,7 +1108,7 @@ mod tests {
         );
     }
 
-    // ============ CreateScrapeUseCaseTrait ============
+    // CreateScrapeUseCaseTrait
 
     #[tokio::test]
     async fn test_trait_execute_delegates_to_impl() {

@@ -26,9 +26,7 @@ use crawlrs::domain::services::webhook_service::{
     WebhookServiceImpl,
 };
 
-// =============================================================================
 // Mock Webhook Sender
-// =============================================================================
 
 struct MockWebhookSender {
     sent_count: AtomicU32,
@@ -98,9 +96,7 @@ impl WebhookSender for MockWebhookSender {
     }
 }
 
-// =============================================================================
 // Mock Webhook Event Repository
-// =============================================================================
 
 struct MockWebhookEventRepository {
     created: Mutex<Vec<WebhookEvent>>,
@@ -190,9 +186,7 @@ impl WebhookEventRepository for MockWebhookEventRepository {
     }
 }
 
-// =============================================================================
 // Mock Webhook Repository
-// =============================================================================
 
 struct MockWebhookRepository {
     webhooks: Mutex<Vec<Webhook>>,
@@ -255,9 +249,7 @@ impl WebhookRepository for MockWebhookRepository {
     }
 }
 
-// =============================================================================
 // Helpers
-// =============================================================================
 
 fn create_test_task() -> Task {
     let now = Utc::now();
@@ -315,9 +307,7 @@ fn make_management_service(
     WebhookManagementServiceImpl::new(webhook_repo, event_repo, webhook_service)
 }
 
-// =============================================================================
 // WebhookServiceImpl tests via public trait
-// =============================================================================
 
 #[tokio::test]
 async fn test_send_webhook_success_via_trait() {
@@ -419,9 +409,7 @@ async fn test_trigger_completion_payload_has_completed_status() {
     assert!(payload.get("error").is_none() || payload["error"].is_null());
 }
 
-// =============================================================================
 // WebhookManagementServiceImpl tests (covers previously uncovered lines)
-// =============================================================================
 
 #[tokio::test]
 async fn test_register_webhook_success() {
@@ -678,9 +666,7 @@ async fn test_list_webhooks_empty_team_returns_empty() {
     assert!(webhooks.is_empty());
 }
 
-// =============================================================================
 // verify_webhook_signature tests via public API
-// =============================================================================
 
 fn generate_test_signature(secret: &str, payload: &str, timestamp: i64) -> String {
     use hmac::{Hmac, Mac};
@@ -770,9 +756,7 @@ fn test_verify_signature_different_length_signature_returns_false() {
     assert!(!verify_webhook_signature(secret, payload, timestamp, "short"));
 }
 
-// =============================================================================
 // Webhook model tests
-// =============================================================================
 
 #[test]
 fn test_webhook_new_sets_fields() {

@@ -43,7 +43,7 @@ use std::sync::Arc;
 /// # 类型化错误传递（#7）
 ///
 /// `ConversionFailed` 使用 `#[from] MarkdownError` 保留下层错误类型，
-/// 调用方可通过 `downcast_ref::<MarkdownError>()` 拿到原始错误做精细处理，
+/// 调用方可通过 `downcast_ref::<MarkdownError>` 拿到原始错误做精细处理，
 /// 而非仅拿到字符串化后的错误消息。
 #[derive(Debug, thiserror::Error)]
 pub enum MarkdownPostProcessorError {
@@ -73,7 +73,7 @@ pub enum MarkdownPostProcessorError {
 /// let processor = MarkdownPostProcessor::new(
 ///     Arc::new(HtmdMarkdownService::new()),
 ///     Some(Arc::new(ContentExtractionFacade::new(None))),
-/// );
+///);
 /// let req: ScrapeRequestDto = serde_json::from_value(json!({
 ///     "url": "https://example.com",
 ///     "formats": ["markdown"]

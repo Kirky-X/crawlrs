@@ -25,13 +25,11 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
-    // 初始化日志系统
     log::set_max_level(log::LevelFilter::Info);
 
     info!("🚀 开始基础爬取示例");
     info!("=====================================\n");
 
-    // 创建引擎客户端
     let client = EngineClient::new();
 
     // 目标URL
@@ -39,10 +37,8 @@ async fn main() {
 
     info!("📌 目标URL: {}", url);
 
-    // 创建爬取请求
     let request = ScrapeRequest::new(url).timeout(Duration::from_secs(30));
 
-    // 执行爬取
     info!("🔄 正在爬取页面...");
     match client.scrape(&request).await {
         Ok(response) => {

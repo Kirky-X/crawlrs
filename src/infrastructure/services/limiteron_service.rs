@@ -128,10 +128,8 @@ impl LimiteronService {
     ) -> Result<Self, RateLimitingError> {
         let (storage, ban_storage, l1_enabled) = Self::build_storage(storage).await?;
 
-        // 创建流量控制配置
         let flow_config = Self::build_flow_control_config(&config)?;
 
-        // 构建 Governor
         let governor = Governor::builder()
             .with_config(flow_config)
             .with_storage(storage)
@@ -309,7 +307,6 @@ impl RateLimitService for LimiteronService {
             return Ok(RateLimitResult::Allowed);
         }
 
-        // 构建请求上下文
         let context = self.build_request_context(api_key, endpoint);
 
         // 使用 Governor 检查限流
@@ -390,7 +387,6 @@ impl ConcurrencyControlService for LimiteronService {
             team_id, task_id
         );
 
-        // 尝试查找任务
         let task = match self.task_repository.find_by_id(task_id).await {
             Ok(Some(t)) => t,
             Ok(None) => {
@@ -418,7 +414,6 @@ impl ConcurrencyControlService for LimiteronService {
                 team_id
             );
 
-            // 创建积压任务
             let backlog = crate::domain::repositories::tasks_backlog_repository::TasksBacklog::new(
                 task_id,
                 team_id,
@@ -450,7 +445,6 @@ impl ConcurrencyControlService for LimiteronService {
             team_id
         );
 
-        // 处理积压任务
         self.process_backlog_tasks(team_id).await?;
 
         Ok(())
@@ -493,7 +487,6 @@ impl BacklogService for LimiteronService {
             team_id
         );
 
-        // 获取待处理的积压任务
         let pending_backlogs = match self
             .tasks_backlog_repository
             .get_pending_tasks(Some(team_id), Some(10))
@@ -512,7 +505,6 @@ impl BacklogService for LimiteronService {
         let mut processed_count = 0;
 
         for backlog in pending_backlogs {
-            // 检查任务是否已过期
             if backlog.is_expired() {
                 let mut expired_backlog = backlog.clone();
                 if let Err(e) = expired_backlog.mark_expired() {
@@ -546,7 +538,6 @@ impl BacklogService for LimiteronService {
                     }
                 }
 
-                // 更新积压任务状态
                 let mut updated_backlog = backlog.clone();
                 if let Err(e) = updated_backlog.mark_completed() {
                     log::error!("LimiteronService: Error marking backlog completed: {}", e);
@@ -589,7 +580,6 @@ impl QuotaService for LimiteronService {
             team_id, amount
         );
 
-        // 检查余额
         let balance = match self.credits_repository.get_balance(team_id).await {
             Ok(balance) => balance,
             Err(e) => {
@@ -686,7 +676,7 @@ mod tests {
     use limiteron::config::{LimiterConfig, Matcher};
     use std::str::FromStr;
 
-    // ========== RateLimitingConfig::default() tests ==========
+    // RateLimitingConfig::default tests
 
     #[test]
     fn test_rate_limiting_config_default_values() {
@@ -697,7 +687,7 @@ mod tests {
         assert!(config.concurrency.enabled);
     }
 
-    // ========== build_flow_control_config tests ==========
+    // build_flow_control_config tests
 
     #[test]
     fn test_build_flow_control_config_default() {
@@ -789,7 +779,7 @@ mod tests {
         }
     }
 
-    // ========== Mock repositories for trait impl tests ==========
+    // Mock repositories for trait impl tests
 
     use crate::domain::models::credits_model::{CreditsTransaction, CreditsTransactionType};
     use crate::domain::models::task_domain::{TaskStatus, TaskType};
@@ -816,9 +806,9 @@ mod tests {
         find_mode: FindByIdMode,
         /// Task to return when find_mode == ReturnTask
         task: Option<Task>,
-        /// Whether update() should fail
+        /// Whether update should fail
         update_should_fail: bool,
-        /// Number of times update() was called
+        /// Number of times update was called
         update_calls: Mutex<u32>,
     }
 
@@ -980,11 +970,11 @@ mod tests {
     struct MockBacklogRepository {
         /// Pending tasks to return from get_pending_tasks
         pending_tasks: Mutex<Vec<TasksBacklog>>,
-        /// Whether create() should fail
+        /// Whether create should fail
         create_should_fail: bool,
-        /// Whether update() should fail
+        /// Whether update should fail
         update_should_fail: bool,
-        /// Whether get_pending_tasks() should fail
+        /// Whether get_pending_tasks should fail
         get_pending_should_fail: bool,
         /// Created backlogs (for assertion)
         created_backlogs: Mutex<Vec<TasksBacklog>>,
@@ -1273,7 +1263,7 @@ mod tests {
         )
     }
 
-    // ========== RateLimitService trait tests ==========
+    // RateLimitService trait tests
 
     #[tokio::test]
     async fn test_check_rate_limit_disabled_short_circuits_to_allowed() {
@@ -1389,7 +1379,7 @@ mod tests {
         assert_eq!(result.unwrap(), 0);
     }
 
-    // ========== ConcurrencyControlService trait tests ==========
+    // ConcurrencyControlService trait tests
 
     #[tokio::test]
     async fn test_check_team_concurrency_disabled_returns_allowed() {
@@ -1652,7 +1642,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ========== BacklogService trait tests ==========
+    // BacklogService trait tests
 
     #[tokio::test]
     async fn test_process_backlog_tasks_get_pending_fails_returns_db_error() {
@@ -1762,7 +1752,7 @@ mod tests {
         let task_id = crate::domain::id::Id::generate();
         let team_id = crate::domain::id::Id::generate();
         let backlog = make_pending_backlog(task_id, team_id);
-        // NOTE: source bug — mark_completed() on a Pending backlog fails, so
+        // NOTE: source bug — mark_completed on a Pending backlog fails, so
         // processed_count never increments. We assert the observed behavior.
         let backlog_repo = Arc::new(MockBacklogRepository::with_pending(vec![backlog]));
         let task_repo = Arc::new(MockTaskRepository::with_no_task());
@@ -1880,7 +1870,7 @@ mod tests {
         assert_eq!(result.unwrap(), 0); // break before any processing
     }
 
-    // ========== QuotaService trait tests ==========
+    // QuotaService trait tests
 
     #[tokio::test]
     async fn test_check_and_deduct_quota_get_balance_fails_returns_credits_error() {

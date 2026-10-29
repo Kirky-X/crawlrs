@@ -59,7 +59,7 @@ static GARRISON_DAO: RwLock<Option<Arc<dyn GarrisonDao>>> = RwLock::new(None);
 /// `#[tokio::test]` 默认并行执行，全局 `RwLock` 会污染——串行化是必要折衷。
 ///
 /// 使用 [`tokio::sync::Mutex`]（而非 [`std::sync::Mutex`]）的理由：
-/// 测试中需持锁跨 `.await`（如 `init_garrison_dao().await`），`std::sync::Mutex`
+/// 测试中需持锁跨 `.await`（如 `init_garrison_dao.await`），`std::sync::Mutex`
 /// 在多线程 runtime 持锁跨 await 可能死锁（[`clippy::await_holding_lock`] 警告）。
 /// `tokio::sync::Mutex` 是 async-aware，安全持锁跨 await。
 ///
@@ -121,7 +121,7 @@ pub async fn init_garrison_dao() -> garrison::prelude::GarrisonResult<Arc<dyn Ga
 ///
 /// # 返回
 ///
-/// - `Ok(())` — 注入成功（先前为 None）
+/// - `Ok()` — 注入成功（先前为 None）
 /// - `Err(dao)` — 已有实例被注入（返回传入的 dao 让调用方处理）
 ///
 /// # Spec
@@ -169,7 +169,7 @@ mod tests {
     // `block_in_place` 在 `current_thread` runtime 中会 panic：
     //   "Cannot start a runtime from within a runtime"
     // （oxcache-0.3.0/src/cache/builder/cache_builder.rs:356-361 注释明确要求
-    //  multi_thread flavor，参考其 `test_builder_sync_mode_true_enables_backend_sync`）
+    // multi_thread flavor，参考其 `test_builder_sync_mode_true_enables_backend_sync`）
     // `worker_threads = 1` 保持单线程语义，仅启用 `block_in_place` 支持。
 
     /// init_garrison_dao 返回可用 Arc<dyn GarrisonDao>
@@ -210,7 +210,7 @@ mod tests {
         dao1.delete(key).await.unwrap();
     }
 
-    // ========== 全局 dao set/get/reset_for_test 测试 ==========
+    // 全局 dao set/get/reset_for_test 测试
 
     /// set_garrison_dao 首次注入返回 Ok，二次注入返回 Err(dao)
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

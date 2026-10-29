@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 /// 带验证规则的配置结构
 ///
-/// `#[config(validate)]` 让 confers 在 `build()` 时自动调用 `Validate::validate()`。
+/// `#[config(validate)]` 让 confers 在 `build` 时自动调用 `Validate::validate`。
 #[derive(Debug, Clone, Deserialize, Serialize, Config, Validate)]
 #[validate(crate = "sdforge::validator")]
 #[config(env_prefix = "APP_", validate)]
@@ -106,7 +106,6 @@ async fn main() {
     info!("🚀 开始 confers 配置验证示例");
     info!("=====================================\n");
 
-    // 1. 验证机制说明
     info!("1️⃣  confers 验证机制");
     info!("-----------------------------");
     info!("📖 confers 0.4 集成 validator crate，提供两层验证：");
@@ -122,7 +121,6 @@ async fn main() {
     info!("   - does_not_contain(...) : 排除特定子串");
     info!("");
 
-    // 2. 验证成功示例
     info!("2️⃣  验证成功示例");
     info!("-----------------------------");
     let valid = valid_sample();
@@ -188,7 +186,6 @@ async fn main() {
     info!("   }}");
     info!("");
 
-    // 6. 验证最佳实践
     info!("6️⃣  验证最佳实践");
     info!("-----------------------------");
     info!("💡 推荐做法：");
@@ -221,7 +218,7 @@ fn format_validation_errors(e: &sdforge::validator::ValidationErrors) -> String 
 /// 占位：保证 ConfigBuilder 类型被引用（用于演示自动验证的入口）
 #[allow(dead_code)]
 fn _build_entry(settings: &ValidatedSettings) {
-    // ConfigBuilder 在 build() 时会调用 settings.validate()
+    // ConfigBuilder 在 build 时会调用 settings.validate
     let _ = settings.validate();
     let _ = ConfigBuilder::<ValidatedSettings>::new();
 }

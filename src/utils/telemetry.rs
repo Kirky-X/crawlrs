@@ -125,7 +125,7 @@ mod tests {
         }
     }
 
-    // ========== build_inklog_config tests ==========
+    // build_inklog_config tests
 
     #[test]
     fn test_build_inklog_config_console_only() {
@@ -185,7 +185,7 @@ mod tests {
         );
     }
 
-    // ========== build_file_sink_config tests ==========
+    // build_file_sink_config tests
 
     #[test]
     fn test_build_file_sink_config_path() {
@@ -238,7 +238,7 @@ mod tests {
         );
     }
 
-    // ========== init_telemetry tests ==========
+    // init_telemetry tests
 
     #[tokio::test]
     async fn test_init_telemetry_succeeds_with_console_only() {

@@ -44,7 +44,7 @@ impl SearchResult {
 mod tests {
     use super::*;
 
-    // ========== SearchResult::default tests ==========
+    // SearchResult::default tests
 
     #[test]
     fn test_default_produces_empty_fields() {
@@ -72,7 +72,7 @@ mod tests {
         assert_eq!(a, b, "default should be deterministic");
     }
 
-    // ========== SearchResult::new tests ==========
+    // SearchResult::new tests
 
     #[test]
     fn test_new_with_description_sets_fields_and_defaults() {
@@ -129,7 +129,7 @@ mod tests {
         assert_eq!(result.score, 0.0);
     }
 
-    // ========== Serialization tests ==========
+    // Serialization tests
 
     #[test]
     fn test_serde_roundtrip_with_description() {
@@ -183,7 +183,7 @@ mod tests {
         );
     }
 
-    // ========== Clone / PartialEq tests ==========
+    // Clone / PartialEq tests
 
     #[test]
     fn test_clone_produces_equal_result() {

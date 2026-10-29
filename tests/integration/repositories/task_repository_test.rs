@@ -66,7 +66,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
     println!("DEBUG: Creating task with ID: {:?}", task.id);
     repo.create(&task).await.expect("Failed to create task");
 
-    // --- Concurrent Acquisition ---
+    // Concurrent Acquisition
     // 使用屏障确保两个工作进程同时开始
     let barrier = Arc::new(tokio::sync::Barrier::new(2));
     let repo1 = repo.clone();
@@ -113,7 +113,6 @@ async fn test_concurrent_task_acquisition_and_timeout() {
         assert_eq!(t2.status, TaskStatus::Active);
     }
 
-    // 验证获取的任务状态正确
     if let Some(t) = result1_ok {
         assert_eq!(
             t.status,
@@ -129,7 +128,7 @@ async fn test_concurrent_task_acquisition_and_timeout() {
         );
     }
 
-    // --- Lock Timeout and Re-acquisition ---
+    // Lock Timeout and Re-acquisition
     // 尝试测试锁超时功能
     let acquired_task_id = result1_ok.map(|t| t.id).or(result2_ok.map(|t| t.id));
 
@@ -142,7 +141,6 @@ async fn test_concurrent_task_acquisition_and_timeout() {
             .expect("Failed to get session");
         let conn = session.connection().expect("Failed to get connection");
 
-        // 获取最新状态的任务
         let task_model_opt = task_entity::Entity::find_by_id(task_id).one(conn).await;
 
         if let Ok(Some(task_model)) = task_model_opt {
@@ -160,7 +158,6 @@ async fn test_concurrent_task_acquisition_and_timeout() {
                 let update_result = task_active.update(conn).await;
 
                 if update_result.is_ok() {
-                    // 尝试重新获取任务
                     let reacquired_task = repo
                         .acquire_next(worker2_id)
                         .await
@@ -218,10 +215,8 @@ async fn test_repository_crud_operations() {
         lock_expires_at: None,
     };
 
-    // Create
     repo.create(&new_task).await.expect("Failed to create task");
 
-    // Read
     let found_task = repo
         .find_by_id(new_task.id)
         .await
@@ -229,7 +224,6 @@ async fn test_repository_crud_operations() {
         .expect("Task not found");
     assert_eq!(found_task.id, new_task.id);
 
-    // Update
     let mut updated_task = found_task;
     updated_task.status = TaskStatus::Active;
     repo.update(&updated_task)
@@ -370,7 +364,6 @@ async fn test_repository_acquire_next_task() {
         "If more tasks exist, they should have Active status"
     );
 
-    // 清理测试创建的任务
     let session = app
         .db_pool
         .get_session("admin")
@@ -395,7 +388,6 @@ async fn test_task_status_transitions() {
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
 
-    // Create a task
     let task = Task {
         id: crawlrs::domain::id::Id::generate().into(),
         task_type: TaskType::Scrape,
@@ -701,7 +693,6 @@ async fn test_exists_by_url() {
         .await
         .expect("Failed to check task existence"));
 
-    // 清理测试创建的任务
     let session = app
         .db_pool
         .get_session("admin")
@@ -730,7 +721,7 @@ async fn test_reset_stuck_tasks() {
     // 使用唯一前缀避免数据冲突
     let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
-    // Use fixed reference time to avoid timing issues between multiple Utc::now() calls
+    // Use fixed reference time to avoid timing issues between multiple Utc::now calls
     let now = Utc::now();
     let one_hour_ago = now - chrono::Duration::hours(1);
     let two_hours_ago = now - chrono::Duration::hours(2);
@@ -828,7 +819,6 @@ async fn test_reset_stuck_tasks() {
         .expect("Task not found");
     assert_eq!(unchanged_task.status, TaskStatus::Active);
 
-    // 清理测试创建的任务
     let session = app
         .db_pool
         .get_session("admin")
@@ -909,9 +899,9 @@ async fn test_cancel_tasks_by_crawl_id() {
         .expect("Failed to create different crawl task");
 
     // Cancel tasks by crawl_id
-    // 注意: cancel_tasks_by_crawl_id 的 find() → update_many() 之间存在 TOCTOU 竞态。
+    // 注意: cancel_tasks_by_crawl_id 的 find → update_many 之间存在 TOCTOU 竞态。
     // 并行测试的 acquire_next 可能在 find 之后读到 Queued 任务并在 update_many 之前
-    // 用 ActiveModel::update() 覆盖为 Active（Lost Update）。
+    // 用 ActiveModel::update 覆盖为 Active（Lost Update）。
     // cancelled_count 仍为 3（update_many 按 ID 过滤不检查状态），但后续 find_by_crawl_id
     // 可能返回 Active 状态的任务。
     let cancelled_count = repo
@@ -962,7 +952,7 @@ async fn test_expire_tasks() {
     let repo = TaskRepositoryImpl::new(app.db_pool.clone(), chrono::Duration::seconds(10));
     let team_id = app.team_id;
 
-    // Use a fixed reference time to avoid timing issues between multiple Utc::now() calls
+    // Use a fixed reference time to avoid timing issues between multiple Utc::now calls
     let now = Utc::now();
     let two_days_ago = now - chrono::Duration::days(2);
 
@@ -1243,7 +1233,6 @@ async fn test_find_existing_urls_batch() {
     // 使用唯一前缀避免数据冲突
     let unique_prefix = crawlrs::domain::id::Id::generate().to_string();
 
-    // 创建 10 个任务
     let mut created_urls = Vec::new();
     for i in 0..10 {
         let url = format!("https://{}.text.npr.org/batch/{}", unique_prefix, i);
@@ -1336,7 +1325,6 @@ async fn test_find_existing_urls_batch() {
         "Should find no existing URLs"
     );
 
-    // 清理测试创建的任务
     let session = app
         .db_pool
         .get_session("admin")
@@ -1403,7 +1391,6 @@ async fn test_find_existing_urls_performance() {
         .expect("Failed to find existing URLs");
     let duration = start.elapsed();
 
-    // 验证结果正确性
     assert_eq!(existing_urls.len(), 50, "Should find all 50 existing URLs");
 
     // 性能断言：批量查询 50 个 URL 应该在合理时间内完成
@@ -1420,7 +1407,6 @@ async fn test_find_existing_urls_performance() {
         duration
     );
 
-    // 清理测试创建的任务
     let session = app
         .db_pool
         .get_session("admin")
@@ -1434,7 +1420,7 @@ async fn test_find_existing_urls_performance() {
         .ok();
 }
 
-/// 验证 acquire_next 的 SET 子句与 Task::start() + Task::acquire_lock() 保持一致。
+/// 验证 acquire_next 的 SET 子句与 Task::start + Task::acquire_lock 保持一致。
 ///
 /// 这是的回归 guard：如果 SQL 的 SET 子句与 domain 方法产生分歧，
 /// 此测试会失败。详见 task_model.rs 的 MIRROR 注释和 task_repo_impl.rs 的 doc comment。
@@ -1483,27 +1469,27 @@ async fn test_acquire_next_set_clause_mirrors_domain_methods() {
         .expect("Should acquire a task");
     let after = Utc::now();
 
-    // SET status='active'  ↔  Task::start() sets status=Active
+    // SET status='active'  ↔  Task::start sets status=Active
     assert_eq!(
         acquired.status,
         TaskStatus::Active,
         "status should be Active (mirrors Task::start)"
     );
 
-    // SET started_at=NOW()  ↔  Task::start() sets started_at=Some(now)
+    // SET started_at=NOW  ↔  Task::start sets started_at=Some(now)
     assert!(
         acquired.started_at.is_some(),
         "started_at should be set (mirrors Task::start)"
     );
 
-    // SET lock_token=$1  ↔  Task::acquire_lock() sets lock_token=Some(worker_id)
+    // SET lock_token=$1  ↔  Task::acquire_lock sets lock_token=Some(worker_id)
     assert_eq!(
         acquired.lock_token,
         Some(worker_id),
         "lock_token should be worker_id (mirrors Task::acquire_lock)"
     );
 
-    // SET lock_expires_at=NOW()+lock_duration  ↔  Task::acquire_lock()
+    // SET lock_expires_at=NOW+lock_duration  ↔  Task::acquire_lock
     assert!(
         acquired.lock_expires_at.is_some(),
         "lock_expires_at should be set (mirrors Task::acquire_lock)"
@@ -1519,7 +1505,7 @@ async fn test_acquire_next_set_clause_mirrors_domain_methods() {
         expected_max
     );
 
-    // SET updated_at=NOW()  ↔  both domain methods set updated_at=now
+    // SET updated_at=NOW  ↔  both domain methods set updated_at=now
     assert!(
         acquired.updated_at >= before,
         "updated_at should be >= acquire time"
@@ -1617,7 +1603,7 @@ async fn test_acquire_next_prefers_queued_over_active_expired() {
 
 /// 验证 acquire_next 不会获取 active 且 lock 未过期的任务。
 ///
-/// 这验证了 Step 2 的 WHERE 条件 `lock_expires_at < NOW()` 正确排除未过期锁。
+/// 这验证了 Step 2 的 WHERE 条件 `lock_expires_at < NOW` 正确排除未过期锁。
 #[tokio::test]
 async fn test_acquire_next_skips_active_unexpired() {
     let _queue_db_lock = TASK_QUEUE_DB_LOCK.lock().await;
@@ -1698,7 +1684,7 @@ async fn test_acquire_next_skips_active_unexpired() {
 
 /// 验证 acquire_next 不会获取 active 且 lock_expires_at IS NULL 的任务。
 ///
-/// 这验证了 SQL `lock_expires_at < NOW()` 对 NULL 返回 NULL（false）的语义，
+/// 这验证了 SQL `lock_expires_at < NOW` 对 NULL 返回 NULL（false）的语义，
 /// 确保 NULL lock_expires_at 的 active 任务不会被错误地当作可恢复任务。
 #[tokio::test]
 async fn test_acquire_next_skips_active_with_null_lock_expires_at() {

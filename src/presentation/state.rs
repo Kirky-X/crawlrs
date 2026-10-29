@@ -22,7 +22,7 @@
 //! use crate::presentation::state::HandlerState;
 //!
 //! async fn my_handler(state: HandlerState) {
-//!     let task_repo = state.task_repo();
+//!     let task_repo = state.task_repo;
 //!     // ... use task_repo
 //! }
 //! ```
@@ -137,7 +137,7 @@ impl HandlerState for Arc<CrawlRsState> {
 ///
 /// async fn crawl_handler(state: Arc<CrawlRsState>) {
 ///     let crawl_state = CrawlHandlerState::from_app_state(&state);
-///     let use_case = crawl_state.create_use_case();
+///     let use_case = crawl_state.create_use_case;
 ///     // ... use the use case
 /// }
 /// ```
@@ -305,7 +305,7 @@ mod tests {
     #[cfg(feature = "teams")]
     use std::net::IpAddr;
 
-    // ============ No-op mocks ============
+    // No-op mocks
     // These mocks satisfy the trait bounds required by CrawlHandlerState.
     // Their methods are never invoked by the tests below; they exist only to
     // allow construction of the state wrapper for wiring/clone verification.
@@ -736,7 +736,7 @@ mod tests {
     fn test_handler_state_trait_returns_injected_repositories() {
         let state = build_test_state();
         // The trait accessors must return Arcs pointing to the same underlying
-        // objects that were injected via new(), verifying correct wiring.
+        // objects that were injected via new, verifying correct wiring.
         assert!(Arc::ptr_eq(&state.crawl_repo, &state.crawl_repo(),));
         assert!(Arc::ptr_eq(&state.task_repo, &state.task_repo(),));
         // webhook-on 时验证 webhook_repo 注入一致性

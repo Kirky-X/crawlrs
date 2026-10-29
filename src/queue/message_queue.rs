@@ -99,7 +99,7 @@ pub trait MessageQueueRepository: Send + Sync {
     /// 1. 只返回 vt 已过期（或为 NULL）且未归档的消息
     /// 2. 按 msg_id 升序（FIFO）
     /// 3. 并发安全——跳过已被其他消费者锁定的行
-    /// 4. 返回的消息 vt 已更新为 `NOW() + vt seconds`，`read_ct` 已 +1
+    /// 4. 返回的消息 vt 已更新为 `NOW + vt seconds`，`read_ct` 已 +1
     async fn read_batch(
         &self,
         queue_name: &str,
@@ -472,7 +472,7 @@ mod tests {
         }
     }
 
-    // ========== Message struct tests ==========
+    // Message struct tests
 
     #[test]
     fn test_message_serialization() {
@@ -494,7 +494,7 @@ mod tests {
         assert_eq!(deserialized.message, serde_json::json!({"key": "value"}));
     }
 
-    // ========== MessageQueueError tests ==========
+    // MessageQueueError tests
 
     #[test]
     fn test_error_display() {
@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(err.to_string(), "Database error: connection lost");
     }
 
-    // ========== DbMessageQueue via MockRepository tests ==========
+    // DbMessageQueue via MockRepository tests
 
     #[tokio::test]
     async fn test_send_increments_counter() {
@@ -598,7 +598,7 @@ mod tests {
         assert_eq!(repo.archive_calls.load(Ordering::SeqCst), 1);
     }
 
-    // ========== Arc<T> delegation tests ==========
+    // Arc<T> delegation tests
 
     #[tokio::test]
     async fn test_arc_delegation_send() {

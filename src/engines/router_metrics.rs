@@ -111,7 +111,7 @@ impl RouterMetrics {
 
     /// 记录引擎选择
     ///
-    /// 仅累加 selection 计数；延迟/成功/失败统计各自在 `record_engine_*` 中用 `entry().or_insert(0)`
+    /// 仅累加 selection 计数；延迟/成功/失败统计各自在 `record_engine_*` 中用 `entry.or_insert(0)`
     /// 自动初始化，避免重置已累计的值。
     ///
     /// 注：`engine_name` 参数保留以维持 API 兼容（调用方按语义传入），但本方法不再使用它
@@ -122,7 +122,7 @@ impl RouterMetrics {
 
     /// 记录引擎延迟
     ///
-    /// PERF-004: `entry().or_insert_with(AtomicU64::new).fetch_add` 无锁累加。
+    /// PERF-004: `entry.or_insert_with(AtomicU64::new).fetch_add` 无锁累加。
     pub fn record_engine_latency(&self, engine_name: &str, duration: Duration) {
         let total_ns = duration.as_nanos() as u64;
         self.latencies()
@@ -133,7 +133,7 @@ impl RouterMetrics {
 
     /// 记录引擎成功
     ///
-    /// PERF-004: `entry().or_insert_with(AtomicU64::new).fetch_add` 无锁累加。
+    /// PERF-004: `entry.or_insert_with(AtomicU64::new).fetch_add` 无锁累加。
     pub fn record_engine_success(&self, engine_name: &str) {
         self.success_count()
             .entry(engine_name.to_string())

@@ -22,7 +22,6 @@ impl ScrapeWorker {
     pub(super) async fn process_extract_task(&self, mut task: Task) -> Result<()> {
         info!("Processing extract task {}", task.id);
 
-        // 1. 解析 Payload
         let (payload, url) = parse_extract_payload(&task)?;
         debug!("has_rules: {}", payload.rules.is_some());
         if let Some(ref rules) = payload.rules {

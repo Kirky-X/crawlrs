@@ -33,7 +33,7 @@ pub fn load_settings() -> Result<Settings> {
         .build()
         .map_err(|e| anyhow::anyhow!("Configuration load failed: {}", e))?;
 
-    // 显式调用 sdforge::validator::Validate::validate()
+    // 显式调用 sdforge::validator::Validate::validate
     // 防止环境变量绕过 #[validate(range(min = 1, max = 600))] 等约束
     settings
         .validate()
@@ -193,7 +193,7 @@ mod tests {
         assert!(settings.server.port > 0);
     }
 
-    // ========== detect_available_port tests ==========
+    // detect_available_port tests
 
     #[test]
     fn test_detect_available_port_with_detection_disabled_returns_ok() {

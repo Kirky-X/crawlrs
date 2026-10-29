@@ -853,7 +853,7 @@ mod tests {
         assert!(ratio < 0.5);
     }
 
-    // ========== Free function tests ==========
+    // Free function tests
 
     #[test]
     fn test_init_encoding_patterns_returns_three_patterns() {
@@ -891,7 +891,7 @@ mod tests {
         assert!(!detect_html_structure(""));
     }
 
-    // ========== WebContentProcessorComponent tests ==========
+    // WebContentProcessorComponent tests
 
     #[test]
     fn test_web_content_processor_component_default() {
@@ -936,7 +936,7 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // ========== WebContentProcessor tests ==========
+    // WebContentProcessor tests
 
     #[test]
     fn test_web_content_processor_default() {
@@ -1048,7 +1048,7 @@ mod tests {
         assert_eq!(lang, Some("unknown".to_string()));
     }
 
-    // ========== ProcessedWebContent struct tests ==========
+    // ProcessedWebContent struct tests
 
     #[test]
     fn test_processed_web_content_fields() {
@@ -1086,7 +1086,7 @@ mod tests {
         assert_eq!(cloned.is_html, content.is_html);
     }
 
-    // ========== WebContentError variants tests ==========
+    // WebContentError variants tests
 
     #[test]
     fn test_web_content_error_display_encoding() {
@@ -1107,7 +1107,7 @@ mod tests {
         assert!(err.to_string().contains("Content extraction error"));
     }
 
-    // ========== CrawlTextProcessor tests ==========
+    // CrawlTextProcessor tests
 
     #[test]
     fn test_crawl_text_processor_default() {

@@ -200,7 +200,7 @@ impl SessionManager {
 
         self.maybe_sweep();
         let key = Self::affinity_key(host, session_id);
-        // 容量检查必须在 entry() 之前：entry 持 shard 写锁期间 len() 需
+        // 容量检查必须在 entry 之前：entry 持 shard 写锁期间 len 需
         // 读取所有 shard 读锁 → 死锁（对齐 ProxyPool::sticky 注释约定）
         let at_capacity = self.sessions.len() >= self.max_sessions;
 

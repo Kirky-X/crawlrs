@@ -20,9 +20,7 @@ use crawlrs::domain::services::audit_service::{
     AuditLogBuilder, AuditService, AuditServiceError, AuditServiceTrait,
 };
 
-// =============================================================================
 // Mock Audit Log Repository
-// =============================================================================
 
 struct MockAuditLogRepository {
     created: Mutex<Vec<AuditLogEntry>>,
@@ -149,9 +147,7 @@ impl AuditLogRepository for MockAuditLogRepository {
     }
 }
 
-// =============================================================================
 // Helpers
-// =============================================================================
 
 fn sample_entry(action: &str, decision: AuditDecision) -> AuditLogEntry {
     AuditLogBuilder::new(action, decision)
@@ -173,9 +169,7 @@ fn make_failing_service() -> AuditService<MockAuditLogRepository> {
     AuditService::new(Arc::new(MockAuditLogRepository::failing()))
 }
 
-// =============================================================================
 // AuditService inherent methods - success paths
-// =============================================================================
 
 #[tokio::test]
 async fn test_audit_service_log_success_records_entry() {
@@ -320,9 +314,7 @@ async fn test_audit_service_cleanup_old_logs_returns_count() {
     assert_eq!(count, 42);
 }
 
-// =============================================================================
 // AuditService inherent methods - error paths
-// =============================================================================
 
 #[tokio::test]
 async fn test_audit_service_log_repository_error_propagates() {
@@ -393,9 +385,7 @@ async fn test_audit_service_cleanup_old_logs_repository_error() {
     assert!(result.is_err());
 }
 
-// =============================================================================
 // AuditServiceTrait impl - success paths (delegates to inherent methods)
-// =============================================================================
 
 #[tokio::test]
 async fn test_trait_log_success_delegates_to_inherent() {
@@ -484,9 +474,7 @@ async fn test_trait_get_denied_requests_success() {
     assert!(results.is_empty());
 }
 
-// =============================================================================
 // AuditServiceTrait impl - ERROR paths (covers previously uncovered lines)
-// =============================================================================
 
 #[tokio::test]
 async fn test_trait_log_error_propagates_repository_failure() {
@@ -576,9 +564,7 @@ async fn test_trait_get_denied_requests_error_propagates_repository_failure() {
     }
 }
 
-// =============================================================================
 // AuditLogBuilder tests via public API
-// =============================================================================
 
 #[test]
 fn test_builder_new_sets_action_and_decision() {
@@ -678,9 +664,7 @@ fn test_builder_chaining_all_methods() {
     assert_eq!(entry.request_method(), Some("POST"));
 }
 
-// =============================================================================
 // AuditServiceError conversion tests
-// =============================================================================
 
 #[test]
 fn test_audit_service_error_from_repository_db_error() {
@@ -709,9 +693,7 @@ fn test_audit_service_error_display_repository_not_found() {
     assert!(msg.contains("Audit log not found"));
 }
 
-// =============================================================================
 // Edge cases
-// =============================================================================
 
 #[tokio::test]
 async fn test_log_with_empty_action_succeeds() {
