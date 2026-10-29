@@ -433,6 +433,29 @@ mod tests {
         serde_json::from_str(&raw).expect("meta json parse")
     }
 
+    /// 显式设置单个文件的 mtime。文件系统时间戳粒度粗于测试的连续写入间隔
+    /// （实测 16 连写仅 2 个不同时间戳），「最旧优先」的淘汰顺序必须由测试
+    /// 自己钉住，否则断言退化为 read_dir 随机序。
+    fn set_mtime(path: &Path, t: std::time::SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap_or_else(|e| panic!("open {}: {e}", path.display()))
+            .set_modified(t)
+            .unwrap_or_else(|e| panic!("set_modified {}: {e}", path.display()));
+    }
+
+    /// 第 i 个签名的合成时间（远早于当前墙钟，且按写入序严格递增）。
+    fn stamped_time(i: u64) -> std::time::SystemTime {
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000 + i)
+    }
+
+    fn stamp_signature(dir: &Path, key: &str, i: u64) {
+        let t = stamped_time(i);
+        set_mtime(&dir.join(format!("{key}.html")), t);
+        set_mtime(&dir.join(format!("{key}.meta.json")), t);
+    }
+
     // ========== 滚动淘汰（F4 护栏验收） ==========
 
     /// 滚动淘汰：目录文件数达 max_total 后最旧优先删除，新签名仍可观测。
@@ -456,6 +479,8 @@ mod tests {
                 screenshot: None,
             })
             .await;
+            let key = FailureSnapshotter::signature_key(&url, 429, &reason);
+            stamp_signature(&dir, &key, i);
         }
 
         let file_count = std::fs::read_dir(&dir).unwrap().count();
@@ -619,6 +644,7 @@ mod tests {
             .await;
         assert_eq!(snapshotter.total_written(), 2, "html + meta = 2 files");
         assert!(dir.join(format!("{key_one}.html")).exists());
+        stamp_signature(&dir, &key_one, 0);
 
         // 护栏已满：新签名滚动删除最旧（key-one 的 html/meta），写入自身文件
         let key_two = FailureSnapshotter::signature_key("https://x.com/two", 403, "r2");
@@ -631,6 +657,7 @@ mod tests {
                 None,
             ))
             .await;
+        stamp_signature(&dir, &key_two, 1);
         assert_eq!(
             dir_file_count(&dir),
             2,
