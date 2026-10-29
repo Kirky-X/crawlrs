@@ -2257,9 +2257,10 @@ capture_xhr_max_responses = 5
     #[cfg(not(feature = "cache-redis"))]
     #[test]
     fn test_validate_backend_redis_rejected_without_feature() {
-        let mut s = CacheSettings::default();
-        s.backend = "redis".to_string();
-        s.redis_url = String::new();
+        let mut s = CacheSettings {
+            backend: "redis".to_string(),
+            ..CacheSettings::default()
+        };
         let err = s.validate_backend().expect_err("feature not compiled");
         assert_eq!(
             err.code.to_string(),
@@ -2278,8 +2279,10 @@ capture_xhr_max_responses = 5
     #[cfg(feature = "cache-redis")]
     #[test]
     fn test_validate_backend_redis_requires_url() {
-        let mut s = CacheSettings::default();
-        s.backend = "redis".to_string();
+        let mut s = CacheSettings {
+            backend: "redis".to_string(),
+            ..CacheSettings::default()
+        };
         let err = s.validate_backend().expect_err("url missing");
         assert_eq!(err.code.to_string(), "cache_backend_redis_url_missing");
 

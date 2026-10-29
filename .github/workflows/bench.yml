@@ -1,0 +1,104 @@
+# Copyright (c) 2025-2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+
+name: Bench
+
+# 性能基线回归门禁：不进默认 CI（push/PR 不触发），仅手动派发。
+# 口径、产物路径与机器说明见 docs/PERFORMANCE.md。
+#
+# 首次使用：先以 mode=save 派发一次采集基线（存为 artifact）；此后
+# mode=compare 与存档基线对比，任一基准中位数上涨超阈值即失败。
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "save=采集并存档基线；compare=与存档基线对比，超阈值失败"
+        type: choice
+        default: compare
+        options:
+          - compare
+          - save
+      baseline_name:
+        description: "Criterion 基线名（--save-baseline / --baseline 参数）"
+        default: ci-baseline
+      threshold_pct:
+        description: "回归判定阈值：中位数上涨百分比（compare 模式）"
+        default: "20"
+
+permissions:
+  contents: read
+  # 跨运行下载基线 artifact 需要读取 Actions 数据
+  actions: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench:
+    name: Criterion bench (${{ inputs.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: bench-deps
+
+      - name: Locate latest archived baseline run (compare)
+        id: baseline-run
+        if: ${{ inputs.mode == 'compare' }}
+        run: |
+          run_id=$(gh run list --workflow=bench.yml --limit 20 \
+            --json databaseId,conclusion \
+            -q '[.[] | select(.conclusion == "success")][0].databaseId')
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::error::未找到成功的基线采集运行——先以 mode=save 派发一次"
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download archived baseline (compare)
+        if: ${{ inputs.mode == 'compare' }}
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: criterion-baseline-${{ inputs.baseline_name }}
+          path: target/criterion
+          run-id: ${{ steps.baseline-run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Run benchmarks
+        # 采样口径与存档基线必须一致（docs/PERFORMANCE.md 固定口径）
+        run: |
+          if [ "${{ inputs.mode }}" = "save" ]; then
+            base_arg=--save-baseline
+          else
+            base_arg=--baseline
+          fi
+          cargo bench --bench benchmark -- \
+            --warm-up-time 1 --measurement-time 3 --sample-size 10 \
+            "$base_arg" "${{ inputs.baseline_name }}"
+
+      - name: Regression gate (compare)
+        if: ${{ inputs.mode == 'compare' }}
+        run: |
+          python3 scripts/bench_gate.py \
+            --criterion-dir target/criterion \
+            --baseline "${{ inputs.baseline_name }}" \
+            --threshold-pct "${{ inputs.threshold_pct }}"
+
+      - name: Upload archived baseline (save)
+        if: ${{ inputs.mode == 'save' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: criterion-baseline-${{ inputs.baseline_name }}
+          path: target/criterion
+          retention-days: 90

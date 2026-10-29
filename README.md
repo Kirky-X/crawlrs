@@ -490,9 +490,10 @@ CI 固定执行 `cargo deny check`（advisories / licenses / bans / sources）�
 <tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
 <tr><td align="center">✅</td><td>核心平台（0.1.0）</td><td>搜索/抓取/爬取/提取/映射五大能力 API、DDD 四层、多租户与限流、Webhook 通知</td></tr>
 <tr><td align="center">✅</td><td>平台加固与智能引擎（0.2.0-rc.2）</td><td>garrison 认证、反爬检测、TLS 指纹与 MLLM 引擎、RAG/KG/DRL 智能增强、Prometheus 可观测性、E2E 质量套件</td></tr>
-<tr><td align="center">🚧</td><td>数据库多驱动</td><td><code>db-sqlite</code> / <code>db-mysql</code> 已实现编译级覆盖，运行时 schema 供给待补（当前 <code>migrations/*.sql</code> 为 PG 专用 DDL）</td></tr>
-<tr><td align="center">📋</td><td>架构演进</td><td>事件驱动内部总线、WebSocket 实时任务状态、Redis 共享缓存层（多实例部署）</td></tr>
-<tr><td align="center">📋</td><td>性能看护</td><td>Criterion 基线（e2e-baseline）回归对比常态化、性能口径复测</td></tr>
+<tr><td align="center">✅</td><td>数据库多驱动</td><td><code>db-sqlite</code> / <code>db-mysql</code> 覆盖到运行时 schema 供给：<code>migrations/{postgres,sqlite,mysql}/</code> 三方言建表目录按编译 feature 选择，<code>[database] auto_migrate</code>（缺省 false）接线，三方一致性由测试看护</td></tr>
+<tr><td align="center">✅</td><td>架构演进</td><td>事件驱动内部总线（已交付 <code>tokio::sync::broadcast</code>）、WebSocket 实时任务状态（<code>GET /v1/tasks/{id}/ws</code>）、Redis 共享缓存层（<code>[cache] backend=redis</code>，多实例部署）</td></tr>
+<tr><td align="center">🚧</td><td>forge_api 注册面迁移</td><td><code>forge-full</code>（sdforge inventory 单一注册面）为在途迁移停机坪，与手写 protected/v2 路由互斥；整体切换需三族中间件统一排序裁决</td></tr>
+<tr><td align="center">🚧</td><td>性能看护</td><td>Criterion 基线（e2e-baseline / ci-baseline）回归对比门禁已落地（<code>.github/workflows/bench.yml</code>，手动派发）；权威性能口径复测待进行</td></tr>
 </table>
 
 </details>

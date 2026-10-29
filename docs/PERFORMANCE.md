@@ -49,6 +49,43 @@ cargo bench
 target/criterion/report/index.html
 ```
 
+### 基线采集与回归对比口径
+
+Criterion 把测量结果写入 `target/criterion/`，基线经 `--save-baseline` 命名存档、`--baseline` 对比。**Criterion 只报告相对变化、不设超阈值退出码**，回归门禁由 `scripts/bench_gate.py` 承担（退出码 `0`=通过 / `1`=超阈值 / `2`=基线缺失）。
+
+```bash
+# 1) 采集基线（机器或采样口径变更后必须重建）
+cargo bench --bench benchmark -- --warm-up-time 1 --measurement-time 3 --sample-size 10 \
+  --save-baseline ci-baseline
+
+# 2) 与存档基线对比（同口径参数）
+cargo bench --bench benchmark -- --warm-up-time 1 --measurement-time 3 --sample-size 10 \
+  --baseline ci-baseline
+
+# 3) 超阈值判定：任一基准中位数上涨超过阈值即退出码 1
+python3 scripts/bench_gate.py --criterion-dir target/criterion \
+  --baseline ci-baseline --threshold-pct 20
+```
+
+**产物路径与命名规则**
+
+- 基线快照：`target/criterion/<group>/<benchmark>/<baseline_name>/estimates.json`（同目录另有 `sample.json` / `benchmark.json`；`new/` 为最近一次运行）。判定读取 `median.point_estimate`。
+- HTML 报告：`target/criterion/report/index.html`。
+- Criterion 输出根遵循 cargo 的 target 目录：`bench_gate.py` 缺省按 `CARGO_TARGET_DIR` 解析（未设则 `target/`）；用户级 cargo config 的 `build.target-dir` 另设路径时，显式传 `--criterion-dir <该路径>/criterion`。
+- 基线名约定：`e2e-baseline`（E2E 套件 Stage 5）、`ci-baseline`（bench 门禁）。**一个名字固定对应一份同机器快照**；换了机器必须换名（如 `ci-baseline-runner-<规格>`），不得跨机器复用。
+
+**CI 门禁（`.github/workflows/bench.yml`，仅 `workflow_dispatch`）**
+
+- `mode=save`：采集并上传 artifact `criterion-baseline-<baseline_name>`（保留 90 天）。
+- `mode=compare`：下载最近一次成功采集的该 artifact，跑 `--baseline` 对比后由 `bench_gate.py` 判定，超阈值即 job 失败。首次使用需先 `save` 一次。
+- bench 不进默认 CI（push/PR 不触发），避免与功能门禁争用 runner。
+
+**机器说明与数字纪律**
+
+- 基线与机器强相关（CPU 型号/频率、内存带宽、后台负载），跨机器数字不可比；GitHub 托管 runner 规格会漂移，阈值默认 `20%` 用于吸收噪声。
+- 采样口径（`--warm-up-time` / `--measurement-time` / `--sample-size`）必须与采集基线时完全一致，否则 `bench_gate.py` 视作不可配对（退出码 2）。
+- **本仓库不发布未经复现的绝对性能数字**；任何对外引用的数字必须附机器规格、采样口径与采集命令。
+
 ### 与 E2E 基线联动
 
 `./tests/e2e/e2e-suite.sh` 的 Stage 5 以缩短采样参数编译并短跑基准：

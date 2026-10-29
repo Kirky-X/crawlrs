@@ -491,9 +491,10 @@ Please do not report security vulnerabilities through public issues — use the 
 <tr><th style="text-align:center">Status</th><th style="text-align:left">Area</th><th style="text-align:left">Items</th></tr>
 <tr><td align="center">✅</td><td>Core platform (0.1.0)</td><td>Five-capability APIs (search/scrape/crawl/extract/map), DDD four layers, multi-tenancy & rate limiting, webhook notifications</td></tr>
 <tr><td align="center">✅</td><td>Platform hardening & smart engines (0.2.0-rc.2)</td><td>garrison authentication, anti-bot detection, TLS-fingerprint & MLLM engines, RAG/KG/DRL intelligent enhancements, Prometheus observability, E2E quality suite</td></tr>
-<tr><td align="center">🚧</td><td>Multi-driver databases</td><td><code>db-sqlite</code> / <code>db-mysql</code> covered at compile level; runtime schema provisioning pending (current <code>migrations/*.sql</code> is PG-only DDL)</td></tr>
-<tr><td align="center">📋</td><td>Architecture evolution</td><td>Event-driven internal bus, WebSocket real-time task status, Redis shared cache layer (multi-instance deployments)</td></tr>
-<tr><td align="center">📋</td><td>Performance stewardship</td><td>Routine Criterion baseline (e2e-baseline) regression comparisons, re-measurement of performance figures</td></tr>
+<tr><td align="center">✅</td><td>Multi-driver databases</td><td><code>db-sqlite</code> / <code>db-mysql</code> now reach runtime schema provisioning: per-dialect DDL under <code>migrations/{postgres,sqlite,mysql}/</code> selected by compiled feature, wired via <code>[database] auto_migrate</code> (default false), cross-dialect consistency guarded by tests</td></tr>
+<tr><td align="center">✅</td><td>Architecture evolution</td><td>Event-driven internal bus (delivered on <code>tokio::sync::broadcast</code>), WebSocket real-time task status (<code>GET /v1/tasks/{id}/ws</code>), Redis shared cache layer (<code>[cache] backend=redis</code>, multi-instance deployments)</td></tr>
+<tr><td align="center">🚧</td><td>forge_api registration surface migration</td><td><code>forge-full</code> (sdforge inventory single registration surface) is the in-flight migration parking lot, mutually exclusive with hand-written protected/v2 routes; full switch awaits a unified ordering decision across the three middleware families</td></tr>
+<tr><td align="center">🚧</td><td>Performance stewardship</td><td>Criterion baseline (e2e-baseline / ci-baseline) regression gate landed (<code>.github/workflows/bench.yml</code>, manual dispatch); authoritative re-measurement still pending</td></tr>
 </table>
 
 </details>

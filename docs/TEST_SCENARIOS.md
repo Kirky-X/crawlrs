@@ -30,8 +30,8 @@
 **环境硬约束**（与 `tests/docs/feature-test-matrix.md` §1.3 一致）：
 
 - 中间件仅需 **PostgreSQL 16**；Chrome / FlareSolverr 为可选浏览器 profile。
-- 代码库无 Redis / Keycloak OIDC 客户端集成，不设相应服务轴。
-- `migrations/*.sql` 为 PG 专用 DDL；`db-sqlite` / `db-mysql` 当前为编译级覆盖。
+- Redis 共享缓存为可选后端（`cache-redis` feature + `[cache] backend=redis`，缺省 `memory`），测试服务轴仍不依赖 Redis 实例。
+- 迁移 DDL 按方言分目录供给：`migrations/{postgres,sqlite,mysql}/` 三套建表语句（一致性由 `tests/migration_dialect.rs` 看护）；`db-sqlite` / `db-mysql` 覆盖到运行时 schema 供给面（`[database] auto_migrate`）。
 
 ---
 
@@ -167,7 +167,7 @@ WreqEngine 出网验证 JA3/JA4 指纹伪装（需 `engine-tls-fingerprint` 特�
 ### 🔁 与 CI 一致的命令
 
 ```bash
-# 单元测试（CI test job；需 PostgreSQL 16 + migrations/*.sql，本地由 testcontainers 自动拉起）
+# 单元测试（CI test job；需 PostgreSQL 16 + migrations/postgres/*.sql，本地由 testcontainers 自动拉起）
 cargo test --features "standard" --lib
 cargo test --features "full" --lib
 
@@ -185,7 +185,7 @@ cargo deny check
 cargo llvm-cov --features "full" --fail-under-lines 80
 ```
 
-CI 的 test / integration-test / coverage job 均以 `postgres:16` service 容器为前提：先执行 `for f in migrations/*.sql; do psql ... -f "$f"; done` 应用迁移，再运行测试；`DATABASE_URL` / `TEST_DATABASE_URL` 指向 `postgres://postgres:postgres@localhost:5432/crawlrs_test`。test job 的工具链矩阵为 Rust 1.97 / stable（见 `ci.yml`）。
+CI 的 test / integration-test / coverage job 均以 `postgres:16` service 容器为前提：先执行 `for f in migrations/postgres/*.sql; do psql ... -f "$f"; done` 应用迁移，再运行测试；`DATABASE_URL` / `TEST_DATABASE_URL` 指向 `postgres://postgres:postgres@localhost:5432/crawlrs_test`。test job 的工具链矩阵为 Rust 1.97 / stable（见 `ci.yml`）。
 
 ### 🎼 E2E 套件（7 阶段）
 

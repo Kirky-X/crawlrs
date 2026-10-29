@@ -549,9 +549,11 @@ json = 'json only'
     /// （不依赖任何供应商栈）
     #[test]
     fn test_provenance_config_from_settings() {
-        let mut llm = crate::config::settings::LLMSettings::default();
-        llm.provenance_enabled = true;
-        llm.provenance_min_coverage = 0.6;
+        let llm = crate::config::settings::LLMSettings {
+            provenance_enabled: true,
+            provenance_min_coverage: 0.6,
+            ..Default::default()
+        };
         let config = provenance::ProvenanceConfig::from_settings(&llm);
         assert!(config.enabled);
         assert!((config.min_coverage - 0.6).abs() < f64::EPSILON);

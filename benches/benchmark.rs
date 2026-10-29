@@ -4,6 +4,28 @@
 //! 性能基准测试套件
 //!
 //! 该模块包含对 crawlrs 系统核心组件的性能基准测试
+//!
+//! # 基线采集与回归对比
+//!
+//! Criterion 测量结果存于 `target/criterion/`，经 `--save-baseline` 命名
+//! 存档、`--baseline` 对比（E2E 套件 Stage 5 与 CI bench 门禁同此口径）：
+//!
+//! ```bash
+//! # 首次采集（或机器/采样口径变更后重建）：把本次测量存为命名基线
+//! cargo bench --bench benchmark -- --save-baseline ci-baseline
+//!
+//! # 回归对比：本次运行与存档基线同跑，报告 change: +x% / -y%
+//! cargo bench --bench benchmark -- --baseline ci-baseline
+//!
+//! # 超阈值判定（Criterion 只报告变化、不设退出码）由门禁脚本承担：
+//! python3 scripts/bench_gate.py --criterion-dir target/criterion \
+//!   --baseline ci-baseline --threshold-pct 20
+//! ```
+//!
+//! 注意：基线与机器强相关（CPU/内存频率/负载），跨机器对比无意义；
+//! 采集与对比的采样参数（`--warm-up-time` / `--measurement-time` /
+//! `--sample-size`）必须一致。口径、产物路径与命名规则详见
+//! `docs/PERFORMANCE.md`。
 
 use async_trait::async_trait;
 use crawlrs::domain::models::task_domain::TaskType;

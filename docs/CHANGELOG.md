@@ -14,6 +14,14 @@
 
 ## [Unreleased]
 
+### Added（架构演进收口 arch-evolution-closure）
+
+- **多驱动 schema 供给**：迁移 DDL 按方言分目录（`migrations/{postgres,sqlite,mysql}/`），`dbnexus_connection` 依编译 feature 选择 `migrations_dir` 并接线 `[database] auto_migrate`（缺省 false），未匹配 dialect 显性报错；`bootstrap/services.rs` 移除「PG DDL 失败→回退内存」；新增 `tests/migration_dialect.rs` 断言三方言覆盖同一组表与列
+- **WebSocket 任务状态**：新增 `GET /v1/tasks/{id}/ws`（axum ws），升级后订阅既有 `event_bus`（tokio broadcast）按 task id 过滤推送状态帧，复用现有鉴权/租户中间件；新增连接数上限与空闲超时配置（`[websocket]`）并断言超限拒绝
+- **Redis 共享缓存层**：新增 `[cache] backend = "memory" | "redis"` 与 `redis_url`；`cache-redis` feature 透传 `oxcache/redis`；`backend=redis` 在 feature 未编译或缺 URL 时启动 fail-closed 拒绝；`cache_service` 按 backend 构造实例（`RedisBackend` 经 `Cache::builder().backend_arc` 注入，默认强制 `rediss://`，非 TLS 需 `OXCACHE_ALLOW_INSECURE_REDIS` 显式放行），两后端 get/set/ttl 语义一致（逐键 TTL），Redis 不可达固定为拒绝（不降级）
+- **性能基线回归门禁**：新增 `.github/workflows/bench.yml`（仅 `workflow_dispatch`，不进默认 CI），`mode=save` 采集并 artifact 存档 Criterion 基线、`mode=compare` 与存档基线对比；新增 `scripts/bench_gate.py` 承担超阈值判定（Criterion 只报告变化不设退出码）；`benches/benchmark.rs` 与 `docs/PERFORMANCE.md` 文档化采集/对比口径、产物路径命名与机器说明
+- **状态对齐**：README / README_EN 路线图「架构演进」📋→✅（事件总线注明 tokio broadcast）、「数据库多驱动」🚧→✅（运行时 schema 供给落地）；新增 `forge_api`（`forge-full`）在途迁移条目；`docs/TEST_SCENARIOS.md` 迁移表述更新为三方言目录现状、Redis 后端说明与 `migrations/postgres/` 路径
+
 ### Fixed（登记簿清零 registry-zero-out）
 
 - **429 响应统一标准包封**：`check_rate_limit` 的 `Denied`/`RetryAfter`/后端错误（fail-closed 503）改经 `response_builder::errors` 标准包封（`error.code = "RATE_LIMITED"`，503 为 `SERVICE_UNAVAILABLE`；`RetryAfter` 保留 `retry_after_seconds`）；单测断言新形态；liveapi 429 关卡断言升级为 `error.code = "RATE_LIMITED"`（旧字符串包封不再接受）
