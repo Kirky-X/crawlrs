@@ -45,20 +45,35 @@ pub struct UaFingerprint {
     pub navigator_platform: Option<&'static str>,
 }
 
-/// Sec-CH-UA-Arch 取宿主真实指令集（浏览器就跑在宿主上，真实 Chrome 上报
-/// 真实值）：x86_64→x86、aarch64→arm，其余平台保守回退 x86。
-fn host_architecture() -> &'static str {
-    match std::env::consts::ARCH {
-        "x86_64" => "x86",
-        "aarch64" => "arm",
-        _ => "x86",
-    }
-}
-
 /// Android profile 的 Sec-CH-UA-Arch：设备叙事恒为 arm（真机 Android
 /// Chrome 上报 arm）——与宿主指令集无关，模拟设备连贯性优先。
 fn android_architecture() -> &'static str {
     "arm"
+}
+
+/// 桌面/移动 profile 的 Sec-CH-UA-Arch：由 **UA 自述口径** 决定，不取宿主。
+///
+/// 取宿主的旧实现在 arm64 机器上会让 `Windows NT 10.0; Win64; x64` 的 profile
+/// 发出 `Sec-CH-UA-Arch: arm`——与本模块的首要目标（消除 UA 与 client hints
+/// 的矛盾）直接冲突，反检测侧可单请求识破；同一 profile 在 x86_64 CI 与
+/// arm64 开发机还会产出不同指纹，构建不可复现。
+///
+/// 判定顺序：arm 标识（`arm64`/`aarch64`/`armv8`/`armv7`）优先于 x86，
+/// 其余按 UA 惯例归 x86。iOS 的 `CPU iPhone OS` 串不含标识 → x86
+/// （真机 iPhone 报 arm，但 CriOS 路径 metadata 整体缺席，不到这里）。
+fn profile_architecture(ua: &str, mobile: bool, platform: &str) -> &'static str {
+    if mobile && platform == "Android" {
+        return android_architecture();
+    }
+    let lowered = ua.to_ascii_lowercase();
+    if lowered.contains("aarch64")
+        || lowered.contains("arm64")
+        || lowered.contains("armv8")
+        || lowered.contains("armv7")
+    {
+        return "arm";
+    }
+    "x86"
 }
 /// bitness 固定 64（移动端 iOS Chrome 上报同样为 64 位语义）
 const BITNESS: &str = "64";
@@ -84,13 +99,10 @@ pub fn build_ua_fingerprint(
     // 与 client hints 无耦合，仍可安全覆盖
     let metadata = brands.map(|b| {
         let (platform, platform_version) = client_hint_platform(profile_platform, ua);
-        // Android 真机为 arm 指令集（设备叙事）；桌面取宿主真实指令集。
-        // 判定须在 platform move 前完成
-        let architecture = if mobile && platform == "Android" {
-            android_architecture().to_string()
-        } else {
-            host_architecture().to_string()
-        };
+        // 架构由 profile 的 UA 自述派生（见 profile_architecture），不取宿主：
+        // 取宿主会让 Windows x64 profile 在 arm64 机器上报 arm，UA 与 client
+        // hints 自相矛盾。判定须在 platform move 前完成。
+        let architecture = profile_architecture(ua, mobile, &platform).to_string();
         UserAgentMetadata {
             brands: Some(b),
             // Sec-CH-UA-Full-Version-List 仅在站点经 Accept-CH 主动索取时
@@ -319,9 +331,9 @@ mod tests {
         let meta = fp.metadata.expect("chrome profile must have metadata");
         assert_eq!(meta.platform, "Windows");
         assert_eq!(meta.platform_version, "10.0.0");
-        // 桌面 profile 取宿主真实指令集（见 build_ua_fingerprint 的 architecture
-        // 分支）：x86_64 CI 报 x86，arm64 开发机报 arm——按编译目标断言，勿硬编码
-        assert_eq!(meta.architecture, super::host_architecture());
+        // 架构由 UA 自述派生（profile_architecture），与编译宿主无关：
+        // `Win64; x64` → x86，在 arm64 开发机与 x86_64 CI 上一致。
+        assert_eq!(meta.architecture, "x86");
         assert_eq!(meta.bitness.as_deref(), Some("64"));
         assert_eq!(meta.model, "");
         assert!(!meta.mobile);
@@ -425,17 +437,36 @@ mod tests {
     }
 
     #[test]
-    fn test_host_architecture_static_mapping() {
-        // 按编译目标断言（arm64 macOS/异构 CI 上硬编码 "x86" 会必然失败）；
-        // 期望值与实现各自的 match 独立书写，非恒真式。
-        let expected = match std::env::consts::ARCH {
-            "x86_64" => "x86",
-            "aarch64" => "arm",
-            _ => "x86",
-        };
-        assert_eq!(super::host_architecture(), expected);
-        // Android profile 恒为 arm，与宿主指令集解耦
-        assert_eq!(super::android_architecture(), "arm");
+    fn test_profile_architecture_from_ua() {
+        // 架构由 UA 自述派生，与编译宿主无关——期望值是独立书写的字面量，
+        // 不调用被测函数，避免自证。
+        // 桌面 Windows x64（Win64; x64）→ x86
+        assert_eq!(
+            super::profile_architecture(UA_WIN_CHROME, false, "Windows"),
+            "x86"
+        );
+        // 桌面 macOS Intel（Intel Mac OS X）→ x86
+        assert_eq!(
+            super::profile_architecture(UA_MAC_CHROME, false, "macOS"),
+            "x86"
+        );
+        // Android 移动端恒 arm（设备叙事，与宿主解耦）
+        assert_eq!(
+            super::profile_architecture(UA_ANDROID_PIXEL, true, "Android"),
+            "arm"
+        );
+        // UA 自述 arm 标识的桌面 profile → arm
+        let ua_linux_arm = "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 \
+                            (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+        assert_eq!(
+            super::profile_architecture(ua_linux_arm, false, "Linux"),
+            "arm"
+        );
+        // 无架构标识 → 保守回退 x86
+        assert_eq!(
+            super::profile_architecture("unknown-ua", false, "Windows"),
+            "x86"
+        );
     }
 
     #[test]

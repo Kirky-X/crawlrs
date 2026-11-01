@@ -168,6 +168,22 @@ jobs:
             exit 1
           fi
           echo "PASS: no RSA code paths in src/, deny.toml ignore premise holds"
+      - name: Verify no ECDSA code paths (deny.toml RUSTSEC-2026-0387 premise)
+        if: matrix.expect-garrison == true
+        run: |
+          set -euo pipefail
+          # deny.toml 忽略 RUSTSEC-2026-0387（crypto-bigint 常时运算时序变异）的前提
+          # 是 crawlrs 走 HS256 对称 JWT，不调用任何 ECDSA 签名/验签路径。该依赖经
+          # elliptic-curve 0.13 ← p256/p384 0.13 ← jsonwebtoken 引入，图内无 patched
+          # 版本；此步骤自动化验证前提仍成立，防止未来改用 ES256/keystore 时 ignore
+          # 静默变成真实风险。
+          matches=$(grep -rE 'ES256|ES384|use p256::|use p384::|p256::|p384::|ecdsa::' src/ --include='*.rs' || true)
+          if [ -n "$matches" ]; then
+            echo "FAIL: found ECDSA code paths, deny.toml ignore for RUSTSEC-2026-0387 no longer safe:"
+            echo "$matches"
+            exit 1
+          fi
+          echo "PASS: no ECDSA code paths in src/, deny.toml ignore premise holds"
 
   fmt:
     name: Rustfmt

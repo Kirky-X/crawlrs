@@ -157,16 +157,21 @@ pub fn detect_system_locale() -> Locale {
 /// 决议启动期默认 locale（纯函数，可测）
 ///
 /// 优先级：
+/// 0. 配置值非法（非 BCP 47）→ 立即回退内置默认 `en-US`，**不进系统检测链**。
+///    非法配置不等于「未配置」；若让它落进检测链，系统 locale 会覆盖回退值，
+///    使"配错了"表现为"配了个别的东西"，掩盖配置错误；
 /// 1. 配置显式指定（`configured_default` ≠ 内置默认 `en-US`）→ 配置值优先；
 /// 2. 配置未显式指定（仍为 default.toml 内置值）→ 系统检测链
 ///    （[`detect_system_locale`]）；
 /// 3. 检测结果不在 `supported` 内（视为检测失败）→ 回退配置值——
 ///    即 default.toml 的 `i18n.default_locale` 语义：**检测失败时的回退**。
+///
+/// 注：本函数只保证返回**可解析**的 locale，不保证它出现在 `supported` 内；
+/// `default ∈ supported` 由启动期 `validate_i18n`（config_loader）负责拒绝。
 pub fn resolve_startup_default_locale(configured_default: &str, supported: &[&str]) -> Locale {
     let builtin: Locale = Locale::from_str(BUILTIN_DEFAULT_LOCALE).expect("valid builtin locale");
     let Ok(configured) = configured_default.parse::<Locale>() else {
-        // 配置非法 → 直接回退内置默认，确定性失败（不进系统检测，
-        // 避免非法配置被误当成"未配置"而让系统 locale 覆盖回退值）
+        // 优先级 0：非法配置直接回退内置默认，确定性失败
         return builtin;
     };
 
@@ -417,8 +422,10 @@ mod tests {
         let locale = resolve_startup_default_locale("zh-CN", &["en-US", "zh-CN"]);
         assert_eq!(locale.to_string(), "zh-CN");
 
-        // 非内置显式值即便不在 supported 内也优先（显式指定即用户意图，
-        // 加载期由 I18nBundle::load/validate_i18n 负责报错）
+        // 非内置显式值即便不在 supported 内也优先（显式指定即用户意图）。
+        // 该组合由启动期 validate_i18n 拒绝（default 不在 supported 内），
+        // 本函数不重复校验——它是纯函数，只在启动期 validate_i18n 之前
+        // 提供"可解析"的兜底值。
         let locale = resolve_startup_default_locale("zh-TW", &["en-US"]);
         assert_eq!(locale.to_string(), "zh-TW");
     }

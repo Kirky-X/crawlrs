@@ -93,6 +93,9 @@ log_header() {
     echo ""
 }
 
+# 计时：各检查由 main 单入口分发、run_all_checks 顺序执行，严格串行无嵌套，
+# 故用单个标量而非关联数组（bash 3.2 兼容）。不可重入——若将来引入并发
+# 或某检查内部再调另一检查，标量会被静默覆盖，需改回按名索引。
 start_timer() {
     TIMER_START=$(date +%s%N)
 }
@@ -105,16 +108,19 @@ end_timer() {
 
 print_duration() {
     local duration=$1
-    if [ $duration -lt 1000 ]; then
+    # 防御：空串/非数字由调用方保证，但负值不当分钟处理
+    if [ "$duration" -lt 1000 ]; then
         echo "${duration}ms"
-    elif [ $duration -lt 60000 ]; then
+    elif [ "$duration" -lt 60000 ]; then
         echo "$(echo "scale=2; $duration/1000" | bc)s"
     else
         # 余数在 bash 整数域算：bc 的 % 受 scale 影响（scale=2 时 102390%60000 得 390）
         local mins=$(( duration / 60000 ))
         local secs=$(( (duration % 60000) / 1000 ))
         local ms=$(( duration % 1000 ))
-        echo "${mins}min $(echo "scale=2; $secs + $ms/1000" | bc)s"
+        # 秒位 2 位小数 + 毫秒补零到 3 位：102390ms → "1min 42.390s"。
+        # 用整数拼接而非 bc，避免 bc 对 0 + 999/1000 输出 ".99" 缺前导零。
+        printf '%dmin %d.%03ds\n' "$mins" "$secs" "$ms"
     fi
 }
 
@@ -171,6 +177,8 @@ check_cargo_fmt() {
         echo "  运行以下命令格式化代码:"
         echo "    ${CYAN}cargo fmt --all${NC}"
         echo ""
+        # 与其余 9 个检查一致：失败路径同样打印耗时
+        end_timer "fmt"
         return 1
     fi
 
@@ -474,22 +482,40 @@ check_private_keys() {
     start_timer "private"
 
     local private_files=()
-    local patterns=(
+    # 两类模式分开：内容特征（PEM 头）匹配文件内容，扩展名匹配文件名。
+    # 混用一个 grep 会把 `\.pem$` 当内容正则（几乎永不命中），且以 `-----BEGIN`
+    # 开头的模式会被 grep 当作选项解析（返回 2 → if 判假 → 静默放行）。
+    local content_patterns=(
         "-----BEGIN RSA PRIVATE KEY-----"
         "-----BEGIN DSA PRIVATE KEY-----"
         "-----BEGIN EC PRIVATE KEY-----"
         "-----BEGIN OPENSSH PRIVATE KEY-----"
         "-----BEGIN PGP PRIVATE KEY BLOCK-----"
-        "\.pem$"
-        "\.key$"
-        "\.priv$"
-        "\.ppk$"
+        "-----BEGIN PRIVATE KEY-----"
     )
+    local name_patterns=("*.pem" "*.key" "*.priv" "*.ppk" "*.p12" "*.pfx")
 
     # 检查暂存的敏感文件
     while IFS= read -r file; do
-        for pattern in "${patterns[@]}"; do
-            if grep -qE "$pattern" "$file" 2>/dev/null; then
+        # 本文件自身是扫描器：它的 patterns 数组里存放的正是要匹配的 PEM 头字面量。
+        # 与 .pre-commit-config.yaml 的 detect-private-key exclude 同口径豁免。
+        case "$file" in
+            scripts/pre-commit-check.sh) continue ;;
+        esac
+        # 文件名判定：扩展名即敏感类型
+        local name_hit=0
+        for glob in "${name_patterns[@]}"; do
+            case "$file" in
+                $glob) name_hit=1; break ;;
+            esac
+        done
+        if [ "$name_hit" -eq 1 ]; then
+            private_files+=("$file")
+            continue
+        fi
+        # 内容判定：`grep --` 阻止 PEM 头被当作选项
+        for pattern in "${content_patterns[@]}"; do
+            if grep -qE -- "$pattern" "$file" 2>/dev/null; then
                 private_files+=("$file")
                 break
             fi

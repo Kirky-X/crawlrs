@@ -69,21 +69,46 @@ impl TaskWsGuard {
         }
     }
 
-    /// 尝试占用一个连接名额；超限返回 `false`（调用方应拒绝连接）。
-    fn try_acquire(&self) -> bool {
+    /// 尝试占用一个连接名额；成功返回持有名额的 RAII guard。
+    fn try_acquire(self: &Arc<Self>) -> Option<WsSlot> {
         self.live
             .try_update(Ordering::AcqRel, Ordering::Acquire, |live| {
                 (live < self.max_connections).then_some(live + 1)
             })
-            .is_ok()
+            .ok()
+            .map(|_| WsSlot(Arc::clone(self)))
     }
 
+    /// 释放一个名额。
+    ///
+    /// 用饱和减而非裸 `fetch_sub`：重复释放会让 `usize` 下溢成极大值，
+    /// 使 `try_acquire` 的 `live < max_connections` 恒真，连接上限被静默
+    /// 绕过（DoS 防护失效）。当前所有路径恰好释放一次，但该约束是隐含的
+    /// 控制流事实而非类型保证。
     fn release(&self) {
-        self.live.fetch_sub(1, Ordering::AcqRel);
+        let _ = self
+            .live
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |live| {
+                live.checked_sub(1)
+            });
     }
 
     fn live(&self) -> usize {
         self.live.load(Ordering::Acquire)
+    }
+}
+
+/// 已占用的 ws 连接名额（RAII）。
+///
+/// `TaskWsGuard::try_acquire` 成功后名额归本 guard 持有，`Drop` 时释放——
+/// 覆盖所有退出路径，包括 future 在中途被 drop（客户端在升级阶段断开）。
+/// 此前手工配对 `release()` 只覆盖显式 return 与正常结束，升级期间的取消
+/// 会永久泄漏名额，表现为可用连接数单调下降。
+struct WsSlot(Arc<TaskWsGuard>);
+
+impl Drop for WsSlot {
+    fn drop(&mut self) {
+        self.0.release();
     }
 }
 
@@ -127,27 +152,30 @@ async fn task_status_ws(
     let guard = guard
         .map(|Extension(g)| g)
         .unwrap_or_else(default_global_guard);
-    if !guard.try_acquire() {
+    let Some(slot) = guard.try_acquire() else {
         log::warn!(
             "ws connection rejected: max_connections={} reached (live={})",
             guard.max_connections,
             guard.live()
         );
         return (StatusCode::TOO_MANY_REQUESTS, "too many ws connections").into_response();
-    }
+    };
 
     // 升级判定放最后：先完成鉴权/租户/限额校验，再协商升级——
     // 非 upgrade 请求打到已存在资源时明确要求升级（426）而非 404/挂起。
+    // 名额由 slot 的 Drop 释放：此处 return 与升级期间被取消都不会泄漏。
     let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
         Ok(ws) => ws,
         Err(_) => {
-            guard.release();
             return (StatusCode::UPGRADE_REQUIRED, "websocket upgrade required").into_response();
         }
     };
 
     let rx = bus.subscribe();
-    ws.on_upgrade(move |socket| task_ws_session(socket, rx, task.id, auth.team_id, guard))
+    let idle_timeout = guard.idle_timeout;
+    ws.on_upgrade(move |socket| {
+        task_ws_session(socket, rx, task.id, auth.team_id, slot, idle_timeout)
+    })
 }
 
 /// 未注入守卫扩展时的进程级缺省守卫（100 连接 / 300s 空闲）。
@@ -159,13 +187,16 @@ fn default_global_guard() -> Arc<TaskWsGuard> {
 }
 
 /// 单个 ws 会话：先发 subscribed 确认帧，再循环按 task/team 过滤推送事件；
-/// 空闲超时（窗口内无可推送事件）即关闭连接并释放名额。
+/// 空闲超时（窗口内无可推送事件）即关闭连接。
+///
+/// 名额由 `slot` 的 `Drop` 释放，本函数返回（任何分支）即自动归还。
 async fn task_ws_session(
     mut socket: WebSocket,
     mut rx: broadcast::Receiver<DomainEvent>,
     task_id: Id,
     team_id: Id,
-    guard: Arc<TaskWsGuard>,
+    slot: WsSlot,
+    idle_timeout: Duration,
 ) {
     let ack = json!({
         "event": "subscribed",
@@ -177,12 +208,11 @@ async fn task_ws_session(
         .await
         .is_err()
     {
-        guard.release();
         return;
     }
 
     loop {
-        match tokio::time::timeout(guard.idle_timeout, rx.recv()).await {
+        match tokio::time::timeout(idle_timeout, rx.recv()).await {
             Ok(Ok(event)) => {
                 if let Some(frame) = status_frame(&event, &task_id, &team_id) {
                     if socket
@@ -208,7 +238,8 @@ async fn task_ws_session(
         }
     }
 
-    guard.release();
+    // 名额随 slot 在函数返回时自动归还（见 WsSlot::Drop）
+    drop(slot);
     let _ = socket.send(Message::Close(None)).await;
 }
 
@@ -264,13 +295,38 @@ mod tests {
     /// R-ws-task-status-003：守卫在达到上限时拒绝新连接，释放后恢复。
     #[test]
     fn ws_guard_rejects_over_limit_and_recovers() {
-        let guard = TaskWsGuard::new(2, Duration::from_secs(1));
-        assert!(guard.try_acquire(), "first acquire");
-        assert!(guard.try_acquire(), "second acquire");
-        assert!(!guard.try_acquire(), "third must be rejected at cap");
+        let guard = Arc::new(TaskWsGuard::new(2, Duration::from_secs(1)));
+        let first = guard.try_acquire().expect("first acquire");
+        let second = guard.try_acquire().expect("second acquire");
+        assert!(
+            guard.try_acquire().is_none(),
+            "third must be rejected at cap"
+        );
         assert_eq!(guard.live(), 2);
+        // 名额随 slot 生命周期自动归还
+        drop(first);
+        assert_eq!(guard.live(), 1, "slot drop releases exactly one slot");
+        assert!(
+            guard.try_acquire().is_some(),
+            "acquire after slot drop succeeds"
+        );
+        drop(second);
+    }
+
+    /// 名额归还走饱和减：重复释放不会让计数下溢后绕过上限。
+    #[test]
+    fn ws_guard_release_does_not_underflow() {
+        let guard = Arc::new(TaskWsGuard::new(4, Duration::from_secs(1)));
         guard.release();
-        assert!(guard.try_acquire(), "acquire after release");
+        guard.release();
+        assert_eq!(guard.live(), 0, "release on empty counter saturates at 0");
+        // 上限仍生效（未被下溢的极大值放行）：slot 必须持有到循环结束
+        let mut slots = Vec::new();
+        for _ in 0..4 {
+            slots.push(guard.try_acquire().expect("within cap"));
+        }
+        assert!(guard.try_acquire().is_none(), "cap still enforced");
+        assert_eq!(guard.live(), 4);
     }
 
     /// 状态帧只匹配同 task 同 team 的事件；其他事件与跨租户事件均被过滤。

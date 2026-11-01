@@ -49,6 +49,12 @@ pub fn load_settings() -> Result<Settings> {
         .validate_backend()
         .map_err(|e| anyhow::anyhow!("Configuration validation failed: {}", e))?;
 
+    // i18n 校验。此前 `validate_i18n` 零调用点：显式配置非法 locale、或 default
+    // 不在 supported 内时启动静默降级——bundle 里没有该 locale，所有翻译回退到
+    // 原始 key，无任何报错。改为启动期 fail-fast（与上面 cache 同一先例）。
+    crate::config::settings::validate_i18n(&settings.i18n)
+        .map_err(|e| anyhow::anyhow!("Configuration validation failed: {}", e))?;
+
     info!("Configuration loaded and validated successfully from config sources");
     Ok(settings)
 }

@@ -1,0 +1,28 @@
+# cargo-audit 配置 — 与 deny.toml 的 [advisories] ignore 保持同一口径。
+#
+# 两套扫描器各有独立配置：deny.toml 供 `cargo deny check`（ci.yml），本文件供
+# `cargo audit` / rustsec/audit-check（security.yml）。此前豁免只写进 deny.toml，
+# cargo-audit 侧仍报同一条告警，导致 security.yml 的 audit-check job 恒红。
+# 新增或移除豁免必须同时改两处，理由写在 deny.toml 对应注释里（单一事实来源）。
+
+[advisories]
+ignore = [
+    # rsa 0.9.10 Marvin Attack（经 garrison → jsonwebtoken 传递）。
+    # crawlrs 仅用 HS256 对称 JWT，不调用 rsa crate 任何函数，攻击面为零。
+    "RUSTSEC-2023-0071",
+    # paste（vecboost → candle-core/gemm 传递）：编译期 proc-macro，无运行时攻击面。
+    "RUSTSEC-2024-0436",
+    # number_prefix（vecboost → hf-hub → indicatif 传递）：仅进度条数字格式化。
+    "RUSTSEC-2025-0119",
+    # unsafe-libyaml（serde_yaml_ng 传递）：libyaml C 代码机器翻译，官方归档、
+    # patched 为空，informational unmaintained 非漏洞。
+    "RUSTSEC-2024-0449",
+    # crypto-bigint 0.5.5 常时运算时序变异（经 elliptic-curve 0.13 ← p256/p384 0.13
+    # ← jsonwebtoken 11.1.0 引入）。修补需 RustCrypto 0.14-gen 栈，jsonwebtoken
+    # 最新发布仍锁 0.13-gen，图内无 patched 路径；crawlrs 仅用 HS256，不调用 ECDSA。
+    "RUSTSEC-2026-0387",
+]
+
+# 传递依赖中的 unmaintained 提示不阻断构建（与 deny.toml 的 informational 口径一致）
+[output]
+quiet = false
