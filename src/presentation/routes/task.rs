@@ -72,7 +72,7 @@ impl TaskWsGuard {
     /// 尝试占用一个连接名额；超限返回 `false`（调用方应拒绝连接）。
     fn try_acquire(&self) -> bool {
         self.live
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |live| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |live| {
                 (live < self.max_connections).then_some(live + 1)
             })
             .is_ok()
