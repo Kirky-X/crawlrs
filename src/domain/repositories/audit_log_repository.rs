@@ -10,12 +10,28 @@ use async_trait::async_trait;
 
 use crate::domain::auth::AuditLogEntry;
 
-/// 仓储操作错误（纯领域定义，不依赖具体存储技术）
+/// 仓储操作错误（领域层契约；`VersionConflict` 携带存储表名与行 id 以便上层定位）
 #[derive(Debug, thiserror::Error)]
 pub enum AuditRepositoryError {
     /// 数据库或连接层错误
     #[error("Database error: {0}")]
     DatabaseError(anyhow::Error),
+
+    /// 数据库限流拒绝；保留建议重试秒数供仓储调用方程序化处理
+    #[error("Database error: Rate limited (retry_after={retry_after_secs:?})")]
+    RateLimited {
+        /// 建议等待时间（秒）；`None` = 限流后端未提供
+        retry_after_secs: Option<u64>,
+    },
+
+    /// 乐观锁版本冲突；保留表名与行 id 供仓储调用方程序化处理
+    #[error("Database error: Version conflict on table '{table}' for id {id}")]
+    VersionConflict {
+        /// 冲突的表名
+        table: String,
+        /// 冲突的行 id
+        id: i64,
+    },
 
     /// 审计日志未找到
     #[error("Audit log not found")]

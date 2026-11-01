@@ -20,7 +20,7 @@ use dbnexus::sea_orm::{
     Statement,
 };
 use dbnexus::DbPool;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 impl From<DbErr> for RepositoryError {
@@ -993,8 +993,12 @@ impl TaskRepository for TaskRepositoryImpl {
         let mut owned_ids: Vec<crate::domain::id::Id> = Vec::new();
         let mut not_found_ids = Vec::new();
 
+        // 预建索引：把 O(task_ids × entities) 的线性扫描降为 O(1) 查找
+        let entities_by_id: HashMap<uuid::Uuid, &task_entity::Model> =
+            entities.iter().map(|e| (e.id, e)).collect();
+
         for id in &task_ids {
-            if let Some(entity) = entities.iter().find(|e| e.id == id.to_uuid_v8()) {
+            if let Some(entity) = entities_by_id.get(&id.to_uuid_v8()) {
                 if entity.team_id == team_id.to_uuid_v8() {
                     owned_ids.push(entity.id.into());
                 } else {

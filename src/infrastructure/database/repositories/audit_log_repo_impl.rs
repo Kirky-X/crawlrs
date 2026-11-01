@@ -44,17 +44,13 @@ impl From<dbnexus::DbError> for AuditRepositoryError {
                 AuditRepositoryError::DatabaseError(anyhow::anyhow!(DbErr::Custom(msg)))
             }
             DbError::RateLimited { retry_after_secs } => {
-                AuditRepositoryError::DatabaseError(anyhow::anyhow!(DbErr::Custom(format!(
-                    "Rate limited (retry_after={retry_after_secs:?})"
-                ))))
+                AuditRepositoryError::RateLimited { retry_after_secs }
             }
             DbError::Unsupported(msg) => AuditRepositoryError::DatabaseError(anyhow::anyhow!(
                 DbErr::Custom(format!("Unsupported: {}", msg))
             )),
             DbError::VersionConflict { table, id } => {
-                AuditRepositoryError::DatabaseError(anyhow::anyhow!(DbErr::Custom(format!(
-                    "Version conflict on table '{table}' for id {id}"
-                ))))
+                AuditRepositoryError::VersionConflict { table, id }
             }
         }
     }
@@ -529,6 +525,55 @@ mod tests {
             }
             other => panic!("expected DatabaseError(Custom), got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_audit_repository_error_from_dbnexus_rate_limited_preserves_retry_after() {
+        let db_err = dbnexus::DbError::RateLimited {
+            retry_after_secs: Some(7),
+        };
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::RateLimited { retry_after_secs } => {
+                assert_eq!(retry_after_secs, Some(7));
+            }
+            other => panic!("expected RateLimited, got {:?}", other),
+        }
+        assert_eq!(
+            format!(
+                "{}",
+                AuditRepositoryError::RateLimited {
+                    retry_after_secs: None
+                }
+            ),
+            "Database error: Rate limited (retry_after=None)"
+        );
+    }
+
+    #[test]
+    fn test_audit_repository_error_from_dbnexus_version_conflict_preserves_fields() {
+        let db_err = dbnexus::DbError::VersionConflict {
+            table: "crawl_tasks".to_string(),
+            id: 42,
+        };
+        let repo_err: AuditRepositoryError = db_err.into();
+        match repo_err {
+            AuditRepositoryError::VersionConflict { table, id } => {
+                assert_eq!(table, "crawl_tasks");
+                assert_eq!(id, 42);
+            }
+            other => panic!("expected VersionConflict, got {:?}", other),
+        }
+        assert_eq!(
+            format!(
+                "{}",
+                AuditRepositoryError::VersionConflict {
+                    table: "crawl_tasks".to_string(),
+                    id: 42
+                }
+            ),
+            "Database error: Version conflict on table 'crawl_tasks' for id 42"
+        );
     }
 
     // AuditDecision display

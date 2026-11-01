@@ -41,6 +41,20 @@ impl From<AuditServiceError> for CrawlRsError {
                     #[cfg(any(feature = "platform", feature = "web-axum"))]
                     return CrawlRsError::Other(format!("Database error: {}", anyhow_err));
                 }
+                AuditRepositoryError::RateLimited { retry_after_secs } => {
+                    let message = format!("Rate limited (retry_after={retry_after_secs:?})");
+                    #[cfg(any(feature = "platform", feature = "web-axum"))]
+                    return CrawlRsError::Database(dbnexus::sea_orm::DbErr::Custom(message));
+                    #[cfg(not(any(feature = "platform", feature = "web-axum")))]
+                    return CrawlRsError::Database(message);
+                }
+                AuditRepositoryError::VersionConflict { table, id } => {
+                    let message = format!("Version conflict on table '{table}' for id {id}");
+                    #[cfg(any(feature = "platform", feature = "web-axum"))]
+                    return CrawlRsError::Database(dbnexus::sea_orm::DbErr::Custom(message));
+                    #[cfg(not(any(feature = "platform", feature = "web-axum")))]
+                    return CrawlRsError::Database(message);
+                }
                 AuditRepositoryError::NotFound => CrawlRsError::Other(repo_err.to_string()),
             },
         }
