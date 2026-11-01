@@ -35,8 +35,9 @@ readonly BOLD='\033[1m'
 readonly NC='\033[0m' # No Color
 
 # 计时统计
-declare -A START_TIMES
-declare -A END_TIMES
+# 各检查严格 start→end 顺序执行，无重叠；用标量而非关联数组，
+# 兼容 macOS 自带 bash 3.2（declare -A 需 bash 4+）
+TIMER_START=0
 
 # 检查计数器
 CHECKS_PASSED=0
@@ -93,14 +94,13 @@ log_header() {
 }
 
 start_timer() {
-    START_TIMES["$1"]=$(date +%s%N)
+    TIMER_START=$(date +%s%N)
 }
 
 end_timer() {
-    local name="$1"
-    END_TIMES["$name"]=$(date +%s%N)
-    local duration=$(( (${END_TIMES["$name"]} - ${START_TIMES["$name"]}) / 1000000 ))
-    echo "  耗时: ${duration}ms"
+    local end
+    end=$(date +%s%N)
+    echo "  耗时: $(( (end - TIMER_START) / 1000000 ))ms"
 }
 
 print_duration() {
@@ -110,7 +110,11 @@ print_duration() {
     elif [ $duration -lt 60000 ]; then
         echo "$(echo "scale=2; $duration/1000" | bc)s"
     else
-        echo "$(echo "scale=2; $duration/60000" | bc)min $(echo "scale=2; ($duration % 60000)/1000" | bc)s"
+        # 余数在 bash 整数域算：bc 的 % 受 scale 影响（scale=2 时 102390%60000 得 390）
+        local mins=$(( duration / 60000 ))
+        local secs=$(( (duration % 60000) / 1000 ))
+        local ms=$(( duration % 1000 ))
+        echo "${mins}min $(echo "scale=2; $secs + $ms/1000" | bc)s"
     fi
 }
 

@@ -14,6 +14,7 @@ permissions:
 jobs:
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # 写法对齐 vecboost/garrison/CodeNexus 同一 workflow：SHA 钉 + fetch-depth: 0。
       # 浅克隆会让 gitleaks-action 的 `<head>^..<head>` 区间无法解析（报
@@ -22,7 +23,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: actionlint
-        uses: docker://rhysd/actionlint:latest
+        # Docker Hub 上该镜像 tag 无 `v` 前缀（v1.7.7 为 404，实际 tag 为 1.7.7）；
+        # 钉 manifest digest 避免 tag 被重指向。
+        uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 # 1.7.7
         with:
           # shellcheck 子检查降到 error 级：YAML 语法/表达式错误仍阻断，
           # 风格级（SC2086/SC2034 等）不阻断，避免打断既有流水线。
@@ -36,18 +39,21 @@ jobs:
         continue-on-error: true
         uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
       - name: gitleaks 密钥扫描
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
+          # gitleaks-action v3.0.0 的 pull_request 扫描强制要求 GITHUB_TOKEN，
+          # 缺失时进程直接 exit 1。
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
       - name: cargo-audit (RustSec 漏洞)
-        uses: rustsec/audit-check@v2.0.0
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
       # 不引入 cargo-vet：`cargo vet verify` 以仓库根存在 supply-chain/（vet.toml /
       # imports.lock）为前提，本仓没有该目录，保留只会必红。依赖来源审计由
       # 上面的 cargo-audit 与 ci.yml 的 cargo-deny 承担（vecboost/CodeNexus 同口径）。
       - name: trivy (文件系统/依赖漏洞)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
