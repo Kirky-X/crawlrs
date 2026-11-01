@@ -725,15 +725,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lookup_host_resolution_failure_propagates_and_not_cached() {
+    async fn test_lookup_host_invalid_name_fails_and_not_cached() {
         let svc = make_service(300).await;
-        // 空主机名在 hickory 侧确定性失败（Name 解析拒绝空标签）
+        // 含空格的主机名在 hickory 名字解析阶段即被拒绝（unrecognized char），
+        // 不发起真实 DNS 查询，保证失败路径确定性；本用例覆盖名字校验失败，
+        // 网络解析失败（NXDOMAIN/超时）由 single-flight 库级测试覆盖。
         let err = svc
-            .lookup_host("", 80)
+            .lookup_host("invalid host", 80)
             .await
-            .expect_err("empty hostname must fail resolution");
+            .expect_err("invalid hostname must fail name parsing");
         assert!(!err.to_string().is_empty(), "错误必须透传非空消息");
-        let key = generate_dns_key("", 80);
+        let key = generate_dns_key("invalid host", 80);
         assert!(
             svc.cache.get(&key).await.unwrap().is_none(),
             "解析失败不得残留缓存条目"
@@ -747,7 +749,9 @@ mod tests {
         let mut handles = Vec::new();
         for _ in 0..8 {
             let svc = Arc::clone(&svc);
-            handles.push(tokio::spawn(async move { svc.lookup_host("", 80).await }));
+            handles.push(tokio::spawn(async move {
+                svc.lookup_host("invalid host", 80).await
+            }));
         }
 
         for handle in handles {

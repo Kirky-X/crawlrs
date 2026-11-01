@@ -99,7 +99,8 @@ pub trait SitemapFetcher: Send + Sync {
     /// 通道满即 await（背压）。
     ///
     /// 语义：404 → `Ok(空流)`（无 sitemap 是合法状态）；其余 ≥400 / 传输失败
-    /// → `Err(TargetUnreachable)`。
+    /// → `Err(TargetUnreachable)`；其余非 200（含 3xx 重定向页）→ `Ok(空流)`，
+    /// 不解析非 sitemap 内容（与 [`MapUseCase::execute`] 子 sitemap 的严格 200 口径对齐）。
     ///
     /// 默认实现为整串 fetch + 一次解析的回退路径；生产实现
     /// （[`EngineSitemapFetcher`]）覆盖为 quick-xml 增量解析。
@@ -115,6 +116,9 @@ pub trait SitemapFetcher: Send + Sync {
         }
         if fetched.status >= 400 {
             return Err(MapError::SitemapStatus(fetched.status));
+        }
+        if fetched.status != 200 {
+            return Ok(SitemapStream::empty());
         }
         let kind = if is_sitemap_index(&fetched.body) {
             SitemapKind::SitemapIndex
@@ -184,6 +188,11 @@ impl SitemapFetcher for EngineSitemapFetcher {
         }
         if response.status_code >= 400 {
             return Err(MapError::SitemapStatus(response.status_code));
+        }
+        if response.status_code != 200 {
+            // 3xx 未跟随重定向时 body 是重定向页而非 sitemap：按空流处理，
+            // 与 execute 子 sitemap 的严格 200 口径对齐。
+            return Ok(SitemapStream::empty());
         }
 
         let (tx, rx) = tokio::sync::mpsc::channel(channel_capacity.max(1));
@@ -272,6 +281,11 @@ impl MapUseCase {
         }
         if first.status >= 400 {
             return Err(MapError::SitemapStatus(first.status));
+        }
+        if first.status != 200 {
+            // 3xx 未跟随重定向时 body 是重定向页而非 sitemap：空结果，
+            // 与 execute_streaming 的严格 200 口径一致。
+            return Ok(MapResult { links: Vec::new() });
         }
 
         let mut locs = parse_locs(&first.body);
@@ -753,6 +767,28 @@ mod tests {
         assert!(result.links.is_empty());
     }
 
+    /// R-map-002：根 sitemap 3xx 重定向页 body 即使含 `<loc>` 也不得解析（严格 200 口径）。
+    #[tokio::test]
+    async fn execute_non_200_redirect_returns_empty_links() {
+        let fetcher = MockFetcher {
+            responses: HashMap::from([(
+                format!("{ORIGIN}/sitemap.xml"),
+                (
+                    302u16,
+                    urlset(&["https://a.com/redirected-should-not-leak"]),
+                ),
+            )]),
+        };
+        let result = MapUseCase::new(Arc::new(fetcher))
+            .execute(&dto(ORIGIN))
+            .await
+            .expect("3xx must be Ok (empty links)");
+        assert!(
+            result.links.is_empty(),
+            "redirect body must not be parsed as sitemap"
+        );
+    }
+
     /// R-map-004：目标站 5xx → SitemapStatus（handler 映射 502 MAP_TARGET_UNREACHABLE）。
     #[tokio::test]
     async fn execute_maps_5xx_to_target_unreachable() {
@@ -840,6 +876,28 @@ mod tests {
                 .await
                 .expect("404 must be Ok (empty stream)");
             assert!(collect(rx.rx).await.is_empty());
+        }
+
+        /// 3xx 重定向页 body 即使含 `<loc>` 也不得解析（严格 200 口径）
+        #[tokio::test]
+        async fn streaming_non_200_redirect_yields_empty_stream() {
+            let fetcher = MockFetcher {
+                responses: HashMap::from([(
+                    format!("{ORIGIN}/sitemap.xml"),
+                    (
+                        302u16,
+                        urlset(&["https://a.com/redirected-should-not-leak"]),
+                    ),
+                )]),
+            };
+            let rx = MapUseCase::new(Arc::new(fetcher))
+                .execute_streaming(&dto(ORIGIN), stream_options(4, 100, 2))
+                .await
+                .expect("3xx must be Ok (empty stream)");
+            assert!(
+                collect(rx.rx).await.is_empty(),
+                "redirect body must not be parsed as sitemap"
+            );
         }
 
         /// 目标站 5xx / 拉取超时 → SitemapStatus（错误显性化）

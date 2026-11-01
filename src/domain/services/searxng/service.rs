@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use log::{debug, error, info, warn};
+use tokio::sync::Semaphore;
 
 use crate::config::SearxngSearchSettings;
 use crate::domain::repositories::searxng_instance_repository::{
@@ -42,6 +43,11 @@ const UNBOUNDED_LIMIT: u64 = i64::MAX as u64;
 /// 熔断键前缀（实例专属，不与 engines 统计口径混用）
 const BREAKER_KEY_PREFIX: &str = "searxng:";
 
+/// 晋升并发上限：失败风暴下每条 URL 一个 spawn 会无界增长，
+/// 用信号量把同时进行的晋升探测限制在固定数量；拿不到 permit 的晋升直接丢弃
+/// （下一轮探活会重新触发，排队只会把风暴转化为任务积压）。
+const PROMOTION_MAX_CONCURRENCY: usize = 8;
+
 /// 服务内部共享状态
 struct SearxngInstanceInner {
     /// 登记簿仓储（DB 为唯一共享真相）
@@ -54,6 +60,8 @@ struct SearxngInstanceInner {
     breaker: CircuitBreaker,
     /// 进程内热池
     pool: InstancePool,
+    /// 晋升并发护栏（见 [`PROMOTION_MAX_CONCURRENCY`]）
+    promotion_sem: Arc<Semaphore>,
     /// 启动期热池重建是否已完成（完成前 `health()` 报 Degraded）
     bootstrap_done: AtomicBool,
 }
@@ -84,6 +92,7 @@ impl SearxngInstanceServiceImpl {
                 settings,
                 breaker,
                 pool,
+                promotion_sem: Arc::new(Semaphore::new(PROMOTION_MAX_CONCURRENCY)),
                 bootstrap_done: AtomicBool::new(false),
             }),
         }
@@ -257,9 +266,19 @@ impl SearxngInstanceServiceImpl {
                         warn!("searxng cooldown transition failed url={url} error={e}");
                     }
                     let this = self.clone();
-                    tokio::spawn(async move {
-                        this.promote_one().await;
-                    });
+                    match self.inner.promotion_sem.clone().try_acquire_owned() {
+                        Ok(permit) => {
+                            tokio::spawn(async move {
+                                let _permit = permit;
+                                this.promote_one().await;
+                            });
+                        }
+                        Err(_) => {
+                            debug!(
+                                "searxng promotion skipped: concurrency limit reached url={url}"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1108,6 +1127,66 @@ mod tests {
         assert_ne!(acquired.url(), "https://failing.example");
         assert_eq!(svc.pool_len(), 1);
         assert_eq!(svc.health(), EngineHealth::Degraded);
+    }
+
+    /// 晋升并发护栏：permit 耗尽时丢弃晋升，候补保持 Candidate
+    #[tokio::test]
+    async fn test_promotion_skipped_when_concurrency_limit_reached() {
+        let repo = shared_repo();
+        let svc = service(
+            repo.clone(),
+            Arc::new(ScriptedTransport::repeat(
+                Scripted::Json {
+                    status: 200,
+                    body: alive_body(),
+                },
+                10,
+            )),
+        );
+        svc.mark_bootstrap_done();
+        seed_pool(&svc, &repo, "https://failing.example");
+        repo.insert_raw(InMemorySearxngRepo::dataset_instance(
+            "https://healthy.example",
+            SearxngInstanceState::Candidate,
+        ));
+
+        // 占满全部 permit：后续晋升必须被丢弃（不排队）
+        let mut permits = Vec::new();
+        for _ in 0..PROMOTION_MAX_CONCURRENCY {
+            permits.push(
+                svc.inner
+                    .promotion_sem
+                    .clone()
+                    .try_acquire_owned()
+                    .expect("permit"),
+            );
+        }
+
+        for _ in 0..3 {
+            svc.report(
+                "https://failing.example",
+                InstanceOutcome::Failure {
+                    error: SearxngError::RateLimited,
+                },
+            )
+            .await;
+        }
+
+        // 给异步任务留出窗口；没有 permit 时不应发生晋升
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            svc.acquire(&[])
+                .map(|m| m.url().to_string())
+                .as_deref()
+                .is_none_or(|url| url != "https://healthy.example"),
+            "promotion must be skipped while the semaphore is exhausted"
+        );
+        assert_eq!(
+            repo.get("https://healthy.example").expect("row").state,
+            SearxngInstanceState::Candidate
+        );
+
+        drop(permits);
     }
 
     #[tokio::test]

@@ -140,7 +140,7 @@ pub fn parse_dataset(payload: &serde_json::Value) -> Result<Dataset, DatasetPars
 
     let mut dataset = Dataset::default();
     for (url, raw_entry) in instances {
-        let entry = match serde_json::from_value::<DatasetEntry>(raw_entry.clone()) {
+        let entry = match DatasetEntry::deserialize(raw_entry) {
             Ok(entry) => entry,
             Err(e) => {
                 debug!("searx.space entry {url} metadata unparsable, using defaults: {e}");

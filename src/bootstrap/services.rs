@@ -651,10 +651,27 @@ pub async fn init_garrison_auth(
             }
         };
 
-        // `cfg_val` 可选格式：`team_id_uuid`（非空 uuid 时用作目标 team）
+        // 格式约定（docs/USER_GUIDE.md:178）：`<team_id_uuid>` 是裸 36 位 UUID
+        // 字符串，不是 `team_id_uuid` 复合格式；`Id::from_str` 仅在含 '-' 且
+        // 长度 36 时按 UUID 解析，与本守卫口径一致。非法/非 36 长度一律回退
+        // 自动生成 team，不静默截断。
         let team_id_arg: Option<crate::domain::id::Id> = if cfg_val.len() == 36 {
-            cfg_val.parse::<crate::domain::id::Id>().ok()
+            match cfg_val.parse::<crate::domain::id::Id>() {
+                Ok(id) => Some(id),
+                Err(e) => {
+                    log::warn!(
+                        "CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 长度 36 但 UUID 解析失败，回退自动生成 team: {e}"
+                    );
+                    None
+                }
+            }
         } else {
+            if !cfg_val.is_empty() {
+                log::warn!(
+                    "CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 非空但不是 36 位 UUID（长度 {}），回退自动生成 team",
+                    cfg_val.len()
+                );
+            }
             None
         };
         let team_id = team_id_arg.unwrap_or_else(crate::domain::id::Id::generate);
