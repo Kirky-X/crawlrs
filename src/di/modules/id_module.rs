@@ -40,7 +40,8 @@ impl ModuleMeta for IdModule {
 /// NebulaId 路由对未编译算法静默跳过（`router::initialize` 对缺失工厂
 /// `continue`），配了 `snowflake`/`segment` 会悄悄落回 uuid_v8——在此显性
 /// 拒绝，让配置错误在启动期暴露。本构建的 nebulaid 仅启用 `sdk,uuid-v8`，
-/// 故只有 `uuid_v8`（含 `uuid_v4`/`uuid_v7` 别名）可用。
+/// 故只有 `uuid_v8` 可用；nebulaid rc.3 起 `uuid_v4`/`uuid_v7` 为真算法
+/// 而非 v8 别名，未编译时必须显性拒绝。
 fn resolve_algorithm(name: &str) -> Result<AlgorithmType, String> {
     let algorithm = name.parse::<AlgorithmType>().map_err(|e| {
         crate::i18n::tr_log_args(

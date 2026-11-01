@@ -22,6 +22,7 @@
 //!   中断调用方）。
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex as ParkingMutex;
@@ -43,9 +44,44 @@ struct GlobalIdGen {
     workspace: String,
     group: String,
     pool: Arc<ParkingMutex<VecDeque<Id>>>,
+    /// 补水 in-flight 闸：周期任务与低水位触发可能并发，只允许一个 batch_generate。
+    refilling: AtomicBool,
 }
 
 static GLOBAL: OnceLock<Arc<GlobalIdGen>> = OnceLock::new();
+
+/// 尝试取得补水资格；返回 `false` 表示已有补水在途。
+fn try_begin_refill(flag: &AtomicBool) -> bool {
+    flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
+/// 补水结束后释放 in-flight 闸（panic 展开时同样释放）。
+struct RefillGuard<'a>(&'a AtomicBool);
+
+impl Drop for RefillGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// 把一批 NebulaId 注入池，直到达到 `target`；返回**实际入池**数量
+/// （因池满而 break 丢弃的 id 不计）。
+fn drain_batch_into_pool(
+    pool: &mut VecDeque<Id>,
+    ids: Vec<nebulaid::core::Id>,
+    target: usize,
+) -> usize {
+    let mut inserted = 0;
+    for id in ids {
+        if pool.len() >= target {
+            break;
+        }
+        pool.push_back(Id::from(id));
+        inserted += 1;
+    }
+    inserted
+}
 
 impl GlobalIdGen {
     /// 弹出下一个 ID（不含补水逻辑的核心）。
@@ -59,7 +95,19 @@ impl GlobalIdGen {
 
     /// 同步补水：仅在**专用补水任务/非 await 热路径**下由 `block_in_place` 包裹调用；
     /// 常规路径依赖周期补水任务，`generate` 本身绝不同步 await（避免嵌套 block_on panic）。
+    ///
+    /// 并发调用由 in-flight 闸串行化：已有补水在途时直接返回 0，避免各自按旧水位
+    /// 申请最多 `TARGET` 个 ID 再丢弃的放大。
     async fn refill(&self) -> usize {
+        if !try_begin_refill(&self.refilling) {
+            log::debug!("id pool refill already in flight, skip");
+            return 0;
+        }
+        let _guard = RefillGuard(&self.refilling);
+        self.refill_locked().await
+    }
+
+    async fn refill_locked(&self) -> usize {
         let need = TARGET.saturating_sub(self.pool_len());
         if need == 0 {
             return 0;
@@ -70,15 +118,8 @@ impl GlobalIdGen {
             .await
         {
             Ok(batch) => {
-                let n = batch.ids.len();
                 let mut pool = self.pool.lock();
-                for id in batch.ids {
-                    if pool.len() >= TARGET {
-                        break;
-                    }
-                    pool.push_back(Id::from(id));
-                }
-                n
+                drain_batch_into_pool(&mut pool, batch.ids, TARGET)
             }
             Err(e) => {
                 log::error!(
@@ -121,6 +162,7 @@ pub async fn init(
         workspace,
         group,
         pool: pool_arc,
+        refilling: AtomicBool::new(false),
     });
 
     // 仅首次成功注册；已初始化则直接返回（复用既有池与补水任务）。
@@ -147,7 +189,8 @@ pub async fn init(
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(REFILL_INTERVAL_MS)).await;
                 if global.pool_len() < LOW_WATER {
-                    global.refill().await;
+                    let inserted = global.refill().await;
+                    log::debug!("id pool refill inserted {inserted} ids");
                 }
             }
         });
@@ -170,7 +213,8 @@ pub fn generate() -> Id {
                 if global.pool_len() < LOW_WATER && tokio::runtime::Handle::try_current().is_ok() {
                     let g = global.clone();
                     tokio::spawn(async move {
-                        g.refill().await;
+                        let inserted = g.refill().await;
+                        log::debug!("id pool refill inserted {inserted} ids");
                     });
                 }
                 id
@@ -187,4 +231,55 @@ pub fn generate() -> Id {
 #[inline]
 pub fn is_initialized() -> bool {
     GLOBAL.get().is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nebula_batch(size: usize) -> Vec<nebulaid::core::Id> {
+        (0..size).map(|_| Id::test_new().as_nebulaid()).collect()
+    }
+
+    /// 池满时 refill 返回值必须是实际入池数，而非批量大小
+    #[test]
+    fn refill_counts_only_inserted_ids() {
+        let mut pool = VecDeque::new();
+        for _ in 0..TARGET - 1 {
+            pool.push_back(Id::test_new());
+        }
+        let inserted = drain_batch_into_pool(&mut pool, nebula_batch(64), TARGET);
+        assert_eq!(inserted, 1, "only one free slot must be reported");
+        assert_eq!(pool.len(), TARGET);
+    }
+
+    /// 池有空位时全部入池，返回值等于批量大小
+    #[test]
+    fn refill_counts_all_ids_when_pool_has_room() {
+        let mut pool = VecDeque::new();
+        let inserted = drain_batch_into_pool(&mut pool, nebula_batch(8), TARGET);
+        assert_eq!(inserted, 8);
+        assert_eq!(pool.len(), 8);
+    }
+
+    /// in-flight 闸：同一时刻只允许一个补水，释放后可再次取得
+    #[test]
+    fn refill_gate_allows_only_one_in_flight() {
+        let flag = AtomicBool::new(false);
+        assert!(try_begin_refill(&flag), "first caller must acquire");
+        assert!(!try_begin_refill(&flag), "second caller must be rejected");
+        flag.store(false, Ordering::Release);
+        assert!(try_begin_refill(&flag), "released gate must be acquirable");
+    }
+
+    /// 闸在 drop 时释放（含 panic 展开路径）
+    #[test]
+    fn refill_guard_releases_on_drop() {
+        let flag = AtomicBool::new(false);
+        assert!(try_begin_refill(&flag));
+        {
+            let _guard = RefillGuard(&flag);
+        }
+        assert!(try_begin_refill(&flag), "guard drop must release the gate");
+    }
 }
