@@ -249,7 +249,7 @@ const TEST_POOL_ACQUIRE_TIMEOUT_MS: u64 = 30_000;
 /// ```ignore
 /// #[tokio::test]
 /// async fn test_acquire_next {
-///     let _guard = acquire_next_test_mutex.lock.await;
+///     let _guard = acquire_next_test_mutex().lock().await;
 ///     // 测试逻辑
 /// }
 /// ```
@@ -269,7 +269,7 @@ pub fn acquire_next_test_mutex() -> &'static Mutex<()> {
 /// ```ignore
 /// #[tokio::test]
 /// async fn test_init_services {
-///     let _guard = acquire_garrison_global_state.await;
+///     let _guard = acquire_garrison_global_state().await;
 ///     // 安全调用 init_services / build_test_state / ServiceModule
 /// }
 /// ```
@@ -283,7 +283,7 @@ pub fn acquire_next_test_mutex() -> &'static Mutex<()> {
 ///
 /// auth feature 关闭时，`garrison_dao`/`garrison_listener` 模块不编译。
 /// 此 guard 与 [`acquire_garrison_global_state`] 在 auth-off 时退化为 no-op
-/// （[`NoopGarrisonGuard`]），调用方 `let _guard = acquire_garrison_global_state.await;`
+/// （[`NoopGarrisonGuard`]），调用方 `let _guard = acquire_garrison_global_state().await;`
 /// 在两种 feature 组合下都能编译，避免散布的 `#[cfg(feature = "auth")]`。
 #[cfg(feature = "auth")]
 pub struct GarrisonGlobalStateGuard {

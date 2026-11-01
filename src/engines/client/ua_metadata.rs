@@ -319,7 +319,9 @@ mod tests {
         let meta = fp.metadata.expect("chrome profile must have metadata");
         assert_eq!(meta.platform, "Windows");
         assert_eq!(meta.platform_version, "10.0.0");
-        assert_eq!(meta.architecture, "x86");
+        // 桌面 profile 取宿主真实指令集（见 build_ua_fingerprint 的 architecture
+        // 分支）：x86_64 CI 报 x86，arm64 开发机报 arm——按编译目标断言，勿硬编码
+        assert_eq!(meta.architecture, super::host_architecture());
         assert_eq!(meta.bitness.as_deref(), Some("64"));
         assert_eq!(meta.model, "");
         assert!(!meta.mobile);
@@ -424,8 +426,15 @@ mod tests {
 
     #[test]
     fn test_host_architecture_static_mapping() {
-        // 静态已知映射（非恒真式：与实现各自的 match 独立书写）
-        assert_eq!(super::host_architecture(), "x86"); // 本仓编译目标 x86_64
+        // 按编译目标断言（arm64 macOS/异构 CI 上硬编码 "x86" 会必然失败）；
+        // 期望值与实现各自的 match 独立书写，非恒真式。
+        let expected = match std::env::consts::ARCH {
+            "x86_64" => "x86",
+            "aarch64" => "arm",
+            _ => "x86",
+        };
+        assert_eq!(super::host_architecture(), expected);
+        // Android profile 恒为 arm，与宿主指令集解耦
         assert_eq!(super::android_architecture(), "arm");
     }
 

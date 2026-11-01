@@ -76,6 +76,9 @@ fn build_model_config(settings: &RagSettings) -> ModelConfig {
         // 嵌入用例：任务维度固定 embedding，无决策推理预算
         task: ModelTask::Embedding,
         decision_params: None,
+        // 嵌入用例不涉及语音转录/翻译
+        transcription_params: None,
+        translation_params: None,
     }
 }
 

@@ -250,7 +250,7 @@ rig-core = { version = "0.44", optional = true, default-features = false, featur
 # Dependency Injection
 trait-kit = { version = "0.5.0-rc.9", default-features = false, features = ["async", "confers", "shutdown"] }
 # NebulaId 本地 path 依赖（未发布 registry）；仅 sdk 特性，版本与本仓 pin 一致
-nebulaid = { path = "../NebulaId", version = "0.3.0-rc.1", default-features = false, features = ["sdk", "uuid-v8"] }
+nebulaid = { path = "../NebulaId", version = "0.3.0-rc.4", default-features = false, features = ["sdk", "uuid-v8"] }
 # oxcache 特性裁剪：memory + serialization + metrics + bloom（macros/batch 零使用）
 oxcache = { version = "0.5.0-rc.8", default-features = false, features = ["memory", "serialization", "metrics", "bloom"] }
 ahash = { version = "0.8", default-features = false, features = ["std", "runtime-rng"] }

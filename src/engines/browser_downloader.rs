@@ -434,9 +434,12 @@ mod tests {
     fn test_get_browser_executable_path_with_empty_dir() {
         let cache_dir = PathBuf::new();
         let exe_path = get_browser_executable_path(&cache_dir);
-        // Should still produce a valid relative path
+        // Should still produce a valid relative path（断言仅 linux 有意义：
+        // 其它平台的可执行名不同，故该绑定在非 linux 下不参与使用）
         #[cfg(target_os = "linux")]
         assert!(exe_path.ends_with("chrome"));
+        #[cfg(not(target_os = "linux"))]
+        let _ = &exe_path;
     }
 
     // === BrowserDownloadManager creation tests ===
@@ -768,7 +771,7 @@ mod tests {
             }
             Err(BrowserDownloadError::DirectoryCreationFailed(msg)) => {
                 // create_dir_all failed as expected
-                assert!(msg.contains("创建下载目录失败"));
+                assert!(msg.contains("Failed to create download directory"));
                 let status = manager.get_status().await;
                 match status {
                     DownloadStatus::Failed(s) => assert!(!s.is_empty()),
