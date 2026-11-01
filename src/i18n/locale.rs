@@ -164,9 +164,11 @@ pub fn detect_system_locale() -> Locale {
 ///    即 default.toml 的 `i18n.default_locale` 语义：**检测失败时的回退**。
 pub fn resolve_startup_default_locale(configured_default: &str, supported: &[&str]) -> Locale {
     let builtin: Locale = Locale::from_str(BUILTIN_DEFAULT_LOCALE).expect("valid builtin locale");
-    let configured: Locale = configured_default
-        .parse()
-        .unwrap_or_else(|_| builtin.clone());
+    let Ok(configured) = configured_default.parse::<Locale>() else {
+        // 配置非法 → 直接回退内置默认，确定性失败（不进系统检测，
+        // 避免非法配置被误当成"未配置"而让系统 locale 覆盖回退值）
+        return builtin;
+    };
 
     // 配置显式指定（≠ 内置默认）→ 配置优先
     if configured != builtin {

@@ -1,5 +1,5 @@
 # 错误消息 — zh-CN
-# 覆盖所有 CrawlRsError::user_message() 变体（17 个 key）
+# 覆盖所有 CrawlRsError::user_message() 变体（17 + 18 + 16 + 2 + 2 = 55 个 key）
 
 error-database = 数据库操作失败，请稍后重试。
 error-network = 外部服务不可用，请稍后重试。

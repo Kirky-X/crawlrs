@@ -550,6 +550,7 @@ fetch_max_backoff_secs = 10
 # sys-locale）决议默认 locale；检测结果不受支持时回退到本值。
 # 显式指定（改为 "en-US" 以外的受支持值）时本值优先于检测。
 # 每请求的 Accept-Language 协商行为不受影响。
+# 配置值非法（非 BCP 47）时直接回退内置默认 en-US，不做系统检测。
 default_locale = "en-US"
 # 支持的 locale 列表
 supported_locales = ["en-US", "zh-CN"]

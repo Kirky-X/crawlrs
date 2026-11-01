@@ -490,7 +490,7 @@ impl I18nBundle {
             "engine-registered",
         ]);
 
-        // logs.ftl 追加 (49 keys) — 引擎/安全/搜索/可观测性运维日志
+        // logs.ftl 追加 (53 keys) — 引擎/安全/搜索/可观测性运维日志
         keys.extend([
             // FlareSolverr engine (5)
             "flare-url-not-configured",
@@ -536,7 +536,7 @@ impl I18nBundle {
             "boot-playwright-capture-enabled",
             "boot-register-id-module-failed",
             "map-target-unreachable",
-            // Search engines & smart routing (8)
+            // Search engines & smart routing (12)
             "search-exa-registered",
             "search-exa-skipped",
             "search-tavily-registered",
@@ -545,6 +545,10 @@ impl I18nBundle {
             "search-smart-start",
             "search-smart-cross-dedup",
             "search-smart-not-injected",
+            "search-engine-disabled-by-config",
+            "search-all-builtin-engines-disabled",
+            "search-default-engine-not-registered",
+            "search-default-engine-unknown",
             // Failure snapshot bypass (5)
             "snapshot-join-failed",
             "snapshot-dir-create-failed",
@@ -697,6 +701,40 @@ mod tests {
             warnings.is_empty(),
             "Key consistency warnings: {warnings:?}"
         );
+    }
+
+    /// FTL 文件中的每个键都必须登记在 `ftl_entries()`，防止「文件有键、registry 漏登记」
+    /// 类缺陷再次通过现有一致性测试（该测试只遍历 registry）。
+    #[test]
+    fn test_ftl_file_keys_are_all_registered() {
+        let bundle = I18nBundle::load("en-US", &["en-US", "zh-CN"], &test_locales_dir()).unwrap();
+        let registry: HashSet<String> = bundle.ftl_entries().into_iter().collect();
+        for locale in ["en-US", "zh-CN"] {
+            for file in ["logs.ftl", "errors.ftl"] {
+                let path = format!("{}/{}/{}", test_locales_dir(), locale, file);
+                let content = fs::read_to_string(&path).expect("read ftl file");
+                for line in content.lines() {
+                    if line.trim_start().starts_with('#') {
+                        continue;
+                    }
+                    let Some((key, _)) = line.split_once(" = ") else {
+                        continue;
+                    };
+                    let key = key.trim();
+                    if key.is_empty()
+                        || !key
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                    {
+                        continue;
+                    }
+                    assert!(
+                        registry.contains(key),
+                        "FTL key '{key}' in {path} missing from ftl_entries()"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

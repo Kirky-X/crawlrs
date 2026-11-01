@@ -1,6 +1,6 @@
 # Operational log messages (non-worker) — en-US
 # Covers text-processing pipeline, bootstrap, engine runtime, search, security
-# and observability logs (29 + 49 = 78 keys)
+# and observability logs (29 + 53 + 2 = 84 keys)
 
 # Text processing pipeline (15 keys)
 text-short-input = Processing short text, length: { $length } bytes

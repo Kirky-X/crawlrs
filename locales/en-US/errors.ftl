@@ -1,5 +1,5 @@
 # Error messages — en-US
-# Covers all CrawlRsError::user_message() variants (17 keys)
+# Covers all CrawlRsError::user_message() variants (17 + 18 + 16 + 2 + 2 = 55 keys)
 
 error-database = Database operation failed. Please try again later.
 error-network = External service unavailable. Please try again later.
