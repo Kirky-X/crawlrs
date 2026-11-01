@@ -30,7 +30,14 @@ yanked = "deny"
 #
 # 注：RUSTSEC-2026-0367/0368/0369（zip 8.6.0）不靠 ignore 处理——已整体移除死依赖
 # chromiumoxide_fetcher（见 Cargo.toml），zip 退出依赖树，告警自动消除。
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119", "RUSTSEC-2024-0449"]
+#
+# RUSTSEC-2026-0387: crypto-bigint 0.5.5 常时运算时序变异（crypto-failure，2026-10-23，
+# 官方 patched >=0.7.6）。引入路径与 garrison 侧同源：elliptic-curve 0.13 ← p256/p384 0.13
+# ← jsonwebtoken 11.1.0 ← garrison(protocol-jwt)。jsonwebtoken 最新发布 11.1.0 仍锁 0.13-gen，
+# 修补需 RustCrypto 0.14-gen 栈，图内无 patched 路径；crawlrs 仅用 HS256 对称 JWT、
+# 不调用 ECDSA 签名/验签，攻击面为零。上游迁移后（jsonwebtoken 支持 p256 0.14 一线）解除。
+# 同口径见 garrison/deny.toml（兄弟仓已先行豁免，本仓机械对齐）。
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119", "RUSTSEC-2024-0449", "RUSTSEC-2026-0387"]
 
 [licenses]
 allow = [
