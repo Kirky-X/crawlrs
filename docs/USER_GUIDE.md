@@ -993,6 +993,39 @@ curl -X POST http://localhost:8899/v1/search \
 }
 ```
 
+### Semantic Re-ranking (optional)
+
+Search results are ordered statistically by default (RRF fusion across engines plus heuristic
+relevance). To order by semantic query-document relevance, enable the `[rag]` section and build
+with the matching feature:
+
+| Build feature | Provider | What it does |
+|---------------|----------|--------------|
+| `rag-local` | vecboost (Candle CPU, local model) | One bi-encoder model serves both embedding and re-ranking; no network calls |
+| `rag-remote` | rig-core (OpenAI-compatible endpoint) | Remote embeddings; pair with any re-rank endpoint below |
+| *(none)* | generic HTTP re-rank | `rerank_provider = "http"` works with the default build — only `reqwest` is required |
+
+`rerank_provider = "http"` with `rerank_format = "cohere"` (Cohere v2, Jina, most self-hosted)
+or `"tei"` (text-embeddings-inference). API keys are injected via environment, never config files:
+
+```bash
+export CRAWLRS__RAG__REMOTE_API_KEY=sk-...
+export CRAWLRS__RAG__RERANK_API_KEY=...
+```
+
+When re-ranking is active, every result carries a `score` field (0..1). When it is off, the field
+is omitted entirely, so existing clients keep parsing unchanged. Provider failures fail open: the
+original order is returned. Configuring a provider whose feature was not compiled fails at startup
+instead of silently degrading.
+
+```json
+{
+  "results": [
+    { "title": "...", "url": "...", "engine": "bing", "score": 0.8731 }
+  ]
+}
+```
+
 ---
 
 ## 📊 Data Extraction

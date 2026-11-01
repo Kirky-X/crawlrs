@@ -22,6 +22,15 @@
 - **性能基线回归门禁**：新增 `.github/workflows/bench.yml`（仅 `workflow_dispatch`，不进默认 CI），`mode=save` 采集并 artifact 存档 Criterion 基线、`mode=compare` 与存档基线对比；新增 `scripts/bench_gate.py` 承担超阈值判定（Criterion 只报告变化不设退出码）；`benches/benchmark.rs` 与 `docs/PERFORMANCE.md` 文档化采集/对比口径、产物路径命名与机器说明
 - **状态对齐**：README / README_EN 路线图「架构演进」📋→✅（事件总线注明 tokio broadcast）、「数据库多驱动」🚧→✅（运行时 schema 供给落地）；新增 `forge_api`（`forge-full`）在途迁移条目；`docs/TEST_SCENARIOS.md` 迁移表述更新为三方言目录现状、Redis 后端说明与 `migrations/postgres/` 路径
 
+### Added（RAG 语义重排 rag-rerank）
+
+- **搜索语义重排**：此前搜索管线止于统计排序（RRF 融合 + 启发式相关性叠加），无 query-doc 语义相关性。新增 `SearchReranker`（`domain/services/rerank.rs`）在结果映射后对 top-N 重排：重排子集按 provider 分数置顶、其余保持原序、逐条写 `score`；provider 缺失或结果 <2 条直通，provider 故障 fail-open 保留原序
+- **两条 provider 链**：`rag-local`（vecboost 0.2.1，Candle CPU，bi-encoder 一个模型同时覆盖嵌入与重排）与 `rag-remote`（rig-core 0.42 经 OpenAI 兼容端点做嵌入）；`vecboost`/`rig-core` 均为 optional，不入 `default`/`full`，默认构建零新增依赖
+- **通用 HTTP 重排适配**（无 feature 门槛，仅用现有 reqwest）：`http_rerank_provider` 支持 `cohere`（Cohere v2 / Jina / 多数自建：`{model,query,documents,top_n}` → `results[{index,relevance_score}]`）与 `tei`（`{query,texts}` → `[{index,score}]`）两种线格式，Bearer 鉴权可配
+- **RAG 增强抽取接线**：`ExtractionService::with_rag` + `extract_with_rag_auto`——rag 未注入、query 为空或 context 为空时等价既有 `extract_with_schema`（fail-open 回退全页）；worker 三处 schema 抽取分支统一切到该入口，prompt-only 抽取维持全页路径
+- **配置与门禁**：新增 `[rag]` 节（默认全关；`enabled`/`embedding_provider`/`rerank_provider`/local 与 remote 模型参数/`rerank_format`/`search_rerank_top_n`/`rag_top_k`），api key 经 `CRAWLRS__RAG__*` env 注入、Debug 脱敏；启动期 `validate_providers` 对「配置了 provider 但对应 feature 未编译」fail-fast
+- **API 透出**：`SearchResultDto.score`（`skip_serializing_if = "Option::is_none"`），重排生效时逐条给出 0..1 相关性，未启用时字段整体省略
+
 ### Fixed（登记簿清零 registry-zero-out）
 
 - **429 响应统一标准包封**：`check_rate_limit` 的 `Denied`/`RetryAfter`/后端错误（fail-closed 503）改经 `response_builder::errors` 标准包封（`error.code = "RATE_LIMITED"`，503 为 `SERVICE_UNAVAILABLE`；`RetryAfter` 保留 `retry_after_seconds`）；单测断言新形态；liveapi 429 关卡断言升级为 `error.code = "RATE_LIMITED"`（旧字符串包封不再接受）

@@ -768,6 +768,10 @@ Search using various search engines.
 }
 ```
 
+> **`score` 字段（0.2.0 新增，可选）**：启用 `[rag]` 语义重排后，每条结果追加
+> `score`（0..1 的 query-doc 相关性得分）。未启用时该字段整体省略
+> （`skip_serializing_if = "Option::is_none"`），既有消费者的解析不受影响。
+
 ---
 
 ### Map API (new in 0.2.0)
