@@ -148,6 +148,9 @@ pub struct CrawlRsState {
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     /// RAG 重排 provider（同上）
     pub rerank_provider: Option<Arc<dyn RerankProvider>>,
+    /// fluxweir 网关句柄（`fluxweir.enabled = false` 时空句柄零开销；
+    /// embedded 持 ServerHandle 供停机 flush，external 仅 base_url）
+    pub fluxweir_gateway: crate::bootstrap::fluxweir_gateway::FluxweirGatewayHandle,
     /// Content extraction facade
     ///
     /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLM 承载，按 Trafilatura→DomSmoothie→CssRule
@@ -286,6 +289,7 @@ impl CrawlRsState {
             extraction_service: services.extraction_service.clone(),
             embedding_provider: services.embedding_provider.clone(),
             rerank_provider: services.rerank_provider.clone(),
+            fluxweir_gateway: services.fluxweir_gateway.clone(),
             content_extractor: services.content_extractor.clone(),
             cache_service: infra.cache_service.clone(),
             audit_service: services.audit_service.clone(),
@@ -379,6 +383,8 @@ pub trait CrawlRsStateExt {
     fn extraction_service(&self) -> Arc<dyn ExtractionServiceTrait>;
     fn embedding_provider(&self) -> Option<Arc<dyn EmbeddingProvider>>;
     fn rerank_provider(&self) -> Option<Arc<dyn RerankProvider>>;
+    /// fluxweir 网关句柄（生命周期/停机 flush/SDK base_url）
+    fn fluxweir_gateway(&self) -> crate::bootstrap::fluxweir_gateway::FluxweirGatewayHandle;
     /// Get content extraction facade
     ///
     /// 供 `scrape_worker` 提取路径使用，按优先级路由多 extractor + LLM 回退。
@@ -522,6 +528,10 @@ impl CrawlRsStateExt for CrawlRsState {
 
     fn rerank_provider(&self) -> Option<Arc<dyn RerankProvider>> {
         self.rerank_provider.clone()
+    }
+
+    fn fluxweir_gateway(&self) -> crate::bootstrap::fluxweir_gateway::FluxweirGatewayHandle {
+        self.fluxweir_gateway.clone()
     }
 
     fn content_extractor(&self) -> Arc<ContentExtractionFacade> {
@@ -674,6 +684,10 @@ impl CrawlRsStateExt for Arc<CrawlRsState> {
 
     fn rerank_provider(&self) -> Option<Arc<dyn RerankProvider>> {
         self.as_ref().rerank_provider.clone()
+    }
+
+    fn fluxweir_gateway(&self) -> crate::bootstrap::fluxweir_gateway::FluxweirGatewayHandle {
+        self.as_ref().fluxweir_gateway()
     }
 
     fn content_extractor(&self) -> Arc<ContentExtractionFacade> {

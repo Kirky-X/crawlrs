@@ -8,6 +8,7 @@
 
 pub mod app;
 pub mod engines;
+pub mod fluxweir;
 pub mod llm;
 pub mod logging;
 pub mod rag;

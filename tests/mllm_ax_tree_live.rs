@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crawlrs::domain::services::llm::vision_adapter::GenaiVisionAdapter;
+use crawlrs::domain::services::llm::vision_adapter::FluxweirVisionAdapter;
 use crawlrs::engines::client::mllm::MllmEngine;
 use crawlrs::engines::client::playwright_pool::{init_global_pool, BrowserPoolConfig};
 use crawlrs::engines::engine_client::{HttpMethod, ScraperEngine};
@@ -113,7 +113,7 @@ async fn mllm_engine_end_to_end_with_ax_tree() {
         ax_tree_enabled: true,
         ..MllmEngineConfig::default()
     };
-    let engine = MllmEngine::new(Arc::new(GenaiVisionAdapter::new()), config);
+    let engine = MllmEngine::new(Arc::new(FluxweirVisionAdapter::new(None)), config);
 
     let url = TARGET_URL.to_string();
     let request = InternalScrapeRequest {

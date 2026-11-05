@@ -60,6 +60,33 @@ impl ServiceType {
     }
 }
 
+/// api 停机信号：SIGTERM/SIGINT（Unix）或 Ctrl+C（非 Unix 降级）。
+/// 与 worker 模式的 `listen_unix_signals` 语义对齐，但不绑定 coordinator
+///（api 排空经 axum graceful shutdown 承载）。
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        let mut sigint = signal(SignalKind::interrupt()).expect("install SIGINT handler");
+        tokio::select! {
+            _ = sigterm.recv() => {
+                log::info!("SIGTERM received, draining API server");
+            }
+            _ = sigint.recv() => {
+                log::info!("SIGINT received, draining API server");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl+C handler");
+        log::info!("Ctrl+C received, draining API server");
+    }
+}
+
 mod app {
     use super::ServiceType;
     use crawlrs::bootstrap::routes::build_api_app_with_state;
@@ -102,10 +129,17 @@ mod app {
         let listener = TcpListener::bind(&addr).await?;
         log::info!("Server listening on {}", addr);
 
+        // 停机排空：信号触发后先完成 fluxweir 网关 flush（pre-aggregator/
+        // 配额账本落库），再放行进程退出（fluxweir-llm-gateway D2 顺序钉死）
+        let gateway_for_shutdown = app_state.fluxweir_gateway();
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
         )
+        .with_graceful_shutdown(async move {
+            crate::shutdown_signal().await;
+            gateway_for_shutdown.shutdown().await;
+        })
         .await?;
 
         Ok(())
@@ -195,6 +229,17 @@ mod app {
                         &worker_ids,
                     )
                     .await;
+                })
+            },
+        );
+        // fluxweir 网关 flush：CloseConnections 阶段执行（flush 完成才放行
+        // 连接关闭；fluxweir-llm-gateway D2 顺序钉死）
+        let gateway_for_worker = app_state.fluxweir_gateway();
+        coordinator.register_shutdown_hook(
+            crawlrs::workers::shutdown::ShutdownPhase::CloseConnections,
+            move || {
+                Box::pin(async move {
+                    gateway_for_worker.shutdown().await;
                 })
             },
         );
@@ -356,9 +401,15 @@ mod app {
             );
         }
         log::info!("Running database migrations from {}...", dir.display());
-        let applied = app_state
-            .db_pool()
-            .run_migrations(&dir)
+        // fluxweir-llm-gateway D9：专用历史表执行器（含存量基线回填），
+        // 与 fluxweir 的 dbnexus_migrations 隔离；第三参为基目录，
+        // 执行器内部按编译 dialect 投影 <dialect>/ 子目录
+        let applied =
+            crawlrs::infrastructure::database::dbnexus_connection::run_crawlrs_migrations(
+                &app_state.db_pool(),
+                true,
+                Some(&base),
+            )
             .await
             .map_err(|e| anyhow::anyhow!("migration failed: {e}"))?;
         log::info!("Database migrations complete: {applied} applied");

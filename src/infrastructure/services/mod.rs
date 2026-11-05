@@ -6,6 +6,14 @@
 /// 提供基础设施层的服务实现
 /// 包括限流服务等核心功能
 pub mod config_service;
+/// fluxweir 承载的 LLM carrier（变更 fluxweir-llm-gateway D4：
+/// 经 SDK 经嵌入式网关/外部实例发出提取请求，gateway feature 门控）
+#[cfg(feature = "gateway")]
+pub mod fluxweir_llm_carrier;
+/// fluxweir 承载的嵌入/重排 provider（变更 fluxweir-llm-gateway D5：
+/// RAG 降级链 secondary，gateway feature 门控）
+#[cfg(feature = "gateway")]
+pub mod fluxweir_providers;
 /// 通用 HTTP rerank provider（无条件编译：仅依赖 reqwest，覆盖
 /// Cohere v2 / Jina / TEI / 自建 /rerank 端点）
 pub mod http_rerank_provider;
@@ -23,12 +31,6 @@ pub mod limiteron_service;
 /// 所有方法返回放行/成功。
 #[cfg(not(feature = "rate-limit"))]
 pub mod noop_rate_limiting_service;
-#[cfg(feature = "rag-remote")]
-pub mod rig_embedding_provider;
-/// RAG 嵌入/重排 provider 实现
-///
-/// - `vecboost_provider`：vecboost 进程内本地推理，`rag-local` feature 门控
-/// - `rig_embedding_provider`：rig 远端嵌入（OpenAI 兼容），`rag-remote` feature 门控
 #[cfg(feature = "rag-local")]
 pub mod vecboost_provider;
 /// webhook 发送器实现

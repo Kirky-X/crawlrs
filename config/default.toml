@@ -277,7 +277,7 @@ prose_min_sentence_words = 7
 prose_max_link_density = 0.7
 
 # RAG 能力配置（嵌入 + 重排）——最小引入：默认全关，provider 依赖可选 feature
-# 嵌入 provider："" 禁用 | "local"（vecboost，需 --features rag-local）| "remote"（rig，需 --features rag-remote）
+# 嵌入 provider："" 禁用 | "local"（vecboost，需 --features rag-local）；远端兜底由 gateway 装配期叠加
 # 重排 provider："" 禁用 | "local"（vecboost，需 --features rag-local）| "http"（通用 /rerank REST，无 feature 要求）
 [rag]
 enabled = false
@@ -292,11 +292,6 @@ local_model_path = "models/BAAI-bge-small-en-v1.5"
 local_model_name = "BAAI/bge-small-en-v1.5"
 local_dimensions = 384
 local_cache_size = 256
-# --- remote（rig，OpenAI 兼容）---
-remote_embed_model = "text-embedding-3-small"
-remote_dimensions = 1536                 # text-embedding-3-small 维度；显式声明可让 rig 跳过探测
-remote_api_base = ""                     # 留空用 rig 默认官方端点；Ollama 填 http://localhost:11434/v1
-# remote_api_key 经 CRAWLRS__RAG__REMOTE_API_KEY 环境变量注入，勿写入本文件
 # --- http（通用 rerank：cohere 格式兼容 Cohere v2/Jina/多数自建；tei 格式对应 text-embeddings-inference）---
 rerank_endpoint = ""                     # 如 https://api.jina.ai/v1/rerank
 rerank_model = ""                        # cohere 格式必填（如 jina-reranker-v2-base-multilingual）；tei 不需要
@@ -306,6 +301,27 @@ rerank_timeout_seconds = 10
 # --- 行为 ---
 search_rerank_top_n = 25                 # 搜索重排送入 provider 的最大文档数
 rag_top_k = 5                            # RAG 抽取检索 top-K 分块
+
+# fluxweir 网关集成（LLM/嵌入/重排统一出口；需 --features gateway，默认全关）
+# embedded：进程内起服并共享 crawlrs 的 dbnexus 连接池；external：SDK 直连外部实例
+[fluxweir]
+enabled = false
+mode = "embedded"
+listen_addr = "127.0.0.1:8900"
+# 网关 API key 经环境变量注入：api_key_env 填变量名（值勿写入本文件）
+api_key_env = ""
+# fluxweir 完整配置文件路径（整文件优先于内联装配；空 = 纯内联最小装配）
+config_path = ""
+# 外部网关实例地址（mode="external" 必填，如 http://llm-gw:8080；embedded 忽略）
+external_base_url = ""
+# 可信代理开关（保留机制）：开启时网关接受宿主经 request extensions 注入的
+# TrustedIdentity（is_admin 位收窄 /admin/*）。当前 SDK 回环形态下 crawlrs 不
+# 注入身份、保持 false 即可——数据面经 SDK 透传客户端 key 鉴权，admin 面经
+# 网关自身 key（api_key_env 指向的变量值）直达 listen_addr
+trusted_proxy = false
+request_timeout_secs = 120
+# RAG 降级链：vecboost（primary）失败时允许切换 fluxweir（fallback）
+rag_fallback = true
 
 # HTTP Proxy Configuration
 # Configure proxy for all scraping engines

@@ -3623,6 +3623,7 @@ async fn build_scrape_worker() -> anyhow::Result<ScrapeWorker> {
         &settings.politeness,
         &settings.session,
         &settings.observability,
+        None,
     );
     let services = init_services(
         &infra,
@@ -3808,6 +3809,7 @@ async fn tc_scrape_worker_builder_builds_full_worker() {
         &settings.politeness,
         &settings.session,
         &settings.observability,
+        None,
     );
     let services = init_services(
         &infra,

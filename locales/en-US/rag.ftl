@@ -1,10 +1,8 @@
 # RAG configuration validation messages — en-US
 # Covers RagSettings::validate_providers() (11 keys)
 
-rag-config-embedding-provider-local-feature = rag.embedding_provider = "local" requires the rag-local feature (vecboost); rebuild with --features rag-local, or use "remote"
-rag-config-embedding-provider-remote-feature = rag.embedding_provider = "remote" requires the rag-remote feature (rig-core); rebuild with --features rag-remote
-rag-config-remote-embed-model-empty = rag.remote_embed_model cannot be empty
-rag-config-embedding-provider-invalid = invalid rag.embedding_provider value "{ $value }" (supported: ""/local/remote)
+rag-config-embedding-provider-local-feature = rag.embedding_provider = "local" requires the rag-local feature (vecboost); rebuild with --features rag-local,
+rag-config-embedding-provider-invalid = invalid rag.embedding_provider value "{ $value }" (supported: ""/local)
 rag-config-rerank-provider-local-feature = rag.rerank_provider = "local" requires the rag-local feature (vecboost); rebuild with --features rag-local, or use "http"
 rag-config-rerank-endpoint-empty = rag.rerank_endpoint cannot be empty when rag.rerank_provider = "http"
 rag-config-rerank-model-empty = rag.rerank_model cannot be empty when rag.rerank_format = "cohere"

@@ -10,7 +10,7 @@
 use crate::config::DatabaseSettings;
 use dbnexus::sea_orm::{ConnAcquireErr, DbErr};
 use dbnexus::{CacheConfig, DbConfig, DbPool, PoolConfig, Session};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,6 +19,20 @@ use std::time::Duration;
 /// 迁移基目录的覆盖环境变量（与 `main.rs` 的 migrate 子命令共用）。
 /// 值为包含 `<dialect>/` 子目录的基目录，而非直接的迁移目录。
 pub const MIGRATIONS_DIR_ENV: &str = "CRAWLRS_MIGRATIONS_DIR";
+
+/// crawlrs 专用迁移历史表（fluxweir-llm-gateway D9）。
+///
+/// dbnexus 默认历史表 `dbnexus_migrations` 由 crawlrs 与 fluxweir 共享时
+/// 会跨消费者短路：crawlrs 文件迁移版本 1..8 与 fluxweir 内存迁移版本
+/// 1..=9 重叠，`!applied.contains(version)` 的待应用判定不分写方——存量库
+/// 上 fluxweir V9 的 ALTER 会打在缺失表上（启动 fail-fast），新库上
+/// fluxweir 先跑则 crawlrs 001..008 全被跳过（运行期 500）。专用表消除
+/// 版本空间碰撞；fluxweir 侧迁移常量为冻结契约不动。
+pub const CRAWLRS_MIGRATIONS_TABLE: &str = "crawlrs_migrations";
+
+/// dbnexus 默认迁移历史表名（dbnexus executor 冻结契约，未导出故本地声明；
+/// 仅作存量基线读取源，crawlrs 不再写入）。
+const DBNEXUS_MIGRATIONS_TABLE: &str = "dbnexus_migrations";
 
 /// 编译期 db dialect feature → 迁移子目录（R-multidb-schema-002）。
 ///
@@ -52,6 +66,173 @@ pub fn dialect_migrations_dir(base: &Path) -> Option<PathBuf> {
         let _ = base;
         None
     }
+}
+
+/// 编译期 db dialect feature → dbnexus `DatabaseType`（与
+/// [`dialect_migrations_dir`] 同款互斥映射，R-multidb-schema-002）。
+fn migration_db_type() -> Option<dbnexus::DatabaseType> {
+    #[cfg(feature = "db-postgres")]
+    {
+        Some(dbnexus::DatabaseType::Postgres)
+    }
+    #[cfg(all(feature = "db-sqlite", not(feature = "db-postgres")))]
+    {
+        Some(dbnexus::DatabaseType::Sqlite)
+    }
+    #[cfg(all(
+        feature = "db-mysql",
+        not(any(feature = "db-postgres", feature = "db-sqlite"))
+    ))]
+    {
+        Some(dbnexus::DatabaseType::MySql)
+    }
+    #[cfg(not(any(feature = "db-postgres", feature = "db-sqlite", feature = "db-mysql")))]
+    {
+        None
+    }
+}
+
+/// crawlrs 专用迁移执行（fluxweir-llm-gateway D9：历史表分离 + 存量基线）。
+///
+/// 流程：`crawlrs_migrations` 空表首跑时从 [`DBNEXUS_MIGRATIONS_TABLE`] 复制
+/// `file_path LIKE '%migrations/%'` 的行为基线（crawlrs 池历史跑的是文件迁移、
+/// 路径必含 `migrations/`；fluxweir 迁移为内存嵌入、合成路径不含该锚点），
+/// 表非空即视为已初始化、不再读默认表——fluxweir 后写入的 1..=9 行永不混入。
+/// 随后 `MigrationExecutor::run_migrations` 跑 `migrations/<dialect>/`。
+///
+/// `auto_migrate=false` 时不执行也不报错（与原池内语义一致）；dialect 目录
+/// 缺失时显性报错（R-multidb-schema-003，禁止静默跳过）。
+///
+/// 返回本次应用（不含基线标记）的迁移数。
+pub async fn run_crawlrs_migrations(
+    pool: &DbPool,
+    auto_migrate: bool,
+    migrations_dir: Option<&Path>,
+) -> Result<u32, DbErr> {
+    if !auto_migrate {
+        return Ok(0);
+    }
+    let base_dir = migrations_dir.ok_or_else(|| {
+        DbErr::Custom(
+            "database.auto_migrate=true but no db dialect feature (db-postgres/db-sqlite/\
+             db-mysql) is compiled; cannot select a migrations/<dialect>/ directory"
+                .to_string(),
+        )
+    })?;
+    // 入参为迁移基目录（含 <dialect>/ 子目录）；按编译 dialect 投影后交给
+    // executor——直接扫基目录会得到 0 个文件（applied=0 假绿）
+    let dir = dialect_migrations_dir(base_dir).ok_or_else(|| {
+        DbErr::Custom(
+            "no db dialect feature compiled; cannot map migrations base dir \
+             to a migrations/<dialect>/ directory"
+                .to_string(),
+        )
+    })?;
+    let Some(db_type) = migration_db_type() else {
+        return Err(DbErr::Custom(
+            "database.auto_migrate=true but no db dialect feature compiled; \
+             cannot map DatabaseType for migrations"
+                .to_string(),
+        ));
+    };
+
+    let session = pool
+        .get_session("admin")
+        .await
+        .map_err(|e| DbErr::Custom(format!("migration session acquire failed: {e}")))?;
+    let mut executor = session
+        .create_migration_executor(db_type)
+        .map_err(|e| DbErr::Custom(format!("migration executor init failed: {e}")))?
+        .with_history_table(CRAWLRS_MIGRATIONS_TABLE)
+        .map_err(|e| DbErr::Custom(format!("history table override failed: {e}")))?;
+    // load_history 幂等建 crawlrs_migrations（executor 内建 IF NOT EXISTS），
+    // 为基线 INSERT 提供表结构
+    executor
+        .load_history()
+        .await
+        .map_err(|e| DbErr::Custom(format!("crawlrs migration history load failed: {e}")))?;
+
+    let conn = session
+        .connection()
+        .map_err(|e| DbErr::Custom(format!("migration session connection: {e}")))?
+        .clone();
+    let baseline = apply_crawlrs_migration_baseline(&conn).await?;
+
+    let applied = executor
+        .run_migrations(&dir)
+        .await
+        .map_err(|e| DbErr::Custom(format!("crawlrs migrations failed: {e}")))?;
+    if baseline > 0 || applied > 0 {
+        info!(
+            "crawlrs migrations complete: baseline marked={baseline}, applied={applied} \
+             (history table: {CRAWLRS_MIGRATIONS_TABLE})"
+        );
+    }
+    Ok(applied)
+}
+
+/// 存量基线回填：仅当 `crawlrs_migrations` 为空且默认历史表存在 crawlrs
+/// 行时执行一次性 INSERT SELECT（`file_path LIKE '%migrations/%'` 筛选）。
+/// 全新库（默认表不存在/为空）返回 0，正常全量跑迁移。
+async fn apply_crawlrs_migration_baseline(
+    conn: &dbnexus::sea_orm::DatabaseConnection,
+) -> Result<u64, DbErr> {
+    use dbnexus::sea_orm::{ConnectionTrait, Statement};
+
+    let backend = conn.get_database_backend();
+    let legacy_has_rows = match conn
+        .query_one_raw(Statement::from_string(
+            backend,
+            format!("SELECT COUNT(*) AS n FROM {DBNEXUS_MIGRATIONS_TABLE}"),
+        ))
+        .await
+    {
+        Ok(Some(row)) => row.try_get::<i64>("", "n").unwrap_or(0) > 0,
+        // 默认表不可读 = 全新库（fluxweir 尚未建表），无基线属预期；
+        // 与查询瞬态失败同分支但留下审计日志，避免存量库静默重放迁移
+        Err(_) => {
+            warn!(
+                "{DBNEXUS_MIGRATIONS_TABLE} not readable (treated as fresh database; \
+                 baseline skipped)"
+            );
+            false
+        }
+        _ => false,
+    };
+    if !legacy_has_rows {
+        return Ok(0);
+    }
+
+    let ours: i64 = conn
+        .query_one_raw(Statement::from_string(
+            backend,
+            format!("SELECT COUNT(*) AS n FROM {CRAWLRS_MIGRATIONS_TABLE}"),
+        ))
+        .await
+        .map_err(|e| DbErr::Custom(format!("crawlrs migration history count failed: {e}")))?
+        .and_then(|row| row.try_get::<i64>("", "n").ok())
+        .unwrap_or(0);
+    if ours > 0 {
+        // 已初始化过：跳过基线（防 fluxweir 后写入默认表的行混入）
+        return Ok(0);
+    }
+
+    let result = conn
+        .execute_unprepared(&format!(
+            "INSERT INTO {CRAWLRS_MIGRATIONS_TABLE} (version, description, applied_at, file_path) \
+             SELECT version, description, applied_at, file_path FROM {DBNEXUS_MIGRATIONS_TABLE} \
+             WHERE file_path LIKE '%migrations/%'"
+        ))
+        .await
+        .map_err(|e| DbErr::Custom(format!("crawlrs migration baseline failed: {e}")))?;
+    let marked = result.rows_affected();
+    if marked > 0 {
+        info!(
+            "crawlrs migration baseline: marked {marked} legacy rows as applied \
+             (source: {DBNEXUS_MIGRATIONS_TABLE})"
+        );
+    }
+    Ok(marked)
 }
 
 /// Database pool wrapper type with metrics support using dbnexus
@@ -321,14 +502,21 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
             acquire_timeout,
         },
         permissions_path,
-        migrations_dir,
-        auto_migrate: settings.auto_migrate,
+        migrations_dir: migrations_dir.clone(),
+        // fluxweir-llm-gateway D9：池内 auto_migrate 恒关——迁移移交
+        // [`run_crawlrs_migrations`]（专用历史表 `crawlrs_migrations`，
+        // 与 fluxweir 的 dbnexus_migrations 隔离）；settings.auto_migrate
+        // 语义保留，由池创建后的显式执行器承接
+        auto_migrate: false,
         migration_timeout: 300,
         admin_role: "admin".to_string(),
         warmup_timeout: 30,
         warmup_retries: 3,
         cache_config: CacheConfig::default(),
-        retry_policy: None,
+        // fluxweir-llm-gateway T018：显式激活幂等读重试（SELECT/SHOW/EXPLAIN，
+        // INSERT 不受影响）——fluxweir 自建池默认 Some(default)，共享池不设
+        // 会使 fluxweir read 路径重试语义静默失活
+        retry_policy: Some(dbnexus::RetryPolicy::default()),
         failover_config: None,
         replica_config: None,
     };
@@ -343,6 +531,22 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
     // None 保持关闭（行为同历史版本）
     if let Some(capacity) = settings.prepare_cache_capacity {
         pool.enable_prepare_cache(capacity);
+    }
+
+    // fluxweir-llm-gateway D9：显式迁移执行（专用历史表 + 存量基线回填；
+    // 传基目录，方言投影在 run_crawlrs_migrations 内统一）
+    let applied = run_crawlrs_migrations(
+        &pool,
+        settings.auto_migrate,
+        Some(Path::new(&migrations_base)),
+    )
+    .await
+    .map_err(|e| {
+        error!("crawlrs migrations failed: {e}");
+        e
+    })?;
+    if applied > 0 {
+        info!("database migrations complete: {applied} applied");
     }
 
     Ok(pool)

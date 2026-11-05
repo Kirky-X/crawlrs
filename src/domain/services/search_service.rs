@@ -2097,6 +2097,7 @@ mod tests {
             search: SearchSettings::default(),
             llm: LLMSettings::default(),
             rag: RagSettings::default(),
+            fluxweir: FluxweirSettings::default(),
             proxy: ProxySettings::default(),
             engines: EngineSettings::default(),
             logging: LoggingSettings::default(),

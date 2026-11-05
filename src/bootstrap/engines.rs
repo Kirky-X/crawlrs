@@ -8,8 +8,6 @@ use crate::config::settings::{
     EngineTimeoutSettings, ObservabilitySettings, PolitenessSettings, ProxyStrategy,
     SessionSettings,
 };
-#[cfg(feature = "engine-mllm")]
-use crate::domain::services::llm::vision_adapter::GenaiVisionAdapter;
 #[cfg(feature = "engine-flaresolverr")]
 use crate::engines::client::flare_solverr::FlareSolverrEngine;
 #[cfg(feature = "engine-mllm")]
@@ -66,6 +64,7 @@ pub struct EngineComponents {
 ///
 /// Returns a vector of initialized engines.
 #[allow(unused_variables)]
+#[allow(clippy::too_many_arguments)]
 pub fn init_engines(
     http_client: Arc<reqwest::Client>,
     proxy_provider: Option<Arc<dyn ProxyProvider>>,
@@ -74,6 +73,11 @@ pub fn init_engines(
     engine_config: &EngineSettings,
     engine_timeouts: &EngineTimeoutSettings,
     max_response_body_bytes: usize,
+    // vision 适配器由装配面注入（经 fluxweir 网关承载；engine-mllm 显式依赖
+    // gateway，无单独编译态）。None 且 engine-mllm 启用 → 装配期 fail-fast。
+    vision_adapter: Option<
+        Arc<dyn crate::domain::services::llm::vision_adapter::VisionAdapterTrait>,
+    >,
 ) -> Vec<Arc<dyn ScraperEngine>> {
     // 从 EngineTimeoutSettings 派生超时与各引擎 MRT，避免硬编码
     let timeout_seconds = engine_timeouts.default_timeout_seconds;
@@ -250,7 +254,15 @@ pub fn init_engines(
             mrt_seconds: engine_config.mllm.mrt_seconds,
             ax_tree_enabled: engine_config.mllm.ax_tree_enabled,
         };
-        let vision_adapter = std::sync::Arc::new(GenaiVisionAdapter::new());
+        // vision 请求经 fluxweir 网关承载；适配器缺位 = [fluxweir] 未启用 =
+        // 配置矛盾，fail-fast（engine-mllm 不存在无 gateway 的编译态）
+        let vision_adapter = vision_adapter.unwrap_or_else(|| {
+            panic!(
+                "engine-mllm enabled but no vision adapter available; \
+                 set [fluxweir].enabled=true (mode embedded/external) — \
+                 vision requests are carried by the fluxweir gateway"
+            )
+        });
         engines.push(std::sync::Arc::new(MllmEngine::new(
             vision_adapter,
             mllm_config,
@@ -300,6 +312,9 @@ pub fn init_engine_components(
     politeness: &PolitenessSettings,
     session: &SessionSettings,
     observability: &ObservabilitySettings,
+    vision_adapter: Option<
+        Arc<dyn crate::domain::services::llm::vision_adapter::VisionAdapterTrait>,
+    >,
 ) -> EngineComponents {
     // F2：SessionManager 与引擎层共享同一 ProxyProvider（Arc 克隆，
     // init_engines 下方按值消费原 Arc）
@@ -312,6 +327,7 @@ pub fn init_engine_components(
         _engine_config,
         engine_timeouts,
         max_response_body_bytes,
+        vision_adapter,
     );
     // F1/F5：host 纪律参数从 [politeness] 配置注入（此前硬编码 with_defaults）
     // F2：SessionManager 注入 [session] 配置与共享代理提供者（UA 池由
@@ -383,6 +399,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            None,
         );
         assert!(
             !engines.is_empty(),
@@ -402,6 +419,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            None,
         );
         let engine_names: Vec<&str> = engines.iter().map(|e| e.name()).collect();
         assert!(
@@ -426,6 +444,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            None,
         );
         assert!(
             !engines.is_empty(),
@@ -446,6 +465,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            None,
         );
         assert!(!engines.is_empty());
     }
@@ -463,6 +483,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            None,
         );
         assert!(!engines.is_empty());
     }
@@ -480,6 +501,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            None,
         );
         assert!(
             !engines.iter().any(|e| e.name() == "wreq"),
@@ -503,6 +525,7 @@ mod tests {
             &engine_config,
             &make_engine_timeouts(),
             engine_config.max_response_body_bytes as usize,
+            None,
         );
         assert!(
             engines.iter().any(|e| e.name() == "wreq"),
@@ -527,6 +550,7 @@ mod tests {
             &PolitenessSettings::default(),
             &SessionSettings::default(),
             &ObservabilitySettings::default(),
+            None,
         );
         assert!(
             !components.engines.is_empty(),
@@ -552,6 +576,7 @@ mod tests {
             &PolitenessSettings::default(),
             &SessionSettings::default(),
             &ObservabilitySettings::default(),
+            None,
         );
         assert!(
             !components.engines.is_empty(),
@@ -574,6 +599,7 @@ mod tests {
             &PolitenessSettings::default(),
             &SessionSettings::default(),
             &ObservabilitySettings::default(),
+            None,
         );
         // The router should have registered engines matching the engines vec
         let registered = components.router.registered_engines();
@@ -598,6 +624,7 @@ mod tests {
             &PolitenessSettings::default(),
             &SessionSettings::default(),
             &ObservabilitySettings::default(),
+            None,
         );
         // EngineClient should report at least 1 engine
         assert!(
@@ -621,6 +648,7 @@ mod tests {
             &PolitenessSettings::default(),
             &SessionSettings::default(),
             &ObservabilitySettings::default(),
+            None,
         );
         // EngineComponents derives Clone; verify clone produces equivalent field counts
         let cloned = components.clone();

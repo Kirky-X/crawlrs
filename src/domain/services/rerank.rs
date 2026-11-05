@@ -51,6 +51,55 @@ pub trait RerankProvider: Send + Sync {
     fn name(&self) -> &str;
 }
 
+/// 复合重排 provider（fluxweir-llm-gateway D5 降级链）
+///
+/// primary 成功直用；primary 出错 **单次** 切换 secondary（log warn 显性记录，
+/// 无内嵌重试防风暴）；双失败时交由 [`SearchReranker`] 的 fail-open 语义
+/// 保原序返回（错误链携带双方上下文，不阻塞检索可用性）。
+/// 典型装配：vecboost/http 为 primary、fluxweir 为 secondary。
+pub struct FallbackRerankProvider {
+    primary: Arc<dyn RerankProvider>,
+    secondary: Arc<dyn RerankProvider>,
+}
+
+impl FallbackRerankProvider {
+    pub fn new(primary: Arc<dyn RerankProvider>, secondary: Arc<dyn RerankProvider>) -> Self {
+        Self { primary, secondary }
+    }
+}
+
+#[async_trait::async_trait]
+impl RerankProvider for FallbackRerankProvider {
+    async fn rerank(
+        &self,
+        query: &str,
+        documents: &[String],
+        top_k: Option<usize>,
+    ) -> Result<Vec<RerankScore>, RerankError> {
+        match self.primary.rerank(query, documents, top_k).await {
+            Ok(scores) => Ok(scores),
+            Err(primary_err) => {
+                log::warn!(
+                    "primary rerank provider failed, falling back to secondary: {primary_err}"
+                );
+                self.secondary
+                    .rerank(query, documents, top_k)
+                    .await
+                    .map_err(|secondary_err| {
+                        RerankError::Provider(format!(
+                            "both rerank providers failed; primary: {primary_err}; \
+                             secondary: {secondary_err}"
+                        ))
+                    })
+            }
+        }
+    }
+
+    fn name(&self) -> &str {
+        "fallback"
+    }
+}
+
 /// 搜索结果重排器（领域层编排，无条件编译）
 ///
 /// `provider` 为 `None` 时完全直通（RAG 能力未启用 / 未配置），零开销。
@@ -184,6 +233,113 @@ mod tests {
         fn name(&self) -> &str {
             "mock"
         }
+    }
+
+    /// 可编程故障 mock（降级链测试）：调用计数经 AtomicUsize 外部断言
+    struct FallbackMockProvider {
+        fail: bool,
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl RerankProvider for FallbackMockProvider {
+        async fn rerank(
+            &self,
+            _query: &str,
+            _documents: &[String],
+            _top_k: Option<usize>,
+        ) -> Result<Vec<RerankScore>, RerankError> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if self.fail {
+                return Err(RerankError::Provider("fallback mock down".to_string()));
+            }
+            Ok(vec![RerankScore {
+                index: 0,
+                score: 0.9,
+            }])
+        }
+
+        fn name(&self) -> &str {
+            "fallback-mock"
+        }
+    }
+
+    #[tokio::test]
+    async fn fallback_rerank_primary_success_skips_secondary() {
+        let primary_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let secondary_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let fallback = FallbackRerankProvider::new(
+            Arc::new(FallbackMockProvider {
+                fail: false,
+                calls: primary_calls.clone(),
+            }),
+            Arc::new(FallbackMockProvider {
+                fail: true,
+                calls: secondary_calls.clone(),
+            }),
+        );
+        let out = fallback
+            .rerank("q", &["d".to_string()], None)
+            .await
+            .expect("primary ok");
+        assert_eq!(out.len(), 1);
+        assert_eq!(primary_calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            secondary_calls.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "secondary must not be called when primary succeeds"
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_rerank_primary_failure_switches_once() {
+        let primary_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let secondary_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let fallback = FallbackRerankProvider::new(
+            Arc::new(FallbackMockProvider {
+                fail: true,
+                calls: primary_calls.clone(),
+            }),
+            Arc::new(FallbackMockProvider {
+                fail: false,
+                calls: secondary_calls.clone(),
+            }),
+        );
+        let out = fallback
+            .rerank("q", &["d".to_string()], None)
+            .await
+            .expect("secondary ok");
+        assert_eq!(out[0].score, 0.9);
+        assert_eq!(primary_calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            secondary_calls.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_rerank_both_fail_reports_both_contexts() {
+        let fallback = FallbackRerankProvider::new(
+            Arc::new(FallbackMockProvider {
+                fail: true,
+                calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }),
+            Arc::new(FallbackMockProvider {
+                fail: true,
+                calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }),
+        );
+        let err = fallback
+            .rerank("q", &["d".to_string()], None)
+            .await
+            .expect_err("must error");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("both rerank providers failed"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("fallback mock down"), "{rendered}");
     }
 
     fn result(title: &str, description: Option<&str>) -> SearchResult {

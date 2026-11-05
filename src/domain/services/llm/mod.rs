@@ -11,8 +11,9 @@
 pub mod chunker; // token 窗口分块 + 并行提问 + merge（F8）
 pub mod prompt_builder;
 pub mod provenance; // 提取结果字符级溯源对齐（F9）
-#[cfg(feature = "engine-mllm")]
-pub mod vision_adapter; // 视觉模型适配器（MLLM 引擎依赖，genai 仅经此面保留）
+                    // 视觉模型适配器：trait 无条件编译（域抽象，mock/测试可用）；
+                    // FluxweirVisionAdapter 实现挂 gateway 门控（vision 经网关承载，无直连态）
+pub mod vision_adapter;
 
 use anyhow::Result;
 use async_trait::async_trait;

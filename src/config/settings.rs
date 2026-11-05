@@ -21,6 +21,7 @@ pub use super::engines::{
     EngineSettings, FlareSolverrCdpSettings, FlareSolverrSettings, FlareSolverrTlsSettings,
     PlaywrightEngineSettings,
 };
+pub use super::fluxweir::FluxweirSettings;
 pub use super::llm::{LLMSettings, LlmChunkingSettings};
 pub use super::logging::{ConsoleLoggingSettings, FileLoggingSettings, LoggingSettings};
 pub use super::rag::RagSettings;
@@ -84,6 +85,10 @@ pub struct Settings {
     /// provider 组合校验走 [`RagSettings::validate_providers`]（启动期 fail-fast），
     /// 不挂 validator 的 nested 约束。
     pub rag: RagSettings,
+
+    /// fluxweir 网关集成配置（默认全关；校验走 [`FluxweirSettings::validate`]）。
+    /// 启用后统一 LLM/嵌入/重排出站出口（见变更 `fluxweir-llm-gateway`）。
+    pub fluxweir: FluxweirSettings,
 
     /// HTTP 代理配置
     pub proxy: ProxySettings,
@@ -1204,6 +1209,7 @@ mod tests {
             search: SearchSettings::default(),
             llm: LLMSettings::default(),
             rag: RagSettings::default(),
+            fluxweir: FluxweirSettings::default(),
             proxy: ProxySettings::default(),
             engines: EngineSettings::default(),
             robots: RobotsSettings::default(),

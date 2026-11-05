@@ -61,21 +61,30 @@ openapi = ["http", "sdforge/openapi", "dep:utoipa"]
 standard = ["engine-playwright", "metrics", "content", "sitemap"]
 full = ["standard", "engine-flaresolverr", "extractors", "llm"]
 
-# llm：LLM 边界（trait + 编排），零外部依赖；genai 仅随 engine-mllm
+# llm：LLM 边界（trait + 编排），零外部依赖；vision 经 gateway 承载
 llm = []
 
-# RAG 特性（不入 default/full）：rag-local=vecboost 本地推理，rag-remote=rig-core 远端嵌入
+# RAG 特性（不入 default/full）：rag-local=vecboost 本地推理，远端嵌入/重排
+# 兜底经 gateway（fluxweir）承载——rig-core 已退役（fluxweir-llm-gateway T011）
 rag-local = ["dep:vecboost"]
-rag-remote = ["dep:rig-core"]
-rag = ["rag-local", "rag-remote"]
+rag = ["rag-local", "gateway"]
+
+# --- 网关特性 ---
+# gateway：fluxweir 统一 LLM/嵌入/重排出口（嵌入式网关 + SDK）。fluxweir 以
+# default-features=false 引入：其 default 携带 db-sqlite，会与 db-postgres 触发
+# dbnexus embedded×server-side 互斥 compile_error；db-postgres 对齐 crawlrs 持久化面。
+# path 依赖：T015/T016/T019 的 with_pool/build_app_with_pool/TrustedIdentity 为本地
+# checkout 交付，registry 0.1.0 不含（vecboost/nebulaid 同款本地开发态）。
+gateway = ["dep:fluxweir", "dep:axum"]
 
 # --- 引擎特性 ---
 engine-playwright = ["dep:chromiumoxide"]
 engine-flaresolverr = []
 # TLS 指纹引擎用 wreq（BoringSSL）；wreq-util 为 GPL-3.0，故自建 Emulation 映射
 engine-tls-fingerprint = ["dep:wreq"]
-# MLLM 自主导航爬取引擎依赖浏览器引擎 + 视觉 LLM（genai 仅经此面保留）
-engine-mllm = ["engine-playwright", "llm", "dep:genai"]
+# MLLM 自主导航爬取引擎依赖浏览器引擎 + 视觉 LLM；
+# vision_adapter 经 fluxweir chat 出站，故显式依赖 gateway（无单独编译态）
+engine-mllm = ["engine-playwright", "llm", "gateway"]
 
 # 内容处理：aho-corasick 多模式匹配，htmd 做 HTML→Markdown 转换
 content = ["dep:aho-corasick", "dep:htmd"]
@@ -238,14 +247,11 @@ regex.workspace = true
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "equivalent", "inline-more"] }
 
 bytes = { version = "1", default-features = false, features = ["std"] }
-genai = { version = "0.6", default-features = false, features = ["rustls-tls"], optional = true }
 # llm prompt 模板加载（domain/services/llm/prompt_builder.rs）运行时解析 toml
 toml = { version = "1.1", default-features = false, features = ["std", "parse", "serde"] }
 
 # vecboost 本地嵌入/重排（rag-local）；关闭服务面避免 dbnexus 互斥 compile_error
 vecboost = { version = "0.3.0-rc.1", optional = true, default-features = false }
-# rig-core 远端嵌入（OpenAI 兼容）；仅嵌入方向，远端重排走自有 HTTP 适配
-rig-core = { version = "0.44", optional = true, default-features = false, features = ["reqwest", "rustls"] }
 
 # Dependency Injection
 trait-kit = { version = "0.5.0-rc.9", default-features = false, features = ["async", "confers", "shutdown"] }
@@ -263,6 +269,13 @@ sys-locale = { version = "0.3", default-features = false }
 
 # 钉 utoipa 5.5（sdforge re-export）；升 6.0 会双版本共存触发 E0659
 utoipa = { version = "5.5", optional = true, default-features = false, features = ["macros"] }
+
+# fluxweir LLM 网关（gateway 特性）：本地 checkout path 依赖（with_pool/build_app_with_pool/
+# TrustedIdentity 为 fluxweir 侧本变更交付，registry 0.1.0 不含）；default-features=false
+# 剥离其 db-sqlite 默认后端（dbnexus embedded×server-side 互斥守卫），db-postgres 对齐共享池。
+# feature 统一附带效应：inklog/trait-kit/confers/oxcache/sdforge/limiteron 随 fluxweir 版本
+# 需求解析上移（fast-masking/secret-scan 进入构建面），回归验证见 T021。
+fluxweir = { path = "../fluxweir", version = "0.1.0", optional = true, default-features = false, features = ["full", "db-postgres"] }
 
 [dev-dependencies]
 # dbnexus 恒可用：test_helpers 经 dbnexus::sea_orm re-export，任意 feature 组合可编译
@@ -380,7 +393,7 @@ regex = { version = "1.13", default-features = false, features = ["std", "perf",
 # Encoding（simd-unsafe 为上游默认携带的非对齐读 SIMD，产物裁剪时一并剥离）
 base64 = { version = "0.23", default-features = false, features = ["std"] }
 # 驱动/runtime 特性不在此声明，由 db-postgres/db-sqlite/db-mysql 特性组选择
-dbnexus = { version = "0.6.0-rc.9", default-features = false, features = ["cache", "macros", "migration", "auto-migrate", "config-env", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
+dbnexus = { version = "0.6.0-rc.11", default-features = false, features = ["cache", "macros", "migration", "auto-migrate", "config-env", "with-chrono", "with-uuid", "with-json", "yaml", "permission", "health-check", "prepare-cache"] }
 sea-orm = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
 # SDK
 sdforge = { version = "0.5.0-rc.6", default-features = false, features = ["http"] }
@@ -390,5 +403,5 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("platform", "agent-lib", "engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability", "db-postgres", "db-sqlite", "db-mysql", "rag", "rag-local", "rag-remote"))'
+    'cfg(feature, values("platform", "agent-lib", "engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability", "db-postgres", "db-sqlite", "db-mysql", "rag", "rag-local", "gateway"))'
 ]

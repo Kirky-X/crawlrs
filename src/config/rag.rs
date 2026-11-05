@@ -4,8 +4,9 @@
 //! RAG 能力配置（嵌入 + 重排）
 //!
 //! 两条 provider 链路，独立选择、可单独启用：
-//! - 嵌入：`local`（vecboost 进程内推理，需 `rag-local` feature）或
-//!   `remote`（rig OpenAI 兼容端点，需 `rag-remote` feature）
+//! - 嵌入：`local`（vecboost 进程内推理，需 `rag-local` feature）；
+//!   远端兜底经 gateway（fluxweir embed）在装配期叠加，不再有 rig 直连
+//!   provider（fluxweir-llm-gateway T011 退役 rag-remote）
 //! - 重排：`local`（vecboost，需 `rag-local`）或 `http`（通用 /rerank REST
 //!   适配，兼容 Cohere/Jina/自建端点，仅 reqwest，无需 feature）
 //!
@@ -35,12 +36,12 @@ fn rag_config_message(
 ///
 /// # 字段说明
 ///
-/// * `remote_api_key` / `rerank_api_key` - 敏感信息，仅 crate 可见，
-///   外部模块应使用 [`RagSettings::remote_api_key`] / [`RagSettings::rerank_api_key`]
+/// * `rerank_api_key` - 敏感信息，仅 crate 可见，外部模块应使用
+///   [`RagSettings::rerank_api_key`]
 ///
 /// # 安全提示
 ///
-/// 两个 api_key 字段包含外部服务凭据，Debug 输出一律 `[REDACTED]`。
+/// api_key 字段包含外部服务凭据，Debug 输出一律 `[REDACTED]`。
 #[derive(Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__RAG__")]
 pub struct RagSettings {
@@ -48,7 +49,7 @@ pub struct RagSettings {
     #[config(default = false)]
     pub enabled: bool,
 
-    /// 嵌入 provider：`""`（禁用）| `local` | `remote`
+    /// 嵌入 provider：`""`（禁用）| `local`；远端兜底由 gateway 装配期叠加
     #[config(default = String::new())]
     pub embedding_provider: String,
 
@@ -74,24 +75,6 @@ pub struct RagSettings {
     /// 本地推理嵌入缓存条数（0 = 关闭）
     #[config(default = 256)]
     pub local_cache_size: usize,
-
-    // remote（rig，OpenAI 兼容）
-    /// 远端嵌入模型名
-    #[config(default = "text-embedding-3-small".to_string())]
-    pub remote_embed_model: String,
-
-    /// 远端嵌入维度（text-embedding-3-small = 1536；显式声明可让
-    /// rig `embedding_model_with_ndims` 跳过探测并作元数据透出）
-    #[config(default = 1536)]
-    pub remote_dimensions: usize,
-
-    /// OpenAI 兼容基础 URL（如 `https://api.openai.com/v1`、Ollama `http://localhost:11434/v1`）；
-    /// 空则用 rig 默认官方端点
-    #[config(default = String::new())]
-    pub remote_api_base: String,
-
-    /// 远端嵌入 API 密钥（敏感信息）
-    pub(crate) remote_api_key: Option<String>,
 
     // http（通用 rerank REST）
     /// 重排端点完整 URL（如 `https://api.jina.ai/v1/rerank`、TEI `http://host/rerank`）
@@ -133,10 +116,6 @@ impl std::fmt::Debug for RagSettings {
             .field("local_model_name", &self.local_model_name)
             .field("local_dimensions", &self.local_dimensions)
             .field("local_cache_size", &self.local_cache_size)
-            .field("remote_embed_model", &self.remote_embed_model)
-            .field("remote_dimensions", &self.remote_dimensions)
-            .field("remote_api_base", &self.remote_api_base)
-            .field("remote_api_key", &"[REDACTED]")
             .field("rerank_endpoint", &self.rerank_endpoint)
             .field("rerank_model", &self.rerank_model)
             .field("rerank_format", &self.rerank_format)
@@ -149,11 +128,6 @@ impl std::fmt::Debug for RagSettings {
 }
 
 impl RagSettings {
-    /// 获取远端嵌入 API 密钥
-    pub fn remote_api_key(&self) -> Option<&str> {
-        self.remote_api_key.as_deref()
-    }
-
     /// 获取重排端点 API 密钥
     pub fn rerank_api_key(&self) -> Option<&str> {
         self.rerank_api_key.as_deref()
@@ -162,7 +136,7 @@ impl RagSettings {
     /// 启动期 provider 配置校验（fail-fast）
     ///
     /// 除字段合法性外，还校验"配置的 provider 是否已编译进二进制"：
-    /// `local` 需要 `rag-local` feature、`remote` 需要 `rag-remote` feature，
+    /// `local` 需要 `rag-local` feature（远端兜底由 gateway 装配期叠加），
     /// 缺失时给出带重建指引的错误，而非运行到一半才失败。
     pub fn validate_providers(&self) -> Result<(), String> {
         if !self.enabled {
@@ -176,32 +150,15 @@ impl RagSettings {
                 return Err(rag_config_message(
                     "rag-config-embedding-provider-local-feature",
                     "rag.embedding_provider = \"local\" requires the rag-local feature (vecboost); \
-                     rebuild with --features rag-local, or use \"remote\"",
+                     rebuild with --features rag-local",
                     &[],
                 ));
-            }
-            "remote" => {
-                #[cfg(not(feature = "rag-remote"))]
-                return Err(rag_config_message(
-                    "rag-config-embedding-provider-remote-feature",
-                    "rag.embedding_provider = \"remote\" requires the rag-remote feature (rig-core); \
-                     rebuild with --features rag-remote",
-                    &[],
-                ));
-                #[cfg(feature = "rag-remote")]
-                if self.remote_embed_model.trim().is_empty() {
-                    return Err(rag_config_message(
-                        "rag-config-remote-embed-model-empty",
-                        "rag.remote_embed_model cannot be empty",
-                        &[],
-                    ));
-                }
             }
             other => {
                 return Err(rag_config_message(
                     "rag-config-embedding-provider-invalid",
                     format!(
-                        "invalid rag.embedding_provider value \"{other}\" (supported: \"\"/local/remote)"
+                        "invalid rag.embedding_provider value \"{other}\" (supported: \"\"/local)"
                     ),
                     &[("value", FluentValue::from(other))],
                 ));
@@ -301,13 +258,11 @@ mod tests {
     fn test_rag_debug_redacts_keys() {
         let settings = RagSettings {
             enabled: true,
-            remote_api_key: Some("sk-secret".to_string()),
             rerank_api_key: Some("jina-secret".to_string()),
             ..RagSettings::default()
         };
         let debug = format!("{settings:?}");
         assert!(debug.contains("[REDACTED]"), "Debug must redact api keys");
-        assert!(!debug.contains("sk-secret"));
         assert!(!debug.contains("jina-secret"));
     }
 

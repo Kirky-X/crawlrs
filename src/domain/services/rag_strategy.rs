@@ -406,6 +406,48 @@ pub trait EmbeddingProvider: Send + Sync {
     fn dimensions(&self) -> usize;
 }
 
+/// 复合嵌入 provider（fluxweir-llm-gateway D5 降级链）
+///
+/// primary 成功直用；primary 出错 **单次** 切换 secondary（log warn 显性记录，
+/// 无内嵌重试防风暴）；双失败时显性报错（anyhow 链携带双方错误上下文）。
+/// 典型装配：vecboost/http 为 primary、fluxweir 为 secondary。
+pub struct FallbackEmbeddingProvider {
+    primary: Arc<dyn EmbeddingProvider>,
+    secondary: Arc<dyn EmbeddingProvider>,
+}
+
+impl FallbackEmbeddingProvider {
+    pub fn new(primary: Arc<dyn EmbeddingProvider>, secondary: Arc<dyn EmbeddingProvider>) -> Self {
+        Self { primary, secondary }
+    }
+}
+
+#[async_trait::async_trait]
+impl EmbeddingProvider for FallbackEmbeddingProvider {
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        match self.primary.embed(texts).await {
+            Ok(vectors) => Ok(vectors),
+            Err(primary_err) => {
+                log::warn!(
+                    "primary embedding provider failed, falling back to secondary: {primary_err:#}"
+                );
+                self.secondary.embed(texts).await.map_err(|secondary_err| {
+                    anyhow::anyhow!(
+                        "both embedding providers failed; primary: {primary_err:#}; \
+                         secondary: {secondary_err:#}"
+                    )
+                })
+            }
+        }
+    }
+
+    /// 维度以 primary 声明为准（降级链装配期保证 secondary 维度一致——
+    /// fluxweir 侧维度校验在响应映射期显性报错）
+    fn dimensions(&self) -> usize {
+        self.primary.dimensions()
+    }
+}
+
 /// 向量存储（内存实现，使用 oxcache 持久化）
 pub struct VectorStore {
     /// 分块 ID → 嵌入向量
@@ -672,6 +714,109 @@ mod tests {
         fn dimensions(&self) -> usize {
             self.dims
         }
+    }
+
+    /// 可编程故障 mock（降级链测试）：`fail=true` 时 embed 报错，调用计数
+    /// 经 AtomicUsize 外部断言（单次切换、不重试）
+    struct FallbackMockEmbeddingProvider {
+        fail: bool,
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingProvider for FallbackMockEmbeddingProvider {
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if self.fail {
+                return Err(anyhow::anyhow!("mock down"));
+            }
+            Ok(texts.iter().map(|_| vec![0.5f32; 2]).collect())
+        }
+
+        fn dimensions(&self) -> usize {
+            2
+        }
+    }
+
+    #[tokio::test]
+    async fn fallback_embedding_primary_success_skips_secondary() {
+        let primary_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let secondary_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let fallback = FallbackEmbeddingProvider::new(
+            Arc::new(FallbackMockEmbeddingProvider {
+                fail: false,
+                calls: primary_calls.clone(),
+            }),
+            Arc::new(FallbackMockEmbeddingProvider {
+                fail: true,
+                calls: secondary_calls.clone(),
+            }),
+        );
+        let out = fallback
+            .embed(&["a".to_string(), "b".to_string()])
+            .await
+            .expect("primary ok");
+        assert_eq!(out.len(), 2);
+        assert_eq!(primary_calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            secondary_calls.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "secondary must not be called when primary succeeds"
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_embedding_primary_failure_switches_once() {
+        let primary_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let secondary_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let fallback = FallbackEmbeddingProvider::new(
+            Arc::new(FallbackMockEmbeddingProvider {
+                fail: true,
+                calls: primary_calls.clone(),
+            }),
+            Arc::new(FallbackMockEmbeddingProvider {
+                fail: false,
+                calls: secondary_calls.clone(),
+            }),
+        );
+        let out = fallback
+            .embed(&["a".to_string()])
+            .await
+            .expect("secondary ok");
+        assert_eq!(out, vec![vec![0.5, 0.5]]);
+        assert_eq!(primary_calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            secondary_calls.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_embedding_both_fail_reports_both_contexts() {
+        let fallback = FallbackEmbeddingProvider::new(
+            Arc::new(FallbackMockEmbeddingProvider {
+                fail: true,
+                calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }),
+            Arc::new(FallbackMockEmbeddingProvider {
+                fail: true,
+                calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }),
+        );
+        let err = fallback
+            .embed(&["a".to_string()])
+            .await
+            .expect_err("must error");
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("both embedding providers failed"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("mock down"),
+            "must carry both contexts: {rendered}"
+        );
     }
 
     // 分块测试

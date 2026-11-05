@@ -378,11 +378,9 @@ impl I18nBundle {
             "domain-error-validation",
         ]);
 
-        // rag.ftl (11 keys) — RagSettings::validate_providers 配置校验消息
+        // rag.ftl (9 keys) — RagSettings::validate_providers 配置校验消息
         keys.extend([
             "rag-config-embedding-provider-local-feature",
-            "rag-config-embedding-provider-remote-feature",
-            "rag-config-remote-embed-model-empty",
             "rag-config-embedding-provider-invalid",
             "rag-config-rerank-provider-local-feature",
             "rag-config-rerank-endpoint-empty",
@@ -391,6 +389,15 @@ impl I18nBundle {
             "rag-config-rerank-provider-invalid",
             "rag-config-search-rerank-top-n",
             "rag-config-rag-top-k",
+        ]);
+
+        // fluxweir.ftl (5 keys) — FluxweirSettings::validate 配置校验消息
+        keys.extend([
+            "fluxweir-config-mode-invalid",
+            "fluxweir-config-listen-addr-empty",
+            "fluxweir-config-external-base-url-empty",
+            "fluxweir-config-api-key-missing",
+            "fluxweir-config-timeout-invalid",
         ]);
 
         // workers.ftl (5 keys) — BacklogWorker::process_backlog 运维日志

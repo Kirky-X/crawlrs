@@ -37,25 +37,28 @@ use crate::domain::services::llm::{ExplicitErrorCarrier, LLMServiceTrait};
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 // rate-limit feature 关闭时不导入 LimiteronService 相关配置类型
 use crate::domain::services::rag_strategy::{
-    ChunkerConfig, EmbeddingProvider, RagExtractionRuntime,
+    ChunkerConfig, EmbeddingProvider, FallbackEmbeddingProvider, RagExtractionRuntime,
 };
 #[cfg(feature = "rate-limit")]
 use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy,
 };
-use crate::domain::services::rerank::{RerankProvider, SearchReranker};
+use crate::domain::services::rerank::{FallbackRerankProvider, RerankProvider, SearchReranker};
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
 // SearXNG 实例生命周期服务（`search.searxng.enabled = false` 时为 None）
 use crate::domain::services::searxng::{
     ReqwestSearxngTransport, SearxngInstanceService, SearxngInstanceServiceImpl,
 };
-// RAG provider 实现：local/remote 由 rag-local / rag-remote feature 门控，
-// http（通用 REST 重排）无条件可用
+// RAG provider 实现：local 由 rag-local feature 门控；远端兜底经 gateway
+//（fluxweir），http（通用 REST 重排）无条件可用
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
+#[cfg(feature = "gateway")]
+use crate::infrastructure::services::fluxweir_providers::{
+    build_client as build_fluxweir_client, FluxweirEmbeddingProvider, FluxweirRerankProvider,
+    FLUXWEIR_EMBED_MODEL, FLUXWEIR_RERANK_MODEL,
+};
 use crate::infrastructure::services::http_rerank_provider::{HttpRerankProvider, RerankFormat};
-#[cfg(feature = "rag-remote")]
-use crate::infrastructure::services::rig_embedding_provider::RigEmbeddingProvider;
 #[cfg(feature = "rag-local")]
 use crate::infrastructure::services::vecboost_provider::VecboostProvider;
 // webhook feature 关闭时不导入 WebhookServiceImpl
@@ -150,6 +153,9 @@ pub struct ServicesComponents {
     pub embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     /// RAG 重排 provider（`rag.enabled = false` 或未配置时为 None）
     pub rerank_provider: Option<Arc<dyn RerankProvider>>,
+    /// fluxweir 网关句柄（`fluxweir.enabled = false` 时空句柄零开销；
+    /// embedded 持 ServerHandle 供停机 flush，external 仅 base_url）
+    pub fluxweir_gateway: crate::bootstrap::fluxweir_gateway::FluxweirGatewayHandle,
     /// Content extraction facade
     ///
     /// 持有 `Vec<Box<dyn ContentExtractor>>` + 可选 LLM 承载，按 Trafilatura→DomSmoothie→CssRule
@@ -420,7 +426,7 @@ pub struct RagComponents {
 /// 初始化 RAG 能力组件。
 ///
 /// 校验语义（fail-fast）由 `RagSettings::validate_providers` 承担：配置了
-/// 未编译的 feature（local 无 `rag-local` / remote 无 `rag-remote`）或非法
+/// 未编译的 feature（local 无 `rag-local`）或非法
 /// provider 值时返回带重建指引的错误。vecboost 模型加载（秒级）发生在此处，
 /// 即启动期一次性成本。
 pub async fn init_rag_components(settings: &Settings) -> Result<RagComponents, String> {
@@ -433,32 +439,84 @@ pub async fn init_rag_components(settings: &Settings) -> Result<RagComponents, S
     settings.rag.validate_providers()?;
     let rag = &settings.rag;
 
+    // fluxweir 兜底 provider（design D5）：gateway 编译 + [fluxweir].enabled
+    // + rag_fallback 时构造；primary（vecboost/http/rig）失败单次切换。
+    // base_url 从 settings 直接决议（embedded 网关此刻可能尚未起服——provider
+    // 请求发生在运行期，readyz 之后）。
+    #[cfg(feature = "gateway")]
+    let fluxweir_fallback: Option<(Arc<dyn EmbeddingProvider>, Arc<dyn RerankProvider>)> =
+        if settings.fluxweir.enabled && settings.fluxweir.rag_fallback {
+            match build_fluxweir_client(settings) {
+                Some(client) => {
+                    log::info!(
+                        "fluxweir RAG fallback enabled (embed={}, rerank={})",
+                        FLUXWEIR_EMBED_MODEL,
+                        FLUXWEIR_RERANK_MODEL
+                    );
+                    Some((
+                        Arc::new(FluxweirEmbeddingProvider::new(
+                            client.clone(),
+                            FLUXWEIR_EMBED_MODEL,
+                            rag.local_dimensions,
+                        )),
+                        Arc::new(FluxweirRerankProvider::new(client, FLUXWEIR_RERANK_MODEL)),
+                    ))
+                }
+                None => {
+                    log::warn!("fluxweir.enabled but API key unresolvable; RAG fallback disabled");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+    #[cfg(not(feature = "gateway"))]
+    let fluxweir_fallback: Option<(Arc<dyn EmbeddingProvider>, Arc<dyn RerankProvider>)> = None;
+
     let embedding: Option<Arc<dyn EmbeddingProvider>> = match rag.embedding_provider.as_str() {
         "" => None,
         #[cfg(feature = "rag-local")]
-        "local" => {
-            Some(Arc::new(VecboostProvider::new(rag).await.map_err(|e| {
-                format!("vecboost embedding provider init failed: {e}")
-            })?))
-        }
-        #[cfg(feature = "rag-remote")]
-        "remote" => {
-            Some(Arc::new(RigEmbeddingProvider::new(rag).map_err(|e| {
-                format!("rig embedding provider init failed: {e}")
-            })?))
-        }
+        "local" => match VecboostProvider::new(rag).await {
+            Ok(provider) => Some(Arc::new(provider)),
+            // D5 装配矩阵：vecboost 初始化失败且有兜底 → 仅 fluxweir（不阻断启动）
+            Err(e) if fluxweir_fallback.is_some() => {
+                log::warn!(
+                    "vecboost embedding provider init failed, using fluxweir fallback only: {e}"
+                );
+                None
+            }
+            Err(e) => return Err(format!("vecboost embedding provider init failed: {e}")),
+        },
         // validate_providers 已拒绝非法值与未编译 feature 的组合，此处不可达
         _ => None,
+    };
+    // primary Some + 兜底 Some → 复合降级链；primary None + 兜底 Some → 仅兜底
+    let embedding = match (
+        embedding,
+        fluxweir_fallback.as_ref().map(|(e, _)| e.clone()),
+    ) {
+        (Some(primary), Some(secondary)) => {
+            Some(Arc::new(FallbackEmbeddingProvider::new(primary, secondary))
+                as Arc<dyn EmbeddingProvider>)
+        }
+        (Some(primary), None) => Some(primary),
+        (None, Some(secondary)) => Some(secondary),
+        (None, None) => None,
     };
 
     let rerank: Option<Arc<dyn RerankProvider>> = match rag.rerank_provider.as_str() {
         "" => None,
         #[cfg(feature = "rag-local")]
-        "local" => {
-            Some(Arc::new(VecboostProvider::new(rag).await.map_err(|e| {
-                format!("vecboost rerank provider init failed: {e}")
-            })?))
-        }
+        "local" => match VecboostProvider::new(rag).await {
+            Ok(provider) => Some(Arc::new(provider)),
+            Err(e) if fluxweir_fallback.is_some() => {
+                log::warn!(
+                    "vecboost rerank provider init failed, using fluxweir fallback only: {e}"
+                );
+                None
+            }
+            Err(e) => return Err(format!("vecboost rerank provider init failed: {e}")),
+        },
         "http" => Some(Arc::new(
             HttpRerankProvider::new(
                 &rag.rerank_endpoint,
@@ -472,6 +530,15 @@ pub async fn init_rag_components(settings: &Settings) -> Result<RagComponents, S
         )),
         // validate_providers 已拒绝非法值与未编译 feature 的组合，此处不可达
         _ => None,
+    };
+    let rerank = match (rerank, fluxweir_fallback.map(|(_, r)| r)) {
+        (Some(primary), Some(secondary)) => {
+            Some(Arc::new(FallbackRerankProvider::new(primary, secondary))
+                as Arc<dyn RerankProvider>)
+        }
+        (Some(primary), None) => Some(primary),
+        (None, Some(secondary)) => Some(secondary),
+        (None, None) => None,
     };
 
     Ok(RagComponents { embedding, rerank })
@@ -807,9 +874,43 @@ pub async fn init_garrison_auth(
 ///
 /// Returns an initialized LLM service wrapped in Arc.
 pub fn init_llm_service(
-    _settings: &Settings,
+    #[cfg_attr(not(feature = "gateway"), allow(unused_variables))] settings: &Settings,
     _http_client: Arc<reqwest::Client>,
+    #[cfg_attr(not(feature = "gateway"), allow(unused_variables))]
+    fluxweir_gateway: &crate::bootstrap::fluxweir_gateway::FluxweirGatewayHandle,
 ) -> Arc<dyn LLMServiceTrait> {
+    // fluxweir-llm-gateway T007：[fluxweir].enabled=true → FluxweirLlmCarrier
+    //（gateway 未编译的 enabled 形态已在 init_fluxweir_gateway fail-fast，
+    // 此处 enabled 即蕴含 gateway 可用）；disabled → ExplicitErrorCarrier 原行为
+    #[cfg(feature = "gateway")]
+    if settings.fluxweir.enabled {
+        let base_url = fluxweir_gateway
+            .base_url()
+            .expect("fluxweir gateway enabled but handle has no base_url (init order bug)")
+            .to_string();
+        let api_key = settings
+            .fluxweir
+            .api_key()
+            .expect("fluxweir enabled but no API key resolvable (validate order bug)");
+        let client = fluxweir::sdk::FluxweirClientBuilder::new()
+            .base_url(base_url)
+            .api_key(api_key)
+            .timeout(std::time::Duration::from_secs(
+                settings.fluxweir.request_timeout_secs,
+            ))
+            .build()
+            .expect("fluxweir SDK client build failed");
+        log::info!(
+            "LLM carrier: FluxweirLlmCarrier via fluxweir gateway at {}",
+            fluxweir_gateway.base_url().unwrap_or("<unknown>")
+        );
+        return Arc::new(
+            crate::infrastructure::services::fluxweir_llm_carrier::FluxweirLlmCarrier::new(
+                client, settings,
+            ),
+        );
+    }
+    let _ = fluxweir_gateway;
     Arc::new(ExplicitErrorCarrier)
 }
 
@@ -997,6 +1098,21 @@ pub async fn init_services(
         settings.rag.search_rerank_top_n,
     ));
 
+    // fluxweir 网关生命周期（默认全关：enabled=false 时空句柄零开销；
+    // enabled=true 但 gateway 未编译 → fail-fast，错误文案含 feature 指引）
+    let fluxweir_gateway = match crate::bootstrap::fluxweir_gateway::init_fluxweir_gateway(
+        settings,
+        Some(infrastructure.db.clone_inner()),
+        &settings.database.url,
+    )
+    .await
+    {
+        Ok(handle) => handle,
+        Err(e) => {
+            panic!("fluxweir gateway init failed (check [fluxweir] config / features): {e:#}")
+        }
+    };
+
     let search_service = init_search_service(
         repositories,
         settings,
@@ -1059,7 +1175,7 @@ pub async fn init_services(
     }
 
     // Initialize LLM service (使用依赖注入的 http_client)
-    let llm_service = init_llm_service(settings, http_client.clone());
+    let llm_service = init_llm_service(settings, http_client.clone(), &fluxweir_gateway);
 
     // Initialize extraction service（嵌入 provider 就绪时注入 RAG 运行时）
     let extraction_service: Arc<dyn ExtractionServiceTrait> =
@@ -1136,6 +1252,7 @@ pub async fn init_services(
         extraction_service,
         embedding_provider: rag.embedding.clone(),
         rerank_provider: rag.rerank.clone(),
+        fluxweir_gateway,
         content_extractor,
         #[cfg(feature = "webhook")]
         webhook_worker,
@@ -1371,7 +1488,7 @@ mod tests {
     async fn test_init_llm_service_defaults_to_explicit_error_carrier() {
         let settings = crate::bootstrap::config::load_settings().expect("Failed to load settings");
         let http_client = make_http_client();
-        let service = init_llm_service(&settings, http_client);
+        let service = init_llm_service(&settings, http_client, &Default::default());
         let schema = serde_json::json!({"type": "object"});
         let err = service
             .extract_data("text", &schema, "json")
@@ -1568,6 +1685,7 @@ mod tests {
             &settings.engines,
             &settings.timeouts.engines,
             settings.engines.max_response_body_bytes as usize,
+            None,
         );
         let engine_router = Arc::new(EngineRouter::with_host_discipline(
             engines.clone(),

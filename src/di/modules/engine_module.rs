@@ -69,6 +69,27 @@ impl AsyncAutoBuilder for EngineModule {
             } else {
                 None
             };
+            // vision 适配器经 fluxweir 网关承载（engine-mllm 显式依赖 gateway，
+            // 无单独编译态）；[fluxweir].enabled=false 时为 None，engine-mllm
+            // 启用会在引擎装配期 fail-fast
+            #[cfg(feature = "gateway")]
+            let vision_adapter: Option<
+                std::sync::Arc<
+                    dyn crate::domain::services::llm::vision_adapter::VisionAdapterTrait,
+                >,
+            > = {
+                use crate::domain::services::llm::vision_adapter::FluxweirVisionAdapter;
+                crate::infrastructure::services::fluxweir_providers::build_client(settings.as_ref())
+                    .map(|client| {
+                        std::sync::Arc::new(FluxweirVisionAdapter::new(Some(client))) as _
+                    })
+            };
+            #[cfg(not(feature = "gateway"))]
+            let vision_adapter: Option<
+                std::sync::Arc<
+                    dyn crate::domain::services::llm::vision_adapter::VisionAdapterTrait,
+                >,
+            > = None;
             let engines = crate::bootstrap::engines::init_engine_components(
                 http_client.clone(),
                 proxy_provider,
@@ -85,6 +106,7 @@ impl AsyncAutoBuilder for EngineModule {
                 &settings.session,
                 // F4：[observability] 配置注入失败现场快照器（目录空串 = 零成本）
                 &settings.observability,
+                vision_adapter,
             );
             Ok(engines)
         })
