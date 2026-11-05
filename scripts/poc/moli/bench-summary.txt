@@ -1,0 +1,4 @@
+# moli vs Chrome 站点对照测量聚合（runs/site=2, sites=20, timeout=15000ms）
+# 指标定义：success_rate=ok 行数/总行数；rss_median_kb=引擎进程树 RSS 采样中位（KB，warmup 后采样期）；p95_ms=成功请求耗时的 P95（nearest-rank）
+moli: success_rate=0.925 (37/40) rss_median_kb=266560 p95_ms=8131
+chrome: success_rate=0.900 (36/40) rss_median_kb=120080 p95_ms=6222

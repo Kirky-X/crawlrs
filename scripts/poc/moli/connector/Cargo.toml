@@ -1,0 +1,26 @@
+[package]
+name = "moli-cdp-connector"
+version = "0.1.0-poc"
+edition = "2021"
+publish = false
+
+# 空 workspace 表：显式脱离主仓 workspace（主仓单 crate 无 members，PoC 不入树）。
+[workspace]
+
+# 独立 PoC 工程：不进主 crate 依赖树，仅用于 moli CDP 指令面验证。
+# chromiumoxide 特性集与主仓 Cargo.toml 完全一致（default-features=false + bytes），
+# 验证结论才能外推到 MoliEngine 的真实依赖形态。
+
+[[bin]]
+name = "cdp_connect"
+path = "../cdp_connect.rs"
+
+[[bin]]
+name = "bench_site"
+path = "../bench_site.rs"
+
+[dependencies]
+chromiumoxide = { version = "0.9", default-features = false, features = ["bytes"] }
+futures = "0.3"
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

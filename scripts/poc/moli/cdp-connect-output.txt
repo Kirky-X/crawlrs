@@ -1,0 +1,8 @@
+连接 moli CDP: ws://127.0.0.1:9222/devtools/browser/2a4faa1d-5793-4bab-b652-941a1beebd6b
+
+===== moli CDP 指令面验证结果 =====
+[pass] navigate                 (Page.navigate) goto Ok（Page.navigate 无异常返回）
+[pass] outerHTML                (Runtime.evaluate) len=2358 且含 <html>/正文特征
+[pass] evaluate                 (Runtime.evaluate) {"len":14,"ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64"}
+[pass] screenshot               (Page.captureScreenshot) 93766 bytes PNG → "/var/folders/6t/gwlz51256jg0wyx5cgds59cc0000gn/T/moli-poc-screenshot.png"
+===== 4 项通过 / 0 项失败 =====
