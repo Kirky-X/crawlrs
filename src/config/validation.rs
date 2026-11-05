@@ -28,6 +28,14 @@ pub fn validate_values(settings: &Settings) -> Result<(), sdforge::validator::Va
         ));
     }
 
+    // moli 端点可解析性（启用时）：坏端点在配置期报错而非运行期引擎失败
+    let moli = &settings.engines.moli;
+    if moli.enabled && url::Url::parse(&moli.endpoint).is_err() {
+        return Err(sdforge::validator::ValidationError::new(
+            "invalid_moli_endpoint",
+        ));
+    }
+
     Ok(())
 }
 
@@ -83,6 +91,23 @@ mod tests {
         // 调度器关闭时不校验（值不生效）
         settings.engines.memory_scheduler.refresh_interval_ms = 1;
         settings.engines.memory_scheduler.enabled = false;
+        assert!(validate_values(&settings).is_ok());
+    }
+
+    /// moli 端点不可解析且启用时被拒；关闭时不校验
+    #[test]
+    fn test_validate_values_moli_endpoint_unparsable_when_enabled() {
+        let mut settings = build_test_settings();
+        settings.engines.moli.endpoint = "not a url".to_string();
+        settings.engines.moli.enabled = true;
+        let result = validate_values(&settings);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code.to_string(),
+            "invalid_moli_endpoint"
+        );
+        // 关闭时同值放行
+        settings.engines.moli.enabled = false;
         assert!(validate_values(&settings).is_ok());
     }
 

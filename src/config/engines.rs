@@ -211,6 +211,37 @@ pub struct MemorySchedulerSettings {
     pub fallback_to_static: bool,
 }
 
+/// MoliEngine 配置（engine-moli 特性，PoC GO 后落地）
+///
+/// 端点模式：crawlrs 不拉起/不托管 moli 进程，`moli serve --layout` 由部署方负责
+/// （截图能力前置，见 poc-report.md）。
+///
+/// # 字段说明
+///
+/// * `enabled` - 是否启用 moli 引擎（默认关）
+/// * `endpoint` - moli serve CDP 端点（http URL，含端口）
+/// * `connect_timeout_ms` - CDP 建连超时（毫秒）
+/// * `scrape_timeout_ms` - 单次抓取（导航+等待+取 DOM）超时（毫秒），即引擎 MRT
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ENGINES__MOLI__")]
+pub struct MoliEngineSettings {
+    /// 是否启用 moli 引擎
+    #[config(default = false)]
+    pub enabled: bool,
+
+    /// moli serve CDP 端点
+    #[config(default = "http://127.0.0.1:9222".to_string())]
+    pub endpoint: String,
+
+    /// CDP 建连超时（毫秒）
+    #[config(default = 3000)]
+    pub connect_timeout_ms: u64,
+
+    /// 单次抓取超时（毫秒）
+    #[config(default = 30000)]
+    pub scrape_timeout_ms: u64,
+}
+
 /// 引擎配置集合
 ///
 /// 包含所有抓取引擎的配置
@@ -241,6 +272,9 @@ pub struct EngineSettings {
 
     /// 内存水位调度器配置
     pub memory_scheduler: MemorySchedulerSettings,
+
+    /// MoliEngine 配置（engine-moli 特性）
+    pub moli: MoliEngineSettings,
 }
 
 #[cfg(test)]
@@ -302,6 +336,16 @@ mod tests {
         assert_eq!(s.tight_available_mib, 2048);
         assert_eq!(s.refresh_interval_ms, 2000);
         assert!(s.fallback_to_static);
+    }
+
+    /// MoliEngineSettings 默认值与 config/default.toml `[engines.moli]` 一致
+    #[test]
+    fn test_moli_engine_settings_defaults() {
+        let s = MoliEngineSettings::default();
+        assert!(!s.enabled);
+        assert_eq!(s.endpoint, "http://127.0.0.1:9222");
+        assert_eq!(s.connect_timeout_ms, 3000);
+        assert_eq!(s.scrape_timeout_ms, 30000);
     }
 
     /// MemorySchedulerSettings 从 toml 全键反序列化

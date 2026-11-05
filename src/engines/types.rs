@@ -134,6 +134,9 @@ pub enum WaitFor {
     /// 等待网络空闲（无新请求持续 500ms）
     ///
     /// chromiumoxide 的 `goto` 已等待 load 事件，此处额外等待确保异步请求完成。
+    /// 引擎实现语义有差：Playwright 观察网络事件；moli 为 readyState=complete +
+    /// 固定静默窗的近似（见 engines/client/moli.rs），SPA 的 load 后 XHR 突发场景
+    /// 下弱于本契约——需要精确语义时用 Selector/DomStable 显式指定。
     #[default]
     NetworkIdle,
     /// 等待指定 CSS selector 出现在 DOM 中

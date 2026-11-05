@@ -51,6 +51,10 @@ pub mod wreq_engine;
 #[cfg(feature = "engine-mllm")]
 pub mod mllm;
 
+// MoliEngine：CDP 控制外部 moli serve 的 JS 渲染引擎（端点模式，PoC GO 后落地）
+#[cfg(feature = "engine-moli")]
+pub mod moli;
+
 // Re-exports
 
 /// Reqwest 引擎 (始终可用)

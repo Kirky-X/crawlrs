@@ -80,9 +80,8 @@ gateway = ["dep:fluxweir", "dep:axum"]
 # --- 引擎特性 ---
 engine-playwright = ["dep:chromiumoxide"]
 engine-flaresolverr = []
-# moli 引擎（PoC GO 后落地）：内存水位调度器随本 feature 交付（sysinfo 采样）；
-# chromiumoxide 接线在 [engines.moli] 配置面任务中并入
-engine-moli = ["dep:sysinfo"]
+# moli 引擎（PoC GO 已过）：内存水位调度器（sysinfo 采样）+ CDP 客户端（chromiumoxide）
+engine-moli = ["dep:sysinfo", "dep:chromiumoxide"]
 # TLS 指纹引擎用 wreq（BoringSSL）；wreq-util 为 GPL-3.0，故自建 Emulation 映射
 engine-tls-fingerprint = ["dep:wreq"]
 # MLLM 自主导航爬取引擎依赖浏览器引擎 + 视觉 LLM；
@@ -406,5 +405,5 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 [lints.rust.unexpected_cfgs]
 level = "deny"
 check-cfg = [
-    'cfg(feature, values("platform", "agent-lib", "engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability", "db-postgres", "db-sqlite", "db-mysql", "rag", "rag-local", "gateway"))'
+    'cfg(feature, values("platform", "agent-lib", "engine-playwright", "engine-flaresolverr", "engine-tls-fingerprint", "engine-mllm", "engine-moli", "metrics", "llm", "standard", "full", "openapi", "test-mocks", "teams", "auth", "rate-limit", "webhook", "content", "trafilatura", "dom-smoothie", "extractors", "http", "observability", "db-postgres", "db-sqlite", "db-mysql", "rag", "rag-local", "gateway"))'
 ]

@@ -230,6 +230,15 @@ refresh_interval_ms = 2000
 # Critical 且无可用 JS 引擎时回退静态抓取并标记 js_degraded（false = 快速失败）
 fallback_to_static = true
 
+# MoliEngine（engine-moli 特性，端点模式）：纯 Rust 无头内核经 CDP 控制。
+# 部署前置：moli serve --layout（截图需要 layout；见 specmark moli-engine-adoption poc-report）。
+# crawlrs 不托管 moli 进程生命周期——端点不可达按常规引擎错误处理。
+[engines.moli]
+enabled = false
+endpoint = "http://127.0.0.1:9222"
+connect_timeout_ms = 3000
+scrape_timeout_ms = 30000
+
 # Webhook Configuration
 [webhook]
 # IMPORTANT: Set webhook secret via CRAWLRS__WEBHOOK__SECRET environment variable

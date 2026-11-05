@@ -238,6 +238,19 @@ pub fn init_engines(
         }
     }
 
+    // MoliEngine 注册（engine-moli feature 门控 + engines.moli.enabled 开启）。
+    // 端点模式：进程生命周期归部署方（moli serve --layout），此处只注册客户端。
+    #[cfg(feature = "engine-moli")]
+    if engine_config.moli.enabled {
+        log::info!(
+            "MoliEngine (moli CDP) enabled at {}",
+            engine_config.moli.endpoint
+        );
+        engines.push(Arc::new(crate::engines::client::moli::MoliEngine::new(
+            crate::engines::client::moli::MoliEngineConfig::from_settings(&engine_config.moli),
+        )));
+    }
+
     // MllmEngine 注册（engine-mllm feature 门控 + engines.mllm.enabled 开启）
     #[cfg(feature = "engine-mllm")]
     if engine_config.mllm.enabled {
@@ -392,9 +405,50 @@ pub fn init_engine_components(
 
 #[cfg(test)]
 mod tests {
+    /// moli 注册语义（engine-moli）：enabled=true 进引擎向量，默认 false 不进
+    #[cfg(feature = "engine-moli")]
+    #[test]
+    fn test_moli_engine_registration_follows_config() {
+        let mut settings = crate::config::settings::Settings::default();
+        settings.engines.moli.enabled = true;
+        let engines = init_engines(
+            make_http_client(),
+            None,
+            ProxyStrategy::RoundRobin,
+            None,
+            &settings.engines,
+            &default_timeouts(),
+            10485760,
+            None,
+        );
+        assert!(
+            engines.iter().any(|e| e.name() == "moli"),
+            "enabled=true 时 moli 必须注册"
+        );
+
+        let disabled = init_engines(
+            make_http_client(),
+            None,
+            ProxyStrategy::RoundRobin,
+            None,
+            &crate::config::settings::Settings::default().engines,
+            &default_timeouts(),
+            10485760,
+            None,
+        );
+        assert!(
+            !disabled.iter().any(|e| e.name() == "moli"),
+            "默认 enabled=false 时 moli 不得注册"
+        );
+    }
+
     use super::*;
     use crate::engines::router::EngineRouterTrait;
     use std::time::Duration;
+
+    fn default_timeouts() -> crate::config::settings::EngineTimeoutSettings {
+        crate::config::settings::EngineTimeoutSettings::default()
+    }
 
     fn make_http_client() -> Arc<reqwest::Client> {
         Arc::new(reqwest::Client::new())
