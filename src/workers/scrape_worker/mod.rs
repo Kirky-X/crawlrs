@@ -1017,6 +1017,7 @@ impl ScrapeWorker {
         // handle_scrape_success 改为 owned ScrapeResponse，
         // 构造 processed_response 时直接 move 字段，避免 clone screenshot(100KB+)/headers/...
         let processed_response = ScrapeResponse {
+            js_degraded: response.js_degraded,
             content: processed_content,
             status_code: response.status_code,
             screenshot: response.screenshot,
@@ -1546,6 +1547,7 @@ fn not_modified_response(
         }
     }
     ScrapeResponse {
+        js_degraded: None,
         content: prior.content.clone(),
         status_code: 200,
         screenshot: None,
@@ -1603,6 +1605,7 @@ mod incremental_scrape_tests {
             created_at: chrono::Utc::now(),
         };
         let not_modified = ScrapeResponse {
+            js_degraded: None,
             captured_responses: Vec::new(),
             status_code: 304,
             content: String::new(),

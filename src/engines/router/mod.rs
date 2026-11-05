@@ -130,6 +130,14 @@ pub struct EngineRouter {
     /// 记录 race 胜出引擎延迟，估算 P84 阈值，供未来顺序路径决策是否发送副本请求。
     /// `HedgeController` 内部全 `Atomic*`，无锁线程安全，可直接共享无需 `Arc`。
     hedge_controller: HedgeController,
+    /// 内存水位镜像（engine-moli 特性）：评分后按水位修正引擎分数；
+    /// `None`（未装配）时路由行为与无水位调度完全一致。
+    #[cfg(feature = "engine-moli")]
+    memory: Option<Arc<crate::engines::memory_watermark::MemoryWatermark>>,
+    /// 内存水位调度参数：Critical 且无可用 JS 引擎时是否回退静态抓取
+    /// （false = 快速失败 `EngineError::MemoryConstrained`）。
+    #[cfg(feature = "engine-moli")]
+    memory_fallback_to_static: bool,
 }
 
 impl EngineRouter {
@@ -195,6 +203,10 @@ impl EngineRouter {
             session,
             failure_snapshot: None, // F4：默认未配置（failure_snapshot_dir 空串）
             hedge_controller: HedgeController::with_defaults(), // 默认参数
+            #[cfg(feature = "engine-moli")]
+            memory: None,
+            #[cfg(feature = "engine-moli")]
+            memory_fallback_to_static: true,
         }
     }
 
@@ -237,7 +249,27 @@ impl EngineRouter {
             session: SessionManager::disabled(), // F2：默认不启用（现状盲轮换）
             failure_snapshot: None,              // F4：默认未配置（failure_snapshot_dir 空串）
             hedge_controller: HedgeController::with_defaults(), // 默认参数
+            #[cfg(feature = "engine-moli")]
+            memory: None,
+            #[cfg(feature = "engine-moli")]
+            memory_fallback_to_static: true,
         }
+    }
+
+    /// 注入内存水位调度（engine-moli 特性）
+    ///
+    /// 由 DI 装配在构造后、`Arc::new` 共享前调用；`watermark` 为 `None`
+    /// （调度器关闭）时路由行为与无水位调度完全一致。`fallback_to_static`
+    /// 取自 `[engines.memory_scheduler]` 配置（Critical 且无可用 JS 引擎时
+    /// 回退静态抓取并标记 `js_degraded`，否则快速失败）。
+    #[cfg(feature = "engine-moli")]
+    pub fn set_memory_scheduler(
+        &mut self,
+        watermark: Option<Arc<crate::engines::memory_watermark::MemoryWatermark>>,
+        fallback_to_static: bool,
+    ) {
+        self.memory = watermark;
+        self.memory_fallback_to_static = fallback_to_static;
     }
 
     pub fn set_max_engine_attempts(&mut self, attempts: usize) {

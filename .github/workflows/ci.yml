@@ -215,6 +215,10 @@ jobs:
         run: cargo clippy --features "standard" -- -D warnings
       - name: Clippy (full)
         run: cargo clippy --features "full" -- -D warnings
+      # engine-moli 特性组合防 feature rot（内存水位调度 + MoliEngine 门控代码
+      # 不在 standard/full 内，缺此腿则 CI 永不编译该面）
+      - name: Clippy (engine-moli)
+        run: cargo clippy --features "engine-moli,engine-playwright,metrics" -- -D warnings
 
   test:
     name: Test (Rust ${{ matrix.rust }})
@@ -265,6 +269,8 @@ jobs:
         run: cargo test --features "standard" --lib
       - name: Test (full, lib)
         run: cargo test --features "full" --lib
+      - name: Run tests (engine-moli)
+        run: cargo test --features "engine-moli,engine-playwright,metrics" --lib
 
   doc:
     name: Documentation

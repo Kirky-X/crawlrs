@@ -129,6 +129,55 @@ impl EngineRouter {
         self.metrics.record_candidates(candidates.len());
 
         if candidates.is_empty() {
+            // 内存水位 Critical 降级语义（engine-moli）：needs_js 请求的浏览器系引擎
+            // 已被水位归 0 挤出候选且 moli 不可用。fallback_to_static=true 时改走
+            // ReqwestEngine 并标记 js_degraded；否则快速失败 MemoryConstrained。
+            #[cfg(feature = "engine-moli")]
+            if request.needs_js {
+                if let Some(watermark) = &self.memory {
+                    if watermark.level() == crate::engines::memory_watermark::MemoryLevel::Critical
+                    {
+                        self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
+                        if self.memory_fallback_to_static {
+                            if let Some(static_engine) =
+                                self.engines.iter().find(|e| e.name() == "reqwest")
+                            {
+                                warn!(
+                                    "memory Critical without JS engines, degrading request to static engine (js_degraded): {}",
+                                    request.url
+                                );
+                                let mut static_request = request.clone();
+                                static_request.needs_js = false;
+                                let fallback_started = std::time::Instant::now();
+                                let mut response =
+                                    static_engine.scrape(&static_request).await.map_err(|e| {
+                                        EngineError::AllEnginesFailed(format!(
+                                            "static fallback after memory degradation failed: {e}"
+                                        ))
+                                    })?;
+                                response.js_degraded = true;
+                                // 降级旁路与候选循环同款簿记：引擎统计/熔断/指标不因
+                                // 旁路执行而失真（否则 reqwest 健康面板漏记这些请求）
+                                let engine_name = static_engine.name();
+                                let response_time = fallback_started.elapsed();
+                                self.update_engine_stats(engine_name, true, response_time);
+                                self.circuit_breaker.record_success(engine_name).await;
+                                self.metrics
+                                    .record_engine_latency(engine_name, response_time);
+                                self.metrics.record_engine_success(engine_name);
+                                self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+                                self.metrics
+                                    .successful_requests
+                                    .fetch_add(1, Ordering::Relaxed);
+                                return Ok(response);
+                            }
+                        }
+                        return Err(EngineError::MemoryConstrained(
+                            "no JS engine available under Critical memory watermark".to_string(),
+                        ));
+                    }
+                }
+            }
             warn!("No suitable engines available for request");
             self.metrics.failed_requests.fetch_add(1, Ordering::Relaxed);
             return Err(EngineError::AllEnginesFailed(
@@ -698,6 +747,7 @@ mod snapshot_failure_tests {
 
     fn sample_response() -> InternalScrapeResponse {
         InternalScrapeResponse {
+            js_degraded: false,
             captured_responses: Vec::new(),
             status_code: 403,
             content: "<html>challenge</html>".to_string(),

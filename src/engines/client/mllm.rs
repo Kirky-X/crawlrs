@@ -312,6 +312,7 @@ impl ScraperEngine for MllmEngine {
             drop(pooled_page);
 
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 status_code: 200,
                 content: final_content,
                 screenshot,

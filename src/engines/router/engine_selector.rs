@@ -50,7 +50,39 @@ impl EngineRouter {
                 }
             }
 
-            let support_score = engine.support_score(request) as f64;
+            let support_score = engine.support_score(request);
+            // 内存水位前置修正（engine-moli）：Abundant 不改分；Tight moli +30 封顶 255；
+            // Critical 浏览器系（除 moli）归 0——归 0 引擎在此处自然退出候选。
+            #[cfg(feature = "engine-moli")]
+            let support_score = match &self.memory {
+                Some(watermark) => {
+                    let level = watermark.level();
+                    let adjusted = crate::engines::memory_watermark::apply_memory_policy(
+                        support_score,
+                        engine_name,
+                        level,
+                        request.needs_js,
+                    );
+                    #[cfg(all(feature = "engine-moli", feature = "metrics"))]
+                    if adjusted != support_score {
+                        // level 用静态 &str（避免每次打点 format! 分配；分配发生在内存压力期）
+                        let level_str = match level {
+                            crate::engines::memory_watermark::MemoryLevel::Critical => "Critical",
+                            crate::engines::memory_watermark::MemoryLevel::Tight => "Tight",
+                            crate::engines::memory_watermark::MemoryLevel::Abundant => "Abundant",
+                        };
+                        metrics::counter!(
+                            "crawlrs_engine_policy_overrides_total",
+                            "engine" => engine_name.to_string(),
+                            "level" => level_str
+                        )
+                        .increment(1);
+                    }
+                    adjusted
+                }
+                None => support_score,
+            };
+            let support_score = support_score as f64;
             if support_score == 0.0 {
                 continue;
             }

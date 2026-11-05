@@ -537,6 +537,12 @@ pub struct ScrapeResponse {
     /// 且旧缓存条目（无此字段）可正常反序列化。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub captured_responses: Vec<CapturedResponse>,
+    /// JS 降级标记（内存水位调度）
+    ///
+    /// 内存水位 Critical 且无可用 JS 引擎时按 `fallback_to_static` 回退静态抓取置
+    /// `Some(true)`；其余情况 `None`——JSON 不出现该字段，旧缓存条目可正常反序列化。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub js_degraded: Option<bool>,
 }
 
 impl ScrapeResponse {
@@ -556,6 +562,7 @@ impl ScrapeResponse {
             final_url: None,
             markdown: None,
             captured_responses: Vec::new(),
+            js_degraded: None,
         }
     }
 
@@ -639,6 +646,11 @@ pub struct InternalScrapeResponse {
     /// 仅 PlaywrightEngine 在 `capture_xhr` 启用时填充；其余引擎为空
     /// （`Default` 派生使构造点可零改动透传空值）。
     pub captured_responses: Vec<InternalCapturedResponse>,
+    /// JS 降级标记（内存水位调度）
+    ///
+    /// 内存水位 Critical 且无可用 JS 引擎时按 `fallback_to_static` 回退静态抓取置 `true`；
+    /// 其余路径恒 `false`（`Default` 派生使构造点可零改动透传）。
+    pub js_degraded: bool,
 }
 
 /// Internal captured XHR/Fetch response
@@ -766,6 +778,7 @@ impl InternalScrapeResponse {
                     body: c.body.clone(),
                 })
                 .collect(),
+            js_degraded: if self.js_degraded { Some(true) } else { None },
         }
     }
 }

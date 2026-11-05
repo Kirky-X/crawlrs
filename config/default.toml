@@ -216,6 +216,20 @@ capture_xhr_max_bytes = 262144
 # 单页面最大捕获响应数（防内存放大）
 capture_xhr_max_responses = 50
 
+# 内存水位调度器（moli-engine-adoption）：sysinfo 采样系统可用内存三档水位，
+# Critical 冻结浏览器系引擎（仅 moli 承担 JS）、Tight 时 moli 优先且 Playwright 池不扩容、
+# Abundant 维持原策略。阈值校验要求 tight_available_mib > critical_available_mib。
+[engines.memory_scheduler]
+enabled = true
+# Critical 档阈值（可用 MiB，`<` 语义；PoC 实测 moli 全进程约 260 MiB + 导航余量）
+critical_available_mib = 512
+# Tight 档阈值（可用 MiB，`<` 语义）
+tight_available_mib = 2048
+# 采样刷新周期（毫秒）
+refresh_interval_ms = 2000
+# Critical 且无可用 JS 引擎时回退静态抓取并标记 js_degraded（false = 快速失败）
+fallback_to_static = true
+
 # Webhook Configuration
 [webhook]
 # IMPORTANT: Set webhook secret via CRAWLRS__WEBHOOK__SECRET environment variable

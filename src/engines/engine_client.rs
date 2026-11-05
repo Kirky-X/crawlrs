@@ -50,6 +50,10 @@ pub enum EngineError {
     #[error("SSRF protection: {0}")]
     SsrfProtection(String),
 
+    /// 内存水位 Critical 且无可用 JS 引擎（moli 不可用）且配置禁用静态回退时的快速失败
+    #[error("Memory constrained: {0}")]
+    MemoryConstrained(String),
+
     /// Browser/Playwright error
     #[error("Browser error: {0}")]
     BrowserError(String),
@@ -134,6 +138,8 @@ impl EngineError {
             Self::AllEnginesFailed(_) => false,
             Self::Expired => false,
             Self::Other(_) => false,
+            // 内存水位 Critical 快速失败：重试不解除内存压力，等水位回升再接受请求
+            Self::MemoryConstrained(_) => false,
             // 引擎级 MRT 超时：可重试（router 优先切下一引擎，而非重试同引擎）
             Self::EngineMrtExceeded { .. } => true,
         }
@@ -164,6 +170,7 @@ impl EngineError {
             | Self::AllEnginesFailed(_)
             | Self::Expired
             | Self::Other(_)
+            | Self::MemoryConstrained(_)
             | Self::EngineMrtExceeded { .. } => RetryReason::Transient,
         }
     }
@@ -486,6 +493,7 @@ fn convert_error(e: EngineError) -> EngineError {
         EngineError::FeatureToggle(msg) => EngineError::FeatureToggle(msg),
         EngineError::Expired => EngineError::Internal("Request expired".to_string()),
         EngineError::Other(msg) => EngineError::Internal(msg),
+        EngineError::MemoryConstrained(msg) => EngineError::MemoryConstrained(msg),
         EngineError::NoEnginesAvailable => EngineError::NoEnginesAvailable,
         EngineError::InvalidUrl(msg) => EngineError::InvalidUrl(msg),
         EngineError::Internal(msg) => EngineError::Internal(msg),

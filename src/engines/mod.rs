@@ -42,6 +42,10 @@ pub mod wait;
 #[cfg(feature = "engine-mllm")]
 pub mod mllm;
 
+// 内存水位调度器：sysinfo 采样三档水位（Critical/Tight/Abundant），AtomicU8 镜像无锁读
+#[cfg(feature = "engine-moli")]
+pub mod memory_watermark;
+
 // Shared validation utilities for SSRF protection
 pub mod shared;
 

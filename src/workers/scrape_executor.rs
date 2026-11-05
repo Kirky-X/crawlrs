@@ -461,6 +461,7 @@ mod tests {
 
     fn make_response(content: &str) -> ScrapeResponse {
         ScrapeResponse {
+            js_degraded: None,
             captured_responses: Vec::new(),
             content: content.to_string(),
             status_code: 200,

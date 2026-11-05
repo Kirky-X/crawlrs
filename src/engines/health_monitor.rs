@@ -486,6 +486,7 @@ mod tests {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: self.status_code,
                 content: "ok".to_string(),
@@ -1141,6 +1142,7 @@ mod tests {
                     Err(EngineError::RequestFailed("temporary".to_string()))
                 } else {
                     Ok(InternalScrapeResponse {
+                        js_degraded: false,
                         captured_responses: Vec::new(),
                         status_code: 200,
                         content: "recovered".to_string(),
@@ -1282,6 +1284,7 @@ mod tests {
             ) -> Result<InternalScrapeResponse, EngineError> {
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 Ok(InternalScrapeResponse {
+                    js_degraded: false,
                     captured_responses: Vec::new(),
                     status_code: 200,
                     content: "slow".to_string(),

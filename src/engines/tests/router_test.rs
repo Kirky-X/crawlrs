@@ -38,6 +38,7 @@ async fn test_route_respects_max_engine_attempts() {
             self.calls.fetch_add(1, Ordering::SeqCst);
             if self.ok {
                 Ok(InternalScrapeResponse {
+                    js_degraded: false,
                     captured_responses: Vec::new(),
                     status_code: 200,
                     content: "ok".to_string(),
@@ -144,7 +145,7 @@ impl ScraperEngine for MockEngine {
         &self,
         _request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
-        Ok(InternalScrapeResponse {
+        Ok(InternalScrapeResponse { js_degraded: false,
             captured_responses: Vec::new(),
                 status_code: 200,
                 // 内容需 ≥200 字节且可见文本 ≥50 字符，
@@ -1019,6 +1020,7 @@ async fn test_route_race_mode_success() {
             // race 胜出响应会过 antibot 分类，夹具内容须像真实渲染页
             // （过短会命中 Tier3 近空页 StructuralBlock 被作废）
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: format!(
@@ -1079,6 +1081,7 @@ async fn test_route_race_mode_records_hedge_latency() {
             // race 胜出响应会过 antibot 分类，夹具内容须像真实渲染页
             // （过短会命中 Tier3 近空页 StructuralBlock 被作废）
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: format!(
@@ -1191,6 +1194,7 @@ async fn test_aggregate_no_candidates() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
@@ -1300,6 +1304,7 @@ async fn test_route_support_score_zero_filtered() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
@@ -1341,7 +1346,7 @@ async fn test_trait_aggregate_delegates_to_impl() {
             &self,
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
-            Ok(InternalScrapeResponse {
+            Ok(InternalScrapeResponse { js_degraded: false,
                 captured_responses: Vec::new(),
                     status_code: 200,
                     // 同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
@@ -1379,7 +1384,7 @@ async fn test_trait_route_delegates_to_impl() {
             &self,
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
-            Ok(InternalScrapeResponse {
+            Ok(InternalScrapeResponse { js_degraded: false,
                 captured_responses: Vec::new(),
                     status_code: 200,
                     // 同 MockEngine，需 ≥200 字节可见文本避免 antibot 误判
@@ -1419,6 +1424,7 @@ async fn test_feature_filter_excludes_low_score_engine_for_screenshot() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
@@ -1495,6 +1501,7 @@ async fn test_route_skips_engine_when_circuit_breaker_open() {
         ) -> Result<InternalScrapeResponse, EngineError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
@@ -1640,7 +1647,7 @@ async fn test_route_mrt_waterfall_first_engine_exceeds_mrt_falls_to_second() {
             self.called.store(true, Ordering::SeqCst);
             // 模拟引擎处理耗时超过 MRT
             tokio::time::sleep(self.sleep_dur).await;
-            Ok(InternalScrapeResponse {
+            Ok(InternalScrapeResponse { js_degraded: false,
                 captured_responses: Vec::new(),
                     status_code: 200,
                     content: "<html><body><h1>Slow Engine Response</h1><p>This is the slow engine response with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
@@ -1673,7 +1680,7 @@ async fn test_route_mrt_waterfall_first_engine_exceeds_mrt_falls_to_second() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             self.called.store(true, Ordering::SeqCst);
-            Ok(InternalScrapeResponse {
+            Ok(InternalScrapeResponse { js_degraded: false,
                 captured_responses: Vec::new(),
                     status_code: 200,
                     content: "<html><body><h1>Fast Engine Response</h1><p>This is the fast engine response with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
@@ -1766,7 +1773,7 @@ async fn test_route_mrt_engine_within_mrt_succeeds_normally() {
         ) -> Result<InternalScrapeResponse, EngineError> {
             self.called.store(true, Ordering::SeqCst);
             tokio::time::sleep(self.sleep_dur).await;
-            Ok(InternalScrapeResponse {
+            Ok(InternalScrapeResponse { js_degraded: false,
                 captured_responses: Vec::new(),
                     status_code: 200,
                     content: "<html><body><h1>Real Content Page</h1><p>This is a real page with sufficient visible text to pass the anti-bot detection threshold of fifty bytes required by the tier3 visible text minimum check.</p></body></html>".to_string(),
@@ -1835,6 +1842,7 @@ async fn test_route_mrt_uses_min_remaining_when_remaining_less_than_mrt() {
             self.calls.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(self.sleep_dur).await;
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: "should-not-reach-here".to_string(),
@@ -1999,6 +2007,7 @@ async fn test_route_race_mode_returns_timeout_on_select_all_timeout() {
             // select_all never resolves in time.
             tokio::time::sleep(Duration::from_secs(5)).await;
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
@@ -2235,6 +2244,7 @@ impl ScraperEngine for CallCountEngine {
     ) -> Result<InternalScrapeResponse, EngineError> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(InternalScrapeResponse {
+            js_degraded: false,
             captured_responses: Vec::new(),
             status_code: 200,
             content: self.content.clone(),
@@ -2413,6 +2423,7 @@ impl ScraperEngine for SessionProbeEngine {
             headers.insert("set-cookie".to_string(), sc.clone());
         }
         Ok(InternalScrapeResponse {
+            js_degraded: false,
             captured_responses: Vec::new(),
             status_code: self.status,
             // 足量正文，避免 content feature 的 JS 空壳探测误判为 SPA shell
@@ -2681,6 +2692,7 @@ impl ScraperEngine for JsUpgradeMockEngine {
             "text/html; charset=utf-8".to_string(),
         );
         Ok(InternalScrapeResponse {
+            js_degraded: false,
             captured_responses: Vec::new(),
             status_code: 200,
             content: self.content.clone(),
@@ -2834,4 +2846,163 @@ async fn test_js_upgrade_reroute_dispatches_browser_when_available() {
         .expect("browser stats 必须存在");
     assert_eq!(browser_stat.usage_count, 1);
     assert!(browser_stat.success_rate > 0.99);
+}
+
+// ---- 内存水位 Critical 降级语义（engine-moli）：R-engine-scheduling-002 验收 ----
+
+#[cfg(feature = "engine-moli")]
+mod memory_critical {
+    use super::*;
+    use crate::engines::memory_watermark::{MemoryLevel, MemoryWatermark};
+
+    /// 名字即内容的打分引擎：needs_js 请求按 `js_score` 打分、其余按 `static_score`，
+    /// 调用计数用于断言"Critical 时 Playwright 一次都不该被尝试"。
+    struct ScoredEngine {
+        engine_name: &'static str,
+        js_score: u8,
+        static_score: u8,
+        calls: std::sync::atomic::AtomicU32,
+    }
+
+    impl ScoredEngine {
+        fn new(engine_name: &'static str, js_score: u8, static_score: u8) -> Arc<Self> {
+            Arc::new(Self {
+                engine_name,
+                js_score,
+                static_score,
+                calls: std::sync::atomic::AtomicU32::new(0),
+            })
+        }
+
+        fn calls(&self) -> u32 {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl ScraperEngine for ScoredEngine {
+        async fn scrape(
+            &self,
+            request: &InternalScrapeRequest,
+        ) -> Result<InternalScrapeResponse, EngineError> {
+            let _ = request;
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(InternalScrapeResponse {
+                js_degraded: false,
+                captured_responses: Vec::new(),
+                status_code: 200,
+                content: format!(
+                    "<html><body><h1>{}</h1><p>engine-served page body with enough visible text for the antibot near-empty heuristic.</p></body></html>",
+                    self.engine_name
+                ),
+                screenshot: None,
+                content_type: "text/html".to_string(),
+                headers: HashMap::new(),
+                response_time_ms: 10,
+                final_url: None,
+            })
+        }
+
+        fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
+            if request.needs_js {
+                self.js_score
+            } else {
+                self.static_score
+            }
+        }
+
+        fn name(&self) -> &'static str {
+            self.engine_name
+        }
+    }
+
+    fn needs_js_request() -> InternalScrapeRequest {
+        let mut req = make_request();
+        req.needs_js = true;
+        req
+    }
+
+    fn critical_watermark() -> Arc<MemoryWatermark> {
+        let wm = MemoryWatermark::new(512, 2048);
+        assert_eq!(wm.apply_sample(Some(100)), MemoryLevel::Critical);
+        wm
+    }
+
+    #[tokio::test]
+    async fn critical_fallback_to_static_marks_js_degraded() {
+        let playwright = ScoredEngine::new("playwright", 200, 200);
+        let reqwest = ScoredEngine::new("reqwest", 10, 200);
+        let mut router = EngineRouter::new(vec![
+            Arc::clone(&playwright) as Arc<dyn ScraperEngine>,
+            Arc::clone(&reqwest) as Arc<dyn ScraperEngine>,
+        ]);
+        router.set_memory_scheduler(Some(critical_watermark()), true);
+
+        let response = router
+            .route(&needs_js_request())
+            .await
+            .expect("fallback_to_static=true 时静态回退应成功");
+        assert!(response.js_degraded, "静态回退必须标记 js_degraded=true");
+        assert!(
+            response.content.contains("reqwest"),
+            "回退应由 reqwest 引擎服务，实际内容: {}",
+            response.content
+        );
+        assert_eq!(playwright.calls(), 0, "Critical 下 Playwright 不得被尝试");
+    }
+
+    #[tokio::test]
+    async fn critical_fast_fail_when_fallback_disabled() {
+        let playwright = ScoredEngine::new("playwright", 200, 200);
+        let reqwest = ScoredEngine::new("reqwest", 10, 200);
+        let mut router = EngineRouter::new(vec![
+            Arc::clone(&playwright) as Arc<dyn ScraperEngine>,
+            Arc::clone(&reqwest) as Arc<dyn ScraperEngine>,
+        ]);
+        router.set_memory_scheduler(Some(critical_watermark()), false);
+
+        let result = router.route(&needs_js_request()).await;
+        match result {
+            Err(EngineError::MemoryConstrained(_)) => {}
+            other => panic!(
+                "期望 MemoryConstrained 快速失败，实际: {:?}",
+                other.map(|r| r.js_degraded)
+            ),
+        }
+        assert_eq!(playwright.calls(), 0);
+        assert_eq!(reqwest.calls(), 0, "快速失败路径不得触发静态引擎");
+    }
+
+    #[tokio::test]
+    async fn abundant_routes_browser_normally_without_degradation() {
+        let playwright = ScoredEngine::new("playwright", 200, 200);
+        let reqwest = ScoredEngine::new("reqwest", 10, 200);
+        let mut router = EngineRouter::new(vec![
+            Arc::clone(&playwright) as Arc<dyn ScraperEngine>,
+            Arc::clone(&reqwest) as Arc<dyn ScraperEngine>,
+        ]);
+        let wm = MemoryWatermark::new(512, 2048);
+        assert_eq!(wm.apply_sample(Some(4096)), MemoryLevel::Abundant);
+        router.set_memory_scheduler(Some(wm), true);
+
+        let response = router
+            .route(&needs_js_request())
+            .await
+            .expect("Abundant 正常路由");
+        assert!(!response.js_degraded, "Abundant 路由不得标记降级");
+        assert!(response.content.contains("playwright"));
+    }
+
+    #[tokio::test]
+    async fn critical_without_watermark_keeps_legacy_behavior() {
+        let playwright = ScoredEngine::new("playwright", 200, 200);
+        let router = EngineRouter::new(vec![Arc::clone(&playwright) as Arc<dyn ScraperEngine>]);
+        // 未装配水位（None）：即使物理内存紧张也无水位语义，行为与无调度一致
+        let response = router
+            .route(&needs_js_request())
+            .await
+            .expect("无水位时正常路由");
+        assert!(!response.js_degraded);
+        assert_eq!(playwright.calls(), 1);
+    }
 }

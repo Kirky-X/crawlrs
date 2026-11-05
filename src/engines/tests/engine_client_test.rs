@@ -393,6 +393,7 @@ fn test_to_internal_page_actions() {
 #[test]
 fn test_internal_response_to_public() {
     let internal = InternalScrapeResponse {
+        js_degraded: false,
         captured_responses: Vec::new(),
         status_code: 200,
         content: "body".to_string(),
@@ -425,6 +426,7 @@ fn test_internal_response_to_public() {
 fn test_internal_response_to_public_captures_passthrough() {
     // F6：捕获结果经 to_public 透传到公共响应
     let internal = InternalScrapeResponse {
+        js_degraded: false,
         captured_responses: vec![InternalCapturedResponse {
             url: "https://example.com/api/data".to_string(),
             status: 200,
@@ -898,6 +900,7 @@ fn test_feature_toggle_distinct_from_other_reasons() {
 #[test]
 fn test_to_public_basic_fields() {
     let internal = InternalScrapeResponse {
+        js_degraded: false,
         captured_responses: Vec::new(),
         status_code: 200,
         content: "hello".to_string(),
@@ -922,6 +925,7 @@ fn test_to_public_with_screenshot_and_headers() {
     let mut headers = std::collections::HashMap::new();
     headers.insert("X-Custom".to_string(), "value".to_string());
     let internal = InternalScrapeResponse {
+        js_degraded: false,
         captured_responses: Vec::new(),
         status_code: 404,
         content: "not found".to_string(),
@@ -944,6 +948,7 @@ fn test_to_public_with_screenshot_and_headers() {
 #[test]
 fn test_to_public_empty_content() {
     let internal = InternalScrapeResponse {
+        js_degraded: false,
         captured_responses: Vec::new(),
         status_code: 204,
         content: String::new(),
@@ -995,6 +1000,7 @@ impl MockEngineRouter {
     fn new_success() -> Self {
         Self {
             result: MockRouteResult::Success(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: "test content".to_string(),
@@ -1148,6 +1154,7 @@ fn test_engine_client_with_engines() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
@@ -1327,6 +1334,7 @@ fn test_scraper_engine_default_supports_tls_fingerprint_returns_false() {
             _request: &InternalScrapeRequest,
         ) -> Result<InternalScrapeResponse, EngineError> {
             Ok(InternalScrapeResponse {
+                js_degraded: false,
                 captured_responses: Vec::new(),
                 status_code: 200,
                 content: "ok".to_string(),
@@ -1373,6 +1381,7 @@ impl ScraperEngine for HealthyMockEngine {
         _request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
         Ok(InternalScrapeResponse {
+            js_degraded: false,
             captured_responses: Vec::new(),
             status_code: 200,
             content: "ok".to_string(),

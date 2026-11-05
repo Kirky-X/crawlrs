@@ -938,7 +938,7 @@ impl ScraperEngine for PlaywrightEngine {
             // BrowserContext。Browser 也在 pooled_page drop 时归还到 BrowserPool
             drop(pooled_page);
 
-            Ok(InternalScrapeResponse {
+            Ok(InternalScrapeResponse { js_degraded: false,
                 status_code,
                 content,
                 screenshot,

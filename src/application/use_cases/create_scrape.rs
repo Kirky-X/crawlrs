@@ -226,6 +226,9 @@ fn map_engine_error(engine_error: crate::engines::engine_client::EngineError) ->
             DomainError::EngineError("Engine request expired".to_string())
         }
         crate::engines::engine_client::EngineError::Other(msg) => DomainError::EngineError(msg),
+        crate::engines::engine_client::EngineError::MemoryConstrained(msg) => {
+            DomainError::EngineError(msg)
+        }
         // 引擎级 MRT 超时：映射到 TimeoutError，
         // 错误信息携带 engine 名字 + mrt 时长，便于调用方定位瀑布式 fallback 失败点
         crate::engines::engine_client::EngineError::EngineMrtExceeded { engine, mrt } => {

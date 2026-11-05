@@ -698,6 +698,7 @@ impl ScraperEngine for WreqEngine {
         }
 
         Ok(InternalScrapeResponse {
+            js_degraded: false,
             status_code,
             content,
             screenshot: None,

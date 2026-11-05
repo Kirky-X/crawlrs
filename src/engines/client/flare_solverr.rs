@@ -864,6 +864,7 @@ impl ScraperEngine for FlareSolverrEngine {
 
         // Build response - FlareSolverr returns HTML content
         let scrape_response = InternalScrapeResponse {
+            js_degraded: false,
             status_code: solution.status,
             content: solution.response,
             content_type: headers

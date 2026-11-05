@@ -736,6 +736,7 @@ impl ScraperEngine for ReqwestEngine {
         }
 
         Ok(InternalScrapeResponse {
+            js_degraded: false,
             status_code,
             content,
             screenshot: None,

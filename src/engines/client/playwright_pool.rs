@@ -256,6 +256,14 @@ struct BrowserPoolState {
     profile_dir_counter: AtomicU64,
     /// F6：已创建 profile 目录登记（shutdown_all 时 best-effort 清理）
     profile_dirs: std::sync::Mutex<Vec<std::path::PathBuf>>,
+    /// 内存水位镜像（engine-moli）：`None`（未装配）时行为与无水位门控一致。
+    /// 构造期自取全局单例，显式 setter 可覆盖（DI 装配顺序：set_global 先于池构造，
+    /// 测试可显式注入）。parking_lot 短临界段锁，与仓内既有选型一致。
+    #[cfg(feature = "engine-moli")]
+    memory: parking_lot::RwLock<Option<Arc<crate::engines::memory_watermark::MemoryWatermark>>>,
+    /// Critical 首次进入的一次性空闲回收标记（AtomicBool CAS 保证单次触发）
+    #[cfg(feature = "engine-moli")]
+    critical_reclaim_done: AtomicBool,
 }
 
 /// P08：池路径的代理 URL 校验（argv 注入防护）
@@ -275,6 +283,10 @@ impl BrowserPoolState {
         browser_config: Arc<dyn BrowserConfigTrait>,
         download_manager: Arc<BrowserDownloadManager>,
     ) -> Self {
+        // engine-moli：构造期自取全局水位镜像（与 router 共享同一 Arc；未装配则空）
+        #[cfg(feature = "engine-moli")]
+        let global_watermark = crate::engines::memory_watermark::get_global();
+
         let max_instances = config.max_instances;
         let (return_tx, return_rx) = mpsc::channel(32);
         Self {
@@ -290,6 +302,10 @@ impl BrowserPoolState {
             return_task: Mutex::new(None),
             return_sender: Arc::new(return_tx),
             return_receiver: Mutex::new(Some(return_rx)),
+            #[cfg(feature = "engine-moli")]
+            memory: parking_lot::RwLock::new(global_watermark),
+            #[cfg(feature = "engine-moli")]
+            critical_reclaim_done: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
             browser_path: OnceCell::new(),
             profile_dir_counter: AtomicU64::new(0),
@@ -310,6 +326,52 @@ impl BrowserPoolState {
             return Err(EngineError::Other(
                 "Browser pool is shutting down".to_string(),
             ));
+        }
+
+        // 内存水位门控（engine-moli）：Critical 拒绝新 acquire 并一次性回收空闲实例；
+        // Tight 只允许复用可用实例、总实例数不增。由路由层 D3/D4 语义兜底降级。
+        #[cfg(feature = "engine-moli")]
+        {
+            use crate::engines::memory_watermark::MemoryLevel;
+            let watermark = self.memory.read().clone();
+            if let Some(watermark) = watermark {
+                match watermark.level() {
+                    MemoryLevel::Critical => {
+                        if !self.critical_reclaim_done.swap(true, Ordering::AcqRel) {
+                            self.reclaim_idle_instances_now().await;
+                        }
+                        return Err(EngineError::MemoryConstrained(
+                            "browser pool acquire rejected under Critical memory watermark"
+                                .to_string(),
+                        ));
+                    }
+                    MemoryLevel::Tight => {
+                        // 分层契约：router 是精确策略（needs_js 维度修正分数），池是
+                        // 粗粒度安全阀（Critical 全拒 + Tight 控容量）。Tight 语义 =
+                        // 复用在运实例、总实例数不增；但 total_instances==0 的冷池
+                        // （临时池/进程刚启动）放行首实例——否则 Tight 期间浏览器
+                        // 渲染被系统性拒绝，Tight 档位形同 Critical。
+                        if self.config.enable_reuse {
+                            if let Some((id, browser)) = self.try_get_available().await {
+                                return Ok((id, browser));
+                            }
+                        }
+                        if self.total_instances.load(Ordering::Relaxed) > 0 {
+                            return Err(EngineError::MemoryConstrained(
+                                "no reusable browser instance under Tight memory watermark"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                    MemoryLevel::Abundant => {
+                        // 水位回落即复位一次性回收标记：下一个 Critical 周期
+                        // 可再次触发空闲实例立即回收（普通 load/store，无 RMW 开销）
+                        if self.critical_reclaim_done.load(Ordering::Relaxed) {
+                            self.critical_reclaim_done.store(false, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
         }
 
         // : 获取 OwnedSemaphorePermit，生命周期绑定到 PooledBrowser
@@ -616,6 +678,28 @@ impl BrowserPoolState {
                 warn!("Browser health check failed: {}", e);
                 false
             }
+        }
+    }
+
+    /// 内存水位进入 Critical 时的一次性空闲实例回收（engine-moli）
+    ///
+    /// 复用 [`Self::cleanup_idle_instances`] 的三阶段回收机制（读锁收集 → 写锁移除 →
+    /// 锁外 drop + total_instances 递减），区别仅在不做 idle_timeout 过滤——
+    /// Critical 语义下所有 available 实例都属可回收空闲，立即回收而非等超时。
+    /// 在运（in_use）实例不受影响：门控只作用于新 acquire，不中断进行中的任务。
+    #[cfg(feature = "engine-moli")]
+    async fn reclaim_idle_instances_now(&self) {
+        let removed = {
+            let mut available = self.available.write().await;
+            available.drain().collect::<Vec<_>>()
+        };
+        for (_, pooled) in removed {
+            self.total_instances.fetch_sub(1, Ordering::Relaxed);
+            log::warn!(
+                "Reclaimed idle browser instance {} due to Critical memory watermark",
+                pooled.instance_id
+            );
+            drop(pooled);
         }
     }
 
@@ -1025,6 +1109,18 @@ impl Drop for BrowserPool {
 }
 
 impl BrowserPool {
+    /// 注入内存水位镜像（engine-moli）
+    ///
+    /// 由 DI 装配在池构造后调用；`None`（调度器关闭）时池行为与无水位门控一致。
+    /// 与 EngineRouter 共享同一 `Arc` 实例（读到的档位恒一致）。
+    #[cfg(feature = "engine-moli")]
+    pub fn set_memory_watermark(
+        &self,
+        watermark: Option<Arc<crate::engines::memory_watermark::MemoryWatermark>>,
+    ) {
+        *self.state.memory.write() = watermark;
+    }
+
     /// 创建新的浏览器池
     pub fn new(config: BrowserPoolConfig, browser_config: Arc<dyn BrowserConfigTrait>) -> Self {
         let download_manager =
@@ -1328,6 +1424,106 @@ pub async fn shutdown_global_pool() {
 
 #[cfg(test)]
 mod tests {
+    // ---- 内存水位门控（engine-moli）：R-engine-scheduling-003 验收 ----
+
+    #[cfg(feature = "engine-moli")]
+    mod memory_gate {
+        use super::*;
+        use crate::engines::memory_watermark::{MemoryLevel, MemoryWatermark};
+
+        fn pool() -> BrowserPool {
+            BrowserPool::new(
+                BrowserPoolConfig::default(),
+                Arc::new(BrowserConfigComponent::default()),
+            )
+        }
+
+        fn watermark(available_mib: u64) -> Arc<MemoryWatermark> {
+            MemoryWatermark::new(512, 2048)
+        }
+
+        #[tokio::test]
+        async fn critical_rejects_acquire_without_launching() {
+            let pool = pool();
+            let wm = watermark(100);
+            assert_eq!(wm.apply_sample(Some(100)), MemoryLevel::Critical);
+            pool.set_memory_watermark(Some(wm));
+            let result = pool.acquire_page().await;
+            match result {
+                Err(EngineError::MemoryConstrained(msg)) => {
+                    assert!(msg.contains("Critical"), "错误文案应指明 Critical：{}", msg);
+                }
+                other => panic!("期望 MemoryConstrained，实际: {:?}", other.err()),
+            }
+        }
+
+        #[tokio::test]
+        async fn tight_cold_pool_passes_gate_but_running_pool_rejects_new_instance() {
+            let pool = pool();
+            let wm = watermark(1500);
+            assert_eq!(wm.apply_sample(Some(1500)), MemoryLevel::Tight);
+            pool.set_memory_watermark(Some(wm));
+
+            // 冷池（total_instances==0）：门控放行首实例——acquire 越过水位门，
+            // 失败只能发生在更深的实例创建层（测试环境无 Chrome 可执行文件），
+            // 以"错误不是 MemoryConstrained"钉住放行语义。
+            let result = pool.acquire_page().await;
+            assert!(
+                !matches!(result, Err(EngineError::MemoryConstrained(_))),
+                "冷池 Tight 应放行首实例，实际被水位拒绝: {:?}",
+                result.err()
+            );
+
+            // 已有实例（total_instances>0）且无可复用：拒绝（总实例数不增）
+            pool.state.total_instances.store(1, Ordering::Relaxed);
+            let result = pool.acquire_page().await;
+            match result {
+                Err(EngineError::MemoryConstrained(msg)) => {
+                    assert!(msg.contains("Tight"), "错误文案应指明 Tight：{}", msg);
+                }
+                other => panic!("期望 MemoryConstrained，实际: {:?}", other.err()),
+            }
+            assert_eq!(
+                pool.state.total_instances.load(Ordering::Relaxed),
+                1,
+                "Tight 下不得创建新实例"
+            );
+        }
+
+        #[tokio::test]
+        async fn pool_shares_global_watermark_instance_with_router() {
+            // T011 装配语义：set_global 后新建池自取同一 Arc（ptr 同源、档位一致）
+            let wm = MemoryWatermark::new(512, 2048);
+            assert_eq!(wm.apply_sample(Some(1500)), MemoryLevel::Tight);
+            crate::engines::memory_watermark::set_global(wm.clone());
+            let pool = pool();
+            let pool_wm = pool
+                .state
+                .memory
+                .read()
+                .clone()
+                .expect("池构造期应自取全局水位镜像");
+            assert!(
+                Arc::ptr_eq(&wm, &pool_wm),
+                "池与 router 必须共享同一水位 Arc 实例"
+            );
+            assert_eq!(pool_wm.level(), MemoryLevel::Tight);
+        }
+
+        #[tokio::test]
+        async fn no_watermark_keeps_legacy_behavior() {
+            // 未装配水位：池不拦截（这里只验证不因水位被拒——
+            // 真正启动浏览器不在本单测范围，故池先 shutdown 后断言错误类型不是水位错误）
+            let pool = pool();
+            pool.shutdown().await;
+            let result = pool.acquire_page().await;
+            assert!(
+                !matches!(result, Err(EngineError::MemoryConstrained(_))),
+                "无水位装配时不得出现水位错误"
+            );
+        }
+    }
+
     use super::*;
     use crate::infrastructure::services::config_service::BrowserConfigComponent;
 

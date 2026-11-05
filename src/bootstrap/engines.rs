@@ -345,6 +345,41 @@ pub fn init_engine_components(
             observability,
         ),
     );
+    // 内存水位调度装配（engine-moli）：全局单例 + router 注入共享同一 Arc；
+    // BrowserPool 构造时经 get_global 自取。采样任务在有 tokio runtime 的调用方
+    // spawn（无 runtime 的嵌入场景降级为静态 Abundant 初始档并 warn——不静默）。
+    #[cfg(feature = "engine-moli")]
+    {
+        let scheduler = &_engine_config.memory_scheduler;
+        if scheduler.enabled {
+            let watermark = crate::engines::memory_watermark::MemoryWatermark::new(
+                scheduler.critical_available_mib,
+                scheduler.tight_available_mib,
+            );
+            log::info!(
+                "memory scheduler enabled: initial level {:?} (critical<{}MiB, tight<{}MiB, refresh={}ms, fallback_to_static={})",
+                watermark.level(),
+                scheduler.critical_available_mib,
+                scheduler.tight_available_mib,
+                scheduler.refresh_interval_ms,
+                scheduler.fallback_to_static
+            );
+            crate::engines::memory_watermark::set_global(watermark.clone());
+            router.set_memory_scheduler(Some(watermark.clone()), scheduler.fallback_to_static);
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    handle.spawn(watermark.run(std::time::Duration::from_millis(
+                        scheduler.refresh_interval_ms,
+                    )));
+                }
+                Err(_) => {
+                    log::warn!(
+                        "no tokio runtime at engine assembly; memory watermark sampling not started (level stays at initial)"
+                    );
+                }
+            }
+        }
+    }
     let router = Arc::new(router);
     let engine_client = Arc::new(EngineClient::with_router(router.clone()));
 

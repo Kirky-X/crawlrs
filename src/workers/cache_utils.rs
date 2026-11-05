@@ -229,6 +229,10 @@ pub struct SanitizedScrapeResponse<'a> {
     /// 与 `ScrapeResponse` 的 skip_serializing_if 对齐，保证缓存读写对称
     #[serde(skip_serializing_if = "<[CapturedResponse]>::is_empty")]
     pub captured_responses: &'a [CapturedResponse],
+    /// JS 降级标记（内存水位 Critical 静态回退）；None 不写入缓存 JSON，
+    /// 与 `ScrapeResponse` 对齐——降级语义随缓存读写对称保留
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub js_degraded: &'a Option<bool>,
 }
 
 /// 借用 `ScrapeResponse` 构造 `SanitizedScrapeResponse`，零克隆
@@ -252,6 +256,7 @@ impl<'a> SanitizedScrapeResponse<'a> {
             final_url: response.final_url.as_ref(),
             markdown: response.markdown.as_ref(),
             captured_responses: &response.captured_responses,
+            js_degraded: &response.js_degraded,
         }
     }
 }
@@ -510,6 +515,7 @@ mod tests {
         headers.insert("Content-Type".to_string(), "text/html".to_string());
 
         let response = ScrapeResponse {
+            js_degraded: None,
             captured_responses: Vec::new(),
             status_code: 200,
             content: "<html></html>".to_string(),
@@ -541,6 +547,7 @@ mod tests {
         headers.insert("X-Trace-Id".to_string(), "abc-123".to_string());
 
         let response = ScrapeResponse {
+            js_degraded: None,
             captured_responses: Vec::new(),
             status_code: 200,
             content: "hello".to_string(),
@@ -574,6 +581,7 @@ mod tests {
     fn test_sanitized_roundtrip_preserves_captured_responses() {
         // F6：非空捕获经缓存写读后完整还原
         let response = ScrapeResponse {
+            js_degraded: None,
             captured_responses: vec![CapturedResponse {
                 url: "https://example.com/api/data".to_string(),
                 status: 200,
@@ -610,6 +618,7 @@ mod tests {
         headers.insert("Set-Cookie".to_string(), "secret".to_string());
 
         let response = ScrapeResponse {
+            js_degraded: None,
             captured_responses: Vec::new(),
             status_code: 200,
             content: "test".to_string(),

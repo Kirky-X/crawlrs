@@ -175,6 +175,42 @@ pub struct PlaywrightEngineSettings {
     pub capture_xhr_max_responses: u32,
 }
 
+/// 内存水位调度器配置
+///
+/// 系统可用内存三档水位（Critical/Tight/Abundant）驱动引擎调度：
+/// Critical 冻结浏览器系引擎（仅 moli 可承担 JS）、Tight moli 优先、Abundant 原策略不变。
+///
+/// # 字段说明
+///
+/// * `enabled` - 是否启用内存水位调度
+/// * `critical_available_mib` - Critical 档阈值（可用 MiB，`<` 语义）
+/// * `tight_available_mib` - Tight 档阈值（可用 MiB，`<` 语义；必须 > critical）
+/// * `refresh_interval_ms` - 采样刷新周期（毫秒）
+/// * `fallback_to_static` - Critical 且无可用 JS 引擎时是否回退静态抓取（否则快速失败）
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__ENGINES__MEMORY_SCHEDULER__")]
+pub struct MemorySchedulerSettings {
+    /// 是否启用内存水位调度
+    #[config(default = true)]
+    pub enabled: bool,
+
+    /// Critical 档阈值（可用 MiB）
+    #[config(default = 512)]
+    pub critical_available_mib: u64,
+
+    /// Tight 档阈值（可用 MiB）
+    #[config(default = 2048)]
+    pub tight_available_mib: u64,
+
+    /// 采样刷新周期（毫秒）
+    #[config(default = 2000)]
+    pub refresh_interval_ms: u64,
+
+    /// Critical 且无可用 JS 引擎时回退静态抓取（false = 快速失败）
+    #[config(default = true)]
+    pub fallback_to_static: bool,
+}
+
 /// 引擎配置集合
 ///
 /// 包含所有抓取引擎的配置
@@ -202,6 +238,9 @@ pub struct EngineSettings {
 
     /// Playwright 引擎配置（XHR/Fetch 后台响应捕获等）
     pub playwright: PlaywrightEngineSettings,
+
+    /// 内存水位调度器配置
+    pub memory_scheduler: MemorySchedulerSettings,
 }
 
 #[cfg(test)]
@@ -252,5 +291,34 @@ mod tests {
         "#;
         let s: MllmEngineSettings = toml::from_str(toml).expect("deserialize");
         assert!(!s.ax_tree_enabled);
+    }
+
+    /// MemorySchedulerSettings 默认值与 config/default.toml `[engines.memory_scheduler]` 一致
+    #[test]
+    fn test_memory_scheduler_settings_defaults() {
+        let s = MemorySchedulerSettings::default();
+        assert!(s.enabled);
+        assert_eq!(s.critical_available_mib, 512);
+        assert_eq!(s.tight_available_mib, 2048);
+        assert_eq!(s.refresh_interval_ms, 2000);
+        assert!(s.fallback_to_static);
+    }
+
+    /// MemorySchedulerSettings 从 toml 全键反序列化
+    #[test]
+    fn test_memory_scheduler_settings_toml_parses() {
+        let toml = r#"
+            enabled = false
+            critical_available_mib = 256
+            tight_available_mib = 1024
+            refresh_interval_ms = 1000
+            fallback_to_static = false
+        "#;
+        let s: MemorySchedulerSettings = toml::from_str(toml).expect("deserialize");
+        assert!(!s.enabled);
+        assert_eq!(s.critical_available_mib, 256);
+        assert_eq!(s.tight_available_mib, 1024);
+        assert_eq!(s.refresh_interval_ms, 1000);
+        assert!(!s.fallback_to_static);
     }
 }
