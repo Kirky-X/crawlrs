@@ -14,6 +14,16 @@
 
 ## [Unreleased]
 
+### Added（fluxweir 网关集成 fluxweir-llm-gateway）
+
+- **统一 LLM 出口**：新增 `gateway` feature（fluxweir 以 `default-features=false, features=["full","db-postgres"]` 引入，规避 dbnexus embedded×server-side 互斥守卫）；`[fluxweir]` 配置节（`enabled`/`mode = embedded | external`/`listen_addr`/`external_base_url`/`api_key_env`/`trusted_proxy`/`rag_fallback`，默认全关、api key 经 env 注入、Debug 脱敏、启动 fail-fast）。`FluxweirLlmCarrier` 实现 `LLMServiceTrait`（prompt 模板 → SDK chat → JSON 解析/usage 映射；chunker/provenance 编排复用），`init_llm_service` 按 `[fluxweir].enabled` 装配，disabled 维持 `ExplicitErrorCarrier`
+- **嵌入式单池共享**：`bootstrap/fluxweir_gateway` 经 `build_app_with_pool` 以 crawlrs 的 dbnexus 连接池克隆起服网关（fluxweir 侧新增 `Database::with_pool`/`assemble_with_database` 增量 API），request_logs/token_usage/配额账本落 crawlrs 同一 PostgreSQL；readyz 指数退避探活 fail-fast；停机顺序钉死——先 `handle.shutdown()` 等 flush 完成再放行池关闭。fluxweir DI kit 池（inklog 存储面）按宿主 URL 独立建连（空 URL fail-fast）
+- **迁移历史表分离**：crawlrs 迁移改用专用历史表 `crawlrs_migrations`（`run_crawlrs_migrations` 显式执行器，池内 `auto_migrate` 恒关移交），首跑从 `dbnexus_migrations` 按 `file_path LIKE '%migrations/%'` 一次性基线回填——消除 crawlrs（1..8）与 fluxweir（1..=9）在同一默认历史表上的版本空间碰撞；`migrate` 子命令同步切换
+- **嵌入/重排降级链**：`FluxweirEmbeddingProvider`/`FluxweirRerankProvider`（维度/越界/缺槽/base64 全显性报错）作 secondary；`FallbackEmbeddingProvider`/`FallbackRerankProvider` 复合包装（primary 失败单次切换、双失败 embedding 报错/rerank fail-open 保序）；装配矩阵——vecboost primary + fluxweir fallback、rag-local 缺则仅 fluxweir、全缺维持直通；共享池 `retry_policy` 显式激活恢复 fluxweir 幂等读重试语义
+- **rig-core/genai 退役**：`rag-remote` feature 与 `rig_embedding_provider` 移除（远端嵌入兜底由 fluxweir 承载），`rag = ["rag-local", "gateway"]`；`vision_adapter` 改经 fluxweir chat 多模态（`engine-mllm` 显式依赖 `gateway`，无单独编译态），genai 依赖整体移除；`http_rerank_provider` 直连 Cohere/TEI 保留
+- **鉴权与租户面**：网关 `[auth]` 摘要鉴权（SDK 回环透传客户端原始 key，租户/配额/成本归因按真实客户端分租户；缩围裁决：不做 Router::merge——与既有 /health 等路径碰撞启动 panic）；fluxweir 侧新增 `TrustedIdentity { team_id, is_admin }` 可信代理机制（`[auth].trusted_proxy` 热读开关，缺省 false 行为逐字节不变；is_admin=false 拒绝 /admin/*，4 分支单测钉住）——保留供未来 HTTP 直连身份桥
+- **验证**：live 集成测试（`tests/integration/fluxweir_gateway_test.rs`，`#[ignore]` + 真实 PostgreSQL）覆盖起服/探活/落库/历史表分离/401/优雅停机；fluxweir 侧 lib 1124 测试 + 双后端 clippy 全绿；crawlrs 四特性组合（default/gateway/rag-local+gateway/full）clippy `-D warnings` 全绿；自研依赖链随 fluxweir 统一上移（sdforge rc.10、trait-kit/confers/oxcache/inklog rc.12、limiteron rc.10），fast-masking 面回归无 panic
+
 ### Added（架构演进收口 arch-evolution-closure）
 
 - **多驱动 schema 供给**：迁移 DDL 按方言分目录（`migrations/{postgres,sqlite,mysql}/`），`dbnexus_connection` 依编译 feature 选择 `migrations_dir` 并接线 `[database] auto_migrate`（缺省 false），未匹配 dialect 显性报错；`bootstrap/services.rs` 移除「PG DDL 失败→回退内存」；新增 `tests/migration_dialect.rs` 断言三方言覆盖同一组表与列

@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod auth_garrison_test;
+/// fluxweir 嵌入式网关端到端集成测试（真实 PostgreSQL；`gateway` feature 门控）
+///
+/// 用例 `#[ignore]`，手动运行：
+/// `cargo test --test integration --features gateway -- --ignored fluxweir_gateway_test`
+#[cfg(feature = "gateway")]
+pub mod fluxweir_gateway_test;
 /// garrison 认证端到端集成测试。
 ///
 /// 所有测试用例均 `#[ignore]` 标记——需真实 DB + garrison 单例，
