@@ -35,6 +35,7 @@ impl MockScraperEngine {
             name: "mock",
             score: 50,
             response: Some(InternalScrapeResponse {
+                js_degraded: false,
                 status_code: 200,
                 content: "<html><body>mock</body></html>".to_string(),
                 screenshot: None,

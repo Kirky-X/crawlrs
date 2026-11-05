@@ -123,6 +123,7 @@ mod engine_client_tests {
 
     fn make_success_response() -> InternalScrapeResponse {
         InternalScrapeResponse {
+            js_degraded: false,
             status_code: 200,
             content: "<html>test</html>".to_string(),
             screenshot: None,
@@ -605,6 +606,7 @@ mod engine_client_tests {
     #[tokio::test]
     async fn test_engine_client_scrape_success_preserves_screenshot() {
         let response_data = InternalScrapeResponse {
+            js_degraded: false,
             status_code: 200,
             content: "content".to_string(),
             screenshot: Some("base64screenshot".to_string()),
