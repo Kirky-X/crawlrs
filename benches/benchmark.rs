@@ -367,6 +367,7 @@ impl ScraperEngine for BenchMockEngine {
         _request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, crawlrs::engines::engine_client::EngineError> {
         Ok(InternalScrapeResponse {
+            js_degraded: false,
             status_code: 200,
             content: "<html><body>Mock</body></html>".to_string(),
             screenshot: None,

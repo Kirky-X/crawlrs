@@ -118,6 +118,8 @@ mod engine_client_tests {
                 engine: engine.clone(),
                 mrt: *mrt,
             },
+            EngineError::MemoryConstrained(msg) => EngineError::MemoryConstrained(msg.clone()),
+            EngineError::Unsupported(msg) => EngineError::Unsupported(msg.clone()),
         }
     }
 

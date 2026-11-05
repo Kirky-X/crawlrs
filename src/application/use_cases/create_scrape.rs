@@ -319,18 +319,24 @@ mod tests {
     /// 合法 regex 与 body 子串变体被接受并映射到对应 WaitFor（走通 use case 校验层）
     #[test]
     fn parse_wait_for_maps_variants() {
-        let mut options = crate::application::dto::scrape_request::ScrapeOptionsDto::default();
-        options.wait_for_response_url = Some(r"api/v\d+".to_string());
+        let options = crate::application::dto::scrape_request::ScrapeOptionsDto {
+            wait_for_response_url: Some(r"api/v\d+".to_string()),
+            ..Default::default()
+        };
         let wf = super::CreateScrapeUseCase::parse_wait_for(&options).expect("合法 regex 应通过");
         assert_eq!(wf, Some(WaitFor::ResponseUrl(r"api/v\d+".to_string())));
 
-        let mut options = crate::application::dto::scrape_request::ScrapeOptionsDto::default();
-        options.wait_for_response_body = Some("token".to_string());
+        let options = crate::application::dto::scrape_request::ScrapeOptionsDto {
+            wait_for_response_body: Some("token".to_string()),
+            ..Default::default()
+        };
         let wf = super::CreateScrapeUseCase::parse_wait_for(&options).expect("body 变体应通过");
         assert_eq!(wf, Some(WaitFor::ResponseBody("token".to_string())));
 
-        let mut options = crate::application::dto::scrape_request::ScrapeOptionsDto::default();
-        options.wait_for = Some(20_000);
+        let options = crate::application::dto::scrape_request::ScrapeOptionsDto {
+            wait_for: Some(20_000),
+            ..Default::default()
+        };
         let wf = super::CreateScrapeUseCase::parse_wait_for(&options).expect("ms 应通过");
         assert_eq!(wf, Some(WaitFor::DomStable(Duration::from_millis(10_000))));
     }

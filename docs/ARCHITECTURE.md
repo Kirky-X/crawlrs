@@ -863,7 +863,7 @@ DI uses **trait-kit 0.5.0-rc.7** with async module builders. `src/main.rs:389-40
 | 3 | `HttpModule` | `Arc<reqwest::Client>` |
 | 4 | `CacheModule` | oxcache 缓存组件（search/dns/regex/generic） |
 | 5 | `RepositoryModule` | 仓储组件（依赖 DatabaseModule） |
-| 6 | `EngineModule` | 5 个引擎 + `EngineRouter` + `EngineClient`（依赖 HttpModule、SettingsModule） |
+| 6 | `EngineModule` | 引擎向量（默认 5 个；`engine-moli` 启用时 +MoliEngine）+ `EngineRouter` + `EngineClient`（依赖 HttpModule、SettingsModule） |
 | 7 | `InfrastructureModule` | DB pool + 缓存服务等基础设施组件 |
 | 8 | `ServiceModule` | 限流/搜索/webhook/团队服务 + 队列 + worker |
 | 9 | `IdModule` | `IdService`（NebulaId ID 生成） |
@@ -1228,6 +1228,32 @@ The router:
 3. Falls back to sequential engines on failure (`route_sequential.rs`)
 4. Supports race mode (concurrent execution, return first success, `route_race.rs`)
 5. race mode 胜出后调用 `hedge_controller.record_latency(response_time)` 更新 EMA/方差，用于后续 P84 阈值估算（详见 [Hedge 请求副本控制器](#hedge-请求副本控制器)）
+6. （`engine-moli` 特性）评分后经 `apply_memory_policy` 做内存水位前置修正（见下节）
+
+### 引擎矩阵与内存水位调度（engine-moli）
+
+<a id="引擎矩阵与内存水位调度"></a>
+
+引擎能力矩阵（`support_score` 口径，均为 GET-only；actions=交互动作支持）：
+
+| 引擎 | feature | needs_js | needs_screenshot | actions | TLS 指纹 | 备注 |
+|------|---------|----------|------------------|---------|----------|------|
+| Reqwest | — | 0 | 0 | 0 | 0 | 静态抓取基线 |
+| Playwright | `engine-playwright` | 100 | 100 | ✅ | 0 | 质量基准；BrowserPool max_instances=5 |
+| FlareSolverr (Full/Cdp/Tls) | `engine-flaresolverr` | 60-100（按模式） | 0-80 | 90 | Tls 模式 | 反爬/挑战页 |
+| Wreq | `engine-tls-fingerprint` | 0 | 0 | 0 | ✅ | 真实 JA3/JA4 |
+| MLLM | `engine-mllm` | 视觉导航 | ✅ | ✅ | 0 | 自主导航 |
+| Moli | `engine-moli` | 90 | 80 | 0（v1 未实现，诚实出局） | 0 | CDP 控制外部 `moli serve --layout`（端点模式，进程归部署方）；响应级等待变体返回 `Unsupported`（Network 事件面不可达） |
+
+内存水位调度器（`src/engines/memory_watermark.rs`，`[engines.memory_scheduler]` 配置）：sysinfo 周期采样（默认 2000ms）系统可用内存 → 三档水位（AtomicU8 镜像无锁读）：
+
+| 水位 | 判定（默认阈值） | EngineRouter 行为 | BrowserPool 行为 |
+|------|------------------|-------------------|------------------|
+| Abundant | ≥ 2048 MiB 可用 | 原策略不变（Playwright 优先，moli 顺序回退） | 无限制 |
+| Tight | < 2048 MiB | moli `support_score` +30（封顶 255）；其余不改分 | 复用在运实例；总量不增（冷池放行首实例） |
+| Critical | < 512 MiB | 浏览器系引擎归 0（仅 moli 保留承担 JS）；无 moli 时按 `fallback_to_static` 回退静态抓取（响应标记 `js_degraded=true`）或快速失败 `MemoryConstrained` | 拒绝新 acquire + 一次性回收空闲实例（水位回落复位） |
+
+分层契约：router 是精确策略（needs_js 维度修正分数），池是粗粒度安全阀（Critical 全拒 + Tight 控容量）——两个控制点作用面刻意不同。非 `needs_js` 请求不受任何水位影响。metrics：`crawlrs_memory_level`（gauge 0/1/2）、`crawlrs_engine_policy_overrides_total{engine,level}`。
 
 ### Hedge 请求副本控制器
 

@@ -446,6 +446,7 @@ mod tests {
     use crate::engines::router::EngineRouterTrait;
     use std::time::Duration;
 
+    #[cfg(feature = "engine-moli")]
     fn default_timeouts() -> crate::config::settings::EngineTimeoutSettings {
         crate::config::settings::EngineTimeoutSettings::default()
     }

@@ -73,7 +73,7 @@
 <td width="50%" style="vertical-align:top; padding: 12px">📊 <b>数据提取</b><br><span style="color:#64748B">CSS 规则、正文提取器（Trafilatura / DomSmoothie）、LLM 与 RAG 增强多种提取模式；降级阶梯质量门、LLM 长文分块并行、提取结果字符级溯源</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🚂 <b>五引擎智能路由</b><br><span style="color:#64748B">Reqwest / Playwright / FlareSolverr / Wreq（TLS 指纹）/ MLLM（视觉 LLM 导航 + 混合 AX 树快照），SmartHybrid、竞速与顺序降级三种路由策略</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🚂 <b>五引擎智能路由</b><br><span style="color:#64748B">Reqwest / Playwright / FlareSolverr / Wreq（TLS 指纹）/ MLLM（视觉 LLM 导航 + 混合 AX 树快照）/ Moli（可选，内存水位调度下低配机的 JS 渲染回退位），SmartHybrid、竞速与顺序降级三种路由策略</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🛡️ <b>反爬对抗</b><br><span style="color:#64748B">三层反爬检测、SPA 空壳探测升级、UA 池一致性伪装、智能重试、代理轮换、请求合并；Session 身份三件套记分退休、AutoThrottle 自适应限速、429 指数退避</span></td>
 </tr>
 <tr>
@@ -231,6 +231,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `engine-flaresolverr` | FlareSolverr 反爬引擎（Full/Cdp/Tls 三模式） | ❌ |
 | `engine-tls-fingerprint` | WreqEngine TLS 指纹伪装（BoringSSL JA3/JA4） | ❌ |
 | `engine-mllm` | MLLM 视觉 LLM 自主导航引擎（隐含 `engine-playwright` + `llm`；视觉面保留 `genai`） | ❌ |
+| `engine-moli` | MoliEngine（CDP 控制外部 `moli serve` 的纯 Rust 无头内核）+ 内存水位调度器（sysinfo 三档：Abundant/Tight/Critical 驱动引擎优先级与 Playwright 池门控） | ❌ |
 | `trafilatura` / `dom-smoothie` / `extractors` | 正文提取主路径 / 性能回退 / 全启用 | ❌ |
 | `llm` | LLM 提取边界（trait + 编排；供应商访问由宿主 carrier 注入） | ❌ |
 | `sitemap` | 站点地图生成（`/v1/map` 端点） | ✅（platform/standard） |

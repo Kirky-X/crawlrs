@@ -76,14 +76,34 @@ want_stage() {
 }
 
 # --- 结果记账 ---------------------------------------------------------------
-declare -A STAGE_STATUS
+# 状态记账用平行索引数组（macOS 系统 bash 3.2 无关联数组，declare -A 会让
+# 下标被当算术表达式求值——报 "<stage>: unbound variable"）
+STAGE_ORDER=()
+STAGE_MARK=()
 FAILED_STAGES=()
+
+stage_mark() { # stage_mark <stage> <mark>（幂等：同名阶段后写覆盖前写）
+  local i name
+  for i in "${!STAGE_ORDER[@]}"; do
+    if [ "${STAGE_ORDER[$i]}" = "$1" ]; then STAGE_MARK[$i]="$2"; return; fi
+  done
+  STAGE_ORDER+=("$1")
+  STAGE_MARK+=("$2")
+}
+
+stage_lookup() { # stage_lookup <stage> -> echo mark（未记录输出 SKIPPED）
+  local i
+  for i in "${!STAGE_ORDER[@]}"; do
+    if [ "${STAGE_ORDER[$i]}" = "$1" ]; then printf '%s' "${STAGE_MARK[$i]}"; return; fi
+  done
+  printf 'SKIPPED'
+}
 
 record() { # record <stage> <exit_code>
   if [ "$2" -eq 0 ]; then
-    STAGE_STATUS["$1"]="PASS"; log_pass "Stage [$1] 通过"
+    stage_mark "$1" "PASS"; log_pass "Stage [$1] 通过"
   else
-    STAGE_STATUS["$1"]="FAIL"; FAILED_STAGES+=("$1"); log_fail "Stage [$1] 失败"
+    stage_mark "$1" "FAIL"; FAILED_STAGES+=("$1"); log_fail "Stage [$1] 失败"
   fi
 }
 
@@ -243,8 +263,8 @@ stage_static() {
   if [ "$deny_ok" != "1" ] && grep -q "failed to fetch advisory database" test-results/stage2-deny.log; then
     # 降级：使用本地缓存的 advisory 数据库（同日拉取过即与远端一致），
     # 显式留痕防止静默弱化供应链门禁
-    log_info "advisory 拉取持续失败，改用本地缓存库复验（--disable-fetch，结果留痕）..."
-    if cargo deny check --disable-fetch > test-results/stage2-deny.log 2>&1; then
+    log_info "advisory 拉取持续失败，改用本地缓存库复验（--offline，结果留痕）..."
+    if cargo deny --offline check > test-results/stage2-deny.log 2>&1; then
       deny_ok=1
       echo "[WARN] advisories 使用本地缓存库复验通过（fetch 网络抖动）" >> test-results/stage2-deny.log
     fi
@@ -356,12 +376,12 @@ stage_liveapi() {
   log_section "Stage 6: Live API E2E (smoke + semantics + audit)"
   if [ "$QUICK" = "1" ]; then
     log_info "--quick 模式跳过 liveapi（构建+Docker+真网依赖）"
-    STAGE_STATUS["liveapi"]="SKIPPED"
+    stage_mark liveapi "SKIPPED"
     return
   fi
   if ! docker info >/dev/null 2>&1 && [ -z "${TEST_DATABASE_URL:-}" ]; then
     log_fail "liveapi 需要 Docker（compose 拉起 PostgreSQL）或外部 TEST_DATABASE_URL"
-    STAGE_STATUS["liveapi"]="FAIL"; FAILED_STAGES+=("liveapi")
+    stage_mark liveapi "FAIL"; FAILED_STAGES+=("liveapi")
     return
   fi
   # PIPESTATUS 必须紧跟管道取用：夹在任何 if 语句后会被其复合状态覆盖，
@@ -383,7 +403,7 @@ stage_report() {
     echo ""
     for s in $STAGES_ALL; do
       if want_stage "$s"; then
-        printf '  %-12s %s\n' "$s" "${STAGE_STATUS[$s]:-SKIPPED}"
+        printf '  %-12s %s\n' "$s" "$(stage_lookup "$s")"
       else
         printf '  %-12s %s\n' "$s" "not-selected"
       fi

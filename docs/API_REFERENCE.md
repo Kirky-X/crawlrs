@@ -528,6 +528,8 @@ Scrape a single web page.
 ```
 
 > 响应为平铺的 `ScrapeStatusResponseDto`（无 `task` 外层键）。`result` 仅在任务 `completed` 时出现；敏感响应头（`set-cookie` / `authorization` 等）在返回前脱敏为 `[REDACTED]`。`error` 仅在任务 `failed` 时出现。
+>
+> 可选字段 `js_degraded`（boolean）：仅当请求要求 JS 渲染但内存水位（`engines.memory_scheduler`，`engine-moli` 特性）触发静态回退时以 `true` 出现——正常响应与旧缓存条目均不含该字段。
 
 #### Cancel Scrape
 
