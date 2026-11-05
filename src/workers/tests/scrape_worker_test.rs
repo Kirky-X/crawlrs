@@ -5107,6 +5107,7 @@ impl MockEngineRouter {
                 EngineError::RequestFailed(s) => EngineError::RequestFailed(s.clone()),
                 EngineError::Other(s) => EngineError::Other(s.clone()),
                 EngineError::MemoryConstrained(s) => EngineError::MemoryConstrained(s.clone()),
+                EngineError::Unsupported(s) => EngineError::Unsupported(s.clone()),
                 EngineError::Internal(s) => EngineError::Internal(s.clone()),
                 EngineError::EngineMrtExceeded { engine, mrt } => EngineError::EngineMrtExceeded {
                     engine: engine.clone(),

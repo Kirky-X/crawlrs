@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::application::dto::scrape_request::{ScrapeActionDto, ScrapeRequestDto};
+use crate::application::dto::scrape_request::{
+    ScrapeActionDto, ScrapeOptionsDto, ScrapeRequestDto,
+};
 use crate::domain::models::DomainError;
 use crate::engines::engine_client::{
     EngineClient, HttpMethod, PageAction, ScrapeOptions, ScrapeRequest, ScrapeResponse,
@@ -95,6 +97,7 @@ impl CreateScrapeUseCase {
         // 用于运行时不信任缓存脏数据的应急场景。其余情况按 cache_mode 走。
         let cache_mode = options.effective_cache_mode();
 
+        let wait_for = Self::parse_wait_for(&options)?;
         let headers = self.parse_headers(options.headers)?;
 
         let screenshot_config = options.screenshot_options.map(|opts| ScreenshotConfig {
@@ -123,11 +126,7 @@ impl CreateScrapeUseCase {
             block_media: options.block_media.unwrap_or(false),
             session_id: None,
             cache_mode,
-            wait_for: options
-                .wait_for
-                // 复查 H3：钳制到 10s（引擎侧 WAIT_TIMEOUT_CAP），防合法输入
-                // 触发 DomStable 超预算确定性失败
-                .map(|ms| WaitFor::DomStable(Duration::from_millis(ms.min(10_000)))),
+            wait_for,
             needs_mllm: options.needs_mllm.unwrap_or(false),
         };
 
@@ -162,6 +161,38 @@ impl CreateScrapeUseCase {
                 }
             })
             .collect()
+    }
+
+    /// 三等待字段解析：wait_for(ms) / wait_for_response_url(regex) /
+    /// wait_for_response_body(子串) 互斥；regex 在此前置编译校验（请求不入队）。
+    fn parse_wait_for(options: &ScrapeOptionsDto) -> Result<Option<WaitFor>, DomainError> {
+        let url_pattern = options.wait_for_response_url.as_deref();
+        let body_needle = options.wait_for_response_body.as_deref();
+        let ms = options.wait_for;
+        let set_count = [ms.is_some(), url_pattern.is_some(), body_needle.is_some()]
+            .iter()
+            .filter(|b| **b)
+            .count();
+        if set_count > 1 {
+            return Err(DomainError::ValidationError(
+                "wait_for, wait_for_response_url, wait_for_response_body are mutually exclusive"
+                    .to_string(),
+            ));
+        }
+        if let Some(pattern) = url_pattern {
+            if regex::Regex::new(pattern).is_err() {
+                return Err(DomainError::ValidationError(format!(
+                    "wait_for_response_url is not a valid regex: {pattern}"
+                )));
+            }
+            return Ok(Some(WaitFor::ResponseUrl(pattern.to_string())));
+        }
+        if let Some(needle) = body_needle {
+            return Ok(Some(WaitFor::ResponseBody(needle.to_string())));
+        }
+        // 复查 H3：钳制到 10s（引擎侧 WAIT_TIMEOUT_CAP），防合法输入
+        // 触发 DomStable 超预算确定性失败
+        Ok(ms.map(|v| WaitFor::DomStable(Duration::from_millis(v.min(10_000)))))
     }
 
     fn parse_headers(
@@ -229,6 +260,9 @@ fn map_engine_error(engine_error: crate::engines::engine_client::EngineError) ->
         crate::engines::engine_client::EngineError::MemoryConstrained(msg) => {
             DomainError::EngineError(msg)
         }
+        crate::engines::engine_client::EngineError::Unsupported(msg) => {
+            DomainError::EngineError(msg)
+        }
         // 引擎级 MRT 超时：映射到 TimeoutError，
         // 错误信息携带 engine 名字 + mrt 时长，便于调用方定位瀑布式 fallback 失败点
         crate::engines::engine_client::EngineError::EngineMrtExceeded { engine, mrt } => {
@@ -242,6 +276,65 @@ fn map_engine_error(engine_error: crate::engines::engine_client::EngineError) ->
 
 #[cfg(test)]
 mod tests {
+    /// 响应级等待三字段互斥：任取两者同设即校验失败
+    #[tokio::test]
+    async fn wait_for_response_variants_mutually_exclusive() {
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto_json = r#"{"url":"https://example.com","options":{
+            "wait_for": 1000,
+            "wait_for_response_url": "api"
+        }}"#;
+        let dto: crate::application::dto::scrape_request::ScrapeRequestDto =
+            serde_json::from_str(dto_json).expect("dto");
+        let result = use_case.execute(dto).await;
+        match result {
+            Err(DomainError::ValidationError(msg)) => {
+                assert!(msg.contains("mutually exclusive"), "文案应指明互斥: {msg}");
+            }
+            other => panic!("期望 ValidationError，实际: {:?}", other.err()),
+        }
+    }
+
+    /// wait_for_response_url 非法 regex 在 use case 层拒绝（请求不入队）
+    #[tokio::test]
+    async fn wait_for_response_url_invalid_regex_rejected() {
+        let use_case = CreateScrapeUseCase::new(make_engine_client());
+        let dto_json = r#"{"url":"https://example.com","options":{
+            "wait_for_response_url": "("
+        }}"#;
+        let dto: crate::application::dto::scrape_request::ScrapeRequestDto =
+            serde_json::from_str(dto_json).expect("dto");
+        let result = use_case.execute(dto).await;
+        match result {
+            Err(DomainError::ValidationError(msg)) => {
+                assert!(
+                    msg.contains("not a valid regex"),
+                    "文案应指明非法 regex: {msg}"
+                );
+            }
+            other => panic!("期望 ValidationError，实际: {:?}", other.err()),
+        }
+    }
+
+    /// 合法 regex 与 body 子串变体被接受并映射到对应 WaitFor（走通 use case 校验层）
+    #[test]
+    fn parse_wait_for_maps_variants() {
+        let mut options = crate::application::dto::scrape_request::ScrapeOptionsDto::default();
+        options.wait_for_response_url = Some(r"api/v\d+".to_string());
+        let wf = super::CreateScrapeUseCase::parse_wait_for(&options).expect("合法 regex 应通过");
+        assert_eq!(wf, Some(WaitFor::ResponseUrl(r"api/v\d+".to_string())));
+
+        let mut options = crate::application::dto::scrape_request::ScrapeOptionsDto::default();
+        options.wait_for_response_body = Some("token".to_string());
+        let wf = super::CreateScrapeUseCase::parse_wait_for(&options).expect("body 变体应通过");
+        assert_eq!(wf, Some(WaitFor::ResponseBody("token".to_string())));
+
+        let mut options = crate::application::dto::scrape_request::ScrapeOptionsDto::default();
+        options.wait_for = Some(20_000);
+        let wf = super::CreateScrapeUseCase::parse_wait_for(&options).expect("ms 应通过");
+        assert_eq!(wf, Some(WaitFor::DomStable(Duration::from_millis(10_000))));
+    }
+
     use super::*;
     use crate::application::dto::scrape_request::ScrapeOptionsDto;
     use crate::common::CacheMode;

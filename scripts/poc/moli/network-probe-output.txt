@@ -1,0 +1,7 @@
+Network.enable ok
+(2s no-event window)
+(2s no-event window)
+(2s no-event window)
+(2s no-event window)
+deadline reached
+TOTAL ResponseReceived events: 0

@@ -118,6 +118,12 @@ pub struct ScrapeOptionsDto {
     /// 等待时间（毫秒）
     #[validate(range(max = 60000, message = "wait_for must be at most 60000ms"))]
     pub wait_for: Option<u64>,
+    /// 响应级等待：等待某响应 URL 匹配 regex（regex crate 语法；与 wait_for /
+    /// wait_for_response_body 互斥；Playwright 支持，moli 返回 Unsupported）
+    pub wait_for_response_url: Option<String>,
+    /// 响应级等待：等待某响应体包含指定文本（与 wait_for / wait_for_response_url 互斥；
+    /// 单响应体匹配检查上限 10 MiB）
+    pub wait_for_response_body: Option<String>,
     /// 超时时间（秒）
     #[validate(range(max = 300, message = "timeout must be at most 300s"))]
     pub timeout: Option<u64>,

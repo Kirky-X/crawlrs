@@ -338,6 +338,8 @@ impl I18nBundle {
             "api-sitemap-source-disabled",
             "api-map-sitemap-status",
             "api-map-origin-unparsable",
+            "api-wait-regex-invalid",
+            "api-wait-mutual-exclusive",
         ]);
 
         // validation.ftl 追加 (1 key) — DTO validator 消息（校验时经启动束解析）

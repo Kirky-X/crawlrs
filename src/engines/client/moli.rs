@@ -288,6 +288,12 @@ impl MoliEngine {
                     tokio::time::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS)).await;
                 }
             }
+            Some(WaitFor::ResponseUrl(_)) | Some(WaitFor::ResponseBody(_)) => {
+                // 正常不可达：scrape() 已在 I/O 前早退 Unsupported；此处防御性兜底
+                Err(EngineError::Unsupported(
+                    "response-level wait unsupported by moli".to_string(),
+                ))
+            }
         }
     }
 
@@ -337,6 +343,21 @@ impl ScraperEngine for MoliEngine {
     ) -> Result<InternalScrapeResponse, EngineError> {
         if request.url.trim().is_empty() {
             return Err(EngineError::InvalidUrl("empty url".to_string()));
+        }
+        // 响应级等待变体：moli 的 CDP Network 事件面实测不可达（Network.enable
+        // 被接受但 0 事件，scripts/poc/moli/network-probe-output.txt）——按
+        // R-wait-signals-002 返回 Unsupported，不静默吞变体。任何 I/O 前早退。
+        if matches!(
+            request.wait_for,
+            Some(WaitFor::ResponseUrl(_)) | Some(WaitFor::ResponseBody(_))
+        ) {
+            log::error!(
+                target: "crawlrs::engine::moli",
+                "response-level wait variants unsupported by moli CDP (Network events unavailable)"
+            );
+            return Err(EngineError::Unsupported(
+                "response-level wait (ResponseUrl/ResponseBody) unsupported by moli".to_string(),
+            ));
         }
         let started = std::time::Instant::now();
         // 会话任务独立 spawn（owned 输入）：外层超时/调用方丢弃 future 时，任务仍按
@@ -502,6 +523,33 @@ mod tests {
         match e.scrape(&r).await {
             Err(EngineError::InvalidUrl(_)) => {}
             other => panic!("期望 InvalidUrl，实际: {:?}", other.err()),
+        }
+    }
+
+    /// 响应级等待变体在 moli 侧显式 Unsupported（R-wait-signals-002/R-engines-moli-005）：
+    /// 早退发生在任何 CDP I/O 之前——用不可达端点验证返回的是 Unsupported 而非连接错误
+    #[tokio::test]
+    async fn response_wait_variants_unsupported_before_io() {
+        let e = MoliEngine::new(MoliEngineConfig {
+            endpoint: "http://127.0.0.1:1".to_string(),
+            connect_timeout: Duration::from_millis(200),
+            scrape_timeout: Duration::from_millis(400),
+        });
+        for wait in [
+            WaitFor::ResponseUrl("api".to_string()),
+            WaitFor::ResponseBody("token".to_string()),
+        ] {
+            let mut r = request(true, false);
+            r.wait_for = Some(wait);
+            match e.scrape(&r).await {
+                Err(EngineError::Unsupported(msg)) => {
+                    assert!(
+                        msg.contains("response-level"),
+                        "文案应指明响应级等待: {msg}"
+                    );
+                }
+                other => panic!("期望 Unsupported，实际: {:?}", other.err()),
+            }
         }
     }
 

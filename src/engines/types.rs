@@ -148,6 +148,19 @@ pub enum WaitFor {
     /// 通过轮询 `document.body.innerHTML.length` 比较，若连续 `stable_duration`
     /// 内长度不变则视为稳定。`stable_duration` 上限 60s。
     DomStable(Duration),
+    /// 等待某响应 URL 匹配 regex（吸收 moli `--wait-response-url` 语义）
+    ///
+    /// `pattern` 为 [regex crate](https://docs.rs/regex) 语法，在桥接层
+    /// （`ScrapeRequest::to_internal`）前置编译校验，非法 regex 请求被拒不入队。
+    /// 引擎支持面：Playwright 监听 CDP 响应事件；moli 的 CDP Network 事件面
+    /// 实测不可达（见 scripts/poc/moli/network-probe-output.txt），对其返回
+    /// `EngineError::Unsupported`——不静默吞变体。
+    ResponseUrl(String),
+    /// 等待某响应体包含指定文本（吸收 moli `--wait-response-body` 语义）
+    ///
+    /// 按子串包含匹配响应体；单响应体匹配检查上限 10 MiB（对齐默认
+    /// `max_response_body_bytes`），超出跳过不做全量缓冲。
+    ResponseBody(String),
 }
 
 /// Optional configuration for scrape operations.
@@ -667,8 +680,21 @@ pub struct InternalCapturedResponse {
 
 /// Convert from public ScrapeRequest to internal format
 impl ScrapeRequest {
+    /// 桥接为引擎内部请求；`ResponseUrl` 变体的 regex 在此前置编译校验
+    /// （非法 regex 返回错误，请求不进入引擎——输入校验前置，不在引擎内编译）。
     #[inline]
-    pub(crate) fn to_internal(&self) -> InternalScrapeRequest {
+    pub(crate) fn to_internal(
+        &self,
+    ) -> Result<InternalScrapeRequest, crate::engines::engine_client::EngineError> {
+        if let Some(crate::engines::engine_client::WaitFor::ResponseUrl(pattern)) =
+            &self.options.wait_for
+        {
+            if let Err(e) = regex::Regex::new(pattern) {
+                return Err(crate::engines::engine_client::EngineError::InvalidUrl(
+                    format!("wait_for_response_url regex invalid: {}", e),
+                ));
+            }
+        }
         let options = &self.options;
 
         let actions: Vec<InternalPageAction> = options
@@ -727,7 +753,7 @@ impl ScrapeRequest {
             None => None,
         };
 
-        InternalScrapeRequest {
+        let internal = InternalScrapeRequest {
             url: self.url.clone(),
             method: options.method,
             headers: options.headers.clone(),
@@ -748,7 +774,8 @@ impl ScrapeRequest {
             session_id,
             wait_for: options.wait_for.clone(),
             needs_mllm: options.needs_mllm,
-        }
+        };
+        Ok(internal)
     }
 }
 

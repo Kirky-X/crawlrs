@@ -22,3 +22,7 @@ api-sitemap-feature-required = sitemap request source requires the `sitemap` fea
 api-sitemap-source-disabled = sitemap request source is disabled (CRAWLRS__SITEMAP__ENABLED=false); set CRAWLRS__SITEMAP__ENABLED=true to accept sitemap_seed
 api-map-sitemap-status = sitemap returned status { $status }
 api-map-origin-unparsable = cannot parse origin from { $url }
+
+# Response-level wait validation (wait-signals)
+api-wait-regex-invalid = wait_for_response_url is not a valid regex: { $pattern }
+api-wait-mutual-exclusive = wait_for, wait_for_response_url and wait_for_response_body are mutually exclusive.

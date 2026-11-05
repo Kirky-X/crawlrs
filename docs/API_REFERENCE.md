@@ -445,7 +445,9 @@ Scrape a single web page.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `headers` | object | empty | Custom HTTP headers (e.g. `User-Agent`) |
-| `wait_for` | integer | — | Wait hint in milliseconds (DTO validation max 60000, but the use case clamps `ms.min(10_000)` — values above 10000 are silently truncated to 10000). Mapped to the `DomStable` wait strategy (DOM unchanged for this duration ⇒ ready); `None` uses the engine default (`WaitFor::NetworkIdle`, CDP network-event based). See [ARCHITECTURE.md → WaitFor](ARCHITECTURE.md#waitfor-策略). |
+| `wait_for` | integer | — | Wait hint in milliseconds (DTO validation max 60000, but the use case clamps `ms.min(10_000)` — values above 10000 are silently truncated to 10000). Mapped to the `DomStable` wait strategy (DOM unchanged for this duration ⇒ ready); `None` uses the engine default (`WaitFor::NetworkIdle`, CDP network-event based). Mutually exclusive with `wait_for_response_url` / `wait_for_response_body`. See [ARCHITECTURE.md → WaitFor](ARCHITECTURE.md#waitfor-策略). |
+| `wait_for_response_url` | string | — | Response-level wait: resolve when a response URL matches this regex ([regex crate](https://docs.rs/regex) syntax, e.g. `api/v\d+/items`). Validated at request time — an invalid regex is rejected before the task is enqueued (`wait_for`-style silent truncation does not apply). Engine support: Playwright (CDP response events); moli returns `Unsupported` (its CDP Network event surface is unavailable — see `scripts/poc/moli/network-probe-output.txt`). On timeout the request fails with the standard wait-timeout error. |
+| `wait_for_response_body` | string | — | Response-level wait: resolve when a response body contains this substring (e.g. `"status":"ready"`). Per-response matching is capped at 10 MiB (bodies beyond the cap are skipped, not buffered). Same exclusivity, engine support and timeout semantics as `wait_for_response_url`. |
 | `timeout` | integer | 30 | Request timeout in seconds |
 | `js_rendering` | boolean | false | Enable JavaScript rendering |
 | `screenshot` | boolean | false | Capture screenshot |

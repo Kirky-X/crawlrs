@@ -54,6 +54,10 @@ pub enum EngineError {
     #[error("Memory constrained: {0}")]
     MemoryConstrained(String),
 
+    /// 引擎不支持该操作（诚实拒绝，不静默降级——如 moli 对响应级等待变体）
+    #[error("Unsupported operation: {0}")]
+    Unsupported(String),
+
     /// Browser/Playwright error
     #[error("Browser error: {0}")]
     BrowserError(String),
@@ -140,6 +144,7 @@ impl EngineError {
             Self::Other(_) => false,
             // 内存水位 Critical 快速失败：重试不解除内存压力，等水位回升再接受请求
             Self::MemoryConstrained(_) => false,
+            Self::Unsupported(_) => false,
             // 引擎级 MRT 超时：可重试（router 优先切下一引擎，而非重试同引擎）
             Self::EngineMrtExceeded { .. } => true,
         }
@@ -171,6 +176,7 @@ impl EngineError {
             | Self::Expired
             | Self::Other(_)
             | Self::MemoryConstrained(_)
+            | Self::Unsupported(_)
             | Self::EngineMrtExceeded { .. } => RetryReason::Transient,
         }
     }
@@ -360,7 +366,7 @@ impl EngineClient {
             return Err(EngineError::SsrfProtection(e.to_string()));
         }
 
-        let internal_request = request.to_internal();
+        let internal_request = request.to_internal()?;
 
         // Route to appropriate engine
         match self.router.route(&internal_request).await {
@@ -494,6 +500,7 @@ fn convert_error(e: EngineError) -> EngineError {
         EngineError::Expired => EngineError::Internal("Request expired".to_string()),
         EngineError::Other(msg) => EngineError::Internal(msg),
         EngineError::MemoryConstrained(msg) => EngineError::MemoryConstrained(msg),
+        EngineError::Unsupported(msg) => EngineError::Unsupported(msg),
         EngineError::NoEnginesAvailable => EngineError::NoEnginesAvailable,
         EngineError::InvalidUrl(msg) => EngineError::InvalidUrl(msg),
         EngineError::Internal(msg) => EngineError::Internal(msg),

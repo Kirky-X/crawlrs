@@ -489,6 +489,9 @@ impl From<crate::engines::engine_client::EngineError> for CrawlRsError {
             crate::engines::engine_client::EngineError::MemoryConstrained(msg) => {
                 CrawlRsError::Engine(format!("Memory constrained: {}", msg))
             }
+            crate::engines::engine_client::EngineError::Unsupported(msg) => {
+                CrawlRsError::Engine(format!("Unsupported operation: {}", msg))
+            }
             crate::engines::engine_client::EngineError::InvalidUrl(msg) => {
                 CrawlRsError::Validation(msg)
             }

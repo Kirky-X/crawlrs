@@ -22,3 +22,7 @@ api-sitemap-feature-required = sitemap 请求源需要 `sitemap` 特性（请使
 api-sitemap-source-disabled = sitemap 请求源已禁用（CRAWLRS__SITEMAP__ENABLED=false）；请设置 CRAWLRS__SITEMAP__ENABLED=true 以接受 sitemap_seed
 api-map-sitemap-status = sitemap 返回状态码 { $status }
 api-map-origin-unparsable = 无法从 { $url } 解析出 origin
+
+# 响应级等待校验（wait-signals）
+api-wait-regex-invalid = wait_for_response_url 不是合法的正则表达式：{ $pattern }
+api-wait-mutual-exclusive = wait_for、wait_for_response_url 与 wait_for_response_body 三者互斥。

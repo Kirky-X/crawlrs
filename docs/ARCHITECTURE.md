@@ -1280,6 +1280,8 @@ pub enum WaitFor {
 
 **接入路径：** `InternalScrapeRequest.wait_for: Option<WaitFor>` 字段，Playwright 引擎在 `goto` 后调用 `request.wait_for.unwrap_or_default().wait(&page, timeout)`。
 
+**响应级变体（wait-signals，吸收 moli `--wait-response-*` 语义）：** `ResponseUrl(String)`（响应 URL 匹配 regex）与 `ResponseBody(String)`（响应体包含子串，单响应体匹配检查上限 10 MiB）。regex 在 `ScrapeRequest::to_internal` 桥接层与 `create_scrape` use case 双层前置校验，非法 regex 请求不入队。引擎支持面：Playwright 监听 CDP `Network.responseReceived` 事件流；moli 的 Network 事件面实测不可达（`Network.enable` 被接受但 0 事件），对其显式返回 `EngineError::Unsupported`——不静默吞变体。
+
 **桥接实现：** API DTO 层 `ScrapeRequestOptions.wait_for: Option<u64>`（毫秒）在 `create_scrape` use case 中映射为 `WaitFor::DomStable(Duration::from_millis(ms))`，并钳制到 10s（引擎侧 `WAIT_TIMEOUT_CAP`），防合法输入触发 DomStable 超预算确定性失败（`src/application/use_cases/create_scrape.rs:126-130`）。
 
 ### TabPool 浏览器 Tab 复用

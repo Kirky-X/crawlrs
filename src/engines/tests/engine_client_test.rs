@@ -252,7 +252,7 @@ fn test_scrape_response_is_success_non_2xx() {
 #[test]
 fn test_to_internal_basic_fields() {
     let request = ScrapeRequest::new("https://example.com");
-    let internal = request.to_internal();
+    let internal = request.to_internal().unwrap();
 
     assert_eq!(internal.url, "https://example.com");
     assert_eq!(internal.method, HttpMethod::Get);
@@ -298,7 +298,7 @@ fn test_to_internal_all_fields() {
             .build(),
     );
 
-    let internal = request.to_internal();
+    let internal = request.to_internal().unwrap();
     assert_eq!(internal.url, "https://example.com");
     assert_eq!(internal.method, HttpMethod::Post);
     assert!(internal.needs_js);
@@ -348,7 +348,7 @@ fn test_to_internal_page_actions() {
     ];
 
     let request = ScrapeRequest::new("https://example.com").with_options(options);
-    let internal = request.to_internal();
+    let internal = request.to_internal().unwrap();
 
     assert_eq!(internal.actions.len(), 7);
     // Verify Wait action
@@ -389,6 +389,81 @@ fn test_to_internal_page_actions() {
 }
 
 // InternalScrapeResponse::to_public tests
+
+#[test]
+fn test_to_internal_rejects_invalid_response_url_regex() {
+    // 桥接层前置校验：非法 regex（未闭合分组）拒绝，请求不进入引擎
+    let request = crate::engines::engine_client::ScrapeRequest::new("https://example.com")
+        .with_options(
+            crate::engines::engine_client::ScrapeOptions::builder()
+                .wait_for(WaitFor::ResponseUrl("(".to_string()))
+                .build(),
+        );
+    let result = request.to_internal();
+    assert!(result.is_err(), "非法 regex 必须在桥接层报错");
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, crate::engines::engine_client::EngineError::InvalidUrl(ref m) if m.contains("regex invalid")),
+        "错误应为 InvalidUrl 且文案含 regex invalid，实际: {err:?}"
+    );
+}
+
+#[test]
+fn test_to_internal_passes_valid_response_variants() {
+    // 合法 regex 与子串变体透传至引擎层
+    let request = crate::engines::engine_client::ScrapeRequest::new("https://example.com")
+        .with_options(
+            crate::engines::engine_client::ScrapeOptions::builder()
+                .wait_for(WaitFor::ResponseUrl(r"api/v\d+".to_string()))
+                .build(),
+        );
+    let internal = request.to_internal().unwrap();
+    assert_eq!(
+        internal.wait_for,
+        Some(WaitFor::ResponseUrl(r"api/v\d+".to_string()))
+    );
+
+    let request = crate::engines::engine_client::ScrapeRequest::new("https://example.com")
+        .with_options(
+            crate::engines::engine_client::ScrapeOptions::builder()
+                .wait_for(WaitFor::ResponseBody("token".to_string()))
+                .build(),
+        );
+    let internal = request.to_internal().unwrap();
+    assert_eq!(
+        internal.wait_for,
+        Some(WaitFor::ResponseBody("token".to_string()))
+    );
+}
+
+#[test]
+fn test_to_internal_existing_variants_unchanged() {
+    // 既有三变体桥接行为不变
+    let base = crate::engines::engine_client::ScrapeRequest::new("https://example.com");
+    assert_eq!(
+        base.clone()
+            .with_options(
+                crate::engines::engine_client::ScrapeOptions::builder()
+                    .wait_for(WaitFor::NetworkIdle)
+                    .build(),
+            )
+            .to_internal()
+            .unwrap()
+            .wait_for,
+        Some(WaitFor::NetworkIdle)
+    );
+    assert_eq!(
+        base.with_options(
+            crate::engines::engine_client::ScrapeOptions::builder()
+                .wait_for(WaitFor::Selector("#x".to_string()))
+                .build(),
+        )
+        .to_internal()
+        .unwrap()
+        .wait_for,
+        Some(WaitFor::Selector("#x".to_string()))
+    );
+}
 
 #[test]
 fn test_internal_response_to_public() {
@@ -1632,7 +1707,7 @@ fn test_to_internal_validates_session_id() {
         ..ScrapeOptions::default()
     };
     let request = ScrapeRequest::new("https://example.com").with_options(options);
-    let internal = request.to_internal();
+    let internal = request.to_internal().unwrap();
     assert!(
         internal.session_id.is_none(),
         "to_internal should reject invalid session_id (bypassing builder)"
@@ -1646,7 +1721,7 @@ fn test_to_internal_preserves_valid_session_id() {
         ..ScrapeOptions::default()
     };
     let request = ScrapeRequest::new("https://example.com").with_options(options);
-    let internal = request.to_internal();
+    let internal = request.to_internal().unwrap();
     assert_eq!(
         internal.session_id,
         Some("valid-session".to_string()),

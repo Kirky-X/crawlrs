@@ -37,6 +37,9 @@ const DOM_STABLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// DomStable 的 stable_duration 上限（60s，防 DoS）
 const DOM_STABLE_MAX_DURATION: Duration = Duration::from_secs(60);
 
+/// ResponseBody 等待的单响应体匹配检查上限（对齐默认 max_response_body_bytes）
+const WAIT_BODY_MAX_BYTES: u64 = 10 * 1024 * 1024;
+
 impl WaitFor {
     /// 执行等待
     ///
@@ -59,6 +62,8 @@ impl WaitFor {
             Self::DomStable(stable_duration) => {
                 Self::wait_dom_stable(page, *stable_duration, timeout).await
             }
+            Self::ResponseUrl(pattern) => Self::wait_response_url(page, pattern, timeout).await,
+            Self::ResponseBody(needle) => Self::wait_response_body(page, needle, timeout).await,
         }
     }
 
@@ -159,6 +164,169 @@ impl WaitFor {
         let _ = page
             .execute(chromiumoxide::cdp::browser_protocol::network::DisableParams::default())
             .await;
+        result
+    }
+
+    /// ResponseUrl：等待某响应 URL 匹配 regex（吸收 moli --wait-response-url 语义）
+    ///
+    /// 监听 `EventResponseReceived` 事件流，URL regex 命中即就绪；超时返回错误
+    /// （显式信号未满足，与 Selector 同语义——区别于 NetworkIdle 的尽力而为）。
+    /// 订阅失败 fail-closed 返回错误（响应等待是显式请求，静默跳过等于谎报就绪）。
+    async fn wait_response_url(
+        page: &Page,
+        pattern: &str,
+        timeout: Duration,
+    ) -> Result<(), EngineError> {
+        use chromiumoxide::cdp::browser_protocol::network::{
+            DisableParams as NetworkDisableParams, EnableParams as NetworkEnableParams,
+            EventResponseReceived,
+        };
+        use futures::StreamExt;
+
+        let regex = regex::Regex::new(pattern).map_err(|e| {
+            EngineError::BrowserError(format!("wait_response_url regex invalid: {e}"))
+        })?;
+        page.execute(NetworkEnableParams::default())
+            .await
+            .map_err(|e| EngineError::BrowserError(format!("network enable failed: {e}")))?;
+        let result: Result<(), EngineError> = async {
+            let mut events = page
+                .event_listener::<EventResponseReceived>()
+                .await
+                .map_err(|e| EngineError::BrowserError(format!("subscribe failed: {e}")))?;
+            let deadline = Instant::now() + timeout;
+            loop {
+                if Instant::now() >= deadline {
+                    return Err(EngineError::BrowserError(format!(
+                        "wait timeout: response_url pattern '{pattern}' not matched after {}ms",
+                        timeout.as_millis()
+                    )));
+                }
+                match tokio::time::timeout(NETWORK_EVENT_POLL_INTERVAL, events.next()).await {
+                    Ok(Some(ev)) => {
+                        if regex.is_match(&ev.response.url) {
+                            return Ok(());
+                        }
+                    }
+                    Ok(None) => {
+                        return Err(EngineError::BrowserError(
+                            "response event stream ended prematurely".to_string(),
+                        ));
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        .await;
+        let _ = page.execute(NetworkDisableParams::default()).await;
+        result
+    }
+
+    /// ResponseBody：等待某响应体包含指定文本（吸收 moli --wait-response-body 语义）
+    ///
+    /// 逐响应取体做子串匹配；单响应体匹配检查上限 [`WAIT_BODY_MAX_BYTES`]
+    ///（对齐默认 max_response_body_bytes），超出跳过不做全量缓冲；
+    /// base64 编码的响应体解码失败按不匹配处理（二进制体无子串语义）。
+    async fn wait_response_body(
+        page: &Page,
+        needle: &str,
+        timeout: Duration,
+    ) -> Result<(), EngineError> {
+        use chromiumoxide::cdp::browser_protocol::network::{
+            DisableParams as NetworkDisableParams, EnableParams as NetworkEnableParams,
+            EventResponseReceived, GetResponseBodyParams,
+        };
+        use futures::StreamExt;
+
+        page.execute(NetworkEnableParams::default())
+            .await
+            .map_err(|e| EngineError::BrowserError(format!("network enable failed: {e}")))?;
+        let result: Result<(), EngineError> = async {
+            use chromiumoxide::cdp::browser_protocol::network::EventLoadingFinished;
+
+            let mut events = page
+                .event_listener::<EventResponseReceived>()
+                .await
+                .map_err(|e| EngineError::BrowserError(format!("subscribe failed: {e}")))?;
+            let mut finished = page
+                .event_listener::<EventLoadingFinished>()
+                .await
+                .map_err(|e| EngineError::BrowserError(format!("subscribe failed: {e}")))?;
+            // 响应体只在 LoadingFinished 后进入 DevTools 缓冲（ResponseReceived 时
+            // 体尚未到位，立即取体报 No data found）——以 finished 事件驱动取体
+            let mut pending: std::collections::HashMap<
+                chromiumoxide::cdp::browser_protocol::network::RequestId,
+                u64,
+            > = std::collections::HashMap::new();
+            let deadline = Instant::now() + timeout;
+            loop {
+                if Instant::now() >= deadline {
+                    return Err(EngineError::BrowserError(format!(
+                        "wait timeout: response_body '{}' not found after {}ms",
+                        needle,
+                        timeout.as_millis()
+                    )));
+                }
+                tokio::select! {
+                    ev = events.next() => {
+                        match ev {
+                            Some(ev) => {
+                                // encoded_data_length 未知时为 -1（cast 溢出 u64::MAX）——
+                                // 负值按 0 处理（放行取体，由返回体本身大小决定）
+                                let len = (ev.response.encoded_data_length.max(0.0)) as u64;
+                                if len <= WAIT_BODY_MAX_BYTES {
+                                    pending.insert(ev.request_id.clone(), len);
+                                }
+                            }
+                            None => {
+                                return Err(EngineError::BrowserError(
+                                    "response event stream ended prematurely".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                    fin = finished.next() => {
+                        match fin {
+                            Some(fin) => {
+                                if let Some(len) = pending.remove(&fin.request_id) {
+                                    let _ = len;
+                                    if let Ok(returns) = page
+                                        .execute(GetResponseBodyParams::new(
+                                            fin.request_id.clone(),
+                                        ))
+                                        .await
+                                    {
+                                        let text = if returns.base64_encoded {
+                                            use base64::Engine as _;
+                                            base64::engine::general_purpose::STANDARD
+                                                .decode(returns.body.as_bytes())
+                                                .ok()
+                                                .and_then(|b| String::from_utf8(b).ok())
+                                        } else {
+                                            Some(returns.body.clone())
+                                        };
+                                        if let Some(text) = text {
+                                            if text.contains(needle) {
+                                                return Ok(());
+                                            }
+                                        }
+                                    }
+                                    // 取体失败（已 evicted/空体等）：跳过该响应，等下一个
+                                }
+                            }
+                            None => {
+                                return Err(EngineError::BrowserError(
+                                    "loading-finished stream ended prematurely".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                    _ = tokio::time::sleep(NETWORK_EVENT_POLL_INTERVAL) => {}
+                }
+            }
+        }
+        .await;
+        let _ = page.execute(NetworkDisableParams::default()).await;
         result
     }
 
@@ -430,6 +598,159 @@ mod tests {
         let mut base = Instant::now();
         base += Duration::from_millis(ms);
         base
+    }
+
+    // ---- ResponseUrl / ResponseBody 活体钉测（本机 Chrome，先例 xhr_capture_e2e）----
+    // 运行：cargo test --features engine-playwright --lib response_wait -- --ignored --test-threads=1
+
+    /// 起本地 HTTP 服务：/page 300ms 后 fetch /api/payload（body 含 READY_TOKEN）
+    async fn spawn_wait_test_server() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            loop {
+                let (mut sock, _) = match listener.accept().await {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 1024];
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let (status, body) = if req.starts_with("GET /page") {
+                        (
+                            "200 OK",
+                            r#"<html><body>wait probe<script>setTimeout(()=>fetch('/api/payload'),300)</script></body></html>"#.to_string(),
+                        )
+                    } else if req.starts_with("GET /api/payload") {
+                        ("200 OK", r#"{"status":"READY_TOKEN"}"#.to_string())
+                    } else {
+                        ("404 Not Found", String::new())
+                    };
+                    // keep-alive（不写 Connection: close）：close 连接下 Chrome 不为
+                    // 响应保留 DevTools body 缓冲，getResponseBody 报 No data found
+                    let resp = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                });
+            }
+        });
+        (addr, handle)
+    }
+
+    fn find_playwright_chromium() -> Option<std::path::PathBuf> {
+        let base = std::path::PathBuf::from(std::env::var("HOME").ok()?)
+            .join("Library/Caches/ms-playwright");
+        let mut entries: Vec<_> = std::fs::read_dir(&base)
+            .ok()?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("chromium-"))
+            })
+            .collect();
+        entries.sort();
+        let chrome = entries
+            .last()?
+            .join("chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
+        chrome.is_file().then_some(chrome)
+    }
+
+    async fn launch_page() -> (chromiumoxide::Browser, chromiumoxide::page::Page) {
+        let profile_dir = std::env::temp_dir().join(format!(
+            "crawlrs-wait-e2e-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&profile_dir).expect("profile dir");
+        let mut builder = chromiumoxide::BrowserConfig::builder()
+            .no_sandbox()
+            .arg("--disable-gpu")
+            .user_data_dir(&profile_dir);
+        // 本机无系统 Chrome 时回退 playwright 缓存的 Chromium（CRAWLRS_TEST_CHROME 可覆盖）
+        if let Ok(bin) = std::env::var("CRAWLRS_TEST_CHROME") {
+            builder = builder.chrome_executable(bin);
+        } else if let Some(bin) = find_playwright_chromium() {
+            builder = builder.chrome_executable(bin);
+        }
+        let config = builder.build().expect("config");
+        let (browser, mut handler) = chromiumoxide::Browser::launch(config)
+            .await
+            .expect("launch");
+        tokio::spawn(async move {
+            use futures::StreamExt;
+            while let Some(h) = handler.next().await {
+                if h.is_err() {
+                    break;
+                }
+            }
+        });
+        let page = browser.new_page("about:blank").await.expect("page");
+        (browser, page)
+    }
+
+    #[tokio::test]
+    #[ignore = "需要本机 Chrome：cargo test --features engine-playwright --lib response_wait -- --ignored --test-threads=1"]
+    async fn response_wait_url_hit_returns_early() {
+        let (addr, server) = spawn_wait_test_server().await;
+        let (_browser, page) = launch_page().await;
+        page.goto(format!("http://{addr}/page")).await.unwrap();
+        let started = Instant::now();
+        let result = WaitFor::ResponseUrl("api/payload".to_string())
+            .wait(&page, Duration::from_secs(10))
+            .await;
+        server.abort();
+        assert!(result.is_ok(), "命中必须提前返回: {:?}", result.err());
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "提前返回不得等到超时边界"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "需要本机 Chrome：cargo test --features engine-playwright --lib response_wait -- --ignored --test-threads=1"]
+    async fn response_wait_body_substring_hit() {
+        let (addr, server) = spawn_wait_test_server().await;
+        let (_browser, page) = launch_page().await;
+        page.goto(format!("http://{addr}/page")).await.unwrap();
+        let result = WaitFor::ResponseBody("READY_TOKEN".to_string())
+            .wait(&page, Duration::from_secs(10))
+            .await;
+        server.abort();
+        assert!(
+            result.is_ok(),
+            "body 子串命中必须返回 Ok: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "需要本机 Chrome：cargo test --features engine-playwright --lib response_wait -- --ignored --test-threads=1"]
+    async fn response_wait_url_timeout_errors() {
+        let (addr, server) = spawn_wait_test_server().await;
+        let (_browser, page) = launch_page().await;
+        page.goto(format!("http://{addr}/page")).await.unwrap();
+        let result = WaitFor::ResponseUrl("this-never-matches".to_string())
+            .wait(&page, Duration::from_secs(1))
+            .await;
+        server.abort();
+        match result {
+            Err(EngineError::BrowserError(msg)) => {
+                assert!(
+                    msg.contains("wait timeout"),
+                    "超时文案应指明 wait timeout: {msg}"
+                );
+            }
+            other => panic!("期望超时错误，实际: {:?}", other),
+        }
     }
 
     /// Started→Finished 后 quiet window 满足 → 空闲
