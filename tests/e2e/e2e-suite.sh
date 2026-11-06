@@ -241,7 +241,7 @@ stage_static() {
     log_info "cargo clippy --features $f --all-targets -- -D warnings"
     if cargo clippy --features "$f" --all-targets -- -D warnings \
         > "test-results/stage2-clippy-$f.log" 2>&1; then log_pass "clippy:$f"; else
-      log_fail "clippy:$f（见 test-results/stage2-clippy-$f.log）"; rc=1; fi
+      log_fail "clippy:${f}（见 test-results/stage2-clippy-$f.log）"; rc=1; fi
   done
 
   log_info "cargo deny check"
@@ -289,7 +289,7 @@ run_cargo_test() { # run_cargo_test <logname> <args...>
   if [ "$rc" = "124" ]; then
     log_fail "$logname 超时（${E2E_STAGE_TIMEOUT}s，疑似并行挂起）"
   else
-    log_fail "$logname（见 test-results/stage3-$logname.log）"
+    log_fail "${logname}（见 test-results/stage3-$logname.log）"
   fi
   grep -E "FAILED|panicked|error\[" "test-results/stage3-$logname.log" | head -10
   return 1

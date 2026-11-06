@@ -61,11 +61,11 @@ trap cleanup EXIT
 
 # 步骤 2：以 path 依赖引入本仓，按嵌入 feature 组合声明
 ( cd "$PROBE_DIR/probe" && cargo add crawlrs --path "$REPO_ROOT" --features "$PROBE_FEATURES" ) \
-    || fail "add" "cargo add path 依赖失败（feature 组合: $PROBE_FEATURES）"
+    || fail "add" "cargo add path 依赖失败（feature 组合: ${PROBE_FEATURES}）"
 
 # 步骤 3：cargo check —— 连带编译校验 crawlrs 嵌入编译面（探针自身代码不使用 crawlrs，
 # 但 cargo 对声明的依赖恒执行 check，feature 组合按步骤 2 生效）
 ( cd "$PROBE_DIR/probe" && cargo check ) \
     || fail "check" "cargo check 嵌入编译失败（feature 组合: $PROBE_FEATURES + default 引擎集）"
 
-echo "PASS: embed-probe — crawlrs 嵌入编译面完好（仓库根: $REPO_ROOT；feature 组合: $PROBE_FEATURES + default 引擎集）"
+echo "PASS: embed-probe — crawlrs 嵌入编译面完好（仓库根: ${REPO_ROOT}；feature 组合: $PROBE_FEATURES + default 引擎集）"

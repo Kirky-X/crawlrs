@@ -156,7 +156,7 @@ if [ "$SKIP_BUILD" != "1" ]; then
   log_info "构建 crawlrs (default features, debug)..."
   cargo build --bin crawlrs || { log_fail "构建失败"; exit 1; }
 fi
-[ -x "$BIN" ] || { log_fail "二进制不存在: $BIN（先构建）"; exit 1; }
+[ -x "$BIN" ] || { log_fail "二进制不存在: ${BIN}（先构建）"; exit 1; }
 
 # ── 2b. migrate 子命令验证：CLI 迁移路径回归（psql 主路径之后、server 之前）──
 # 双跑即幂等断言：迁移文件非幂等时二跑必报错
@@ -165,10 +165,10 @@ MIGRATE_LOG="test-results/liveapi-migrate.log"
 : > "$MIGRATE_LOG"
 CRAWLRS__DATABASE__URL="$TEST_DATABASE_URL" \
     CRAWLRS__AUTH__JWT_SECRET="$JWT_SECRET" "$BIN" migrate >> "$MIGRATE_LOG" 2>&1 \
-    || { log_fail "crawlrs migrate 首跑失败（见 $MIGRATE_LOG）"; exit 1; }
+    || { log_fail "crawlrs migrate 首跑失败（见 ${MIGRATE_LOG}）"; exit 1; }
 CRAWLRS__DATABASE__URL="$TEST_DATABASE_URL" \
     CRAWLRS__AUTH__JWT_SECRET="$JWT_SECRET" "$BIN" migrate >> "$MIGRATE_LOG" 2>&1 \
-    || { log_fail "crawlrs migrate 二跑（幂等）失败（见 $MIGRATE_LOG）"; exit 1; }
+    || { log_fail "crawlrs migrate 二跑（幂等）失败（见 ${MIGRATE_LOG}）"; exit 1; }
 log_pass "crawlrs migrate 幂等双跑通过"
 
 # ── 3. 启动服务（进程内自举 admin key）────────────────────────────────────────
@@ -206,14 +206,14 @@ SERVER_PID=$!
 log_info "等待 /health 就绪..."
 for i in $(seq 1 60); do
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    log_fail "服务进程提前退出（见 $SERVER_LOG）"
+    log_fail "服务进程提前退出（见 ${SERVER_LOG}）"
     tail -30 "$SERVER_LOG"
     exit 1
   fi
   if curl -sf -o /dev/null "${BASE_URL}/health"; then
     break
   fi
-  [ "$i" = "60" ] && { log_fail "服务 120s 未就绪（见 $SERVER_LOG）"; tail -30 "$SERVER_LOG"; exit 1; }
+  [ "$i" = "60" ] && { log_fail "服务 120s 未就绪（见 ${SERVER_LOG}）"; tail -30 "$SERVER_LOG"; exit 1; }
   sleep 2
 done
 log_pass "服务就绪: $BASE_URL"
@@ -236,7 +236,7 @@ API_KEY=$(grep -oE 'api_key:[[:space:]]+[^ ]+' "$SERVER_LOG" | head -1 \
 TEAM_ID=$(grep -oE 'team_id:[[:space:]]+[0-9a-f-]+' "$SERVER_LOG" | head -1 \
   | sed 's/^team_id:[[:space:]]*//' | tr -d '\r')
 if [ -z "$API_KEY" ] || [ -z "$TEAM_ID" ]; then
-  log_fail "未能从服务启动日志解析自举 api_key/team_id（见 $SERVER_LOG）"
+  log_fail "未能从服务启动日志解析自举 api_key/team_id（见 ${SERVER_LOG}）"
   exit 1
 fi
 log_pass "自举完成 (team=$TEAM_ID, key=${API_KEY:0:6}…<masked>)"
@@ -400,5 +400,5 @@ if [ "$SMOKE_RC" = "0" ] && [ "$SEMANTICS_RC" = "0" ] && [ "$QUOTA_RC" = "0" ] &
   echo "产物: test-results/{api-smoke.log, api-semantics.log, api-audit.jsonl, api-interaction-digest.md, api-semantics-matrix.md, api-quota-402.json, api-quota-429.json, liveapi-server.log}"
   exit 0
 fi
-log_fail "活体 API E2E 存在失败（smoke=$SMOKE_RC semantics=$SEMANTICS_RC quota402=$QUOTA_RC rl429=$RL429_RC）"
+log_fail "活体 API E2E 存在失败（smoke=$SMOKE_RC semantics=$SEMANTICS_RC quota402=$QUOTA_RC rl429=${RL429_RC}）"
 exit 1

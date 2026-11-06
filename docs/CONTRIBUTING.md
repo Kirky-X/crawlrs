@@ -42,7 +42,7 @@ cargo build            # 默认特性（platform + db-postgres）
 cargo build --features full   # 全部引擎与能力
 ```
 
-> 注意：自研基座依赖（dbnexus / confers / garrison / limiteron / oxcache / inklog / sdforge / trait-kit / vecboost / nebulaid）均以 crates.io registry 引入；唯一例外是 `fluxweir`（gateway 特性，本地 path）——registry 0.1.0 缺 `build_app_with_pool`/`TrustedIdentity`，发布含该提交的新版本后改纯 registry。**注意**：Cargo 在解析期即要求该 path 存在——任何构建（含默认/`full`）都需要同级 `../fluxweir` 目录，否则依赖解析失败（与是否启用 `gateway` 无关）。
+> 注意：全部自研基座依赖均以 registry 或钉 rev 的 git 依赖引入，无需同级仓库 checkout。`fluxweir`（gateway 特性）当前为 git 依赖 `rev = 2d559ad`——registry 0.1.0 缺 `build_app_with_pool`/`TrustedIdentity`，待其发布含该 API 的新版本后改纯 registry。
 
 ### 验证环境就绪
 

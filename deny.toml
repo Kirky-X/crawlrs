@@ -60,6 +60,7 @@ wildcards = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# moli-html2md（HTML→Markdown 主转换器）以钉 rev 的 git 依赖引入：
-# 显式白名单该源，rev 在 Cargo.toml 钉死 + deny 三关护栏（仅此一个 git 源）
-allow-git = ["https://github.com/lexmount/moli"]
+# 两个钉 rev 的 git 源（rev 在 Cargo.toml 钉死 + deny 四关护栏）：
+# - moli-html2md：HTML→Markdown 主转换器
+# - fluxweir：gateway 嵌入网关（registry 0.1.0 缺 build_app_with_pool/TrustedIdentity）
+allow-git = ["https://github.com/lexmount/moli", "https://github.com/Kirky-X/fluxweir"]

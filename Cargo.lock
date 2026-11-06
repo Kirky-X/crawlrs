@@ -3256,6 +3256,7 @@ dependencies = [
 [[package]]
 name = "fluxweir"
 version = "0.1.0"
+source = "git+https://github.com/Kirky-X/fluxweir?rev=2d559ad#2d559ad90c148b57246d2a10be5b4327824113f3"
 dependencies = [
  "async-channel",
  "async-stream",
