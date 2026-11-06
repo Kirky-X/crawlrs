@@ -88,31 +88,13 @@ mod tests {
         SearxngInstanceSource, SearxngInstanceState,
     };
     use crate::domain::services::searxng::test_support::{Scripted, ScriptedTransport};
-    use chrono::Utc;
 
     fn instance(url: &str) -> SearxngInstance {
-        let now = Utc::now();
-        SearxngInstance {
-            url: url.to_string(),
-            source: SearxngInstanceSource::Seed,
-            state: SearxngInstanceState::Candidate,
-            network_type: None,
-            version: None,
-            api_grade: None,
-            http_grade: None,
-            tls_grade: None,
-            cdn_grade: None,
-            uptime_day: None,
-            uptime_month: None,
-            latency_ms: None,
-            consecutive_failures: 0,
-            last_success_at: None,
-            last_failure_at: None,
-            last_error: None,
-            dataset_miss_count: 0,
-            created_at: now,
-            updated_at: now,
-        }
+        SearxngInstance::new(
+            url,
+            SearxngInstanceSource::Seed,
+            SearxngInstanceState::Candidate,
+        )
     }
 
     fn cfg() -> SearxngHealthSettings {

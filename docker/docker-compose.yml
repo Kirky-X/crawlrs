@@ -84,7 +84,9 @@ services:
       - CRAWLRS__RATE_LIMITING__DEFAULT_RPM=${RATE_LIMITING_DEFAULT_RPM:-60}
 
       # 认证配置（auth feature 必需，JWT 密钥 ≥32 字节）
-      - CRAWLRS__AUTH__JWT_SECRET=${AUTH_JWT_SECRET:-crawlrs_docker_jwt_secret_2026_secure!!}
+      # 不提供默认值：缺 AUTH_JWT_SECRET 时 compose 直接拒绝启动，避免弱默认密钥
+      # 被用于任何部署（CWE-1188）。本地开发在 .env 中设置一个 ≥32 字节的随机值。
+      - CRAWLRS__AUTH__JWT_SECRET=${AUTH_JWT_SECRET:?AUTH_JWT_SECRET is required in .env}
 
       # 首次启动自动创建 admin API Key（同进程内 garrison 内存持久化）
       - CRAWLRS_BOOTSTRAP_ADMIN=${BOOTSTRAP_ADMIN:-true}

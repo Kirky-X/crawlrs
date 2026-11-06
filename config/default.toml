@@ -603,10 +603,11 @@ supported_locales = ["en-US", "zh-CN"]
 locales_dir = "locales"
 
 # ID Generation (NebulaId)
-# ID 生成配置——全项目 ID 生成/处理经 NebulaId（../NebulaId）落地。
+# ID 生成配置——全项目 ID 生成/处理经 NebulaId 落地。
 [id]
-# 算法：uuid_v8（默认，生成 UUID 兼容值 → DB UUID 列与 API JSON 契约零改动）；
-# 可选 snowflake（数值/时间有序，需额外 DB schema 迁移，非默认路径）。
+# 算法：uuid_v8（默认，生成 UUID 兼容值 → DB UUID 列与 API JSON 契约零改动）。
+# snowflake 不在当前构建内：仅在启用 nebulaid 对应 feature 重新编译后可用；
+# 当前构建（sdk,uuid-v8）配置 snowflake 会在启动期被 error-id-algorithm-uncompiled 显性拒绝。
 algorithm = "uuid_v8"
 # 生成 ID 时传入的默认 workspace / group 标识（biz_tag 由各业务域在生成点传入）。
 workspace = "crawlrs"

@@ -41,7 +41,11 @@ use sha2::{Digest, Sha256};
 use crate::common::metrics_shim::counter;
 use crate::config::settings::ObservabilitySettings;
 
-/// 一次失败现场的快照输入（全借用；落盘内容在内部拷贝进阻塞任务）
+/// 一次失败现场的快照输入
+///
+/// `content` / `screenshot` 持有所有权：落盘任务可直接移入 `spawn_blocking`，
+/// 不在 async worker 线程上做整份正文拷贝或 base64 解码。其余字段仅用于
+/// 签名键与 meta 构建，保持借用。
 pub struct SnapshotInput<'a> {
     /// 请求 URL（签名键成分）
     pub url: &'a str,
@@ -50,11 +54,11 @@ pub struct SnapshotInput<'a> {
     /// 失败原因（签名键成分 + meta.json 字段）
     pub reason: &'a str,
     /// 响应体（`.html` 落盘内容）
-    pub content: &'a str,
+    pub content: String,
     /// 响应头（meta.json 字段）
     pub headers: &'a HashMap<String, String>,
     /// 截图 base64（`Some` 时解码写 `.jpg`；仅浏览器引擎已产出时非空）
-    pub screenshot: Option<&'a str>,
+    pub screenshot: Option<String>,
 }
 
 /// 失败现场快照器：错误签名键去重存档
@@ -69,10 +73,18 @@ pub struct FailureSnapshotter {
     dir: PathBuf,
     /// 签名键 → 命中次数（去重计数）
     counts: DashMap<String, u64>,
-    /// 全目录已写文件数（磁盘护栏游标）
+    /// 净写入操作数（写入次数 − 逐出次数；重复命中刷新 meta 也计一次），
+    /// 用于监控，不是目录文件数（文件数由 `max_total` 扫描守卫）
     total_written: AtomicU64,
     /// 全目录快照文件总数上限
     max_total: usize,
+    /// 落盘互斥：只串行化「首写」路径（`count == 1`，含目录扫描与滚动逐出）。
+    ///
+    /// 并发首写在无锁情况下会同时看到目录已满并重复逐出，导致计数与磁盘漂移；
+    /// 重复命中只刷新 meta.json、不碰逐出游标，走无锁路径。锁在
+    /// `spawn_blocking` 内获取（同步上下文），不跨 await 持有；base64 解码在
+    /// 锁外执行。
+    persist_lock: Arc<parking_lot::Mutex<()>>,
 }
 
 impl FailureSnapshotter {
@@ -85,6 +97,7 @@ impl FailureSnapshotter {
             counts: DashMap::new(),
             total_written: AtomicU64::new(0),
             max_total: max_total.max(1),
+            persist_lock: Arc::new(parking_lot::Mutex::new(())),
         }
     }
 
@@ -142,17 +155,27 @@ impl FailureSnapshotter {
 
         let dir = self.dir.clone();
         let key_closure = key.clone();
-        let content = input.content.to_string();
-        // base64 解码放调用线程（纯 CPU、输入生命周期受限），落盘留阻塞池
-        let screenshot = input
-            .screenshot
-            .map(|s| BASE64.decode(s))
-            .transpose()
-            .ok()
-            .flatten();
+        // 持有字段直接移入阻塞任务：async 线程上不做正文拷贝
+        let content = input.content;
+        let screenshot_b64 = input.screenshot;
         let max_total = self.max_total;
+        let persist_lock = self.persist_lock.clone();
 
         let outcome = tokio::task::spawn_blocking(move || {
+            // 重复命中只刷新 meta.json，不使用截图：count > 1 时跳过解码（省 CPU）
+            let screenshot = if count == 1 {
+                screenshot_b64
+                    .as_deref()
+                    .map(|s| BASE64.decode(s))
+                    .transpose()
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+            // 仅首写（count == 1）需要互斥：它做目录扫描与逐出；重复命中只刷新
+            // meta.json，不碰逐出游标，无需加锁。
+            let _guard = (count == 1).then(|| persist_lock.lock());
             persist_snapshot(
                 &dir,
                 &key_closure,
@@ -167,13 +190,14 @@ impl FailureSnapshotter {
 
         match outcome {
             Ok((written, evicted)) => {
-                if written > 0 {
-                    self.total_written.fetch_add(written, Ordering::Relaxed);
-                }
-                if evicted > 0 {
-                    self.total_written.fetch_sub(
-                        evicted.min(self.total_written.load(Ordering::Relaxed)),
+                if written > 0 || evicted > 0 {
+                    // 单次 CAS 应用「写入/逐出」delta：先 add 再 load+sub 是非原子三段式，
+                    // 并发命中会让计数漂移。计数器语义 = 净写入操作数（重复命中刷新
+                    // meta.json 也计一次），不是目录文件数。
+                    let _ = self.total_written.try_update(
                         Ordering::Relaxed,
+                        Ordering::Relaxed,
+                        |cur| Some(cur.saturating_add(written).saturating_sub(evicted)),
                     );
                 }
             }
@@ -418,9 +442,9 @@ mod tests {
             url,
             status_code: status,
             reason,
-            content,
+            content: content.to_string(),
             headers: &EMPTY_HEADERS,
-            screenshot,
+            screenshot: screenshot.map(str::to_owned),
         }
     }
 
@@ -474,7 +498,7 @@ mod tests {
                 url: &url,
                 status_code: 429,
                 reason: &reason,
-                content: "429",
+                content: "429".to_string(),
                 headers: &headers,
                 screenshot: None,
             })
@@ -612,7 +636,7 @@ mod tests {
             url: "https://x.com/meta",
             status_code: 429,
             reason: "rate limited",
-            content: "<html>429</html>",
+            content: "<html>429</html>".to_string(),
             headers: &headers,
             screenshot: None,
         };
@@ -843,5 +867,47 @@ mod tests {
         };
         let s = FailureSnapshotter::from_config(&enabled).expect("some");
         assert_eq!(s.total_written(), 0);
+    }
+
+    // ========== 并发串行化 ==========
+
+    /// 并发 snapshot：落盘互斥保证文件数不超 max_total，且 total_written 与磁盘一致
+    #[tokio::test]
+    async fn concurrent_snapshots_keep_dir_bounded_and_accounted() {
+        let (snapshotter, dir) = temp_snapshotter(4);
+        let snapshotter = Arc::new(snapshotter);
+
+        let mut handles = Vec::new();
+        for i in 0..16 {
+            let snap = snapshotter.clone();
+            handles.push(tokio::spawn(async move {
+                let url = format!("https://x.com/c{i}");
+                let reason = format!("rate limited {i}");
+                snap.snapshot(SnapshotInput {
+                    url: &url,
+                    status_code: 429,
+                    reason: &reason,
+                    content: format!("<html>{i}</html>"),
+                    headers: &EMPTY_HEADERS,
+                    screenshot: None,
+                })
+                .await;
+            }));
+        }
+        for handle in handles {
+            handle.await.expect("snapshot task");
+        }
+
+        let files = fs::read_dir(&dir).expect("read_dir").count() as u64;
+        assert!(
+            files <= 4,
+            "dir must stay bounded by max_total, got {files}"
+        );
+        // 本用例每键仅命中一次：净写入操作数 = 目录文件数
+        assert_eq!(
+            snapshotter.total_written(),
+            files,
+            "for unique keys the net write counter must equal on-disk file count"
+        );
     }
 }

@@ -25,7 +25,6 @@
 //! 故 API/DTO 契约零改动、无需逐字段 `#[serde(with)]`。
 
 use std::fmt;
-use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
@@ -222,26 +221,7 @@ impl fmt::Debug for Id {
     }
 }
 
-impl FromStr for Id {
-    type Err = ParseIdError;
-
-    /// 解析：含 `-` 且长度 36 且为合法 UUID → u128；否则按十进制 u128 解析。
-    ///
-    /// 与 [`nebulaid::core::Id::from_string`] 同口径，兼容 UUID 字符串路径参数与
-    /// 数值 ID。
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let cleaned = s.trim();
-        if cleaned.contains('-') && cleaned.len() == 36 {
-            if let Ok(uuid) = Uuid::parse_str(cleaned) {
-                return Ok(Id(uuid.as_u128()));
-            }
-        }
-        cleaned
-            .parse::<u128>()
-            .map(Id)
-            .map_err(|_| ParseIdError(s.to_string()))
-    }
-}
+mod from_str;
 
 impl Serialize for Id {
     /// 序列化为字符串（UUID 形态值为标准 36 位 UUID 字符串，保持 API 契约不变）。

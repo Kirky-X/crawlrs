@@ -12,9 +12,9 @@ shift
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${root}"
 
-container="crawlrs-it-pg"
-port="5499"
-db="crawlrs_test"
+container="${CRAWLRS_IT_PG_CONTAINER:-crawlrs-it-pg}"
+port="${CRAWLRS_IT_PG_PORT:-5499}"
+db="${CRAWLRS_IT_PG_DB:-crawlrs_test}"
 export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:${port}/${db}" # pragma: allowlist secret
 
 if ! docker ps --format '{{.Names}}' | grep -qx "${container}"; then
@@ -29,11 +29,12 @@ fi
 # （后续 psql 报 "the database system is shutting down"）造成就绪竞态。
 # 以对目标库可执行真实查询为准（与后续迁移探测同一路径）。
 ready=0
-for _ in $(seq 1 30); do
+for i in $(seq 1 30); do
   if [ "$(docker exec "${container}" psql -tA -U postgres -d "${db}" -c "SELECT 1" 2>/dev/null)" = "1" ]; then
     ready=1
     break
   fi
+  [ "${i}" -eq 30 ] || echo "waiting for ${container} PostgreSQL... (attempt ${i}/30)" >&2
   sleep 2
 done
 if [ "${ready}" -ne 1 ]; then

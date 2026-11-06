@@ -294,11 +294,12 @@ impl MapUseCase {
             let children: Vec<String> = locs.iter().take(MAX_SUB_SITEMAPS).cloned().collect();
             locs.clear();
             for child in children {
-                // 连接级瞬态错误（如 keep-alive 连接被对端关闭）重试一次，
-                // 仍失败则按既有语义放弃该子 sitemap 的内容（不计为整体失败）
+                // 连接级瞬态错误（如 keep-alive 连接被对端关闭）与 ≥400 状态各重试一次
+                // （4xx/5xx 也可能瞬态：网关抖动；404 已在上方转为空流）；仍失败则按既有
+                // 语义放弃该子 sitemap 的内容（不计为整体失败）
                 let fetched = match self.fetcher.fetch(&child).await {
                     Ok(f) => Some(f),
-                    // 连接级瞬态错误重试一次（ok 语义：仍失败则放弃该子 sitemap）
+                    // 连接级瞬态错误 / ≥400 状态重试一次（ok 语义：仍失败则放弃该子 sitemap）
                     Err(MapError::TargetUnreachable(_)) | Err(MapError::SitemapStatus(_)) => {
                         self.fetcher.fetch(&child).await.ok()
                     }
@@ -378,7 +379,7 @@ impl MapUseCase {
                             .acquire_owned()
                             .await
                             .expect("semaphore has capacity");
-                        // 连接级瞬态错误重试一次，仍失败放弃该子 sitemap
+                        // 连接级瞬态错误 / ≥400 状态各重试一次，仍失败放弃该子 sitemap
                         // （ok 语义，对齐 execute 的子 sitemap 处理）
                         let stream = match fetcher
                             .fetch_streaming(&child, options.channel_capacity)
@@ -411,8 +412,15 @@ impl MapUseCase {
                     });
                 }
                 drop(tx);
-                // 全部子任务结束后 tx 归零，rx 端 recv 返回 None
-                tokio::spawn(async move { while set.join_next().await.is_some() {} });
+                // 全部子任务结束后 tx 归零，rx 端 recv 返回 None。
+                // 子任务 panic 不让它静默消失：记 warn 后继续等待其余子任务。
+                tokio::spawn(async move {
+                    while let Some(res) = set.join_next().await {
+                        if let Err(e) = res {
+                            log::warn!("sitemap child task failed: {e}");
+                        }
+                    }
+                });
                 Ok(SitemapStream {
                     kind: SitemapKind::SitemapIndex,
                     rx,
@@ -1148,6 +1156,67 @@ mod tests {
                 .await
                 .expect("execute_streaming");
             assert!(collect(rx.rx).await.is_empty());
+        }
+
+        /// 子 sitemap 解析 panic：消费任务记 warn 不中断，主流仍正常收尾
+        struct PanicChildFetcher;
+
+        #[async_trait]
+        impl SitemapFetcher for PanicChildFetcher {
+            async fn fetch(&self, _url: &str) -> Result<SitemapFetch, MapError> {
+                Err(MapError::Internal("unused".to_string()))
+            }
+
+            async fn fetch_streaming(
+                &self,
+                url: &str,
+                channel_capacity: usize,
+            ) -> Result<SitemapStream, MapError> {
+                const ROOT: &str = "https://a.com/sitemap.xml";
+                if url == ROOT {
+                    let (tx, rx) = tokio::sync::mpsc::channel(channel_capacity.max(1));
+                    let children = [
+                        "https://a.com/panic.xml".to_string(),
+                        "https://a.com/ok.xml".to_string(),
+                    ];
+                    tokio::spawn(async move {
+                        for child in children {
+                            if tx.send(child).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+                    return Ok(SitemapStream {
+                        kind: SitemapKind::SitemapIndex,
+                        rx,
+                    });
+                }
+                if url.ends_with("/panic.xml") {
+                    panic!("mock child panic");
+                }
+                let (tx, rx) = tokio::sync::mpsc::channel(channel_capacity.max(1));
+                tokio::spawn(async move {
+                    let _ = tx.send("https://a.com/u-ok".to_string()).await;
+                });
+                Ok(SitemapStream {
+                    kind: SitemapKind::Urlset,
+                    rx,
+                })
+            }
+        }
+
+        #[tokio::test]
+        async fn streaming_child_panic_does_not_break_stream() {
+            let rx = MapUseCase::new(Arc::new(PanicChildFetcher))
+                .execute_streaming(&dto(ORIGIN), stream_options(4, 100, 2))
+                .await
+                .expect("execute_streaming");
+            let got = collect(rx.rx).await;
+            assert_eq!(
+                got,
+                vec!["https://a.com/u-ok".to_string()],
+                "healthy child must still deliver after a sibling panics"
+            );
         }
 
         /// finalize_links：流式 loc 聚合语义与 execute() 一致

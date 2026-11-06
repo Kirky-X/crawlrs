@@ -214,20 +214,13 @@ impl SearxngInstanceServiceImpl {
                 {
                     warn!("searxng success record failed url={url} error={e}");
                 }
-                // 刷新池内的时延快照（管理视图展示）
-                if let Some(member) = self
-                    .inner
-                    .pool
-                    .snapshot()
-                    .into_iter()
-                    .find(|m| m.url() == url)
-                {
-                    let mut instance = member.instance.clone();
+                // 刷新池内的时延快照（管理视图展示）：仅当成员仍在池中才更新。
+                // 若并发 Failure 已把它逐出，回填放弃（逐出决定优先，不回插）。
+                self.inner.pool.update_if_present(url, |instance| {
                     instance.latency_ms = Some(latency_ms);
                     instance.consecutive_failures = 0;
                     instance.last_success_at = Some(chrono::Utc::now());
-                    self.inner.pool.replace(Arc::new(PoolMember { instance }));
-                }
+                });
             }
             InstanceOutcome::Failure { error } => {
                 self.inner.breaker.record_failure(&key).await;

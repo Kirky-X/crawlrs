@@ -44,6 +44,8 @@ fail() {
 
 # 步骤 0：校验仓库根为有效 cargo 包（含 Cargo.toml 且声明 crawlrs）
 [ -f "$REPO_ROOT/Cargo.toml" ] || fail "root" "仓库根缺 Cargo.toml: $REPO_ROOT"
+grep -q '^name = "crawlrs"' "$REPO_ROOT/Cargo.toml" ||
+  fail "root" "Cargo.toml 未声明 crawlrs 包: $REPO_ROOT"
 
 # 嵌入 feature 组合：与 README 声明一致，逗号分隔单值（cargo add 确定支持）
 readonly PROBE_FEATURES="db-postgres,extractors,llm"

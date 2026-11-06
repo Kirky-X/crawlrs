@@ -77,13 +77,14 @@ impl AuditLogBuilder {
     /// - NULL 表示"未知/不适用"
     /// - nil UUID 会被 `find_by_api_key_id(nil_uuid)` 误匹配，混淆真实 API key 的审计日志
     pub fn maybe_with_api_key_id(mut self, id: Option<crate::domain::id::Id>) -> Self {
-        self.api_key_id = id;
+        // nil UUID 归一为 None：注释承诺的「不写 nil」由实现保证，而非调用方自觉
+        self.api_key_id = id.filter(|id| !id.is_nil());
         self
     }
 
     /// Conditionally set team ID（语义同 `maybe_with_api_key_id`）。
     pub fn maybe_with_team_id(mut self, id: Option<crate::domain::id::Id>) -> Self {
-        self.team_id = id;
+        self.team_id = id.filter(|id| !id.is_nil());
         self
     }
 
@@ -178,6 +179,27 @@ mod tests {
         let team_id = crate::domain::id::Id::generate();
         let builder =
             AuditLogBuilder::new("test_action", AuditDecision::Allow).with_team_id(team_id);
+        assert_eq!(builder.team_id, Some(team_id));
+    }
+
+    #[test]
+    fn test_maybe_with_nil_ids_normalizes_to_none() {
+        let nil = crate::domain::id::Id::nil();
+        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow)
+            .maybe_with_api_key_id(Some(nil))
+            .maybe_with_team_id(Some(nil));
+        assert_eq!(builder.api_key_id, None, "nil api key id must be dropped");
+        assert_eq!(builder.team_id, None, "nil team id must be dropped");
+    }
+
+    #[test]
+    fn test_maybe_with_non_nil_ids_keeps_values() {
+        let api_key_id = crate::domain::id::Id::generate();
+        let team_id = crate::domain::id::Id::generate();
+        let builder = AuditLogBuilder::new("test_action", AuditDecision::Allow)
+            .maybe_with_api_key_id(Some(api_key_id))
+            .maybe_with_team_id(Some(team_id));
+        assert_eq!(builder.api_key_id, Some(api_key_id));
         assert_eq!(builder.team_id, Some(team_id));
     }
 

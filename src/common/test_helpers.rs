@@ -248,7 +248,7 @@ const TEST_POOL_ACQUIRE_TIMEOUT_MS: u64 = 30_000;
 /// 用法：
 /// ```ignore
 /// #[tokio::test]
-/// async fn test_acquire_next {
+/// async fn test_acquire_next() {
 ///     let _guard = acquire_next_test_mutex().lock().await;
 ///     // 测试逻辑
 /// }
@@ -268,7 +268,7 @@ pub fn acquire_next_test_mutex() -> &'static Mutex<()> {
 ///
 /// ```ignore
 /// #[tokio::test]
-/// async fn test_init_services {
+/// async fn test_init_services() {
 ///     let _guard = acquire_garrison_global_state().await;
 ///     // 安全调用 init_services / build_test_state / ServiceModule
 /// }

@@ -83,28 +83,10 @@ impl InMemorySearxngRepo {
         state: SearxngInstanceState,
         source: SearxngInstanceSource,
     ) -> SearxngInstance {
-        let now = Utc::now();
-        SearxngInstance {
-            url: url.to_string(),
-            source,
-            state,
-            network_type: Some("normal".to_string()),
-            version: None,
-            api_grade: None,
-            http_grade: None,
-            tls_grade: None,
-            cdn_grade: None,
-            uptime_day: Some(99.0),
-            uptime_month: None,
-            latency_ms: None,
-            consecutive_failures: 0,
-            last_success_at: None,
-            last_failure_at: None,
-            last_error: None,
-            dataset_miss_count: 0,
-            created_at: now,
-            updated_at: now,
-        }
+        let mut instance = SearxngInstance::new(url, source, state);
+        instance.network_type = Some("normal".to_string());
+        instance.uptime_day = Some(99.0);
+        instance
     }
 
     /// 当前登记簿行数

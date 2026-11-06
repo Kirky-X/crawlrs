@@ -64,18 +64,25 @@ impl EngineRouter {
         url: &str,
         status_code: u16,
         reason: &str,
-        response: &InternalScrapeResponse,
+        response: InternalScrapeResponse,
     ) {
         if let Some(snapshotter) = &self.failure_snapshot {
+            // 按值接收：content/screenshot 直接移入快照输入，避免 async 线程上的整份拷贝
+            let InternalScrapeResponse {
+                content,
+                screenshot,
+                headers,
+                ..
+            } = response;
             snapshotter
                 .snapshot(
                     crate::infrastructure::observability::failure_snapshot::SnapshotInput {
                         url,
                         status_code,
                         reason,
-                        content: &response.content,
-                        headers: &response.headers,
-                        screenshot: response.screenshot.as_deref(),
+                        content,
+                        headers: &headers,
+                        screenshot,
                     },
                 )
                 .await;
@@ -453,7 +460,7 @@ impl EngineRouter {
                                     &request.url,
                                     response.status_code,
                                     &detection.reason,
-                                    &response,
+                                    response,
                                 )
                                 .await;
                                 warn!(
@@ -769,7 +776,7 @@ mod snapshot_failure_tests {
         let router = EngineRouter::new(Vec::new());
         assert!(router.failure_snapshot.is_none(), "default must be None");
         router
-            .snapshot_failure("https://x.com/a", 403, "waf", &sample_response())
+            .snapshot_failure("https://x.com/a", 403, "waf", sample_response())
             .await;
     }
 
@@ -786,7 +793,7 @@ mod snapshot_failure_tests {
             ),
         )));
         router
-            .snapshot_failure("https://x.com/a", 403, "waf", &sample_response())
+            .snapshot_failure("https://x.com/a", 403, "waf", sample_response())
             .await;
         assert_eq!(dir_file_count(&dir), 2, "html + meta.json");
     }

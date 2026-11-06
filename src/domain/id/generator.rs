@@ -185,6 +185,8 @@ pub async fn init(
             )
         );
         // spawn 周期补水任务（任务内 clone Arc 保持存活）。
+        // 生命周期：fire-and-forget——不保存 JoinHandle、无 shutdown 信号；tokio runtime
+        // drop 时任务随之终止。属有意设计（不为单一后台补水引入 CancellationToken）。
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(REFILL_INTERVAL_MS)).await;

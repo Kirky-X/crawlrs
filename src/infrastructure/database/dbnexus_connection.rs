@@ -269,7 +269,7 @@ impl DatabasePool {
     ///
     /// ```ignore
     /// let pool: Arc<DatabasePool> = /* ... */;
-    /// let inner: Arc<DbPool> = pool.clone_inner;
+    /// let inner: Arc<DbPool> = pool.clone_inner();
     /// let repo = MyRepository::new(inner);
     /// ```
     #[inline]

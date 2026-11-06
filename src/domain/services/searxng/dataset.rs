@@ -173,6 +173,8 @@ pub fn admit(
         InstanceUrlError::Unsafe(_) | InstanceUrlError::Invalid(_) => {
             AdmissionReject::UnsafeUrl(format!("{url} ({e})"))
         }
+        // 规范化路径不会产出 UnknownVariant（仅枚举 FromStr 使用）；按不安全 URL 兜底
+        InstanceUrlError::UnknownVariant(_) => AdmissionReject::UnsafeUrl(format!("{url} ({e})")),
     })?;
 
     // 3. 网络类型（字段在时必须为 normal）

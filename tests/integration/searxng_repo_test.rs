@@ -286,6 +286,141 @@ async fn test_dataset_miss_retires_searx_space_but_not_seed() {
 }
 
 #[tokio::test]
+async fn test_record_dataset_miss_concurrent_increments_are_serialized() {
+    let _guard = searxng_test_lock().lock().await;
+    let app = create_test_app_no_worker().await;
+    let repo = SearxngInstanceRepositoryImpl::new(app.db_pool.clone());
+    let prefix = unique_prefix();
+    let url = format!("{prefix}.example.org");
+
+    repo.upsert_from_dataset(&admitted(&url, Some(99.0), None))
+        .await
+        .expect("upsert instance");
+
+    // 行锁串行化：两次并发 miss 必须各自递增（旧实现会读到同一旧值，最终只 +1）
+    let (first, second) = tokio::join!(
+        repo.record_dataset_miss(&url, 5),
+        repo.record_dataset_miss(&url, 5)
+    );
+    first.expect("first concurrent miss");
+    second.expect("second concurrent miss");
+
+    let instance = repo.get_by_url(&url).await.expect("get").expect("exists");
+    assert_eq!(
+        instance.dataset_miss_count, 2,
+        "concurrent misses must both be counted"
+    );
+
+    cleanup(&app.db_pool, &prefix).await;
+}
+
+#[tokio::test]
+async fn test_collect_lock_release_is_keyed_and_idempotent() {
+    let _guard = searxng_test_lock().lock().await;
+    let app = create_test_app_no_worker().await;
+    let repo = SearxngInstanceRepositoryImpl::new(app.db_pool.clone());
+
+    // 不与生产使用中的键（0 / COLLECT_ADVISORY_LOCK_KEY）冲突的测试专用键
+    let key = 0x5eed_1234_i64;
+    let first = repo
+        .try_acquire_collect_lock(key)
+        .await
+        .expect("acquire lock")
+        .expect("lock should be free");
+
+    // 幂等：重复释放同一键不报错（第二次 release 时事务已被取走，直接返回 Ok）
+    first.release().await.expect("first release");
+    first
+        .release()
+        .await
+        .expect("second release must be idempotent");
+
+    // 按键释放后同键可再次获取
+    let again = repo
+        .try_acquire_collect_lock(key)
+        .await
+        .expect("re-acquire")
+        .expect("lock must be available after release");
+    again.release().await.expect("cleanup release");
+}
+
+#[tokio::test]
+async fn test_collect_lock_excludes_concurrent_holder() {
+    let _guard = searxng_test_lock().lock().await;
+    let app = create_test_app_no_worker().await;
+    let repo = SearxngInstanceRepositoryImpl::new(app.db_pool.clone());
+
+    let key = 0x5eed_5678_i64;
+    let holder = repo
+        .try_acquire_collect_lock(key)
+        .await
+        .expect("acquire")
+        .expect("lock should be free");
+
+    // 守卫存活期间第二次获取必须失败（事务级 lock 的真实互斥语义）
+    let contended = repo
+        .try_acquire_collect_lock(key)
+        .await
+        .expect("second acquire attempt");
+    assert!(
+        contended.is_none(),
+        "lock must be exclusive while the first guard is alive"
+    );
+
+    holder.release().await.expect("release holder");
+    let reacquired = repo
+        .try_acquire_collect_lock(key)
+        .await
+        .expect("re-acquire after release")
+        .expect("lock must be free after release");
+    reacquired.release().await.expect("cleanup release");
+}
+
+#[tokio::test]
+async fn test_upsert_from_dataset_revives_retired_instance() {
+    let _guard = searxng_test_lock().lock().await;
+    let app = create_test_app_no_worker().await;
+    let repo = SearxngInstanceRepositoryImpl::new(app.db_pool.clone());
+    let prefix = unique_prefix();
+    let url = format!("{prefix}.example.org");
+
+    repo.upsert_from_dataset(&admitted(&url, Some(99.0), None))
+        .await
+        .expect("first upsert");
+
+    // 模拟已被退役且带缺席计数的行（参数化绑定，避免拼接范式被复制到生产代码）
+    {
+        let session = app.db_pool.get_session("admin").await.expect("session");
+        let conn = session.connection().expect("connection");
+        conn.query_one_raw(dbnexus::sea_orm::Statement::from_sql_and_values(
+            dbnexus::sea_orm::DatabaseBackend::Postgres,
+            "UPDATE searxng_instances SET state = 'retired', dataset_miss_count = 3 \
+             WHERE url = $1 RETURNING url",
+            [url.clone().into()],
+        ))
+        .await
+        .expect("mark retired");
+    }
+
+    // 重新出现在数据集：ON CONFLICT 更新里 retired → candidate，缺席计数清零
+    let outcome = repo
+        .upsert_from_dataset(&admitted(&url, Some(99.0), None))
+        .await
+        .expect("second upsert");
+    assert_eq!(outcome, UpsertOutcome::Updated);
+
+    let instance = repo.get_by_url(&url).await.expect("get").expect("exists");
+    assert_eq!(
+        instance.state,
+        SearxngInstanceState::Candidate,
+        "retired instance must revive to candidate"
+    );
+    assert_eq!(instance.dataset_miss_count, 0);
+
+    cleanup(&app.db_pool, &prefix).await;
+}
+
+#[tokio::test]
 async fn test_record_probe_result_updates_counters() {
     let _guard = searxng_test_lock().lock().await;
     let app = create_test_app_no_worker().await;

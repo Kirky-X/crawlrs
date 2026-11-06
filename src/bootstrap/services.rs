@@ -719,9 +719,9 @@ pub async fn init_garrison_auth(
         };
 
         // 格式约定（docs/USER_GUIDE.md:178）：`<team_id_uuid>` 是裸 36 位 UUID
-        // 字符串，不是 `team_id_uuid` 复合格式；`Id::from_str` 仅在含 '-' 且
-        // 长度 36 时按 UUID 解析，与本守卫口径一致。非法/非 36 长度一律回退
-        // 自动生成 team，不静默截断。
+        // 字符串，不是 `team_id_uuid` 复合格式；`Id::from_str` 按 UUID 解析的形态
+        // 为「含 '-' 且长度 36」或「32 位紧凑 UUID」，本守卫只放行 36 位裸 UUID
+        // （bootstrap 契约），非法/非 36 长度一律回退自动生成 team，不静默截断。
         let team_id_arg: Option<crate::domain::id::Id> = if cfg_val.len() == 36 {
             match cfg_val.parse::<crate::domain::id::Id>() {
                 Ok(id) => Some(id),
@@ -1032,43 +1032,52 @@ pub async fn init_services(
 
     // SearXNG 实例生命周期（必须在 SearchClient 之前构造：引擎注册与 smart 聚合依赖服务存在性）。
     // enabled=false → None（不构造服务、不拉起 worker、不注册引擎）。
-    let searxng_instances: Option<Arc<dyn SearxngInstanceService>> =
+    // transport 只构造一次：实例服务与 search engine 共享同一份（同一 http_client/user_agent）。
+    let searxng_transport: Option<Arc<dyn crate::domain::services::searxng::SearxngTransport>> =
         if settings.search.searxng.enabled {
-            let transport = Arc::new(ReqwestSearxngTransport::new(
+            Some(Arc::new(ReqwestSearxngTransport::new(
                 http_client.clone(),
                 settings.search.searxng.user_agent.clone(),
-            ));
-            let concrete = Arc::new(SearxngInstanceServiceImpl::new(
-                repositories.searxng_instance_repo.clone(),
-                transport,
-                settings.search.searxng.clone(),
-            ));
-            // 启动期：seed 引导 + 后台热池重建（不阻塞就绪；完成前 health() = Degraded）
-            concrete.spawn_bootstrap();
-            info!(
-                "SearXNG instance service enabled (pool_target={})",
-                settings.search.searxng.pool_target
-            );
-            Some(concrete as Arc<dyn SearxngInstanceService>)
+            )))
         } else {
-            info!("SearXNG disabled by config (search.searxng.enabled=false)");
             None
         };
 
-    // SearXNG 适配器：smart 聚合 fan-out 与 SearchClient 单引擎路径共用同一实例服务
+    let searxng_instances: Option<Arc<dyn SearxngInstanceService>> =
+        match searxng_transport.as_ref() {
+            Some(transport) => {
+                let concrete = Arc::new(SearxngInstanceServiceImpl::new(
+                    repositories.searxng_instance_repo.clone(),
+                    transport.clone(),
+                    settings.search.searxng.clone(),
+                ));
+                // 启动期：seed 引导 + 后台热池重建（不阻塞就绪；完成前 health() = Degraded）
+                concrete.spawn_bootstrap();
+                info!(
+                    "SearXNG instance service enabled (pool_target={})",
+                    settings.search.searxng.pool_target
+                );
+                Some(concrete as Arc<dyn SearxngInstanceService>)
+            }
+            None => {
+                info!("SearXNG disabled by config (search.searxng.enabled=false)");
+                None
+            }
+        };
+
+    // SearXNG 适配器：smart 聚合 fan-out 与 SearchClient 单引擎路径共用同一实例服务与 transport
     let searxng_search_engine: Option<Arc<dyn SearchEngine>> =
-        searxng_instances.as_ref().map(|service| {
-            let transport = Arc::new(ReqwestSearxngTransport::new(
-                http_client.clone(),
-                settings.search.searxng.user_agent.clone(),
-            ));
-            Arc::new(crate::search::client::searxng::SearxngSearchEngine::new(
-                service.clone(),
-                transport,
-                std::time::Duration::from_secs(settings.search.timeout_seconds),
-                settings.search.searxng.max_failover_attempts,
-            )) as Arc<dyn SearchEngine>
-        });
+        match (searxng_instances.as_ref(), searxng_transport.as_ref()) {
+            (Some(service), Some(transport)) => Some(Arc::new(
+                crate::search::client::searxng::SearxngSearchEngine::new(
+                    service.clone(),
+                    transport.clone(),
+                    std::time::Duration::from_secs(settings.search.timeout_seconds),
+                    settings.search.searxng.max_failover_attempts,
+                ),
+            ) as Arc<dyn SearchEngine>),
+            _ => None,
+        };
 
     // Initialize search engine (for backward compatibility)
     let search_engine_service: Arc<dyn SearchEngine> =

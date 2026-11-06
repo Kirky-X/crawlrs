@@ -51,7 +51,7 @@ impl FromStr for SearxngInstanceSource {
         match value {
             "searx_space" => Ok(SearxngInstanceSource::SearxSpace),
             "seed" => Ok(SearxngInstanceSource::Seed),
-            other => Err(InstanceUrlError::Invalid(format!(
+            other => Err(InstanceUrlError::UnknownVariant(format!(
                 "unknown instance source: {other}"
             ))),
         }
@@ -130,7 +130,7 @@ impl FromStr for SearxngInstanceState {
             "active" => Ok(SearxngInstanceState::Active),
             "cooldown" => Ok(SearxngInstanceState::Cooldown),
             "retired" => Ok(SearxngInstanceState::Retired),
-            other => Err(InstanceUrlError::Invalid(format!(
+            other => Err(InstanceUrlError::UnknownVariant(format!(
                 "unknown instance state: {other}"
             ))),
         }
@@ -146,6 +146,9 @@ pub enum InstanceUrlError {
     /// 指向内网/环回/链路本地地址（SSRF 面）
     #[error("unsafe instance url (internal address): {0}")]
     Unsafe(String),
+    /// 枚举 token 未知（`SearxngInstanceSource` / `SearxngInstanceState` 的 FromStr）
+    #[error("unknown variant: {0}")]
+    UnknownVariant(String),
 }
 
 /// 规范化实例 base URL：强制 https、host 小写、去尾斜杠。
@@ -243,6 +246,38 @@ pub struct SearxngInstance {
 }
 
 impl SearxngInstance {
+    /// 以最小必填字段构造实例：其余元数据为 None、计数为 0、时间为 epoch。
+    ///
+    /// 供测试与内存构造使用（无 DB 写入）；`created_at`/`updated_at` 取 epoch
+    /// (`DateTime::<Utc>::default()`)，不是可落库的“现在”。
+    pub fn new(
+        url: impl Into<String>,
+        source: SearxngInstanceSource,
+        state: SearxngInstanceState,
+    ) -> Self {
+        Self {
+            url: url.into(),
+            source,
+            state,
+            network_type: None,
+            version: None,
+            api_grade: None,
+            http_grade: None,
+            tls_grade: None,
+            cdn_grade: None,
+            uptime_day: None,
+            uptime_month: None,
+            latency_ms: None,
+            consecutive_failures: 0,
+            last_success_at: None,
+            last_failure_at: None,
+            last_error: None,
+            dataset_miss_count: 0,
+            created_at: DateTime::<Utc>::default(),
+            updated_at: DateTime::<Utc>::default(),
+        }
+    }
+
     /// 熔断器键（实例专属，避免与 engines 指标口径混淆）
     pub fn breaker_key(&self) -> String {
         format!("searxng:{}", self.url)
@@ -285,11 +320,15 @@ pub enum UpsertOutcome {
 
 /// 采集轮互斥守卫
 ///
-/// 跨进程（api / worker 双进程）防重：守卫存活期间持有 PG advisory lock 的会话，
-/// 显式 [`release`](CollectLockGuard::release) 释放（`Drop` 不释放，避免隐式吞错）。
+/// 跨进程（api / worker 双进程）防重：守卫存活期间持有互斥权；显式
+/// [`release`](CollectLockGuard::release) 释放（`Drop` 不显式释放，由实现尽力兜底）。
+///
+/// 实现约定：`try_acquire_collect_lock` 返回 `Ok(None)` 表示互斥权已被其他持有者
+/// 占用；`release` 幂等，重复调用直接返回 `Ok(())`。具体互斥机制由存储实现决定，
+/// 本端口不约束。
 #[async_trait]
 pub trait CollectLockGuard: Send + Sync {
-    /// 释放锁（幂等）
+    /// 释放锁（幂等：重复释放直接返回 Ok）
     async fn release(&self) -> Result<(), RepositoryError>;
 }
 
@@ -512,31 +551,35 @@ mod tests {
         assert!(normalize_instance_url("https://").is_err());
     }
 
+    #[test]
+    fn test_enum_from_str_uses_unknown_variant_error() {
+        use std::str::FromStr;
+
+        let state_err = SearxngInstanceState::from_str("bogus").expect_err("unknown state");
+        assert!(
+            matches!(state_err, InstanceUrlError::UnknownVariant(_)),
+            "got: {state_err:?}"
+        );
+        let source_err = SearxngInstanceSource::from_str("bogus").expect_err("unknown source");
+        assert!(
+            matches!(source_err, InstanceUrlError::UnknownVariant(_)),
+            "got: {source_err:?}"
+        );
+        assert_eq!(
+            state_err.to_string(),
+            "unknown variant: unknown instance state: bogus"
+        );
+    }
+
     // 熔断键
 
     #[test]
     fn test_breaker_key_prefixes_url() {
-        let instance = SearxngInstance {
-            url: "https://searx.example.org".to_string(),
-            source: SearxngInstanceSource::Seed,
-            state: SearxngInstanceState::Candidate,
-            network_type: None,
-            version: None,
-            api_grade: None,
-            http_grade: None,
-            tls_grade: None,
-            cdn_grade: None,
-            uptime_day: None,
-            uptime_month: None,
-            latency_ms: None,
-            consecutive_failures: 0,
-            last_success_at: None,
-            last_failure_at: None,
-            last_error: None,
-            dataset_miss_count: 0,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
+        let instance = SearxngInstance::new(
+            "https://searx.example.org",
+            SearxngInstanceSource::Seed,
+            SearxngInstanceState::Candidate,
+        );
         assert_eq!(instance.breaker_key(), "searxng:https://searx.example.org");
     }
 }

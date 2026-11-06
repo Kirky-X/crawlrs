@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// `api_key` 字段包含 Bing Search API 密钥，泄露可能导致未经授权的访问。
 /// 该字段仅对 crate 可见，外部模块应使用 `api_key()` 方法访问。
-#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[derive(Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__BING_SEARCH__")]
 pub struct BingSearchSettings {
     /// Bing Search API 密钥 (敏感信息)
@@ -30,6 +30,15 @@ impl BingSearchSettings {
     /// 不要记录到日志或暴露给用户。
     pub fn api_key(&self) -> Option<&str> {
         self.api_key.as_deref()
+    }
+}
+
+/// 手写 `Debug`：`api_key` 输出 `[REDACTED]`（CWE-532，与 Exa/Tavily 同口径）。
+impl std::fmt::Debug for BingSearchSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BingSearchSettings")
+            .field("api_key", &"[REDACTED]")
+            .finish()
     }
 }
 
@@ -129,7 +138,7 @@ pub struct SearchEnginesSettings {
 ///
 /// `api_key` 字段包含 Exa API 密钥，泄露可能导致未经授权的访问。
 /// 该字段仅对 crate 可见，外部模块应使用 `api_key()` 方法访问。
-#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[derive(Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__SEARCH__EXA__")]
 pub struct ExaEngineSettings {
     /// Exa API Key (敏感信息)
@@ -157,6 +166,17 @@ impl ExaEngineSettings {
     }
 }
 
+/// 手写 `Debug`：`api_key` 输出 `[REDACTED]`，避免整份 Settings 被调试打印时泄露凭据
+/// （CWE-532；对齐 `DatabaseSettings`/`RagSettings` 的脱敏模式）。
+impl std::fmt::Debug for ExaEngineSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExaEngineSettings")
+            .field("api_key", &"[REDACTED]")
+            .field("base_url", &self.base_url)
+            .finish()
+    }
+}
+
 /// Tavily 引擎凭据配置
 ///
 /// SearchClient 单引擎路径（engine="tavily" 显式调用）的装配凭据。
@@ -166,7 +186,7 @@ impl ExaEngineSettings {
 ///
 /// `api_key` 字段包含 Tavily API 密钥，泄露可能导致未经授权的访问。
 /// 该字段仅对 crate 可见，外部模块应使用 `api_key()` 方法访问。
-#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[derive(Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__SEARCH__TAVILY__")]
 pub struct TavilyEngineSettings {
     /// Tavily API Key (敏感信息)
@@ -191,6 +211,16 @@ impl TavilyEngineSettings {
     /// 获取 Tavily API 基础 URL 覆盖
     pub fn base_url(&self) -> Option<&str> {
         self.base_url.as_deref()
+    }
+}
+
+/// 手写 `Debug`：`api_key` 输出 `[REDACTED]`，与 `ExaEngineSettings` 同口径（CWE-532）。
+impl std::fmt::Debug for TavilyEngineSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TavilyEngineSettings")
+            .field("api_key", &"[REDACTED]")
+            .field("base_url", &self.base_url)
+            .finish()
     }
 }
 
@@ -332,7 +362,7 @@ pub struct SearchFallbackConfig {
 }
 
 /// 单个 fallback 引擎的配置
-#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[derive(Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__SEARCH__FALLBACK__")]
 pub struct FallbackEngineConfig {
     /// API Key（可选，部分引擎支持匿名访问）
@@ -342,6 +372,16 @@ pub struct FallbackEngineConfig {
     /// API 端点 URL
     #[config(default = String::new())]
     pub endpoint: String,
+}
+
+/// 手写 `Debug`：`api_key` 输出 `[REDACTED]`、`endpoint` 可见（CWE-532）。
+impl std::fmt::Debug for FallbackEngineConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FallbackEngineConfig")
+            .field("api_key", &"[REDACTED]")
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
 }
 
 #[cfg(test)]
@@ -427,6 +467,62 @@ mod tests {
         assert!(
             debug.contains("BingSearchSettings"),
             "Debug output should contain struct name"
+        );
+    }
+
+    #[test]
+    fn test_bing_debug_redacts_api_key() {
+        let settings = BingSearchSettings {
+            api_key: Some("fixture-bing-value".to_string()), // pragma: allowlist secret
+        };
+        let debug = format!("{settings:?}");
+        assert!(debug.contains("[REDACTED]"), "debug: {debug}");
+        assert!(
+            !debug.contains("fixture-bing-value"),
+            "api key leaked: {debug}"
+        );
+    }
+
+    #[test]
+    fn test_search_fallback_debug_redacts_api_keys() {
+        let settings = SearchFallbackConfig {
+            enabled: true,
+            engines: vec!["exa".to_string()],
+            exa: FallbackEngineConfig {
+                api_key: "fixture-exa-value".to_string(), // pragma: allowlist secret
+                endpoint: "https://exa.example".to_string(),
+            },
+            parallel: FallbackEngineConfig {
+                api_key: "fixture-parallel-value".to_string(), // pragma: allowlist secret
+                endpoint: String::new(),
+            },
+            tavily: FallbackEngineConfig {
+                api_key: "fixture-tavily-value".to_string(), // pragma: allowlist secret
+                endpoint: String::new(),
+            },
+        };
+        let debug = format!("{settings:?}");
+        assert!(debug.contains("SearchFallbackConfig"), "debug: {debug}");
+        assert!(
+            !debug.contains("fixture-exa-value"),
+            "exa key leaked: {debug}"
+        );
+        assert!(
+            !debug.contains("fixture-parallel-value"),
+            "parallel key leaked: {debug}"
+        );
+        assert!(
+            !debug.contains("fixture-tavily-value"),
+            "tavily key leaked: {debug}"
+        );
+        assert_eq!(
+            debug.matches("[REDACTED]").count(),
+            3,
+            "all three fallback keys must be redacted: {debug}"
+        );
+        assert!(
+            debug.contains("https://exa.example"),
+            "non-sensitive endpoint should stay visible: {debug}"
         );
     }
 
@@ -669,6 +765,25 @@ mod tests {
     // TavilyEngineSettings tests
 
     #[test]
+    fn test_exa_engine_settings_debug_redacts_api_key() {
+        let settings = ExaEngineSettings {
+            api_key: Some("fixture-exa-engine".to_string()), // pragma: allowlist secret
+            base_url: Some("https://mcp.example.com/mcp".to_string()),
+        };
+        let debug = format!("{settings:?}");
+        assert!(debug.contains("ExaEngineSettings"), "debug: {debug}");
+        assert!(debug.contains("[REDACTED]"), "debug: {debug}");
+        assert!(
+            !debug.contains("fixture-exa-engine"),
+            "api key leaked: {debug}"
+        );
+        assert!(
+            debug.contains("https://mcp.example.com/mcp"),
+            "non-sensitive field should stay visible: {debug}"
+        );
+    }
+
+    #[test]
     fn test_tavily_engine_settings_default_is_none() {
         let settings = TavilyEngineSettings::default();
         assert!(
@@ -689,6 +804,25 @@ mod tests {
         };
         assert_eq!(settings.api_key(), Some("secret-tavily-key"));
         assert_eq!(settings.base_url(), Some("https://api.example.com"));
+    }
+
+    #[test]
+    fn test_tavily_engine_settings_debug_redacts_api_key() {
+        let settings = TavilyEngineSettings {
+            api_key: Some("fixture-tavily-engine".to_string()), // pragma: allowlist secret
+            base_url: Some("https://api.tavily.com".to_string()),
+        };
+        let debug = format!("{settings:?}");
+        assert!(debug.contains("TavilyEngineSettings"), "debug: {debug}");
+        assert!(debug.contains("[REDACTED]"), "debug: {debug}");
+        assert!(
+            !debug.contains("fixture-tavily-engine"),
+            "api key leaked: {debug}"
+        );
+        assert!(
+            debug.contains("https://api.tavily.com"),
+            "non-sensitive field should stay visible: {debug}"
+        );
     }
 
     #[test]

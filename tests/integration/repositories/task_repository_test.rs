@@ -610,7 +610,10 @@ async fn test_acquire_next_zombie_recovery_respects_max_retries() {
         .expect("Failed to create recoverable task");
 
     let mut recovered: Option<Task> = None;
-    for _ in 0..100 {
+    // 预算取大：测试库跨运行累积的 active 过期任务会先被恢复路径取走，
+    // 100 次预算在长期复用的库上会被耗尽（实测 450+ 条遗留）。取到目标即退出，
+    // 实际耗时与遗留量线性相关（每条一次 UPDATE），上限仅防死循环。
+    for _ in 0..10_000 {
         let acquired = repo
             .acquire_next(worker)
             .await
@@ -1506,9 +1509,13 @@ async fn test_acquire_next_set_clause_mirrors_domain_methods() {
     );
 
     // SET updated_at=NOW  ↔  both domain methods set updated_at=now
+    // 容器 PG 的 NOW() 与宿主 Utc::now() 是两个时钟域（实测漂移可达数十毫秒），
+    // 断言意图是「updated_at 被刷新到现在」，故与 lock_expires_at 同口径留 2s 容差。
     assert!(
-        acquired.updated_at >= before,
-        "updated_at should be >= acquire time"
+        acquired.updated_at >= before - chrono::Duration::seconds(2),
+        "updated_at should be refreshed to now (allowing container clock skew): got {} before {}",
+        acquired.updated_at,
+        before
     );
 }
 

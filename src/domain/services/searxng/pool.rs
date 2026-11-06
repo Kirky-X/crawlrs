@@ -13,6 +13,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use super::PoolMember;
+use crate::domain::repositories::searxng_instance_repository::SearxngInstance;
 
 /// 热池
 pub struct InstancePool {
@@ -90,6 +91,25 @@ impl InstancePool {
         }
     }
 
+    /// 仅在 url 仍存在时应用 `f` 更新该成员实例（不存在时不插入）。返回是否命中。
+    ///
+    /// 用于 Success 回填：若成员已被并发 `evict` 逐出，回填必须放弃而不是把
+    /// 刚被逐出的实例重新塞回池中（`replace` 的「不存在即插入」语义在此有害）。
+    ///
+    /// 注意：`f` 在池写锁内执行，禁止在闭包内回调本池方法（`parking_lot` 不可重入）。
+    pub fn update_if_present(&self, url: &str, f: impl FnOnce(&mut SearxngInstance)) -> bool {
+        let mut members = self.members.write();
+        match members.iter_mut().find(|m| m.url() == url) {
+            Some(slot) => {
+                let mut instance = slot.instance.clone();
+                f(&mut instance);
+                *slot = Arc::new(PoolMember { instance });
+                true
+            }
+            None => false,
+        }
+    }
+
     /// 成员快照（轮转无关，按插入顺序）
     pub fn snapshot(&self) -> Vec<Arc<PoolMember>> {
         self.members.read().clone()
@@ -134,33 +154,16 @@ mod tests {
     use crate::domain::repositories::searxng_instance_repository::{
         SearxngInstance, SearxngInstanceSource, SearxngInstanceState,
     };
-    use chrono::Utc;
 
     fn member(url: &str) -> Arc<PoolMember> {
-        let now = Utc::now();
-        Arc::new(PoolMember {
-            instance: SearxngInstance {
-                url: url.to_string(),
-                source: SearxngInstanceSource::Seed,
-                state: SearxngInstanceState::Active,
-                network_type: None,
-                version: None,
-                api_grade: None,
-                http_grade: None,
-                tls_grade: None,
-                cdn_grade: None,
-                uptime_day: Some(99.0),
-                uptime_month: None,
-                latency_ms: Some(100),
-                consecutive_failures: 0,
-                last_success_at: None,
-                last_failure_at: None,
-                last_error: None,
-                dataset_miss_count: 0,
-                created_at: now,
-                updated_at: now,
-            },
-        })
+        let mut instance = SearxngInstance::new(
+            url,
+            SearxngInstanceSource::Seed,
+            SearxngInstanceState::Active,
+        );
+        instance.uptime_day = Some(99.0);
+        instance.latency_ms = Some(100);
+        Arc::new(PoolMember { instance })
     }
 
     fn always_available(_: &str) -> bool {
@@ -173,6 +176,41 @@ mod tests {
         assert!(pool.insert(member("https://a.example")));
         assert!(!pool.insert(member("https://a.example")));
         assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn test_update_if_present_updates_member() {
+        let pool = InstancePool::new(3);
+        pool.insert(member("https://a.example"));
+
+        let hit = pool.update_if_present("https://a.example", |instance| {
+            instance.latency_ms = Some(42);
+            instance.consecutive_failures = 0;
+        });
+        assert!(hit);
+        let updated = pool
+            .snapshot()
+            .into_iter()
+            .find(|m| m.url() == "https://a.example")
+            .expect("member");
+        assert_eq!(updated.instance.latency_ms, Some(42));
+    }
+
+    #[test]
+    fn test_update_if_present_skips_evicted_member_without_reinsert() {
+        let pool = InstancePool::new(3);
+        pool.insert(member("https://a.example"));
+        assert!(pool.evict("https://a.example").is_some());
+
+        let hit = pool.update_if_present("https://a.example", |instance| {
+            instance.latency_ms = Some(42);
+        });
+        assert!(!hit, "evicted member must not be updated or re-inserted");
+        assert!(
+            !pool.contains("https://a.example"),
+            "update_if_present must never insert a missing member"
+        );
+        assert_eq!(pool.len(), 0);
     }
 
     #[test]

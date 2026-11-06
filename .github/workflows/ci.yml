@@ -260,6 +260,12 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-test-deps-${{ matrix.rust }}
+      - name: Assert postgres migrations present
+        run: |
+          ls migrations/postgres/*.sql >/dev/null 2>&1 || {
+            echo "error: no migrations/postgres/*.sql found (misplaced migration files?)" >&2
+            exit 1
+          }
       - name: Run database migrations
         run: |
           for f in migrations/postgres/*.sql; do
@@ -326,6 +332,12 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-full-deps
+      - name: Assert postgres migrations present
+        run: |
+          ls migrations/postgres/*.sql >/dev/null 2>&1 || {
+            echo "error: no migrations/postgres/*.sql found (misplaced migration files?)" >&2
+            exit 1
+          }
       - name: Run database migrations
         run: |
           for f in migrations/postgres/*.sql; do
@@ -390,6 +402,12 @@ jobs:
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: cargo-llvm-cov
+      - name: Assert postgres migrations present
+        run: |
+          ls migrations/postgres/*.sql >/dev/null 2>&1 || {
+            echo "error: no migrations/postgres/*.sql found (misplaced migration files?)" >&2
+            exit 1
+          }
       - name: Run database migrations
         run: |
           for f in migrations/postgres/*.sql; do

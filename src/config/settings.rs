@@ -420,7 +420,7 @@ pub struct CorsSettings {
 ///
 /// `secret` 字段包含 Webhook 签名密钥，泄露可能导致伪造请求。
 /// 该字段仅对 crate 可见，外部模块应使用 `secret()` 方法访问。
-#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[derive(Clone, Deserialize, Serialize, confers::Config)]
 #[config(env_prefix = "CRAWLRS__WEBHOOK__")]
 pub struct WebhookSettings {
     /// Webhook签名密钥 (敏感信息)
@@ -434,6 +434,17 @@ pub struct WebhookSettings {
     /// 批处理大小
     #[config(default = 1000)]
     pub batch_size: usize,
+}
+
+/// 手写 `Debug`：`secret` 输出 `[REDACTED]`（CWE-532）；非敏感参数保持可见。
+impl std::fmt::Debug for WebhookSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookSettings")
+            .field("secret", &"[REDACTED]")
+            .field("max_retries", &self.max_retries)
+            .field("batch_size", &self.batch_size)
+            .finish()
+    }
 }
 
 impl WebhookSettings {
@@ -1487,6 +1498,28 @@ mod tests {
             debug_output.contains("***REDACTED***"),
             "Debug output should contain '***REDACTED***' placeholder, got: {debug_output}"
         );
+    }
+
+    /// 防止日志打印 Settings 时泄露 Webhook 签名密钥。
+    #[test]
+    fn test_webhook_settings_debug_redacts_secret() {
+        let settings = WebhookSettings {
+            secret: "fixture-webhook-value".to_string(), // pragma: allowlist secret
+            max_retries: 7,
+            batch_size: 64,
+        };
+        let debug = format!("{settings:?}");
+        assert!(debug.contains("WebhookSettings"), "debug: {debug}");
+        assert!(debug.contains("[REDACTED]"), "debug: {debug}");
+        assert!(
+            !debug.contains("fixture-webhook-value"),
+            "secret leaked: {debug}"
+        );
+        assert!(
+            debug.contains("7"),
+            "non-sensitive retries visible: {debug}"
+        );
+        assert!(debug.contains("64"), "non-sensitive batch visible: {debug}");
     }
 
     /// ObservabilitySettings 默认值与 config/default.toml `[observability]` 节
