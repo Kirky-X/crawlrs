@@ -250,7 +250,7 @@ regex.workspace = true
 # URL 去重：hashbrown HashSet + ahash 双哈希种子（性能优于 std）
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "equivalent", "inline-more"] }
 
-bytes = { version = "1", default-features = false, features = ["std"] }
+bytes = { version = "1.12", default-features = false, features = ["std"] }
 # llm prompt 模板加载（domain/services/llm/prompt_builder.rs）运行时解析 toml
 toml = { version = "1.2", default-features = false, features = ["std", "parse", "serde"] }
 
