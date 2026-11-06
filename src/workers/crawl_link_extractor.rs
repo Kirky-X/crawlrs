@@ -130,6 +130,61 @@ pub async fn extract_and_queue_links(
         return Ok(());
     }
 
+    let (pattern_filter, filter_ctx, blacklist_filter, empty_include_short_circuit) =
+        build_link_filters(task, config);
+
+    let unique_links = collect_unique_links(
+        task,
+        response,
+        &pattern_filter,
+        empty_include_short_circuit,
+        &blacklist_filter,
+        &filter_ctx,
+    )?;
+
+    info!("Found {} unique links on {}", unique_links.len(), task.url);
+
+    // URL 分层去重
+    let (mut to_enqueue, db_check) = partition_by_dedup(&unique_links, deduplicator)?;
+
+    // Frontier 评分排序
+    let mut new_urls: Vec<String> = Vec::with_capacity(unique_links.len());
+    new_urls.extend(std::mem::take(&mut to_enqueue));
+
+    if !db_check.is_empty() {
+        new_urls.extend(resolve_db_check(db_check, repository, deduplicator).await?);
+    }
+
+    // Frontier 评分排序入队
+    if !new_urls.is_empty() {
+        score_and_enqueue(
+            new_urls,
+            task,
+            crawl_id,
+            current_depth,
+            config,
+            repository,
+            crawl_repository,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// 构造链接过滤链（include/exclude patterns + 团队域名黑名单）
+///
+/// 自 [`extract_and_queue_links`] 提取，过滤规则构造顺序与日志逐字保留。
+/// 返回 `(pattern_filter, filter_ctx, blacklist_filter, empty_include_short_circuit)`。
+fn build_link_filters(
+    task: &Task,
+    config: &CrawlConfigDto,
+) -> (
+    Option<UrlPatternFilter>,
+    FilterContext,
+    Option<DomainFilter>,
+    bool,
+) {
     // 循环外构造一次 UrlPatternFilter
     let empty_include_short_circuit =
         matches!(&config.include_patterns, Some(patterns) if patterns.is_empty());
@@ -161,57 +216,81 @@ pub async fn extract_and_queue_links(
         Some(DomainFilter::denylist(domain_blacklist))
     };
 
-    let unique_links = {
-        let document = Html::parse_document(&response.content);
-        let selector =
-            Selector::parse("a").map_err(|e| ScrapeWorkerError::SelectorError(e.to_string()))?;
-        let base_url = Url::parse(&task.url)?;
+    (
+        pattern_filter,
+        filter_ctx,
+        blacklist_filter,
+        empty_include_short_circuit,
+    )
+}
 
-        let mut links = HashSet::new();
+/// 从 HTML 响应收集绝对链接并按过滤链去重
+///
+/// 自 [`extract_and_queue_links`] 提取，过滤判定顺序与短路行为逐字保留：
+/// 黑名单 → include/exclude patterns → include 为空集合时整体短路。
+fn collect_unique_links(
+    task: &Task,
+    response: &ScrapeResponse,
+    pattern_filter: &Option<UrlPatternFilter>,
+    empty_include_short_circuit: bool,
+    blacklist_filter: &Option<DomainFilter>,
+    filter_ctx: &FilterContext,
+) -> Result<HashSet<String>> {
+    let document = Html::parse_document(&response.content);
+    let selector =
+        Selector::parse("a").map_err(|e| ScrapeWorkerError::SelectorError(e.to_string()))?;
+    let base_url = Url::parse(&task.url)?;
 
-        for element in document.select(&selector) {
-            if let Some(href) = element.value().attr("href") {
-                if let Ok(absolute_url) = base_url.join(href) {
-                    let url_str = absolute_url.to_string();
+    let mut links = HashSet::new();
 
-                    if !url_str.starts_with("http") {
-                        continue;
-                    }
-                    if url_str == task.url {
-                        continue;
-                    }
+    for element in document.select(&selector) {
+        if let Some(href) = element.value().attr("href") {
+            if let Ok(absolute_url) = base_url.join(href) {
+                let url_str = absolute_url.to_string();
 
-                    // 黑名单过滤：绝对拒绝，不受 include patterns 影响
-                    if let Some(bf) = &blacklist_filter {
-                        if !bf.accept(&url_str, &filter_ctx) {
-                            continue;
-                        }
-                    }
-
-                    if let Some(filter) = &pattern_filter {
-                        if !filter.accept(&url_str, &filter_ctx) {
-                            continue;
-                        }
-                    } else if empty_include_short_circuit {
-                        continue;
-                    }
-
-                    links.insert(url_str);
+                if !url_str.starts_with("http") {
+                    continue;
                 }
+                if url_str == task.url {
+                    continue;
+                }
+
+                // 黑名单过滤：绝对拒绝，不受 include patterns 影响
+                if let Some(bf) = blacklist_filter {
+                    if !bf.accept(&url_str, filter_ctx) {
+                        continue;
+                    }
+                }
+
+                if let Some(filter) = pattern_filter {
+                    if !filter.accept(&url_str, filter_ctx) {
+                        continue;
+                    }
+                } else if empty_include_short_circuit {
+                    continue;
+                }
+
+                links.insert(url_str);
             }
         }
-        links
-    };
+    }
+    Ok(links)
+}
 
-    info!("Found {} unique links on {}", unique_links.len(), task.url);
-
-    // URL 分层去重
+/// 布隆分层去重：`DefinitelyNew` 直接入队，`MaybeExisting` 转 DB 校验
+///
+/// 自 [`extract_and_queue_links`] 提取，写锁临界区与错误语义逐字保留
+/// （首个去重错误立即返回，锁随作用域释放）。
+fn partition_by_dedup(
+    unique_links: &HashSet<String>,
+    deduplicator: &Arc<parking_lot::RwLock<Deduplicator>>,
+) -> Result<(Vec<String>, Vec<String>)> {
     let mut to_enqueue: Vec<String> = Vec::with_capacity(unique_links.len());
     let mut db_check: Vec<String> = Vec::with_capacity(unique_links.len());
 
     {
         let mut dedup = deduplicator.write();
-        for link in &unique_links {
+        for link in unique_links {
             match dedup.check_and_insert(link) {
                 Ok(DedupResult::DefinitelyNew { normalized }) => {
                     to_enqueue.push(normalized);
@@ -230,137 +309,153 @@ pub async fn extract_and_queue_links(
         }
     }
 
-    // Frontier 评分排序
-    let mut new_urls: Vec<String> = Vec::with_capacity(unique_links.len());
-    new_urls.extend(std::mem::take(&mut to_enqueue));
+    Ok((to_enqueue, db_check))
+}
 
-    if !db_check.is_empty() {
-        db_check.sort_unstable();
-        db_check.dedup();
+/// DB 校验布隆疑似项：确认不存在则无条件 insert + 入队
+///
+/// 自 [`extract_and_queue_links`] 提取，排序/去重与二次 insert 注释逐字保留。
+async fn resolve_db_check(
+    mut db_check: Vec<String>,
+    repository: &dyn TaskRepository,
+    deduplicator: &Arc<parking_lot::RwLock<Deduplicator>>,
+) -> Result<Vec<String>> {
+    db_check.sort_unstable();
+    db_check.dedup();
 
-        let existing_urls = repository.find_existing_urls(&db_check).await?;
-        let existing_url_set: HashSet<String> = existing_urls.into_iter().collect();
+    let existing_urls = repository.find_existing_urls(&db_check).await?;
+    let existing_url_set: HashSet<String> = existing_urls.into_iter().collect();
 
-        let mut to_db_insert: Vec<&String> = Vec::with_capacity(db_check.len());
-        for normalized in &db_check {
-            if !existing_url_set.contains(normalized) {
-                to_db_insert.push(normalized);
-            }
+    let mut to_db_insert: Vec<&String> = Vec::with_capacity(db_check.len());
+    for normalized in &db_check {
+        if !existing_url_set.contains(normalized) {
+            to_db_insert.push(normalized);
         }
-
-        let mut to_db_enqueue: Vec<String> = Vec::with_capacity(to_db_insert.len());
-        if !to_db_insert.is_empty() {
-            let mut dedup = deduplicator.write();
-            // DB 已确认这些 URL 不存在——布隆阳性必为假阳性，必须无条件
-            // insert + 入队。禁止再走 check_and_insert：首轮检查已置位布隆，
-            // 二次检查必然复现 MaybeExisting，会把 DB 确认的新 URL 静默丢弃
-            // （永久漏抓）。
-            for normalized in &to_db_insert {
-                dedup.insert(normalized);
-                to_db_enqueue.push(normalized.to_string());
-            }
-        }
-
-        new_urls.extend(std::mem::take(&mut to_db_enqueue));
     }
 
-    // Frontier 评分排序入队
-    if !new_urls.is_empty() {
-        let scorer = PathDepthScorer::new();
-        let scoring_ctx = ScoringContext::default();
-        let frontier = Frontier::new();
+    let mut to_db_enqueue: Vec<String> = Vec::with_capacity(to_db_insert.len());
+    if !to_db_insert.is_empty() {
+        let mut dedup = deduplicator.write();
+        // DB 已确认这些 URL 不存在——布隆阳性必为假阳性，必须无条件
+        // insert + 入队。禁止再走 check_and_insert：首轮检查已置位布隆，
+        // 二次检查必然复现 MaybeExisting，会把 DB 确认的新 URL 静默丢弃
+        // （永久漏抓）。
+        for normalized in &to_db_insert {
+            dedup.insert(normalized);
+            to_db_enqueue.push(normalized.to_string());
+        }
+    }
 
-        for url in &new_urls {
-            let base_score = scorer.score(url, &scoring_ctx);
-            // KG 结构空洞提升因子
-            // kg_priority_boost > 1.0 表示 URL 可能填补结构空洞，应获得更高优先级
-            let score = (base_score as f64 * scoring_ctx.kg_priority_boost).clamp(0.0, 1.0) as f32;
-            match crate::workers::crawl::ScoredUrl::new(url.clone(), score) {
-                Ok(scored) => frontier.push(scored),
-                Err(e) => {
-                    warn!(
-                        "{}",
-                        tr_log_args(
-                            "link-score-skip",
-                            &[
-                                (
-                                    "task_id",
-                                    fluent_bundle::FluentValue::from(task.id.to_string())
-                                ),
-                                ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                                ("url", fluent_bundle::FluentValue::from(url.as_str())),
-                            ],
-                        )
-                    );
-                }
+    Ok(to_db_enqueue)
+}
+
+/// Frontier 评分入队 + 按策略（DFS/BFS）生成子任务落库
+///
+/// 自 [`extract_and_queue_links`] 提取，评分日志、优先级策略与任务构造逐字保留。
+#[allow(clippy::too_many_arguments)]
+async fn score_and_enqueue(
+    new_urls: Vec<String>,
+    task: &Task,
+    crawl_id: crate::domain::id::Id,
+    current_depth: u32,
+    config: &CrawlConfigDto,
+    repository: &dyn TaskRepository,
+    crawl_repository: &dyn CrawlRepository,
+) -> Result<()> {
+    let scorer = PathDepthScorer::new();
+    let scoring_ctx = ScoringContext::default();
+    let frontier = Frontier::new();
+
+    for url in &new_urls {
+        let base_score = scorer.score(url, &scoring_ctx);
+        // KG 结构空洞提升因子
+        // kg_priority_boost > 1.0 表示 URL 可能填补结构空洞，应获得更高优先级
+        let score = (base_score as f64 * scoring_ctx.kg_priority_boost).clamp(0.0, 1.0) as f32;
+        match crate::workers::crawl::ScoredUrl::new(url.clone(), score) {
+            Ok(scored) => frontier.push(scored),
+            Err(e) => {
+                warn!(
+                    "{}",
+                    tr_log_args(
+                        "link-score-skip",
+                        &[
+                            (
+                                "task_id",
+                                fluent_bundle::FluentValue::from(task.id.to_string())
+                            ),
+                            ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                            ("url", fluent_bundle::FluentValue::from(url.as_str())),
+                        ],
+                    )
+                );
+            }
+        }
+    }
+
+    info!(
+        "{}",
+        tr_log_args(
+            "link-frontier-enqueued",
+            &[
+                (
+                    "task_id",
+                    fluent_bundle::FluentValue::from(task.id.to_string())
+                ),
+                (
+                    "count",
+                    fluent_bundle::FluentValue::from(frontier.len().to_string())
+                ),
+                (
+                    "domains",
+                    fluent_bundle::FluentValue::from(frontier.domain_count().to_string())
+                ),
+            ],
+        )
+    );
+
+    while let Some(scored) = frontier.pop() {
+        // 出队按 priority ASC（小值先出）。
+        // DFS（栈语义）：子链接键 = 父 priority - (子深度)，i32 负空间
+        // 保证默认 priority=0 与超深链路下仍严格随深度递减（复查
+        // 此前 saturating_sub(1) 在 priority=0 或深链路塌缩回 BFS）。
+        // BFS（层序）：继承父 priority。
+        let mut priority = task.priority;
+        if let Some(strategy) = &config.strategy {
+            if strategy.to_lowercase() == "dfs" {
+                let depth_key = (current_depth.min(1_000_000) as i32).saturating_add(1);
+                priority = task.priority.saturating_sub(depth_key);
             }
         }
 
-        info!(
-            "{}",
-            tr_log_args(
-                "link-frontier-enqueued",
-                &[
-                    (
-                        "task_id",
-                        fluent_bundle::FluentValue::from(task.id.to_string())
-                    ),
-                    (
-                        "count",
-                        fluent_bundle::FluentValue::from(frontier.len().to_string())
-                    ),
-                    (
-                        "domains",
-                        fluent_bundle::FluentValue::from(frontier.domain_count().to_string())
-                    ),
-                ],
-            )
-        );
+        let new_task = Task {
+            id: crate::domain::id::Id::generate(),
+            task_type: TaskType::Crawl,
+            status: TaskStatus::Queued,
+            priority,
+            team_id: task.team_id,
+            api_key_id: task.api_key_id,
+            url: scored.url,
+            payload: json!({
+                "crawl_id": crawl_id.to_string(),
+                "depth": current_depth + 1,
+                "config": config
+            }),
+            retry_count: 0,
+            attempt_count: 0,
+            max_retries: 3,
+            scheduled_at: None,
+            created_at: Utc::now(),
+            started_at: None,
+            completed_at: None,
+            crawl_id: Some(crawl_id),
+            updated_at: Utc::now(),
+            lock_token: None,
+            lock_expires_at: None,
+            expires_at: None,
+        };
 
-        while let Some(scored) = frontier.pop() {
-            // 出队按 priority ASC（小值先出）。
-            // DFS（栈语义）：子链接键 = 父 priority - (子深度)，i32 负空间
-            // 保证默认 priority=0 与超深链路下仍严格随深度递减（复查
-            // 此前 saturating_sub(1) 在 priority=0 或深链路塌缩回 BFS）。
-            // BFS（层序）：继承父 priority。
-            let mut priority = task.priority;
-            if let Some(strategy) = &config.strategy {
-                if strategy.to_lowercase() == "dfs" {
-                    let depth_key = (current_depth.min(1_000_000) as i32).saturating_add(1);
-                    priority = task.priority.saturating_sub(depth_key);
-                }
-            }
-
-            let new_task = Task {
-                id: crate::domain::id::Id::generate(),
-                task_type: TaskType::Crawl,
-                status: TaskStatus::Queued,
-                priority,
-                team_id: task.team_id,
-                api_key_id: task.api_key_id,
-                url: scored.url,
-                payload: json!({
-                    "crawl_id": crawl_id.to_string(),
-                    "depth": current_depth + 1,
-                    "config": config
-                }),
-                retry_count: 0,
-                attempt_count: 0,
-                max_retries: 3,
-                scheduled_at: None,
-                created_at: Utc::now(),
-                started_at: None,
-                completed_at: None,
-                crawl_id: Some(crawl_id),
-                updated_at: Utc::now(),
-                lock_token: None,
-                lock_expires_at: None,
-                expires_at: None,
-            };
-
-            repository.create(&new_task).await?;
-            crawl_repository.increment_total_tasks(crawl_id).await?;
-        }
+        repository.create(&new_task).await?;
+        crawl_repository.increment_total_tasks(crawl_id).await?;
     }
 
     Ok(())

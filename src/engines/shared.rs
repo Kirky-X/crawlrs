@@ -25,56 +25,66 @@ use std::net::IpAddr;
 /// - IPv6 documentation: 2001:db8::/32
 pub fn is_private_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ipv4) => {
-            let octets = ipv4.octets();
-            // 10.0.0.0/8
-            octets[0] == 10
-            // 172.16.0.0/12
-            || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-            // 192.168.0.0/16
-            || (octets[0] == 192 && octets[1] == 168)
-            // Loopback 127.0.0.0/8
-            || ipv4.is_loopback()
-            // Link-local 169.254.0.0/16
-            || ipv4.is_link_local()
-            // Multicast 224.0.0.0/4
-            || (224..=239).contains(&octets[0])
-            // Carrier-Grade NAT 100.64.0.0/10
-            || (octets[0] == 100 && (64..=127).contains(&octets[1]))
-            // Broadcast 0.0.0.0/8
-            || octets[0] == 0
-            // 255.255.255.255
-            || (octets[0] == 255 && octets[1] == 255 && octets[2] == 255 && octets[3] == 255)
-        }
-        IpAddr::V6(ipv6) => {
-            let segs = ipv6.segments();
-            ipv6.is_loopback()
-                || (segs[0] & 0xfe00) == 0xfc00 // fc00::/7 ULA
-                || (segs[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
-                || (segs[0] & 0xff00) == 0xff00 // ff00::/8 multicast
-                || segs == [0, 0, 0, 0, 0, 0, 0, 0] // /128 unspecified
-                || (segs[0] == 0x2001 && segs[1] == 0x0db8) // 2001:db8::/32 documentation
-                // IPv4-mapped IPv6 (ffff:x.x.x.x) - use std lib (Rust 1.65+)
-                || ipv6
-                    .to_ipv4_mapped()
-                    .map(|v4| is_private_ip(IpAddr::V4(v4)))
-                    .unwrap_or(false)
-                // IPv4-compatible IPv6 (x.x.x.x, RFC 4291 deprecated) - bypass risk
-                // to_ipv4_mapped does NOT cover this form; must check explicitly.
-                // Exclude ::/128 (unspecified) and ::1 (loopback) - already handled above.
-                || (segs[0..6] == [0, 0, 0, 0, 0, 0]
-                    && (segs[6] != 0 || segs[7] != 0)
-                    && {
-                        let ipv4 = std::net::Ipv4Addr::new(
-                            (segs[6] >> 8) as u8,
-                            (segs[6] & 0xff) as u8,
-                            (segs[7] >> 8) as u8,
-                            (segs[7] & 0xff) as u8,
-                        );
-                        is_private_ip(IpAddr::V4(ipv4))
-                    })
-        }
+        IpAddr::V4(ipv4) => is_private_ipv4(ipv4),
+        IpAddr::V6(ipv6) => is_private_ipv6(ipv6),
     }
+}
+
+/// 判定 IPv4 地址是否为私有/保留地址
+///
+/// （`is_private_ip` 的 V4 分支，逻辑与注释原样保留）
+fn is_private_ipv4(ipv4: std::net::Ipv4Addr) -> bool {
+    let octets = ipv4.octets();
+    // 10.0.0.0/8
+    octets[0] == 10
+    // 172.16.0.0/12
+    || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+    // 192.168.0.0/16
+    || (octets[0] == 192 && octets[1] == 168)
+    // Loopback 127.0.0.0/8
+    || ipv4.is_loopback()
+    // Link-local 169.254.0.0/16
+    || ipv4.is_link_local()
+    // Multicast 224.0.0.0/4
+    || (224..=239).contains(&octets[0])
+    // Carrier-Grade NAT 100.64.0.0/10
+    || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+    // Broadcast 0.0.0.0/8
+    || octets[0] == 0
+    // 255.255.255.255
+    || (octets[0] == 255 && octets[1] == 255 && octets[2] == 255 && octets[3] == 255)
+}
+
+/// 判定 IPv6 地址是否为私有/保留地址
+///
+/// （`is_private_ip` 的 V6 分支，逻辑与注释原样保留）
+fn is_private_ipv6(ipv6: std::net::Ipv6Addr) -> bool {
+    let segs = ipv6.segments();
+    ipv6.is_loopback()
+        || (segs[0] & 0xfe00) == 0xfc00 // fc00::/7 ULA
+        || (segs[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+        || (segs[0] & 0xff00) == 0xff00 // ff00::/8 multicast
+        || segs == [0, 0, 0, 0, 0, 0, 0, 0] // /128 unspecified
+        || (segs[0] == 0x2001 && segs[1] == 0x0db8) // 2001:db8::/32 documentation
+        // IPv4-mapped IPv6 (ffff:x.x.x.x) - use std lib (Rust 1.65+)
+        || ipv6
+            .to_ipv4_mapped()
+            .map(is_private_ipv4)
+            .unwrap_or(false)
+        // IPv4-compatible IPv6 (x.x.x.x, RFC 4291 deprecated) - bypass risk
+        // to_ipv4_mapped does NOT cover this form; must check explicitly.
+        // Exclude ::/128 (unspecified) and ::1 (loopback) - already handled above.
+        || (segs[0..6] == [0, 0, 0, 0, 0, 0]
+            && (segs[6] != 0 || segs[7] != 0)
+            && {
+                let ipv4 = std::net::Ipv4Addr::new(
+                    (segs[6] >> 8) as u8,
+                    (segs[6] & 0xff) as u8,
+                    (segs[7] >> 8) as u8,
+                    (segs[7] & 0xff) as u8,
+                );
+                is_private_ipv4(ipv4)
+            })
 }
 
 /// List of blocked hostnames that should never be accessed via SSRF.

@@ -153,51 +153,45 @@ impl TextEncodingProcessor {
             if c == '\\' {
                 if chars.peek() == Some(&'u') {
                     chars.next();
-                    let mut hex_chars = String::new();
-                    for _ in 0..4 {
-                        if let Some(h) = chars.next() {
-                            hex_chars.push(h);
-                        }
-                    }
-                    if let Ok(code_point) = u32::from_str_radix(&hex_chars, 16) {
-                        if let Some(ch) = char::from_u32(code_point) {
-                            result.push(ch);
-                            continue;
-                        }
+                    if let Some(ch) = Self::decode_hex_escape(&mut chars, 4) {
+                        result.push(ch);
+                        continue;
                     }
                 } else if chars.peek() == Some(&'U') {
                     chars.next();
-                    let mut hex_chars = String::new();
-                    for _ in 0..8 {
-                        if let Some(h) = chars.next() {
-                            hex_chars.push(h);
-                        }
-                    }
-                    if let Ok(code_point) = u32::from_str_radix(&hex_chars, 16) {
-                        if let Some(ch) = char::from_u32(code_point) {
-                            result.push(ch);
-                            continue;
-                        }
+                    if let Some(ch) = Self::decode_hex_escape(&mut chars, 8) {
+                        result.push(ch);
+                        continue;
                     }
                 } else if chars.peek() == Some(&'x') {
                     chars.next();
-                    let mut hex_chars = String::new();
-                    for _ in 0..2 {
-                        if let Some(h) = chars.next() {
-                            hex_chars.push(h);
-                        }
-                    }
-                    if let Ok(code_point) = u32::from_str_radix(&hex_chars, 16) {
-                        if let Some(ch) = char::from_u32(code_point) {
-                            result.push(ch);
-                            continue;
-                        }
+                    if let Some(ch) = Self::decode_hex_escape(&mut chars, 2) {
+                        result.push(ch);
+                        continue;
                     }
                 }
             }
             result.push(c);
         }
         result
+    }
+
+    /// 读取 `n` 个字符并按十六进制码点解码为 char
+    ///
+    /// 位数不足或码点非法时返回 `None`；已消费的字符不回退（与原实现一致，
+    /// 解码失败时调用方仅输出转义前缀的反斜杠本身）。
+    fn decode_hex_escape(
+        chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+        n: usize,
+    ) -> Option<char> {
+        let mut hex_chars = String::new();
+        for _ in 0..n {
+            if let Some(h) = chars.next() {
+                hex_chars.push(h);
+            }
+        }
+        let code_point = u32::from_str_radix(&hex_chars, 16).ok()?;
+        char::from_u32(code_point)
     }
 
     /// Unicode字符串规范化转换

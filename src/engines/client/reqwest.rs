@@ -464,52 +464,19 @@ impl ReqwestEngine {
         };
         ClientHandle::new(client, Some(url), is_fallback)
     }
-}
 
-#[async_trait]
-impl ScraperEngine for ReqwestEngine {
-    /// 执行HTTP抓取
+    /// 构建本次请求的 SSRF 客户端与请求级 cookie Jar
     ///
-    /// # 参数
-    ///
-    /// * `request` - 抓取请求
-    ///
-    /// # 返回值
-    ///
-    /// * `Ok(InternalScrapeResponse)` - 抓取响应
-    /// * `Err(EngineError)` - 抓取过程中出现的错误
-    async fn scrape(
+    /// 自 [`ScraperEngine::scrape`] 提取，构建分支、日志与错误语义逐字保留。
+    /// 返回 `(request_cookie_jar, ssrf_client)`。
+    fn build_request_client(
         &self,
         request: &InternalScrapeRequest,
-    ) -> Result<InternalScrapeResponse, EngineError> {
-        let validator = validators::SsrfValidator::new();
-        let validated_url = validator
-            .validate(&request.url)
-            .await
-            .map_err(|e| EngineError::Other(format!("SSRF protection: {}", e)))?;
-        let host = validated_url
-            .parsed_url
-            .host_str()
-            .unwrap_or("")
-            .to_string();
-        let port = validated_url.port;
-        // SSRF: pin hostname → validated IPs via reqwest resolve override.
-        // Keep the original URL intact so TLS SNI and virtual host routing work correctly.
-        let resolve_addrs: Vec<std::net::SocketAddr> = validated_url
-            .resolved_ips
-            .iter()
-            .map(|ip| std::net::SocketAddr::new(*ip, port))
-            .collect();
-        if resolve_addrs.is_empty() {
-            return Err(EngineError::Other("SSRF: no resolved IPs".to_string()));
-        }
+        handle: &mut ClientHandle,
+        host: &str,
+        resolve_addrs: &[std::net::SocketAddr],
+    ) -> Result<(Arc<reqwest::cookie::Jar>, reqwest::Client), EngineError> {
         let need_tls_bypass = request.skip_tls_verification;
-        let mut handle = self.get_client(
-            &request.proxy,
-            request.skip_tls_verification,
-            request.session_id.as_deref(),
-        );
-
         // SSRF DNS pin: build client with resolve override from scratch.
         // Keeps the original hostname for TLS SNI and HTTP virtual host routing,
         // while connecting to SSRF-validated IPs.
@@ -528,7 +495,7 @@ impl ScraperEngine for ReqwestEngine {
                 .cookie_provider(Arc::clone(&request_cookie_jar))
                 .local_address(Some(std::net::Ipv4Addr::UNSPECIFIED.into()))
                 .dns_resolver(crate::infrastructure::dns::create_ipv4_only_resolver())
-                .resolve_to_addrs(&host, &resolve_addrs)
+                .resolve_to_addrs(host, resolve_addrs)
                 .redirect(crate::utils::http_client::create_ssrf_safe_redirect_policy(
                     5,
                 ));
@@ -587,8 +554,18 @@ impl ScraperEngine for ReqwestEngine {
                 };
             temp_client.unwrap_or_else(|| handle.client.clone())
         };
-        let effective_client = &ssrf_client;
+        Ok((request_cookie_jar, ssrf_client))
+    }
 
+    /// 构建请求 builder：自定义 headers + UA profile + body/timeout
+    ///
+    /// 自 [`ScraperEngine::scrape`] 提取，应用顺序与注释逐字保留。
+    fn build_request_builder(
+        &self,
+        request: &InternalScrapeRequest,
+        client: &reqwest::Client,
+        request_url: &str,
+    ) -> reqwest::RequestBuilder {
         let mut headers = HeaderMap::new();
         for (k, v) in &request.headers {
             if let (Ok(header_name), Ok(header_value)) = (
@@ -608,10 +585,9 @@ impl ScraperEngine for ReqwestEngine {
         // `crawlrs/*` UA: major search engines (Baidu, Sogou, Bing) reject
         // bot-identified requests with a 227-byte JS-redirect error page
         // instead of returning actual search results.
-        let request_url = validated_url.parsed_url.as_str();
         let mut request_builder = match request.method {
-            crate::engines::engine_client::HttpMethod::Get => effective_client.get(request_url),
-            crate::engines::engine_client::HttpMethod::Post => effective_client.post(request_url),
+            crate::engines::engine_client::HttpMethod::Get => client.get(request_url),
+            crate::engines::engine_client::HttpMethod::Post => client.post(request_url),
         };
 
         // 应用 UA 绑定 headers（User-Agent + Accept-Language + sec-ch-ua）
@@ -635,10 +611,19 @@ impl ScraperEngine for ReqwestEngine {
 
         request_builder = request_builder.timeout(request.timeout);
 
-        let start = Instant::now();
-        let response_result = request_builder.send().await;
+        request_builder
+    }
 
-        let response = match response_result {
+    /// 发送请求；超时/失败时回填 ProxyProvider 并打印完整错误链
+    ///
+    /// 自 [`ScraperEngine::scrape`] 提取，日志与错误语义逐字保留。
+    async fn send_request(
+        &self,
+        request_builder: reqwest::RequestBuilder,
+        request: &InternalScrapeRequest,
+        handle: &ClientHandle,
+    ) -> Result<reqwest::Response, EngineError> {
+        let response = match request_builder.send().await {
             Ok(resp) => resp,
             Err(e) if e.is_timeout() => {
                 // H3: 通过 ClientHandle.report_failure 回填 ProxyProvider（无需感知 used_proxy_url）
@@ -667,16 +652,16 @@ impl ScraperEngine for ReqwestEngine {
                 return Err(EngineError::RequestFailed(e.to_string()));
             }
         };
+        Ok(response)
+    }
 
-        let status_code = response.status().as_u16();
-
-        // H3: 2xx 成功 → 通过 ClientHandle.report_success 回填 ProxyProvider 恢复代理健康
-        // 4xx/5xx 视为业务层失败，但代理本身可用，不 report_failure（避免误伤好代理）
-        if (200..300).contains(&status_code) {
-            if let Some(provider) = &self.proxy_provider {
-                handle.report_success(provider.as_ref());
-            }
-        }
+    /// 提取 content_type 与响应头，并从请求级 cookie Jar 回取 Cookie
+    ///
+    /// 自 [`ScraperEngine::scrape`] 提取，逻辑与注释逐字保留。
+    fn collect_response_headers(
+        response: &reqwest::Response,
+        request_cookie_jar: &Arc<reqwest::cookie::Jar>,
+    ) -> (String, std::collections::HashMap<String, String>) {
         let content_type = response
             .headers()
             .get("content-type")
@@ -711,6 +696,74 @@ impl ScraperEngine for ReqwestEngine {
                 }
             }
         }
+
+        (content_type, response_headers)
+    }
+}
+
+#[async_trait]
+impl ScraperEngine for ReqwestEngine {
+    /// 执行HTTP抓取
+    ///
+    /// # 参数
+    ///
+    /// * `request` - 抓取请求
+    ///
+    /// # 返回值
+    ///
+    /// * `Ok(InternalScrapeResponse)` - 抓取响应
+    /// * `Err(EngineError)` - 抓取过程中出现的错误
+    async fn scrape(
+        &self,
+        request: &InternalScrapeRequest,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        let validator = validators::SsrfValidator::new();
+        let validated_url = validator
+            .validate(&request.url)
+            .await
+            .map_err(|e| EngineError::Other(format!("SSRF protection: {}", e)))?;
+        let host = validated_url
+            .parsed_url
+            .host_str()
+            .unwrap_or("")
+            .to_string();
+        let port = validated_url.port;
+        // SSRF: pin hostname → validated IPs via reqwest resolve override.
+        // Keep the original URL intact so TLS SNI and virtual host routing work correctly.
+        let resolve_addrs: Vec<std::net::SocketAddr> = validated_url
+            .resolved_ips
+            .iter()
+            .map(|ip| std::net::SocketAddr::new(*ip, port))
+            .collect();
+        if resolve_addrs.is_empty() {
+            return Err(EngineError::Other("SSRF: no resolved IPs".to_string()));
+        }
+        let mut handle = self.get_client(
+            &request.proxy,
+            request.skip_tls_verification,
+            request.session_id.as_deref(),
+        );
+        let (request_cookie_jar, ssrf_client) =
+            self.build_request_client(request, &mut handle, &host, &resolve_addrs)?;
+        let effective_client = &ssrf_client;
+
+        let request_url = validated_url.parsed_url.as_str();
+        let request_builder = self.build_request_builder(request, effective_client, request_url);
+
+        let start = Instant::now();
+        let response = self.send_request(request_builder, request, &handle).await?;
+
+        let status_code = response.status().as_u16();
+
+        // H3: 2xx 成功 → 通过 ClientHandle.report_success 回填 ProxyProvider 恢复代理健康
+        // 4xx/5xx 视为业务层失败，但代理本身可用，不 report_failure（避免误伤好代理）
+        if (200..300).contains(&status_code) {
+            if let Some(provider) = &self.proxy_provider {
+                handle.report_success(provider.as_ref());
+            }
+        }
+        let (content_type, response_headers) =
+            Self::collect_response_headers(&response, &request_cookie_jar);
 
         // 响应体大小上限：content_length 预检 + bytes_stream 累积读取，
         // 超限返回 EngineError 并 warn!，替代无界 `.text()`（防止超大响应 OOM）。

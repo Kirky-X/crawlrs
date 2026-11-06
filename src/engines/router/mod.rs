@@ -436,12 +436,12 @@ impl EngineRouter {
         false
     }
 
-    // route_internal 已拆分到 route_sequential.rs (partial impl block)
+    // route_internal 已拆分到 route_sequential/ (partial impl block)
     // route_race_mode 已拆分到 route_race.rs (partial impl block)
 
     /// 记录 host 检出反爬挑战（F7）
     ///
-    /// 与唯一生产调用点（`route_sequential.rs` 反爬检测分支）同门控 `content`
+    /// 与唯一生产调用点（`route_sequential/antibot.rs` 反爬检测分支）同门控 `content`
     /// feature：`content` 关闭时该分支不编译，方法随之不定义，避免 dead_code
     /// 告警。`host_needs_browser`（读取本 hint 表）在 `content` 关闭时仍被路由
     /// 前置查询调用（此时表恒空 → 恒 false），故保持 ungated。

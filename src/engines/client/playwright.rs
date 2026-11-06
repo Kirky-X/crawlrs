@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::engines::browser_downloader::{BrowserDownloadConfig, BrowserDownloadManager};
-use crate::engines::client::playwright_pool::{get_global_pool, BrowserPool, BrowserPoolConfig};
+use crate::engines::client::playwright_pool::{
+    get_global_pool, BrowserPool, BrowserPoolConfig, PooledPage,
+};
 use crate::engines::client::ua_metadata::{build_ua_fingerprint, cdp_accept_language};
 use crate::engines::engine_client::{
     EngineError, InternalCapturedResponse, InternalPageAction, InternalScrapeRequest,
@@ -602,6 +604,331 @@ pub(crate) async fn apply_browser_fingerprint(
     Ok(())
 }
 
+/// 从池中获取 Browser + Page 并应用指纹一致性设置。
+///
+/// 默认（context_isolation=true）每任务独立 BrowserContext，归还时
+/// 整体销毁，cookie/storage 不跨任务串扰；isolation=false 时 Page
+/// 从 TabPool 复用（LIFO），池空时调用 browser.new_page。
+///
+/// Note: pooled_page drop 时自动归还资源——复用页经 TabPool 导航
+/// about:blank 后压栈，隔离页随整个 BrowserContext 销毁。
+/// Browser 也在 pooled_page drop 时归还到 BrowserPool。
+/// 错误路径下 Page 可能不可用，归还路径会 drop 它（关闭 tab）。
+async fn acquire_fingerprinted_page(
+    pool: &BrowserPool,
+    ua_pool: &UaPool,
+    request: &InternalScrapeRequest,
+) -> Result<(PooledPage, chromiumoxide::page::Page), EngineError> {
+    let pooled_page = pool.acquire_page().await?;
+    // Page 是 Arc-based，clone 廉价；pooled_page 持有原始 Page 用于归还
+    let page: chromiumoxide::page::Page = pooled_page.page().clone();
+
+    // 指纹一致性设置（UA/客户端提示/locale/viewport/stealth）已抽取
+    // 为共享函数——MllmEngine 同样驱动真实 Chromium 页面，必须过同
+    // 一套（此前 mllm 裸 goto，是全引擎里唯一没化妆的检测点）
+    apply_browser_fingerprint(&page, ua_pool, request.mobile).await?;
+
+    Ok((pooled_page, page))
+}
+
+/// 请求拦截（广告/追踪域名 + 媒体资源）。
+/// 仅当 block_ads 或 block_media 任一启用时激活 CDP Fetch domain 拦截。
+/// 启用后所有请求被暂停，必须由事件处理 task 及时 continue/fail，
+/// 否则请求会挂起直至超时。task 在 page 关闭后事件流结束自动退出。
+async fn setup_request_interception(
+    page: &chromiumoxide::page::Page,
+    request: &InternalScrapeRequest,
+    intercept_guard: &mut InterceptGuard,
+) -> Result<(), EngineError> {
+    if request.block_ads || request.block_media {
+        let controller = Arc::new(InterceptController::new(
+            request.block_ads,
+            request.block_media,
+        ));
+
+        // 启用 Fetch domain（默认拦截所有请求阶段）
+        page.execute(EnableParams::default()).await.map_err(|e| {
+            EngineError::BrowserError(format!("Failed to enable Fetch interception: {}", e))
+        })?;
+
+        // 订阅 EventRequestPaused 事件流
+        let mut events = page
+            .event_listener::<EventRequestPaused>()
+            .await
+            .map_err(|e| {
+                EngineError::BrowserError(format!("Failed to subscribe EventRequestPaused: {}", e))
+            })?;
+
+        // 克隆 page + controller 给事件处理 task
+        let page_clone = page.clone();
+        let controller_clone = Arc::clone(&controller);
+
+        // 事件处理 task：对每个被暂停的请求判断是否拦截
+        // 命中黑名单/媒体 → FailRequest(BlockedByClient) + 计数
+        // 否则 → ContinueRequest（放行）
+        //
+        // CDP `ResourceType` 在边界处通过 `ResourceKind::from` 转换为领域
+        // `ResourceKind`，避免 InterceptController 依赖具体 CDP 实现。
+        let intercept_handle = tokio::spawn(async move {
+            while let Some(event) = events.next().await {
+                let url = event.request.url.clone();
+                let kind = ResourceKind::from(event.resource_type.clone());
+                let request_id = event.request_id.clone();
+                if controller_clone.should_block(&url, Some(kind)) {
+                    controller_clone.record_block();
+                    if let Err(e) = page_clone
+                        .execute(FailRequestParams::new(request_id, BLOCK_REASON))
+                        .await
+                    {
+                        log::debug!("FailRequest failed for {}: {}", url, e);
+                    }
+                } else if let Err(e) = page_clone
+                    .execute(ContinueRequestParams::new(request_id))
+                    .await
+                {
+                    log::debug!("ContinueRequest failed for {}: {}", url, e);
+                }
+            }
+        });
+        // 保存 JoinHandle 到守卫：scrape 退出（成功/错误/超时）时 abort，
+        // 防止拦截 task 残留在归还池的复用页面上。
+        intercept_guard.set(intercept_handle);
+    }
+    Ok(())
+}
+
+/// 页面导航与等待：goto（默认等 load 事件）→ 注入 cleanup 脚本（best-effort）→
+/// bot 检测页告警（仍返回内容交由解析器处理）→ 逐个执行页面动作 → 等待策略。
+async fn navigate_and_wait(
+    page: &chromiumoxide::page::Page,
+    request: &InternalScrapeRequest,
+) -> Result<(), EngineError> {
+    // Navigate and wait for load
+    // goto waits for the load event by default
+    page.goto(&request.url)
+        .await
+        .map_err(|e| EngineError::BrowserError(e.to_string()))?;
+
+    // 页面加载后注入 cleanup 脚本（best-effort）
+    // 顺序：consent_popups → overlay_elements → flatten_shadow_dom
+    let cleanup_injector = crate::engines::js_inject::JsInjector::cleanup();
+    if let Err(e) = cleanup_injector
+        .apply(page, crate::engines::js_inject::InjectPhase::AfterLoad)
+        .await
+    {
+        log::warn!("Cleanup injection failed (best-effort, continue): {}", e);
+    }
+
+    // Try to detect if we got a bot detection page
+    let content: String = page
+        .content()
+        .await
+        .map_err(|e| EngineError::BrowserError(e.to_string()))?;
+
+    if content.contains("如果您在几秒钟内没有被重定向")
+        || content.contains("Having trouble accessing Google")
+        || content.contains("enablejs")
+    {
+        log::warn!("Detected bot detection page from Google");
+        // Still return the content, let the parser handle it
+    }
+
+    for action in &request.actions {
+        match action {
+            InternalPageAction::Wait { milliseconds } => {
+                tokio::time::sleep(Duration::from_millis(*milliseconds)).await;
+            }
+            InternalPageAction::Click { selector } => {
+                let element: chromiumoxide::element::Element =
+                    page.find_element(selector).await.map_err(|e| {
+                        EngineError::BrowserError(format!("Click failed, element not found: {}", e))
+                    })?;
+                element
+                    .click()
+                    .await
+                    .map_err(|e| EngineError::BrowserError(format!("Click failed: {}", e)))?;
+            }
+            InternalPageAction::Scroll { direction } => {
+                let script = match direction.as_str() {
+                    "down" => "window.scrollBy(0, window.innerHeight);",
+                    "up" => "window.scrollBy(0, -window.innerHeight);",
+                    "bottom" => "window.scrollTo(0, document.body.scrollHeight);",
+                    "top" => "window.scrollTo(0, 0);",
+                    _ => "window.scrollBy(0, window.innerHeight);",
+                };
+                let _: chromiumoxide::js::EvaluationResult = page
+                    .evaluate(script)
+                    .await
+                    .map_err(|e| EngineError::BrowserError(format!("Scroll failed: {}", e)))?;
+            }
+            InternalPageAction::Screenshot { full_page: _ } => {
+                // 此处动作生成的截图暂不直接返回，仅作为交互过程的一部分
+                // 如果需要保存，可能需要额外的逻辑处理
+            }
+            InternalPageAction::Input { selector, text } => {
+                let element: chromiumoxide::element::Element =
+                    page.find_element(selector).await.map_err(|e| {
+                        EngineError::BrowserError(format!("Input failed, element not found: {}", e))
+                    })?;
+                element
+                    .type_str(text)
+                    .await
+                    .map_err(|e| EngineError::BrowserError(format!("Input failed: {}", e)))?;
+            }
+        }
+    }
+
+    // 页面加载后等待策略（替代原 sync_wait_ms 固定 sleep）
+    //
+    // `request.wait_for` 由调用方通过 `ScrapeOptions.wait_for` 设置；
+    // `None` 时使用 `WaitFor::NetworkIdle`（与原默认等待语义一致，sleep 500ms）。
+    //
+    // 满足条件立即返回，超时返回 `EngineError::BrowserError`。
+    // `sync_wait_ms` 不再在 Playwright 引擎中使用（保留供 FlareSolverr 等非浏览器引擎）。
+    let wait_strategy = request.wait_for.clone().unwrap_or_default();
+    let wait_timeout = request.timeout.min(WAIT_TIMEOUT_CAP);
+    wait_strategy.wait(page, wait_timeout).await?;
+
+    Ok(())
+}
+
+/// 按请求配置抓取截图（`needs_screenshot=false` 时返回 `None`）。
+async fn capture_screenshot(
+    page: &chromiumoxide::page::Page,
+    request: &InternalScrapeRequest,
+) -> Result<Option<String>, EngineError> {
+    let mut screenshot: Option<String> = None;
+
+    if request.needs_screenshot {
+        let config = request
+            .screenshot_config
+            .clone()
+            .unwrap_or(InternalScreenshotConfig {
+                full_page: true,
+                selector: None,
+                quality: Some(80),
+                format: Some("jpeg".to_string()),
+            });
+
+        let format = match config.format.as_deref() {
+            Some("png") => CaptureScreenshotFormat::Png,
+            _ => CaptureScreenshotFormat::Jpeg,
+        };
+
+        let params = chromiumoxide::page::ScreenshotParams::builder()
+            .format(format)
+            .quality(config.quality.unwrap_or(80) as i64)
+            .full_page(config.full_page)
+            .build();
+
+        let screenshot_bytes = if let Some(selector) = &config.selector {
+            // Find element and screenshot
+            let element: chromiumoxide::element::Element = page
+                .find_element(selector)
+                .await
+                .map_err(|e| EngineError::BrowserError(format!("Element not found: {}", e)))?;
+
+            // Create new format instance for element screenshot since original was moved
+            let element_format = match config.format.as_deref() {
+                Some("png") => CaptureScreenshotFormat::Png,
+                _ => CaptureScreenshotFormat::Jpeg,
+            };
+
+            element.screenshot(element_format).await.map_err(|e| {
+                EngineError::BrowserError(format!("Element screenshot failed: {}", e))
+            })?
+        } else {
+            // Page screenshot
+            page.screenshot(params)
+                .await
+                .map_err(|e| EngineError::BrowserError(format!("Page screenshot failed: {}", e)))?
+        };
+
+        screenshot = Some(BASE64.encode(screenshot_bytes));
+    }
+
+    Ok(screenshot)
+}
+
+/// 提取最终内容并构建响应：XHR 捕获收集 → final URL → content-type →
+/// 正文 → 响应头 → 截图 → 归还池化页（drop）→ 组装 [`InternalScrapeResponse`]。
+async fn collect_and_build_response(
+    page: &chromiumoxide::page::Page,
+    request: &InternalScrapeRequest,
+    xhr_session: Option<&XhrCaptureSession>,
+    pooled_page: PooledPage,
+    start: Instant,
+) -> Result<InternalScrapeResponse, EngineError> {
+    // F6：页面等待完成后统一取体（wait 之后、page 释放之前）。
+    // NetworkIdle 等待退出时可能已 best-effort Network.disable（见 wait.rs），
+    // 取体前重新 enable（幂等）；完成后 disable，防止 tab 池复用期事件常开。
+    let captured_responses = match xhr_session {
+        Some(session) => session.collect(page).await,
+        None => Vec::new(),
+    };
+
+    // Get final URL after navigation (handles redirects)
+    let final_url: String = page
+        .url()
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| request.url.clone());
+
+    // Try to get content-type from document properties
+    let content_type = page
+        .evaluate(
+            r#"
+                () => document.contentType || document.querySelector('meta[http-equiv="content-type"]')?.getAttribute('content') || 'text/html'
+            "#,
+        )
+        .await
+        .map_err(|e| EngineError::BrowserError(e.to_string()))?
+        .into_value::<String>()
+        .unwrap_or_else(|_| "text/html".to_string())
+        .split(';')
+        .next()
+        .unwrap_or("text/html")
+        .trim()
+        .to_string();
+
+    // Use 200 as default - getting exact status from browser JS is unreliable
+    // For most scraping use cases, 200 is the expected success status
+    let status_code = 200;
+
+    let content: String = page
+        .content()
+        .await
+        .map_err(|e| EngineError::BrowserError(e.to_string()))?;
+
+    // Build headers from available document information
+    let response_headers = {
+        let mut headers = std::collections::HashMap::with_capacity(2);
+        headers.insert("Content-Type".to_string(), content_type.clone());
+        headers
+    };
+
+    let screenshot = capture_screenshot(page, request).await?;
+
+    // 不调用 page.close，让 pooled_page drop 时按归还模式收尾：
+    // 复用页归还 TabPool（导航 about:blank 后压栈），隔离页销毁整个
+    // BrowserContext。Browser 也在 pooled_page drop 时归还到 BrowserPool
+    drop(pooled_page);
+
+    Ok(InternalScrapeResponse {
+        js_degraded: false,
+        status_code,
+        content,
+        screenshot,
+        content_type: "text/html".to_string(),
+        headers: response_headers,
+        response_time_ms: start.elapsed().as_millis() as u64,
+        // 传递页面导航后的最终 URL（不再丢弃），修复 final_url 全链路失效
+        final_url: Some(final_url),
+        captured_responses,
+    })
+}
+
 #[async_trait]
 impl ScraperEngine for PlaywrightEngine {
     /// 执行浏览器自动化抓取
@@ -640,23 +967,8 @@ impl ScraperEngine for PlaywrightEngine {
 
         // Wrap the entire operation in a timeout
         tokio::time::timeout(timeout_duration, async {
-            // 从池中获取 Browser + Page
-            // 默认（context_isolation=true）每任务独立 BrowserContext，归还时
-            // 整体销毁，cookie/storage 不跨任务串扰；isolation=false 时 Page
-            // 从 TabPool 复用（LIFO），池空时调用 browser.new_page
-            let pooled_page = pool.acquire_page().await?;
-            // Page 是 Arc-based，clone 廉价；pooled_page 持有原始 Page 用于归还
-            let page: chromiumoxide::page::Page = pooled_page.page().clone();
-
-            // Note: pooled_page drop 时自动归还资源——复用页经 TabPool 导航
-            // about:blank 后压栈，隔离页随整个 BrowserContext 销毁。
-            // Browser 也在 pooled_page drop 时归还到 BrowserPool。
-            // 错误路径下 Page 可能不可用，归还路径会 drop 它（关闭 tab）。
-
-            // 指纹一致性设置（UA/客户端提示/locale/viewport/stealth）已抽取
-            // 为共享函数——MllmEngine 同样驱动真实 Chromium 页面，必须过同
-            // 一套（此前 mllm 裸 goto，是全引擎里唯一没化妆的检测点）
-            apply_browser_fingerprint(&page, &self.ua_pool, request.mobile).await?;
+            let (pooled_page, page) =
+                acquire_fingerprinted_page(&pool, &self.ua_pool, request).await?;
 
             if !request.headers.is_empty() {
                 // 如果 chromiumoxide 的 API 限制太多，我们暂时记录日志并跳过，
@@ -669,72 +981,7 @@ impl ScraperEngine for PlaywrightEngine {
             // 取消（整个 future 被 drop）退出，守卫 drop 时都会 abort 拦截 task。
             let mut intercept_guard = InterceptGuard::new();
 
-            // 请求拦截（广告/追踪域名 + 媒体资源）
-            // 仅当 block_ads 或 block_media 任一启用时激活 CDP Fetch domain 拦截。
-            // 启用后所有请求被暂停，必须由事件处理 task 及时 continue/fail，
-            // 否则请求会挂起直至超时。task 在 page 关闭后事件流结束自动退出。
-            if request.block_ads || request.block_media {
-                let controller = Arc::new(InterceptController::new(
-                    request.block_ads,
-                    request.block_media,
-                ));
-
-                // 启用 Fetch domain（默认拦截所有请求阶段）
-                page.execute(EnableParams::default())
-                    .await
-                    .map_err(|e| {
-                        EngineError::BrowserError(format!(
-                            "Failed to enable Fetch interception: {}",
-                            e
-                        ))
-                    })?;
-
-                // 订阅 EventRequestPaused 事件流
-                let mut events = page
-                    .event_listener::<EventRequestPaused>()
-                    .await
-                    .map_err(|e| {
-                        EngineError::BrowserError(format!(
-                            "Failed to subscribe EventRequestPaused: {}",
-                            e
-                        ))
-                    })?;
-
-                // 克隆 page + controller 给事件处理 task
-                let page_clone = page.clone();
-                let controller_clone = Arc::clone(&controller);
-
-                // 事件处理 task：对每个被暂停的请求判断是否拦截
-                // 命中黑名单/媒体 → FailRequest(BlockedByClient) + 计数
-                // 否则 → ContinueRequest（放行）
-                //
-                // CDP `ResourceType` 在边界处通过 `ResourceKind::from` 转换为领域
-                // `ResourceKind`，避免 InterceptController 依赖具体 CDP 实现。
-                let intercept_handle = tokio::spawn(async move {
-                    while let Some(event) = events.next().await {
-                        let url = event.request.url.clone();
-                        let kind = ResourceKind::from(event.resource_type.clone());
-                        let request_id = event.request_id.clone();
-                        if controller_clone.should_block(&url, Some(kind)) {
-                            controller_clone.record_block();
-                            if let Err(e) = page_clone
-                                .execute(FailRequestParams::new(request_id, BLOCK_REASON))
-                                .await
-                            {
-                                log::debug!("FailRequest failed for {}: {}", url, e);
-                            }
-                        } else if let Err(e) = page_clone
-                            .execute(ContinueRequestParams::new(request_id))
-                            .await
-                        {
-                            log::debug!("ContinueRequest failed for {}: {}", url, e);
-                        }
-                    }
-                });
-                // 保存 JoinHandle 到守卫：scrape 退出（成功/错误/超时）时 abort，
-                // 防止拦截 task 残留在归还池的复用页面上。
-                intercept_guard.set(intercept_handle);
-            }
+            setup_request_interception(&page, request, &mut intercept_guard).await?;
 
             // F6：XHR/Fetch 后台响应捕获会话（导航前启动，详见 XhrCaptureSession）。
             // 捕获与上方 Fetch 拦截并存互不干扰：被 FailRequest 的请求不会产生
@@ -745,210 +992,10 @@ impl ScraperEngine for PlaywrightEngine {
                 None => None,
             };
 
-            // Navigate and wait for load
-            // goto waits for the load event by default
-            page.goto(&request.url).await
-                .map_err(|e| EngineError::BrowserError(e.to_string()))?;
+            navigate_and_wait(&page, request).await?;
 
-            // 页面加载后注入 cleanup 脚本（best-effort）
-            // 顺序：consent_popups → overlay_elements → flatten_shadow_dom
-            let cleanup_injector = crate::engines::js_inject::JsInjector::cleanup();
-            if let Err(e) = cleanup_injector
-                .apply(&page, crate::engines::js_inject::InjectPhase::AfterLoad)
+            collect_and_build_response(&page, request, xhr_session.as_ref(), pooled_page, start)
                 .await
-            {
-                log::warn!("Cleanup injection failed (best-effort, continue): {}", e);
-            }
-
-            // Try to detect if we got a bot detection page
-            let content: String = page
-                .content()
-                .await
-                .map_err(|e| EngineError::BrowserError(e.to_string()))?;
-
-            if content.contains("如果您在几秒钟内没有被重定向") ||
-               content.contains("Having trouble accessing Google") ||
-               content.contains("enablejs") {
-                log::warn!("Detected bot detection page from Google");
-                // Still return the content, let the parser handle it
-            }
-
-            for action in &request.actions {
-                match action {
-                    InternalPageAction::Wait { milliseconds } => {
-                        tokio::time::sleep(Duration::from_millis(*milliseconds)).await;
-                    }
-                    InternalPageAction::Click { selector } => {
-                        let element: chromiumoxide::element::Element = page
-                            .find_element(selector)
-                            .await
-                            .map_err(|e| {
-                                EngineError::BrowserError(format!(
-                                    "Click failed, element not found: {}",
-                                    e
-                                ))
-                            })?;
-                        element
-                            .click()
-                            .await
-                            .map_err(|e| EngineError::BrowserError(format!("Click failed: {}", e)))?;
-                    }
-                    InternalPageAction::Scroll { direction } => {
-                        let script = match direction.as_str() {
-                            "down" => "window.scrollBy(0, window.innerHeight);",
-                            "up" => "window.scrollBy(0, -window.innerHeight);",
-                            "bottom" => "window.scrollTo(0, document.body.scrollHeight);",
-                            "top" => "window.scrollTo(0, 0);",
-                            _ => "window.scrollBy(0, window.innerHeight);",
-                        };
-                        let _: chromiumoxide::js::EvaluationResult = page
-                            .evaluate(script)
-                            .await
-                            .map_err(|e| EngineError::BrowserError(format!("Scroll failed: {}", e)))?;
-                    }
-                    InternalPageAction::Screenshot { full_page: _ } => {
-                        // 此处动作生成的截图暂不直接返回，仅作为交互过程的一部分
-                        // 如果需要保存，可能需要额外的逻辑处理
-                    }
-                    InternalPageAction::Input { selector, text } => {
-                        let element: chromiumoxide::element::Element = page
-                            .find_element(selector)
-                            .await
-                            .map_err(|e| {
-                                EngineError::BrowserError(format!(
-                                    "Input failed, element not found: {}",
-                                    e
-                                ))
-                            })?;
-                        element
-                            .type_str(text)
-                            .await
-                            .map_err(|e| EngineError::BrowserError(format!("Input failed: {}", e)))?;
-                    }
-                }
-            }
-
-            // 页面加载后等待策略（替代原 sync_wait_ms 固定 sleep）
-            //
-            // `request.wait_for` 由调用方通过 `ScrapeOptions.wait_for` 设置；
-            // `None` 时使用 `WaitFor::NetworkIdle`（与原默认等待语义一致，sleep 500ms）。
-            //
-            // 满足条件立即返回，超时返回 `EngineError::BrowserError`。
-            // `sync_wait_ms` 不再在 Playwright 引擎中使用（保留供 FlareSolverr 等非浏览器引擎）。
-            let wait_strategy = request.wait_for.clone().unwrap_or_default();
-            let wait_timeout = request.timeout.min(WAIT_TIMEOUT_CAP);
-            wait_strategy.wait(&page, wait_timeout).await?;
-
-            // F6：页面等待完成后统一取体（wait 之后、page 释放之前）。
-            // NetworkIdle 等待退出时可能已 best-effort Network.disable（见 wait.rs），
-            // 取体前重新 enable（幂等）；完成后 disable，防止 tab 池复用期事件常开。
-            let captured_responses = match &xhr_session {
-                Some(session) => session.collect(&page).await,
-                None => Vec::new(),
-            };
-
-            // Get final URL after navigation (handles redirects)
-            let final_url: String = page
-                .url()
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| request.url.clone());
-
-            // Try to get content-type from document properties
-            let content_type = page
-                .evaluate(
-                    r#"
-                () => document.contentType || document.querySelector('meta[http-equiv="content-type"]')?.getAttribute('content') || 'text/html'
-            "#,
-                )
-                .await
-                .map_err(|e| EngineError::BrowserError(e.to_string()))?
-                .into_value::<String>()
-                .unwrap_or_else(|_| "text/html".to_string())
-                .split(';')
-                .next()
-                .unwrap_or("text/html")
-                .trim()
-                .to_string();
-
-            // Use 200 as default - getting exact status from browser JS is unreliable
-            // For most scraping use cases, 200 is the expected success status
-            let status_code = 200;
-
-            let content: String = page
-                .content()
-                .await
-                .map_err(|e| EngineError::BrowserError(e.to_string()))?;
-
-            // Build headers from available document information
-            let response_headers = {
-                let mut headers = std::collections::HashMap::with_capacity(2);
-                headers.insert("Content-Type".to_string(), content_type.clone());
-                headers
-            };
-
-            let mut screenshot: Option<String> = None;
-
-            if request.needs_screenshot {
-                let config = request.screenshot_config.clone().unwrap_or(InternalScreenshotConfig {
-                    full_page: true,
-                    selector: None,
-                    quality: Some(80),
-                    format: Some("jpeg".to_string()),
-                });
-
-                let format = match config.format.as_deref() {
-                    Some("png") => CaptureScreenshotFormat::Png,
-                    _ => CaptureScreenshotFormat::Jpeg,
-                };
-
-                let params = chromiumoxide::page::ScreenshotParams::builder()
-                    .format(format)
-                    .quality(config.quality.unwrap_or(80) as i64)
-                    .full_page(config.full_page)
-                    .build();
-
-                let screenshot_bytes = if let Some(selector) = &config.selector {
-                    // Find element and screenshot
-                    let element: chromiumoxide::element::Element = page
-                        .find_element(selector)
-                        .await
-                        .map_err(|e| EngineError::BrowserError(format!("Element not found: {}", e)))?;
-
-                    // Create new format instance for element screenshot since original was moved
-                    let element_format = match config.format.as_deref() {
-                        Some("png") => CaptureScreenshotFormat::Png,
-                        _ => CaptureScreenshotFormat::Jpeg,
-                    };
-
-                    element.screenshot(element_format).await
-                        .map_err(|e| EngineError::BrowserError(format!("Element screenshot failed: {}", e)))?
-                } else {
-                    // Page screenshot
-                    page.screenshot(params).await
-                        .map_err(|e| EngineError::BrowserError(format!("Page screenshot failed: {}", e)))?
-                };
-
-                screenshot = Some(BASE64.encode(screenshot_bytes));
-            }
-
-            // 不调用 page.close，让 pooled_page drop 时按归还模式收尾：
-            // 复用页归还 TabPool（导航 about:blank 后压栈），隔离页销毁整个
-            // BrowserContext。Browser 也在 pooled_page drop 时归还到 BrowserPool
-            drop(pooled_page);
-
-            Ok(InternalScrapeResponse { js_degraded: false,
-                status_code,
-                content,
-                screenshot,
-                content_type: "text/html".to_string(),
-                headers: response_headers,
-                response_time_ms: start.elapsed().as_millis() as u64,
-                // 传递页面导航后的最终 URL（不再丢弃），修复 final_url 全链路失效
-                final_url: Some(final_url),
-                captured_responses,
-            })
         })
             .await
             .map_err(|_| EngineError::Timeout(timeout_duration))?
