@@ -10,7 +10,9 @@ use super::super::EngineRouter;
 use crate::engines::engine_client::InternalScrapeRequest;
 use crate::engines::session::SessionIdentity;
 use crate::utils::retry::{RetryDirective, RetryReason};
+use crate::utils::ua_pool::UaProfile;
 use log::{debug, warn};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -77,10 +79,8 @@ impl EngineRouter {
         // - session.enabled=false（默认）：走 pick_seeded 盲轮换分支，
         //   行为与引入 F2 之前完全一致。
         //
-        // 三件 header 一次性同步写入（两路径同规则）：
-        //   - User-Agent / Accept-Language：所有 profile 必设
-        //   - sec-ch-ua：仅 Chromium-based 非空时设置；为空时移除原值，
-        //     避免残留 Firefox/Safari UA 但保留 Chromium sec-ch-ua 的矛盾。
+        // 三件 header 一次性同步写入（两路径同规则），写入规则见
+        // [`apply_ua_profile_headers`] 文档。
         let mut headers = request.headers.clone();
         let mut attempt_proxy = request.proxy.clone();
         let session_identity: Option<Arc<SessionIdentity>> = if self.session.is_enabled() {
@@ -93,16 +93,7 @@ impl EngineRouter {
                 self.session
                     .acquire(host_key, request.session_id.as_deref(), request.mobile);
             let profile = identity.ua_profile(self.session.ua_pool());
-            headers.insert("User-Agent".to_string(), profile.ua.to_string());
-            headers.insert(
-                "Accept-Language".to_string(),
-                profile.accept_language.to_string(),
-            );
-            if profile.sec_ch_ua.is_empty() {
-                headers.remove("sec-ch-ua");
-            } else {
-                headers.insert("sec-ch-ua".to_string(), profile.sec_ch_ua.to_string());
-            }
+            apply_ua_profile_headers(&mut headers, profile);
             if let Some(cookie) = self.session.cookie_header(&identity, host_key) {
                 headers.insert("Cookie".to_string(), cookie);
             }
@@ -129,16 +120,7 @@ impl EngineRouter {
             let profile = self
                 .ua_pool
                 .pick_seeded((total_attempts - 1) as u64, request.mobile);
-            headers.insert("User-Agent".to_string(), profile.ua.to_string());
-            headers.insert(
-                "Accept-Language".to_string(),
-                profile.accept_language.to_string(),
-            );
-            if profile.sec_ch_ua.is_empty() {
-                headers.remove("sec-ch-ua");
-            } else {
-                headers.insert("sec-ch-ua".to_string(), profile.sec_ch_ua.to_string());
-            }
+            apply_ua_profile_headers(&mut headers, profile);
             debug!(
                 "Attempt {}: rotated UA via pick_seeded(seed={}) -> {} ({}, AL={}, sec-ch-ua={})",
                 total_attempts,
@@ -181,5 +163,23 @@ impl EngineRouter {
             needs_mllm: request.needs_mllm,
         };
         (attempt_request, session_identity)
+    }
+}
+
+/// UA profile 三件 header 一次性同步写入（session 亲和与 pick_seeded 盲轮换
+/// 两路径同规则）：
+/// - `User-Agent` / `Accept-Language`：所有 profile 必设
+/// - `sec-ch-ua`：仅 Chromium-based 非空时设置；为空时移除原值，
+///   避免残留 Firefox/Safari UA 但保留 Chromium sec-ch-ua 的矛盾。
+fn apply_ua_profile_headers(headers: &mut HashMap<String, String>, profile: &UaProfile) {
+    headers.insert("User-Agent".to_string(), profile.ua.to_string());
+    headers.insert(
+        "Accept-Language".to_string(),
+        profile.accept_language.to_string(),
+    );
+    if profile.sec_ch_ua.is_empty() {
+        headers.remove("sec-ch-ua");
+    } else {
+        headers.insert("sec-ch-ua".to_string(), profile.sec_ch_ua.to_string());
     }
 }

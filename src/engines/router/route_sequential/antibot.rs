@@ -14,7 +14,6 @@ use std::time::Duration;
 
 /// 已知 WAF 变体：403 命中任一即为带 challenge 的拦截页，
 /// 只有"无 WAF 指纹的裸 403"才计入 host 纪律连击
-#[cfg(feature = "content")]
 fn is_known_waf(tech: crate::engines::antibot::AntiBotTech) -> bool {
     use crate::engines::antibot::AntiBotTech;
     matches!(
@@ -30,7 +29,6 @@ fn is_known_waf(tech: crate::engines::antibot::AntiBotTech) -> bool {
     )
 }
 
-#[cfg(feature = "content")]
 impl EngineRouter {
     /// 反爬挑战检测与处理（route_internal 成功臂挑战分支，原样提取）
     ///
@@ -99,7 +97,6 @@ impl EngineRouter {
     }
 }
 
-#[cfg(feature = "content")]
 impl EngineRouter {
     /// F4：失败现场快照（旁路观测，永不失败）
     ///
@@ -107,7 +104,6 @@ impl EngineRouter {
     /// 内部 IO 失败已在 [`FailureSnapshotter::snapshot`](crate::infrastructure::observability::failure_snapshot::FailureSnapshotter::snapshot)
     /// 内 `log::debug` 静默降级，绝不影响抓取主流程。
     /// 仅透传引擎已产出的 screenshot（不额外触发截图）。
-    #[cfg(feature = "content")]
     pub(super) async fn snapshot_failure(
         &self,
         url: &str,
@@ -139,7 +135,7 @@ impl EngineRouter {
     }
 }
 
-#[cfg(all(test, feature = "content"))]
+#[cfg(test)]
 mod snapshot_failure_tests {
     use super::*;
     use std::collections::HashMap;

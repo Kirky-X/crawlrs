@@ -130,8 +130,12 @@ pub async fn extract_and_queue_links(
         return Ok(());
     }
 
-    let (pattern_filter, filter_ctx, blacklist_filter, empty_include_short_circuit) =
-        build_link_filters(task, config);
+    let LinkFilters {
+        pattern_filter,
+        filter_ctx,
+        blacklist_filter,
+        empty_include_short_circuit,
+    } = build_link_filters(task, config);
 
     let unique_links = collect_unique_links(
         task,
@@ -172,19 +176,23 @@ pub async fn extract_and_queue_links(
     Ok(())
 }
 
+/// 链接过滤链构造结果（include/exclude patterns + 团队域名黑名单 + 空集合短路标志）
+struct LinkFilters {
+    /// include/exclude pattern 过滤器（include 配置为空集合短路时为 `None`）
+    pattern_filter: Option<UrlPatternFilter>,
+    /// 过滤上下文
+    filter_ctx: FilterContext,
+    /// 团队域名黑名单过滤器（payload 未配置黑名单时为 `None`）
+    blacklist_filter: Option<DomainFilter>,
+    /// include_patterns 配置为空集合时的整体短路标志
+    empty_include_short_circuit: bool,
+}
+
 /// 构造链接过滤链（include/exclude patterns + 团队域名黑名单）
 ///
 /// 自 [`extract_and_queue_links`] 提取，过滤规则构造顺序与日志逐字保留。
-/// 返回 `(pattern_filter, filter_ctx, blacklist_filter, empty_include_short_circuit)`。
-fn build_link_filters(
-    task: &Task,
-    config: &CrawlConfigDto,
-) -> (
-    Option<UrlPatternFilter>,
-    FilterContext,
-    Option<DomainFilter>,
-    bool,
-) {
+/// 返回 [`LinkFilters`]。
+fn build_link_filters(task: &Task, config: &CrawlConfigDto) -> LinkFilters {
     // 循环外构造一次 UrlPatternFilter
     let empty_include_short_circuit =
         matches!(&config.include_patterns, Some(patterns) if patterns.is_empty());
@@ -216,12 +224,12 @@ fn build_link_filters(
         Some(DomainFilter::denylist(domain_blacklist))
     };
 
-    (
+    LinkFilters {
         pattern_filter,
         filter_ctx,
         blacklist_filter,
         empty_include_short_circuit,
-    )
+    }
 }
 
 /// 从 HTML 响应收集绝对链接并按过滤链去重
@@ -413,6 +421,14 @@ async fn score_and_enqueue(
         )
     );
 
+    // DFS/BFS 策略判断提到循环外：`to_lowercase` 每次调用都分配新 String，
+    // 不必逐 URL 重复计算
+    let is_dfs_strategy = config
+        .strategy
+        .as_deref()
+        .map(|s| s.to_lowercase() == "dfs")
+        .unwrap_or(false);
+
     while let Some(scored) = frontier.pop() {
         // 出队按 priority ASC（小值先出）。
         // DFS（栈语义）：子链接键 = 父 priority - (子深度)，i32 负空间
@@ -420,11 +436,9 @@ async fn score_and_enqueue(
         // 此前 saturating_sub(1) 在 priority=0 或深链路塌缩回 BFS）。
         // BFS（层序）：继承父 priority。
         let mut priority = task.priority;
-        if let Some(strategy) = &config.strategy {
-            if strategy.to_lowercase() == "dfs" {
-                let depth_key = (current_depth.min(1_000_000) as i32).saturating_add(1);
-                priority = task.priority.saturating_sub(depth_key);
-            }
+        if is_dfs_strategy {
+            let depth_key = (current_depth.min(1_000_000) as i32).saturating_add(1);
+            priority = task.priority.saturating_sub(depth_key);
         }
 
         let new_task = Task {

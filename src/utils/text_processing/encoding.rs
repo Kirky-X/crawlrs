@@ -184,13 +184,21 @@ impl TextEncodingProcessor {
         chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
         n: usize,
     ) -> Option<char> {
-        let mut hex_chars = String::new();
+        // 栈上缓冲代替逐转义序列的 String 堆分配：n ∈ {2, 4, 8}（\x/\u/\U），
+        // 每个 char 的 UTF-8 编码 ≤ 4 字节，8 × 4 = 32 字节必够容纳全部已读字符。
+        // 语义与原实现一致：迭代器提前耗尽时按已读前缀解析（含空串、非 ASCII
+        // 字符的 from_str_radix 非法 digit 错误路径均不变）。
+        const MAX_HEX_CHARS: usize = 8;
+        debug_assert!(n <= MAX_HEX_CHARS);
+        let mut buf = [0u8; MAX_HEX_CHARS * 4];
+        let mut len = 0usize;
         for _ in 0..n {
             if let Some(h) = chars.next() {
-                hex_chars.push(h);
+                len += h.encode_utf8(&mut buf[len..]).len();
             }
         }
-        let code_point = u32::from_str_radix(&hex_chars, 16).ok()?;
+        let hex_str = std::str::from_utf8(&buf[..len]).ok()?;
+        let code_point = u32::from_str_radix(hex_str, 16).ok()?;
         char::from_u32(code_point)
     }
 

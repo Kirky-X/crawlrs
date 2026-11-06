@@ -511,7 +511,8 @@ impl ReqwestEngine {
                         error!(
                             "Failed to parse proxy URL for SSRF resolve client; \
                              request will NOT use the proxy: {}; proxy_url={}",
-                            e, proxy_url
+                            e,
+                            redact_proxy_url(&proxy_url)
                         );
                     }
                 }
@@ -541,7 +542,8 @@ impl ReqwestEngine {
                                 error!(
                                     "Failed to parse proxy URL for temp TLS-bypass client; \
                                      request will NOT use the proxy: {}; proxy_url={}",
-                                    e, proxy_url
+                                    e,
+                                    redact_proxy_url(&proxy_url)
                                 );
                             }
                         }

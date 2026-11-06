@@ -457,11 +457,7 @@ impl ScrapeWorker {
         // guard 在 match 块作用域结束时 Drop，确保先广播给等待方再释放。
 
         let prior_result = self
-            .merge_conditional_request_headers(
-                &task,
-                &mut scrape_request,
-                scrape_request_dto.as_ref(),
-            )
+            .prepare_conditional_request(&task, &mut scrape_request, scrape_request_dto.as_ref())
             .await;
 
         let response = self.scrape_with_cache(&scrape_request).await;
@@ -598,7 +594,7 @@ impl ScrapeWorker {
     /// 带验证器的历史结果时，把 If-None-Match / If-Modified-Since 合并进
     /// 请求头发起条件请求；`304` 时复用历史结果内容（见 process_scrape_task
     /// 的短路分支）。历史查询失败降级为无条件抓取（warn 显性化，不阻塞抓取）。
-    async fn merge_conditional_request_headers(
+    async fn prepare_conditional_request(
         &self,
         task: &Task,
         scrape_request: &mut ScrapeRequest,
@@ -836,6 +832,35 @@ impl ScrapeWorker {
         Ok(())
     }
 
+    /// 立即失败回填（finalize_scrape_failure 的 timeout / reason 重试上限
+    /// 两分支共用）：取最新任务态 → 置 `Failed` + `completed_at` + `error`
+    /// （可附额外 payload 字段）→ 守卫式写入。任务已不存在（find_by_id 空）
+    /// 时静默跳过；写入失败经 `?` 上抛（与原两分支行为一致）。
+    async fn mark_task_failed_immediately(
+        &self,
+        task_id: crate::domain::id::Id,
+        error_message: &str,
+        extra_payload_fields: &[(&'static str, Value)],
+    ) -> Result<()> {
+        // Fetch task to ensure we have latest state
+        if let Ok(Some(mut t)) = self.repository.find_by_id(task_id).await {
+            t.status = TaskStatus::Failed;
+            t.completed_at = Some(Utc::now());
+            // 直接操作 t.payload，避免 clone 整个 JSON
+            // （原实现 let mut payload = t.payload.clone + 后续 t.payload = payload
+            // 在失败路径上多分配一次 JSON Value）
+            if let Some(obj) = t.payload.as_object_mut() {
+                obj.insert("error".to_string(), json!(error_message));
+                for (key, value) in extra_payload_fields {
+                    obj.insert((*key).to_string(), value.clone());
+                }
+            }
+            // 守卫式写入：锁被抢占/任务被终结时放弃写入
+            self.repository.update_task_guarded(&t).await?;
+        }
+        Ok(())
+    }
+
     /// 抓取失败路径：AIMD 记账 → 重试分类（timeout 立即失败 / RetryTracker
     /// reason 上限 / handle_failure 重排）→ 失败 Webhook。
     async fn finalize_scrape_failure(&self, task: &mut Task, e: EngineError) -> Result<()> {
@@ -858,19 +883,8 @@ impl ScrapeWorker {
             || err_str.contains("all engines failed")
         {
             debug!("Timeout or AllEnginesFailed detected, marking task as failed");
-            // Fetch task to ensure we have latest state
-            if let Ok(Some(mut t)) = self.repository.find_by_id(task.id).await {
-                t.status = TaskStatus::Failed;
-                t.completed_at = Some(Utc::now());
-                // 直接操作 t.payload，避免 clone 整个 JSON
-                // （原实现 let mut payload = t.payload.clone + 后续 t.payload = payload
-                // 在失败路径上多分配一次 JSON Value）
-                if let Some(obj) = t.payload.as_object_mut() {
-                    obj.insert("error".to_string(), json!(e.to_string()));
-                }
-                // 守卫式写入：锁被抢占/任务被终结时放弃写入
-                self.repository.update_task_guarded(&t).await?;
-            }
+            self.mark_task_failed_immediately(task.id, &e.to_string(), &[])
+                .await?;
         } else {
             // reason-specific 重试限制检查
             // RetryTracker 各 reason 独立计数——AntiBot/FeatureToggle 达上限后
@@ -885,19 +899,12 @@ impl ScrapeWorker {
                      marking task {} as failed",
                     retry_reason, task.attempt_count, task.id
                 );
-                if let Ok(Some(mut t)) = self.repository.find_by_id(task.id).await {
-                    t.status = TaskStatus::Failed;
-                    t.completed_at = Some(Utc::now());
-                    if let Some(obj) = t.payload.as_object_mut() {
-                        obj.insert("error".to_string(), json!(e.to_string()));
-                        obj.insert(
-                            "retry_limit_reason".to_string(),
-                            json!(format!("{:?}", retry_reason)),
-                        );
-                    }
-                    // 守卫式写入：锁被抢占/任务被终结时放弃写入
-                    self.repository.update_task_guarded(&t).await?;
-                }
+                self.mark_task_failed_immediately(
+                    task.id,
+                    &e.to_string(),
+                    &[("retry_limit_reason", json!(format!("{:?}", retry_reason)))],
+                )
+                .await?;
             } else {
                 let err_msg = e.to_string();
                 self.handle_failure(task, &err_msg).await?;
