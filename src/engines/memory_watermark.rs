@@ -180,10 +180,42 @@ impl MemoryWatermark {
         }
     }
 
+    /// 采样器不可用（`sysinfo::System` 构造失败）时按既有失败语义立即 fail-closed：
+    /// 水位置 Critical、失败计数置满、`log::warn!` 可见（错误不吞）。
+    /// 与 [`Self::apply_sample`] 的连续失败路径共用同一终态，避免"无法采样"被
+    /// 误读为 Abundant（fail-open）。
+    pub fn mark_sampler_unavailable(&self) {
+        self.consecutive_failures
+            .store(FAILURE_THRESHOLD, Ordering::Relaxed);
+        let prev = self
+            .level
+            .swap(MemoryLevel::Critical as u8, Ordering::Relaxed);
+        #[cfg(all(feature = "engine-moli", feature = "metrics"))]
+        gauge!("crawlrs_memory_level").set(MemoryLevel::Critical as u8 as f64);
+        log::warn!(
+            target: "crawlrs::memory",
+            "memory sampler unavailable (sysinfo init failed), forcing Critical (was {:?})",
+            MemoryLevel::from_u8(prev)
+        );
+    }
+
     /// 采样循环：以 `refresh_interval` 周期刷新系统内存并写入镜像。通常由 DI 装配
     /// spawn 一次、随进程生命周期运行；任务取消即停止（无内部死循环外的状态）。
     pub async fn run(self: Arc<Self>, refresh_interval: Duration) {
-        let mut sys = sysinfo::System::new();
+        // sysinfo 0.40 起构造可失败（内核接口不可用/平台不支持）。失败则采样循环
+        // 不启动并立即 fail-closed（水位 Critical，引擎调度拒绝新任务），
+        // 同时记录 error——错误可见，不把"无法采样"伪装成健康。
+        let mut sys = match sysinfo::System::new() {
+            Ok(sys) => sys,
+            Err(e) => {
+                log::error!(
+                    target: "crawlrs::engines::memory_watermark",
+                    "sysinfo System 初始化失败，内存水位采样停用: {e}"
+                );
+                self.mark_sampler_unavailable();
+                return;
+            }
+        };
         let mut ticker = tokio::time::interval(refresh_interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -240,6 +272,17 @@ mod tests {
         assert_eq!(wm.apply_sample(None), MemoryLevel::Abundant); // 重新计数 1 次
         assert_eq!(wm.apply_sample(None), MemoryLevel::Abundant); // 2 次
         assert_eq!(wm.apply_sample(None), MemoryLevel::Critical); // 3 次 → Critical
+    }
+
+    /// 采样器不可用（构造失败）→ 立即 Critical（fail-closed，不得停留在 Abundant）
+    #[test]
+    fn sampler_unavailable_forces_critical() {
+        let wm = MemoryWatermark::new(512, 2048);
+        assert_eq!(wm.level(), MemoryLevel::Abundant);
+        wm.mark_sampler_unavailable();
+        assert_eq!(wm.level(), MemoryLevel::Critical);
+        // 失败计数置满：后续仍按 Critical 处理（不因计数被重置而回落）
+        assert_eq!(wm.apply_sample(None), MemoryLevel::Critical);
     }
 
     #[test]

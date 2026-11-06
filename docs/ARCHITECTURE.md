@@ -50,19 +50,19 @@ crawlrs is built using **Domain-Driven Design (DDD)** principles with a clean, l
 
 | Component | Technology | Version |
 |-----------|-----------|---------|
-| Async Runtime | Tokio | 1.53 |
+| Async Runtime | Tokio | 1.54 |
 | Web Framework | Axum | 0.8 |
 | ORM | Sea-ORM (via dbnexus) | 2.0.4 |
 | HTTP Client | Reqwest | 0.13 |
 | Database | PostgreSQL | 16+ |
-| Cache | oxcache (in-memory) | 0.5.0-rc.6 |
-| Rate Limiting | limiteron | 0.3.0-rc.6 |
-| DI Framework | trait-kit | 0.5.0-rc.7 |
-| Config | confers | 0.6.0-rc.6 |
-| SDK Generator | sdforge | 0.5.0-rc.6 |
-| Logging | inklog | 0.3.0-rc.6 |
+| Cache | oxcache (in-memory) | 0.5.0-rc.12 |
+| Rate Limiting | limiteron | 0.3.0-rc.10 |
+| DI Framework | trait-kit | 0.5.0-rc.12 |
+| Config | confers | 0.6.0-rc.13 |
+| SDK Generator | sdforge | 0.5.0-rc.10 |
+| Logging | inklog | 0.3.0-rc.12 |
 | Browser Engine | chromiumoxide | 0.9 |
-| HTML Parser | scraper | 0.27 |
+| HTML Parser | scraper | 0.29 |
 
 ---
 
@@ -174,8 +174,8 @@ flowchart TD
     end
 
     subgraph Infra [Infrastructure Layer]
-        DB[(Postgres Database<br/>dbnexus 0.6.0-rc.6)]
-        RC[(oxcache 0.5.0-rc.6<br/>in-memory)]
+        DB[(Postgres Database<br/>dbnexus 0.6.0-rc.11)]
+        RC[(oxcache 0.5.0-rc.12<br/>in-memory)]
         EXT[External APIs]
         MON[inklog / Prometheus]
         SEC[SSRF / Geolocation / DNS]
@@ -380,7 +380,7 @@ pub async fn extract<GR>(
 1. **Authentication Middleware** - API key validation, Bearer token, team ID extraction
 2. **Security Headers Middleware** - CSP, X-Content-Type-Options, X-Frame-Options
 3. **CORS** - Configurable origins via `tower-http`
-4. **Rate Limiting** - 单一中间件 `rate_limit_middleware.rs`：实现本身只做 429 + `Retry-After` 判定与头部设置，实际速率判断与配额扣减经 `RateLimitingService` trait 委托给 `LimiteronService`（limiteron 0.3.0-rc.6，PostgreSQL 后端）。全仓无 Redis 依赖
+4. **Rate Limiting** - 单一中间件 `rate_limit_middleware.rs`：实现本身只做 429 + `Retry-After` 判定与头部设置，实际速率判断与配额扣减经 `RateLimitingService` trait 委托给 `LimiteronService`（limiteron 0.3.0-rc.10，PostgreSQL 后端）。全仓无 Redis 依赖
 5. **Team Semaphore Middleware** - Per-team concurrency control
 6. **Scope Validation** - API key permission scope checking（未挂载生产路由）
 
@@ -680,7 +680,7 @@ infrastructure/
 
 **Database Layer:**
 
-**Technology:** dbnexus 0.6.0-rc.6 (builds on Sea-ORM 2.0.4)
+**Technology:** dbnexus 0.6.0-rc.11 (builds on Sea-ORM 2.0.4)
 
 dbnexus provides connection pooling, permission control, migration framework, metrics monitoring, and audit logging on top of Sea-ORM's type-safe database access. Three database backends are supported: PostgreSQL (default), SQLite, and MySQL — selectable via `db-postgres` / `db-sqlite` / `db-mysql` features.
 
@@ -704,7 +704,7 @@ dbnexus provides connection pooling, permission control, migration framework, me
 
 **Cache Layer:**
 
-**Technology:** oxcache 0.5.0-rc.6 (in-memory, no Redis backend)
+**Technology:** oxcache 0.5.0-rc.12 (in-memory, no Redis backend)
 
 ```rust
 // Cache types
@@ -853,9 +853,9 @@ bootstrap/                 # Application bootstrap
 
 ## 🧩 Core Components
 
-### Dependency Injection (trait-kit 0.5.0-rc.7)
+### Dependency Injection (trait-kit 0.5.0-rc.12)
 
-DI uses **trait-kit 0.5.0-rc.7** with async module builders. `src/main.rs:389-405` registers **9 个 Module** 到 `AsyncKit`：
+DI uses **trait-kit 0.5.0-rc.12** with async module builders. `src/main.rs:389-405` registers **9 个 Module** 到 `AsyncKit`：
 
 | # | Module | 提供 |
 |---|--------|------|
@@ -1066,7 +1066,7 @@ When a feature is off, the corresponding endpoints return **404** (not 401/403) 
 
 ### Configuration Hierarchy
 
-**Location:** `config/default.toml` (confers 0.6.0-rc.6)
+**Location:** `config/default.toml` (confers 0.6.0-rc.13)
 
 ```toml
 [database]              # Connection pool, timeouts, prepare-cache
@@ -1747,7 +1747,7 @@ Worker lifecycle:
 
 ### Architecture
 
-Caching uses **oxcache 0.5.0-rc.6** with a single in-memory backend (moka). There is no Redis or multi-tier cache.
+Caching uses **oxcache 0.5.0-rc.12** with a single in-memory backend (moka). There is no Redis or multi-tier cache.
 
 ```mermaid
 flowchart TD
@@ -1811,9 +1811,9 @@ pub trait CacheService: Send + Sync {
 
 ## ⏱️ Rate Limiting
 
-**Technology:** limiteron 0.3.0-rc.6 (PostgreSQL-backed)
+**Technology:** limiteron 0.3.0-rc.10 (PostgreSQL-backed)
 
-Rate limiting is implemented using **limiteron 0.3.0-rc.6**, which provides PostgreSQL-backed token bucket rate limiting with the following features:
+Rate limiting is implemented using **limiteron 0.3.0-rc.10**, which provides PostgreSQL-backed token bucket rate limiting with the following features:
 
 | Feature | Purpose |
 |---------|---------|
@@ -1827,7 +1827,7 @@ Rate limiting is implemented using **limiteron 0.3.0-rc.6**, which provides Post
 
 ### Middleware 实现
 
-`src/presentation/middleware/rate_limit_middleware.rs` 是**唯一的**限流中间件。历史上曾并存另外两个平行方案（`src/presentation/middleware/mod.rs:21-24` 的历史注释记录了它们因无路由挂载点、零调用方而被移除的事实），现已不在代码中。该中间件本身只负责 429 判定与 `Retry-After` 响应头，实际速率判断经 `RateLimitingService` trait 委托给 `LimiteronService`（limiteron 0.3.0-rc.6，PostgreSQL 后端）：
+`src/presentation/middleware/rate_limit_middleware.rs` 是**唯一的**限流中间件。历史上曾并存另外两个平行方案（`src/presentation/middleware/mod.rs:21-24` 的历史注释记录了它们因无路由挂载点、零调用方而被移除的事实），现已不在代码中。该中间件本身只负责 429 判定与 `Retry-After` 响应头，实际速率判断经 `RateLimitingService` trait 委托给 `LimiteronService`（limiteron 0.3.0-rc.10，PostgreSQL 后端）：
 
 ```text
 HTTP request → rate_limit_middleware (429 + Retry-After)

@@ -14,6 +14,15 @@
 
 ## [Unreleased]
 
+### Changed（依赖全量升级 deps-refresh）
+
+- **全量升级到最新 minor**：tokio 1.53→1.54、uuid 1.27→1.29、sysinfo 0.39→0.40、scraper 0.27→0.29、dom_smoothie 0.18→0.19、lru 0.18→0.19、html-escape 0.2→0.3、parking_lot 0.12→0.13、toml 1.1→1.2、utoipa 5.5→6.0（与 sdforge 0.5.0-rc.10 的 `pub use utoipa` re-export 同版）；其余直接依赖的最新 minor 与既有约束一致，无需改动
+- **自研依赖升到最新 rc**：confers 0.6.0-rc.13、dbnexus 0.6.0-rc.11、sdforge 0.5.0-rc.10、garrison 0.9.0-rc.5、inklog 0.3.0-rc.12、limiteron 0.3.0-rc.10、trait-kit 0.5.0-rc.12、oxcache 0.5.0-rc.12、vecboost 0.3.0-rc.3、nebulaid 0.3.0-rc.4；链内 semver 要求互相兼容，无双版本共存
+- **移除本地依赖写法**：nebulaid 去掉 `path = "../NebulaId"`，改纯 registry rc.4（SDK/ID 所需符号已在 registry 版本提供）；删除 `[patch.crates-io] vecboost = { path = "../vecboost" }`（registry 0.3.0-rc.3 已依赖 confers ^0.6.0-rc.12，本地补丁不再需要）。**fluxweir 是唯一保留的 path 依赖（硬外部阻塞）**：registry 最新 0.1.0 缺 `build_app_with_pool`/`TrustedIdentity`；所需实现位于本地未推送提交 16b7cc5（当前 checkout HEAD 2d559ad 含其为祖先，`origin/main` 未含）。解锁前提：推送该提交并发布含所需 API 的新版本；在此之前干净 checkout 的依赖解析会失败（optional path 依赖在解析期即要求存在），CI 无法覆盖该构建面
+- **sysinfo 0.40 API 适配**：`System::new()/new_with_specifics()` 改为 `Result`；三个监控组件以 `Option<System>` **fail-closed 降级**——无法采集时 CPU/内存读取返回 100% 哨兵（驱动阈值告警，绝不返回假健康 0%），锁中毒路径同语义，`MutableSystemMonitor`（生产消耗方）降级时 `is_metrics_stale` 返回 true，并新增 `crawlrs_system_monitor_degraded` gauge 区分「无法采集」与「真实满负载」；内存水位采样器初始化失败时立即 `mark_sampler_unavailable()`（水位 Critical，引擎调度拒绝新任务）并记录 error
+- **钉版维持（有明确上游约束）**：wreq 6.0.0-rc.31（5.x 全部 yanked，rc.31 为最新可用）、testcontainers 0.27（testcontainers-modules 0.15.0 硬依赖 ^0.27，升 0.28 即冲突）、axum-test 21.1（22.0 仅 rc）、dashmap 6.2（7.0 仅 rc）；moli-html2md git 依赖钉 rev `2db52b45` = tag v1.1.21（最新 tag）
+- **验证**：pre-commit-check all 13/13、default lib 6174/0、full lib 6357/0、live integration 161/0、acceptance 49/49、markdown_fidelity 8/8、e2e --quick 全阶段 PASS（liveapi 按 quick 跳过）、cargo deny 四关 ok、clippy 三腿 `-D warnings` 0 错；`Cargo.lock` 全量重解析入库
+
 ### Added（fluxweir 网关集成 fluxweir-llm-gateway）
 
 - **统一 LLM 出口**：新增 `gateway` feature（fluxweir 以 `default-features=false, features=["full","db-postgres"]` 引入，规避 dbnexus embedded×server-side 互斥守卫）；`[fluxweir]` 配置节（`enabled`/`mode = embedded | external`/`listen_addr`/`external_base_url`/`api_key_env`/`trusted_proxy`/`rag_fallback`，默认全关、api key 经 env 注入、Debug 脱敏、启动 fail-fast）。`FluxweirLlmCarrier` 实现 `LLMServiceTrait`（prompt 模板 → SDK chat → JSON 解析/usage 映射；chunker/provenance 编排复用），`init_llm_service` 按 `[fluxweir].enabled` 装配，disabled 维持 `ExplicitErrorCarrier`

@@ -4,6 +4,9 @@
 [advisories]
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "deny"
+# unmaintained 通告真实参与评估（默认不评估会让 ignore 列表里的 unmaintained 条目
+# 变成"未被检测到"的死豁免；"all" 覆盖全部依赖图，含传递依赖）
+unmaintained = "all"
 # RUSTSEC-2023-0071: rsa Marvin Attack（jsonwebtoken rust_crypto 后端携带 rsa v0.9.10）。
 # 2026-10-03：crawlrs 的 jsonwebtoken 直接声明已移除（src 零引用死依赖），
 # 残余路径仅 garrison(auth) → jsonwebtoken → rsa 单条。风险评估：crawlrs 仅用
@@ -18,15 +21,11 @@ yanked = "deny"
 # patched >=0.23.46。已将 rustls 升至此版本（cargo update -p rustls --precise 0.23.46），
 # `cargo deny check` 无 rustls 告警，无需 ignore。后续 rustls 相关变更随门禁一并复核。
 #
-# 以下 advisory 为传递依赖中已停止维护的 crate，无可用升级版本，待上游迁移后移除：
-# - RUSTSEC-2024-0436: paste（vecboost → candle-core/gemm 传递依赖，编译期 proc-macro，
-#   无运行时攻击面；merge 时自旧线恢复该 ignore，cargo-deny-action 默认
-#   --all-features 才会扫到）
-# - RUSTSEC-2025-0119: number_prefix（vecboost → hf-hub → indicatif 传递依赖，
-#   仅进度条数字格式化，无运行时攻击面）
-# - RUSTSEC-2024-0449: unsafe-libyaml（confers/dbnexus → serde_yaml_ng 传递依赖，
-#   为 libyaml C 代码的机器翻译，官方已归档、patched 为空 = 永久无修复版；informational
-#   unmaintained 非漏洞，无已知 CVE，运行时仅做 YAML 解析。待家族侧 yaml 引擎迁移后移除）
+# - RUSTSEC-2024-0436: paste（可选 rag-local → vecboost → tokenizers 传递；编译期 proc-macro，
+#   无运行时攻击面。cargo-deny 仅在 --all-features 图触达，CI action 默认即 --all-features）
+# - RUSTSEC-2025-0119: number_prefix（可选 rag-local → vecboost → tokenizers → hf-hub →
+#   indicatif 传递；仅进度条数字格式化）
+# 2026-11-06 依赖全量升级后 RUSTSEC-2024-0449（unsafe-libyaml）宿主已退出依赖树，ignore 已移除。
 #
 # 注：RUSTSEC-2026-0367/0368/0369（zip 8.6.0）不靠 ignore 处理——已整体移除死依赖
 # chromiumoxide_fetcher（见 Cargo.toml），zip 退出依赖树，告警自动消除。
@@ -41,7 +40,7 @@ yanked = "deny"
 # 唯一引入路径 testcontainers 0.27.3 → testcontainers-modules 0.15.0，均 [dev-dependencies]，
 # 不进任何发布二进制；集成测试的容器镜像 tar 解包用。unmaintained 非漏洞，上游 testcontainers
 # 换 tar-codec 后移除本豁免（tracking: testcontainers-rs 上游 changelog）。
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119", "RUSTSEC-2024-0449", "RUSTSEC-2026-0387", "RUSTSEC-2026-0440"]
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2024-0436", "RUSTSEC-2025-0119", "RUSTSEC-2026-0387", "RUSTSEC-2026-0440"]
 
 [licenses]
 allow = [

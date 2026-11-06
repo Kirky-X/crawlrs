@@ -297,13 +297,13 @@ crawlrs 不再内置任何 LLM 供应商访问（原 `LLMService` / `provider_ad
 
 | 依赖 | 统一基线 | 嵌入角色 |
 |------|---------|---------|
-| `dbnexus` | `0.6.0-rc.9` | 数据库抽象（sea-orm 之上） |
-| `inklog` | `0.3.0-rc.9` | 日志（`log::` facade 后端） |
-| `limiteron` | `0.3.0-rc.7` | 限流 / 熔断 / 退避 |
-| `confers` | `0.6.0-rc.10` | 配置加载 |
-| `trait-kit` | `0.5.0-rc.9` | 异步 DI（AsyncKit） |
-| `oxcache` | `0.5.0-rc.8` | 多级缓存 |
-| `garrison` | `0.9.0-rc.3` | 认证引擎（经 default 的 `auth` 引入） |
+| `dbnexus` | `0.6.0-rc.11` | 数据库抽象（sea-orm 之上） |
+| `inklog` | `0.3.0-rc.12` | 日志（`log::` facade 后端） |
+| `limiteron` | `0.3.0-rc.10` | 限流 / 熔断 / 退避 |
+| `confers` | `0.6.0-rc.13` | 配置加载 |
+| `trait-kit` | `0.5.0-rc.12` | 异步 DI（AsyncKit） |
+| `oxcache` | `0.5.0-rc.12` | 多级缓存 |
+| `garrison` | `0.9.0-rc.5` | 认证引擎（经 default 的 `auth` 引入） |
 
 </details>
 

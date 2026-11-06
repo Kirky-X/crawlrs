@@ -296,13 +296,13 @@ The embedding side and crawlrs share the same nexus-family dependencies; cargo u
 
 | Dependency | Unified baseline | Embedding role |
 |-----------|-----------------|---------------|
-| `dbnexus` | `0.6.0-rc.9` | Database abstraction (over sea-orm) |
-| `inklog` | `0.3.0-rc.9` | Logging (`log::` facade backend) |
-| `limiteron` | `0.3.0-rc.7` | Rate limiting / circuit breaking / backoff |
-| `confers` | `0.6.0-rc.10` | Configuration loading |
-| `trait-kit` | `0.5.0-rc.9` | Async DI (AsyncKit) |
-| `oxcache` | `0.5.0-rc.8` | Multi-tier caching |
-| `garrison` | `0.9.0-rc.3` | Authentication engine (pulled via default's `auth`) |
+| `dbnexus` | `0.6.0-rc.11` | Database abstraction (over sea-orm) |
+| `inklog` | `0.3.0-rc.12` | Logging (`log::` facade backend) |
+| `limiteron` | `0.3.0-rc.10` | Rate limiting / circuit breaking / backoff |
+| `confers` | `0.6.0-rc.13` | Configuration loading |
+| `trait-kit` | `0.5.0-rc.12` | Async DI (AsyncKit) |
+| `oxcache` | `0.5.0-rc.12` | Multi-tier caching |
+| `garrison` | `0.9.0-rc.5` | Authentication engine (pulled via default's `auth`) |
 
 </details>
 

@@ -14,6 +14,29 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
+/// 构造 sysinfo `System`（0.40 起构造可失败：内核接口不可用/平台不支持）。
+///
+/// 失败时返回 `None` 并记录错误——三个监控组件进入 **fail-closed 降级**：
+/// cpu/memory 读取返回 1.0（最坏情形哨兵，驱动内存准入拒绝与阈值告警；
+/// 绝不返回 0.0 这种"假健康"值），不 panic。错误可见：构造期一条 `log::error!`。
+fn new_system() -> Option<System> {
+    match System::new_with_specifics(
+        RefreshKind::nothing()
+            .with_cpu(CpuRefreshKind::everything())
+            .with_memory(MemoryRefreshKind::everything()),
+    ) {
+        Ok(sys) => {
+            // new_with_specifics 已按 RefreshKind 刷新 CPU/内存；不再 refresh_all()
+            //（后者会枚举全部进程，纯属启动期浪费）
+            Some(sys)
+        }
+        Err(e) => {
+            log::error!("sysinfo System 初始化失败，系统监控 fail-closed 降级（读取返回 100%，内存准入拒绝新任务）: {e}");
+            None
+        }
+    }
+}
+
 /// 系统监控 trait（支持 DI）
 ///
 /// 提供系统资源监控的抽象接口，便于测试时注入 mock 实现。
@@ -30,8 +53,8 @@ pub trait SystemMonitorTrait: Send + Sync {
 ///
 /// 通过原子变量提供无锁读取，同时保持热路径高性能。
 pub struct SystemMonitorComponent {
-    /// 系统信息
-    system: Arc<Mutex<System>>,
+    /// 系统信息（构造失败时为 None：监控降级，见 [`new_system`]）
+    system: Arc<Mutex<Option<System>>>,
     /// 最后更新时间戳
     last_update: Arc<AtomicU64>,
     /// CPU 使用率 (0-100)
@@ -43,12 +66,7 @@ pub struct SystemMonitorComponent {
 impl SystemMonitorComponent {
     /// 创建新的系统监控组件
     pub fn new() -> Self {
-        let mut sys = System::new_with_specifics(
-            RefreshKind::nothing()
-                .with_cpu(CpuRefreshKind::everything())
-                .with_memory(MemoryRefreshKind::everything()),
-        );
-        sys.refresh_all();
+        let sys = new_system();
 
         Self {
             system: Arc::new(Mutex::new(sys)),
@@ -58,10 +76,21 @@ impl SystemMonitorComponent {
         }
     }
 
+    /// 测试专用：注入指定 System（None = 模拟构造失败，覆盖 fail-closed 降级路径）
+    #[cfg(test)]
+    fn with_system(system: Option<System>) -> Self {
+        Self {
+            system: Arc::new(Mutex::new(system)),
+            last_update: Arc::new(AtomicU64::new(0)),
+            cpu_usage: Arc::new(AtomicU64::new(0)),
+            memory_usage: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
     /// 更新系统指标
     fn update(&mut self) {
         // Acquire lock with poisoning handling
-        let sys = match self.system.lock() {
+        let mut guard = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
                 log::error!("System monitor mutex poisoned, cannot update metrics");
@@ -70,7 +99,10 @@ impl SystemMonitorComponent {
                 return;
             }
         };
-        let mut sys = sys; // Make mutable for refresh operations
+        let Some(sys) = guard.as_mut() else {
+            // sysinfo 构造失败：监控已降级并在构造期记录 error
+            return;
+        };
         sys.refresh_cpu_all();
         sys.refresh_memory();
     }
@@ -80,29 +112,48 @@ impl SystemMonitorComponent {
         self.update();
 
         let cpu_usage = {
-            let sys = match self.system.lock() {
+            let guard = match self.system.lock() {
                 Ok(guard) => guard,
                 Err(_) => {
-                    log::error!("Failed to acquire system monitor lock for CPU usage");
+                    log::error!(
+                        "Failed to acquire system monitor lock for CPU usage; fail-closed 100%"
+                    );
+                    // 无法判断时按最坏情形写哨兵（保持 stale：last_update 不更新）
+                    self.cpu_usage.store(100, Ordering::Relaxed);
+                    self.memory_usage.store(100, Ordering::Relaxed);
                     return;
                 }
             };
-            f64::from(sys.global_cpu_usage())
+            match guard.as_ref() {
+                Some(sys) => f64::from(sys.global_cpu_usage()),
+                // fail-closed 哨兵：100% 让阈值告警必触发，避免显示假健康
+                None => 100.0,
+            }
         };
 
         let memory_usage = {
-            let sys = match self.system.lock() {
+            let guard = match self.system.lock() {
                 Ok(guard) => guard,
                 Err(_) => {
-                    log::error!("Failed to acquire system monitor lock for memory usage");
+                    log::error!(
+                        "Failed to acquire system monitor lock for memory usage; fail-closed 100%"
+                    );
+                    self.cpu_usage.store(100, Ordering::Relaxed);
+                    self.memory_usage.store(100, Ordering::Relaxed);
                     return;
                 }
             };
-            let total_mem = sys.total_memory();
-            if total_mem > 0 {
-                sys.used_memory() as f64 / total_mem as f64 * 100.0
-            } else {
-                0.0
+            match guard.as_ref() {
+                Some(sys) => {
+                    let total_mem = sys.total_memory();
+                    if total_mem > 0 {
+                        sys.used_memory() as f64 / total_mem as f64 * 100.0
+                    } else {
+                        0.0
+                    }
+                }
+                // fail-closed 哨兵：100% 让阈值告警必触发
+                None => 100.0,
             }
         };
 
@@ -142,32 +193,38 @@ impl SystemMonitorTrait for SystemMonitorComponent {
 /// System monitor for tracking CPU and memory usage
 #[derive(Clone)]
 pub struct SystemMonitor {
-    system: Arc<Mutex<System>>,
+    system: Arc<Mutex<Option<System>>>,
 }
 
 impl SystemMonitor {
     /// Create a new system monitor
     pub fn new() -> Self {
-        let mut sys = System::new_with_specifics(
-            RefreshKind::nothing()
-                .with_cpu(CpuRefreshKind::everything())
-                .with_memory(MemoryRefreshKind::everything()),
-        );
-        sys.refresh_all();
+        let sys = new_system();
 
         Self {
             system: Arc::new(Mutex::new(sys)),
         }
     }
 
+    /// 测试专用：注入指定 System（None = 模拟构造失败）
+    #[cfg(test)]
+    fn with_system(system: Option<System>) -> Self {
+        Self {
+            system: Arc::new(Mutex::new(system)),
+        }
+    }
+
     /// Update system metrics
     fn update(&mut self) {
-        let mut sys = match self.system.lock() {
+        let mut guard = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
                 log::error!("System monitor mutex poisoned, cannot update metrics");
                 return;
             }
+        };
+        let Some(sys) = guard.as_mut() else {
+            return;
         };
         sys.refresh_cpu_all();
         sys.refresh_memory();
@@ -176,31 +233,45 @@ impl SystemMonitor {
     /// Get current CPU usage (0.0 - 1.0)
     pub fn cpu_usage(&mut self) -> f64 {
         self.update();
-        let sys = match self.system.lock() {
+        let guard = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                log::error!("System monitor mutex poisoned, returning 0.0 for CPU usage");
-                return 0.0;
+                log::error!(
+                    "System monitor mutex poisoned, returning fail-closed 1.0 for CPU usage"
+                );
+                return 1.0;
             }
         };
-        f64::from(sys.global_cpu_usage()) / 100.0
+        match guard.as_ref() {
+            Some(sys) => f64::from(sys.global_cpu_usage()) / 100.0,
+            // fail-closed 哨兵：无法采集时按最坏情形返回 100%（不返回假健康 0%）
+            None => 1.0,
+        }
     }
 
     /// Get current memory usage (0.0 - 1.0)
     pub fn memory_usage(&mut self) -> f64 {
         self.update();
-        let sys = match self.system.lock() {
+        let guard = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                log::error!("System monitor mutex poisoned, returning 0.0 for memory usage");
-                return 0.0;
+                log::error!(
+                    "System monitor mutex poisoned, returning fail-closed 1.0 for memory usage"
+                );
+                return 1.0;
             }
         };
-        let total_mem = sys.total_memory();
-        if total_mem > 0 {
-            sys.used_memory() as f64 / total_mem as f64
-        } else {
-            0.0
+        match guard.as_ref() {
+            Some(sys) => {
+                let total_mem = sys.total_memory();
+                if total_mem > 0 {
+                    sys.used_memory() as f64 / total_mem as f64
+                } else {
+                    0.0
+                }
+            }
+            // fail-closed 哨兵：无法采集时按最坏情形返回 100%
+            None => 1.0,
         }
     }
 }
@@ -216,60 +287,89 @@ impl Default for SystemMonitor {
 /// pub 以便 `init_metrics` 与 `MemoryScheduler` 共享同一实例。
 /// 通过 `shared_system_monitor()` 获取全局单例，避免重复采集（复用）。
 pub struct MutableSystemMonitor {
-    system: Arc<Mutex<System>>,
+    system: Arc<Mutex<Option<System>>>,
 }
 
 impl MutableSystemMonitor {
     fn new() -> Self {
-        let mut sys = System::new_with_specifics(
-            RefreshKind::nothing()
-                .with_cpu(CpuRefreshKind::everything())
-                .with_memory(MemoryRefreshKind::everything()),
-        );
-        sys.refresh_all();
+        let sys = new_system();
 
         Self {
             system: Arc::new(Mutex::new(sys)),
         }
     }
 
+    /// 测试专用：注入指定 System（None = 模拟构造失败）
+    #[cfg(test)]
+    fn with_system(system: Option<System>) -> Self {
+        Self {
+            system: Arc::new(Mutex::new(system)),
+        }
+    }
+
     /// 刷新系统指标（改为 `&self`，内部 Arc\<Mutex\> 保证线程安全）
     pub fn refresh(&self) {
-        let mut sys = match self.system.lock() {
+        let mut guard = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
                 log::error!("MutableSystemMonitor mutex poisoned, cannot refresh");
                 return;
             }
         };
+        let Some(sys) = guard.as_mut() else {
+            return;
+        };
         sys.refresh_cpu_all();
         sys.refresh_memory();
     }
 
     pub fn cpu_usage(&self) -> f64 {
-        let sys = match self.system.lock() {
+        let guard = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                log::error!("MutableSystemMonitor mutex poisoned, returning 0.0 for CPU usage");
-                return 0.0;
+                log::error!(
+                    "MutableSystemMonitor mutex poisoned, returning fail-closed 1.0 for CPU usage"
+                );
+                return 1.0;
             }
         };
-        f64::from(sys.global_cpu_usage()) / 100.0
+        match guard.as_ref() {
+            Some(sys) => f64::from(sys.global_cpu_usage()) / 100.0,
+            // fail-closed 哨兵：无法采集时按最坏情形返回 100%（内存准入拒新任务、告警触发）
+            None => 1.0,
+        }
     }
 
     pub fn memory_usage(&self) -> f64 {
-        let sys = match self.system.lock() {
+        let guard = match self.system.lock() {
             Ok(guard) => guard,
             Err(_) => {
-                log::error!("MutableSystemMonitor mutex poisoned, returning 0.0 for memory usage");
-                return 0.0;
+                log::error!("MutableSystemMonitor mutex poisoned, returning fail-closed 1.0 for memory usage");
+                return 1.0;
             }
         };
-        let total_mem = sys.total_memory();
-        if total_mem > 0 {
-            sys.used_memory() as f64 / total_mem as f64
-        } else {
-            0.0
+        match guard.as_ref() {
+            Some(sys) => {
+                let total_mem = sys.total_memory();
+                if total_mem > 0 {
+                    sys.used_memory() as f64 / total_mem as f64
+                } else {
+                    0.0
+                }
+            }
+            // fail-closed 哨兵：无法采集时按最坏情形返回 100%
+            None => 1.0,
+        }
+    }
+}
+
+impl MutableSystemMonitor {
+    /// 是否处于构造失败降级态（无法采集；读取路径返回 fail-closed 100%）。
+    /// 供指标导出把「无法采集」与「真实满负载」区分开。
+    pub fn is_degraded(&self) -> bool {
+        match self.system.lock() {
+            Ok(guard) => guard.is_none(),
+            Err(_) => true,
         }
     }
 }
@@ -285,8 +385,12 @@ impl SystemMonitorTrait for MutableSystemMonitor {
         MutableSystemMonitor::memory_usage(self)
     }
     fn is_metrics_stale(&self) -> bool {
-        // 后台任务持续刷新，不判定过期；调用方按需采样即可
-        false
+        // 后台任务持续刷新，不判定过期；但 sysinfo 构造失败（降级）必须报告 stale，
+        // 让调用方能把"无法采集"与"健康"区分开（fail-closed）
+        match self.system.lock() {
+            Ok(guard) => guard.is_none(),
+            Err(_) => true,
+        }
     }
 }
 
@@ -412,10 +516,17 @@ pub fn init_metrics() {
         "crawlrs_webhook_delivery_total",
         "Total webhook delivery attempts by result and status_code"
     );
+    describe_gauge!(
+        "crawlrs_system_monitor_degraded",
+        "Whether system monitoring is degraded (1 = sysinfo unavailable, readings are fail-closed sentinels)"
+    );
 }
 
 fn update_system_metrics(monitor: &MutableSystemMonitor) {
     monitor.refresh();
+
+    // 降级信号独立导出：区分「无法采集（fail-closed 100%）」与「真实满负载」
+    gauge!("crawlrs_system_monitor_degraded").set(if monitor.is_degraded() { 1.0 } else { 0.0 });
 
     let cpu_usage = monitor.cpu_usage();
 
@@ -506,6 +617,35 @@ mod tests {
         fn is_metrics_stale(&self) -> bool {
             self.stale
         }
+    }
+
+    // sysinfo 构造失败（降级）路径：fail-closed 哨兵与 stale 语义
+
+    #[test]
+    fn degraded_component_reports_fail_closed_sentinel() {
+        let mut c = SystemMonitorComponent::with_system(None);
+        c.refresh();
+        // 无法采集时按最坏情形 100%，绝不返回假健康 0%
+        assert!((SystemMonitorTrait::cpu_usage(&c) - 1.0).abs() < f64::EPSILON);
+        assert!((SystemMonitorTrait::memory_usage(&c) - 1.0).abs() < f64::EPSILON);
+        // refresh 写入哨兵值后视为"已刷新"
+        assert!(!SystemMonitorTrait::is_metrics_stale(&c));
+    }
+
+    #[test]
+    fn degraded_monitor_reports_fail_closed_sentinel() {
+        let mut m = SystemMonitor::with_system(None);
+        assert!((m.cpu_usage() - 1.0).abs() < f64::EPSILON);
+        assert!((m.memory_usage() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn degraded_mutable_monitor_reports_fail_closed_and_stale() {
+        let m = MutableSystemMonitor::with_system(None);
+        assert!((m.memory_usage() - 1.0).abs() < f64::EPSILON);
+        assert!((m.cpu_usage() - 1.0).abs() < f64::EPSILON);
+        // 降级必须被报告为 stale，调用方可区分"无法采集"与"空闲"
+        assert!(SystemMonitorTrait::is_metrics_stale(&m));
     }
 
     // get_cpu_usage_with_monitor tests
@@ -860,7 +1000,9 @@ mod tests {
 
         // refresh should return early without panicking
         component.refresh();
-        // last_update was never updated (refresh failed), so still stale
+        // 锁中毒 = 无法判断 → fail-closed 100%，且仍报告 stale
+        assert_eq!(SystemMonitorTrait::cpu_usage(&component), 1.0);
+        assert_eq!(SystemMonitorTrait::memory_usage(&component), 1.0);
         assert!(
             component.is_metrics_stale(),
             "last_update should remain 0 after poisoned refresh"
@@ -868,7 +1010,7 @@ mod tests {
     }
 
     #[test]
-    fn test_system_monitor_mutex_poisoned_cpu_returns_zero() {
+    fn test_system_monitor_mutex_poisoned_cpu_fails_closed() {
         let mut monitor = SystemMonitor::new();
         let system_arc = monitor.system.clone();
         let handle = std::thread::spawn(move || {
@@ -878,11 +1020,11 @@ mod tests {
         let _ = handle.join();
 
         let cpu = monitor.cpu_usage();
-        assert_eq!(cpu, 0.0, "poisoned mutex should return 0.0 for CPU usage");
+        assert_eq!(cpu, 1.0, "poisoned mutex must fail closed (100%)");
     }
 
     #[test]
-    fn test_system_monitor_mutex_poisoned_memory_returns_zero() {
+    fn test_system_monitor_mutex_poisoned_memory_fails_closed() {
         let mut monitor = SystemMonitor::new();
         let system_arc = monitor.system.clone();
         let handle = std::thread::spawn(move || {
@@ -892,10 +1034,7 @@ mod tests {
         let _ = handle.join();
 
         let mem = monitor.memory_usage();
-        assert_eq!(
-            mem, 0.0,
-            "poisoned mutex should return 0.0 for memory usage"
-        );
+        assert_eq!(mem, 1.0, "poisoned mutex must fail closed (100%)");
     }
 
     #[test]
@@ -913,7 +1052,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mutable_system_monitor_mutex_poisoned_cpu_returns_zero() {
+    fn test_mutable_system_monitor_mutex_poisoned_cpu_fails_closed() {
         let monitor = MutableSystemMonitor::new();
         let system_arc = monitor.system.clone();
         let handle = std::thread::spawn(move || {
@@ -923,11 +1062,11 @@ mod tests {
         let _ = handle.join();
 
         let cpu = monitor.cpu_usage();
-        assert_eq!(cpu, 0.0);
+        assert_eq!(cpu, 1.0);
     }
 
     #[test]
-    fn test_mutable_system_monitor_mutex_poisoned_memory_returns_zero() {
+    fn test_mutable_system_monitor_mutex_poisoned_memory_fails_closed() {
         let monitor = MutableSystemMonitor::new();
         let system_arc = monitor.system.clone();
         let handle = std::thread::spawn(move || {
@@ -937,7 +1076,7 @@ mod tests {
         let _ = handle.join();
 
         let mem = monitor.memory_usage();
-        assert_eq!(mem, 0.0);
+        assert_eq!(mem, 1.0);
     }
 
     // init_metrics: 覆盖 tokio::spawn + interval 注册路径
