@@ -324,8 +324,9 @@ pub enum UpsertOutcome {
 /// [`release`](CollectLockGuard::release) 释放（`Drop` 不显式释放，由实现尽力兜底）。
 ///
 /// 实现约定：`try_acquire_collect_lock` 返回 `Ok(None)` 表示互斥权已被其他持有者
-/// 占用；`release` 幂等，重复调用直接返回 `Ok(())`。具体互斥机制由存储实现决定，
-/// 本端口不约束。
+/// 占用；`release` 幂等，重复调用直接返回 `Ok(())`。释放动作本身失败时返回 `Err`
+/// 且不保证重试可补做（实现可能已消耗底层句柄），由调用方记录并结束本轮。
+/// 具体互斥机制由存储实现决定，本端口不约束。
 #[async_trait]
 pub trait CollectLockGuard: Send + Sync {
     /// 释放锁（幂等：重复释放直接返回 Ok）

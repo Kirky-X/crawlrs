@@ -37,6 +37,10 @@ const LAST_ERROR_MAX_CHARS: usize = 512;
 /// 保持 `idle_in_transaction_session_timeout = 0`（PG 默认），且不要经
 /// transaction-pooling 代理（如 PgBouncer transaction 模式）——否则后端连接可能
 /// 被回收，互斥权在轮次中途静默丢失。
+///
+/// 计量说明：`begin()` 直接从底层 sqlx 池取连接，绕过 dbnexus 的 Session 计数，
+/// 采集轮期间 dbnexus 池指标会比实际少 1 条（连接本身会在 release/Drop 时归还）。
+/// 对齐该指标需要 dbnexus 暴露外部连接记账 API（第三方库能力边界）。
 struct PgCollectLockGuard {
     /// `Some` = 锁仍持有；`release()` take 后置 None（重复释放幂等）
     tx: parking_lot::Mutex<Option<dbnexus::sea_orm::DatabaseTransaction>>,

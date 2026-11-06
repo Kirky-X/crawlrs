@@ -315,7 +315,7 @@ async fn test_record_dataset_miss_concurrent_increments_are_serialized() {
 }
 
 #[tokio::test]
-async fn test_collect_lock_release_is_keyed_and_idempotent() {
+async fn test_collect_lock_release_is_idempotent() {
     let _guard = searxng_test_lock().lock().await;
     let app = create_test_app_no_worker().await;
     let repo = SearxngInstanceRepositoryImpl::new(app.db_pool.clone());

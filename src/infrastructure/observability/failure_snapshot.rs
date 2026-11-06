@@ -239,7 +239,9 @@ impl FailureSnapshotter {
         self.counts.get(key).map(|c| *c)
     }
 
-    /// 查询全目录已写文件数（测试与监控用）
+    /// 查询净写入操作数（写入次数 − 逐出次数；重复命中刷新 meta 也计一次）。
+    ///
+    /// 测试与监控用；不是目录文件数（文件数由 `max_total` 扫描守卫）。
     pub fn total_written(&self) -> u64 {
         self.total_written.load(Ordering::Relaxed)
     }
