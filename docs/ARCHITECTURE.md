@@ -508,6 +508,7 @@ domain/
 │   │                              #  prompt_builder, chunker, provenance；
 │   │                              #  vision_adapter 由 engine-mllm 门控）
 │   ├── content_extractor/         # 正文提取（trafilatura/dom_smoothie/css_rule/quality_gate/facade）
+│   ├── markdown/                 # 转换器链（moli_adapter/moli_converter/converter_chain）
 │   ├── markdown_service.rs
 │   ├── relevance_scorer.rs
 │   ├── retry_handler.rs
@@ -1539,13 +1540,39 @@ gated `engine-playwright`，R-jsrender-003：
 - `AdaptiveSemaphore`：桥接 `tokio::sync::Semaphore`，`set_target` 经 `add_permits`/`forget_permits`
 - 集成 `TeamSemaphore::with_adaptive(...)`，默认关闭（`concurrency.adaptive_enabled=false`）
 
-### Markdown Conversion (`src/domain/services/markdown_service.rs`)
+### Markdown Conversion (`src/domain/services/markdown_service.rs` + `markdown/`)
 
-gated `markdown` 特性：
+gated `content` 特性。**三层管线**（html2md-converter-chain 变更后）：
 
-- `MarkdownServiceTrait::to_markdown(html,only_main_content)->Result<String>` + `HtmdMarkdownService`
-- `ScrapeResponse.markdown: Option<String>`
-- `scrape_worker` 经 `MarkdownPostProcessor` 在 formats 含 `"markdown"` 时生成
+```text
+HTML（静态抓取或浏览器渲染产物）
+  → ① 提取链（`content_extractor/facade.rs`）：Trafilatura → DomSmoothie → CSS 规则
+       （only_main_content=true 时先裁正文；零改动）
+  → ② 转换器链（`markdown/converter_chain.rs`）：moli-html2md 主 → htmd 兜底
+       （[markdown] converter = "moli" 默认；"htmd" 直通诊断，无兜底）
+  → ③ 后处理（`workers/markdown_post_processor.rs`）：only_main_content 三路 +
+       链接绝对化（零改动）
+```
+
+- 抽象：`MarkdownConverter{name,convert}` 窄接口（链成员与 htmd 单转换器共用；
+  旧 `MarkdownServiceTrait` 已删除——一步到位，不留兼容层）
+- 兜底语义：primary `Err` 或「输入含可见文本而输出空白」→ fallback + `log::warn!` +
+  `crawlrs_md_converter_fallback_total{from,to,reason}`；双败 → `ChainFailed` 带两侧原因
+- 适配器：`markdown/moli_adapter.rs` 把 `scraper::Html`（html5ever 树）暴露为
+  `moli_html2md::Dom`（4 个必需方法；注释/doctype→Other；文本已解码不二次转义）；
+  `<template>` 子树按契约暴露但上游按 HTML 规范跳过（script/style/template 不出产物）
+- 依赖：`moli-html2md` 以 git 依赖钉 rev（`2db52b45`，tag v1.1.21；仅
+  `icu_properties` 运行时依赖，无 V8/moli 主 crate）+ `ego-tree`（与 scraper 同版本，
+  树 NodeId 类型同一性）；deny 白名单该 git 源
+- `ScrapeResponse.markdown: Option<String>`；`scrape_worker` 经
+  `MarkdownPostProcessor` 在 formats 含 `"markdown"` 时生成
+
+**诚实边界（computed CSS 钩子未接）：** `Dom::control_value` / `has_block_layout` /
+`has_text_boundary` 保留 trait 默认实现（None/false）——静态 HTML 无计算样式，
+接了就是假数据。`has_block_layout` 缺失意味着「样式化链接（如按钮式导航）」在
+纯结构视角下可能少断块、inline 边界（tab/badge）折叠处理弱于全渲染视角；
+`control_value` 缺失意味着受 JS 控制过 value 的表单控件输出源默认值。
+重开条件：MoliEngine 全渲染视角落地后经实测评估是否提供 computed style 注入面。
 
 ### Content Extraction (`src/domain/services/content_extractor/`)
 

@@ -198,6 +198,12 @@ failure_retire_threshold = 5
 failure_threshold = 3
 recovery_timeout_seconds = 120
 
+# Markdown Conversion (html2md-converter-chain)
+# converter = "moli"：转换器链（moli-html2md 主 + htmd 兜底；fallback 触发 log::warn + 计数）
+# converter = "htmd"：htmd 单转换器直通（诊断/对比用，无兜底语义）
+[markdown]
+converter = "moli"
+
 # Engine Configuration
 [engines]
 # 响应体大小上限（字节）：超出中断抓取，防止超大/恶意页面 OOM

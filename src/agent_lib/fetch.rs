@@ -27,7 +27,7 @@ use reqwest::redirect::Policy;
 use reqwest::Response;
 
 use crate::domain::services::content_extractor::ContentExtractionFacade;
-use crate::domain::services::markdown_service::{HtmdMarkdownService, MarkdownServiceTrait};
+use crate::domain::services::markdown_service::MarkdownConverter;
 use crate::infrastructure::dns::create_ipv4_only_resolver;
 use crate::infrastructure::security::ssrf::{SsrfValidator, ValidatedUrl};
 
@@ -268,22 +268,25 @@ async fn convert_to_markdown(
     peer_addr: Option<String>,
 ) -> Result<FetchedContent, AgentLibError> {
     let facade = ContentExtractionFacade::new(None);
-    let markdown_service = HtmdMarkdownService::new();
+    // agent-lib 嵌入式面不读取运行时 Settings：转换器固定为默认链
+    //（moli 主 + htmd 兜底）。[markdown].converter=htmd 的直通诊断仅作用于
+    // 服务进程（worker 装配），agent-lib 嵌入形态显式豁免（架构审查 MEDIUM-2）。
+    let markdown_converter = crate::domain::services::markdown::ConverterChain::default_chain();
 
     let extracted = facade.extract(html, current.as_str()).await;
 
     let (title, body) = match extracted {
         Ok(c) if !c.text.trim().is_empty() => {
             let title = c.title.clone().unwrap_or_default();
-            let md = markdown_service
-                .to_markdown(&c.text, false)
+            let md = markdown_converter
+                .convert(&c.text)
                 .map_err(|e| AgentLibError::Markdown(e.to_string()))?;
             (title, md)
         }
         _ => {
             // 提取失败/为空 → 回退整页 HTML 转换
-            let md = markdown_service
-                .to_markdown(html, false)
+            let md = markdown_converter
+                .convert(html)
                 .map_err(|e| AgentLibError::Markdown(e.to_string()))?;
             (String::new(), md)
         }

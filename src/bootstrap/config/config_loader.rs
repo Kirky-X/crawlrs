@@ -42,6 +42,12 @@ pub fn load_settings() -> Result<Settings> {
     // Validate cross-field invariants (e.g. mem_pressure < mem_critical)
     settings.concurrency.validate();
 
+    // 跨字段值校验（[engines.memory_scheduler] 阈值单调性、[engines.moli] 端点
+    // 可解析性、[markdown].converter 枚举）——此前该函数无生产调用点（安全审查
+    // MEDIUM-1：配置期拒绝只存在于测试），此处接入启动路径使其生效。
+    crate::config::validation::validate_values(&settings)
+        .map_err(|e| anyhow::anyhow!("Configuration values validation failed: {}", e))?;
+
     // 缓存后端 fail-closed 校验（R-redis-shared-cache-001）：
     // backend=redis 在 cache-redis feature 未编译或 redis_url 缺失时启动拒绝
     settings

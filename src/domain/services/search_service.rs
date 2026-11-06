@@ -2100,6 +2100,7 @@ mod tests {
             fluxweir: FluxweirSettings::default(),
             proxy: ProxySettings::default(),
             engines: EngineSettings::default(),
+            markdown: Default::default(),
             logging: LoggingSettings::default(),
             workers: WorkerSettings::default(),
             sitemap: SitemapSettings::default(),

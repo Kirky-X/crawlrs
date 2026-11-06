@@ -28,6 +28,14 @@ pub fn validate_values(settings: &Settings) -> Result<(), sdforge::validator::Va
         ));
     }
 
+    // [markdown].converter 枚举校验：非法值配置期报错并列出合法值
+    if let Err(e) = settings.markdown.converter_kind() {
+        return Err(
+            sdforge::validator::ValidationError::new("invalid_markdown_converter")
+                .with_message(e.into()),
+        );
+    }
+
     // moli 端点可解析性（启用时）：坏端点在配置期报错而非运行期引擎失败
     let moli = &settings.engines.moli;
     if moli.enabled && url::Url::parse(&moli.endpoint).is_err() {
@@ -92,6 +100,29 @@ mod tests {
         settings.engines.memory_scheduler.refresh_interval_ms = 1;
         settings.engines.memory_scheduler.enabled = false;
         assert!(validate_values(&settings).is_ok());
+    }
+
+    /// [markdown].converter 非法值被拒并指出合法值；合法值通过
+    #[test]
+    fn test_validate_values_markdown_converter_invalid() {
+        let mut settings = build_test_settings();
+        settings.markdown.converter = "banana".to_string();
+        let result = validate_values(&settings);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code.to_string(),
+            "invalid_markdown_converter"
+        );
+        // 合法值：moli 与 htmd（大小写不敏感）
+        for ok in ["moli", "htmd", "HTMD"] {
+            settings.markdown.converter = ok.to_string();
+            assert!(validate_values(&settings).is_ok(), "{ok} 应通过");
+        }
+        // 默认值 moli
+        assert_eq!(
+            crate::config::settings::MarkdownSettings::default().converter,
+            "moli"
+        );
     }
 
     /// moli 端点不可解析且启用时被拒；关闭时不校验

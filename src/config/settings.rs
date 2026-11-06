@@ -96,6 +96,9 @@ pub struct Settings {
     /// 引擎配置
     pub engines: EngineSettings,
 
+    /// Markdown 转换配置（html2md-converter-chain 变更）
+    pub markdown: MarkdownSettings,
+
     /// robots.txt 遵从配置
     #[validate(nested)]
     pub robots: RobotsSettings,
@@ -244,6 +247,43 @@ pub struct RobotsSettings {
     /// 重试最大退避（秒）
     #[config(default = 10)]
     pub fetch_max_backoff_secs: u64,
+}
+
+/// Markdown 转换器选择（`[markdown]` 段）
+///
+/// `converter = "moli"`（默认）转换器链——moli-html2md 主 + htmd 兜底；
+/// `converter = "htmd"` 链退化为 htmd 单转换器直通（诊断/对比用，无兜底语义）。
+/// 非法值在配置校验期报错（`invalid_markdown_converter` 并列出合法值）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarkdownConverterKind {
+    /// moli-html2md 主 + htmd 兜底链（默认）
+    #[default]
+    Moli,
+    /// htmd 单转换器直通（诊断用）
+    Htmd,
+}
+
+/// Markdown 转换配置
+#[derive(Debug, Clone, Deserialize, Serialize, confers::Config)]
+#[config(env_prefix = "CRAWLRS__MARKDOWN__")]
+pub struct MarkdownSettings {
+    /// 转换器选择：moli（链）| htmd（直通诊断）
+    #[config(default = "moli".to_string())]
+    pub converter: String,
+}
+
+impl MarkdownSettings {
+    /// 解析转换器枚举（配置校验/装配层调用；非法值在装配期 fail-closed）
+    pub fn converter_kind(&self) -> Result<MarkdownConverterKind, String> {
+        match self.converter.to_ascii_lowercase().as_str() {
+            "moli" => Ok(MarkdownConverterKind::Moli),
+            "htmd" => Ok(MarkdownConverterKind::Htmd),
+            other => Err(format!(
+                "invalid [markdown].converter = {other:?}; expected \"moli\" or \"htmd\""
+            )),
+        }
+    }
 }
 
 /// Per-host 礼貌爬取与 AutoThrottle 配置（吸收点 F1/F5）
@@ -1212,6 +1252,7 @@ mod tests {
             fluxweir: FluxweirSettings::default(),
             proxy: ProxySettings::default(),
             engines: EngineSettings::default(),
+            markdown: MarkdownSettings::default(),
             robots: RobotsSettings::default(),
             logging: LoggingSettings::default(),
             workers: WorkerSettings::default(),

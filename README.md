@@ -225,7 +225,7 @@ curl -X POST http://localhost:8899/v1/scrape \
 | `rate-limit` | limiteron 限流熔断；关闭时注入 `NoopRateLimitingService` | ✅ |
 | `webhook` | Webhook 投递；关闭时移除 `/v1/webhooks` 路由并注入 Noop | ✅ |
 | `metrics` | Prometheus 指标导出（含 sysinfo 内存感知） | ✅（platform） |
-| `content` | 反爬检测（aho-corasick）+ HTML→Markdown（htmd） | ✅（platform） |
+| `content` | 反爬检测（aho-corasick）+ HTML→Markdown 转换器链（moli-html2md 主 + htmd 兜底） | ✅（platform） |
 | `db-postgres` / `db-sqlite` / `db-mysql` | 数据库驱动三选一（dbnexus 编译期互斥强制） | ✅ postgres |
 | `engine-playwright` | chromiumoxide 浏览器自动化引擎 | ❌ |
 | `engine-flaresolverr` | FlareSolverr 反爬引擎（Full/Cdp/Tls 三模式） | ❌ |
@@ -584,7 +584,8 @@ crawlrs 站在以下优秀开源项目的肩膀上：
 | [wreq](https://crates.io/crates/wreq) | BoringSSL TLS 指纹伪装 |
 | [scraper](https://crates.io/crates/scraper) | HTML 解析 |
 | [genai](https://crates.io/crates/genai) | 视觉模型接入（`engine-mllm` MLLM 引擎） |
-| [htmd](https://crates.io/crates/htmd) | HTML→Markdown 转换 |
+| [htmd](https://crates.io/crates/htmd) | HTML→Markdown 转换（转换器链兜底） |
+| [moli-html2md](https://github.com/lexmount/moli) | HTML→Markdown 主转换器（git 依赖钉 rev；GFM 表格/MathML/TeX 保真） |
 | [rs-trafilatura](https://crates.io/crates/rs-trafilatura) / [dom_smoothie](https://crates.io/crates/dom_smoothie) | 正文提取 |
 | [criterion](https://crates.io/crates/criterion) | 基准测试 |
 | [testcontainers](https://crates.io/crates/testcontainers) | 集成测试基础设施 |

@@ -9,23 +9,23 @@
 //! # 职责
 //!
 //! 根据任务请求的 `formats` 字段判断是否需要生成 Markdown，
-//! 命中 `"markdown"` 则通过注入的 `MarkdownServiceTrait` 转换 HTML → Markdown。
+//! 命中 `"markdown"` 则通过注入的 `MarkdownConverter` 转换 HTML → Markdown。
 //!
 //! # 依赖倒置（DIP）
 //!
-//! 本类型通过 `Arc<dyn MarkdownServiceTrait>` 注入转换服务，而非硬编码
+//! 本类型通过 `Arc<dyn MarkdownConverter>` 注入转换器，而非硬编码
 //! `HtmdMarkdownService`，便于测试时 mock 替换，未来扩展其他实现时无需修改源码。
 //!
 //! # 特性门控
 //!
-//! 本模块整体 gated `markdown`（与 [`crate::domain::services::markdown_service`] 一致）。
-//! 关闭 `markdown` 特性时本模块不编译，ScrapeWorker 也不持有本类型的字段。
+//! 本模块整体 gated `content`（与 [`crate::domain::services::markdown_service`] 一致）。
+//! 关闭 `content` 特性时本模块不编译，ScrapeWorker 也不持有本类型的字段。
 
 #![cfg(feature = "content")]
 
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::domain::services::content_extractor::ContentExtractionFacade;
-use crate::domain::services::markdown_service::{MarkdownError, MarkdownServiceTrait};
+use crate::domain::services::markdown_service::{MarkdownConverter, MarkdownError};
 use log::{debug, warn};
 use std::sync::Arc;
 
@@ -47,7 +47,7 @@ use std::sync::Arc;
 /// 而非仅拿到字符串化后的错误消息。
 #[derive(Debug, thiserror::Error)]
 pub enum MarkdownPostProcessorError {
-    /// HTML → Markdown 转换失败（底层 `MarkdownServiceTrait::to_markdown` 返回错误）
+    /// HTML → Markdown 转换失败（底层 `MarkdownConverter::convert` 返回错误）
     ///
     /// 通过 `#[from]` 自动实现 `From<MarkdownError>`，保留下层错误类型信息。
     #[error("markdown conversion failed: {0}")]
@@ -59,14 +59,14 @@ pub enum MarkdownPostProcessorError {
 
 /// Markdown 后处理器
 ///
-/// 持有注入的 `MarkdownServiceTrait` 实例（通过 `Arc` 共享），可安全在多处共享单例。
+/// 持有注入的 `MarkdownConverter` 实例（通过 `Arc` 共享），可安全在多处共享单例。
 ///
 /// # 用法
 ///
 /// ```no_run
 /// # use crawlrs::application::dto::scrape_request::ScrapeRequestDto;
 /// # use crawlrs::workers::markdown_post_processor::MarkdownPostProcessor;
-/// # use crawlrs::domain::services::markdown_service::HtmdMarkdownService;
+/// # use crawlrs::domain::services::markdown::MoliHtml2MdConverter;
 /// # use crawlrs::domain::services::content_extractor::ContentExtractionFacade;
 /// # use serde_json::json;
 /// # use std::sync::Arc;
@@ -87,7 +87,7 @@ pub enum MarkdownPostProcessorError {
 #[derive(Clone)]
 pub struct MarkdownPostProcessor {
     /// 注入的 Markdown 转换服务（DIP：依赖抽象而非具体实现）
-    markdown_service: Arc<dyn MarkdownServiceTrait>,
+    markdown_converter: Arc<dyn MarkdownConverter>,
     /// 可选的正文提取门面
     ///
     /// `only_main_content=true` 时先经此提取正文，再转 Markdown。
@@ -100,18 +100,18 @@ impl MarkdownPostProcessor {
     ///
     /// # 参数
     ///
-    /// - `markdown_service`：Markdown 转换服务（实现 [`MarkdownServiceTrait`] trait），
-    ///   由调用方注入具体实现（如 [`crate::domain::services::markdown_service::HtmdMarkdownService`]）。
+    /// - `markdown_converter`：Markdown 转换器（实现 [`MarkdownConverter`] trait），
+    ///   默认注入 [`crate::domain::services::markdown::ConverterChain`]（moli 主 + htmd 兜底）。
     ///   通过 `Arc` 共享，多个 worker 可共用同一实例。
     /// - `content_extractor`：可选的正文提取门面。
     ///   `only_main_content=true` 时先提取正文再转 Markdown；`None` 时跳过。
     #[must_use]
     pub fn new(
-        markdown_service: Arc<dyn MarkdownServiceTrait>,
+        markdown_converter: Arc<dyn MarkdownConverter>,
         content_extractor: Option<Arc<ContentExtractionFacade>>,
     ) -> Self {
         Self {
-            markdown_service,
+            markdown_converter,
             content_extractor,
         }
     }
@@ -233,9 +233,9 @@ impl MarkdownPostProcessor {
                 // 复查：rs-trafilatura 0.2.2 的 content_html 不做相对→绝对
                 // URL 转换（上游 convert_tags 为死代码），先以页面 URL 为基重写
                 let absolute = absoluteize_links(&html, &req.url);
-                self.markdown_service.to_markdown(&absolute, false)
+                self.markdown_converter.convert(&absolute)
             }
-            MainContentSource::FullHtml => self.markdown_service.to_markdown(content, false),
+            MainContentSource::FullHtml => self.markdown_converter.convert(content),
         };
 
         match markdown_result {

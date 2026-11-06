@@ -171,7 +171,8 @@ impl ScrapeWorker {
             coalesce_coordinator: deps.coalesce_coordinator,
             #[cfg(feature = "content")]
             markdown_post_processor: MarkdownPostProcessor::new(
-                Arc::new(crate::domain::services::markdown_service::HtmdMarkdownService::new()),
+                // 按 [markdown].converter 装配（moli 链默认 / htmd 直通诊断）
+                crate::domain::services::markdown::build_converter(&deps.settings.markdown),
                 // bootstrap 注入的带质量门 Facade（[content_extraction] 四键 +
                 // llm_service 回退）；不再本地 new(None) 另立 disabled 实例
                 Some(Arc::clone(&deps.content_extractor)),

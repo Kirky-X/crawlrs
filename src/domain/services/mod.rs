@@ -42,9 +42,12 @@ pub mod extraction_utils;
 pub mod geo_location;
 pub mod id_service;
 pub mod llm;
-/// Markdown 转换服务（content-processing R1）
+/// Markdown 转换器链子模块（moli-html2md 主 + htmd 兜底；html2md-converter-chain 变更）
+#[cfg(feature = "content")]
+pub mod markdown;
+/// Markdown 转换抽象与 htmd 兜底实现（content-processing R1）
 ///
-/// gated `markdown` 特性（依赖 `htmd`）。`markdown` 已加入 `standard`/`full`。
+/// gated `content` 特性（依赖 `htmd`）。`content` 已加入 `standard`/`full`。
 #[cfg(feature = "content")]
 pub mod markdown_service;
 /// Noop Webhook 服务实现（webhook feature 关闭时使用）
