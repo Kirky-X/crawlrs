@@ -179,81 +179,6 @@ fn make_test_memory_scheduler() -> Arc<MemoryScheduler> {
     ))
 }
 
-// redact_url_for_log tests
-
-#[test]
-fn test_redact_url_for_log_strips_query_params() {
-    // query 参数中的 token/api_key 必须被移除
-    let url = "https://example.com/api?token=secret&api_key=key123";
-    let redacted = redact_url_for_log(url);
-    assert_eq!(redacted, "https://example.com/api");
-    assert!(
-        !redacted.contains("secret"),
-        "token value must not appear in log"
-    );
-    assert!(
-        !redacted.contains("key123"),
-        "api_key value must not appear in log"
-    );
-}
-
-#[test]
-fn test_redact_url_for_log_strips_fragment() {
-    let url = "https://example.com/page#section";
-    let redacted = redact_url_for_log(url);
-    assert_eq!(redacted, "https://example.com/page");
-    assert!(!redacted.contains("section"));
-}
-
-#[test]
-fn test_redact_url_for_log_preserves_path() {
-    let url = "https://example.com/deep/nested/path";
-    let redacted = redact_url_for_log(url);
-    assert_eq!(redacted, url);
-}
-
-#[test]
-fn test_redact_url_for_log_preserves_port() {
-    let url = "http://localhost:8080/api";
-    let redacted = redact_url_for_log(url);
-    assert_eq!(redacted, url);
-}
-
-#[test]
-fn test_redact_url_for_log_invalid_url_returns_placeholder() {
-    // 非法 URL 返回占位符，绝不原样返回可能含凭证的输入
-    let redacted = redact_url_for_log("not a url at all");
-    assert_eq!(redacted, "[invalid-url]");
-}
-
-#[test]
-fn test_redact_url_for_log_truncates_long_urls() {
-    // 超长 URL 截断到 200 字符 + "..."
-    let long_path = "a".repeat(300);
-    let url = format!("https://example.com/{}", long_path);
-    let redacted = redact_url_for_log(&url);
-    assert!(
-        redacted.ends_with("..."),
-        "truncated URL should end with '...': {}",
-        redacted
-    );
-    // 截断后总长度应 <= 203（200 + "..."）
-    assert!(
-        redacted.len() <= 203,
-        "redacted length {} should be <= 203",
-        redacted.len()
-    );
-}
-
-#[test]
-fn test_redact_url_for_log_empty_query_only() {
-    // 仅 query 无 path
-    let url = "https://example.com?token=secret";
-    let redacted = redact_url_for_log(url);
-    assert_eq!(redacted, "https://example.com/");
-    assert!(!redacted.contains("secret"));
-}
-
 // filter_sensitive_headers tests
 // 函数改为原地修改 (&mut HashMap)，测试同步更新
 
@@ -7689,17 +7614,23 @@ async fn test_should_crawl_multiple_exclude_patterns_any_blocks() {
 
 // 高级缓存模式门控测试
 
+/// 缓存键测试固定租户：比较 key 的用例必须共享租户维度
+fn cache_test_team() -> crate::domain::id::Id {
+    crate::domain::id::Id::from_u128(0x7e57_0000_0000_0000_0000_0000_0000_0001)
+}
+
 // generate_scrape_cache_key
 
 #[test]
 fn test_generate_scrape_cache_key_format() {
     let ctx = CacheContext {
+        team_id: cache_test_team(),
         url: "https://example.com".to_string(),
         method: HttpMethod::Get,
         mode: CacheMode::Enabled,
     };
     let key = generate_scrape_cache_key(&ctx, &ScrapeOptions::default());
-    assert!(key.starts_with("scrape:"));
+    assert!(key.starts_with(&format!("scrape:{}:", cache_test_team())));
     assert!(key.contains("https://example.com"));
 }
 
@@ -7708,6 +7639,7 @@ fn test_generate_scrape_cache_key_different_methods_produce_different_keys() {
     let url = "https://example.com/api";
     let get_key = generate_scrape_cache_key(
         &CacheContext {
+            team_id: cache_test_team(),
             url: url.to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -7716,6 +7648,7 @@ fn test_generate_scrape_cache_key_different_methods_produce_different_keys() {
     );
     let post_key = generate_scrape_cache_key(
         &CacheContext {
+            team_id: cache_test_team(),
             url: url.to_string(),
             method: HttpMethod::Post,
             mode: CacheMode::Enabled,
@@ -7732,6 +7665,7 @@ fn test_generate_scrape_cache_key_different_methods_produce_different_keys() {
 fn test_generate_scrape_cache_key_different_urls_produce_different_keys() {
     let key1 = generate_scrape_cache_key(
         &CacheContext {
+            team_id: cache_test_team(),
             url: "https://a.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -7740,6 +7674,7 @@ fn test_generate_scrape_cache_key_different_urls_produce_different_keys() {
     );
     let key2 = generate_scrape_cache_key(
         &CacheContext {
+            team_id: cache_test_team(),
             url: "https://b.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -7757,6 +7692,7 @@ async fn test_try_read_scrape_cache_miss_returns_none() {
     let worker = build_mock_worker_with_cache(cache.clone()).await;
 
     let ctx = CacheContext {
+        team_id: cache_test_team(),
         url: "https://example.com".to_string(),
         method: HttpMethod::Get,
         mode: CacheMode::Enabled,
@@ -7773,6 +7709,7 @@ async fn test_try_read_scrape_cache_miss_returns_none() {
 async fn test_try_read_scrape_cache_hit_returns_response() {
     let url = "https://example.com";
     let ctx = CacheContext {
+        team_id: cache_test_team(),
         url: url.to_string(),
         method: HttpMethod::Get,
         mode: CacheMode::ReadOnly,
@@ -7796,6 +7733,7 @@ async fn test_try_read_scrape_cache_hit_returns_response() {
 async fn test_try_read_scrape_cache_corrupt_data_returns_err() {
     let url = "https://example.com";
     let ctx = CacheContext {
+        team_id: cache_test_team(),
         url: url.to_string(),
         method: HttpMethod::Get,
         mode: CacheMode::Enabled,
@@ -7821,6 +7759,7 @@ async fn test_try_write_scrape_cache_writes_serialized_response() {
     let worker = build_mock_worker_with_cache(cache.clone()).await;
 
     let ctx = CacheContext {
+        team_id: cache_test_team(),
         url: "https://example.com/page".to_string(),
         method: HttpMethod::Get,
         mode: CacheMode::Enabled,
@@ -7841,6 +7780,7 @@ async fn test_try_write_scrape_cache_key_matches_read_key() {
 
     // 写缓存（Bypass 模式：should_read=false, should_write=true，合并原 WriteOnly 语义）
     let ctx = CacheContext {
+        team_id: cache_test_team(),
         url: url.to_string(),
         method: HttpMethod::Get,
         mode: CacheMode::Bypass,
@@ -7858,6 +7798,87 @@ async fn test_try_write_scrape_cache_key_matches_read_key() {
     assert!(result.is_ok());
     let resp = result.unwrap().expect("should hit after write");
     assert_eq!(resp.content, "written");
+}
+
+#[tokio::test]
+async fn test_cache_team_isolation_prevents_cross_team_hit() {
+    // 租户 A 写入后，租户 B 同 URL 同 options 读取必须 miss（跨租户不共享条目）
+    let url = "https://example.com/private";
+    let options = ScrapeOptions::default();
+    let cache = Arc::new(MockCacheService::new());
+    let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+    let ctx_a = CacheContext {
+        team_id: crate::domain::id::Id::from_u128(1),
+        url: url.to_string(),
+        method: HttpMethod::Get,
+        mode: CacheMode::Bypass,
+    };
+    let key_a = generate_scrape_cache_key(&ctx_a, &options);
+    let response = ScrapeResponse::new(200, "tenant-a content", "text/html");
+    worker
+        .try_write_scrape_cache(&ctx_a, &key_a, &response)
+        .await
+        .unwrap();
+
+    let ctx_b = CacheContext {
+        team_id: crate::domain::id::Id::from_u128(2),
+        url: url.to_string(),
+        method: HttpMethod::Get,
+        mode: CacheMode::ReadOnly,
+    };
+    let key_b = generate_scrape_cache_key(&ctx_b, &options);
+    assert_ne!(key_a, key_b, "team dimension must change the cache key");
+
+    let result = worker.try_read_scrape_cache(&ctx_b, &key_b).await;
+    assert!(result.is_ok(), "read should succeed on miss");
+    assert!(
+        result.unwrap().is_none(),
+        "tenant B must not read tenant A's cached response"
+    );
+}
+
+#[tokio::test]
+async fn test_cache_same_team_needs_js_difference_prevents_hit() {
+    // 同 team + 同 URL，needs_js=true 写入后 needs_js=false 读取必须 miss
+    let url = "https://example.com/spa";
+    let team = cache_test_team();
+    let cache = Arc::new(MockCacheService::new());
+    let worker = build_mock_worker_with_cache(cache.clone()).await;
+
+    let ctx = CacheContext {
+        team_id: team,
+        url: url.to_string(),
+        method: HttpMethod::Get,
+        mode: CacheMode::Bypass,
+    };
+    let rendered = ScrapeOptions {
+        needs_js: true,
+        ..Default::default()
+    };
+    let key_rendered = generate_scrape_cache_key(&ctx, &rendered);
+    worker
+        .try_write_scrape_cache(
+            &ctx,
+            &key_rendered,
+            &ScrapeResponse::new(200, "rendered", "text/html"),
+        )
+        .await
+        .unwrap();
+
+    let plain = ScrapeOptions::default();
+    let key_plain = generate_scrape_cache_key(&ctx, &plain);
+    assert_ne!(
+        key_rendered, key_plain,
+        "needs_js must change the cache key within one tenant"
+    );
+
+    let result = worker.try_read_scrape_cache(&ctx, &key_plain).await;
+    assert!(result.is_ok(), "read should succeed on miss");
+    assert!(
+        result.unwrap().is_none(),
+        "needs_js=false must not hit the needs_js=true cached response"
+    );
 }
 
 // process_scrape_task 门控行为（通过 MockCacheService 计数器验证）

@@ -427,8 +427,7 @@ where
         return extract_one(text.to_string()).await;
     }
 
-    let ranges = plan_chunks(text, cfg);
-    let total = ranges.len();
+    let (chunk_texts, total) = plan_chunk_texts(text, cfg);
     log::info!(
         "llm_chunking: text_len={} chars, chunks={}, max_parallel={}, merge_enabled={}",
         text.chars().count(),
@@ -436,7 +435,27 @@ where
         cfg.max_parallel,
         cfg.merge_enabled
     );
-    let chunk_texts: Vec<String> = ranges
+
+    let per_chunk = extract_chunks(chunk_texts, extract_one, cfg.max_parallel).await?;
+    let (chunk_values, mut total_usage) = collect_chunk_results(per_chunk);
+
+    // merge：单次 merge prompt 综合；失败或关闭时确定性退化启发式拼接
+    if cfg.merge_enabled && chunk_values.len() > 1 {
+        if let Some(merged) =
+            merge_chunk_results(&chunk_values, merge_call, &mut total_usage).await?
+        {
+            return Ok((merged, total_usage));
+        }
+    }
+
+    Ok((merge_results(&chunk_values), total_usage))
+}
+
+/// 切块并在每块前加逐块上下文说明；返回（块文本, 块数）
+fn plan_chunk_texts(text: &str, cfg: &ChunkingConfig) -> (Vec<String>, usize) {
+    let ranges = plan_chunks(text, cfg);
+    let total = ranges.len();
+    let chunk_texts = ranges
         .iter()
         .enumerate()
         .map(|(i, r)| {
@@ -449,11 +468,24 @@ where
             )
         })
         .collect();
+    (chunk_texts, total)
+}
 
+/// 并行块提取（JoinSet + 信号量限流，并发峰值 ≤ max_parallel），结果按块序回填
+async fn extract_chunks<E, FutE>(
+    chunk_texts: Vec<String>,
+    extract_one: E,
+    max_parallel: usize,
+) -> anyhow::Result<Vec<(Value, TokenUsage)>>
+where
+    E: Fn(String) -> FutE + Clone + Send + 'static,
+    FutE: std::future::Future<Output = anyhow::Result<(Value, TokenUsage)>> + Send,
+{
     // JoinSet + 信号量限流：并发峰值 ≤ max_parallel
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(cfg.max_parallel.max(1)));
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(max_parallel.max(1)));
     let mut join_set: tokio::task::JoinSet<(usize, anyhow::Result<(Value, TokenUsage)>)> =
         tokio::task::JoinSet::new();
+    let total = chunk_texts.len();
     for (idx, chunk_text) in chunk_texts.into_iter().enumerate() {
         let permit_sem = semaphore.clone();
         let extract_one = extract_one.clone();
@@ -469,39 +501,50 @@ where
         let (value, usage) = result?;
         per_chunk[idx] = Some((value, usage));
     }
+    Ok(per_chunk.into_iter().flatten().collect())
+}
 
+/// 按块序收集结果值并累加 TokenUsage（Σ块）
+fn collect_chunk_results(per_chunk: Vec<(Value, TokenUsage)>) -> (Vec<Value>, TokenUsage) {
     let mut total_usage = TokenUsage::default();
-    let mut chunk_values: Vec<Value> = Vec::with_capacity(total);
-    for (value, usage) in per_chunk.into_iter().flatten() {
+    let mut chunk_values: Vec<Value> = Vec::with_capacity(per_chunk.len());
+    for (value, usage) in per_chunk {
         total_usage.prompt_tokens += usage.prompt_tokens;
         total_usage.completion_tokens += usage.completion_tokens;
         total_usage.total_tokens += usage.total_tokens;
         chunk_values.push(value);
     }
+    (chunk_values, total_usage)
+}
 
-    // merge：单次 merge prompt 综合；失败或关闭时确定性退化启发式拼接
-    if cfg.merge_enabled && chunk_values.len() > 1 {
-        let payload = format!(
-            "{instruction}{results}",
-            instruction = MERGE_INSTRUCTION,
-            results = serde_json::to_string(&chunk_values)?,
-        );
-        match merge_call(payload).await {
-            Ok((merged, usage)) => {
-                total_usage.prompt_tokens += usage.prompt_tokens;
-                total_usage.completion_tokens += usage.completion_tokens;
-                total_usage.total_tokens += usage.total_tokens;
-                return Ok((merged, total_usage));
-            }
-            Err(e) => {
-                log::warn!(
-                    "llm_chunking: merge call failed ({e}); falling back to heuristic merge"
-                );
-            }
+/// merge 调用：成功返回综合结果并累加其 TokenUsage；失败记 warn 并返回 None
+/// （调用方退化为确定性启发式拼接）
+async fn merge_chunk_results<M, FutM>(
+    chunk_values: &[Value],
+    merge_call: M,
+    total_usage: &mut TokenUsage,
+) -> anyhow::Result<Option<Value>>
+where
+    M: Fn(String) -> FutM,
+    FutM: std::future::Future<Output = anyhow::Result<(Value, TokenUsage)>> + Send,
+{
+    let payload = format!(
+        "{instruction}{results}",
+        instruction = MERGE_INSTRUCTION,
+        results = serde_json::to_string(chunk_values)?,
+    );
+    match merge_call(payload).await {
+        Ok((merged, usage)) => {
+            total_usage.prompt_tokens += usage.prompt_tokens;
+            total_usage.completion_tokens += usage.completion_tokens;
+            total_usage.total_tokens += usage.total_tokens;
+            Ok(Some(merged))
+        }
+        Err(e) => {
+            log::warn!("llm_chunking: merge call failed ({e}); falling back to heuristic merge");
+            Ok(None)
         }
     }
-
-    Ok((merge_results(&chunk_values), total_usage))
 }
 
 #[cfg(test)]

@@ -312,6 +312,20 @@ impl SemanticChunker {
     /// 退化分块：无明确语义边界时按段落切分
     fn fallback_chunk(&self, html: &str, chunk_id: &mut usize) -> Result<Vec<Chunk>> {
         let document = Html::parse_document(html);
+        let mut chunks = self.paragraph_chunks(&document, chunk_id);
+
+        if chunks.is_empty() {
+            // 最终退化：整段文本作为一个块
+            if let Some(chunk) = self.whole_document_chunk(html, chunk_id) {
+                chunks.push(chunk);
+            }
+        }
+
+        Ok(chunks)
+    }
+
+    /// 按 `<p>` 标签聚合段落分块（累计达到目标字符数即落块）
+    fn paragraph_chunks(&self, document: &Html, chunk_id: &mut usize) -> Vec<Chunk> {
         let mut chunks = Vec::new();
 
         // 按 <p> 标签分块
@@ -351,21 +365,23 @@ impl SemanticChunker {
             }
         }
 
-        if chunks.is_empty() {
-            // 最终退化：整段文本作为一个块
-            let clean_text = self.strip_html_tags(html);
-            if !clean_text.trim().is_empty() {
-                chunks.push(Chunk {
-                    id: *chunk_id,
-                    text: clean_text,
-                    dom_path: "body".to_string(),
-                    embedding: None,
-                });
-                *chunk_id += 1;
-            }
-        }
+        chunks
+    }
 
-        Ok(chunks)
+    /// 最终退化：整段清洗文本作为一个块（清洗后为空则不分块）
+    fn whole_document_chunk(&self, html: &str, chunk_id: &mut usize) -> Option<Chunk> {
+        let clean_text = self.strip_html_tags(html);
+        if clean_text.trim().is_empty() {
+            return None;
+        }
+        let chunk = Chunk {
+            id: *chunk_id,
+            text: clean_text,
+            dom_path: "body".to_string(),
+            embedding: None,
+        };
+        *chunk_id += 1;
+        Some(chunk)
     }
 
     /// 切分超长文本

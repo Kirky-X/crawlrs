@@ -9,6 +9,7 @@
 //!
 //! 模块边界（规则：`mod.rs` 只放接口与类型）：
 //! - `dataset.rs` — 数据集宽容解析 + 准入谓词
+//! - `collector.rs` — 采集轮执行（数据集拉取 / 准入 upsert / 缺席退役）
 //! - `pool.rs` — 进程内热池（纯内存，无外部依赖）
 //! - `probe.rs` — JSON API 探活判活
 //! - `service.rs` — 编排（采集 / 探活 / 熔断 / 晋升 / 降级）
@@ -27,6 +28,8 @@ pub mod http;
 pub mod pool;
 pub mod probe;
 pub mod service;
+
+mod collector;
 
 #[cfg(test)]
 pub(crate) mod test_support;

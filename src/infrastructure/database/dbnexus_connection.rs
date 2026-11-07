@@ -482,71 +482,16 @@ pub async fn create_pool_with_retry(
 ///
 /// Result containing the pool or a database error
 pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
-    let max_connections = settings.max_connections.unwrap_or(100);
-    let min_connections = settings.min_connections.unwrap_or(10);
-    let idle_timeout = settings.idle_timeout.unwrap_or(300);
-    let acquire_timeout = settings.connect_timeout.map(|t| t * 1000).unwrap_or(30000);
+    let pool_config = build_pool_config(settings);
 
     debug!(
         "Creating dbnexus pool: max_connections={}, min_connections={}, idle_timeout={}s",
-        max_connections, min_connections, idle_timeout
+        pool_config.max_connections, pool_config.min_connections, pool_config.idle_timeout
     );
 
-    let permissions_path = get_permissions_path();
-    if let Some(ref path) = permissions_path {
-        info!("Loading permissions config from: {:?}", path);
-    }
-
-    // R-multidb-schema-002：按编译 dialect 选择迁移目录；auto_migrate 缺省
-    // false（不执行迁移也不报错）。未编译任何 dialect 却要求 auto_migrate
-    // 时显性报错——禁止静默跳过或回退（R-multidb-schema-003）。
-    let migrations_base =
-        std::env::var(MIGRATIONS_DIR_ENV).unwrap_or_else(|_| "migrations".to_string());
-    let migrations_dir = dialect_migrations_dir(Path::new(&migrations_base));
-    if settings.auto_migrate && migrations_dir.is_none() {
-        return Err(DbErr::Custom(
-            "database.auto_migrate=true but no db dialect feature (db-postgres/db-sqlite/\
-             db-mysql) is compiled; cannot select a migrations/<dialect>/ directory"
-                .to_string(),
-        ));
-    }
-    if settings.auto_migrate {
-        info!(
-            "auto_migrate enabled; migrations dir: {}",
-            migrations_dir
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default()
-        );
-    }
-
-    let config = DbConfig {
-        url: settings.url.clone(),
-        pool_config: PoolConfig {
-            max_connections,
-            min_connections,
-            idle_timeout,
-            acquire_timeout,
-        },
-        permissions_path,
-        migrations_dir: migrations_dir.clone(),
-        // fluxweir-llm-gateway D9：池内 auto_migrate 恒关——迁移移交
-        // [`run_crawlrs_migrations`]（专用历史表 `crawlrs_migrations`，
-        // 与 fluxweir 的 dbnexus_migrations 隔离）；settings.auto_migrate
-        // 语义保留，由池创建后的显式执行器承接
-        auto_migrate: false,
-        migration_timeout: 300,
-        admin_role: "admin".to_string(),
-        warmup_timeout: 30,
-        warmup_retries: 3,
-        cache_config: CacheConfig::default(),
-        // fluxweir-llm-gateway T018：显式激活幂等读重试（SELECT/SHOW/EXPLAIN，
-        // INSERT 不受影响）——fluxweir 自建池默认 Some(default)，共享池不设
-        // 会使 fluxweir read 路径重试语义静默失活
-        retry_policy: Some(dbnexus::RetryPolicy::default()),
-        failover_config: None,
-        replica_config: None,
-    };
+    let permissions_path = resolve_permissions_path();
+    let (migrations_base, migrations_dir) = resolve_migrations_dir(settings)?;
+    let config = build_db_config(settings, pool_config, permissions_path, migrations_dir);
 
     // Create pool using dbnexus with_config (handles async initialization)
     let pool = DbPool::with_config(config)
@@ -577,6 +522,84 @@ pub async fn create_pool(settings: &DatabaseSettings) -> Result<DbPool, DbErr> {
     }
 
     Ok(pool)
+}
+
+/// 由设置构造 dbnexus 池参数（连接数与超时缺省值）
+fn build_pool_config(settings: &DatabaseSettings) -> PoolConfig {
+    PoolConfig {
+        max_connections: settings.max_connections.unwrap_or(100),
+        min_connections: settings.min_connections.unwrap_or(10),
+        idle_timeout: settings.idle_timeout.unwrap_or(300),
+        acquire_timeout: settings.connect_timeout.map(|t| t * 1000).unwrap_or(30000),
+    }
+}
+
+/// 解析并记录权限配置路径（dbnexus 权限配置，未检出时返回 None）
+fn resolve_permissions_path() -> Option<String> {
+    let permissions_path = get_permissions_path();
+    if let Some(ref path) = permissions_path {
+        info!("Loading permissions config from: {:?}", path);
+    }
+    permissions_path
+}
+
+/// 解析迁移基目录与方言子目录。
+///
+/// R-multidb-schema-002：按编译 dialect 选择迁移目录；auto_migrate 缺省
+/// false（不执行迁移也不报错）。未编译任何 dialect 却要求 auto_migrate
+/// 时显性报错——禁止静默跳过或回退（R-multidb-schema-003）。
+fn resolve_migrations_dir(settings: &DatabaseSettings) -> Result<(String, Option<PathBuf>), DbErr> {
+    let migrations_base =
+        std::env::var(MIGRATIONS_DIR_ENV).unwrap_or_else(|_| "migrations".to_string());
+    let migrations_dir = dialect_migrations_dir(Path::new(&migrations_base));
+    if settings.auto_migrate && migrations_dir.is_none() {
+        return Err(DbErr::Custom(
+            "database.auto_migrate=true but no db dialect feature (db-postgres/db-sqlite/\
+             db-mysql) is compiled; cannot select a migrations/<dialect>/ directory"
+                .to_string(),
+        ));
+    }
+    if settings.auto_migrate {
+        info!(
+            "auto_migrate enabled; migrations dir: {}",
+            migrations_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        );
+    }
+    Ok((migrations_base, migrations_dir))
+}
+
+/// 由设置与已解析路径构造 dbnexus 配置（池内 auto_migrate 恒关）
+fn build_db_config(
+    settings: &DatabaseSettings,
+    pool_config: PoolConfig,
+    permissions_path: Option<String>,
+    migrations_dir: Option<PathBuf>,
+) -> DbConfig {
+    DbConfig {
+        url: settings.url.clone(),
+        pool_config,
+        permissions_path,
+        migrations_dir,
+        // fluxweir-llm-gateway D9：池内 auto_migrate 恒关——迁移移交
+        // [`run_crawlrs_migrations`]（专用历史表 `crawlrs_migrations`，
+        // 与 fluxweir 的 dbnexus_migrations 隔离）；settings.auto_migrate
+        // 语义保留，由池创建后的显式执行器承接
+        auto_migrate: false,
+        migration_timeout: 300,
+        admin_role: "admin".to_string(),
+        warmup_timeout: 30,
+        warmup_retries: 3,
+        cache_config: CacheConfig::default(),
+        // fluxweir-llm-gateway T018：显式激活幂等读重试（SELECT/SHOW/EXPLAIN，
+        // INSERT 不受影响）——fluxweir 自建池默认 Some(default)，共享池不设
+        // 会使 fluxweir read 路径重试语义静默失活
+        retry_policy: Some(dbnexus::RetryPolicy::default()),
+        failover_config: None,
+        replica_config: None,
+    }
 }
 
 #[cfg(test)]

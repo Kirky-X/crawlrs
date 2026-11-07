@@ -8,7 +8,7 @@
 //!
 //! 核心数据结构：
 //! - `CoalesceKey`：合并键 = 租户 + 规范化 URL + 完整请求身份指纹
-//!   （`ScrapeOptions` 全字段，含 headers/proxy）
+//!   （`ScrapeOptions` 全字段，含 headers/proxy；`cache_mode` 为控制开关，归一后不参与）
 //! - `RequestCoalescer`：`DashMap<CoalesceKey, InFlightEntry>` 共享状态
 //! - `CoalesceResult`：`try_start` 返回枚举（`Proceed`/`Wait`）
 //! - `CoalesceGuard`：RAII guard，Drop 时广播完成通知并移除条目
@@ -19,8 +19,9 @@
 //! 同一 URL 会命中同一 in-flight 条目，等待方按 leader task_id 读到另一租户
 //! 的抓取结果。租户 + 完整请求身份指纹进入键后：
 //! - 不同租户永不合并（跨租户泄露路径不可达）
-//! - 同租户但请求身份不同（headers/proxy/method/body/needs_js/... 任一
-//!   `ScrapeOptions` 字段）也不合并（避免带认证头或不同渲染选项的请求互相串结果）
+//! - 同租户但请求身份不同（headers/proxy/method/body/needs_js/... 任一内容
+//!   相关 `ScrapeOptions` 字段；`cache_mode` 除外）也不合并（避免带认证头或
+//!   不同渲染选项的请求互相串结果）
 //! - 同租户且完整请求身份相同 → 合并
 //!
 //! 设计要点：
@@ -35,7 +36,7 @@
 
 use crate::domain::id::Id;
 use crate::engines::types::ScrapeOptions;
-use crate::workers::cache_utils::redact_url_for_log;
+use crate::utils::url_redaction::redact_url_for_log;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::hash::Hasher;
@@ -52,8 +53,8 @@ pub const STALE_TIMEOUT: Duration = Duration::from_secs(120);
 /// 三个维度共同决定"两个请求是否可以共用一次抓取结果"：
 /// - `team_id`：租户隔离边界，跨租户永不合并（M-2 修复点）
 /// - `url`：规范化后的目标 URL（等价写法归一）
-/// - `fingerprint`：完整请求身份的确定性摘要（`ScrapeOptions` 全字段，
-///   含 headers 与 proxy）
+/// - `fingerprint`：完整请求身份的确定性摘要（`ScrapeOptions` 中与内容相关的
+///   字段，含 headers 与 proxy；缓存控制开关 `cache_mode` 归一后不参与）
 ///
 /// `Hash`/`Eq` 全维度比较，任一维度不同即视为不同请求。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -74,10 +75,12 @@ impl CoalesceKey {
     ///
     /// # 指纹语义
     ///
-    /// - **完整**：`ScrapeOptions` 全部字段参与指纹（method/body/needs_js/
-    ///   session_id/mobile/needs_screenshot/screenshot_config/actions/wait_for/
-    ///   block_ads/block_media/use_fire_engine/needs_mllm/skip_tls_verification/
-    ///   headers/proxy 等），新增字段自动纳入
+    /// - **完整**：`ScrapeOptions` 中所有影响请求/响应内容的字段都参与指纹
+    ///   （method/body/needs_js/session_id/mobile/needs_screenshot/
+    ///   screenshot_config/actions/wait_for/block_ads/block_media/
+    ///   use_fire_engine/needs_mllm/skip_tls_verification/headers/proxy 等），
+    ///   新增字段自动纳入；`cache_mode` 是缓存/合并控制开关，不是内容身份，
+    ///   归一为 `None` 后不参与（见 `request_fingerprint`）
     /// - **确定性**：序列化为结构化 JSON 后递归按键排序，headers 名先小写再按
     ///   （名, 值）排序，`HashMap` 迭代序不影响指纹
     /// - **进程内稳定**：哈希用 `DefaultHasher`（SipHash-1-3）。算法跨 Rust 版本
@@ -133,21 +136,44 @@ fn normalize_coalesce_url(raw: &str) -> String {
     }
 }
 
-/// 计算完整请求身份（`ScrapeOptions` 全字段）的确定性指纹
+/// 计算请求身份（`ScrapeOptions` 内容相关字段）的确定性指纹
 ///
 /// 编码分两步：
 /// 1. `serde_json::to_value` 把 `ScrapeOptions` 转成结构化 JSON 表示；headers
 ///    单独替换为「小写名 + 值排序的二元组数组」，消除 `HashMap` 迭代序与
-///    header 名大小写差异
+///    header 名大小写差异；`cache_mode` 归一为 `null`
 /// 2. 递归按键排序所有 JSON 对象后 `serde_json::to_vec` 得到确定性字节串，
 ///    再经 `DefaultHasher`（SipHash-1-3）压缩为 64 位
 ///
+/// # cache_mode 不参与身份
+///
+/// `cache_mode` 是缓存/合并的控制开关，不是内容身份：`None` 与
+/// `Some(CacheMode::Enabled)` 语义等价（默认启用），`ReadOnly` / `Bypass`
+/// 只改变本次读写字行为，不改变抓取结果。若纳入指纹，会同时造成：
+/// - `ReadOnly` 读取与写入使用不同 key → 永远 miss
+/// - `Bypass` 写入的条目无人读取（读取 key 不同）
+/// - `None` 与 `Some(Enabled)` 生成双 key，缓存与合并都被拆散
+///
+/// 因此规范化投影把该字段固定为 `null`，合并键与缓存键同享此语义。
+/// 该归一不是第二份字段清单：除 headers 的确定性替换外，其余字段仍由
+/// `ScrapeOptions` 的 `Serialize` 自动纳入。
+///
 /// 选 `DefaultHasher` 而非自研 FNV：键只存在于进程内存，无须跨进程稳定；
 /// 结构化序列化已保证编码确定，标准库零依赖即可。
-fn request_fingerprint(options: &ScrapeOptions) -> u64 {
-    // 字段名必须与 `ScrapeOptions::headers` 一致；该字段改名时须同步更新此处，
-    // 否则 headers 将被错误地按 `HashMap` 迭代序编码。
+///
+/// # 复用约束
+///
+/// 这是全仓唯一的 `ScrapeOptions` 身份编码实现：抓取缓存键
+/// （`workers::cache_utils::generate_scrape_cache_key`）直接复用本函数，
+/// 不得另建字段清单。`ScrapeOptions` 新增字段会自动进入缓存键与合并键，
+/// 避免两条链路对"请求身份"的定义漂移（控制开关类字段按上述归一例外处理）。
+#[must_use]
+pub(crate) fn request_fingerprint(options: &ScrapeOptions) -> u64 {
+    // 字段名必须与 `ScrapeOptions` 的字段名一致；字段改名时须同步更新此处。
+    // - `headers`：按确定性结构编码，消除 HashMap 迭代序
+    // - `cache_mode`：控制开关归一为 null，不参与内容身份（见函数文档）
     const HEADERS_FIELD: &str = "headers";
+    const CACHE_MODE_FIELD: &str = "cache_mode";
 
     let mut identity =
         serde_json::to_value(options).expect("ScrapeOptions JSON serialization is infallible");
@@ -156,6 +182,7 @@ fn request_fingerprint(options: &ScrapeOptions) -> u64 {
             HEADERS_FIELD.to_string(),
             canonical_headers(&options.headers),
         );
+        map.insert(CACHE_MODE_FIELD.to_string(), serde_json::Value::Null);
     }
     let canonical = canonicalize_json(identity);
     let bytes =
@@ -1115,15 +1142,58 @@ mod tests {
         );
         assert_ne!(
             base,
-            fp(|o| o.cache_mode = Some(CacheMode::Bypass)),
-            "cache_mode"
-        );
-        assert_ne!(
-            base,
             fp(|o| o.wait_for = Some(WaitFor::Selector("main".into()))),
             "wait_for"
         );
         assert_ne!(base, fp(|o| o.needs_mllm = true), "needs_mllm");
+    }
+
+    /// H1 回归：`cache_mode` 是控制开关，不参与请求内容身份
+    ///
+    /// 四种取值必须得到同一指纹。否则 ReadOnly 读用的 key 与写用的 key 不同
+    /// 导致永远 miss，Bypass 写入的条目无人读取，None 与 Some(Enabled) 拆成
+    /// 双 key。合并键与缓存键共用本指纹，因此两者同享该归一。
+    #[test]
+    fn fingerprint_ignores_cache_mode_control_switch() {
+        fn fp(cache_mode: Option<CacheMode>) -> u64 {
+            let options = ScrapeOptions {
+                cache_mode,
+                ..Default::default()
+            };
+            key_with("https://example.com/cache-mode", &options).fingerprint()
+        }
+
+        let base = fp(None);
+        assert_eq!(base, fp(Some(CacheMode::Enabled)), "Some(Enabled)");
+        assert_eq!(base, fp(Some(CacheMode::ReadOnly)), "Some(ReadOnly)");
+        assert_eq!(base, fp(Some(CacheMode::Bypass)), "Some(Bypass)");
+        // Disabled 同为控制开关，归一后指纹不变（该模式下缓存流程整体跳过）
+        assert_eq!(base, fp(Some(CacheMode::Disabled)), "Some(Disabled)");
+
+        // 归一只针对 cache_mode：headers 与 needs_js 仍必须敏感
+        let mut with_header = ScrapeOptions {
+            cache_mode: Some(CacheMode::Bypass),
+            ..Default::default()
+        };
+        with_header
+            .headers
+            .insert("Authorization".into(), "Bearer token".into());
+        assert_ne!(
+            base,
+            key_with("https://example.com/cache-mode", &with_header).fingerprint(),
+            "headers must stay part of request identity"
+        );
+
+        let with_js = ScrapeOptions {
+            cache_mode: Some(CacheMode::ReadOnly),
+            needs_js: true,
+            ..Default::default()
+        };
+        assert_ne!(
+            base,
+            key_with("https://example.com/cache-mode", &with_js).fingerprint(),
+            "needs_js must stay part of request identity"
+        );
     }
 
     /// H1 行为回归：同租户同 URL 但 needs_js 不同的请求不合并

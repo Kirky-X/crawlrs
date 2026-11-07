@@ -59,6 +59,8 @@ pub mod url;
 ///
 /// 等价 URL 归一为同一规范串，配合 dedup 模块做分层去重。
 pub mod url_normalizer;
+/// URL 日志脱敏（移除 query/fragment/userinfo，限制长度）
+pub(crate) mod url_redaction;
 
 // 向后兼容的重新导出 - 已清理，只保留结构体
 pub use crate::utils::text_processing::{

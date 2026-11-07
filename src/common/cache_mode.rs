@@ -34,6 +34,7 @@
 //! 调用方需要"只写不读"语义时统一用 `Bypass`。
 
 use crate::common::HttpMethod;
+use crate::domain::id::Id;
 use serde::{Deserialize, Serialize};
 
 /// 缓存模式枚举
@@ -82,11 +83,16 @@ const UNCACHEABLE_SCHEMES: &[&str] = &[
 
 /// 缓存上下文
 ///
-/// 封装单次抓取请求的缓存决策输入：URL、HTTP method、缓存模式。
+/// 封装单次抓取请求的缓存决策输入：租户、URL、HTTP method、缓存模式。
 /// `scrape_worker` 在读写 `CacheService` 前构造 `CacheContext` 并调用
 /// `should_read`/`should_write`/`is_cacheable` 门控。
+///
+/// `team_id` 同时参与 cache key 组成，保证跨租户不共享缓存条目
+/// （CWE-200：跨租户内容泄露）。
 #[derive(Debug, Clone)]
 pub struct CacheContext {
+    /// 任务所属租户（cache key 的隔离维度）
+    pub team_id: Id,
     /// 目标 URL（用于 `is_cacheable` 判断 scheme）
     pub url: String,
     /// HTTP 方法（用于 `is_cacheable` 判断非幂等）
@@ -179,6 +185,7 @@ mod tests {
     #[test]
     fn test_should_read_enabled_returns_true() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -189,6 +196,7 @@ mod tests {
     #[test]
     fn test_should_read_disabled_returns_false() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Disabled,
@@ -199,6 +207,7 @@ mod tests {
     #[test]
     fn test_should_read_read_only_returns_true() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::ReadOnly,
@@ -210,6 +219,7 @@ mod tests {
     fn test_should_read_bypass_returns_false() {
         // Bypass：跳过读（不信任缓存），合并原 WriteOnly 语义
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Bypass,
@@ -222,6 +232,7 @@ mod tests {
     #[test]
     fn test_should_write_enabled_returns_true() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -232,6 +243,7 @@ mod tests {
     #[test]
     fn test_should_write_disabled_returns_false() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Disabled,
@@ -243,6 +255,7 @@ mod tests {
     fn test_should_write_read_only_returns_false() {
         // ReadOnly：未命中抓取不写回
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::ReadOnly,
@@ -255,6 +268,7 @@ mod tests {
         // Bypass：跳过读，正常写回（更新缓存）
         // 合并原 WriteOnly 语义
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Bypass,
@@ -276,6 +290,7 @@ mod tests {
 
         for (mode, expected_read, expected_write) in cases {
             let ctx = CacheContext {
+                team_id: Id::nil(),
                 url: "https://example.com".to_string(),
                 method: HttpMethod::Get,
                 mode,
@@ -300,6 +315,7 @@ mod tests {
     #[test]
     fn test_is_cacheable_https_url_returns_true() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com/page".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -310,6 +326,7 @@ mod tests {
     #[test]
     fn test_is_cacheable_http_url_returns_true() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "http://example.com/page".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -320,6 +337,7 @@ mod tests {
     #[test]
     fn test_is_cacheable_data_scheme_returns_false() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "data:text/plain;base64,SGVsbG8=".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -330,6 +348,7 @@ mod tests {
     #[test]
     fn test_is_cacheable_blob_scheme_returns_false() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "blob:https://example.com/uuid".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -343,6 +362,7 @@ mod tests {
     fn test_is_cacheable_javascript_scheme_returns_false() {
         // javascript: URI 缓存后可能被其他请求读到并触发 XSS 执行
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "javascript:alert('xss')".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -354,6 +374,7 @@ mod tests {
     fn test_is_cacheable_file_scheme_returns_false() {
         // file:// 本地文件访问，缓存无意义且可能泄露本地文件内容
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "file:///etc/passwd".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -365,6 +386,7 @@ mod tests {
     fn test_is_cacheable_vbscript_scheme_returns_false() {
         // vbscript: IE 脚本注入向量
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "vbscript:msgbox('xss')".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -376,6 +398,7 @@ mod tests {
     fn test_is_cacheable_about_scheme_returns_false() {
         // about: 浏览器内部页面（about:blank 等），无网络往返
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "about:blank".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -394,6 +417,7 @@ mod tests {
         ];
         for url in cases {
             let ctx = CacheContext {
+                team_id: Id::nil(),
                 url: url.to_string(),
                 method: HttpMethod::Get,
                 mode: CacheMode::Enabled,
@@ -410,6 +434,7 @@ mod tests {
     fn test_is_cacheable_data_scheme_case_insensitive() {
         // scheme 检查应大小写不敏感（URL scheme 规范定义为小写，但防御性编程）
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "DATA:text/plain,hello".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -420,6 +445,7 @@ mod tests {
     #[test]
     fn test_is_cacheable_blob_scheme_case_insensitive() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "BLOB:https://example.com/uuid".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -432,6 +458,7 @@ mod tests {
     #[test]
     fn test_is_cacheable_get_method_returns_true() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -443,6 +470,7 @@ mod tests {
     fn test_is_cacheable_post_method_returns_false() {
         // POST 非幂等，不可缓存
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com/api".to_string(),
             method: HttpMethod::Post,
             mode: CacheMode::Enabled,
@@ -454,6 +482,7 @@ mod tests {
     fn test_is_cacheable_post_with_data_scheme_returns_false() {
         // 两个条件都命中，仍返回 false（短路 OR）
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "data:text/plain,hello".to_string(),
             method: HttpMethod::Post,
             mode: CacheMode::Enabled,
@@ -474,6 +503,7 @@ mod tests {
         ];
         for mode in modes {
             let ctx = CacheContext {
+                team_id: Id::nil(),
                 url: "https://example.com".to_string(),
                 method: HttpMethod::Get,
                 mode,
@@ -491,6 +521,7 @@ mod tests {
         // 即使 mode=Disabled，is_cacheable 仍按 url+method 判断
         // 调用方应先查 is_cacheable，若 false 则跳过整个缓存流程
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "data:text/plain,hello".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Disabled,
@@ -503,6 +534,7 @@ mod tests {
     #[test]
     fn test_cache_context_fields_accessible() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::ReadOnly,
@@ -515,6 +547,7 @@ mod tests {
     #[test]
     fn test_cache_context_clone() {
         let ctx = CacheContext {
+            team_id: Id::nil(),
             url: "https://example.com".to_string(),
             method: HttpMethod::Get,
             mode: CacheMode::Enabled,

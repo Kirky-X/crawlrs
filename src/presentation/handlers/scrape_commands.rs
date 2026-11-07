@@ -23,6 +23,7 @@ use crate::{
     domain::services::team_service::TeamService,
     i18n::{I18nBundle, Locale},
     presentation::extractors::CrawlRsDeps,
+    presentation::handlers::credits::{CreditCharge, CreditFlow},
     presentation::handlers::response_builder::{
         errors, errors_locale, json_rejection_response, success_response, ApiResponse,
     },
@@ -156,7 +157,9 @@ async fn preflight_scrape(
         return Some(response);
     }
 
-    deduct_scrape_quota(rate_limiting_service, team_id, &payload.url).await
+    CreditFlow::new(rate_limiting_service, team_id)
+        .deduct(CreditCharge::Scrape { url: &payload.url })
+        .await
 }
 
 /// 入队并构造成功 / 失败响应（失败时补偿退还已扣配额）。
@@ -177,7 +180,9 @@ async fn enqueue_scrape(
                 team_id, e, payload
             );
             // 补偿：入队失败时退还已扣的 1 credit，避免客户积分静默丢失
-            refund_scrape_quota(rate_limiting_service, team_id, &payload.url, task.id).await;
+            CreditFlow::new(rate_limiting_service, team_id)
+                .refund(CreditCharge::Scrape { url: &payload.url }, Some(task.id))
+                .await;
             errors::internal_server_error(e.to_string())
         }
     }
@@ -278,28 +283,6 @@ async fn enforce_scrape_geo_restrictions(
     }
 }
 
-/// 扣减 1 credit 的 scrape 配额；失败返回 402 响应。
-async fn deduct_scrape_quota(
-    rate_limiting_service: &dyn RateLimitingService,
-    team_id: crate::domain::id::Id,
-    url: &str,
-) -> Option<Response> {
-    if let Err(e) = rate_limiting_service
-        .check_and_deduct_quota(
-            team_id,
-            1,
-            crate::domain::models::CreditsTransactionType::Scrape,
-            format!("Scrape URL: {}", url),
-            None,
-        )
-        .await
-    {
-        error!("Quota check failed for team {}: {}", team_id, e);
-        return Some(errors::payment_required(e.to_string()));
-    }
-    None
-}
-
 /// 入队成功后按 sync_wait_ms 等待任务状态并构造 201/202 响应。
 async fn respond_scrape_enqueued(
     task_repository: &dyn TaskRepository,
@@ -329,29 +312,6 @@ async fn respond_scrape_enqueued(
     let status_code = sync_wait_status_code(sync_wait_ms, wait_result.is_timeout);
 
     success_response(status_code, response)
-}
-
-/// 补偿：入队失败时退还已扣的 1 credit，避免客户积分静默丢失。
-async fn refund_scrape_quota(
-    rate_limiting_service: &dyn RateLimitingService,
-    team_id: crate::domain::id::Id,
-    url: &str,
-    task_id: crate::domain::id::Id,
-) {
-    if let Err(refund_err) = rate_limiting_service
-        .refund_quota(
-            team_id,
-            1,
-            format!("Refund: enqueue failed for {}", url),
-            Some(task_id),
-        )
-        .await
-    {
-        error!(
-            "CRITICAL: Failed to refund 1 credit for team {} after enqueue failure: {}",
-            team_id, refund_err
-        );
-    }
 }
 
 /// Cancel a scrape task by ID.

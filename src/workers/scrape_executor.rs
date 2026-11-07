@@ -19,7 +19,8 @@ use crate::i18n::tr_log_args;
 use crate::infrastructure::oxcache::CacheService;
 use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
 use crate::utils::robots::RobotsCheckerTrait;
-use crate::workers::cache_utils::{redact_url_for_log, SanitizedScrapeResponse};
+use crate::utils::url_redaction::redact_url_for_log;
+use crate::workers::cache_utils::SanitizedScrapeResponse;
 
 /// 处理文本编码转换
 ///
@@ -714,6 +715,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_read_scrape_cache_miss_returns_none() {
         let ctx = CacheContext {
+            team_id: crate::domain::id::Id::nil(),
             url: "https://example.com".to_string(),
             method: crate::common::HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -730,6 +732,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_write_scrape_cache_writes_serialized_response() {
         let ctx = CacheContext {
+            team_id: crate::domain::id::Id::nil(),
             url: "https://example.com".to_string(),
             method: crate::common::HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -746,6 +749,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_write_scrape_cache_key_matches_read_key() {
         let ctx = CacheContext {
+            team_id: crate::domain::id::Id::nil(),
             url: "https://example.com".to_string(),
             method: crate::common::HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -882,6 +886,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_read_scrape_cache_get_error() {
         let ctx = CacheContext {
+            team_id: crate::domain::id::Id::nil(),
             url: "https://example.com".to_string(),
             method: crate::common::HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -894,6 +899,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_read_scrape_cache_corrupt_data() {
         let ctx = CacheContext {
+            team_id: crate::domain::id::Id::nil(),
             url: "https://example.com".to_string(),
             method: crate::common::HttpMethod::Get,
             mode: CacheMode::Enabled,
@@ -909,6 +915,7 @@ mod tests {
     #[tokio::test]
     async fn test_try_write_scrape_cache_set_error() {
         let ctx = CacheContext {
+            team_id: crate::domain::id::Id::nil(),
             url: "https://example.com".to_string(),
             method: crate::common::HttpMethod::Get,
             mode: CacheMode::Enabled,

@@ -17,6 +17,7 @@ use crate::application::dto::crawl_request::CrawlConfigDto;
 use crate::application::dto::scrape_request::ScrapeRequestDto;
 use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::config::settings::Settings;
+use crate::domain::id::Id;
 use crate::domain::models::{Task, TaskStatus};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::credits_repository::CreditsRepository;
@@ -43,10 +44,12 @@ use crate::queue::task_queue::TaskQueue;
 use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 // 优雅退出协调器
 use crate::workers::shutdown::ShutdownCoordinator;
-// cache key 生成、URL 脱敏
-use crate::workers::cache_utils::{self, redact_url_for_log};
+// cache key 生成
+use crate::workers::cache_utils;
 // 请求合并键（租户 + 规范化 URL + 完整请求身份指纹）
 use crate::utils::coalesce::CoalesceKey;
+// URL 日志脱敏
+use crate::utils::url_redaction::redact_url_for_log;
 // Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
 use crate::utils::retry_policy::RetryPolicy;
 #[cfg(feature = "content")]
@@ -387,7 +390,7 @@ impl ScrapeWorker {
             .prepare_conditional_request(&task, &mut scrape_request, scrape_request_dto.as_ref())
             .await;
 
-        let response = self.scrape_with_cache(&scrape_request).await;
+        let response = self.scrape_with_cache(task.team_id, &scrape_request).await;
 
         match response {
             Ok(response) => {
@@ -475,7 +478,7 @@ impl ScrapeWorker {
             if is_internal_url(proxy_url) {
                 warn!(
                     "SSRF via proxy blocked in worker proxy={} task_id={} team_id={}",
-                    crate::workers::cache_utils::redact_url_for_log(proxy_url),
+                    redact_url_for_log(proxy_url),
                     task.id,
                     task.team_id
                 );
@@ -505,7 +508,7 @@ impl ScrapeWorker {
             warn!(
                 "robots_disallowed: task {} marked failed, url={}, ua={}",
                 task.id,
-                crate::workers::cache_utils::redact_url_for_log(&task.url),
+                redact_url_for_log(&task.url),
                 self.settings.robots.user_agent
             );
             self.repository
@@ -579,54 +582,63 @@ impl ScrapeWorker {
     /// - 写缓存：`is_cacheable && should_write` 且抓取成功 → 序列化写回
     ///
     /// `cache_mode=None`（默认）等价于 `Enabled`（`unwrap_or_default()`）。
-    /// 不可缓存的请求（data:/blob:/POST）跳过整个缓存流程。
+    /// 不可缓存的请求（data:/blob:/POST）跳过整个缓存流程；cache key 也只在
+    /// 缓存流程实际启用（可缓存且可读或可写）时生成。
+    ///
+    /// `team_id` 进入 cache key：跨租户不共享缓存条目（CWE-200）。
     async fn scrape_with_cache(
         &self,
+        team_id: Id,
         scrape_request: &ScrapeRequest,
     ) -> Result<ScrapeResponse, EngineError> {
         let cache_ctx = CacheContext {
+            team_id,
             url: scrape_request.url.clone(),
             method: scrape_request.options.method,
             mode: scrape_request.options.cache_mode.unwrap_or_default(),
         };
 
-        // cache key 纳入 ScrapeOptions 影响字段（headers/needs_js/session_id）
-        //
-        // 由 `cache_utils::generate_scrape_cache_key` 统一生成，读/写共用同一 key。
-        // 旧实现仅 `scrape:{method}:{url}` 会导致同 URL 不同 options 的缓存串扰
-        // （如 needs_js=true 拿到渲染后 DOM 与 needs_js=false 拿到原始 HTML 共享缓存）。
-        let cache_key = cache_utils::generate_scrape_cache_key(&cache_ctx, &scrape_request.options);
+        // cache key 仅在缓存流程实际启用时生成：`is_cacheable` 且至少一个
+        // 读写方向被允许。`Disabled` 与不可缓存请求（data:/blob:/POST 等）
+        // 不做指纹计算。读/写共用同一个 `Option<String>`，避免门控前无条件
+        // 生成 key（M1：指纹含 JSON 规范化，属非平凡开销）。
+        let cache_key = (cache_ctx.is_cacheable()
+            && (cache_ctx.should_read() || cache_ctx.should_write()))
+        .then(|| cache_utils::generate_scrape_cache_key(&cache_ctx, &scrape_request.options));
 
         // 读缓存门控
-        let cached_response = if cache_ctx.is_cacheable() && cache_ctx.should_read() {
-            match try_read_scrape_cache(&cache_ctx, &cache_key, self.cache_service.as_ref()).await {
-                Ok(Some(cached)) => {
-                    // debug 禁用时跳过 redact_url_for_log 调用（~1μs）
-                    // log crate 的 debug! 宏本身已 lazy format_args，但函数参数在宏调用前已求值，
-                    // 需 log_enabled! 守卫才能避免 redact_url_for_log 的 Url::parse + String 分配。
-                    if log::log_enabled!(log::Level::Debug) {
-                        debug!(
-                            "Cache hit, returning cached response url={} mode={:?}",
-                            redact_url_for_log(&cache_ctx.url),
-                            cache_ctx.mode
-                        );
+        let cached_response = match cache_key.as_deref() {
+            Some(cache_key) if cache_ctx.should_read() => {
+                match try_read_scrape_cache(&cache_ctx, cache_key, self.cache_service.as_ref())
+                    .await
+                {
+                    Ok(Some(cached)) => {
+                        // debug 禁用时跳过 redact_url_for_log 调用（~1μs）
+                        // log crate 的 debug! 宏本身已 lazy format_args，但函数参数在宏调用前已求值，
+                        // 需 log_enabled! 守卫才能避免 redact_url_for_log 的 Url::parse + String 分配。
+                        if log::log_enabled!(log::Level::Debug) {
+                            debug!(
+                                "Cache hit, returning cached response url={} mode={:?}",
+                                redact_url_for_log(&cache_ctx.url),
+                                cache_ctx.mode
+                            );
+                        }
+                        Some(cached)
                     }
-                    Some(cached)
-                }
-                Ok(None) => None,
-                Err(e) => {
-                    // 缓存读失败不吞，记录后降级为 miss（不阻塞抓取）
-                    // 日志使用脱敏 URL，防止 query 参数泄露
-                    warn!(
-                        "Cache read failed, falling back to scrape url={} error={}",
-                        redact_url_for_log(&cache_ctx.url),
-                        e
-                    );
-                    None
+                    Ok(None) => None,
+                    Err(e) => {
+                        // 缓存读失败不吞，记录后降级为 miss（不阻塞抓取）
+                        // 日志使用脱敏 URL，防止 query 参数泄露
+                        warn!(
+                            "Cache read failed, falling back to scrape url={} error={}",
+                            redact_url_for_log(&cache_ctx.url),
+                            e
+                        );
+                        None
+                    }
                 }
             }
-        } else {
-            None
+            _ => None,
         };
 
         match cached_response {
@@ -635,23 +647,25 @@ impl ScrapeWorker {
                 let resp = self.engine_client.scrape(scrape_request).await;
                 // 写缓存门控：仅抓取成功且 should_write 时写回
                 if let Ok(ref r) = resp {
-                    if cache_ctx.is_cacheable() && cache_ctx.should_write() {
-                        if let Err(e) = try_write_scrape_cache(
-                            &cache_ctx,
-                            &cache_key,
-                            r,
-                            self.cache_service.as_ref(),
-                            self.settings.cache.types.search.ttl_seconds,
-                        )
-                        .await
-                        {
-                            // 缓存写失败不吞，记录但不影响抓取结果
-                            // 日志使用脱敏 URL
-                            warn!(
-                                "Cache write failed url={} error={}",
-                                redact_url_for_log(&cache_ctx.url),
-                                e
-                            );
+                    if cache_ctx.should_write() {
+                        if let Some(cache_key) = cache_key.as_deref() {
+                            if let Err(e) = try_write_scrape_cache(
+                                &cache_ctx,
+                                cache_key,
+                                r,
+                                self.cache_service.as_ref(),
+                                self.settings.cache.types.search.ttl_seconds,
+                            )
+                            .await
+                            {
+                                // 缓存写失败不吞，记录但不影响抓取结果
+                                // 日志使用脱敏 URL
+                                warn!(
+                                    "Cache write failed url={} error={}",
+                                    redact_url_for_log(&cache_ctx.url),
+                                    e
+                                );
+                            }
                         }
                     }
                 }
@@ -1726,7 +1740,7 @@ impl ScrapeWorker {
 }
 
 // 任务准入 / 结果提取辅助方法（partial impl block）
-mod task_support;
+mod task_lifecycle;
 // Crawl 任务处理方法（partial impl block）
 mod crawl_task;
 // Extract 任务处理方法（partial impl block）

@@ -31,8 +31,8 @@
 //! 链接发现运行）；sitemap 404 是合法状态（站点无 sitemap），返回零入队
 //! 而非错误。
 
-mod batch_helpers;
-use batch_helpers::{build_sitemap_task, dedup_filtered_batch, filter_batch_urls};
+mod sitemap_batch;
+use sitemap_batch::{build_sitemap_task, dedup_filtered_batch, filter_batch_urls};
 
 use std::sync::Arc;
 

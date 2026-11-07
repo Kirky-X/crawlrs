@@ -33,7 +33,7 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::utils::coalesce::{
     CoalesceGuard, CoalesceKey, CoalesceResult, CoalesceSignal, RequestCoalescer,
 };
-use crate::workers::cache_utils::redact_url_for_log;
+use crate::utils::url_redaction::redact_url_for_log;
 use anyhow::Result;
 use chrono::Utc;
 use log::{error, info, warn};
@@ -44,7 +44,8 @@ use std::sync::Arc;
 ///
 /// 封装同合并键（租户 + 规范化 URL + 完整请求身份指纹）并发请求的
 /// single-flight 协调逻辑，从 ScrapeWorker 抽离。
-/// 合并键构造见 [`CoalesceKey`]：跨租户或 `ScrapeOptions` 任一字段不同一律不合并。
+/// 合并键构造见 [`CoalesceKey`]：跨租户或 `ScrapeOptions` 内容相关字段
+/// 任一不同一律不合并（`cache_mode` 控制开关除外）。
 ///
 /// # 字段
 ///

@@ -295,35 +295,17 @@ impl RobotsChecker {
     /// 按 retry_policy 重试抓取 robots.txt；含 fail-closed / fail-open 降级语义
     async fn fetch_robots_text(&self, robots_url: &str) -> RobotsFetch {
         let mut attempt = 0;
-        let mut content = String::new();
         let mut last_error = None;
 
         while attempt < self.retry_policy.max_retries {
             attempt += 1;
-            let request = Self::build_robots_request(robots_url, &self.user_agent);
 
-            let response = self.engine_client.scrape(&request).await;
-
-            match response {
-                Ok(resp) => {
-                    if resp.is_success() {
-                        content = resp.content;
-                        last_error = None;
-                        break;
-                    } else if resp.status_code == 404 {
-                        content = "".to_string();
-                        last_error = None;
-                        break;
-                    } else if resp.status_code >= 500 {
-                        last_error = Some(anyhow::anyhow!("Server error: {}", resp.status_code));
-                    } else {
-                        content = "".to_string();
-                        last_error = None;
-                        break;
-                    }
+            match self.fetch_robots_once(robots_url).await {
+                RobotsFetchAttempt::Content(content) => {
+                    return RobotsFetch::Content(content);
                 }
-                Err(e) => {
-                    last_error = Some(anyhow::anyhow!("Request failed: {}", e));
+                RobotsFetchAttempt::Retryable(err) => {
+                    last_error = Some(err);
                 }
             }
 
@@ -333,38 +315,69 @@ impl RobotsChecker {
             }
         }
 
-        if let Some(err) = last_error {
-            if self.fail_closed {
-                log::warn!(
-                    "{}",
-                    crate::i18n::tr_log_args(
-                        "robots-fetch-fail-closed",
-                        &[
-                            ("url", fluent_bundle::FluentValue::from(robots_url)),
-                            ("error", fluent_bundle::FluentValue::from(err.to_string())),
-                        ],
-                    )
-                );
-                // 失败标记按短 TTL 写入内存缓存，防止对不可达目标站打爆
-                {
-                    let mut cache = self.memory_cache.lock().await;
-                    cache.insert(
-                        robots_url.to_string(),
-                        CachedRobots {
-                            content: String::new(),
-                            expires_at: Instant::now() + ROBOTS_FAILURE_CACHE_TTL,
-                            fetch_failed: true,
-                        },
-                    );
-                }
-                return RobotsFetch::FailClosed;
-            }
-            log::warn!("Failed to fetch robots.txt from {}: {}", robots_url, err);
-            // Default to empty content on persistent error
-            content = "".to_string();
+        match last_error {
+            Some(err) => self.handle_robots_fetch_error(robots_url, err).await,
+            // max_retries=0：从未发起尝试，等价于历史空内容返回
+            None => RobotsFetch::Content(String::new()),
         }
+    }
 
-        RobotsFetch::Content(content)
+    /// 单次抓取尝试：成功/404/其余非 5xx 结束本轮（内容或空串）；
+    /// 5xx 与传输错误交给重试循环
+    async fn fetch_robots_once(&self, robots_url: &str) -> RobotsFetchAttempt {
+        let request = Self::build_robots_request(robots_url, &self.user_agent);
+
+        let response = self.engine_client.scrape(&request).await;
+
+        match response {
+            Ok(resp) => {
+                if resp.is_success() {
+                    RobotsFetchAttempt::Content(resp.content)
+                } else if resp.status_code == 404 {
+                    RobotsFetchAttempt::Content(String::new())
+                } else if resp.status_code >= 500 {
+                    RobotsFetchAttempt::Retryable(anyhow::anyhow!(
+                        "Server error: {}",
+                        resp.status_code
+                    ))
+                } else {
+                    RobotsFetchAttempt::Content(String::new())
+                }
+            }
+            Err(e) => RobotsFetchAttempt::Retryable(anyhow::anyhow!("Request failed: {}", e)),
+        }
+    }
+
+    /// 重试耗尽后的降级：fail-closed 写短 TTL 失败标记并判禁；fail-open 告警并放行空内容
+    async fn handle_robots_fetch_error(&self, robots_url: &str, err: anyhow::Error) -> RobotsFetch {
+        if self.fail_closed {
+            log::warn!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "robots-fetch-fail-closed",
+                    &[
+                        ("url", fluent_bundle::FluentValue::from(robots_url)),
+                        ("error", fluent_bundle::FluentValue::from(err.to_string())),
+                    ],
+                )
+            );
+            // 失败标记按短 TTL 写入内存缓存，防止对不可达目标站打爆
+            {
+                let mut cache = self.memory_cache.lock().await;
+                cache.insert(
+                    robots_url.to_string(),
+                    CachedRobots {
+                        content: String::new(),
+                        expires_at: Instant::now() + ROBOTS_FAILURE_CACHE_TTL,
+                        fetch_failed: true,
+                    },
+                );
+            }
+            return RobotsFetch::FailClosed;
+        }
+        log::warn!("Failed to fetch robots.txt from {}: {}", robots_url, err);
+        // Default to empty content on persistent error
+        RobotsFetch::Content(String::new())
     }
 
     /// 构造 robots.txt 抓取请求（5s 超时 + 配置的 User-Agent）
@@ -459,6 +472,14 @@ enum RobotsFetch {
     FailClosed,
     /// 抓取成功 / 404 / fail-open 降级（内容可能为空串）
     Content(String),
+}
+
+/// 单次 robots.txt 抓取尝试的结果（重试循环据此判定是否继续）
+enum RobotsFetchAttempt {
+    /// 已结束本轮（成功内容 / 404 空串 / 其余非 5xx 空串）
+    Content(String),
+    /// 5xx 或传输错误：按 retry_policy 重试
+    Retryable(anyhow::Error),
 }
 
 /// robots.txt 行分类（指令前缀大小写不敏感）

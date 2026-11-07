@@ -15,19 +15,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use tokio::sync::Semaphore;
 
 use crate::config::SearxngSearchSettings;
 use crate::domain::repositories::searxng_instance_repository::{
-    normalize_instance_url, SearxngInstance, SearxngInstanceRepository, SearxngInstanceSource,
-    SearxngInstanceState, UpsertOutcome,
+    normalize_instance_url, SearxngInstance, SearxngInstanceRepository, SearxngInstanceState,
 };
-use crate::domain::repositories::task_repository::RepositoryError;
 use crate::engines::circuit_breaker::{CircuitBreaker, CircuitConfig};
 use crate::search::types::EngineHealth;
 
-use super::dataset::{admit, parse_dataset};
+use super::collector;
 use super::probe::{probe_instance, ProbeOutcome};
 use super::{
     BreakerMirror, CollectorReport, HealthReport, InstanceOutcome, InstancePool, PoolMember,
@@ -36,9 +34,6 @@ use super::{
 
 /// 采集轮跨进程互斥锁的固定常量键（"searxng\0" 的 big-endian i64）
 pub(crate) const COLLECT_ADVISORY_LOCK_KEY: i64 = 0x7365_6172_786E_6700;
-
-/// 「不限制」分页上限：sqlx 把 limit 绑为 i64，直接用 u64::MAX 会 PosOverflow
-const UNBOUNDED_LIMIT: u64 = i64::MAX as u64;
 
 /// 熔断键前缀（实例专属，不与 engines 统计口径混用）
 const BREAKER_KEY_PREFIX: &str = "searxng:";
@@ -312,36 +307,7 @@ impl SearxngInstanceServiceImpl {
     /// 采集执行体（调用方必须已持有采集锁）
     async fn collect_inner(&self) -> Result<CollectorReport, SearxngError> {
         let collector = &self.inner.settings.collector;
-        let timeout = Duration::from_secs(collector.request_timeout_seconds);
-
-        let (status, payload) = self
-            .inner
-            .transport
-            .get_json(&collector.data_url, timeout)
-            .await
-            .map_err(|e| {
-                error!(
-                    "searxng dataset fetch failed url={} class={} error={}",
-                    collector.data_url,
-                    e.class(),
-                    e
-                );
-                SearxngError::DatasetFetch(format!("{}: {e}", collector.data_url))
-            })?;
-
-        if !(200..300).contains(&status) {
-            let err = SearxngError::DatasetFetch(format!(
-                "{} returned HTTP {status}",
-                collector.data_url
-            ));
-            error!("{err}");
-            return Err(err);
-        }
-
-        let dataset = parse_dataset(&payload).map_err(|e| {
-            error!("searxng dataset parse failed: {e}");
-            SearxngError::DatasetFetch(e.to_string())
-        })?;
+        let dataset = collector::fetch_dataset(self.inner.transport.as_ref(), collector).await?;
 
         let mut report = CollectorReport {
             fetched: dataset.instances.len(),
@@ -353,78 +319,16 @@ impl SearxngInstanceServiceImpl {
         // 不应因此累计缺席计数。
         let mut present: HashSet<String> = HashSet::with_capacity(dataset.instances.len());
 
-        for (raw_url, entry) in &dataset.instances {
-            if let Ok(url) = normalize_instance_url(raw_url) {
-                present.insert(url);
-            }
-
-            let admitted = match admit(raw_url, entry, collector.min_uptime_day) {
-                Ok(admitted) => admitted,
-                Err(reject) => {
-                    report.errors += 1;
-                    debug!("searxng admission rejected: {reject}");
-                    continue;
-                }
-            };
-            report.seen += 1;
-
-            match self.inner.repo.upsert_from_dataset(&admitted).await {
-                Ok(UpsertOutcome::Inserted) => report.admitted_new += 1,
-                Ok(UpsertOutcome::Updated) => report.updated += 1,
-                Err(e) => {
-                    report.errors += 1;
-                    warn!("searxng upsert failed url={} error={e}", admitted.url);
-                }
-            }
-        }
-
-        // 缺席退役：既有 searx_space 实例未出现在本轮数据集 → 累计缺席；
-        // seed 来源永不退役（仓储侧豁免）。
-        let existing = self
-            .inner
-            .repo
-            .list_paginated(UNBOUNDED_LIMIT, 0)
-            .await
-            .map_err(|e| {
-                error!("searxng registry listing failed: {e}");
-                SearxngError::Repository(e.to_string())
-            })?;
-        for instance in existing {
-            if instance.source != SearxngInstanceSource::SearxSpace {
-                continue;
-            }
-            if present.contains(&instance.url) {
-                continue;
-            }
-            match self
-                .inner
-                .repo
-                .record_dataset_miss(&instance.url, collector.retire_miss_cycles)
-                .await
-            {
-                Ok(true) => {
-                    report.retired += 1;
-                    info!(
-                        "searxng instance retired for dataset absence url={}",
-                        instance.url
-                    );
-                }
-                Ok(false) => {}
-                Err(RepositoryError::NotFound) => {
-                    debug!(
-                        "searxng instance vanished during collection url={}",
-                        instance.url
-                    );
-                }
-                Err(e) => {
-                    report.errors += 1;
-                    warn!(
-                        "searxng dataset-miss record failed url={} error={e}",
-                        instance.url
-                    );
-                }
-            }
-        }
+        collector::sync_instances(
+            self.inner.repo.as_ref(),
+            &dataset,
+            collector,
+            &mut report,
+            &mut present,
+        )
+        .await;
+        collector::retire_absent(self.inner.repo.as_ref(), &present, collector, &mut report)
+            .await?;
 
         info!(
             "searxng collect finished fetched={} seen={} admitted_new={} updated={} retired={} errors={}",

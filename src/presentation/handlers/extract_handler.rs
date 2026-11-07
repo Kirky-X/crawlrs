@@ -21,6 +21,7 @@ use crate::domain::repositories::task_repository::TaskRepository;
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
+use crate::presentation::handlers::credits::{CreditCharge, CreditFlow};
 use crate::presentation::handlers::response_builder::{
     error_response, json_rejection_response, success_response,
 };
@@ -118,8 +119,11 @@ where
     let task = build_extract_task(&payload, team_id, auth_state.api_key_id);
 
     // 配额扣减（extract 入口此前完全不扣费）
-    if let Some(response) =
-        deduct_extract_quota(rate_limiting_service.as_ref(), team_id, payload.urls.len()).await
+    if let Some(response) = CreditFlow::new(rate_limiting_service.as_ref(), team_id)
+        .deduct(CreditCharge::Extract {
+            url_count: payload.urls.len(),
+        })
+        .await
     {
         return response;
     }
@@ -204,7 +208,14 @@ async fn enqueue_extract(
         }
         Err(e) => {
             // 补偿：入队失败退还已扣的 extract 积分，避免客户积分静默丢失
-            refund_extract_quota(rate_limiting_service, team_id, payload.urls.len(), task.id).await;
+            CreditFlow::new(rate_limiting_service, team_id)
+                .refund(
+                    CreditCharge::Extract {
+                        url_count: payload.urls.len(),
+                    },
+                    Some(task.id),
+                )
+                .await;
             error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         }
     }
@@ -235,7 +246,11 @@ async fn preflight_extract(
     }
 
     // 配额扣减（extract 入口此前完全不扣费）
-    deduct_extract_quota(rate_limiting_service, team_id, payload.urls.len()).await
+    CreditFlow::new(rate_limiting_service, team_id)
+        .deduct(CreditCharge::Extract {
+            url_count: payload.urls.len(),
+        })
+        .await
 }
 
 /// 使用团队服务验证地理限制，并记录 ALLOWED / DENIED 审计日志。
@@ -350,28 +365,6 @@ fn build_extract_task(
     )
 }
 
-/// 扣减 extract 配额；失败返回 402 响应。
-async fn deduct_extract_quota(
-    rate_limiting_service: &dyn RateLimitingService,
-    team_id: crate::domain::id::Id,
-    url_count: usize,
-) -> Option<Response> {
-    if let Err(e) = rate_limiting_service
-        .check_and_deduct_quota(
-            team_id,
-            crawl_task::EXTRACT_TASK_CREDITS_COST,
-            crate::domain::models::CreditsTransactionType::Extract,
-            format!("Extract {} URL(s)", url_count),
-            None,
-        )
-        .await
-    {
-        error!("Quota check failed for team {}: {}", team_id, e);
-        return Some(error_response(StatusCode::PAYMENT_REQUIRED, e.to_string()));
-    }
-    None
-}
-
 /// 入队成功后按 sync_wait_ms 等待任务完成，返回实际等待的毫秒数。
 async fn await_extract_completion(
     task_repository: &dyn TaskRepository,
@@ -421,29 +414,6 @@ fn extract_accepted_response(
             status: "pending".to_string(),
         },
     )
-}
-
-/// 补偿：入队失败退还已扣的 extract 积分，避免客户积分静默丢失。
-async fn refund_extract_quota(
-    rate_limiting_service: &dyn RateLimitingService,
-    team_id: crate::domain::id::Id,
-    url_count: usize,
-    task_id: crate::domain::id::Id,
-) {
-    if let Err(refund_err) = rate_limiting_service
-        .refund_quota(
-            team_id,
-            crawl_task::EXTRACT_TASK_CREDITS_COST,
-            format!("Refund: extract enqueue failed for {} URL(s)", url_count),
-            Some(task_id),
-        )
-        .await
-    {
-        error!(
-            "CRITICAL: Failed to refund extract credits for team {}: {}",
-            team_id, refund_err
-        );
-    }
 }
 
 #[cfg(all(test, feature = "teams"))]
@@ -1927,7 +1897,7 @@ mod tests {
             return;
         }
         // Allowed path where log_geo_restriction_action returns Err — covers
-        // the error! branch on the Allowed arm (line 107).
+        // the error! branch on the Allowed arm.
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_failing_log(
@@ -1964,7 +1934,7 @@ mod tests {
             return;
         }
         // Denied path where log_geo_restriction_action returns Err — covers
-        // the error! branch on the Denied arm (line 122).
+        // the error! branch on the Denied arm.
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
         let restrictions = TeamGeoRestrictions {
@@ -2005,7 +1975,7 @@ mod tests {
             return;
         }
         // sync_wait_ms > 0 but query_tasks fails → wait_for_tasks_completion
-        // returns Err — covers the error! branch on the wait arm (lines 192-193).
+        // returns Err — covers the error! branch on the wait arm.
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::failing_query());
         let geo_repo = Arc::new(MockGeoRestrictionRepository::with_restrictions(
@@ -2056,7 +2026,7 @@ mod tests {
         // sync_wait_ms > 0 and wait_for_tasks_completion returns Ok quickly
         // (task is already Completed on first poll) → waited_time_ms <
         // sync_wait_ms → CREATED (not ACCEPTED). Covers the Ok arm where
-        // waited_time_ms < sync_wait_ms (handler lines 189-190, 205-209).
+        // waited_time_ms < sync_wait_ms.
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let completed_task = Task {
             id: crate::domain::id::Id::generate(),
@@ -2131,15 +2101,16 @@ mod tests {
 
     // Log-evaluated handler tests
     // These tests call `ensure_debug_logger` so that `log::error!` format
-    // args are evaluated, covering the error! lines (72, 107, 122, 131, 193)
-    // and the surrounding error_response lines in the handler.
+    // args are evaluated, covering the error! branches (geo restrictions,
+    // geo access, and sync wait) and the surrounding error_response lines in
+    // the handler.
 
     #[tokio::test]
     async fn test_extract_no_extraction_method_log_evaluated() {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // Covers error_response lines 60-61 (Either prompt, schema, or rules).
+        // Covers the missing extraction method validation branch.
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -2181,7 +2152,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // Covers error! line 72 + error_response lines 74-75.
+        // Covers the geo restrictions fetch error branch.
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -2213,7 +2184,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // Covers error_response line 84 (sync_wait_ms must be <= MAX).
+        // Covers the sync_wait_ms upper-bound validation branch.
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -2255,8 +2226,8 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // Covers error_response line 126 (Access denied due to geographic
-        // restrictions).
+        // Covers the geographic denial branch (Access denied due to
+        // geographic restrictions).
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -2297,7 +2268,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // Covers error! line 131 + error_response lines 133-134.
+        // Covers the geo validation error branch.
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());
@@ -2336,9 +2307,9 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // Covers line 185 (BASE_POLL_INTERVAL_MS argument) + error! line 193
-        // when wait_for_tasks_completion fails. Uses a failing query repo so
-        // the wait path exercises the Err arm.
+        // Covers the BASE_POLL_INTERVAL_MS argument + the sync wait error
+        // branch when wait_for_tasks_completion fails. Uses a failing query
+        // repo so the wait path exercises the Err arm.
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::succeeding());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::failing_query());
@@ -2380,7 +2351,7 @@ mod tests {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
-        // Covers error_response line 213 (enqueue failure path).
+        // Covers the enqueue failure path.
         ensure_debug_logger();
         let queue: Arc<dyn TaskQueue> = Arc::new(MockTaskQueue::failing());
         let task_repo: Arc<dyn TaskRepository> = Arc::new(MockTaskRepository::succeeding());

@@ -4,22 +4,27 @@
 //! 抓取缓存工具集
 //!
 //! 本模块从 `scrape_worker` 抽离缓存相关纯函数，符合单一职责原则：
-//! - `generate_scrape_cache_key`：cache key 生成（纳入 ScrapeOptions 影响字段）
-//! - `redact_url_for_log`：URL 日志脱敏（防 query/fragment 凭据泄露）
+//! - `generate_scrape_cache_key`：cache key 生成（租户 + 方法 + URL + ScrapeOptions 内容指纹）
 //! - `filter_sensitive_headers`：敏感响应头过滤（CWE-200）
 //! - `SanitizedScrapeResponse`：borrowed 序列化结构体（性能，避免完整克隆）
+//!
+//! URL 日志脱敏位于 `crate::utils::url_redaction::redact_url_for_log`：
+//! 该逻辑不属于 worker 生命周期，放在 `utils` 可让无默认特性构建也编译。
 //!
 //! `scrape_worker` 的 `try_read_scrape_cache` / `try_write_scrape_cache` 通过
 //! 这些工具完成 cache key 计算与安全过滤，调用方在 `process_scrape_task`
 //! 中先用 `generate_scrape_cache_key` 计算 key，再传入读写方法。
+//!
+//! 请求身份指纹的唯一实现位于 [`crate::utils::coalesce::request_fingerprint`]，
+//! 本模块直接复用；禁止在缓存链路另建字段清单。
 
 use std::collections::HashMap;
 
 use serde::{Serialize, Serializer};
-use url::Url;
 
 use crate::common::CacheContext;
 use crate::engines::engine_client::{CapturedResponse, ScrapeOptions, ScrapeResponse};
+use crate::utils::coalesce::request_fingerprint;
 
 // cache key 生成
 
@@ -28,30 +33,41 @@ use crate::engines::engine_client::{CapturedResponse, ScrapeOptions, ScrapeRespo
 /// # 格式
 ///
 /// ```text
-/// scrape:{method}:{url}?fp={fingerprint}
+/// scrape:{team_id}:{method}:{url}?fp={fingerprint}
 /// ```
 ///
-/// 其中 `fingerprint` 由 `options_fingerprint` 计算，纳入影响响应内容的
-/// `ScrapeOptions` 字段，避免同 URL 不同 options 的缓存串扰。
+/// 四个维度共同定义"两个请求能否共享缓存结果"：
+/// - `team_id`：租户隔离边界。缓存条目不再跨租户共享
+///   （CWE-200：跨租户内容泄露路径不可达）
+/// - `method`：HTTP 方法
+/// - `url`：目标 URL
+/// - `fingerprint`：`ScrapeOptions` 内容相关字段的结构化指纹，直接复用
+///   [`request_fingerprint`]，与请求合并键使用同一实现
 ///
-/// # 纳入 ScrapeOptions 影响字段
+/// # 内容相关字段指纹
 ///
-/// 原实现仅 `scrape:{method}:{url}`，存在以下串扰风险：
+/// 旧实现手工维护 `headers` / `needs_js` / `session_id` 三个字段，
+/// 与合并键的字段面不一致：`ScrapeOptions` 新增字段时缓存键不会自动跟上，
+/// 造成同 URL 不同选项的缓存串扰。现改为复用 coalesce 的结构化编码：
 ///
-/// | 字段 | 影响维度 | 串扰场景 |
-/// |------|---------|---------|
-/// | `headers` | 自定义请求头影响服务端响应 | 带 `Accept-Language: zh` 与 `en` 的请求共享缓存，返回错误语言 |
-/// | `needs_js` | 决定是否走浏览器引擎渲染 | 同 URL 一次 needs_js=true（拿到渲染后 DOM）一次 false（拿到原始 HTML）共享缓存，返回错误内容 |
-/// | `session_id` | 粘性会话固定代理，影响 IP 风控结果 | 不同 session 走不同代理，A 已被目标站封禁、B 未封禁，共享缓存导致 B 拿到 A 的失败响应 |
+/// - 所有影响抓取结果的 `ScrapeOptions` 字段参与（method/body/needs_js/
+///   session_id/mobile/needs_screenshot/screenshot_config/actions/wait_for/
+///   block_ads/block_media/use_fire_engine/needs_mllm/skip_tls_verification/
+///   headers/proxy/timeout/sync_wait_ms/needs_tls_fingerprint 等）
+/// - `cache_mode` 是缓存控制开关，**不参与**：`None` 与 `Some(Enabled)` 语义
+///   等价，`ReadOnly` / `Bypass` 只改变本次读写行为。纳入会导致 ReadOnly
+///   读写 key 不同而永远 miss、Bypass 写入无人读取
+/// - headers 先小写名再按（名, 值）排序，`HashMap` 迭代序不影响指纹
+/// - 新增字段自动纳入，**禁止**在缓存链路维护第二份字段清单
 ///
-/// 其余字段（`timeout` / `mobile` / `body` / `actions` 等）也影响响应但风险较低，
-/// 为平衡 key 长度与正确性，仅纳入上述三个高影响字段。
+/// # 旧条目
 ///
-/// # 性能权衡
+/// key 组成变化后旧缓存条目不再命中，按现有 TTL 自然过期，无需迁移。
 ///
-/// `options_fingerprint` 用 [`std::collections::hash_map::DefaultHasher`]
-/// （内部 SipHash-1-3）计算 64-bit 哈希，再以 hex 编码（16 字符）附加到 key。
-/// 选 DefaultHasher 而非 fnv/cityhash：标准库零新依赖，短输入性能足够。
+/// # 性能
+///
+/// 指纹为 `DefaultHasher`（SipHash-1-3）压缩后的 64-bit 哈希，
+/// 以 16 字符 hex 附加到 key。标准库零新依赖。
 ///
 /// # 算法稳定性说明
 ///
@@ -66,97 +82,11 @@ use crate::engines::engine_client::{CapturedResponse, ScrapeOptions, ScrapeRespo
 /// 校验（仅可打印 ASCII，<=128 字节），不会注入控制字符到 key。
 #[must_use]
 pub fn generate_scrape_cache_key(ctx: &CacheContext, options: &ScrapeOptions) -> String {
-    let fp = options_fingerprint(options);
-    format!("scrape:{:?}:{}?fp={}", ctx.method, ctx.url, fp)
-}
-
-/// 计算 `ScrapeOptions` 中影响响应内容的字段的指纹
-///
-/// 纳入字段：`headers` / `needs_js` / `session_id`。
-/// 用 [`std::collections::hash_map::DefaultHasher`]（SipHash-1-3）计算 64-bit 哈希，
-/// 输出 hex 字符串（16 字符）。
-///
-/// # 为何选 DefaultHasher
-///
-/// - 标准库零依赖
-/// - SipHash-1-3 抗碰撞足够：cache key 冲突=缓存串扰，非安全敏感场景
-/// - Rust 当前版本稳定，跨版本变更最坏情况是缓存全部失效（降级，非错误）
-///
-/// # 为何只纳入三个字段
-///
-/// 详见 [`generate_scrape_cache_key`] 的串扰分析表。
-#[must_use]
-fn options_fingerprint(options: &ScrapeOptions) -> String {
-    use std::hash::Hasher;
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-
-    // headers：按 key 排序后写入，保证不同顺序的相同 headers 集合产生相同指纹
-    let mut sorted_headers: Vec<(&String, &String)> = options.headers.iter().collect();
-    sorted_headers.sort_by(|a, b| a.0.cmp(b.0));
-    for (k, v) in sorted_headers {
-        // 使用长度前缀编码替代 NUL 分隔符，防止含 \0 的 key/value 碰撞
-        hasher.write_usize(k.len());
-        hasher.write(k.as_bytes());
-        hasher.write_usize(v.len());
-        hasher.write(v.as_bytes());
-    }
-    hasher.write_u8(0xFF); // headers 与 needs_js 的分界
-
-    // needs_js：1 字节
-    hasher.write_u8(u8::from(options.needs_js));
-
-    // session_id：None 写 0，Some 写长度 + 内容
-    match &options.session_id {
-        None => hasher.write_u8(0),
-        Some(sid) => {
-            hasher.write_u8(1);
-            hasher.write_usize(sid.len());
-            hasher.write(sid.as_bytes());
-        }
-    }
-
-    let hash = hasher.finish();
-    format!("{:016x}", hash)
-}
-
-// URL 日志脱敏
-
-/// URL 日志最大长度（防日志膨胀）
-const MAX_URL_LOG_LEN: usize = 200;
-
-/// 脱敏 URL 用于日志输出
-///
-/// URL query 参数可能携带 `token` / `api_key` / `session_id` 等敏感信息，
-/// warn 级别日志会持久化到磁盘。此函数移除 query 和 fragment，仅保留
-/// `scheme://host[:port]/path`，并限制总长度防止日志膨胀。
-///
-/// 解析失败时返回 `[invalid-url]` 占位符，绝不原样返回可能含凭证的输入
-/// （CWE-532 防护：日志文件中的信息泄露）。
-#[must_use]
-pub fn redact_url_for_log(url: &str) -> String {
-    match Url::parse(url) {
-        Ok(mut parsed) => {
-            parsed.set_query(None);
-            parsed.set_fragment(None);
-            // 剥离 userinfo（用户名/密码），防止凭据泄露到日志
-            if parsed.username() != "" {
-                let _ = parsed.set_username("");
-            }
-            if parsed.password().is_some() {
-                parsed.set_password(None).ok();
-            }
-            let redacted = parsed.to_string();
-            // 限制长度防止日志膨胀（URL 应为 ASCII，但用 chars 截断更安全）
-            if redacted.len() > MAX_URL_LOG_LEN {
-                let truncated: String = redacted.chars().take(MAX_URL_LOG_LEN).collect();
-                format!("{}...", truncated)
-            } else {
-                redacted
-            }
-        }
-        Err(_) => "[invalid-url]".to_string(),
-    }
+    let fingerprint = request_fingerprint(options);
+    format!(
+        "scrape:{}:{:?}:{}?fp={:016x}",
+        ctx.team_id, ctx.method, ctx.url, fingerprint
+    )
 }
 
 // 敏感响应头过滤
@@ -295,10 +225,27 @@ where
 mod tests {
     use super::*;
     use crate::common::CacheMode;
+    use crate::domain::id::Id;
     use crate::engines::engine_client::HttpMethod;
+    use crate::utils::coalesce::CoalesceKey;
+
+    /// 固定租户：同一用例内构造的 key 共享租户维度
+    fn test_team() -> Id {
+        Id::from_u128(0x7e57_0000_0000_0000_0000_0000_0000_0001)
+    }
+
+    /// 另一个租户：用于跨租户隔离断言
+    fn other_team() -> Id {
+        Id::from_u128(0x7e57_0000_0000_0000_0000_0000_0000_0002)
+    }
 
     fn make_ctx(url: &str, method: HttpMethod) -> CacheContext {
+        make_ctx_for(test_team(), url, method)
+    }
+
+    fn make_ctx_for(team_id: Id, url: &str, method: HttpMethod) -> CacheContext {
         CacheContext {
+            team_id,
             url: url.to_string(),
             method,
             mode: CacheMode::Enabled,
@@ -312,9 +259,47 @@ mod tests {
         let ctx = make_ctx("https://example.com", HttpMethod::Get);
         let opts = ScrapeOptions::default();
         let key = generate_scrape_cache_key(&ctx, &opts);
-        // 格式：scrape:{method}:{url}?fp={16-hex}
-        assert!(key.starts_with("scrape:Get:https://example.com?fp="));
-        assert_eq!(key.len(), "scrape:Get:https://example.com?fp=".len() + 16);
+        // 格式：scrape:{team_id}:{method}:{url}?fp={16-hex}
+        let prefix = format!("scrape:{}:Get:https://example.com?fp=", test_team());
+        assert!(key.starts_with(&prefix));
+        assert_eq!(key.len(), prefix.len() + 16);
+    }
+
+    #[test]
+    fn test_cache_key_differs_by_team_id() {
+        // 同 URL + 同 method + 同 options，不同租户必须产生不同 key。
+        // 场景：租户 A 的私有页面内容不得被租户 B 的缓存命中读到。
+        let url = "https://example.com/private";
+        let opts = ScrapeOptions::default();
+
+        let key_a =
+            generate_scrape_cache_key(&make_ctx_for(test_team(), url, HttpMethod::Get), &opts);
+        let key_b =
+            generate_scrape_cache_key(&make_ctx_for(other_team(), url, HttpMethod::Get), &opts);
+
+        assert_ne!(
+            key_a, key_b,
+            "different team_id must produce different cache keys"
+        );
+    }
+
+    #[test]
+    fn test_cache_key_fingerprint_matches_coalesce_fingerprint() {
+        // 单一实现来源：缓存键指纹必须与合并键指纹逐位一致，
+        // 防止缓存链路私自维护第二份字段清单。
+        let mut opts = ScrapeOptions::default();
+        opts.needs_js = true;
+        opts.headers
+            .insert("X-Trace".to_string(), "abc".to_string());
+
+        let key =
+            generate_scrape_cache_key(&make_ctx("https://example.com", HttpMethod::Get), &opts);
+        let expected = CoalesceKey::new(test_team(), "https://example.com", &opts).fingerprint();
+
+        assert!(
+            key.ends_with(&format!("?fp={:016x}", expected)),
+            "cache key fingerprint must reuse coalesce::request_fingerprint"
+        );
     }
 
     #[test]
@@ -361,8 +346,8 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_key_differs_by_needs_js() {
-        // 同 URL + 同 method，needs_js=true vs false 应产生不同 key
+    fn test_cache_key_same_team_differs_by_needs_js() {
+        // 同 team + 同 URL + 同 method，needs_js=true vs false 应产生不同 key
         // 场景：浏览器渲染后 DOM 与原始 HTML 不能共享缓存
         let ctx = make_ctx("https://example.com", HttpMethod::Get);
 
@@ -443,30 +428,6 @@ mod tests {
         let key_a = generate_scrape_cache_key(&ctx, &opts_a);
         let key_b = generate_scrape_cache_key(&ctx, &opts_b);
         assert_eq!(key_a, key_b, "headers order must not affect cache key");
-    }
-
-    // redact_url_for_log
-
-    #[test]
-    fn test_redact_url_for_log_strips_query_and_fragment() {
-        let url = "https://example.com/path?token=secret&api_key=abc#fragment";
-        let redacted = redact_url_for_log(url);
-        assert_eq!(redacted, "https://example.com/path");
-    }
-
-    #[test]
-    fn test_redact_url_for_log_invalid_url_returns_placeholder() {
-        let redacted = redact_url_for_log("not a url");
-        assert_eq!(redacted, "[invalid-url]");
-    }
-
-    #[test]
-    fn test_redact_url_for_log_truncates_long_url() {
-        let long_path = "a".repeat(300);
-        let url = format!("https://example.com/{}", long_path);
-        let redacted = redact_url_for_log(&url);
-        assert!(redacted.ends_with("..."));
-        assert!(redacted.len() <= MAX_URL_LOG_LEN + 3); // +3 for "..."
     }
 
     // filter_sensitive_headers

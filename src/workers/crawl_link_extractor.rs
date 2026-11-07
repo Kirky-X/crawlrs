@@ -6,8 +6,8 @@
 //! 从 `scrape_worker.rs` 提取的爬取链接处理函数。
 //! 包含 robots.txt 检查、完成状态更新和链接提取入队。
 
-mod filters;
-use filters::url_accepted;
+mod link_filters;
+use link_filters::url_accepted;
 
 use std::collections::HashSet;
 use std::sync::Arc;

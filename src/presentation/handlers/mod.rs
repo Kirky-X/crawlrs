@@ -13,6 +13,7 @@ pub mod audit_handler;
 pub mod crawl_commands;
 pub mod crawl_handler;
 pub mod crawl_queries;
+mod credits;
 pub mod extract_handler;
 // map handler（F11 sitemap 流式站点图）：sitemap-off 时不编译
 #[cfg(feature = "sitemap")]

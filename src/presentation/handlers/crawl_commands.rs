@@ -14,10 +14,10 @@ use std::sync::Arc;
 
 use crate::application::dto::crawl_request::CrawlRequestDto;
 use crate::application::use_cases::crawl_use_case::CrawlUseCaseError;
-use crate::common::constants::crawl_task::CRAWL_TASK_CREDITS_COST;
 use crate::common::constants::crawl_task::DEFAULT_TIMEOUT_MS;
 use crate::config::settings::Settings;
 use crate::i18n::{I18nBundle, Locale};
+use crate::presentation::handlers::credits::{CreditCharge, CreditFlow};
 use crate::presentation::handlers::response_builder::errors;
 use crate::presentation::handlers::response_builder::{
     error_response, error_response_locale, errors_locale, json_rejection_response, success_response,
@@ -113,7 +113,9 @@ pub async fn create_crawl(
             success_response(status_code, crawl)
         }
         Err(e) => {
-            refund_crawl_quota(state.as_ref(), team_id, &crawl_url).await;
+            CreditFlow::new(state.rate_limiting_service.as_ref(), team_id)
+                .refund(CreditCharge::Crawl { url: &crawl_url }, None)
+                .await;
             crawl_error_response(e, &locale, &bundle)
         }
     }
@@ -152,18 +154,12 @@ async fn preflight_crawl(
         return Some(response);
     }
 
-    if let Err(e) = state
-        .rate_limiting_service
-        .check_and_deduct_quota(
-            auth_state.team_id,
-            CRAWL_TASK_CREDITS_COST,
-            crate::domain::models::CreditsTransactionType::Crawl,
-            format!("Crawl URL: {}", payload.url),
-            None,
-        )
-        .await
+    if let Some(response) =
+        CreditFlow::new(state.rate_limiting_service.as_ref(), auth_state.team_id)
+            .deduct(CreditCharge::Crawl { url: &payload.url })
+            .await
     {
-        return Some(errors::payment_required(e.to_string()));
+        return Some(response);
     }
 
     None
@@ -286,30 +282,6 @@ async fn await_crawl_sync_wait(
                 is_timeout: false,
             }
         }
-    }
-}
-
-/// 补偿：create_crawl 失败时退还已扣的 CRAWL_TASK_CREDITS_COST，
-/// 避免客户积分静默丢失。
-async fn refund_crawl_quota(
-    state: &CrawlHandlerState,
-    team_id: crate::domain::id::Id,
-    crawl_url: &str,
-) {
-    if let Err(refund_err) = state
-        .rate_limiting_service
-        .refund_quota(
-            team_id,
-            CRAWL_TASK_CREDITS_COST,
-            format!("Refund: crawl creation failed for {}", crawl_url),
-            None,
-        )
-        .await
-    {
-        error!(
-            "CRITICAL: Failed to refund {} credits for team {} after crawl creation failure: {}",
-            CRAWL_TASK_CREDITS_COST, team_id, refund_err
-        );
     }
 }
 
