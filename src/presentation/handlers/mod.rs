@@ -81,7 +81,10 @@ pub async fn check_ssrf_url(
                 api_key_id,
                 e
             );
-            Some(errors::bad_request(format!("SSRF protection: {}", e)))
+            Some(errors::bad_request(format!(
+                "SSRF protection: {}",
+                e.kind()
+            )))
         }
     }
 }
@@ -102,7 +105,10 @@ pub async fn check_ssrf_urls_batch(
                 api_key_id,
                 e
             );
-            return Some(errors::bad_request(format!("SSRF protection: {}", e)));
+            return Some(errors::bad_request(format!(
+                "SSRF protection: {}",
+                e.kind()
+            )));
         }
     }
     None

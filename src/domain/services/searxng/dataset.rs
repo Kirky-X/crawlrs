@@ -161,46 +161,8 @@ pub fn admit(
     entry: &DatasetEntry,
     min_uptime_day: f64,
 ) -> Result<AdmittedInstance, AdmissionReject> {
-    // 1. HTTPS 硬要求（数据集里存在 http 站，不能升级后照收：其 JSON API 面不成立）
-    match Url::parse(url).map(|u| u.scheme().to_string()) {
-        Ok(scheme) if scheme == "https" => {}
-        Ok(scheme) => return Err(AdmissionReject::NotHttps(format!("{url} ({scheme})"))),
-        Err(e) => return Err(AdmissionReject::UnsafeUrl(format!("{url} ({e})"))),
-    }
-
-    // 2. 规范化 + SSRF 静态校验（内网/环回拒绝）
-    let normalized = normalize_instance_url(url).map_err(|e| match e {
-        InstanceUrlError::Unsafe(_) | InstanceUrlError::Invalid(_) => {
-            AdmissionReject::UnsafeUrl(format!("{url} ({e})"))
-        }
-        // 规范化路径不会产出 UnknownVariant（仅枚举 FromStr 使用）；按不安全 URL 兜底
-        InstanceUrlError::UnknownVariant(_) => AdmissionReject::UnsafeUrl(format!("{url} ({e})")),
-    })?;
-
-    // 3. 网络类型（字段在时必须为 normal）
-    if let Some(network_type) = entry.network_type.as_deref() {
-        if !network_type.eq_ignore_ascii_case("normal") {
-            return Err(AdmissionReject::NonNormalNetwork(format!(
-                "{normalized} ({network_type})"
-            )));
-        }
-    }
-
-    // 4. JSON API 可用性（字段在时）
-    if let Some(api) = &entry.api {
-        if !api_flag_available(api) {
-            return Err(AdmissionReject::ApiUnavailable(normalized));
-        }
-    }
-
-    // 5. 在线率阈值（字段在时；缺失视为未知，交给探活）
-    if let Some(day) = entry.uptime.as_ref().and_then(|u| u.day) {
-        if day < min_uptime_day {
-            return Err(AdmissionReject::LowUptime(format!(
-                "{normalized} (day={day} < {min_uptime_day})"
-            )));
-        }
-    }
+    let normalized = validate_admission_url(url)?;
+    check_admission_entry(&normalized, entry, min_uptime_day)?;
 
     Ok(AdmittedInstance {
         url: normalized,
@@ -213,6 +175,57 @@ pub fn admit(
         uptime_day: entry.uptime.as_ref().and_then(|u| u.day),
         uptime_month: entry.uptime.as_ref().and_then(|u| u.month),
     })
+}
+
+/// 准入 URL 校验：1. HTTPS 硬要求（数据集里存在 http 站，不能升级后照收：
+/// 其 JSON API 面不成立）；2. 规范化 + SSRF 静态校验（内网/环回拒绝）。
+/// 返回规范化后的 URL。
+fn validate_admission_url(url: &str) -> Result<String, AdmissionReject> {
+    match Url::parse(url).map(|u| u.scheme().to_string()) {
+        Ok(scheme) if scheme == "https" => {}
+        Ok(scheme) => return Err(AdmissionReject::NotHttps(format!("{url} ({scheme})"))),
+        Err(e) => return Err(AdmissionReject::UnsafeUrl(format!("{url} ({e})"))),
+    }
+
+    normalize_instance_url(url).map_err(|e| match e {
+        InstanceUrlError::Unsafe(_) | InstanceUrlError::Invalid(_) => {
+            AdmissionReject::UnsafeUrl(format!("{url} ({e})"))
+        }
+        // 规范化路径不会产出 UnknownVariant（仅枚举 FromStr 使用）；按不安全 URL 兜底
+        InstanceUrlError::UnknownVariant(_) => AdmissionReject::UnsafeUrl(format!("{url} ({e})")),
+    })
+}
+
+/// 准入元数据字段校验：3. 网络类型（字段在时必须为 normal）；
+/// 4. JSON API 可用性（字段在时）；5. 在线率阈值（字段在时；缺失视为未知，
+/// 交给探活）。
+fn check_admission_entry(
+    normalized: &str,
+    entry: &DatasetEntry,
+    min_uptime_day: f64,
+) -> Result<(), AdmissionReject> {
+    if let Some(network_type) = entry.network_type.as_deref() {
+        if !network_type.eq_ignore_ascii_case("normal") {
+            return Err(AdmissionReject::NonNormalNetwork(format!(
+                "{normalized} ({network_type})"
+            )));
+        }
+    }
+
+    if let Some(api) = &entry.api {
+        if !api_flag_available(api) {
+            return Err(AdmissionReject::ApiUnavailable(normalized.to_string()));
+        }
+    }
+
+    if let Some(day) = entry.uptime.as_ref().and_then(|u| u.day) {
+        if day < min_uptime_day {
+            return Err(AdmissionReject::LowUptime(format!(
+                "{normalized} (day={day} < {min_uptime_day})"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// `api` 字段的可用性判读：`true` / `{ "status_code": 200 }` 视为可用；

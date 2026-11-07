@@ -4,7 +4,7 @@
 use axum::{
     extract::{ConnectInfo, Extension},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
 use log::error;
@@ -22,7 +22,7 @@ use crate::domain::services::rate_limiting_service::RateLimitingService;
 #[cfg(feature = "teams")]
 use crate::domain::services::team_service::TeamService;
 use crate::presentation::handlers::response_builder::{
-    error_response, json_rejection_response, ApiResponse,
+    error_response, json_rejection_response, success_response,
 };
 use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crate::presentation::handlers::{check_ssrf_urls_batch, sync_wait_status_code};
@@ -71,15 +71,8 @@ where
         Err(ref rej) => return json_rejection_response(rej),
     };
     let team_id = auth_state.team_id;
-    if payload.urls.is_empty() {
-        return error_response(StatusCode::BAD_REQUEST, "At least one URL is required");
-    }
-
-    if payload.prompt.is_none() && payload.schema.is_none() && payload.rules.is_none() {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "Either prompt, schema, or rules is required",
-        );
+    if let Some(response) = validate_extract_fields(&payload) {
+        return response;
     }
 
     // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证
@@ -105,153 +98,42 @@ where
     };
 
     // Validate sync_wait_ms if present
-    if let Some(ms) = payload.sync_wait_ms {
-        if ms > crawl_task::MAX_SYNC_WAIT_MS {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                format!("sync_wait_ms must be <= {}", crawl_task::MAX_SYNC_WAIT_MS),
-            );
-        }
+    if let Some(response) = validate_extract_sync_wait(&payload) {
+        return response;
     }
 
     // 使用团队服务验证地理限制
-    match team_service
-        .validate_geographic_restriction(team_id, &client_ip, &restrictions)
-        .await
+    if let Some(response) = validate_extract_geo_access(
+        &geo_restriction_repo,
+        &team_service,
+        team_id,
+        &client_ip,
+        &restrictions,
+    )
+    .await
     {
-        Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
-            if let Err(e) = geo_restriction_repo
-                .log_geo_restriction_action(
-                    team_id,
-                    &client_ip,
-                    "",
-                    "ALLOWED",
-                    "Extract request - Geographic restriction check passed",
-                )
-                .await
-            {
-                error!("Failed to log geographic restriction action: {}", e);
-            }
-        }
-        Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
-            if let Err(e) = geo_restriction_repo
-                .log_geo_restriction_action(
-                    team_id,
-                    &client_ip,
-                    "",
-                    "DENIED",
-                    &format!("Extract request - {}", reason),
-                )
-                .await
-            {
-                error!("Failed to log geographic restriction action: {}", e);
-            }
-
-            return error_response(
-                StatusCode::FORBIDDEN,
-                format!("Access denied due to geographic restrictions: {}", reason),
-            );
-        }
-        Err(e) => {
-            error!("Failed to validate geographic restrictions: {:?}", e);
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to validate geographic access",
-            );
-        }
+        return response;
     }
 
-    let task = Task::new(
-        crate::domain::id::Id::generate(),
-        TaskType::Extract,
-        team_id,
-        auth_state.api_key_id,
-        payload
-            .urls
-            .first()
-            .expect("URLs already validated as non-empty")
-            .clone(),
-        serde_json::to_value(&payload).unwrap_or_default(),
-    );
+    let task = build_extract_task(&payload, team_id, auth_state.api_key_id);
 
     // 配额扣减（extract 入口此前完全不扣费）
-    if let Err(e) = rate_limiting_service
-        .check_and_deduct_quota(
-            team_id,
-            crawl_task::EXTRACT_TASK_CREDITS_COST,
-            crate::domain::models::CreditsTransactionType::Extract,
-            format!("Extract {} URL(s)", payload.urls.len()),
-            None,
-        )
-        .await
+    if let Some(response) =
+        deduct_extract_quota(rate_limiting_service.as_ref(), team_id, payload.urls.len()).await
     {
-        error!("Quota check failed for team {}: {}", team_id, e);
-        return error_response(StatusCode::PAYMENT_REQUIRED, e.to_string());
+        return response;
     }
 
-    match queue.enqueue(task.clone()).await {
-        Ok(_) => {
-            let sync_wait_ms = payload
-                .sync_wait_ms
-                .unwrap_or(crawl_task::DEFAULT_TIMEOUT_MS as u32);
-            let mut waited_time_ms = 0u64;
-
-            if sync_wait_ms > 0 {
-                let wait_start = std::time::Instant::now();
-
-                match wait_for_tasks_completion(
-                    task_repository.as_ref(),
-                    &[task.id],
-                    team_id,
-                    sync_wait_ms,
-                    crawl_task::BASE_POLL_INTERVAL_MS,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        waited_time_ms = wait_start.elapsed().as_millis() as u64;
-                    }
-                    Err(e) => {
-                        error!("Failed to wait for task completion: {:?}", e);
-                        // 即使等待失败，也返回已创建的任务信息
-                    }
-                }
-            }
-
-            let response = ExtractResponseDto {
-                id: task.id,
-                status: "pending".to_string(),
-            };
-
-            let status_code =
-                sync_wait_status_code(sync_wait_ms, waited_time_ms >= sync_wait_ms as u64);
-
-            (status_code, Json(ApiResponse::success(response))).into_response()
-        }
-        Err(e) => {
-            // 补偿：入队失败退还已扣的 extract 积分，避免客户积分静默丢失
-            if let Err(refund_err) = rate_limiting_service
-                .refund_quota(
-                    team_id,
-                    crawl_task::EXTRACT_TASK_CREDITS_COST,
-                    format!(
-                        "Refund: extract enqueue failed for {} URL(s)",
-                        payload.urls.len()
-                    ),
-                    Some(task.id),
-                )
-                .await
-            {
-                error!(
-                    "CRITICAL: Failed to refund extract credits for team {}: {}",
-                    team_id, refund_err
-                );
-            }
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-        }
-    }
+    enqueue_extract(
+        queue.as_ref(),
+        task,
+        task_repository.as_ref(),
+        rate_limiting_service.as_ref(),
+        team_id,
+        &payload,
+    )
+    .await
 }
-
 /// teams-off 版本的 extract 函数
 ///
 /// 移除 GR 泛型 + geo_restriction_repo + team_service 参数 + 地理限制块
@@ -277,122 +159,290 @@ pub async fn extract(
         Err(ref rej) => return json_rejection_response(rej),
     };
     let team_id = auth_state.team_id;
-    if payload.urls.is_empty() {
-        return error_response(StatusCode::BAD_REQUEST, "At least one URL is required");
-    }
-
-    if payload.prompt.is_none() && payload.schema.is_none() && payload.rules.is_none() {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "Either prompt, schema, or rules is required",
-        );
-    }
-
-    // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证
-    if let Some(response) =
-        check_ssrf_urls_batch(&payload.urls, team_id, auth_state.api_key_id).await
+    if let Some(response) = preflight_extract(
+        &payload,
+        team_id,
+        auth_state.api_key_id,
+        rate_limiting_service.as_ref(),
+    )
+    .await
     {
         return response;
     }
 
-    // Validate sync_wait_ms if present
-    if let Some(ms) = payload.sync_wait_ms {
-        if ms > crawl_task::MAX_SYNC_WAIT_MS {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                format!("sync_wait_ms must be <= {}", crawl_task::MAX_SYNC_WAIT_MS),
-            );
-        }
-    }
+    let task = build_extract_task(&payload, team_id, auth_state.api_key_id);
 
-    let task = Task::new(
-        crate::domain::id::Id::generate(),
-        TaskType::Extract,
+    enqueue_extract(
+        queue.as_ref(),
+        task,
+        task_repository.as_ref(),
+        rate_limiting_service.as_ref(),
         team_id,
-        auth_state.api_key_id,
-        payload
-            .urls
-            .first()
-            .expect("URLs already validated as non-empty")
-            .clone(),
-        serde_json::to_value(&payload).unwrap_or_default(),
-    );
+        &payload,
+    )
+    .await
+}
 
-    // 配额扣减（extract 入口此前完全不扣费）
-    if let Err(e) = rate_limiting_service
-        .check_and_deduct_quota(
-            team_id,
-            crawl_task::EXTRACT_TASK_CREDITS_COST,
-            crate::domain::models::CreditsTransactionType::Extract,
-            format!("Extract {} URL(s)", payload.urls.len()),
-            None,
-        )
-        .await
-    {
-        error!("Quota check failed for team {}: {}", team_id, e);
-        return error_response(StatusCode::PAYMENT_REQUIRED, e.to_string());
-    }
-
+/// 入队并构造成功 / 失败响应（失败时补偿退还已扣积分）。
+async fn enqueue_extract(
+    queue: &dyn TaskQueue,
+    task: Task,
+    task_repository: &dyn TaskRepository,
+    rate_limiting_service: &dyn RateLimitingService,
+    team_id: crate::domain::id::Id,
+    payload: &ExtractRequestDto,
+) -> Response {
     match queue.enqueue(task.clone()).await {
         Ok(_) => {
             let sync_wait_ms = payload
                 .sync_wait_ms
                 .unwrap_or(crawl_task::DEFAULT_TIMEOUT_MS as u32);
-            let mut waited_time_ms = 0u64;
+            let waited_time_ms =
+                await_extract_completion(task_repository, task.id, team_id, sync_wait_ms).await;
 
-            if sync_wait_ms > 0 {
-                let wait_start = std::time::Instant::now();
-
-                match wait_for_tasks_completion(
-                    task_repository.as_ref(),
-                    &[task.id],
-                    team_id,
-                    sync_wait_ms,
-                    crawl_task::BASE_POLL_INTERVAL_MS,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        waited_time_ms = wait_start.elapsed().as_millis() as u64;
-                    }
-                    Err(e) => {
-                        error!("Failed to wait for task completion: {:?}", e);
-                        // 即使等待失败，也返回已创建的任务信息
-                    }
-                }
-            }
-
-            let response = ExtractResponseDto {
-                id: task.id,
-                status: "pending".to_string(),
-            };
-
-            let status_code =
-                sync_wait_status_code(sync_wait_ms, waited_time_ms >= sync_wait_ms as u64);
-
-            (status_code, Json(ApiResponse::success(response))).into_response()
+            extract_accepted_response(task.id, sync_wait_ms, waited_time_ms)
         }
         Err(e) => {
             // 补偿：入队失败退还已扣的 extract 积分，避免客户积分静默丢失
-            if let Err(refund_err) = rate_limiting_service
-                .refund_quota(
+            refund_extract_quota(rate_limiting_service, team_id, payload.urls.len(), task.id).await;
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
+    }
+}
+
+/// extract 前置校验与计费：字段校验 → SSRF → sync_wait 范围 → 配额扣减。
+///
+/// 返回 `Some(response)` 表示请求必须中止。
+#[cfg(not(feature = "teams"))]
+async fn preflight_extract(
+    payload: &ExtractRequestDto,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
+    rate_limiting_service: &dyn RateLimitingService,
+) -> Option<Response> {
+    if let Some(response) = validate_extract_fields(payload) {
+        return Some(response);
+    }
+
+    // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证
+    if let Some(response) = check_ssrf_urls_batch(&payload.urls, team_id, api_key_id).await {
+        return Some(response);
+    }
+
+    // Validate sync_wait_ms if present
+    if let Some(response) = validate_extract_sync_wait(payload) {
+        return Some(response);
+    }
+
+    // 配额扣减（extract 入口此前完全不扣费）
+    deduct_extract_quota(rate_limiting_service, team_id, payload.urls.len()).await
+}
+
+/// 使用团队服务验证地理限制，并记录 ALLOWED / DENIED 审计日志。
+#[cfg(feature = "teams")]
+async fn validate_extract_geo_access<GR>(
+    geo_restriction_repo: &Arc<GR>,
+    team_service: &Arc<TeamService>,
+    team_id: crate::domain::id::Id,
+    client_ip: &str,
+    restrictions: &crate::domain::services::team_service::TeamGeoRestrictions,
+) -> Option<Response>
+where
+    GR: GeoRestrictionRepository + 'static,
+{
+    match team_service
+        .validate_geographic_restriction(team_id, client_ip, restrictions)
+        .await
+    {
+        Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
+            if let Err(e) = geo_restriction_repo
+                .log_geo_restriction_action(
                     team_id,
-                    crawl_task::EXTRACT_TASK_CREDITS_COST,
-                    format!(
-                        "Refund: extract enqueue failed for {} URL(s)",
-                        payload.urls.len()
-                    ),
-                    Some(task.id),
+                    client_ip,
+                    "",
+                    "ALLOWED",
+                    "Extract request - Geographic restriction check passed",
                 )
                 .await
             {
-                error!(
-                    "CRITICAL: Failed to refund extract credits for team {}: {}",
-                    team_id, refund_err
-                );
+                error!("Failed to log geographic restriction action: {}", e);
             }
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            None
         }
+        Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
+            if let Err(e) = geo_restriction_repo
+                .log_geo_restriction_action(
+                    team_id,
+                    client_ip,
+                    "",
+                    "DENIED",
+                    &format!("Extract request - {}", reason),
+                )
+                .await
+            {
+                error!("Failed to log geographic restriction action: {}", e);
+            }
+
+            Some(error_response(
+                StatusCode::FORBIDDEN,
+                format!("Access denied due to geographic restrictions: {}", reason),
+            ))
+        }
+        Err(e) => {
+            error!("Failed to validate geographic restrictions: {:?}", e);
+            Some(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to validate geographic access",
+            ))
+        }
+    }
+}
+
+/// 校验 extract 请求字段：至少一个 URL，且 prompt/schema/rules 至少其一。
+fn validate_extract_fields(payload: &ExtractRequestDto) -> Option<Response> {
+    if payload.urls.is_empty() {
+        return Some(error_response(
+            StatusCode::BAD_REQUEST,
+            "At least one URL is required",
+        ));
+    }
+
+    if payload.prompt.is_none() && payload.schema.is_none() && payload.rules.is_none() {
+        return Some(error_response(
+            StatusCode::BAD_REQUEST,
+            "Either prompt, schema, or rules is required",
+        ));
+    }
+
+    None
+}
+
+/// 校验 sync_wait_ms 上限（需在 SSRF 校验之后调用，保持既有错误优先级）。
+fn validate_extract_sync_wait(payload: &ExtractRequestDto) -> Option<Response> {
+    if let Some(ms) = payload.sync_wait_ms {
+        if ms > crawl_task::MAX_SYNC_WAIT_MS {
+            return Some(error_response(
+                StatusCode::BAD_REQUEST,
+                format!("sync_wait_ms must be <= {}", crawl_task::MAX_SYNC_WAIT_MS),
+            ));
+        }
+    }
+    None
+}
+
+/// 构造 extract 任务（首个 URL 作为任务目标）。
+fn build_extract_task(
+    payload: &ExtractRequestDto,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
+) -> Task {
+    Task::new(
+        crate::domain::id::Id::generate(),
+        TaskType::Extract,
+        team_id,
+        api_key_id,
+        payload
+            .urls
+            .first()
+            .expect("URLs already validated as non-empty")
+            .clone(),
+        serde_json::to_value(payload).unwrap_or_default(),
+    )
+}
+
+/// 扣减 extract 配额；失败返回 402 响应。
+async fn deduct_extract_quota(
+    rate_limiting_service: &dyn RateLimitingService,
+    team_id: crate::domain::id::Id,
+    url_count: usize,
+) -> Option<Response> {
+    if let Err(e) = rate_limiting_service
+        .check_and_deduct_quota(
+            team_id,
+            crawl_task::EXTRACT_TASK_CREDITS_COST,
+            crate::domain::models::CreditsTransactionType::Extract,
+            format!("Extract {} URL(s)", url_count),
+            None,
+        )
+        .await
+    {
+        error!("Quota check failed for team {}: {}", team_id, e);
+        return Some(error_response(StatusCode::PAYMENT_REQUIRED, e.to_string()));
+    }
+    None
+}
+
+/// 入队成功后按 sync_wait_ms 等待任务完成，返回实际等待的毫秒数。
+async fn await_extract_completion(
+    task_repository: &dyn TaskRepository,
+    task_id: crate::domain::id::Id,
+    team_id: crate::domain::id::Id,
+    sync_wait_ms: u32,
+) -> u64 {
+    let mut waited_time_ms = 0u64;
+
+    if sync_wait_ms > 0 {
+        let wait_start = std::time::Instant::now();
+
+        match wait_for_tasks_completion(
+            task_repository,
+            &[task_id],
+            team_id,
+            sync_wait_ms,
+            crawl_task::BASE_POLL_INTERVAL_MS,
+        )
+        .await
+        {
+            Ok(_) => {
+                waited_time_ms = wait_start.elapsed().as_millis() as u64;
+            }
+            Err(e) => {
+                error!("Failed to wait for task completion: {:?}", e);
+                // 即使等待失败，也返回已创建的任务信息
+            }
+        }
+    }
+
+    waited_time_ms
+}
+
+/// 构造 extract 入队响应（超时未完成时由 sync_wait_status_code 降级为 202）。
+fn extract_accepted_response(
+    task_id: crate::domain::id::Id,
+    sync_wait_ms: u32,
+    waited_time_ms: u64,
+) -> Response {
+    let status_code = sync_wait_status_code(sync_wait_ms, waited_time_ms >= sync_wait_ms as u64);
+
+    success_response(
+        status_code,
+        ExtractResponseDto {
+            id: task_id,
+            status: "pending".to_string(),
+        },
+    )
+}
+
+/// 补偿：入队失败退还已扣的 extract 积分，避免客户积分静默丢失。
+async fn refund_extract_quota(
+    rate_limiting_service: &dyn RateLimitingService,
+    team_id: crate::domain::id::Id,
+    url_count: usize,
+    task_id: crate::domain::id::Id,
+) {
+    if let Err(refund_err) = rate_limiting_service
+        .refund_quota(
+            team_id,
+            crawl_task::EXTRACT_TASK_CREDITS_COST,
+            format!("Refund: extract enqueue failed for {} URL(s)", url_count),
+            Some(task_id),
+        )
+        .await
+    {
+        error!(
+            "CRITICAL: Failed to refund extract credits for team {}: {}",
+            team_id, refund_err
+        );
     }
 }
 

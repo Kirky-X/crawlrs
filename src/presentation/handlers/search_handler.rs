@@ -16,7 +16,9 @@ use crate::{
     domain::{
         repositories::task_repository::TaskRepository,
         services::rate_limiting_service::RateLimitingService,
-        services::search_service::{SearchQuery, SearchServiceError, SearchServiceTrait},
+        services::search_service::{
+            SearchQuery, SearchResponse, SearchServiceError, SearchServiceTrait,
+        },
     },
     i18n::{I18nBundle, Locale},
     presentation::handlers::check_ssrf_url,
@@ -62,7 +64,52 @@ pub async fn search(
         .unwrap_or(crawl_task::DEFAULT_TIMEOUT_MS as u32);
 
     // 将 DTO 转换为领域参数
-    let search_query = SearchQuery {
+    let search_query = into_search_query(payload);
+
+    // SSRF 防护 (CWE-918)：验证 crawl_config.proxy 不指向内部网络
+    if let Some(response) = check_search_proxy_ssrf(&search_query, team_id, api_key_id).await {
+        return response;
+    }
+
+    // 使用注入的SearchService
+    match execute_search(
+        search_service.as_ref(),
+        task_repo.as_ref(),
+        team_id,
+        api_key_id,
+        search_query,
+        sync_wait_ms,
+    )
+    .await
+    {
+        Ok(response_dto) => success_response(StatusCode::OK, response_dto),
+        Err(e) => search_error_response(e, &locale, &bundle),
+    }
+}
+
+/// 执行搜索；启用爬取结果且有 crawl_id 时等待子任务完成，返回 DTO。
+async fn execute_search(
+    search_service: &dyn SearchServiceTrait,
+    task_repo: &dyn TaskRepository,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
+    search_query: SearchQuery,
+    sync_wait_ms: u32,
+) -> Result<SearchResponseDto, SearchServiceError> {
+    let response = search_service
+        .search(team_id, api_key_id, search_query)
+        .await?;
+
+    // 如果启用了爬取结果并且有crawl_id，则等待任务完成
+    await_search_crawl_tasks(task_repo, response.crawl_id, team_id, sync_wait_ms).await;
+
+    // 将领域响应转换为 DTO
+    Ok(into_search_response_dto(response))
+}
+
+/// 将搜索请求 DTO 转换为领域查询参数。
+fn into_search_query(payload: SearchRequestDto) -> SearchQuery {
+    SearchQuery {
         query: payload.query,
         limit: payload.limit,
         lang: payload.lang,
@@ -83,100 +130,117 @@ pub async fn search(
                 extraction_rules: c.extraction_rules,
             }
         }),
-    };
+    }
+}
 
-    // SSRF 防护 (CWE-918)：验证 crawl_config.proxy 不指向内部网络
+/// SSRF 防护 (CWE-918)：验证 crawl_config.proxy 不指向内部网络。
+async fn check_search_proxy_ssrf(
+    search_query: &SearchQuery,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
+) -> Option<axum::response::Response> {
     if let Some(ref config) = search_query.crawl_config {
         if let Some(ref proxy_url) = config.proxy {
             if let Some(response) = check_ssrf_url(proxy_url, team_id, api_key_id).await {
-                return response;
+                return Some(response);
             }
         }
     }
+    None
+}
 
-    // 使用注入的SearchService
-    match search_service
-        .search(team_id, api_key_id, search_query)
-        .await
-    {
-        Ok(response) => {
-            // 如果启用了爬取结果并且有crawl_id，则等待任务完成
-            if sync_wait_ms > 0 {
-                if let Some(crawl_id) = response.crawl_id {
-                    match task_repo.find_by_crawl_id(crawl_id).await {
-                        Ok(tasks) => {
-                            if !tasks.is_empty() {
-                                let task_ids: Vec<crate::domain::id::Id> =
-                                    tasks.iter().map(|task| task.id).collect();
-                                match wait_for_tasks_completion(
-                                    task_repo.as_ref(),
-                                    &task_ids,
-                                    team_id,
-                                    sync_wait_ms,
-                                    crawl_task::BASE_POLL_INTERVAL_MS,
-                                )
-                                .await
-                                {
-                                    Ok(_) => {
-                                        // 等待成功，可以返回响应
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to wait for task completion: {:?}", e);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to find tasks for crawl {}: {:?}", crawl_id, e);
-                        }
+/// 如果启用了爬取结果并且有 crawl_id，则等待任务完成。
+async fn await_search_crawl_tasks(
+    task_repo: &dyn TaskRepository,
+    crawl_id: Option<crate::domain::id::Id>,
+    team_id: crate::domain::id::Id,
+    sync_wait_ms: u32,
+) {
+    if sync_wait_ms == 0 {
+        return;
+    }
+    let Some(crawl_id) = crawl_id else {
+        return;
+    };
+
+    match task_repo.find_by_crawl_id(crawl_id).await {
+        Ok(tasks) => {
+            if !tasks.is_empty() {
+                let task_ids: Vec<crate::domain::id::Id> =
+                    tasks.iter().map(|task| task.id).collect();
+                match wait_for_tasks_completion(
+                    task_repo,
+                    &task_ids,
+                    team_id,
+                    sync_wait_ms,
+                    crawl_task::BASE_POLL_INTERVAL_MS,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        // 等待成功，可以返回响应
+                    }
+                    Err(e) => {
+                        error!("Failed to wait for task completion: {:?}", e);
                     }
                 }
             }
-
-            // 将领域响应转换为 DTO
-            let response_dto = SearchResponseDto {
-                query: response.query,
-                results: response
-                    .results
-                    .into_iter()
-                    .map(|r| SearchResultDto {
-                        title: r.title,
-                        url: r.url,
-                        description: r.description,
-                        engine: Some(r.engine),
-                        score: r.score,
-                    })
-                    .collect(),
-                crawl_id: response.crawl_id,
-                credits_used: response.credits_used,
-            };
-
-            success_response(StatusCode::OK, response_dto)
         }
-        Err(e) => match e {
-            SearchServiceError::UnknownEngine(name) => {
-                let msg = crate::i18n::t_with_args(
-                    &locale,
-                    &bundle,
-                    "search-error-unknown-engine",
-                    &[("name", FluentValue::from(name.as_str()))],
-                );
-                error_response(StatusCode::BAD_REQUEST, msg)
-            }
-            SearchServiceError::SmartSearchFailed(detail) => {
-                let msg = crate::i18n::t_with_args(
-                    &locale,
-                    &bundle,
-                    "search-error-smart-search",
-                    &[("message", FluentValue::from(detail.as_str()))],
-                );
-                error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
-            }
-            other => {
-                let (status, msg): (StatusCode, String) = other.into();
-                error_response(status, msg)
-            }
-        },
+        Err(e) => {
+            error!("Failed to find tasks for crawl {}: {:?}", crawl_id, e);
+        }
+    }
+}
+
+/// 将领域搜索响应转换为 DTO。
+fn into_search_response_dto(response: SearchResponse) -> SearchResponseDto {
+    SearchResponseDto {
+        query: response.query,
+        results: response
+            .results
+            .into_iter()
+            .map(|r| SearchResultDto {
+                title: r.title,
+                url: r.url,
+                description: r.description,
+                engine: Some(r.engine),
+                score: r.score,
+            })
+            .collect(),
+        crawl_id: response.crawl_id,
+        credits_used: response.credits_used,
+    }
+}
+
+/// 将搜索服务错误映射为统一错误响应。
+fn search_error_response(
+    e: SearchServiceError,
+    locale: &Locale,
+    bundle: &Arc<I18nBundle>,
+) -> axum::response::Response {
+    match e {
+        SearchServiceError::UnknownEngine(name) => {
+            let msg = crate::i18n::t_with_args(
+                locale,
+                bundle,
+                "search-error-unknown-engine",
+                &[("name", FluentValue::from(name.as_str()))],
+            );
+            error_response(StatusCode::BAD_REQUEST, msg)
+        }
+        SearchServiceError::SmartSearchFailed(detail) => {
+            let msg = crate::i18n::t_with_args(
+                locale,
+                bundle,
+                "search-error-smart-search",
+                &[("message", FluentValue::from(detail.as_str()))],
+            );
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
+        }
+        other => {
+            let (status, msg): (StatusCode, String) = other.into();
+            error_response(status, msg)
+        }
     }
 }
 

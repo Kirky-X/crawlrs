@@ -31,23 +31,30 @@
 //! 链接发现运行）；sitemap 404 是合法状态（站点无 sitemap），返回零入队
 //! 而非错误。
 
-use std::collections::HashSet;
+mod batch_helpers;
+use batch_helpers::{build_sitemap_task, dedup_filtered_batch, filter_batch_urls};
+
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use url::Url;
 
 use crate::application::dto::map_request::MapRequestDto;
 use crate::application::use_cases::map_use_case::{
     MapUseCase, SitemapFetcher, SitemapKind, SitemapStreamOptions,
 };
-use crate::domain::models::{Task, TaskStatus, TaskType};
 use crate::domain::repositories::crawl_repository::CrawlRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::infrastructure::oxcache::CacheService;
-use crate::utils::dedup::{DedupResult, Deduplicator};
-use crate::workers::crawl::{DomainFilter, FilterContext, UrlFilter, UrlPatternFilter};
+use crate::utils::dedup::Deduplicator;
+use crate::workers::crawl::{DomainFilter, FilterContext, UrlPatternFilter};
+
+#[cfg(test)]
+use crate::domain::models::{Task, TaskStatus, TaskType};
+#[cfg(test)]
+use serde_json::json;
+#[cfg(test)]
+use std::collections::HashSet;
 
 /// 批大小：每消费这么多 loc 执行一次过滤/去重/入队/指针持久化
 const FEED_BATCH_SIZE: usize = 500;
@@ -310,89 +317,23 @@ async fn flush_batch(
     cache: &dyn CacheService,
     pointer_ttl_secs: u64,
 ) -> anyhow::Result<()> {
-    let mut to_enqueue: Vec<String> = Vec::new();
-    for url in batch.drain(..) {
-        // 黑名单绝对拒绝（优先级高于 include/exclude，对齐 extract_and_queue_links）
-        if let Some(bf) = blacklist_filter {
-            if !bf.accept(&url, filter_ctx) {
-                stats.filtered_out += 1;
-                continue;
-            }
-        }
-        if empty_include_short_circuit {
-            stats.filtered_out += 1;
-            continue;
-        }
-        if let Some(filter) = pattern_filter {
-            if !filter.accept(&url, filter_ctx) {
-                stats.filtered_out += 1;
-                continue;
-            }
-        }
-        to_enqueue.push(url);
-    }
-
-    // 分层去重：Bloom 阴性直接入队；阳性回落 DB 精确校验（假阳性必须入队）
-    let mut new_urls: Vec<String> = Vec::new();
-    let mut db_check: Vec<String> = Vec::new();
-    {
-        let mut dedup = dedup.write();
-        for url in to_enqueue {
-            match dedup.check_and_insert(&url) {
-                Ok(DedupResult::DefinitelyNew { normalized }) => new_urls.push(normalized),
-                Ok(DedupResult::MaybeExisting { normalized, .. }) => db_check.push(normalized),
-                Err(e) => return Err(anyhow::anyhow!("URL dedup check failed for {url}: {e}")),
-            }
-        }
-    }
-
-    if !db_check.is_empty() {
-        db_check.sort_unstable();
-        db_check.dedup();
-        let existing: HashSet<String> = task_repo.find_existing_urls(&db_check).await?;
-        for normalized in db_check {
-            if existing.contains(&normalized) {
-                stats.duplicates_skipped += 1;
-            } else {
-                // DB 确认不存在：布隆阳性必为假阳性，无条件 insert + 入队
-                //（禁止二次 check_and_insert——首轮已置位布隆，必复现阳性而漏抓）
-                dedup.write().insert(&normalized);
-                new_urls.push(normalized);
-            }
-        }
-    }
-
-    // 批内去重（同一 sitemap 可能重复列出同一 URL）
-    new_urls.sort_unstable();
-    new_urls.dedup();
+    let new_urls = dedup_filtered_batch(
+        filter_batch_urls(
+            batch,
+            stats,
+            pattern_filter,
+            blacklist_filter,
+            filter_ctx,
+            empty_include_short_circuit,
+        ),
+        dedup,
+        task_repo,
+        stats,
+    )
+    .await?;
 
     for url in &new_urls {
-        let task = Task {
-            id: crate::domain::id::Id::generate(),
-            task_type: TaskType::Crawl,
-            status: TaskStatus::Queued,
-            priority: seed.priority,
-            team_id: seed.team_id,
-            api_key_id: seed.api_key_id,
-            url: url.clone(),
-            payload: json!({
-                "crawl_id": seed.crawl_id,
-                "depth": 1,
-                "config": seed.config_json,
-            }),
-            retry_count: 0,
-            attempt_count: 0,
-            max_retries: 3,
-            scheduled_at: None,
-            created_at: chrono::Utc::now(),
-            started_at: None,
-            completed_at: None,
-            crawl_id: Some(seed.crawl_id),
-            updated_at: chrono::Utc::now(),
-            lock_token: None,
-            lock_expires_at: None,
-            expires_at: None,
-        };
+        let task = build_sitemap_task(url, seed);
         task_repo.create(&task).await?;
         crawl_repo.increment_total_tasks(seed.crawl_id).await?;
         stats.enqueued += 1;

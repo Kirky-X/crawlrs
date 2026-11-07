@@ -33,7 +33,7 @@ use crate::engines::engine_client::{
 use crate::engines::provider::{ProxyCategory, ProxyProvider};
 use crate::engines::validators;
 use crate::utils::proxy::redact_proxy_url;
-use crate::utils::ua_pool::{TlsEmulation, UaPool};
+use crate::utils::ua_pool::{TlsEmulation, UaPool, UaProfile};
 use async_trait::async_trait;
 use log::error;
 use std::sync::Arc;
@@ -231,76 +231,89 @@ const DEFAULT_WREQ_MAX_RESPONSE_BODY_BYTES: usize = 10 * 1024 * 1024;
 /// 静态内网 hostname/IP 字面量，并对重定向目标 hostname 做 DNS 解析检查
 /// （全部 IP 必须为公网；解析失败按 fail-closed 拒绝跟随）。
 fn create_ssrf_safe_wreq_redirect_policy(max_redirects: usize) -> wreq::redirect::Policy {
-    use crate::engines::shared::is_private_ip;
-    use crate::infrastructure::security::ssrf::is_internal_url;
-    use std::net::ToSocketAddrs;
-
     wreq::redirect::Policy::custom(move |attempt| {
         if attempt.previous.len() >= max_redirects {
             return attempt.error("too many redirects");
         }
 
         let uri = &*attempt.uri;
-
-        // 1) 只允许 http/https
-        if uri.scheme_str() != Some("http") && uri.scheme_str() != Some("https") {
-            log::warn!(
-                "SSRF protection: Blocking wreq redirect with non-HTTP scheme: {:?}",
-                uri.scheme_str()
-            );
+        if !wreq_redirect_target_allowed(uri) {
             return attempt.stop();
-        }
-
-        // 2) 静态检查：IP 字面量私网 / 内部 hostname
-        let uri_str = uri.to_string();
-        if is_internal_url(&uri_str) {
-            log::warn!(
-                "SSRF protection: Blocking wreq redirect to internal URL: {}",
-                uri_str
-            );
-            return attempt.stop();
-        }
-
-        // 3) DNS 级检查：重定向目标全部解析 IP 必须公网（fail-closed）
-        if let Some(host) = uri.host() {
-            let port = uri
-                .port_u16()
-                .unwrap_or(if uri.scheme_str() == Some("https") {
-                    443
-                } else {
-                    80
-                });
-            match (host, port).to_socket_addrs() {
-                Ok(addrs) => {
-                    let mut any = false;
-                    for addr in addrs {
-                        any = true;
-                        if is_private_ip(addr.ip()) {
-                            log::warn!(
-                                "SSRF protection: wreq redirect host {} resolves to private IP {}, blocking",
-                                host,
-                                addr.ip()
-                            );
-                            return attempt.stop();
-                        }
-                    }
-                    if !any {
-                        return attempt.stop();
-                    }
-                }
-                Err(e) => {
-                    log::warn!(
-                        "SSRF protection: wreq redirect DNS failed for host {} ({}), blocking",
-                        host,
-                        e
-                    );
-                    return attempt.stop();
-                }
-            }
         }
 
         attempt.follow()
     })
+}
+
+/// 单跳重定向目标安全校验：scheme 白名单 → 静态内网检查 → DNS 级检查
+/// （任一失败返回 false，由调用方 `stop()` 拒绝跟随）
+fn wreq_redirect_target_allowed(uri: &wreq::Uri) -> bool {
+    use crate::infrastructure::security::ssrf::is_internal_url;
+
+    // 1) 只允许 http/https
+    if uri.scheme_str() != Some("http") && uri.scheme_str() != Some("https") {
+        log::warn!(
+            "SSRF protection: Blocking wreq redirect with non-HTTP scheme: {:?}",
+            uri.scheme_str()
+        );
+        return false;
+    }
+
+    // 2) 静态检查：IP 字面量私网 / 内部 hostname
+    let uri_str = uri.to_string();
+    if is_internal_url(&uri_str) {
+        log::warn!(
+            "SSRF protection: Blocking wreq redirect to internal URL: {}",
+            uri_str
+        );
+        return false;
+    }
+
+    // 3) DNS 级检查：重定向目标全部解析 IP 必须公网（fail-closed）
+    wreq_redirect_dns_allowed(uri)
+}
+
+/// DNS 级重定向检查：重定向目标全部解析 IP 必须公网（fail-closed）。
+/// 无 host 的 URI 跳过该检查（与原实现一致，返回允许）。
+fn wreq_redirect_dns_allowed(uri: &wreq::Uri) -> bool {
+    use crate::engines::shared::is_private_ip;
+    use std::net::ToSocketAddrs;
+
+    let Some(host) = uri.host() else {
+        return true;
+    };
+    let port = uri
+        .port_u16()
+        .unwrap_or(if uri.scheme_str() == Some("https") {
+            443
+        } else {
+            80
+        });
+    match (host, port).to_socket_addrs() {
+        Ok(addrs) => {
+            let mut any = false;
+            for addr in addrs {
+                any = true;
+                if is_private_ip(addr.ip()) {
+                    log::warn!(
+                        "SSRF protection: wreq redirect host {} resolves to private IP {}, blocking",
+                        host,
+                        addr.ip()
+                    );
+                    return false;
+                }
+            }
+            any
+        }
+        Err(e) => {
+            log::warn!(
+                "SSRF protection: wreq redirect DNS failed for host {} ({}), blocking",
+                host,
+                e
+            );
+            false
+        }
+    }
 }
 
 impl WreqEngine {
@@ -563,6 +576,153 @@ impl WreqEngine {
             .build()
             .map_err(|e| EngineError::Other(format!("Failed to build wreq resolve client: {e}")))
     }
+
+    /// SSRF 保护 + resolve 固定 IP：校验请求 URL，返回
+    /// `(校验通过并解析后的 URL, 经端口补全的 SocketAddr 列表)`。
+    /// 保持原始 URL 不变，TLS SNI 和虚拟主机路由正常。
+    async fn validate_and_pin_ssrf(
+        request: &InternalScrapeRequest,
+    ) -> Result<(validators::ValidatedUrl, Vec<std::net::SocketAddr>), EngineError> {
+        let validated_url = validators::SsrfValidator::new()
+            .validate(&request.url)
+            .await
+            .map_err(|e| EngineError::Other(format!("SSRF protection: {}", e)))?;
+        // SSRF: pin hostname → validated IPs via wreq resolve override.
+        // Keep the original URL intact so TLS SNI and virtual host routing work correctly.
+        let resolve_addrs: Vec<std::net::SocketAddr> = validated_url
+            .resolved_ips
+            .iter()
+            .map(|ip| std::net::SocketAddr::new(*ip, validated_url.port))
+            .collect();
+        Ok((validated_url, resolve_addrs))
+    }
+
+    /// 组装请求：method → UA 绑定 headers → 用户自定义 headers（覆盖 UA 默认）
+    /// → body → timeout
+    fn build_request_builder(
+        client: &wreq::Client,
+        request_url: &str,
+        request: &InternalScrapeRequest,
+        profile: &UaProfile,
+    ) -> wreq::RequestBuilder {
+        let mut request_builder = match request.method {
+            crate::common::HttpMethod::Get => client.get(request_url),
+            crate::common::HttpMethod::Post => client.post(request_url),
+        };
+
+        // UA 绑定 headers（User-Agent / Accept-Language / sec-ch-ua），用户自定义 headers 随后覆盖
+        request_builder = request_builder
+            .header("User-Agent", profile.ua)
+            .header("Accept-Language", profile.accept_language);
+        if !profile.sec_ch_ua.is_empty() {
+            request_builder = request_builder.header("sec-ch-ua", profile.sec_ch_ua);
+        }
+
+        // 自定义 headers
+        request_builder = request_builder.headers(Self::to_wreq_header_map(&request.headers));
+
+        if let Some(body) = &request.body {
+            request_builder = request_builder.body(body.clone());
+        }
+        request_builder.timeout(request.timeout)
+    }
+
+    /// 用户 headers → wreq HeaderMap（非法 name/value 静默跳过，与原实现一致）
+    fn to_wreq_header_map(
+        headers: &std::collections::HashMap<String, String>,
+    ) -> wreq::header::HeaderMap {
+        let mut map = wreq::header::HeaderMap::new();
+        for (k, v) in headers {
+            if let (Ok(name), Ok(value)) = (
+                wreq::header::HeaderName::from_bytes(k.as_bytes()),
+                wreq::header::HeaderValue::from_str(v),
+            ) {
+                map.insert(name, value);
+            }
+        }
+        map
+    }
+
+    /// 发送请求；失败时反馈代理健康并归一化错误
+    /// （超时 → `Timeout`，其余 → `RequestFailed`）
+    async fn send_and_handle_failure(
+        &self,
+        request_builder: wreq::RequestBuilder,
+        used_proxy_url: &Option<String>,
+        request: &InternalScrapeRequest,
+    ) -> Result<wreq::Response, EngineError> {
+        match request_builder.send().await {
+            Ok(resp) => Ok(resp),
+            Err(e) => {
+                if let Some(url) = used_proxy_url {
+                    if let Some(provider) = &self.proxy_provider {
+                        provider.mark_failure(url);
+                    }
+                }
+                if e.is_timeout() {
+                    return Err(EngineError::Timeout(request.timeout));
+                }
+                error!("wreq send failed for {}: {e}", request.url);
+                Err(EngineError::RequestFailed(e.to_string()))
+            }
+        }
+    }
+
+    /// 2xx 成功 → mark_success 恢复代理健康（对齐 ReqwestEngine H3）
+    fn mark_proxy_success(&self, used_proxy_url: &Option<String>, status_code: u16) {
+        if (200..300).contains(&status_code) {
+            if let Some(url) = used_proxy_url {
+                if let Some(provider) = &self.proxy_provider {
+                    provider.mark_success(url);
+                }
+            }
+        }
+    }
+
+    /// 响应头 → HashMap（仅收集 UTF-8 合法的键值，与原实现一致）
+    fn collect_response_headers(
+        response: &wreq::Response,
+    ) -> std::collections::HashMap<String, String> {
+        let mut response_headers = std::collections::HashMap::with_capacity(32);
+        for (k, v) in response.headers() {
+            if let Ok(v_str) = v.to_str() {
+                response_headers.insert(k.as_str().to_string(), v_str.to_string());
+            }
+        }
+        response_headers
+    }
+
+    /// 响应 Content-Type：trim 后非空；缺失或非法 UTF-8 回退 `text/html`
+    fn extract_content_type(response: &wreq::Response) -> String {
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "text/html".to_string())
+    }
+
+    /// 组装抓取响应（scrape 收尾字段映射）
+    fn build_scrape_response(
+        status_code: u16,
+        content: String,
+        content_type: String,
+        headers: std::collections::HashMap<String, String>,
+        response_time_ms: u64,
+    ) -> InternalScrapeResponse {
+        InternalScrapeResponse {
+            js_degraded: false,
+            status_code,
+            content,
+            screenshot: None,
+            content_type,
+            headers,
+            response_time_ms,
+            final_url: None,
+            captured_responses: Vec::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -576,27 +736,11 @@ impl ScraperEngine for WreqEngine {
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
         // SSRF 保护：DNS 验证 + resolve 覆盖（保持原始 URL，TLS SNI 和虚拟主机路由正常）
-        let validator = validators::SsrfValidator::new();
-        let validated_url = validator
-            .validate(&request.url)
-            .await
-            .map_err(|e| EngineError::Other(format!("SSRF protection: {}", e)))?;
-        let host = validated_url
-            .parsed_url
-            .host_str()
-            .unwrap_or("")
-            .to_string();
-        let port = validated_url.port;
-        // SSRF: pin hostname → validated IPs via wreq resolve override.
-        // Keep the original URL intact so TLS SNI and virtual host routing work correctly.
-        let resolve_addrs: Vec<std::net::SocketAddr> = validated_url
-            .resolved_ips
-            .iter()
-            .map(|ip| std::net::SocketAddr::new(*ip, port))
-            .collect();
+        let (validated_url, resolve_addrs) = Self::validate_and_pin_ssrf(request).await?;
         if resolve_addrs.is_empty() {
             return Err(EngineError::Other("SSRF: no resolved IPs".to_string()));
         }
+        let host = validated_url.parsed_url.host_str().unwrap_or("");
 
         // 选与请求匹配的 UA profile（ua + accept_language + sec-ch-ua + tls_emulation）。
         // wreq 只能仿真 Chromium 系 TLS，必须从 Chromium 子集中选取，
@@ -608,7 +752,7 @@ impl ScraperEngine for WreqEngine {
 
         // 构建含 SSRF resolve 覆盖的 wreq client（保持原始 hostname → TLS SNI / 虚拟主机路由正确）
         let effective_client = Self::build_resolve_client(
-            &host,
+            host,
             &resolve_addrs,
             used_proxy_url.as_deref(),
             request.skip_tls_verification,
@@ -616,80 +760,24 @@ impl ScraperEngine for WreqEngine {
             profile.tls_emulation,
         )?;
 
-        let request_url = validated_url.parsed_url.as_str();
-        let mut request_builder = match request.method {
-            crate::common::HttpMethod::Get => effective_client.get(request_url),
-            crate::common::HttpMethod::Post => effective_client.post(request_url),
-        };
-
-        // UA 绑定 headers（User-Agent / Accept-Language / sec-ch-ua），用户自定义 headers 随后覆盖
-        request_builder = request_builder
-            .header("User-Agent", profile.ua)
-            .header("Accept-Language", profile.accept_language);
-        if !profile.sec_ch_ua.is_empty() {
-            request_builder = request_builder.header("sec-ch-ua", profile.sec_ch_ua);
-        }
-
-        // 自定义 headers
-        let mut headers = wreq::header::HeaderMap::new();
-        for (k, v) in &request.headers {
-            if let (Ok(name), Ok(value)) = (
-                wreq::header::HeaderName::from_bytes(k.as_bytes()),
-                wreq::header::HeaderValue::from_str(v),
-            ) {
-                headers.insert(name, value);
-            }
-        }
-        request_builder = request_builder.headers(headers);
-
-        if let Some(body) = &request.body {
-            request_builder = request_builder.body(body.clone());
-        }
-        request_builder = request_builder.timeout(request.timeout);
+        let request_builder = Self::build_request_builder(
+            &effective_client,
+            validated_url.parsed_url.as_str(),
+            request,
+            profile,
+        );
 
         let start = Instant::now();
-        let response_result = request_builder.send().await;
-
-        let response = match response_result {
-            Ok(resp) => resp,
-            Err(e) => {
-                if let Some(url) = &used_proxy_url {
-                    if let Some(provider) = &self.proxy_provider {
-                        provider.mark_failure(url);
-                    }
-                }
-                if e.is_timeout() {
-                    return Err(EngineError::Timeout(request.timeout));
-                }
-                error!("wreq send failed for {}: {e}", request.url);
-                return Err(EngineError::RequestFailed(e.to_string()));
-            }
-        };
+        let response = self
+            .send_and_handle_failure(request_builder, &used_proxy_url, request)
+            .await?;
 
         let status_code = response.status().as_u16();
-        // 2xx 成功 → mark_success 恢复代理健康（对齐 ReqwestEngine H3）
-        if (200..300).contains(&status_code) {
-            if let Some(url) = &used_proxy_url {
-                if let Some(provider) = &self.proxy_provider {
-                    provider.mark_success(url);
-                }
-            }
-        }
+        self.mark_proxy_success(&used_proxy_url, status_code);
 
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "text/html".to_string());
+        let content_type = Self::extract_content_type(&response);
 
-        let mut response_headers = std::collections::HashMap::with_capacity(32);
-        for (k, v) in response.headers() {
-            if let Ok(v_str) = v.to_str() {
-                response_headers.insert(k.as_str().to_string(), v_str.to_string());
-            }
-        }
+        let response_headers = Self::collect_response_headers(&response);
 
         let content = read_wreq_body_limited(response, self.max_response_body_bytes).await?;
 
@@ -697,17 +785,13 @@ impl ScraperEngine for WreqEngine {
             tokio::time::sleep(Duration::from_millis(request.sync_wait_ms as u64)).await;
         }
 
-        Ok(InternalScrapeResponse {
-            js_degraded: false,
+        Ok(Self::build_scrape_response(
             status_code,
             content,
-            screenshot: None,
             content_type,
-            headers: response_headers,
-            response_time_ms: start.elapsed().as_millis() as u64,
-            final_url: None,
-            captured_responses: Vec::new(),
-        })
+            response_headers,
+            start.elapsed().as_millis() as u64,
+        ))
     }
 
     /// 支持分数：

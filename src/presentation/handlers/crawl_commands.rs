@@ -6,7 +6,7 @@
 use axum::{
     extract::{ConnectInfo, Extension, Path},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
 use std::net::SocketAddr;
@@ -89,58 +89,10 @@ pub async fn create_crawl(
     let team_id = auth_state.team_id;
     let sync_wait_ms = payload.sync_wait_ms.unwrap_or(DEFAULT_TIMEOUT_MS as u32);
 
-    if payload.config.max_depth > 5 {
-        return errors::unprocessable_entity("max_depth must be between 0 and 5");
-    }
-
-    // F11：sitemap 请求源主开关校验（能力不可用时显式拒绝，禁止静默忽略）
-    if let Some(key) = sitemap_seed_rejection(&payload, &settings) {
-        return error_response_locale(StatusCode::UNPROCESSABLE_ENTITY, &locale, &bundle, key);
-    }
-
-    // 1. 检查限流（架构限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
-    if let Err(response) = check_rate_limit(
-        state.rate_limiting_service.as_ref(),
-        auth_state.api_key_id,
-        "/v1/crawl",
-    )
-    .await
+    if let Some(response) =
+        preflight_crawl(&state, &payload, &settings, &auth_state, &locale, &bundle).await
     {
         return response;
-    }
-
-    // 2. SSRF 验证 - 使用完整的异步 DNS 验证
-    if let Some(response) = check_ssrf_url(&payload.url, team_id, auth_state.api_key_id).await {
-        return response;
-    }
-
-    // 2.5 SSRF 防护 (CWE-918)：验证 config.proxy 不指向内部网络
-    if let Some(ref proxy_url) = payload.config.proxy {
-        if let Some(response) = check_ssrf_url(proxy_url, team_id, auth_state.api_key_id).await {
-            return response;
-        }
-    }
-
-    // 2.6 SSRF 防护 (CWE-918)：显式 sitemap_url 是 worker 侧的拉取目标，
-    // 与种子 URL 同级验证（纵深防御；引擎 router 侧另有执行前校验）
-    if let Some(ref sitemap_url) = payload.sitemap_url {
-        if let Some(response) = check_ssrf_url(sitemap_url, team_id, auth_state.api_key_id).await {
-            return response;
-        }
-    }
-
-    if let Err(e) = state
-        .rate_limiting_service
-        .check_and_deduct_quota(
-            team_id,
-            CRAWL_TASK_CREDITS_COST,
-            crate::domain::models::CreditsTransactionType::Crawl,
-            format!("Crawl URL: {}", payload.url),
-            None,
-        )
-        .await
-    {
-        return errors::payment_required(e.to_string());
     }
 
     let use_case = state.create_use_case();
@@ -153,76 +105,211 @@ pub async fn create_crawl(
         .await
     {
         Ok(crawl) => {
-            let wait_result = if sync_wait_ms > 0 {
-                match state.task_repo.find_by_crawl_id(crawl.id).await {
-                    Ok(tasks) => {
-                        if !tasks.is_empty() {
-                            let task_ids = extract_task_ids(&tasks);
-                            handle_sync_wait_and_get_status(
-                                state.task_repo.as_ref(),
-                                &task_ids,
-                                team_id,
-                                sync_wait_ms,
-                            )
-                            .await
-                            .unwrap_or(SyncWaitResult {
-                                waited_time_ms: sync_wait_ms as u64,
-                                is_timeout: true,
-                            })
-                        } else {
-                            SyncWaitResult {
-                                waited_time_ms: 0,
-                                is_timeout: false,
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to find tasks for crawl {}: {:?}", crawl.id, e);
-                        SyncWaitResult {
-                            waited_time_ms: 0,
-                            is_timeout: false,
-                        }
-                    }
-                }
-            } else {
-                SyncWaitResult {
-                    waited_time_ms: 0,
-                    is_timeout: false,
-                }
-            };
+            let wait_result =
+                await_crawl_sync_wait(state.as_ref(), crawl.id, team_id, sync_wait_ms).await;
 
             let status_code = sync_wait_status_code(sync_wait_ms, wait_result.is_timeout);
 
             success_response(status_code, crawl)
         }
         Err(e) => {
-            // 补偿：create_crawl 失败时退还已扣的 CRAWL_TASK_CREDITS_COST，
-            // 避免客户积分静默丢失
-            if let Err(refund_err) = state
-                .rate_limiting_service
-                .refund_quota(
+            refund_crawl_quota(state.as_ref(), team_id, &crawl_url).await;
+            crawl_error_response(e, &locale, &bundle)
+        }
+    }
+}
+
+/// 前置校验与计费：深度/sitemap 校验 → 限流 → SSRF → 配额扣减。
+///
+/// 返回 `Some(response)` 表示请求必须中止。
+async fn preflight_crawl(
+    state: &CrawlHandlerState,
+    payload: &CrawlRequestDto,
+    settings: &Settings,
+    auth_state: &AuthState,
+    locale: &Locale,
+    bundle: &Arc<I18nBundle>,
+) -> Option<Response> {
+    if let Some(response) = validate_crawl_request(payload, settings, locale, bundle) {
+        return Some(response);
+    }
+
+    // 1. 检查限流（架构限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
+    if let Err(response) = check_rate_limit(
+        state.rate_limiting_service.as_ref(),
+        auth_state.api_key_id,
+        "/v1/crawl",
+    )
+    .await
+    {
+        return Some(response);
+    }
+
+    // 2. SSRF 验证 - 使用完整的异步 DNS 验证（目标 URL / proxy / sitemap_url）
+    if let Some(response) =
+        check_crawl_ssrf_targets(payload, auth_state.team_id, auth_state.api_key_id).await
+    {
+        return Some(response);
+    }
+
+    if let Err(e) = state
+        .rate_limiting_service
+        .check_and_deduct_quota(
+            auth_state.team_id,
+            CRAWL_TASK_CREDITS_COST,
+            crate::domain::models::CreditsTransactionType::Crawl,
+            format!("Crawl URL: {}", payload.url),
+            None,
+        )
+        .await
+    {
+        return Some(errors::payment_required(e.to_string()));
+    }
+
+    None
+}
+
+/// 将 create_crawl 错误映射为统一响应。
+fn crawl_error_response(
+    e: CrawlUseCaseError,
+    locale: &Locale,
+    bundle: &Arc<I18nBundle>,
+) -> Response {
+    match e {
+        CrawlUseCaseError::NotFound => {
+            errors_locale::not_found(locale, bundle, "api-crawl-not-found")
+        }
+        e => {
+            let (status, msg): (StatusCode, String) = e.into();
+            error_response(status, msg)
+        }
+    }
+}
+
+/// 创建请求的前置校验：深度上限与 sitemap 请求源主开关。
+///
+/// F11：请求携带 `sitemap_seed=true` 而能力不可用时必须**显式拒绝**
+/// （禁止静默忽略降级为普通 crawl）。
+fn validate_crawl_request(
+    payload: &CrawlRequestDto,
+    settings: &Settings,
+    locale: &Locale,
+    bundle: &Arc<I18nBundle>,
+) -> Option<Response> {
+    if payload.config.max_depth > 5 {
+        return Some(errors::unprocessable_entity(
+            "max_depth must be between 0 and 5",
+        ));
+    }
+
+    // F11：sitemap 请求源主开关校验（能力不可用时显式拒绝，禁止静默忽略）
+    if let Some(key) = sitemap_seed_rejection(payload, settings) {
+        return Some(error_response_locale(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            locale,
+            bundle,
+            key,
+        ));
+    }
+
+    None
+}
+
+/// 2. SSRF 防护 (CWE-918)：目标 URL、config.proxy、显式 sitemap_url 依次校验。
+async fn check_crawl_ssrf_targets(
+    payload: &CrawlRequestDto,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
+) -> Option<Response> {
+    if let Some(response) = check_ssrf_url(&payload.url, team_id, api_key_id).await {
+        return Some(response);
+    }
+
+    // 2.5 SSRF 防护 (CWE-918)：验证 config.proxy 不指向内部网络
+    if let Some(ref proxy_url) = payload.config.proxy {
+        if let Some(response) = check_ssrf_url(proxy_url, team_id, api_key_id).await {
+            return Some(response);
+        }
+    }
+
+    // 2.6 SSRF 防护 (CWE-918)：显式 sitemap_url 是 worker 侧的拉取目标，
+    // 与种子 URL 同级验证（纵深防御；引擎 router 侧另有执行前校验）
+    if let Some(ref sitemap_url) = payload.sitemap_url {
+        if let Some(response) = check_ssrf_url(sitemap_url, team_id, api_key_id).await {
+            return Some(response);
+        }
+    }
+
+    None
+}
+
+/// 创建成功后按 sync_wait_ms 轮询 crawl 子任务状态。
+async fn await_crawl_sync_wait(
+    state: &CrawlHandlerState,
+    crawl_id: crate::domain::id::Id,
+    team_id: crate::domain::id::Id,
+    sync_wait_ms: u32,
+) -> SyncWaitResult {
+    if sync_wait_ms == 0 {
+        return SyncWaitResult {
+            waited_time_ms: 0,
+            is_timeout: false,
+        };
+    }
+
+    match state.task_repo.find_by_crawl_id(crawl_id).await {
+        Ok(tasks) => {
+            if tasks.is_empty() {
+                SyncWaitResult {
+                    waited_time_ms: 0,
+                    is_timeout: false,
+                }
+            } else {
+                let task_ids = extract_task_ids(&tasks);
+                handle_sync_wait_and_get_status(
+                    state.task_repo.as_ref(),
+                    &task_ids,
                     team_id,
-                    CRAWL_TASK_CREDITS_COST,
-                    format!("Refund: crawl creation failed for {}", crawl_url),
-                    None,
+                    sync_wait_ms,
                 )
                 .await
-            {
-                error!(
-                    "CRITICAL: Failed to refund {} credits for team {} after crawl creation failure: {}",
-                    CRAWL_TASK_CREDITS_COST, team_id, refund_err
-                );
-            }
-            match e {
-                CrawlUseCaseError::NotFound => {
-                    errors_locale::not_found(&locale, &bundle, "api-crawl-not-found")
-                }
-                e => {
-                    let (status, msg): (StatusCode, String) = e.into();
-                    error_response(status, msg)
-                }
+                .unwrap_or(SyncWaitResult {
+                    waited_time_ms: sync_wait_ms as u64,
+                    is_timeout: true,
+                })
             }
         }
+        Err(e) => {
+            error!("Failed to find tasks for crawl {}: {:?}", crawl_id, e);
+            SyncWaitResult {
+                waited_time_ms: 0,
+                is_timeout: false,
+            }
+        }
+    }
+}
+
+/// 补偿：create_crawl 失败时退还已扣的 CRAWL_TASK_CREDITS_COST，
+/// 避免客户积分静默丢失。
+async fn refund_crawl_quota(
+    state: &CrawlHandlerState,
+    team_id: crate::domain::id::Id,
+    crawl_url: &str,
+) {
+    if let Err(refund_err) = state
+        .rate_limiting_service
+        .refund_quota(
+            team_id,
+            CRAWL_TASK_CREDITS_COST,
+            format!("Refund: crawl creation failed for {}", crawl_url),
+            None,
+        )
+        .await
+    {
+        error!(
+            "CRITICAL: Failed to refund {} credits for team {} after crawl creation failure: {}",
+            CRAWL_TASK_CREDITS_COST, team_id, refund_err
+        );
     }
 }
 

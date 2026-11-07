@@ -56,7 +56,7 @@ use crate::utils::robots::RobotsCheckerTrait;
 // 内存感知调度器接入 scrape_worker
 // MemoryScheduler 依赖 SystemMonitorTrait（metrics 特性门控），故整块接入由 metrics 门控
 #[cfg(feature = "metrics")]
-use crate::workers::scheduler::memory_scheduler::{Admission, MemoryScheduler, MemoryState};
+use crate::workers::scheduler::memory_scheduler::MemoryScheduler;
 
 // 提取到独立模块的函数导入
 pub(super) use super::crawl_link_extractor::{
@@ -297,104 +297,21 @@ impl ScrapeWorker {
         );
         info!("Processing task");
 
-        if let Some(expires_at) = task.expires_at {
-            if Utc::now() > expires_at {
-                warn!("Task {} expired at {}", task.id, expires_at);
-                let marked = self
-                    .repository
-                    .mark_failed(task.id, Some(self.worker_id))
-                    .await?;
-                if marked == 0 {
-                    // 已被其他 worker 终结/认领，不重复发失败 webhook
-                    warn!(
-                        "Task {} already terminal or re-claimed, skip expiry handling",
-                        task.id
-                    );
-                    return Ok(());
-                }
-                // Trigger failure webhook if needed
-                self.trigger_webhook(&task, Some("Task expired".to_string()))
-                    .await;
-                return Ok(());
-            }
+        if self.handle_expired_task(&task).await? {
+            return Ok(());
         }
 
-        // 内存感知准入检查
-        //
-        // 在获取并发许可（Team Semaphore）之前先采样内存状态并决定是否放行：
-        // - Normal → Proceed：进入并发获取流程
-        // - Pressure → Defer：复用现有 backlog 重排逻辑延后（
-        // 不新建持久队列，复用 scheduled_at + Queued 状态机）
-        // - Critical → Reschedule：同样经 backlog 重排，但语义为拒绝当前批次
-        //
-        // 采样策略：每次 process_task 调用 `update_state()` 读取最新内存使用率。
-        // 这与 `MemoryScheduler::spawn_monitor` 的后台 1s 采样互补——后台采样驱动
-        // 优雅关闭信号，此处 per-task 采样保证 admit 返回最新决策。
-        //
-        // F10 AIMD 内存联动：update_state 之后、admit 之前把水位广播给
-        // TeamSemaphore（Pressure 冻结 additive-increase / Critical CAS 半减），
-        // 消除「门控在暂停派发、AIMD 却在加并发」的矛盾。放在 admit match 之前
-        // 以覆盖全部状态；Normal 不发信号，AIMD 自然恢复 +1（无粘滞）。
-        // Defer/Reschedule 分支在 requeue 前不 acquire，信号先行不影响回队。
+        // 内存感知准入检查（策略与 AIMD 联动详见 [`ScrapeWorker::admit_task_by_memory`]）
         #[cfg(feature = "metrics")]
-        {
-            self.memory_scheduler.update_state();
-            match self.memory_scheduler.state() {
-                MemoryState::Pressure => {
-                    self.team_semaphore.on_memory_pressure(false);
-                }
-                MemoryState::Critical => {
-                    self.team_semaphore.on_memory_pressure(true);
-                }
-                MemoryState::Normal => {}
-            }
-            match self.memory_scheduler.admit().await {
-                Admission::Proceed => {}
-                Admission::Defer => {
-                    warn!(
-                        "Memory pressure detected, deferring task {} (team_id={}) via backlog reschedule",
-                        task.id, task.team_id
-                    );
-                    // 复用现有 backlog 重排逻辑：延后 30 秒重新入队
-                    // （条件回队：锁守卫防止覆盖并发发生的取消/终结）
-                    let scheduled_at = Utc::now() + chrono::Duration::seconds(30);
-                    self.repository
-                        .requeue_task(task.id, task.lock_token, Some(scheduled_at))
-                        .await?;
-                    return Ok(());
-                }
-                Admission::Reschedule => {
-                    warn!(
-                        "Memory critical detected, rescheduling task {} (team_id={}) to backlog",
-                        task.id, task.team_id
-                    );
-                    // Critical 同样复用 backlog 重排逻辑（不新建持久队列）
-                    let scheduled_at = Utc::now() + chrono::Duration::seconds(30);
-                    self.repository
-                        .requeue_task(task.id, task.lock_token, Some(scheduled_at))
-                        .await?;
-                    return Ok(());
-                }
-            }
+        if self.admit_task_by_memory(&task).await? {
+            return Ok(());
         }
 
         // Concurrency Check (Layer 2: Team Semaphore)
         // The permit is held for the duration of task processing and auto-releases on drop.
-        let _permit = match self.acquire_concurrency_permit(&task) {
+        let _permit = match self.acquire_permit_or_reschedule(&task).await? {
             Some(p) => p,
-            None => {
-                warn!(
-                    "Team {} concurrency limit exceeded, rescheduling task {}",
-                    task.team_id, task.id
-                );
-                // Reschedule logic (Backlog)
-                // Delay by 30 seconds（条件回队，锁守卫防覆盖并发状态迁移）
-                let scheduled_at = Utc::now() + chrono::Duration::seconds(30);
-                self.repository
-                    .requeue_task(task.id, task.lock_token, Some(scheduled_at))
-                    .await?;
-                return Ok(());
-            }
+            None => return Ok(()),
         };
 
         let task_type = task.task_type;
@@ -1115,79 +1032,11 @@ impl ScrapeWorker {
             captured_responses: response.captured_responses,
         };
 
-        // 解析 ScrapeRequest 以检查是否有提取规则
         // Token 扣费延后：先收集用量，仅在赢得 mark_completed 守卫后统一扣除，
         // 防止丢守卫的陈旧 worker 与认领方对同一次任务双扣费
-        let mut pending_token_usages: Vec<crate::domain::services::llm::TokenUsage> = Vec::new();
-        let mut extracted_data = None;
-        if let Some(req) = parsed_req.as_ref() {
-            if let Some(rules) = &req.extraction_rules {
-                match self
-                    .extraction_service
-                    .extract(&processed_response.content, rules, Some(&task.url))
-                    .await
-                {
-                    Ok((data, usage)) => {
-                        extracted_data = Some(data);
-                        // Record usage (PRD-334: Tokens Billing) — 扣费延后至守卫胜利后
-                        if usage.total_tokens > 0 {
-                            // 1. Record in-memory for real-time tracking
-                            self.token_usage
-                                .entry(task.team_id)
-                                .or_insert_with(|| AtomicI64::new(0))
-                                .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
-
-                            // 2. Defer DB deduction until the completion guard is won
-                            pending_token_usages.push(usage);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Extraction failed for url {}: {}", task.url, e);
-                    }
-                }
-            } else if let Some(prompt) = &req.extraction_prompt {
-                // extraction_prompt 为空字符串时视为未设置
-                if !prompt.is_empty() {
-                    match self
-                        .extract_with_prompt(&processed_response.content, prompt, &task.url)
-                        .await
-                    {
-                        Ok((data, usage)) => {
-                            extracted_data = Some(data);
-                            if usage.total_tokens > 0 {
-                                self.token_usage
-                                    .entry(task.team_id)
-                                    .or_insert_with(|| AtomicI64::new(0))
-                                    .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
-                                pending_token_usages.push(usage);
-                            }
-                        }
-                        Err(e) => {
-                            error!("Prompt extraction failed for url {}: {}", task.url, e);
-                        }
-                    }
-                }
-            } else if let Some(schema) = &req.extraction_schema {
-                match self
-                    .extract_with_schema(&processed_response.content, schema)
-                    .await
-                {
-                    Ok((data, usage)) => {
-                        extracted_data = Some(data);
-                        if usage.total_tokens > 0 {
-                            self.token_usage
-                                .entry(task.team_id)
-                                .or_insert_with(|| AtomicI64::new(0))
-                                .fetch_add(usage.total_tokens as i64, Ordering::Relaxed);
-                            pending_token_usages.push(usage);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Schema extraction failed for url {}: {}", task.url, e);
-                    }
-                }
-            }
-        }
+        let (extracted_data, pending_token_usages) = self
+            .run_extraction_stage(task, parsed_req, &processed_response.content)
+            .await;
 
         // 先落库结果（save_result 按 task_id 幂等 upsert），再以锁守卫终结任务：
         // 中间崩溃的窗口退化为"结果已存、任务可被僵尸恢复重跑"，重跑后幂等覆盖
@@ -1866,6 +1715,8 @@ impl ScrapeWorker {
     }
 }
 
+// 任务准入 / 结果提取辅助方法（partial impl block）
+mod task_support;
 // Crawl 任务处理方法（partial impl block）
 mod crawl_task;
 // Extract 任务处理方法（partial impl block）

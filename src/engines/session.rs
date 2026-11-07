@@ -324,46 +324,51 @@ impl SessionManager {
             if !name.eq_ignore_ascii_case("set-cookie") {
                 continue;
             }
-            for cookie_str in value.split('\n') {
-                // 手动通道：只取 "name=value" 对（首个 ';' 前），属性全忽略
-                let pair = cookie_str.split(';').next().unwrap_or("").trim();
-                if pair.is_empty() {
-                    continue;
-                }
-                let pair_len = pair.len() + if blob.is_empty() { 0 } else { 2 };
-                if pair_len > self.cookie_cache_max_bytes {
-                    log::warn!(
-                        "{}",
-                        crate::i18n::tr_log_args(
-                            "session-cookie-cap-dropped",
-                            &[
-                                ("bytes", fluent_bundle::FluentValue::from(pair.len() as i64)),
-                                (
-                                    "cap",
-                                    fluent_bundle::FluentValue::from(
-                                        self.cookie_cache_max_bytes as i64
-                                    ),
-                                ),
-                                ("id", fluent_bundle::FluentValue::from(identity.id as i64),),
-                            ],
-                        )
-                    );
-                    continue;
-                }
-                if !blob.is_empty() {
-                    blob.push_str("; ");
-                }
-                blob.push_str(pair);
-                // 容量护栏：超出上限丢最旧条目（分号分隔的首段）
-                while blob.len() > self.cookie_cache_max_bytes {
-                    match blob.find("; ") {
-                        Some(pos) => {
-                            blob.drain(..pos + 2);
-                        }
-                        None => {
-                            blob.clear();
-                            break;
-                        }
+            self.append_set_cookie_blob(blob, value, identity.id, self.cookie_cache_max_bytes);
+        }
+    }
+
+    /// 追加单条 `Set-Cookie` 头值到 host 桶（自 [`SessionManager::capture_cookies`]
+    /// 提取；F2：reqwest 引擎把重定向链各跳 + 最终响应的 Cookie 以 `'\n'` 连接
+    /// 进单一 set-cookie 值，按行拆分逐条处理）。
+    ///
+    /// 手动通道：只取 `name=value` 对（首个 `;` 前）；单条超限丢弃该条（warn），
+    /// 累积超限丢最旧条目。
+    fn append_set_cookie_blob(&self, blob: &mut String, value: &str, identity_id: u64, cap: usize) {
+        for cookie_str in value.split('\n') {
+            // 手动通道：只取 "name=value" 对（首个 ';' 前），属性全忽略
+            let pair = cookie_str.split(';').next().unwrap_or("").trim();
+            if pair.is_empty() {
+                continue;
+            }
+            let pair_len = pair.len() + if blob.is_empty() { 0 } else { 2 };
+            if pair_len > cap {
+                log::warn!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "session-cookie-cap-dropped",
+                        &[
+                            ("bytes", fluent_bundle::FluentValue::from(pair.len() as i64)),
+                            ("cap", fluent_bundle::FluentValue::from(cap as i64)),
+                            ("id", fluent_bundle::FluentValue::from(identity_id as i64),),
+                        ],
+                    )
+                );
+                continue;
+            }
+            if !blob.is_empty() {
+                blob.push_str("; ");
+            }
+            blob.push_str(pair);
+            // 容量护栏：超出上限丢最旧条目（分号分隔的首段）
+            while blob.len() > cap {
+                match blob.find("; ") {
+                    Some(pos) => {
+                        blob.drain(..pos + 2);
+                    }
+                    None => {
+                        blob.clear();
+                        break;
                     }
                 }
             }

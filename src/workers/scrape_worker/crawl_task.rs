@@ -164,64 +164,18 @@ impl ScrapeWorker {
         };
 
         // 先以锁守卫终结任务：只有仍持有锁时才落库结果，
-        // 防止锁过期被其他 worker 认领后双写结果
+        // 防止锁过期被其他 worker 认领后双写结果（详见 [`persist_crawl_result`]）
         let marked = self
-            .repository
-            .mark_completed(task.id, Some(self.worker_id))
-            .await?;
-        if marked == 0 {
-            warn!(
-                "Crawl task {} no longer owned by worker {}, skipping result",
-                task.id, self.worker_id
-            );
-            return Ok(());
-        }
-
-        if soft404_hit {
-            info!(
-                "{}",
-                crate::i18n::tr_log_args(
-                    "crawl-soft404-detected",
-                    &[
-                        ("url", fluent_bundle::FluentValue::from(task.url.as_str())),
-                        (
-                            "task_id",
-                            fluent_bundle::FluentValue::from(task.id.to_string())
-                        ),
-                    ],
-                )
-            );
-        } else {
-            save_result(
+            .persist_crawl_result(
                 task,
                 &processed_response,
                 extracted_data,
-                self.result_repository.as_ref(),
+                crawl_id,
+                soft404_hit,
             )
             .await?;
-        }
-
-        // 结果行不变量（completed⇒结果可查）无条件执行：除 soft404 外，
-        // 去重命中/304 等完成路径同样可能无结果行（实测 memory 后端轮
-        // completed+0 结果）。存在性检查为 COUNT 投影（非整行回读）；
-        // ensure 失败仅 error 留痕并继续计数——任务行已 Completed，此处
-        // Err 会让 crawl 计数永久卡死且重试被守卫结构性拒绝。
-        if let Err(e) = self.ensure_result_row(task).await {
-            error!(
-                "Failed to ensure result row for crawl task {}: {}",
-                task.id, e
-            );
-        }
-
-        if let Err(e) = self
-            .crawl_repository
-            .increment_completed_tasks(crawl_id)
-            .await
-        {
-            error!(
-                "Failed to increment completed tasks for crawl {}: {}",
-                crawl_id, e
-            );
+        if !marked {
+            return Ok(());
         }
 
         // 先提取并入队子链接，再评估自适应停止条件。
@@ -258,53 +212,21 @@ impl ScrapeWorker {
             self.feed_sitemap_source(task, crawl_id, config).await;
         }
 
-        // 自适应停止条件检查
-        //
-        // 每完成一个爬取步骤（并入队子链接）后，评估是否应提前终止整个 crawl：
-        // - `MaxPagesReached`: completed_tasks >= max_pages（可配置上限）
-        // - `NoPendingLinks`: total_tasks 已全部完成（无待处理链接）
-        //
-        // 命中时直接标记 crawl 为 Completed。
-        // 注：完整 `AdaptiveStrategy::evaluate`（BM25/覆盖率/饱和度）
-        // 需 CrawlConfigDto 扩展 keywords 字段后接入（当前 DTO 无 keywords）。
+        // 自适应停止条件检查（评估策略详见 [`apply_adaptive_stop`]）
         if let Ok(Some(crawl_state)) = self.crawl_repository.find_by_id(crawl_id).await {
             let pages_crawled = crawl_state.completed_tasks() as usize;
             let total = crawl_state.total_tasks() as usize;
-            let pending = total.saturating_sub(pages_crawled + crawl_state.failed_tasks() as usize);
 
             // 页数上限来自 crawl config（缺省 1000）
             let max_pages = config.max_pages.unwrap_or(1000) as usize;
-            let stop_condition = StopCondition::new().with_max_pages(max_pages);
-            let stats = CrawlStats::new()
-                .with_pages(pages_crawled)
-                .with_pending(pending);
-
-            if let Some(reason) = stop_condition.should_stop(&stats) {
-                info!(
-                    "adaptive stop for crawl {}: {} (pages={}, pending={})",
-                    crawl_id,
-                    reason.description(),
-                    pages_crawled,
-                    pending
-                );
-                if let Err(e) = self
-                    .crawl_repository
-                    .update_status(
-                        crawl_id,
-                        crate::domain::models::crawl_model::CrawlStatus::Completed,
-                    )
-                    .await
-                {
-                    error!(
-                        "Failed to update crawl status after adaptive stop for {}: {}",
-                        crawl_id, e
-                    );
-                }
-            } else {
-                // 未触发停止条件：由 update_crawl_completion_status 按总量判定
-                // 是否全部完成（子任务入队后 total 已增长，不会误标 Completed）
-                update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
-            }
+            self.apply_adaptive_stop(
+                crawl_id,
+                pages_crawled,
+                crawl_state.failed_tasks() as usize,
+                total,
+                max_pages,
+            )
+            .await;
         } else {
             // crawl 查询失败，回退到原流程（仅更新完成状态）
             update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
@@ -319,6 +241,134 @@ impl ScrapeWorker {
         .await;
 
         Ok(())
+    }
+
+    /// 落库 crawl 结果（自 [`ScrapeWorker::handle_crawl_success`] 提取）
+    ///
+    /// 先以锁守卫终结任务：只有仍持有锁时才落库结果，
+    /// 防止锁过期被其他 worker 认领后双写结果。守卫失败（返回 `false`）
+    /// 时调用方直接返回。
+    async fn persist_crawl_result(
+        &self,
+        task: &Task,
+        processed_response: &ScrapeResponse,
+        extracted_data: Option<serde_json::Value>,
+        crawl_id: crate::domain::id::Id,
+        soft404_hit: bool,
+    ) -> Result<bool> {
+        let marked = self
+            .repository
+            .mark_completed(task.id, Some(self.worker_id))
+            .await?;
+        if marked == 0 {
+            warn!(
+                "Crawl task {} no longer owned by worker {}, skipping result",
+                task.id, self.worker_id
+            );
+            return Ok(false);
+        }
+
+        if soft404_hit {
+            info!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "crawl-soft404-detected",
+                    &[
+                        ("url", fluent_bundle::FluentValue::from(task.url.as_str())),
+                        (
+                            "task_id",
+                            fluent_bundle::FluentValue::from(task.id.to_string())
+                        ),
+                    ],
+                )
+            );
+        } else {
+            save_result(
+                task,
+                processed_response,
+                extracted_data,
+                self.result_repository.as_ref(),
+            )
+            .await?;
+        }
+
+        // 结果行不变量（completed⇒结果可查）无条件执行：除 soft404 外，
+        // 去重命中/304 等完成路径同样可能无结果行（实测 memory 后端轮
+        // completed+0 结果）。存在性检查为 COUNT 投影（非整行回读）；
+        // ensure 失败仅 error 留痕并继续计数——任务行已 Completed，此处
+        // Err 会让 crawl 计数永久卡死且重试被守卫结构性拒绝。
+        if let Err(e) = self.ensure_result_row(task).await {
+            error!(
+                "Failed to ensure result row for crawl task {}: {}",
+                task.id, e
+            );
+        }
+
+        if let Err(e) = self
+            .crawl_repository
+            .increment_completed_tasks(crawl_id)
+            .await
+        {
+            error!(
+                "Failed to increment completed tasks for crawl {}: {}",
+                crawl_id, e
+            );
+        }
+
+        Ok(true)
+    }
+
+    /// 自适应停止条件检查与完成状态更新（自 [`ScrapeWorker::handle_crawl_success`]
+    /// 提取）
+    ///
+    /// 每完成一个爬取步骤（并入队子链接）后，评估是否应提前终止整个 crawl：
+    /// - `MaxPagesReached`: completed_tasks >= max_pages（可配置上限）
+    /// - `NoPendingLinks`: total_tasks 已全部完成（无待处理链接）
+    ///
+    /// 命中时直接标记 crawl 为 Completed。
+    /// 注：完整 `AdaptiveStrategy::evaluate`（BM25/覆盖率/饱和度）
+    /// 需 CrawlConfigDto 扩展 keywords 字段后接入（当前 DTO 无 keywords）。
+    async fn apply_adaptive_stop(
+        &self,
+        crawl_id: crate::domain::id::Id,
+        pages_crawled: usize,
+        failed_tasks: usize,
+        total: usize,
+        max_pages: usize,
+    ) {
+        let pending = total.saturating_sub(pages_crawled + failed_tasks);
+
+        let stop_condition = StopCondition::new().with_max_pages(max_pages);
+        let stats = CrawlStats::new()
+            .with_pages(pages_crawled)
+            .with_pending(pending);
+
+        if let Some(reason) = stop_condition.should_stop(&stats) {
+            info!(
+                "adaptive stop for crawl {}: {} (pages={}, pending={})",
+                crawl_id,
+                reason.description(),
+                pages_crawled,
+                pending
+            );
+            if let Err(e) = self
+                .crawl_repository
+                .update_status(
+                    crawl_id,
+                    crate::domain::models::crawl_model::CrawlStatus::Completed,
+                )
+                .await
+            {
+                error!(
+                    "Failed to update crawl status after adaptive stop for {}: {}",
+                    crawl_id, e
+                );
+            }
+        } else {
+            // 未触发停止条件：由 update_crawl_completion_status 按总量判定
+            // 是否全部完成（子任务入队后 total 已增长，不会误标 Completed）
+            update_crawl_completion_status_fn(crawl_id, self.crawl_repository.as_ref()).await;
+        }
     }
 
     /// 确保 crawl 子任务的结果行存在（`completed ⇒ /results ≥1 行` 不变量）

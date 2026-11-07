@@ -404,78 +404,31 @@ impl EnvVarSecurityMonitor {
                 let lower_value = value.to_lowercase();
 
                 // 检查空值（生产环境严格要求）
-                if value.is_empty() && environment == "production" {
-                    warnings.push(SensitiveVarWarning {
-                        var_name: var_name.to_string(),
-                        warning_type: SensitiveVarWarningType::EmptyValue,
-                        message: format!(
-                            "Sensitive environment variable {} is empty in production, which may be a security risk",
-                            var_name
-                        ),
-                        severity: WarningSeverity::Critical,
-                    });
+                if let Some(warning) = empty_value_warning(var_name, &value, environment) {
+                    warnings.push(warning);
                     continue;
                 }
 
-                for weak in &weak_defaults {
-                    if lower_value.contains(weak) {
-                        warnings.push(SensitiveVarWarning {
-                            var_name: var_name.to_string(),
-                            warning_type: SensitiveVarWarningType::WeakDefaultValue,
-                            message: format!(
-                                "Sensitive environment variable {} contains weak default value pattern: '{}'",
-                                var_name, weak
-                            ),
-                            severity: WarningSeverity::High,
-                        });
-                        break;
-                    }
+                if let Some(warning) =
+                    weak_default_value_warning(var_name, &lower_value, &weak_defaults)
+                {
+                    warnings.push(warning);
                 }
 
-                for pattern in &test_patterns {
-                    if lower_value.contains(pattern) {
-                        warnings.push(SensitiveVarWarning {
-                            var_name: var_name.to_string(),
-                            warning_type: SensitiveVarWarningType::TestValue,
-                            message: format!(
-                                "Sensitive environment variable {} contains test value pattern: '{}'",
-                                var_name, pattern
-                            ),
-                            severity: if environment == "production" {
-                                WarningSeverity::Critical
-                            } else {
-                                WarningSeverity::Medium
-                            },
-                        });
-                        break;
-                    }
+                if let Some(warning) =
+                    test_value_warning(var_name, &lower_value, &test_patterns, environment)
+                {
+                    warnings.push(warning);
                 }
 
                 // 检查过短的密钥值（小于16字符）
-                if value.len() < 16 && !value.is_empty() {
-                    warnings.push(SensitiveVarWarning {
-                        var_name: var_name.to_string(),
-                        warning_type: SensitiveVarWarningType::ShortValue,
-                        message: format!(
-                            "Sensitive environment variable {} value too short ({} characters); a strong key of at least 32 characters is recommended",
-                            var_name,
-                            value.len()
-                        ),
-                        severity: WarningSeverity::Medium,
-                    });
+                if let Some(warning) = short_value_warning(var_name, &value) {
+                    warnings.push(warning);
                 }
 
                 // 检查是否为常见的不安全模式
-                if lower_value == var_name.to_lowercase() {
-                    warnings.push(SensitiveVarWarning {
-                        var_name: var_name.to_string(),
-                        warning_type: SensitiveVarWarningType::InsecurePattern,
-                        message: format!(
-                            "Sensitive environment variable {} value equals its variable name, which is a serious security issue",
-                            var_name
-                        ),
-                        severity: WarningSeverity::Critical,
-                    });
+                if let Some(warning) = insecure_pattern_warning(var_name, &lower_value) {
+                    warnings.push(warning);
                 }
             }
         }
@@ -565,6 +518,108 @@ impl EnvVarSecurityMonitor {
             high_issues_count: high_count,
         }
     }
+}
+
+/// 空值告警（生产环境严格要求）。
+fn empty_value_warning(
+    var_name: &str,
+    value: &str,
+    environment: &str,
+) -> Option<SensitiveVarWarning> {
+    if value.is_empty() && environment == "production" {
+        return Some(SensitiveVarWarning {
+            var_name: var_name.to_string(),
+            warning_type: SensitiveVarWarningType::EmptyValue,
+            message: format!(
+                "Sensitive environment variable {} is empty in production, which may be a security risk",
+                var_name
+            ),
+            severity: WarningSeverity::Critical,
+        });
+    }
+    None
+}
+
+/// 弱默认值模式告警（仅报首个命中模式）。
+fn weak_default_value_warning(
+    var_name: &str,
+    lower_value: &str,
+    weak_defaults: &[&str],
+) -> Option<SensitiveVarWarning> {
+    for weak in weak_defaults {
+        if lower_value.contains(weak) {
+            return Some(SensitiveVarWarning {
+                var_name: var_name.to_string(),
+                warning_type: SensitiveVarWarningType::WeakDefaultValue,
+                message: format!(
+                    "Sensitive environment variable {} contains weak default value pattern: '{}'",
+                    var_name, weak
+                ),
+                severity: WarningSeverity::High,
+            });
+        }
+    }
+    None
+}
+
+/// 测试值模式告警（仅报首个命中模式；生产环境升为 Critical）。
+fn test_value_warning(
+    var_name: &str,
+    lower_value: &str,
+    test_patterns: &[&str],
+    environment: &str,
+) -> Option<SensitiveVarWarning> {
+    for pattern in test_patterns {
+        if lower_value.contains(pattern) {
+            return Some(SensitiveVarWarning {
+                var_name: var_name.to_string(),
+                warning_type: SensitiveVarWarningType::TestValue,
+                message: format!(
+                    "Sensitive environment variable {} contains test value pattern: '{}'",
+                    var_name, pattern
+                ),
+                severity: if environment == "production" {
+                    WarningSeverity::Critical
+                } else {
+                    WarningSeverity::Medium
+                },
+            });
+        }
+    }
+    None
+}
+
+/// 过短密钥值告警（小于 16 字符）。
+fn short_value_warning(var_name: &str, value: &str) -> Option<SensitiveVarWarning> {
+    if value.len() < 16 && !value.is_empty() {
+        return Some(SensitiveVarWarning {
+            var_name: var_name.to_string(),
+            warning_type: SensitiveVarWarningType::ShortValue,
+            message: format!(
+                "Sensitive environment variable {} value too short ({} characters); a strong key of at least 32 characters is recommended",
+                var_name,
+                value.len()
+            ),
+            severity: WarningSeverity::Medium,
+        });
+    }
+    None
+}
+
+/// 值等于变量名的不安全模式告警。
+fn insecure_pattern_warning(var_name: &str, lower_value: &str) -> Option<SensitiveVarWarning> {
+    if lower_value == var_name.to_lowercase() {
+        return Some(SensitiveVarWarning {
+            var_name: var_name.to_string(),
+            warning_type: SensitiveVarWarningType::InsecurePattern,
+            message: format!(
+                "Sensitive environment variable {} value equals its variable name, which is a serious security issue",
+                var_name
+            ),
+            severity: WarningSeverity::Critical,
+        });
+    }
+    None
 }
 
 // ── Tests ──────────────────────────────────────────────────

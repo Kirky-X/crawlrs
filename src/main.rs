@@ -419,19 +419,7 @@ mod app {
 
     pub(crate) async fn run() -> anyhow::Result<()> {
         // 1. Load and configure settings
-        let is_production = env::var("CRAWLRS_ENV")
-            .map(|v| v.eq_ignore_ascii_case("production") || v.eq_ignore_ascii_case("prod"))
-            .unwrap_or(false);
-
-        let (settings, _port) = crawlrs::bootstrap::config::load_and_configure(is_production)?;
-        let settings = Arc::new(settings);
-
-        // 1.5 初始化启动期 i18n 全局束（检测链决议 default_locale）。
-        // 必须先于 kit.build：RAG 配置校验消息等启动期出口经 Fluent 输出。
-        // 加载失败（locales 目录缺失）保持未初始化，各出口回退英文规范串。
-        if let Some(bundle) = crawlrs::i18n::build_startup_bundle(&settings.i18n) {
-            crawlrs::i18n::init_startup_i18n(bundle);
-        }
+        let settings = load_runtime_settings()?;
 
         // 2. Initialize telemetry and metrics (inklog LoggerManager must be held alive)
         let _logger_manager = crawlrs::bootstrap::telemetry::init_all(&settings.logging)
@@ -448,6 +436,45 @@ mod app {
 
         let mut kit = AsyncKit::new();
         kit.set_config(settings.clone());
+        register_core_modules(&mut kit)?;
+
+        let kit = kit
+            .build()
+            .await
+            .map_err(|e| anyhow::anyhow!("build AsyncKit: {e}"))?;
+        let app_state = CrawlRsState::from_kit(&kit)?;
+        let http_client = kit
+            .require::<HttpModule>()
+            .map_err(|e| anyhow::anyhow!("require HttpModule: {e}"))?;
+
+        log::info!("Application dependencies initialized successfully");
+
+        // 4. Start service based on type
+        dispatch_service(&app_state, settings, http_client).await
+    }
+
+    /// 加载并配置运行时设置。
+    ///
+    /// 1.5 初始化启动期 i18n 全局束（检测链决议 default_locale）。
+    /// 必须先于 kit.build：RAG 配置校验消息等启动期出口经 Fluent 输出。
+    /// 加载失败（locales 目录缺失）保持未初始化，各出口回退英文规范串。
+    fn load_runtime_settings() -> anyhow::Result<Arc<crawlrs::config::settings::Settings>> {
+        let is_production = env::var("CRAWLRS_ENV")
+            .map(|v| v.eq_ignore_ascii_case("production") || v.eq_ignore_ascii_case("prod"))
+            .unwrap_or(false);
+
+        let (settings, _port) = crawlrs::bootstrap::config::load_and_configure(is_production)?;
+        let settings = Arc::new(settings);
+
+        if let Some(bundle) = crawlrs::i18n::build_startup_bundle(&settings.i18n) {
+            crawlrs::i18n::init_startup_i18n(bundle);
+        }
+
+        Ok(settings)
+    }
+
+    /// 注册全部 DI 模块（顺序即依赖顺序）。
+    fn register_core_modules(kit: &mut AsyncKit) -> anyhow::Result<()> {
         kit.register::<SettingsModule>()
             .map_err(|e| anyhow::anyhow!("register SettingsModule: {e}"))?;
         kit.register::<DatabaseModule>()
@@ -470,31 +497,27 @@ mod app {
                 crawlrs::i18n::tr_log("boot-register-id-module-failed")
             )
         })?;
+        Ok(())
+    }
 
-        let kit = kit
-            .build()
-            .await
-            .map_err(|e| anyhow::anyhow!("build AsyncKit: {e}"))?;
-        let app_state = CrawlRsState::from_kit(&kit)?;
-        let http_client = kit
-            .require::<HttpModule>()
-            .map_err(|e| anyhow::anyhow!("require HttpModule: {e}"))?;
-
-        log::info!("Application dependencies initialized successfully");
-
-        // 4. Start service based on type
+    /// 按 `argv[1]` 选择执行人格并启动对应服务。
+    async fn dispatch_service(
+        app_state: &CrawlRsState,
+        settings: Arc<crawlrs::config::settings::Settings>,
+        http_client: Arc<reqwest::Client>,
+    ) -> anyhow::Result<()> {
         match ServiceType::from_args() {
             ServiceType::Api => {
-                start_api_service(&app_state, settings).await?;
+                start_api_service(app_state, settings).await?;
             }
             ServiceType::Worker => {
-                start_worker_service(&app_state, settings, http_client).await?;
+                start_worker_service(app_state, settings, http_client).await?;
             }
             ServiceType::Bootstrap => {
-                run_bootstrap(&app_state, &settings).await?;
+                run_bootstrap(app_state, &settings).await?;
             }
             ServiceType::Migrate => {
-                start_migrate_service(&app_state).await?;
+                start_migrate_service(app_state).await?;
             }
         }
 

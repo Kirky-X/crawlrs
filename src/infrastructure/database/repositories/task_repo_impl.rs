@@ -980,59 +980,93 @@ impl TaskRepository for TaskRepositoryImpl {
 
         // PERF: 使用批量查询代替 N+1 查询
         // 一次性获取所有任务，验证团队所有权
-        let entities: Vec<task_entity::Model> = task_entity::Entity::find()
-            .filter(task_entity::Column::Id.is_in(task_ids.iter().copied()))
-            .all(conn)
-            .await
-            .map_err(|e| RepositoryError::Database(e.into()))?;
+        let entities = load_cancel_candidates(conn, &task_ids).await?;
 
         let mut cancelled = Vec::new();
         let mut errors = Vec::new();
 
         // 按团队所有权分组
-        let mut owned_ids: Vec<crate::domain::id::Id> = Vec::new();
-        let mut not_found_ids = Vec::new();
-
-        // 预建索引：把 O(task_ids × entities) 的线性扫描降为 O(1) 查找
-        let entities_by_id: HashMap<uuid::Uuid, &task_entity::Model> =
-            entities.iter().map(|e| (e.id, e)).collect();
-
-        for id in &task_ids {
-            if let Some(entity) = entities_by_id.get(&id.to_uuid_v8()) {
-                if entity.team_id == team_id.to_uuid_v8() {
-                    owned_ids.push(entity.id.into());
-                } else {
-                    errors.push((*id, "Team ID mismatch".to_string()));
-                }
-            } else {
-                not_found_ids.push(*id);
-            }
-        }
-
-        for id in not_found_ids {
-            errors.push((id, "Task not found".to_string()));
-        }
+        let (owned_ids, not_found_errors) = classify_task_ownership(&task_ids, &team_id, &entities);
+        errors.extend(not_found_errors);
 
         // 批量更新所有归属当前团队的任务
         if !owned_ids.is_empty() {
-            let update_count = task_entity::Entity::update_many()
-                .col_expr(
-                    task_entity::Column::Status,
-                    Expr::value(TaskStatus::Cancelled.to_string()),
-                )
-                .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
-                .filter(task_entity::Column::Id.is_in(owned_ids.iter().copied()))
-                .exec(conn)
-                .await
-                .map_err(|e| RepositoryError::Database(e.into()))?;
-
+            cancel_owned_tasks(conn, &owned_ids).await?;
             // 所有更新的任务都成功取消
             cancelled.extend(owned_ids);
-            let _ = update_count;
         }
 
         Ok((cancelled, errors))
     }
+}
+
+/// 批量载入待取消任务实体（一次查询，避免 N+1）
+async fn load_cancel_candidates(
+    conn: &dbnexus::sea_orm::DatabaseConnection,
+    task_ids: &[crate::domain::id::Id],
+) -> Result<Vec<task_entity::Model>, RepositoryError> {
+    task_entity::Entity::find()
+        .filter(task_entity::Column::Id.is_in(task_ids.iter().copied()))
+        .all(conn)
+        .await
+        .map_err(|e| RepositoryError::Database(e.into()))
+}
+
+/// 按团队所有权分组任务 ID：归属当前团队 → 待取消（owned），他队 → 错误，
+/// 不存在 → 错误。预建索引把 O(task_ids × entities) 的线性扫描降为 O(1) 查找。
+fn classify_task_ownership(
+    task_ids: &[crate::domain::id::Id],
+    team_id: &crate::domain::id::Id,
+    entities: &[task_entity::Model],
+) -> (
+    Vec<crate::domain::id::Id>,
+    Vec<(crate::domain::id::Id, String)>,
+) {
+    let mut owned_ids: Vec<crate::domain::id::Id> = Vec::new();
+    let mut errors = Vec::new();
+    let mut not_found_ids = Vec::new();
+
+    // 预建索引：把 O(task_ids × entities) 的线性扫描降为 O(1) 查找
+    let entities_by_id: HashMap<uuid::Uuid, &task_entity::Model> =
+        entities.iter().map(|e| (e.id, e)).collect();
+
+    for id in task_ids {
+        if let Some(entity) = entities_by_id.get(&id.to_uuid_v8()) {
+            if entity.team_id == team_id.to_uuid_v8() {
+                owned_ids.push(entity.id.into());
+            } else {
+                errors.push((*id, "Team ID mismatch".to_string()));
+            }
+        } else {
+            not_found_ids.push(*id);
+        }
+    }
+
+    for id in not_found_ids {
+        errors.push((id, "Task not found".to_string()));
+    }
+
+    (owned_ids, errors)
+}
+
+/// 批量取消归属当前团队的任务（状态置 Cancelled、刷新 UpdatedAt）
+async fn cancel_owned_tasks(
+    conn: &dbnexus::sea_orm::DatabaseConnection,
+    owned_ids: &[crate::domain::id::Id],
+) -> Result<(), RepositoryError> {
+    let update_count = task_entity::Entity::update_many()
+        .col_expr(
+            task_entity::Column::Status,
+            Expr::value(TaskStatus::Cancelled.to_string()),
+        )
+        .col_expr(task_entity::Column::UpdatedAt, Expr::value(Utc::now()))
+        .filter(task_entity::Column::Id.is_in(owned_ids.iter().copied()))
+        .exec(conn)
+        .await
+        .map_err(|e| RepositoryError::Database(e.into()))?;
+
+    let _ = update_count;
+    Ok(())
 }
 
 #[cfg(test)]

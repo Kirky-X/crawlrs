@@ -16,6 +16,8 @@
 //! **URL 关键词命中率**（复用 `scorers::KeywordRelevanceScorer` 逻辑）。
 //! 后续正文提取接入后可升级为正文 TF-IDF 评分。
 
+mod stop_checks;
+
 use super::scorers::KeywordRelevanceScorer;
 use super::{ScoringContext, UrlScorer};
 
@@ -405,54 +407,13 @@ impl StopCondition {
     /// 全部不满足时返回 `None`（继续爬取）。
     #[must_use]
     pub fn should_stop(&self, stats: &CrawlStats) -> Option<StopReason> {
-        // 1. 无待处理链接 → 立即停止
-        if stats.pending_links == 0 {
-            return Some(StopReason::NoPendingLinks);
-        }
-
-        // 2. 最大页数
-        if let Some(max) = self.max_pages {
-            if stats.pages_crawled >= max {
-                return Some(StopReason::MaxPagesReached {
-                    crawled: stats.pages_crawled,
-                    max,
-                });
-            }
-        }
-
-        // 3. 置信度阈值
-        if let Some(threshold) = self.min_confidence {
-            if stats.result.confidence >= threshold {
-                return Some(StopReason::ConfidenceReached {
-                    confidence: stats.result.confidence,
-                    threshold,
-                });
-            }
-        }
-
-        // 4. 饱和度阈值（低于阈值 = 新内容发现率过低）
-        if let Some(threshold) = self.saturation_threshold {
-            if stats.result.saturation < threshold {
-                return Some(StopReason::SaturationReached {
-                    saturation: stats.result.saturation,
-                    threshold,
-                });
-            }
-        }
-
-        // 5. KG 覆盖率阈值（达到阈值 = 知识图谱已充分覆盖）
-        if let Some(threshold) = self.min_coverage {
-            if let Some(coverage) = stats.kg_coverage {
-                if coverage >= threshold {
-                    return Some(StopReason::CoverageReached {
-                        coverage,
-                        threshold,
-                    });
-                }
-            }
-        }
-
-        None
+        // or_else 短路：调用序即原优先级顺序（1→5），
+        // 保持「返回第一个满足的条件」语义。
+        self.check_pending_links(stats)
+            .or_else(|| self.check_max_pages(stats))
+            .or_else(|| self.check_confidence(stats))
+            .or_else(|| self.check_saturation(stats))
+            .or_else(|| self.check_coverage(stats))
     }
 }
 

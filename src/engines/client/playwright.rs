@@ -250,6 +250,27 @@ impl PlaywrightBrowserManagerComponent {
 
     /// 内部函数：获取或初始化浏览器
     async fn get_or_init_browser(&self) -> Result<Arc<Browser>, EngineError> {
+        if let Some(browser) = self.cached_browser_if_healthy().await {
+            return Ok(browser);
+        }
+
+        // 需要创建新的浏览器
+        let (browser, handler) = self.connect_or_launch_browser().await?;
+
+        // 启动处理器任务
+        // 存储 JoinHandle 到 manager，cleanup 时 abort + await
+        self.install_handler(handler);
+
+        let browser = Arc::new(browser);
+
+        // 存储浏览器实例
+        self.store_browser(&browser);
+
+        Ok(browser)
+    }
+
+    /// 复用已缓存的健康浏览器（测试模式下总是重建）
+    async fn cached_browser_if_healthy(&self) -> Option<Arc<Browser>> {
         let test_mode = self.config.is_test_mode();
 
         let browser_to_check = {
@@ -259,16 +280,27 @@ impl PlaywrightBrowserManagerComponent {
 
         if let Some(browser) = browser_to_check {
             if self.check_health(&browser).await && !test_mode {
-                return Ok(browser);
+                return Some(browser);
             }
         }
+        None
+    }
 
-        // 需要创建新的浏览器
+    /// 存储浏览器实例（供后续复用）
+    fn store_browser(&self, browser: &Arc<Browser>) {
+        let mut browser_guard = self.browser.lock().expect("Browser mutex poisoned");
+        *browser_guard = Some(Arc::clone(browser));
+    }
+
+    /// 连接远端 Chrome 或启动本地浏览器（含浏览器自动下载与 proxy URL 严格校验）
+    async fn connect_or_launch_browser(
+        &self,
+    ) -> Result<(Browser, chromiumoxide::Handler), EngineError> {
         let remote_debugging_url = self.config.get_remote_debugging_url();
 
         let proxy_url = self.config.get_proxy_url();
 
-        let (browser, mut handler) = if let Some(ref url) = remote_debugging_url {
+        let (browser, handler) = if let Some(ref url) = remote_debugging_url {
             log::info!("Connecting to remote Chrome instance at: {}", url);
             Browser::connect(url).await.map_err(|e| {
                 // Chrome 连接失败是可重试的基础设施错误（浏览器池可能在重启），
@@ -278,51 +310,62 @@ impl PlaywrightBrowserManagerComponent {
         } else {
             // 尝试自动下载浏览器（如果需要）
             let browser_path = self.download_browser_if_needed().await?;
-
-            let mut builder = BrowserConfig::builder()
-                .no_sandbox()
-                .request_timeout(Duration::from_secs(30));
-
-            // 设置浏览器路径（如果 chromiumoxide 支持）
-            if let Some(ref path) = browser_path {
-                log::info!("Using browser at: {:?}", path);
-                builder = builder.chrome_executable(path);
-            }
-
-            builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
-
-            if let Some(ref proxy) = proxy_url {
-                // 严格校验 proxy URL 防止命令行参数注入
-                //
-                // 原漏洞：`format!("--proxy-server={}", proxy)` 若 proxy 含空格或特殊字符，
-                // Chrome 可能解析为多个 argv（如 "http://x --enable-bad-flag" 被拆为
-                // `--proxy-server=http://x` + `--enable-bad-flag`）。
-                //
-                // 1. `validate_proxy_url` 严格校验 URL 格式 + scheme 白名单 + 无空白字符
-                // 2. `arg("--proxy-server").arg(validated)` 分离传递 flag 与值，
-                // 从根本上消除单字符串拼接导致的 argv 拆分风险
-                // 3. `redact_proxy_url` 脱敏日志输出，避免 user:pass 凭证泄露
-                const ALLOWED_PROXY_SCHEMES: &[&str] = &["http", "https", "socks5", "socks4"];
-                let validated = validate_proxy_url(proxy, ALLOWED_PROXY_SCHEMES)
-                    .map_err(|e| EngineError::Other(format!("Invalid proxy URL: {}", e)))?;
-                log::info!(
-                    "Using proxy for Playwright: {}",
-                    redact_proxy_url(&validated)
-                );
-                builder = builder.arg("--proxy-server").arg(validated);
-            }
-
-            Browser::launch(
-                builder
-                    .build()
-                    .map_err(|e| EngineError::Other(e.to_string()))?,
-            )
-            .await
-            .map_err(|e| EngineError::Other(e.to_string()))?
+            Self::launch_local_browser(browser_path, proxy_url).await?
         };
+        Ok((browser, handler))
+    }
 
-        // 启动处理器任务
-        // 存储 JoinHandle 到 manager，cleanup 时 abort + await
+    /// 启动本地浏览器（含 proxy URL 严格校验与安全传参）
+    async fn launch_local_browser(
+        browser_path: Option<PathBuf>,
+        proxy_url: Option<String>,
+    ) -> Result<(Browser, chromiumoxide::Handler), EngineError> {
+        let mut builder = BrowserConfig::builder()
+            .no_sandbox()
+            .request_timeout(Duration::from_secs(30));
+
+        // 设置浏览器路径（如果 chromiumoxide 支持）
+        if let Some(ref path) = browser_path {
+            log::info!("Using browser at: {:?}", path);
+            builder = builder.chrome_executable(path);
+        }
+
+        builder = builder.arg("--disable-gpu").arg("--disable-dev-shm-usage");
+
+        if let Some(ref proxy) = proxy_url {
+            // 严格校验 proxy URL 防止命令行参数注入
+            //
+            // 原漏洞：`format!("--proxy-server={}", proxy)` 若 proxy 含空格或特殊字符，
+            // Chrome 可能解析为多个 argv（如 "http://x --enable-bad-flag" 被拆为
+            // `--proxy-server=http://x` + `--enable-bad-flag`）。
+            //
+            // 1. `validate_proxy_url` 严格校验 URL 格式 + scheme 白名单 + 无空白字符
+            // 2. `arg("--proxy-server").arg(validated)` 分离传递 flag 与值，
+            // 从根本上消除单字符串拼接导致的 argv 拆分风险
+            // 3. `redact_proxy_url` 脱敏日志输出，避免 user:pass 凭证泄露
+            const ALLOWED_PROXY_SCHEMES: &[&str] = &["http", "https", "socks5", "socks4"];
+            let validated = validate_proxy_url(proxy, ALLOWED_PROXY_SCHEMES)
+                .map_err(|e| EngineError::Other(format!("Invalid proxy URL: {}", e)))?;
+            log::info!(
+                "Using proxy for Playwright: {}",
+                redact_proxy_url(&validated)
+            );
+            builder = builder.arg("--proxy-server").arg(validated);
+        }
+
+        let (browser, handler) = Browser::launch(
+            builder
+                .build()
+                .map_err(|e| EngineError::Other(e.to_string()))?,
+        )
+        .await
+        .map_err(|e| EngineError::Other(e.to_string()))?;
+        Ok((browser, handler))
+    }
+
+    /// 启动 handler 事件循环 task 并登记到 manager：
+    /// 已有旧 handler 先 abort；存储 JoinHandle 到 manager，cleanup 时 abort + await
+    fn install_handler(&self, mut handler: chromiumoxide::Handler) {
         let handler_task = tokio::spawn(async move {
             while let Some(h) = handler.next().await {
                 if let Err(e) = h {
@@ -341,16 +384,6 @@ impl PlaywrightBrowserManagerComponent {
             }
             *guard = Some(handler_task);
         }
-
-        let browser = Arc::new(browser);
-
-        // 存储浏览器实例
-        {
-            let mut browser_guard = self.browser.lock().expect("Browser mutex poisoned");
-            *browser_guard = Some(Arc::clone(&browser));
-        }
-
-        Ok(browser)
     }
 
     /// 下载浏览器（如果需要）
@@ -703,80 +736,11 @@ async fn navigate_and_wait(
     page: &chromiumoxide::page::Page,
     request: &InternalScrapeRequest,
 ) -> Result<(), EngineError> {
-    // Navigate and wait for load
-    // goto waits for the load event by default
-    page.goto(&request.url)
-        .await
-        .map_err(|e| EngineError::BrowserError(e.to_string()))?;
+    goto_and_inject_cleanup(page, &request.url).await?;
 
-    // 页面加载后注入 cleanup 脚本（best-effort）
-    // 顺序：consent_popups → overlay_elements → flatten_shadow_dom
-    let cleanup_injector = crate::engines::js_inject::JsInjector::cleanup();
-    if let Err(e) = cleanup_injector
-        .apply(page, crate::engines::js_inject::InjectPhase::AfterLoad)
-        .await
-    {
-        log::warn!("Cleanup injection failed (best-effort, continue): {}", e);
-    }
+    warn_if_bot_detection_page(page).await?;
 
-    // Try to detect if we got a bot detection page
-    let content: String = page
-        .content()
-        .await
-        .map_err(|e| EngineError::BrowserError(e.to_string()))?;
-
-    if content.contains("如果您在几秒钟内没有被重定向")
-        || content.contains("Having trouble accessing Google")
-        || content.contains("enablejs")
-    {
-        log::warn!("Detected bot detection page from Google");
-        // Still return the content, let the parser handle it
-    }
-
-    for action in &request.actions {
-        match action {
-            InternalPageAction::Wait { milliseconds } => {
-                tokio::time::sleep(Duration::from_millis(*milliseconds)).await;
-            }
-            InternalPageAction::Click { selector } => {
-                let element: chromiumoxide::element::Element =
-                    page.find_element(selector).await.map_err(|e| {
-                        EngineError::BrowserError(format!("Click failed, element not found: {}", e))
-                    })?;
-                element
-                    .click()
-                    .await
-                    .map_err(|e| EngineError::BrowserError(format!("Click failed: {}", e)))?;
-            }
-            InternalPageAction::Scroll { direction } => {
-                let script = match direction.as_str() {
-                    "down" => "window.scrollBy(0, window.innerHeight);",
-                    "up" => "window.scrollBy(0, -window.innerHeight);",
-                    "bottom" => "window.scrollTo(0, document.body.scrollHeight);",
-                    "top" => "window.scrollTo(0, 0);",
-                    _ => "window.scrollBy(0, window.innerHeight);",
-                };
-                let _: chromiumoxide::js::EvaluationResult = page
-                    .evaluate(script)
-                    .await
-                    .map_err(|e| EngineError::BrowserError(format!("Scroll failed: {}", e)))?;
-            }
-            InternalPageAction::Screenshot { full_page: _ } => {
-                // 此处动作生成的截图暂不直接返回，仅作为交互过程的一部分
-                // 如果需要保存，可能需要额外的逻辑处理
-            }
-            InternalPageAction::Input { selector, text } => {
-                let element: chromiumoxide::element::Element =
-                    page.find_element(selector).await.map_err(|e| {
-                        EngineError::BrowserError(format!("Input failed, element not found: {}", e))
-                    })?;
-                element
-                    .type_str(text)
-                    .await
-                    .map_err(|e| EngineError::BrowserError(format!("Input failed: {}", e)))?;
-            }
-        }
-    }
+    run_page_actions(page, &request.actions).await?;
 
     // 页面加载后等待策略（替代原 sync_wait_ms 固定 sleep）
     //
@@ -789,6 +753,112 @@ async fn navigate_and_wait(
     let wait_timeout = request.timeout.min(WAIT_TIMEOUT_CAP);
     wait_strategy.wait(page, wait_timeout).await?;
 
+    Ok(())
+}
+
+/// 导航到目标 URL（默认等 load 事件）并注入 cleanup 脚本（best-effort）
+async fn goto_and_inject_cleanup(
+    page: &chromiumoxide::page::Page,
+    url: &str,
+) -> Result<(), EngineError> {
+    // Navigate and wait for load
+    // goto waits for the load event by default
+    page.goto(url)
+        .await
+        .map_err(|e| EngineError::BrowserError(e.to_string()))?;
+
+    // 页面加载后注入 cleanup 脚本（best-effort）
+    // 顺序：consent_popups → overlay_elements → flatten_shadow_dom
+    let cleanup_injector = crate::engines::js_inject::JsInjector::cleanup();
+    if let Err(e) = cleanup_injector
+        .apply(page, crate::engines::js_inject::InjectPhase::AfterLoad)
+        .await
+    {
+        log::warn!("Cleanup injection failed (best-effort, continue): {}", e);
+    }
+    Ok(())
+}
+
+/// bot 检测页仅告警（仍返回内容交由解析器处理）
+async fn warn_if_bot_detection_page(page: &chromiumoxide::page::Page) -> Result<(), EngineError> {
+    // Try to detect if we got a bot detection page
+    let content: String = page
+        .content()
+        .await
+        .map_err(|e| EngineError::BrowserError(e.to_string()))?;
+
+    if is_bot_detection_page(&content) {
+        log::warn!("Detected bot detection page from Google");
+        // Still return the content, let the parser handle it
+    }
+    Ok(())
+}
+
+/// 逐个执行页面动作（任一失败即向上传播）
+async fn run_page_actions(
+    page: &chromiumoxide::page::Page,
+    actions: &[InternalPageAction],
+) -> Result<(), EngineError> {
+    for action in actions {
+        execute_page_action(page, action).await?;
+    }
+    Ok(())
+}
+
+/// bot 检测页特征（Google 告警页等；命中仅告警，仍返回内容交由解析器处理）
+fn is_bot_detection_page(content: &str) -> bool {
+    content.contains("如果您在几秒钟内没有被重定向")
+        || content.contains("Having trouble accessing Google")
+        || content.contains("enablejs")
+}
+
+/// 执行单个页面动作（wait / click / scroll / screenshot / input）
+async fn execute_page_action(
+    page: &chromiumoxide::page::Page,
+    action: &InternalPageAction,
+) -> Result<(), EngineError> {
+    match action {
+        InternalPageAction::Wait { milliseconds } => {
+            tokio::time::sleep(Duration::from_millis(*milliseconds)).await;
+        }
+        InternalPageAction::Click { selector } => {
+            let element: chromiumoxide::element::Element =
+                page.find_element(selector).await.map_err(|e| {
+                    EngineError::BrowserError(format!("Click failed, element not found: {}", e))
+                })?;
+            element
+                .click()
+                .await
+                .map_err(|e| EngineError::BrowserError(format!("Click failed: {}", e)))?;
+        }
+        InternalPageAction::Scroll { direction } => {
+            let script = match direction.as_str() {
+                "down" => "window.scrollBy(0, window.innerHeight);",
+                "up" => "window.scrollBy(0, -window.innerHeight);",
+                "bottom" => "window.scrollTo(0, document.body.scrollHeight);",
+                "top" => "window.scrollTo(0, 0);",
+                _ => "window.scrollBy(0, window.innerHeight);",
+            };
+            let _: chromiumoxide::js::EvaluationResult = page
+                .evaluate(script)
+                .await
+                .map_err(|e| EngineError::BrowserError(format!("Scroll failed: {}", e)))?;
+        }
+        InternalPageAction::Screenshot { full_page: _ } => {
+            // 此处动作生成的截图暂不直接返回，仅作为交互过程的一部分
+            // 如果需要保存，可能需要额外的逻辑处理
+        }
+        InternalPageAction::Input { selector, text } => {
+            let element: chromiumoxide::element::Element =
+                page.find_element(selector).await.map_err(|e| {
+                    EngineError::BrowserError(format!("Input failed, element not found: {}", e))
+                })?;
+            element
+                .type_str(text)
+                .await
+                .map_err(|e| EngineError::BrowserError(format!("Input failed: {}", e)))?;
+        }
+    }
     Ok(())
 }
 

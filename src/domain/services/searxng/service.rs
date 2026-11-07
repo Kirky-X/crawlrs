@@ -28,7 +28,7 @@ use crate::engines::circuit_breaker::{CircuitBreaker, CircuitConfig};
 use crate::search::types::EngineHealth;
 
 use super::dataset::{admit, parse_dataset};
-use super::probe::probe_instance;
+use super::probe::{probe_instance, ProbeOutcome};
 use super::{
     BreakerMirror, CollectorReport, HealthReport, InstanceOutcome, InstancePool, PoolMember,
     PoolMemberState, PoolSnapshot, SearxngError, SearxngInstanceService, SearxngTransport,
@@ -552,57 +552,82 @@ impl SearxngInstanceServiceImpl {
         let key = Self::breaker_key(&instance.url);
 
         if outcome.alive {
-            self.inner.breaker.record_success(&key).await;
+            self.apply_alive_outcome(instance, outcome, report, &key)
+                .await;
+            return;
+        }
+        self.apply_failed_outcome(instance, outcome, report, &key)
+            .await;
+    }
+
+    /// 存活路径：熔断记成功 → 落探活结果 → 刷新实例（时延/失败计数/成功时间）
+    /// → 状态机转 active → 入池或替换池成员。
+    async fn apply_alive_outcome(
+        &self,
+        instance: &SearxngInstance,
+        outcome: ProbeOutcome,
+        report: &mut HealthReport,
+        key: &str,
+    ) {
+        self.inner.breaker.record_success(key).await;
+        if let Err(e) = self
+            .inner
+            .repo
+            .record_probe_result(&instance.url, true, outcome.latency_ms, None)
+            .await
+        {
+            warn!(
+                "searxng probe success record failed url={} error={e}",
+                instance.url
+            );
+        }
+
+        let mut refreshed = instance.clone();
+        refreshed.latency_ms = outcome.latency_ms;
+        refreshed.consecutive_failures = 0;
+        refreshed.last_success_at = Some(chrono::Utc::now());
+
+        if refreshed.state != SearxngInstanceState::Active {
             if let Err(e) = self
                 .inner
                 .repo
-                .record_probe_result(&instance.url, true, outcome.latency_ms, None)
+                .transition_state(&refreshed.url, SearxngInstanceState::Active)
                 .await
             {
                 warn!(
-                    "searxng probe success record failed url={} error={e}",
-                    instance.url
+                    "searxng active transition failed url={} error={e}",
+                    refreshed.url
                 );
+                return;
             }
-
-            let mut refreshed = instance.clone();
-            refreshed.latency_ms = outcome.latency_ms;
-            refreshed.consecutive_failures = 0;
-            refreshed.last_success_at = Some(chrono::Utc::now());
-
-            if refreshed.state != SearxngInstanceState::Active {
-                if let Err(e) = self
-                    .inner
-                    .repo
-                    .transition_state(&refreshed.url, SearxngInstanceState::Active)
-                    .await
-                {
-                    warn!(
-                        "searxng active transition failed url={} error={e}",
-                        refreshed.url
-                    );
-                    return;
-                }
-                refreshed.state = SearxngInstanceState::Active;
-            }
-
-            if !self.inner.pool.contains(&refreshed.url) {
-                if self.add_member(refreshed.clone()) {
-                    report.promoted += 1;
-                    info!("searxng instance promoted into pool url={}", refreshed.url);
-                }
-            } else {
-                self.inner.pool.replace(Arc::new(PoolMember {
-                    instance: refreshed,
-                }));
-            }
-            return;
+            refreshed.state = SearxngInstanceState::Active;
         }
 
-        // 失败路径
+        if !self.inner.pool.contains(&refreshed.url) {
+            if self.add_member(refreshed.clone()) {
+                report.promoted += 1;
+                info!("searxng instance promoted into pool url={}", refreshed.url);
+            }
+        } else {
+            self.inner.pool.replace(Arc::new(PoolMember {
+                instance: refreshed,
+            }));
+        }
+    }
+
+    /// 失败路径：熔断记失败 → 落探活结果 → 逐出池成员 → 连续失败达阈值退役
+    /// （cooldown/candidate → retired；active 不允许直迁，先落 cooldown，
+    /// 下一轮由 cooldown → retired 完成）。
+    async fn apply_failed_outcome(
+        &self,
+        instance: &SearxngInstance,
+        outcome: ProbeOutcome,
+        report: &mut HealthReport,
+        key: &str,
+    ) {
         report.errors += 1;
         let message = outcome.error.unwrap_or_else(|| "probe failed".to_string());
-        self.inner.breaker.record_failure(&key).await;
+        self.inner.breaker.record_failure(key).await;
         if let Err(e) = self
             .inner
             .repo

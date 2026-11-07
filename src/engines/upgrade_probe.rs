@@ -83,57 +83,18 @@ impl JsUpgradeProbe {
     /// - `score >= threshold → upgrade=true`
     pub fn evaluate(&self, headers: &HeaderMap, body_prefix: &str) -> ProbeVerdict {
         // 1. Content-Type 前置短路：非 HTML 不升级
-        if let Some(ct) = headers.get(reqwest::header::CONTENT_TYPE) {
-            if let Ok(ct_str) = ct.to_str() {
-                let ct_lower = ct_str.to_ascii_lowercase();
-                if !ct_lower.contains("html") {
-                    return ProbeVerdict {
-                        score: 0,
-                        upgrade: false,
-                        reason: format!("content-type non-html: {}", ct_str),
-                    };
-                }
-            }
+        if let Some(verdict) = non_html_short_circuit(headers) {
+            return verdict;
         }
 
         let mut score: u32 = 0;
         let mut reasons: Vec<&'static str> = Vec::new();
 
         // 2. 强信号
-        for sig in STRONG_FRAMEWORK_SIGNALS {
-            if body_prefix.contains(*sig) {
-                score += STRONG_SIGNAL_SCORE;
-                reasons.push(*sig);
-            }
-        }
-        if body_prefix.contains(REACT_ROOT_SHELL)
-            && body_prefix.to_ascii_lowercase().contains("hydrate")
-        {
-            score += STRONG_SIGNAL_SCORE;
-            reasons.push("react-root-shell-hydrate");
-        }
-        if body_prefix.contains("<noscript>") && needs_js_hint(body_prefix) {
-            score += STRONG_SIGNAL_SCORE;
-            reasons.push("noscript-js-hint");
-        }
+        score += strong_signal_score(body_prefix, &mut reasons);
 
         // 3. 弱信号
-        let script_src_count = count_non_tracking_script_srcs(body_prefix);
-        if script_src_count > 0 {
-            score += script_src_count * WEAK_SCRIPT_SRC_SCORE;
-            reasons.push("non-tracking-script-src");
-        }
-
-        let modulepreload_count = count_modulepreloads(body_prefix);
-        if modulepreload_count > 0 {
-            score += modulepreload_count * WEAK_MODULEPRELOAD_SCORE;
-            reasons.push("modulepreload");
-        }
-
-        if is_text_sparse(body_prefix) && count_all_scripts(body_prefix) >= SCRIPT_MANY_THRESHOLD {
-            score += WEAK_TEXT_SPARSE_SCORE;
-            reasons.push("text-sparse-script-heavy");
-        }
+        score += weak_signal_score(body_prefix, &mut reasons);
 
         let upgrade = score >= self.threshold;
         let reason = if reasons.is_empty() {
@@ -148,6 +109,69 @@ impl JsUpgradeProbe {
             reason,
         }
     }
+}
+
+/// Content-Type 前置短路：头存在、可解析为 UTF-8 且不含 "html" 时返回零分
+/// verdict；头缺失或非 UTF-8 时返回 None（继续 body 评估）
+fn non_html_short_circuit(headers: &HeaderMap) -> Option<ProbeVerdict> {
+    let ct = headers.get(reqwest::header::CONTENT_TYPE)?;
+    let ct_str = ct.to_str().ok()?;
+    let ct_lower = ct_str.to_ascii_lowercase();
+    if !ct_lower.contains("html") {
+        return Some(ProbeVerdict {
+            score: 0,
+            upgrade: false,
+            reason: format!("content-type non-html: {}", ct_str),
+        });
+    }
+    None
+}
+
+/// 强信号评分（命中一项 +10）：SPA 框架挂载点 / React 空壳 + hydrate /
+/// `<noscript>` 需 JS 提示；命中的信号名追加进 `reasons`
+fn strong_signal_score(body_prefix: &str, reasons: &mut Vec<&'static str>) -> u32 {
+    let mut score: u32 = 0;
+    for sig in STRONG_FRAMEWORK_SIGNALS {
+        if body_prefix.contains(*sig) {
+            score += STRONG_SIGNAL_SCORE;
+            reasons.push(*sig);
+        }
+    }
+    if body_prefix.contains(REACT_ROOT_SHELL)
+        && body_prefix.to_ascii_lowercase().contains("hydrate")
+    {
+        score += STRONG_SIGNAL_SCORE;
+        reasons.push("react-root-shell-hydrate");
+    }
+    if body_prefix.contains("<noscript>") && needs_js_hint(body_prefix) {
+        score += STRONG_SIGNAL_SCORE;
+        reasons.push("noscript-js-hint");
+    }
+    score
+}
+
+/// 弱信号评分：每个非追踪 `<script src>` +1、每个
+/// `<link rel=modulepreload>` +2、可见文本极少但脚本多 +3
+fn weak_signal_score(body_prefix: &str, reasons: &mut Vec<&'static str>) -> u32 {
+    let mut score: u32 = 0;
+
+    let script_src_count = count_non_tracking_script_srcs(body_prefix);
+    if script_src_count > 0 {
+        score += script_src_count * WEAK_SCRIPT_SRC_SCORE;
+        reasons.push("non-tracking-script-src");
+    }
+
+    let modulepreload_count = count_modulepreloads(body_prefix);
+    if modulepreload_count > 0 {
+        score += modulepreload_count * WEAK_MODULEPRELOAD_SCORE;
+        reasons.push("modulepreload");
+    }
+
+    if is_text_sparse(body_prefix) && count_all_scripts(body_prefix) >= SCRIPT_MANY_THRESHOLD {
+        score += WEAK_TEXT_SPARSE_SCORE;
+        reasons.push("text-sparse-script-heavy");
+    }
+    score
 }
 
 /// SPA 框架数据挂载点
@@ -201,22 +225,27 @@ fn count_non_tracking_script_srcs(body: &str) -> u32 {
     count
 }
 
+/// 跳过 `src` 后的空白与 `=` 字符，返回第一个非空白 / 非 `=` 字节位置
+fn skip_ws_and_eq(bytes: &[u8], mut i: usize) -> usize {
+    while i < bytes.len()
+        && (bytes[i] == b' '
+            || bytes[i] == b'='
+            || bytes[i] == b'\t'
+            || bytes[i] == b'\n'
+            || bytes[i] == b'\r')
+    {
+        i += 1;
+    }
+    i
+}
+
 /// 从 `<script ...>` 标签内提取 `src` 属性值
 fn extract_script_src(tag: &str) -> Option<&str> {
     let mut rest = tag;
     while let Some(idx) = rest.find("src") {
         let after = &rest[idx + 3..];
         let bytes = after.as_bytes();
-        let mut i = 0;
-        while i < bytes.len()
-            && (bytes[i] == b' '
-                || bytes[i] == b'='
-                || bytes[i] == b'\t'
-                || bytes[i] == b'\n'
-                || bytes[i] == b'\r')
-        {
-            i += 1;
-        }
+        let i = skip_ws_and_eq(bytes, 0);
         if i >= bytes.len() {
             return None;
         }
@@ -239,30 +268,37 @@ fn extract_script_src(tag: &str) -> Option<&str> {
     None
 }
 
+/// 追踪脚本 URL 特征清单（GA / GTM / analytics / pixel 等供应商）
+const TRACKING_SCRIPT_SIGNATURES: &[&str] = &[
+    "google-analytics",
+    "googletagmanager",
+    "/gtm.js",
+    "/gtm_",
+    "analytics.js",
+    "facebook.net/en_us/fbevents.js",
+    "/pixel.js",
+    "pixel-",
+    "hotjar",
+    "segment.com/analytics.js",
+    "mixpanel",
+    "amplitude",
+    "scorecardresearch",
+    "quantserve",
+    "chartbeat",
+    "bat.bing.com",
+    "clarity.ms",
+    "tiktok.com/i18n/pixel",
+    "snap.licdn.com",
+    "adsbygoogle",
+    "doubleclick",
+    "facebook.com/tr",
+];
+
 /// 判断 script src URL 是否为追踪脚本
 fn is_tracking_script(url: &str) -> bool {
-    url.contains("google-analytics")
-        || url.contains("googletagmanager")
-        || url.contains("/gtm.js")
-        || url.contains("/gtm_")
-        || url.contains("analytics.js")
-        || url.contains("facebook.net/en_us/fbevents.js")
-        || url.contains("/pixel.js")
-        || url.contains("pixel-")
-        || url.contains("hotjar")
-        || url.contains("segment.com/analytics.js")
-        || url.contains("mixpanel")
-        || url.contains("amplitude")
-        || url.contains("scorecardresearch")
-        || url.contains("quantserve")
-        || url.contains("chartbeat")
-        || url.contains("bat.bing.com")
-        || url.contains("clarity.ms")
-        || url.contains("tiktok.com/i18n/pixel")
-        || url.contains("snap.licdn.com")
-        || url.contains("adsbygoogle")
-        || url.contains("doubleclick")
-        || url.contains("facebook.com/tr")
+    TRACKING_SCRIPT_SIGNATURES
+        .iter()
+        .any(|sig| url.contains(sig))
 }
 
 /// 统计 `<link rel="modulepreload">` 数量

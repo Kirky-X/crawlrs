@@ -210,17 +210,7 @@ impl SsrfValidator {
         hostname: &str,
         port: u16,
     ) -> Result<Vec<IpAddr>, SsrfError> {
-        if let Some(cache) = &self.dns_cache {
-            cache
-                .lookup_host(hostname, port)
-                .await
-                .map_err(|e| SsrfError::DnsResolutionFailed {
-                    hostname: hostname.to_string(),
-                    reason: e.to_string(),
-                })
-        } else {
-            resolve_dns_direct(hostname, port).await
-        }
+        self.resolve_hostname_ips(hostname, port).await
     }
 
     /// Resolve DNS and validate all returned IP addresses.
@@ -235,18 +225,7 @@ impl SsrfValidator {
         port: u16,
     ) -> Result<Vec<IpAddr>, SsrfError> {
         // Use DNS cache if available (requires oxcache-cache feature)
-        let ips = {
-            if let Some(cache) = &self.dns_cache {
-                cache.lookup_host(hostname, port).await.map_err(|e| {
-                    SsrfError::DnsResolutionFailed {
-                        hostname: hostname.to_string(),
-                        reason: e.to_string(),
-                    }
-                })?
-            } else {
-                resolve_dns_direct(hostname, port).await?
-            }
-        };
+        let ips = self.resolve_hostname_ips(hostname, port).await?;
 
         // Check if any IPs were resolved
         if ips.is_empty() {
@@ -255,27 +234,7 @@ impl SsrfValidator {
             });
         }
 
-        // DNS rebinding detection: check for mixed private/public IPs
-        let has_private = ips.iter().any(|ip| is_private_ip(*ip));
-        let has_public = ips.iter().any(|ip| !is_private_ip(*ip));
-
-        if has_private && has_public {
-            log::warn!(
-                "DNS rebinding attack detected: hostname {} resolved to mixed private/public IPs",
-                hostname
-            );
-            return Err(SsrfError::DnsRebindingDetected {
-                hostname: hostname.to_string(),
-                ips: ips.iter().map(|ip| ip.to_string()).collect(),
-            });
-        }
-
-        // Check all IPs are not private
-        for ip in &ips {
-            if is_private_ip(*ip) {
-                return Err(SsrfError::PrivateIpAccess { ip: ip.to_string() });
-            }
-        }
+        check_resolved_ips_not_internal(hostname, &ips)?;
 
         // Log if multiple IPs resolved (potential DNS round-robin)
         if ips.len() > 1 {
@@ -287,6 +246,25 @@ impl SsrfValidator {
         }
 
         Ok(ips)
+    }
+
+    /// 仅解析 DNS（缓存可用走缓存，否则直连解析），不做任何内网判定
+    async fn resolve_hostname_ips(
+        &self,
+        hostname: &str,
+        port: u16,
+    ) -> Result<Vec<IpAddr>, SsrfError> {
+        if let Some(cache) = &self.dns_cache {
+            cache
+                .lookup_host(hostname, port)
+                .await
+                .map_err(|e| SsrfError::DnsResolutionFailed {
+                    hostname: hostname.to_string(),
+                    reason: e.to_string(),
+                })
+        } else {
+            resolve_dns_direct(hostname, port).await
+        }
     }
 
     /// Validate a redirect URL during HTTP request.
@@ -359,6 +337,35 @@ pub(crate) fn ssrf_protection_disabled() -> bool {
         }
         disabled
     })
+}
+
+/// DNS rebinding detection + private-IP rejection:
+/// 1. mixed private/public IPs → `DnsRebindingDetected`（rebinding signature）
+/// 2. any private IP → `PrivateIpAccess`
+fn check_resolved_ips_not_internal(hostname: &str, ips: &[IpAddr]) -> Result<(), SsrfError> {
+    // DNS rebinding detection: check for mixed private/public IPs
+    let has_private = ips.iter().any(|ip| is_private_ip(*ip));
+    let has_public = ips.iter().any(|ip| !is_private_ip(*ip));
+
+    if has_private && has_public {
+        log::warn!(
+            "DNS rebinding attack detected: hostname {} resolved to mixed private/public IPs",
+            hostname
+        );
+        return Err(SsrfError::DnsRebindingDetected {
+            hostname: hostname.to_string(),
+            ips: ips.iter().map(|ip| ip.to_string()).collect(),
+        });
+    }
+
+    // Check all IPs are not private
+    for ip in ips {
+        if is_private_ip(*ip) {
+            return Err(SsrfError::PrivateIpAccess { ip: ip.to_string() });
+        }
+    }
+
+    Ok(())
 }
 
 /// Validate a domain against a blacklist.

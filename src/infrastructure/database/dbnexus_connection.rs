@@ -112,6 +112,66 @@ pub async fn run_crawlrs_migrations(
     if !auto_migrate {
         return Ok(0);
     }
+    let (dir, db_type) = resolve_dialect_dir_and_type(migrations_dir)?;
+    let (mut executor, conn) = build_crawlrs_migration_executor(pool, db_type).await?;
+    let baseline = apply_crawlrs_migration_baseline(&conn).await?;
+
+    let applied = executor
+        .run_migrations(&dir)
+        .await
+        .map_err(|e| DbErr::Custom(format!("crawlrs migrations failed: {e}")))?;
+    if baseline > 0 || applied > 0 {
+        info!(
+            "crawlrs migrations complete: baseline marked={baseline}, applied={applied} \
+             (history table: {CRAWLRS_MIGRATIONS_TABLE})"
+        );
+    }
+    Ok(applied)
+}
+
+/// 建立 crawlrs 迁移执行器：取 admin session → 按 dialect 构造 executor →
+/// 覆盖历史表 → 加载（幂等建）历史表；返回 executor 与其连接。
+async fn build_crawlrs_migration_executor(
+    pool: &DbPool,
+    db_type: dbnexus::DatabaseType,
+) -> Result<
+    (
+        dbnexus::MigrationExecutor,
+        dbnexus::sea_orm::DatabaseConnection,
+    ),
+    DbErr,
+> {
+    let session = pool
+        .get_session("admin")
+        .await
+        .map_err(|e| DbErr::Custom(format!("migration session acquire failed: {e}")))?;
+    let mut executor = session
+        .create_migration_executor(db_type)
+        .map_err(|e| DbErr::Custom(format!("migration executor init failed: {e}")))?
+        .with_history_table(CRAWLRS_MIGRATIONS_TABLE)
+        .map_err(|e| DbErr::Custom(format!("history table override failed: {e}")))?;
+    // load_history 幂等建 crawlrs_migrations（executor 内建 IF NOT EXISTS），
+    // 为基线 INSERT 提供表结构
+    executor
+        .load_history()
+        .await
+        .map_err(|e| DbErr::Custom(format!("crawlrs migration history load failed: {e}")))?;
+
+    let conn = session
+        .connection()
+        .map_err(|e| DbErr::Custom(format!("migration session connection: {e}")))?
+        .clone();
+    Ok((executor, conn))
+}
+
+/// 迁移目录与 DatabaseType 的编译期 dialect 解析：
+/// - `migrations_dir` 缺失 → 显性报错（auto_migrate 开启却无目录可选）；
+/// - 基目录 → `migrations/<dialect>/` 投影（R-multidb-schema-002）；
+/// - dialect feature → `dbnexus::DatabaseType`（与 [`dialect_migrations_dir`]
+///   同款互斥映射，R-multidb-schema-002）。
+fn resolve_dialect_dir_and_type(
+    migrations_dir: Option<&Path>,
+) -> Result<(PathBuf, dbnexus::DatabaseType), DbErr> {
     let base_dir = migrations_dir.ok_or_else(|| {
         DbErr::Custom(
             "database.auto_migrate=true but no db dialect feature (db-postgres/db-sqlite/\
@@ -135,40 +195,7 @@ pub async fn run_crawlrs_migrations(
                 .to_string(),
         ));
     };
-
-    let session = pool
-        .get_session("admin")
-        .await
-        .map_err(|e| DbErr::Custom(format!("migration session acquire failed: {e}")))?;
-    let mut executor = session
-        .create_migration_executor(db_type)
-        .map_err(|e| DbErr::Custom(format!("migration executor init failed: {e}")))?
-        .with_history_table(CRAWLRS_MIGRATIONS_TABLE)
-        .map_err(|e| DbErr::Custom(format!("history table override failed: {e}")))?;
-    // load_history 幂等建 crawlrs_migrations（executor 内建 IF NOT EXISTS），
-    // 为基线 INSERT 提供表结构
-    executor
-        .load_history()
-        .await
-        .map_err(|e| DbErr::Custom(format!("crawlrs migration history load failed: {e}")))?;
-
-    let conn = session
-        .connection()
-        .map_err(|e| DbErr::Custom(format!("migration session connection: {e}")))?
-        .clone();
-    let baseline = apply_crawlrs_migration_baseline(&conn).await?;
-
-    let applied = executor
-        .run_migrations(&dir)
-        .await
-        .map_err(|e| DbErr::Custom(format!("crawlrs migrations failed: {e}")))?;
-    if baseline > 0 || applied > 0 {
-        info!(
-            "crawlrs migrations complete: baseline marked={baseline}, applied={applied} \
-             (history table: {CRAWLRS_MIGRATIONS_TABLE})"
-        );
-    }
-    Ok(applied)
+    Ok((dir, db_type))
 }
 
 /// 存量基线回填：仅当 `crawlrs_migrations` 为空且默认历史表存在 crawlrs

@@ -53,9 +53,25 @@ pub fn prune(nodes: Vec<AxNode>) -> Vec<AxNode> {
 /// backendNodeId）」节点的行，无名节点只作连接器递归子级。
 pub fn serialize(nodes: &[AxNode], budget_chars: usize) -> String {
     let (children, roots) = children_index(nodes);
+    let (out, truncated) = build_outline(nodes, &children, &roots, budget_chars);
+    if truncated {
+        append_truncation_marker(out, budget_chars)
+    } else {
+        out
+    }
+}
+
+/// DFS 累积大纲行：预算超限时置 truncated 并终止遍历，
+/// 返回 `(大纲, 是否截断)`
+fn build_outline(
+    nodes: &[AxNode],
+    children: &[Vec<usize>],
+    roots: &[usize],
+    budget_chars: usize,
+) -> (String, bool) {
     let mut out = String::new();
     let mut truncated = false;
-    for &root in &roots {
+    for &root in roots {
         let mut stack = vec![root];
         while let Some(idx) = stack.pop() {
             let node = &nodes[idx];
@@ -79,21 +95,24 @@ pub fn serialize(nodes: &[AxNode], budget_chars: usize) -> String {
             break;
         }
     }
-    if truncated {
-        // 标注放不下时回退丢行腾位；丢到只剩空仍放不下（budget < 标注长）则不标注
-        while !out.is_empty() && out.len() + 1 + TRUNCATED_MARKER.len() > budget_chars {
-            match out.rfind('\n') {
-                Some(p) => out.truncate(p),
-                None => out.clear(),
-            }
+    (out, truncated)
+}
+
+/// 末行截断标注：标注放不下时回退丢行腾位；丢到只剩空仍放不下
+/// （budget < 标注长）则不标注
+fn append_truncation_marker(mut out: String, budget_chars: usize) -> String {
+    while !out.is_empty() && out.len() + 1 + TRUNCATED_MARKER.len() > budget_chars {
+        match out.rfind('\n') {
+            Some(p) => out.truncate(p),
+            None => out.clear(),
         }
-        let marker_add = if out.is_empty() { 0 } else { 1 } + TRUNCATED_MARKER.len();
-        if out.len() + marker_add <= budget_chars {
-            if !out.is_empty() {
-                out.push('\n');
-            }
-            out.push_str(TRUNCATED_MARKER);
+    }
+    let marker_add = if out.is_empty() { 0 } else { 1 } + TRUNCATED_MARKER.len();
+    if out.len() + marker_add <= budget_chars {
+        if !out.is_empty() {
+            out.push('\n');
         }
+        out.push_str(TRUNCATED_MARKER);
     }
     out
 }

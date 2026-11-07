@@ -47,7 +47,7 @@ use garrison::dao::repository::sqlite::{
     DbnexusUserRoleRepository as UserRoleRepositoryImpl,
 };
 use garrison::dao::repository::{
-    PermissionRepository, RolePermissionRepository, RoleRepository, UserRoleRepository,
+    PermissionRepository, RolePermissionRepository, RoleRepository, UserRoleRepository, UserRoleRow,
 };
 use garrison::prelude::{GarrisonInterface, GarrisonResult};
 use std::collections::HashSet;
@@ -92,6 +92,54 @@ impl CrawlrsGarrisonInterface {
     ///
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
+    }
+
+    /// 步骤 2：对每个 role_id 取 role_permission 关联，聚合并去重 permission_id
+    async fn load_permission_ids(
+        pool: DbPool,
+        tenant_id: i64,
+        user_roles: &[UserRoleRow],
+    ) -> GarrisonResult<HashSet<String>> {
+        let role_perm_repo = RolePermissionRepositoryImpl::new(pool);
+
+        // 预估容量避免扩容 rehash（P-）。
+        let mut permission_ids: HashSet<String> = HashSet::with_capacity(user_roles.len());
+        for ur in user_roles {
+            let role_perms = role_perm_repo
+                .find_by_role_id(tenant_id, &ur.role_id)
+                .await?;
+            for rp in role_perms {
+                permission_ids.insert(rp.permission_id);
+            }
+        }
+        Ok(permission_ids)
+    }
+
+    /// 步骤 3：对每个 permission_id 取 permission code。
+    ///
+    /// 注意：`PermissionRepository::find_by_id` 签名为 `fn find_by_id(&self, id: &str)`，
+    /// **不传 tenant_id**——这是 garrison 框架设计：`app_permission` 表是全局表
+    /// （permission code 跨租户共享，如 crawlrs:read/crawlrs:write/crawlrs:admin），
+    /// 租户隔离由 `app_role_permission` 关联表的 tenant_id 过滤实现（步骤 2 已过滤）。
+    /// garrison 0.8.1 `src/dao/repository/mod.rs:399-401` 确认此签名。
+    ///
+    /// 去重说明：permission_ids 已是 HashSet（permission_id 唯一），
+    /// permission_id 与 code 一对一（DB 主键约束），故 code 也唯一，无需额外 seen HashSet
+    /// 删除冗余去重。
+    async fn load_permission_codes(
+        pool: DbPool,
+        permission_ids: HashSet<String>,
+    ) -> GarrisonResult<Vec<String>> {
+        let perm_repo = PermissionRepositoryImpl::new(pool);
+
+        let mut perms: Vec<String> = Vec::with_capacity(permission_ids.len());
+        for pid in permission_ids {
+            let perm = perm_repo.find_by_id(&pid).await?;
+            if let Some(row) = perm {
+                perms.push(row.code);
+            }
+        }
+        Ok(perms)
     }
 }
 
@@ -139,43 +187,14 @@ impl GarrisonInterface for CrawlrsGarrisonInterface {
         }
 
         // 2. 对每个 role_id 取 role_permission 关联
-        let role_perm_repo = RolePermissionRepositoryImpl::new(pool.clone());
-        let perm_repo = PermissionRepositoryImpl::new(pool);
-
-        // 预估容量避免扩容 rehash（P-）。
-        let mut permission_ids: HashSet<String> = HashSet::with_capacity(user_roles.len());
-        for ur in &user_roles {
-            let role_perms = role_perm_repo
-                .find_by_role_id(tenant_id, &ur.role_id)
-                .await?;
-            for rp in role_perms {
-                permission_ids.insert(rp.permission_id);
-            }
-        }
-
+        let permission_ids =
+            Self::load_permission_ids(pool.clone(), tenant_id, &user_roles).await?;
         if permission_ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        // 3. 对每个 permission_id 取 permission code。
-        //
-        // 注意：`PermissionRepository::find_by_id` 签名为 `fn find_by_id(&self, id: &str)`，
-        // **不传 tenant_id**——这是 garrison 框架设计：`app_permission` 表是全局表
-        // （permission code 跨租户共享，如 crawlrs:read/crawlrs:write/crawlrs:admin），
-        // 租户隔离由 `app_role_permission` 关联表的 tenant_id 过滤实现（步骤 2 已过滤）。
-        // garrison 0.8.1 `src/dao/repository/mod.rs:399-401` 确认此签名。
-        //
-        // 去重说明：permission_ids 已是 HashSet（permission_id 唯一），
-        // permission_id 与 code 一对一（DB 主键约束），故 code 也唯一，无需额外 seen HashSet
-        // 删除冗余去重。
-        let mut perms: Vec<String> = Vec::with_capacity(permission_ids.len());
-        for pid in permission_ids {
-            let perm = perm_repo.find_by_id(&pid).await?;
-            if let Some(row) = perm {
-                perms.push(row.code);
-            }
-        }
-        Ok(perms)
+        // 3. 对每个 permission_id 取 permission code
+        Self::load_permission_codes(pool, permission_ids).await
     }
 
     /// 获取指定 login_id 的角色列表。

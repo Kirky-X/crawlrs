@@ -295,60 +295,61 @@ impl ExaSearchEngine {
     /// ...
     /// ```
     fn parse_text_results(text: &str) -> Vec<ExaSearchResult> {
-        let mut results = Vec::new();
-
         // 按 "---" 分隔符拆分结果块
-        let blocks: Vec<&str> = text.split("\n---\n").collect();
+        text.split("\n---\n")
+            .filter_map(Self::parse_text_block)
+            .collect()
+    }
 
-        for block in blocks {
-            let block = block.trim();
-            if block.is_empty() {
+    /// 解析单个结果块（Title:/URL:/Highlights: 等字段行 + 描述片段）；
+    /// URL 为空的结果丢弃（返回 None）
+    fn parse_text_block(block: &str) -> Option<ExaSearchResult> {
+        let block = block.trim();
+        if block.is_empty() {
+            return None;
+        }
+
+        let mut title = String::new();
+        let mut url = String::new();
+        let mut description = String::new();
+
+        for line in block.lines() {
+            let line = line.trim();
+            if let Some(t) = line.strip_prefix("Title: ") {
+                title = t.trim().to_string();
+            } else if let Some(u) = line.strip_prefix("URL: ") {
+                url = u.trim().to_string();
+            } else if line.starts_with("Highlights:") {
+                // Highlights 后面的行是描述内容的片段
+                // 收集非字段行作为描述
                 continue;
-            }
-
-            let mut title = String::new();
-            let mut url = String::new();
-            let mut description = String::new();
-
-            for line in block.lines() {
-                let line = line.trim();
-                if let Some(t) = line.strip_prefix("Title: ") {
-                    title = t.trim().to_string();
-                } else if let Some(u) = line.strip_prefix("URL: ") {
-                    url = u.trim().to_string();
-                } else if line.starts_with("Highlights:") {
-                    // Highlights 后面的行是描述内容的片段
-                    // 收集非字段行作为描述
-                    continue;
-                } else if !line.starts_with("Published:")
-                    && !line.starts_with("Author:")
-                    && !line.is_empty()
-                    && !line.starts_with("...")
-                {
-                    // 非元数据行，作为描述片段
-                    if !description.is_empty() {
-                        description.push(' ');
-                    }
-                    description.push_str(line);
+            } else if !line.starts_with("Published:")
+                && !line.starts_with("Author:")
+                && !line.is_empty()
+                && !line.starts_with("...")
+            {
+                // 非元数据行，作为描述片段
+                if !description.is_empty() {
+                    description.push(' ');
                 }
-            }
-
-            // 截断描述到合理长度（char 边界安全，中文描述不 panic）
-            if description.chars().count() > 500 {
-                description = crate::common::text_slice::truncate_chars(&description, 500);
-                description.push_str("...");
-            }
-
-            if !url.is_empty() {
-                results.push(ExaSearchResult {
-                    title,
-                    url,
-                    description,
-                });
+                description.push_str(line);
             }
         }
 
-        results
+        // 截断描述到合理长度（char 边界安全，中文描述不 panic）
+        if description.chars().count() > 500 {
+            description = crate::common::text_slice::truncate_chars(&description, 500);
+            description.push_str("...");
+        }
+
+        if url.is_empty() {
+            return None;
+        }
+        Some(ExaSearchResult {
+            title,
+            url,
+            description,
+        })
     }
 
     /// 构造 tools/call 请求体

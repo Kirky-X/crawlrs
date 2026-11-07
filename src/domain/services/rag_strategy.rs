@@ -75,6 +75,56 @@ pub struct SemanticChunker {
     config: ChunkerConfig,
 }
 
+/// [`SemanticChunker::chunk_html`] 的分块累积状态：已产出块 + 待落盘文本
+#[derive(Default)]
+struct ChunkAccumulator {
+    chunks: Vec<Chunk>,
+    chunk_id: usize,
+    pending_text: String,
+    pending_path: String,
+}
+
+impl ChunkAccumulator {
+    /// 将 pending 文本落盘为一块（pending 为空时不动）
+    fn push_pending_chunk(&mut self) {
+        if self.pending_text.is_empty() {
+            return;
+        }
+        self.chunks.push(Chunk {
+            id: self.chunk_id,
+            text: std::mem::take(&mut self.pending_text),
+            dom_path: std::mem::take(&mut self.pending_path),
+            embedding: None,
+        });
+        self.chunk_id += 1;
+    }
+
+    /// 结构化元素（表格/列表）独立成块：先 flush pending，再追加结构化块
+    ///（即使超过 max_chunk_size 也不截断）
+    fn push_structural(&mut self, text: String, dom_path: String) {
+        // 先 flush pending
+        self.push_pending_chunk();
+        self.chunks.push(Chunk {
+            id: self.chunk_id,
+            text,
+            dom_path,
+            embedding: None,
+        });
+        self.chunk_id += 1;
+    }
+
+    /// 非结构化元素：累积文本（块首元素记 dom_path，后续以换行连接）
+    fn append_text(&mut self, text: String, dom_path: String) {
+        if self.pending_text.is_empty() {
+            self.pending_path = dom_path;
+        }
+        if !self.pending_text.is_empty() {
+            self.pending_text.push('\n');
+        }
+        self.pending_text.push_str(&text);
+    }
+}
+
 impl SemanticChunker {
     pub fn new(config: ChunkerConfig) -> Self {
         Self { config }
@@ -90,112 +140,103 @@ impl SemanticChunker {
     /// 5. 保证表格/列表完整性（不截断 tr/li）
     pub fn chunk_html(&self, html: &str) -> Result<Vec<Chunk>> {
         let document = Html::parse_document(html);
-        let mut chunks = Vec::new();
-        let mut chunk_id = 0;
 
         let boundary_nodes = self.collect_boundary_nodes(&document);
 
         if boundary_nodes.is_empty() {
             // 无明确语义边界，退化为按段落切分
+            let mut chunk_id = 0;
             return self.fallback_chunk(html, &mut chunk_id);
         }
 
         let boundary_node_count = boundary_nodes.len();
-        let mut pending_text = String::new();
-        let mut pending_path = String::new();
+        let mut acc = ChunkAccumulator::default();
 
         for (element, dom_path) in boundary_nodes {
-            let text = self.extract_visible_text(&element);
-            let text = text.trim().to_string();
-
-            if text.is_empty() {
-                continue;
-            }
-
-            // 检查结构化元素（表格/列表）—— 保持完整
-            let is_structural = self.is_structural_element(&element);
-
-            if is_structural {
-                // 先 flush pending
-                if !pending_text.is_empty() {
-                    chunks.push(Chunk {
-                        id: chunk_id,
-                        text: std::mem::take(&mut pending_text),
-                        dom_path: std::mem::take(&mut pending_path),
-                        embedding: None,
-                    });
-                    chunk_id += 1;
-                }
-                // 结构化元素作为独立块（即使超过 max_chunk_size 也不截断）
-                chunks.push(Chunk {
-                    id: chunk_id,
-                    text,
-                    dom_path,
-                    embedding: None,
-                });
-                chunk_id += 1;
-                continue;
-            }
-
-            // 非结构化元素：累积文本
-            if pending_text.is_empty() {
-                pending_path = dom_path;
-            }
-            if !pending_text.is_empty() {
-                pending_text.push('\n');
-            }
-            pending_text.push_str(&text);
-
-            // 达到目标大小时 flush
-            let char_estimate = self.token_to_chars(self.config.target_chunk_size);
-            if pending_text.len() >= char_estimate {
-                // 如果超过 max_chunk_size，进一步切分
-                if pending_text.len() > self.token_to_chars(self.config.max_chunk_size) {
-                    let sub_chunks = self.split_large_text(&pending_text, &pending_path, chunk_id);
-                    let sub_len = sub_chunks.len();
-                    chunks.extend(sub_chunks);
-                    chunk_id += sub_len;
-                } else {
-                    chunks.push(Chunk {
-                        id: chunk_id,
-                        text: std::mem::take(&mut pending_text),
-                        dom_path: std::mem::take(&mut pending_path),
-                        embedding: None,
-                    });
-                    chunk_id += 1;
-                }
-            }
+            self.accumulate_boundary_node(&element, dom_path, &mut acc);
         }
 
         // flush 剩余
-        if !pending_text.is_empty() {
-            let char_min = self.token_to_chars(self.config.min_chunk_size);
-            if pending_text.len() < char_min && chunks.len() > 1 {
-                // 太小，合并到前一个块
-                if let Some(last) = chunks.last_mut() {
-                    last.text.push('\n');
-                    last.text.push_str(&pending_text);
-                }
-            } else {
-                chunks.push(Chunk {
-                    id: chunk_id,
-                    text: pending_text,
-                    dom_path: pending_path,
-                    embedding: None,
-                });
-            }
-        }
+        self.flush_tail(&mut acc);
 
         // 合并过小的块
-        self.merge_small_chunks(&mut chunks);
+        self.merge_small_chunks(&mut acc.chunks);
 
         log::info!(
             "Semantic chunking: {} chunks from HTML ({} boundary nodes)",
-            chunks.len(),
+            acc.chunks.len(),
             boundary_node_count
         );
 
-        Ok(chunks)
+        Ok(acc.chunks)
+    }
+
+    /// 处理单个边界节点：提取可见文本，结构化元素（表格/列表）独立成块，
+    /// 非结构化元素累积并在达到目标大小时 flush（超过 max_chunk_size 时进一步切分）
+    fn accumulate_boundary_node(
+        &self,
+        element: &scraper::ElementRef,
+        dom_path: String,
+        acc: &mut ChunkAccumulator,
+    ) {
+        let text = self.extract_visible_text(element);
+        let text = text.trim().to_string();
+
+        if text.is_empty() {
+            return;
+        }
+
+        // 检查结构化元素（表格/列表）—— 保持完整
+        if self.is_structural_element(element) {
+            acc.push_structural(text, dom_path);
+            return;
+        }
+
+        // 非结构化元素：累积文本
+        acc.append_text(text, dom_path);
+
+        // 达到目标大小时 flush（超过 max_chunk_size 时进一步切分）
+        self.flush_accumulated(acc);
+    }
+
+    /// 累积文本达到 target_chunk_size 时 flush：超过 max_chunk_size 则
+    /// split_large_text 进一步切分，否则整块落盘
+    fn flush_accumulated(&self, acc: &mut ChunkAccumulator) {
+        let char_estimate = self.token_to_chars(self.config.target_chunk_size);
+        if acc.pending_text.len() < char_estimate {
+            return;
+        }
+        if acc.pending_text.len() > self.token_to_chars(self.config.max_chunk_size) {
+            let sub_chunks =
+                self.split_large_text(&acc.pending_text, &acc.pending_path, acc.chunk_id);
+            let sub_len = sub_chunks.len();
+            acc.chunks.extend(sub_chunks);
+            acc.chunk_id += sub_len;
+        } else {
+            acc.push_pending_chunk();
+        }
+    }
+
+    /// flush 剩余 pending：低于 min_chunk_size 且已有多个块时合并到前一块
+    fn flush_tail(&self, acc: &mut ChunkAccumulator) {
+        if acc.pending_text.is_empty() {
+            return;
+        }
+        let char_min = self.token_to_chars(self.config.min_chunk_size);
+        if acc.pending_text.len() < char_min && acc.chunks.len() > 1 {
+            // 太小，合并到前一个块
+            if let Some(last) = acc.chunks.last_mut() {
+                last.text.push('\n');
+                last.text.push_str(&acc.pending_text);
+            }
+        } else {
+            acc.chunks.push(Chunk {
+                id: acc.chunk_id,
+                text: std::mem::take(&mut acc.pending_text),
+                dom_path: std::mem::take(&mut acc.pending_path),
+                embedding: None,
+            });
+        }
     }
 
     /// 收集顶层语义边界节点
@@ -208,17 +249,19 @@ impl SemanticChunker {
 
         // 优先找 article > section > main > div.content 等
         for tag in &self.config.boundary_tags {
-            if let Ok(selector) = Selector::parse(tag) {
-                for element in document.select(&selector) {
-                    // 用 element 的 tree id 去重（同一元素被多个 selector 匹配时只保留一次）
-                    let node_id = element.id();
-                    if seen_ids.contains(&node_id) {
-                        continue;
-                    }
-                    seen_ids.insert(node_id);
-                    let dom_path = self.build_dom_path(element);
-                    results.push((element, dom_path));
+            // selector 非法时静默跳过该标签
+            let Ok(selector) = Selector::parse(tag) else {
+                continue;
+            };
+            for element in document.select(&selector) {
+                // 用 element 的 tree id 去重（同一元素被多个 selector 匹配时只保留一次）
+                let node_id = element.id();
+                if seen_ids.contains(&node_id) {
+                    continue;
                 }
+                seen_ids.insert(node_id);
+                let dom_path = self.build_dom_path(element);
+                results.push((element, dom_path));
             }
         }
 

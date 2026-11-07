@@ -59,7 +59,7 @@ pub enum SitemapKind {
 /// 解析端在通道满时暂停（背压），消费端按解析顺序逐条 `recv`。
 #[cfg(feature = "sitemap")]
 pub struct SitemapStream {
-    /// 根元素类型（由首个 Start 事件判定；空文档按 Urlset 处理）
+    /// 根元素类型（由文档根元素判定；空文档按 Urlset 处理）
     pub kind: SitemapKind,
     /// `<loc>` 文本流（保序）
     pub rx: tokio::sync::mpsc::Receiver<String>,
@@ -111,14 +111,8 @@ pub trait SitemapFetcher: Send + Sync {
         channel_capacity: usize,
     ) -> Result<SitemapStream, MapError> {
         let fetched = self.fetch(url).await?;
-        if fetched.status == 404 {
-            return Ok(SitemapStream::empty());
-        }
-        if fetched.status >= 400 {
-            return Err(MapError::SitemapStatus(fetched.status));
-        }
-        if fetched.status != 200 {
-            return Ok(SitemapStream::empty());
+        if let Some(verdict) = classify_sitemap_status(fetched.status) {
+            return verdict;
         }
         let kind = if is_sitemap_index(&fetched.body) {
             SitemapKind::SitemapIndex
@@ -175,42 +169,63 @@ impl SitemapFetcher for EngineSitemapFetcher {
         url: &str,
         channel_capacity: usize,
     ) -> Result<SitemapStream, MapError> {
-        use quick_xml::events::Event;
-
         let request = ScrapeRequest::new(url.to_string()).timeout(self.timeout);
         let response = self
             .client
             .scrape(&request)
             .await
             .map_err(|e| MapError::TargetUnreachable(e.to_string()))?;
-        if response.status_code == 404 {
-            return Ok(SitemapStream::empty());
+        if let Some(verdict) = classify_sitemap_status(response.status_code) {
+            return verdict;
         }
-        if response.status_code >= 400 {
-            return Err(MapError::SitemapStatus(response.status_code));
-        }
-        if response.status_code != 200 {
-            // 3xx 未跟随重定向时 body 是重定向页而非 sitemap：按空流处理，
-            // 与 execute 子 sitemap 的严格 200 口径对齐。
-            return Ok(SitemapStream::empty());
-        }
+        Ok(spawn_loc_stream(response.content, channel_capacity))
+    }
+}
 
-        let (tx, rx) = tokio::sync::mpsc::channel(channel_capacity.max(1));
-        let mut reader = quick_xml::Reader::from_str(&response.content);
-        let mut kind: Option<SitemapKind> = None;
+/// 非 200 状态的流式口径：404 → 空流（无 sitemap 是合法状态）；其余 ≥400 →
+/// `Err(SitemapStatus)`；其余非 200（3xx 重定向页）→ 空流，不解析非 sitemap
+/// 内容（与 execute 子 sitemap 的严格 200 口径对齐）。返回 `None` 表示 200，
+/// 继续解析。
+#[cfg(feature = "sitemap")]
+fn classify_sitemap_status(status: u16) -> Option<Result<SitemapStream, MapError>> {
+    if status == 404 {
+        return Some(Ok(SitemapStream::empty()));
+    }
+    if status >= 400 {
+        return Some(Err(MapError::SitemapStatus(status)));
+    }
+    if status != 200 {
+        // 3xx 未跟随重定向时 body 是重定向页而非 sitemap：按空流处理，
+        // 与 execute 子 sitemap 的严格 200 口径对齐。
+        return Some(Ok(SitemapStream::empty()));
+    }
+    None
+}
+
+/// quick-xml 增量解析：遇 `<loc>` 即 `send`，通道满即 await（背压）。
+/// XML 中途解析失败时保留已产出的部分结果（`warn!` 显性化后终止流），
+/// 不因尾部畸形标签丢弃整份 sitemap。
+///
+/// 解析循环在独立任务中运行并持有 XML 所有权；函数先返回接收端，生产端
+/// 才能在通道满时安全等待消费方 `recv`，不会因接收端尚未交付而永久阻塞。
+#[cfg(feature = "sitemap")]
+fn spawn_loc_stream(xml: String, channel_capacity: usize) -> SitemapStream {
+    use quick_xml::events::Event;
+
+    let kind = if is_sitemap_index(&xml) {
+        SitemapKind::SitemapIndex
+    } else {
+        SitemapKind::Urlset
+    };
+    let (tx, rx) = tokio::sync::mpsc::channel(channel_capacity.max(1));
+    tokio::spawn(async move {
+        let mut reader = quick_xml::Reader::from_str(&xml);
         let mut in_loc = false;
         let mut loc_text = String::new();
         loop {
             match reader.read_event() {
                 Ok(Event::Start(e)) => {
                     let name = e.name().local_name();
-                    if kind.is_none() {
-                        kind = Some(if name.as_ref().eq_ignore_ascii_case("sitemapindex") {
-                            SitemapKind::SitemapIndex
-                        } else {
-                            SitemapKind::Urlset
-                        });
-                    }
                     if name.as_ref().eq_ignore_ascii_case("loc") {
                         in_loc = true;
                         loc_text.clear();
@@ -244,12 +259,9 @@ impl SitemapFetcher for EngineSitemapFetcher {
                 }
             }
         }
+    });
 
-        Ok(SitemapStream {
-            kind: kind.unwrap_or(SitemapKind::Urlset),
-            rx,
-        })
-    }
+    SitemapStream { kind, rx }
 }
 
 /// `/v1/map` 结果
@@ -337,9 +349,6 @@ impl MapUseCase {
         dto: &MapRequestDto,
         options: SitemapStreamOptions,
     ) -> Result<SitemapStream, MapError> {
-        use tokio::sync::mpsc;
-        use tokio::task::JoinSet;
-
         let origin =
             extract_origin(&dto.url).ok_or_else(|| MapError::OriginUnparsable(dto.url.clone()))?;
 
@@ -355,79 +364,102 @@ impl MapUseCase {
             }),
             SitemapKind::SitemapIndex => {
                 // 递归一层：取前 MAX_SUB_SITEMAPS 个子 sitemap
-                let mut children: Vec<String> = Vec::new();
-                while children.len() < MAX_SUB_SITEMAPS {
-                    match first.rx.recv().await {
-                        Some(child) => children.push(child),
-                        None => break,
-                    }
-                }
-
-                let (tx, rx) = mpsc::channel(options.channel_capacity.max(1));
-                let semaphore = Arc::new(tokio::sync::Semaphore::new(
-                    options.max_concurrent_sub_sitemaps.max(1),
-                ));
-                let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-                let mut set: JoinSet<()> = JoinSet::new();
-                for child in children {
-                    let fetcher = self.fetcher.clone();
-                    let tx = tx.clone();
-                    let semaphore = semaphore.clone();
-                    let sent = sent.clone();
-                    set.spawn(async move {
-                        let _permit = semaphore
-                            .acquire_owned()
-                            .await
-                            .expect("semaphore has capacity");
-                        // 连接级瞬态错误 / ≥400 状态各重试一次，仍失败放弃该子 sitemap
-                        // （ok 语义，对齐 execute 的子 sitemap 处理）
-                        let stream = match fetcher
-                            .fetch_streaming(&child, options.channel_capacity)
-                            .await
-                        {
-                            Ok(s) => Some(s),
-                            Err(MapError::TargetUnreachable(_))
-                            | Err(MapError::SitemapStatus(_)) => fetcher
-                                .fetch_streaming(&child, options.channel_capacity)
-                                .await
-                                .ok(),
-                            Err(_) => None,
-                        };
-                        if let Some(stream) = stream {
-                            let mut rx = stream.rx;
-                            while let Some(loc) = rx.recv().await {
-                                // 消费上限护栏：check 与 increment 非原子，
-                                // 并发下最多超发 ≤ 并发数条——护栏安全方向
-                                if sent.load(std::sync::atomic::Ordering::Relaxed)
-                                    >= options.max_urls
-                                {
-                                    return;
-                                }
-                                if tx.send(loc).await.is_err() {
-                                    return;
-                                }
-                                sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-                    });
-                }
-                drop(tx);
-                // 全部子任务结束后 tx 归零，rx 端 recv 返回 None。
-                // 子任务 panic 不让它静默消失：记 warn 后继续等待其余子任务。
-                tokio::spawn(async move {
-                    while let Some(res) = set.join_next().await {
-                        if let Err(e) = res {
-                            log::warn!("sitemap child task failed: {e}");
-                        }
-                    }
-                });
-                Ok(SitemapStream {
-                    kind: SitemapKind::SitemapIndex,
-                    rx,
-                })
+                let children = collect_index_children(&mut first.rx).await;
+                Ok(self.expand_index_stream(children, options))
             }
         }
     }
+
+    /// `SitemapIndex` 并发展开：子 sitemap 各自限流重试抓取，loc 汇入一个
+    /// 有界通道（`max_urls` 为消费上限护栏，`max_concurrent_sub_sitemaps`
+    /// 为并发上限）。
+    ///
+    /// 返回的流在全部子任务结束后自然闭合（tx 归零）；子任务 panic 记
+    /// `warn!` 后继续等待其余子任务（不静默消失）。
+    #[cfg(feature = "sitemap")]
+    fn expand_index_stream(
+        &self,
+        children: Vec<String>,
+        options: SitemapStreamOptions,
+    ) -> SitemapStream {
+        use tokio::sync::mpsc;
+        use tokio::task::JoinSet;
+
+        let (tx, rx) = mpsc::channel(options.channel_capacity.max(1));
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(
+            options.max_concurrent_sub_sitemaps.max(1),
+        ));
+        let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut set: JoinSet<()> = JoinSet::new();
+        for child in children {
+            let fetcher = self.fetcher.clone();
+            let tx = tx.clone();
+            let semaphore = semaphore.clone();
+            let sent = sent.clone();
+            set.spawn(async move {
+                let _permit = semaphore
+                    .acquire_owned()
+                    .await
+                    .expect("semaphore has capacity");
+                // 连接级瞬态错误 / ≥400 状态各重试一次，仍失败放弃该子 sitemap
+                // （ok 语义，对齐 execute 的子 sitemap 处理）
+                let stream = match fetcher
+                    .fetch_streaming(&child, options.channel_capacity)
+                    .await
+                {
+                    Ok(s) => Some(s),
+                    Err(MapError::TargetUnreachable(_)) | Err(MapError::SitemapStatus(_)) => {
+                        fetcher
+                            .fetch_streaming(&child, options.channel_capacity)
+                            .await
+                            .ok()
+                    }
+                    Err(_) => None,
+                };
+                if let Some(stream) = stream {
+                    let mut rx = stream.rx;
+                    while let Some(loc) = rx.recv().await {
+                        // 消费上限护栏：check 与 increment 非原子，
+                        // 并发下最多超发 ≤ 并发数条——护栏安全方向
+                        if sent.load(std::sync::atomic::Ordering::Relaxed) >= options.max_urls {
+                            return;
+                        }
+                        if tx.send(loc).await.is_err() {
+                            return;
+                        }
+                        sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+        drop(tx);
+        // 全部子任务结束后 tx 归零，rx 端 recv 返回 None。
+        // 子任务 panic 不让它静默消失：记 warn 后继续等待其余子任务。
+        tokio::spawn(async move {
+            while let Some(res) = set.join_next().await {
+                if let Err(e) = res {
+                    log::warn!("sitemap child task failed: {e}");
+                }
+            }
+        });
+        SitemapStream {
+            kind: SitemapKind::SitemapIndex,
+            rx,
+        }
+    }
+}
+
+/// 从根 index 流中收集前 [`MAX_SUB_SITEMAPS`] 个子 sitemap URL（流尽即止）
+#[cfg(feature = "sitemap")]
+async fn collect_index_children(rx: &mut tokio::sync::mpsc::Receiver<String>) -> Vec<String> {
+    let mut children: Vec<String> = Vec::new();
+    while children.len() < MAX_SUB_SITEMAPS {
+        match rx.recv().await {
+            Some(child) => children.push(child),
+            None => break,
+        }
+    }
+    children
 }
 
 /// Urlset 流的消费上限转发：最多转发 `max_urls` 条（防无限站点图）
@@ -852,6 +884,24 @@ mod tests {
             out
         }
 
+        /// 回归：loc 数超过通道容量时，解析任务不得在接收端交付前阻塞。
+        ///
+        /// 旧实现把解析循环内联在 async fn 中、先解析后返回 `rx`：通道满即
+        /// 永久挂起。修复后解析在独立任务中运行、函数先返回流。
+        #[tokio::test]
+        async fn spawn_loc_stream_does_not_block_when_loc_count_exceeds_capacity() {
+            let locs: Vec<String> = (0..8).map(|i| format!("https://a.com/{i}")).collect();
+            let refs: Vec<&str> = locs.iter().map(String::as_str).collect();
+            let stream = spawn_loc_stream(urlset(&refs), 1);
+            assert_eq!(stream.kind, SitemapKind::Urlset);
+
+            let received =
+                tokio::time::timeout(std::time::Duration::from_secs(5), collect(stream.rx))
+                    .await
+                    .expect("producer must not deadlock when loc count exceeds capacity");
+            assert_eq!(received, locs);
+        }
+
         /// Urlset 流经 execute_streaming 逐条产出且保序（万级 loc）
         #[tokio::test]
         async fn streaming_urlset_yields_ten_thousand_locs_in_order() {
@@ -1030,36 +1080,31 @@ mod tests {
                 let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                 self.max_in_flight.fetch_max(now, Ordering::SeqCst);
             }
-        }
 
-        #[async_trait]
-        impl SitemapFetcher for IndexMockFetcher {
-            async fn fetch(&self, _url: &str) -> Result<SitemapFetch, MapError> {
-                Err(MapError::Internal("unused".to_string()))
+            /// 根 index：按 `root_children` 顺序产出子 sitemap URL 流
+            fn root_stream(&self, channel_capacity: usize) -> SitemapStream {
+                let (tx, rx) = tokio::sync::mpsc::channel(channel_capacity.max(1));
+                let children = self.root_children.clone();
+                tokio::spawn(async move {
+                    for child in children {
+                        if tx.send(child).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+                SitemapStream {
+                    kind: SitemapKind::SitemapIndex,
+                    rx,
+                }
             }
 
-            async fn fetch_streaming(
+            /// 子 sitemap：404 → 空流；≥400 → TargetUnreachable；
+            /// 200 → 延迟 `child_delay_ms` 后产出 loc 流（记录并发进入）
+            async fn child_stream(
                 &self,
                 url: &str,
                 channel_capacity: usize,
             ) -> Result<SitemapStream, MapError> {
-                const ROOT: &str = "https://a.com/sitemap.xml";
-                if url == ROOT {
-                    let (tx, rx) = tokio::sync::mpsc::channel(channel_capacity.max(1));
-                    let children = self.root_children.clone();
-                    tokio::spawn(async move {
-                        for child in children {
-                            if tx.send(child).await.is_err() {
-                                break;
-                            }
-                        }
-                    });
-                    return Ok(SitemapStream {
-                        kind: SitemapKind::SitemapIndex,
-                        rx,
-                    });
-                }
-
                 let (status, body) = match self.children.get(url) {
                     Some((s, b)) => (*s, b.clone()),
                     None => return Err(MapError::TargetUnreachable(format!("no mock for {url}"))),
@@ -1089,6 +1134,25 @@ mod tests {
                     kind: SitemapKind::Urlset,
                     rx,
                 })
+            }
+        }
+
+        #[async_trait]
+        impl SitemapFetcher for IndexMockFetcher {
+            async fn fetch(&self, _url: &str) -> Result<SitemapFetch, MapError> {
+                Err(MapError::Internal("unused".to_string()))
+            }
+
+            async fn fetch_streaming(
+                &self,
+                url: &str,
+                channel_capacity: usize,
+            ) -> Result<SitemapStream, MapError> {
+                const ROOT: &str = "https://a.com/sitemap.xml";
+                if url == ROOT {
+                    return Ok(self.root_stream(channel_capacity));
+                }
+                self.child_stream(url, channel_capacity).await
             }
         }
 

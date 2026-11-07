@@ -122,39 +122,13 @@ impl ContentExtractionFacade {
         for extractor in &self.extractors {
             match extractor.extract(html, url) {
                 Ok(content) => {
-                    if !self.quality.enabled {
-                        // 既有语义：首个高置信即返；低置信记首个，继续尝试后续
-                        if content.confidence >= 0.7 {
-                            return Ok((content, None));
-                        }
-                        if best.is_none() {
-                            best = Some(content);
-                        }
-                        continue;
-                    }
-
-                    let metrics = quality_gate::evaluate(&content.text, content.html.as_deref());
-                    if content.confidence >= 0.7
-                        && metrics.word_count >= self.quality.min_word_count
-                        && !quality_gate::is_hard_fail(&metrics, &self.quality)
-                    {
-                        return Ok((content, Some(metrics)));
-                    }
-
-                    let should_replace = match (&best, &best_metrics) {
-                        (None, _) => true,
-                        (Some(b), Some(bm)) => {
-                            metrics.word_count >= bm.word_count
-                                && content.text.chars().count() as f64
-                                    >= self.quality.replacement_length_ratio
-                                        * b.text.chars().count() as f64
-                        }
-                        // best 与 best_metrics 同步维护，此分支不可达；保守取替换
-                        (Some(_), None) => true,
+                    let verdict = if !self.quality.enabled {
+                        Self::apply_legacy_verdict(content, &mut best)
+                    } else {
+                        self.apply_gated_verdict(content, &mut best, &mut best_metrics)
                     };
-                    if should_replace {
-                        best = Some(content);
-                        best_metrics = Some(metrics);
+                    if let Some(outcome) = verdict {
+                        return Ok(outcome);
                     }
                 }
                 Err(e) => errors.push((extractor.name(), e)),
@@ -166,6 +140,55 @@ impl ContentExtractionFacade {
             Some(content) => Ok((content, best_metrics)),
             None => Err(errors),
         }
+    }
+
+    /// 既有语义（质量门 disabled）：首个高置信即返；低置信记首个，继续尝试后续。
+    /// 返回 `Some(outcome)` 表示快路径命中、链路立即返回。
+    fn apply_legacy_verdict(
+        content: ExtractedContent,
+        best: &mut Option<ExtractedContent>,
+    ) -> Option<ChainOutcome> {
+        if content.confidence >= 0.7 {
+            return Some((content, None));
+        }
+        if best.is_none() {
+            *best = Some(content);
+        }
+        None
+    }
+
+    /// 质量门启用裁决：快路径（confidence 达标 + 词数达标 + 无 prose 硬失败）
+    /// 命中即返；否则按 word_count + 长度比（`replacement_length_ratio`）替换 best。
+    /// 返回 `Some(outcome)` 表示快路径命中、链路立即返回。
+    fn apply_gated_verdict(
+        &self,
+        content: ExtractedContent,
+        best: &mut Option<ExtractedContent>,
+        best_metrics: &mut Option<quality_gate::ProseMetrics>,
+    ) -> Option<ChainOutcome> {
+        let metrics = quality_gate::evaluate(&content.text, content.html.as_deref());
+        if content.confidence >= 0.7
+            && metrics.word_count >= self.quality.min_word_count
+            && !quality_gate::is_hard_fail(&metrics, &self.quality)
+        {
+            return Some((content, Some(metrics)));
+        }
+
+        let should_replace = match (&best, &best_metrics) {
+            (None, _) => true,
+            (Some(b), Some(bm)) => {
+                metrics.word_count >= bm.word_count
+                    && content.text.chars().count() as f64
+                        >= self.quality.replacement_length_ratio * b.text.chars().count() as f64
+            }
+            // best 与 best_metrics 同步维护，此分支不可达；保守取替换
+            (Some(_), None) => true,
+        };
+        if should_replace {
+            *best = Some(content);
+            *best_metrics = Some(metrics);
+        }
+        None
     }
 
     /// LLM 回退提取：将原文送 LLM 结构化提取，输出 `text` 字段

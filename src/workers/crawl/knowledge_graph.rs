@@ -222,6 +222,19 @@ impl KnowledgeGraphAccumulator {
         let mut holes = Vec::new();
 
         // 1. 缺失的实体类型
+        self.push_missing_entity_type_holes(&mut holes);
+
+        // 2. 数量不足的实体类型（少于预期最小值 2）
+        self.push_underrepresented_type_holes(&mut holes);
+
+        // 3. 缺失的关系类型（已知类型中未出现）
+        self.push_missing_relation_holes(&mut holes);
+
+        holes
+    }
+
+    /// 缺失的实体类型：已知类型从未在图中出现
+    fn push_missing_entity_type_holes(&self, holes: &mut Vec<StructuralHole>) {
         for type_label in &self.known_entity_types {
             if !self.type_counts.contains_key(type_label) {
                 holes.push(StructuralHole {
@@ -231,8 +244,10 @@ impl KnowledgeGraphAccumulator {
                 });
             }
         }
+    }
 
-        // 2. 数量不足的实体类型（少于预期最小值 2）
+    /// 数量不足的实体类型（少于预期最小值 2）
+    fn push_underrepresented_type_holes(&self, holes: &mut Vec<StructuralHole>) {
         let expected_min = 2;
         for (type_label, &count) in &self.type_counts {
             if count < expected_min {
@@ -247,8 +262,10 @@ impl KnowledgeGraphAccumulator {
                 });
             }
         }
+    }
 
-        // 3. 缺失的关系类型（已知类型中未出现）
+    /// 缺失的关系类型（已知类型中未出现）
+    fn push_missing_relation_holes(&self, holes: &mut Vec<StructuralHole>) {
         for rel_type in &self.known_relation_types {
             let has_any = self
                 .relations
@@ -270,8 +287,6 @@ impl KnowledgeGraphAccumulator {
                 }
             }
         }
-
-        holes
     }
 
     /// Chao1 覆盖率估计
@@ -363,15 +378,23 @@ impl KnowledgeGraphAccumulator {
         }
 
         // 检查 URL 是否匹配结构空洞的建议模式
-        for hole in &holes {
-            for pattern in &hole.suggested_url_patterns {
-                if self.url_matches_pattern(url, pattern) {
-                    return 2.0; // 匹配空洞模式，优先级翻倍
-                }
-            }
+        if self.matches_hole_pattern(url, &holes) {
+            return 2.0; // 匹配空洞模式，优先级翻倍
         }
 
         1.0
+    }
+
+    /// URL 是否命中任一结构空洞的建议模式
+    fn matches_hole_pattern(&self, url: &str, holes: &[StructuralHole]) -> bool {
+        for hole in holes {
+            for pattern in &hole.suggested_url_patterns {
+                if self.url_matches_pattern(url, pattern) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// 简单的 URL 模式匹配（支持 `**` 通配符）

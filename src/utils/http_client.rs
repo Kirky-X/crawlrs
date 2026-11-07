@@ -13,6 +13,9 @@
 //! - Configurable timeouts
 //! - Custom user agent support
 
+mod redirect_dns;
+use redirect_dns::redirect_dns_check_blocks;
+
 use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
@@ -146,9 +149,7 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
         return reqwest::redirect::Policy::limited(max_redirects as usize);
     }
 
-    use crate::engines::shared::is_private_ip;
     use crate::infrastructure::security::ssrf::is_internal_url;
-    use std::net::ToSocketAddrs;
 
     reqwest::redirect::Policy::custom(move |attempt| {
         if attempt.previous().len() >= max_redirects as usize {
@@ -179,49 +180,10 @@ pub fn create_ssrf_safe_redirect_policy(max_redirects: u8) -> reqwest::redirect:
             return attempt.stop();
         }
 
-        // 3) DNS 级检查：重定向目标 hostname 解析出的全部 IP 必须是公网地址。
-        // 阻断「302 → 攻击者域名 → 解析到 169.254.169.254/内网 IP」的绕过
-        // （该路径不受初始请求 resolve_to_addrs pin 的约束）。策略闭包为同步
-        // 上下文，使用阻塞式解析；解析失败按 fail-closed 拒绝跟随。
-        if let Some(host) = redirect_url.host_str() {
-            let port = redirect_url.port_or_known_default().unwrap_or(
-                if redirect_url.scheme() == "https" {
-                    443
-                } else {
-                    80
-                },
-            );
-            match (host, port).to_socket_addrs() {
-                Ok(addrs) => {
-                    let mut any = false;
-                    for addr in addrs {
-                        any = true;
-                        if is_private_ip(addr.ip()) {
-                            log::warn!(
-                                "SSRF protection: Redirect host {} resolves to private IP {}, blocking",
-                                host,
-                                addr.ip()
-                            );
-                            return attempt.stop();
-                        }
-                    }
-                    if !any {
-                        log::warn!(
-                            "SSRF protection: No DNS result for redirect host {}, blocking",
-                            host
-                        );
-                        return attempt.stop();
-                    }
-                }
-                Err(e) => {
-                    log::warn!(
-                        "SSRF protection: DNS resolution failed for redirect host {} ({}), blocking",
-                        host,
-                        e
-                    );
-                    return attempt.stop();
-                }
-            }
+        // 3) DNS 级检查：解析出的全部 IP 必须是公网地址（详见
+        // [`redirect_dns_check_blocks`]），任一失败按 fail-closed 阻断
+        if redirect_dns_check_blocks(redirect_url) {
+            return attempt.stop();
         }
 
         log::debug!(

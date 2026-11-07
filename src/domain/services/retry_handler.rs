@@ -72,49 +72,68 @@ impl RetryHandler {
             .min(task.max_retries.max(1) as u32);
 
         if new_attempt_count > effective_max_retries {
-            warn!(
-                "Task {} exceeded max retries (effective={}, policy={}, task declared={}), marking as failed",
-                task.id,
-                effective_max_retries,
-                self.retry_policy.max_retries,
-                task.max_retries
-            );
+            return self
+                .terminate_task(task, error, new_attempt_count, effective_max_retries)
+                .await;
+        }
+        self.schedule_retry(task, new_attempt_count).await
+    }
 
-            task.attempt_count = new_attempt_count as i32;
-            task.retry_count += 1;
-            task.status = TaskStatus::Failed;
-            task.completed_at = Some(Utc::now());
+    /// 终结分支（自 [`RetryHandler::handle_failure`] 提取）：超过有效重试
+    /// 上限后标记任务失败并写入错误串。
+    async fn terminate_task(
+        &self,
+        task: &mut Task,
+        error: &str,
+        new_attempt_count: u32,
+        effective_max_retries: u32,
+    ) -> HandleFailureResult {
+        warn!(
+            "Task {} exceeded max retries (effective={}, policy={}, task declared={}), marking as failed",
+            task.id,
+            effective_max_retries,
+            self.retry_policy.max_retries,
+            task.max_retries
+        );
 
-            // 终结分支透传错误串：API 回读 payload["error"]，无此写入则回退
-            // "Task failed." 泛化文案。空串不写（保留"真无错误串才回退"语义）。
-            if !error.is_empty() {
-                if let Some(obj) = task.payload.as_object_mut() {
-                    obj.insert(
-                        "error".to_string(),
-                        serde_json::Value::String(error.to_string()),
-                    );
-                } else {
-                    warn!(
-                        "Task {} payload is not an object, cannot record error string",
-                        task.id
-                    );
-                }
-            }
+        task.attempt_count = new_attempt_count as i32;
+        task.retry_count += 1;
+        task.status = TaskStatus::Failed;
+        task.completed_at = Some(Utc::now());
 
-            // 守卫式写入：锁被抢占/任务已被他方迁移时放弃终结
-            let rows = match self.repository.update_task_guarded(task).await {
-                Ok(rows) => rows,
-                Err(e) => return HandleFailureResult::Error(e.into()),
-            };
-            if rows == 0 {
+        // 终结分支透传错误串：API 回读 payload["error"]，无此写入则回退
+        // "Task failed." 泛化文案。空串不写（保留"真无错误串才回退"语义）。
+        if !error.is_empty() {
+            if let Some(obj) = task.payload.as_object_mut() {
+                obj.insert(
+                    "error".to_string(),
+                    serde_json::Value::String(error.to_string()),
+                );
+            } else {
                 warn!(
-                    "Task {} terminal-fail not written (guard failed: migrated by another worker)",
+                    "Task {} payload is not an object, cannot record error string",
                     task.id
                 );
             }
-            return HandleFailureResult::Failed;
         }
 
+        // 守卫式写入：锁被抢占/任务已被他方迁移时放弃终结
+        let rows = match self.repository.update_task_guarded(task).await {
+            Ok(rows) => rows,
+            Err(e) => return HandleFailureResult::Error(e.into()),
+        };
+        if rows == 0 {
+            warn!(
+                "Task {} terminal-fail not written (guard failed: migrated by another worker)",
+                task.id
+            );
+        }
+        HandleFailureResult::Failed
+    }
+
+    /// 重试分支（自 [`RetryHandler::handle_failure`] 提取）：计算退避并
+    /// 守卫式调度下一次重试。
+    async fn schedule_retry(&self, task: &mut Task, new_attempt_count: u32) -> HandleFailureResult {
         // Calculate backoff and schedule next retry
         let backoff = self.retry_policy.calculate_backoff(new_attempt_count);
         let next_retry = Utc::now() + Duration::milliseconds(backoff.as_millis() as i64);

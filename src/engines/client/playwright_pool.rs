@@ -331,47 +331,8 @@ impl BrowserPoolState {
         // 内存水位门控（engine-moli）：Critical 拒绝新 acquire 并一次性回收空闲实例；
         // Tight 只允许复用可用实例、总实例数不增。由路由层 D3/D4 语义兜底降级。
         #[cfg(feature = "engine-moli")]
-        {
-            use crate::engines::memory_watermark::MemoryLevel;
-            let watermark = self.memory.read().clone();
-            if let Some(watermark) = watermark {
-                match watermark.level() {
-                    MemoryLevel::Critical => {
-                        if !self.critical_reclaim_done.swap(true, Ordering::AcqRel) {
-                            self.reclaim_idle_instances_now().await;
-                        }
-                        return Err(EngineError::MemoryConstrained(
-                            "browser pool acquire rejected under Critical memory watermark"
-                                .to_string(),
-                        ));
-                    }
-                    MemoryLevel::Tight => {
-                        // 分层契约：router 是精确策略（needs_js 维度修正分数），池是
-                        // 粗粒度安全阀（Critical 全拒 + Tight 控容量）。Tight 语义 =
-                        // 复用在运实例、总实例数不增；但 total_instances==0 的冷池
-                        // （临时池/进程刚启动）放行首实例——否则 Tight 期间浏览器
-                        // 渲染被系统性拒绝，Tight 档位形同 Critical。
-                        if self.config.enable_reuse {
-                            if let Some((id, browser)) = self.try_get_available().await {
-                                return Ok((id, browser));
-                            }
-                        }
-                        if self.total_instances.load(Ordering::Relaxed) > 0 {
-                            return Err(EngineError::MemoryConstrained(
-                                "no reusable browser instance under Tight memory watermark"
-                                    .to_string(),
-                            ));
-                        }
-                    }
-                    MemoryLevel::Abundant => {
-                        // 水位回落即复位一次性回收标记：下一个 Critical 周期
-                        // 可再次触发空闲实例立即回收（普通 load/store，无 RMW 开销）
-                        if self.critical_reclaim_done.load(Ordering::Relaxed) {
-                            self.critical_reclaim_done.store(false, Ordering::Relaxed);
-                        }
-                    }
-                }
-            }
+        if let Some(gated) = self.gate_by_memory_watermark().await {
+            return gated;
         }
 
         // : 获取 OwnedSemaphorePermit，生命周期绑定到 PooledBrowser
@@ -390,6 +351,51 @@ impl BrowserPoolState {
 
         // 创建新实例（传递 permit 绑定到 PooledBrowser）
         self.create_new_instance(permit).await
+    }
+
+    /// 内存水位门控（engine-moli）：返回 `Some(result)` 表示 acquire 结果被
+    /// 水位决策短路（Critical 拒绝 / Tight 复用或拒绝）；`None` 表示继续正常路径。
+    #[cfg(feature = "engine-moli")]
+    async fn gate_by_memory_watermark(&self) -> Option<Result<(u64, Arc<Browser>), EngineError>> {
+        use crate::engines::memory_watermark::MemoryLevel;
+        let watermark = self.memory.read().clone();
+        let watermark = watermark?;
+        match watermark.level() {
+            MemoryLevel::Critical => {
+                if !self.critical_reclaim_done.swap(true, Ordering::AcqRel) {
+                    self.reclaim_idle_instances_now().await;
+                }
+                Some(Err(EngineError::MemoryConstrained(
+                    "browser pool acquire rejected under Critical memory watermark".to_string(),
+                )))
+            }
+            MemoryLevel::Tight => {
+                // 分层契约：router 是精确策略（needs_js 维度修正分数），池是
+                // 粗粒度安全阀（Critical 全拒 + Tight 控容量）。Tight 语义 =
+                // 复用在运实例、总实例数不增；但 total_instances==0 的冷池
+                // （临时池/进程刚启动）放行首实例——否则 Tight 期间浏览器
+                // 渲染被系统性拒绝，Tight 档位形同 Critical。
+                if self.config.enable_reuse {
+                    if let Some((id, browser)) = self.try_get_available().await {
+                        return Some(Ok((id, browser)));
+                    }
+                }
+                if self.total_instances.load(Ordering::Relaxed) > 0 {
+                    return Some(Err(EngineError::MemoryConstrained(
+                        "no reusable browser instance under Tight memory watermark".to_string(),
+                    )));
+                }
+                None
+            }
+            MemoryLevel::Abundant => {
+                // 水位回落即复位一次性回收标记：下一个 Critical 周期
+                // 可再次触发空闲实例立即回收（普通 load/store，无 RMW 开销）
+                if self.critical_reclaim_done.load(Ordering::Relaxed) {
+                    self.critical_reclaim_done.store(false, Ordering::Relaxed);
+                }
+                None
+            }
+        }
     }
 
     /// 获取 Browser 实例 + 对应的 TabPool

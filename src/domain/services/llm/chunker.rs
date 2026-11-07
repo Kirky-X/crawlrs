@@ -225,20 +225,7 @@ fn split_oversized_segment(seg: &str, budget: usize) -> Vec<Range<usize>> {
                 pieces.push(acc_start..s.start);
                 acc_chars = 0;
             }
-            // 硬切：每 budget 个字符一块（UTF-8 字符边界安全）
-            let mut pos = s.start;
-            let mut used = 0usize;
-            for (bi, _) in seg[s.start..s.end].char_indices() {
-                if used == budget {
-                    pieces.push(pos..s.start + bi);
-                    pos = s.start + bi;
-                    used = 0;
-                }
-                used += 1;
-            }
-            if pos < s.end {
-                pieces.push(pos..s.end);
-            }
+            hard_split_sentence(seg, &s, budget, &mut pieces);
             acc_start = s.end;
             continue;
         }
@@ -258,6 +245,24 @@ fn split_oversized_segment(seg: &str, budget: usize) -> Vec<Range<usize>> {
         pieces.push(acc_start..seg.len());
     }
     pieces
+}
+
+/// 超预算句子的字符硬切：每 `budget` 个字符一块（UTF-8 字符边界安全），
+/// 追加到 `pieces`
+fn hard_split_sentence(seg: &str, s: &Range<usize>, budget: usize, pieces: &mut Vec<Range<usize>>) {
+    let mut pos = s.start;
+    let mut used = 0usize;
+    for (bi, _) in seg[s.start..s.end].char_indices() {
+        if used == budget {
+            pieces.push(pos..s.start + bi);
+            pos = s.start + bi;
+            used = 0;
+        }
+        used += 1;
+    }
+    if pos < s.end {
+        pieces.push(pos..s.end);
+    }
 }
 
 /// 术语预检：schema 属性名拆词（停用词过滤后）全部不在文本中 → false
@@ -324,19 +329,24 @@ fn split_terms(name: &str) -> Vec<String> {
         if seg.is_empty() {
             continue;
         }
-        let mut cur = String::new();
-        for c in seg.chars() {
-            if !cur.is_empty() && c.is_ascii_uppercase() {
-                terms.push(cur.to_lowercase());
-                cur = String::new();
-            }
-            cur.push(c);
-        }
-        if !cur.is_empty() {
-            terms.push(cur.to_lowercase());
-        }
+        split_camel_segment_into(seg, &mut terms);
     }
     terms
+}
+
+/// 段内驼峰边界切分并小写化（`FooBar` → `["foo", "bar"]`），追加到 `terms`
+fn split_camel_segment_into(seg: &str, terms: &mut Vec<String>) {
+    let mut cur = String::new();
+    for c in seg.chars() {
+        if !cur.is_empty() && c.is_ascii_uppercase() {
+            terms.push(cur.to_lowercase());
+            cur = String::new();
+        }
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        terms.push(cur.to_lowercase());
+    }
 }
 
 /// 字段级启发式 merge：对象逐字段取首个非 null（数组字段 concat），根数组直接 concat

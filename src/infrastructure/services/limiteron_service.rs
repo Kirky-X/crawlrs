@@ -15,8 +15,9 @@ use limiteron::storage::{BanStorage, MemoryBanStorage, MemoryStorage, Storage};
 use log::{debug, warn};
 
 use crate::domain::repositories::{
-    credits_repository::CreditsRepository, task_repository::TaskRepository,
-    tasks_backlog_repository::TasksBacklogRepository,
+    credits_repository::CreditsRepository,
+    task_repository::TaskRepository,
+    tasks_backlog_repository::{TasksBacklog, TasksBacklogRepository},
 };
 use crate::domain::services::rate_limiting_service::{
     BacklogService, ConcurrencyConfig, ConcurrencyControlService, ConcurrencyResult, QuotaService,
@@ -487,34 +488,12 @@ impl BacklogService for LimiteronService {
             team_id
         );
 
-        let pending_backlogs = match self
-            .tasks_backlog_repository
-            .get_pending_tasks(Some(team_id), Some(10))
-            .await
-        {
-            Ok(backlogs) => backlogs,
-            Err(e) => {
-                log::error!(
-                    "LimiteronService: Database error getting pending tasks: {:?}",
-                    e
-                );
-                return Err(RateLimitingError::DatabaseError);
-            }
-        };
+        let pending_backlogs = self.load_pending_backlogs(team_id).await?;
 
         let mut processed_count = 0;
 
         for backlog in pending_backlogs {
-            if backlog.is_expired() {
-                let mut expired_backlog = backlog.clone();
-                if let Err(e) = expired_backlog.mark_expired() {
-                    log::error!("LimiteronService: Error marking backlog expired: {}", e);
-                    continue;
-                }
-
-                if let Err(e) = self.tasks_backlog_repository.update(&expired_backlog).await {
-                    log::error!("LimiteronService: Database error updating backlog: {:?}", e);
-                }
+            if self.expire_backlog_item(&backlog).await {
                 continue;
             }
 
@@ -523,33 +502,9 @@ impl BacklogService for LimiteronService {
 
             if current_concurrency < self.config.concurrency.max_concurrent_per_team {
                 // 成功获取槽位，更新任务状态
-                if let Ok(Some(mut task)) = self.task_repository.find_by_id(backlog.task_id).await {
-                    if task.status == crate::domain::models::TaskStatus::Queued {
-                        task.status = crate::domain::models::TaskStatus::Active;
-                        task.started_at = Some(chrono::Utc::now());
-                        task.lock_token = None;
-                        task.lock_expires_at =
-                            Some(chrono::Utc::now() + chrono::Duration::seconds(300));
-
-                        if let Err(e) = self.task_repository.update(&task).await {
-                            log::error!("LimiteronService: Database error updating task: {:?}", e);
-                            continue;
-                        }
-                    }
+                if self.complete_backlog_item(&backlog).await {
+                    processed_count += 1;
                 }
-
-                let mut updated_backlog = backlog.clone();
-                if let Err(e) = updated_backlog.mark_completed() {
-                    log::error!("LimiteronService: Error marking backlog completed: {}", e);
-                    continue;
-                }
-
-                if let Err(e) = self.tasks_backlog_repository.update(&updated_backlog).await {
-                    log::error!("LimiteronService: Database error updating backlog: {:?}", e);
-                    continue;
-                }
-
-                processed_count += 1;
             } else {
                 // 无法获取槽位，停止处理
                 break;
@@ -562,6 +517,78 @@ impl BacklogService for LimiteronService {
         );
 
         Ok(processed_count)
+    }
+}
+
+impl LimiteronService {
+    /// 拉取待处理的 backlog（每批最多 10 条）。
+    async fn load_pending_backlogs(
+        &self,
+        team_id: crate::domain::id::Id,
+    ) -> Result<Vec<TasksBacklog>, RateLimitingError> {
+        match self
+            .tasks_backlog_repository
+            .get_pending_tasks(Some(team_id), Some(10))
+            .await
+        {
+            Ok(backlogs) => Ok(backlogs),
+            Err(e) => {
+                log::error!(
+                    "LimiteronService: Database error getting pending tasks: {:?}",
+                    e
+                );
+                Err(RateLimitingError::DatabaseError)
+            }
+        }
+    }
+
+    /// 过期 backlog：标记过期并落库；返回 true 表示应跳过该条目。
+    async fn expire_backlog_item(&self, backlog: &TasksBacklog) -> bool {
+        if !backlog.is_expired() {
+            return false;
+        }
+
+        let mut expired_backlog = backlog.clone();
+        if let Err(e) = expired_backlog.mark_expired() {
+            log::error!("LimiteronService: Error marking backlog expired: {}", e);
+            return true;
+        }
+
+        if let Err(e) = self.tasks_backlog_repository.update(&expired_backlog).await {
+            log::error!("LimiteronService: Database error updating backlog: {:?}", e);
+        }
+        true
+    }
+
+    /// 已获取槽位：将 Queued 任务置为 Active 并完成 backlog；返回是否计入 processed。
+    async fn complete_backlog_item(&self, backlog: &TasksBacklog) -> bool {
+        // 成功获取槽位，更新任务状态
+        if let Ok(Some(mut task)) = self.task_repository.find_by_id(backlog.task_id).await {
+            if task.status == crate::domain::models::TaskStatus::Queued {
+                task.status = crate::domain::models::TaskStatus::Active;
+                task.started_at = Some(chrono::Utc::now());
+                task.lock_token = None;
+                task.lock_expires_at = Some(chrono::Utc::now() + chrono::Duration::seconds(300));
+
+                if let Err(e) = self.task_repository.update(&task).await {
+                    log::error!("LimiteronService: Database error updating task: {:?}", e);
+                    return false;
+                }
+            }
+        }
+
+        let mut updated_backlog = backlog.clone();
+        if let Err(e) = updated_backlog.mark_completed() {
+            log::error!("LimiteronService: Error marking backlog completed: {}", e);
+            return false;
+        }
+
+        if let Err(e) = self.tasks_backlog_repository.update(&updated_backlog).await {
+            log::error!("LimiteronService: Database error updating backlog: {:?}", e);
+            return false;
+        }
+
+        true
     }
 }
 

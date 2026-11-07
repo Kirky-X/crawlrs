@@ -187,15 +187,7 @@ fn greedy_match(src: &[Token], ex: &[Token], allowed_miss: usize) -> GreedyResul
     let mut j = 0usize;
     let mut unmatched = 0usize;
     for t in ex {
-        let mut found = None;
-        while j < src.len() {
-            if src[j].lower == t.lower {
-                found = Some(j);
-                break;
-            }
-            j += 1;
-        }
-        match found {
+        match find_next_token(src, j, &t.lower) {
             Some(k) => {
                 matches.push(k);
                 j = k + 1;
@@ -215,6 +207,18 @@ fn greedy_match(src: &[Token], ex: &[Token], allowed_miss: usize) -> GreedyResul
         matches,
         pruned: false,
     }
+}
+
+/// 在 `src[from..]` 中找首个 `lower` 相等词元的下标（未消费前缀线性扫描）
+fn find_next_token(src: &[Token], from: usize, lower: &str) -> Option<usize> {
+    let mut j = from;
+    while j < src.len() {
+        if src[j].lower == lower {
+            return Some(j);
+        }
+        j += 1;
+    }
+    None
 }
 
 struct GreedyResult {

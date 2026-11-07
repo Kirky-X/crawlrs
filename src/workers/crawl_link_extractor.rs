@@ -6,6 +6,9 @@
 //! 从 `scrape_worker.rs` 提取的爬取链接处理函数。
 //! 包含 robots.txt 检查、完成状态更新和链接提取入队。
 
+mod filters;
+use filters::url_accepted;
+
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -26,8 +29,8 @@ use crate::i18n::tr_log_args;
 use crate::utils::dedup::{DedupResult, Deduplicator};
 use crate::utils::robots::RobotsCheckerTrait;
 use crate::workers::crawl::{
-    DomainFilter, FilterContext, Frontier, PathDepthScorer, ScoringContext, UrlFilter,
-    UrlPatternFilter, UrlScorer,
+    DomainFilter, FilterContext, Frontier, PathDepthScorer, ScoringContext, UrlPatternFilter,
+    UrlScorer,
 };
 use crate::workers::errors::ScrapeWorkerError;
 
@@ -234,7 +237,8 @@ fn build_link_filters(task: &Task, config: &CrawlConfigDto) -> LinkFilters {
 
 /// 从 HTML 响应收集绝对链接并按过滤链去重
 ///
-/// 自 [`extract_and_queue_links`] 提取，过滤判定顺序与短路行为逐字保留：
+/// 自 [`extract_and_queue_links`] 提取，过滤判定顺序与短路行为逐字保留
+/// （单链接判定见 [`url_accepted`]）：
 /// 黑名单 → include/exclude patterns → include 为空集合时整体短路。
 fn collect_unique_links(
     task: &Task,
@@ -256,29 +260,16 @@ fn collect_unique_links(
             if let Ok(absolute_url) = base_url.join(href) {
                 let url_str = absolute_url.to_string();
 
-                if !url_str.starts_with("http") {
-                    continue;
+                if url_accepted(
+                    &url_str,
+                    &task.url,
+                    pattern_filter,
+                    empty_include_short_circuit,
+                    blacklist_filter,
+                    filter_ctx,
+                ) {
+                    links.insert(url_str);
                 }
-                if url_str == task.url {
-                    continue;
-                }
-
-                // 黑名单过滤：绝对拒绝，不受 include patterns 影响
-                if let Some(bf) = blacklist_filter {
-                    if !bf.accept(&url_str, filter_ctx) {
-                        continue;
-                    }
-                }
-
-                if let Some(filter) = pattern_filter {
-                    if !filter.accept(&url_str, filter_ctx) {
-                        continue;
-                    }
-                } else if empty_include_short_circuit {
-                    continue;
-                }
-
-                links.insert(url_str);
             }
         }
     }

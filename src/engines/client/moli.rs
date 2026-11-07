@@ -232,68 +232,79 @@ impl MoliEngine {
         wait_for: &Option<WaitFor>,
     ) -> Result<(), EngineError> {
         match wait_for {
-            None | Some(WaitFor::NetworkIdle) => {
-                let deadline = tokio::time::Instant::now() + self.config.scrape_timeout;
-                loop {
-                    let ready = page
-                        .evaluate("() => document.readyState")
-                        .await
-                        .ok()
-                        .and_then(|v| v.into_value::<String>().ok())
-                        .is_some_and(|s| s == "complete");
-                    if ready {
-                        tokio::time::sleep(Duration::from_millis(NETWORK_IDLE_SETTLE_MS)).await;
-                        return Ok(());
-                    }
-                    if tokio::time::Instant::now() >= deadline {
-                        let e = "moli page never reached readyState=complete".to_string();
-                        log::error!(target: "crawlrs::engine::moli", "{}", e);
-                        return Err(EngineError::Timeout(self.config.scrape_timeout));
-                    }
-                    tokio::time::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS)).await;
-                }
-            }
+            None | Some(WaitFor::NetworkIdle) => self.wait_network_idle(page).await,
             Some(WaitFor::Selector(selector)) => {
                 let expr = format!(r#"() => document.querySelector({:?}) !== null"#, selector);
                 self.poll_until(page, &expr, "selector never appeared")
                     .await
             }
-            Some(WaitFor::DomStable(stable_for)) => {
-                let mut last_len: Option<usize> = None;
-                let mut stable_since: Option<tokio::time::Instant> = None;
-                let deadline = tokio::time::Instant::now() + self.config.scrape_timeout;
-                loop {
-                    let len = page
-                        .evaluate("() => document.documentElement.outerHTML.length")
-                        .await
-                        .ok()
-                        .and_then(|v| v.into_value::<f64>().ok())
-                        .map(|f| f as usize);
-                    if let (Some(prev), Some(cur)) = (last_len, len) {
-                        if prev == cur {
-                            let since = stable_since.get_or_insert(tokio::time::Instant::now());
-                            if since.elapsed() >= *stable_for {
-                                return Ok(());
-                            }
-                        } else {
-                            stable_since = None;
-                        }
-                    }
-                    last_len = len;
-                    if tokio::time::Instant::now() >= deadline {
-                        let e = "moli page DOM never stabilized".to_string();
-                        log::error!(target: "crawlrs::engine::moli", "{}", e);
-                        return Err(EngineError::Timeout(self.config.scrape_timeout));
-                    }
-                    tokio::time::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS)).await;
-                }
-            }
+            Some(WaitFor::DomStable(stable_for)) => self.wait_dom_stable(page, stable_for).await,
             Some(WaitFor::ResponseUrl(_)) | Some(WaitFor::ResponseBody(_)) => {
                 // 正常不可达：scrape() 已在 I/O 前早退 Unsupported；此处防御性兜底
                 Err(EngineError::Unsupported(
                     "response-level wait unsupported by moli".to_string(),
                 ))
             }
+        }
+    }
+
+    /// 等 `document.readyState == "complete"` + 固定静默窗
+    /// （CDP Network 事件计数的精确 idle 未在 PoC 验证面内，近似实现诚实标注）
+    async fn wait_network_idle(&self, page: &chromiumoxide::Page) -> Result<(), EngineError> {
+        let deadline = tokio::time::Instant::now() + self.config.scrape_timeout;
+        loop {
+            let ready = page
+                .evaluate("() => document.readyState")
+                .await
+                .ok()
+                .and_then(|v| v.into_value::<String>().ok())
+                .is_some_and(|s| s == "complete");
+            if ready {
+                tokio::time::sleep(Duration::from_millis(NETWORK_IDLE_SETTLE_MS)).await;
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                let e = "moli page never reached readyState=complete".to_string();
+                log::error!(target: "crawlrs::engine::moli", "{}", e);
+                return Err(EngineError::Timeout(self.config.scrape_timeout));
+            }
+            tokio::time::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS)).await;
+        }
+    }
+
+    /// 轮询 outerHTML 长度在 `stable_for` 内不再变化
+    async fn wait_dom_stable(
+        &self,
+        page: &chromiumoxide::Page,
+        stable_for: &Duration,
+    ) -> Result<(), EngineError> {
+        let mut last_len: Option<usize> = None;
+        let mut stable_since: Option<tokio::time::Instant> = None;
+        let deadline = tokio::time::Instant::now() + self.config.scrape_timeout;
+        loop {
+            let len = page
+                .evaluate("() => document.documentElement.outerHTML.length")
+                .await
+                .ok()
+                .and_then(|v| v.into_value::<f64>().ok())
+                .map(|f| f as usize);
+            if let (Some(prev), Some(cur)) = (last_len, len) {
+                if prev == cur {
+                    let since = stable_since.get_or_insert(tokio::time::Instant::now());
+                    if since.elapsed() >= *stable_for {
+                        return Ok(());
+                    }
+                } else {
+                    stable_since = None;
+                }
+            }
+            last_len = len;
+            if tokio::time::Instant::now() >= deadline {
+                let e = "moli page DOM never stabilized".to_string();
+                log::error!(target: "crawlrs::engine::moli", "{}", e);
+                return Err(EngineError::Timeout(self.config.scrape_timeout));
+            }
+            tokio::time::sleep(Duration::from_millis(WAIT_POLL_INTERVAL_MS)).await;
         }
     }
 

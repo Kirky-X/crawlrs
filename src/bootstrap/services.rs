@@ -3,13 +3,16 @@
 
 //! Application services initialization.
 
+mod runtime;
+mod search;
+
 use log::info;
 // web-axum/auth-off 面不打印 admin key（bootstrap 是 auth 面流程），导入随 auth 门控
 #[cfg(feature = "auth")]
 use std::io::IsTerminal;
 use std::sync::Arc;
 
-use crate::application::use_cases::create_scrape::{CreateScrapeUseCase, CreateScrapeUseCaseTrait};
+use crate::application::use_cases::create_scrape::CreateScrapeUseCaseTrait;
 use crate::bootstrap::infrastructure::InfrastructureComponents;
 use crate::bootstrap::infrastructure::Repositories;
 use crate::config::settings::Settings;
@@ -18,15 +21,14 @@ use crate::config::settings::Settings;
 use crate::bootstrap::error::BootstrapError;
 #[cfg(feature = "auth")]
 use crate::infrastructure::auth::{
-    build_garrison_config, get_garrison_dao, init_garrison_dao, set_audit_service,
-    set_garrison_dao, CrawlrsGarrisonInterface,
+    build_garrison_config, get_garrison_dao, init_garrison_dao, set_garrison_dao,
+    CrawlrsGarrisonInterface,
 };
 // garrison prelude 提供 GarrisonDao / GarrisonInterface / GarrisonManager trait 与类型。
-use crate::domain::services::audit_service::{AuditService, AuditServiceTrait};
+use crate::domain::services::audit_service::AuditServiceTrait;
 // ContentExtractionFacade 用于正文提取（Trafilatura→DomSmoothie→CssRule + 质量门裁决 + LLM 回退）
 use crate::domain::services::content_extractor::ContentExtractionFacade;
-use crate::domain::services::content_extractor::QualityGateConfig;
-use crate::domain::services::extraction_service::{ExtractionService, ExtractionServiceTrait};
+use crate::domain::services::extraction_service::ExtractionServiceTrait;
 use dbnexus::DbPool;
 #[cfg(feature = "auth")]
 use garrison::prelude::{GarrisonDao, GarrisonInterface, GarrisonManager};
@@ -36,9 +38,7 @@ use crate::domain::services::geo_location::GeoLocationService;
 use crate::domain::services::llm::{ExplicitErrorCarrier, LLMServiceTrait};
 use crate::domain::services::rate_limiting_service::RateLimitingService;
 // rate-limit feature 关闭时不导入 LimiteronService 相关配置类型
-use crate::domain::services::rag_strategy::{
-    ChunkerConfig, EmbeddingProvider, FallbackEmbeddingProvider, RagExtractionRuntime,
-};
+use crate::domain::services::rag_strategy::{EmbeddingProvider, FallbackEmbeddingProvider};
 #[cfg(feature = "rate-limit")]
 use crate::domain::services::rate_limiting_service::{
     ConcurrencyConfig, ConcurrencyStrategy, RateLimitConfig, RateLimitStrategy,
@@ -46,9 +46,7 @@ use crate::domain::services::rate_limiting_service::{
 use crate::domain::services::rerank::{FallbackRerankProvider, RerankProvider, SearchReranker};
 use crate::domain::services::search_service::{SearchService, SearchServiceTrait};
 // SearXNG 实例生命周期服务（`search.searxng.enabled = false` 时为 None）
-use crate::domain::services::searxng::{
-    ReqwestSearxngTransport, SearxngInstanceService, SearxngInstanceServiceImpl,
-};
+use crate::domain::services::searxng::SearxngInstanceService;
 // RAG provider 实现：local 由 rag-local feature 门控；远端兜底经 gateway
 //（fluxweir），http（通用 REST 重排）无条件可用
 #[cfg(feature = "teams")]
@@ -61,18 +59,9 @@ use crate::infrastructure::services::fluxweir_providers::{
 use crate::infrastructure::services::http_rerank_provider::{HttpRerankProvider, RerankFormat};
 #[cfg(feature = "rag-local")]
 use crate::infrastructure::services::vecboost_provider::VecboostProvider;
-// webhook feature 关闭时不导入 WebhookServiceImpl
-// （NoopWebhookService 在 webhook-off 时替代，trait 始终导入）
+// webhook feature 关闭时此 trait 仍导入（webhook-off 由 runtime 装配 Noop 实现）
 use crate::domain::services::webhook_service::WebhookService;
-#[cfg(feature = "webhook")]
-use crate::domain::services::webhook_service::WebhookServiceImpl;
-// webhook feature 关闭时导入 NoopWebhookService
-#[cfg(not(feature = "webhook"))]
-use crate::domain::services::noop_webhook_service::NoopWebhookService;
 use crate::engines::engine_client::EngineClient;
-use crate::infrastructure::database::repositories::audit_log_repo_impl::AuditLogRepositoryImpl;
-#[cfg(feature = "teams")]
-use crate::infrastructure::geolocation::GeoLocationServiceImpl;
 // rate-limit feature 关闭时不导入 LimiteronService
 #[cfg(feature = "rate-limit")]
 use crate::infrastructure::services::limiteron_service::{
@@ -81,13 +70,11 @@ use crate::infrastructure::services::limiteron_service::{
 // rate-limit feature 关闭时导入 NoopRateLimitingService
 #[cfg(not(feature = "rate-limit"))]
 use crate::infrastructure::services::noop_rate_limiting_service::NoopRateLimitingService;
-// webhook feature 关闭时不导入 WebhookSenderImpl
+// webhook feature 关闭时不导入 WebhookSenderImpl（装配已移至 services::runtime）
 // webhook_sender_impl 模块本身也被 cfg 门控（见 infrastructure::services::mod）。
 use crate::domain::services::team_semaphore::{AdaptiveParams, TeamSemaphore};
-#[cfg(feature = "webhook")]
-use crate::infrastructure::services::webhook_sender_impl::WebhookSenderImpl;
 use crate::presentation::middleware::rate_limit_middleware::RateLimitMiddleware;
-use crate::queue::task_queue::{PostgresTaskQueue, TaskQueue};
+use crate::queue::task_queue::TaskQueue;
 use crate::search::client::SearchClientTrait;
 use crate::search::engine_trait::SearchEngine;
 use crate::search::smart as smart_search;
@@ -187,7 +174,7 @@ pub struct ServicesComponents {
 /// # Returns
 ///
 /// Returns an initialized rate limit middleware.
-pub fn init_rate_limit_middleware(
+pub(super) fn init_rate_limit_middleware(
     rate_limiting_service: Arc<dyn RateLimitingService>,
 ) -> RateLimitMiddleware {
     RateLimitMiddleware::new(rate_limiting_service)
@@ -206,7 +193,7 @@ pub fn init_rate_limit_middleware(
 /// # Returns
 ///
 /// Returns an initialized team semaphore.
-pub fn init_team_semaphore(settings: &Settings) -> Arc<TeamSemaphore> {
+pub(super) fn init_team_semaphore(settings: &Settings) -> Arc<TeamSemaphore> {
     let default_team_limit = settings.concurrency.default_team_limit as usize;
 
     if settings.concurrency.adaptive_enabled {
@@ -243,7 +230,7 @@ pub fn init_team_semaphore(settings: &Settings) -> Arc<TeamSemaphore> {
 /// # Returns
 ///
 /// Returns an initialized rate limiting service as `Arc<dyn RateLimitingService>`.
-pub async fn init_rate_limiting_service(
+pub(super) async fn init_rate_limiting_service(
     repositories: &Repositories,
     settings: &Settings,
     db_pool: Option<Arc<DbPool>>,
@@ -362,7 +349,7 @@ pub async fn init_rate_limiting_service(
 /// # Returns
 ///
 /// Returns an initialized search engine.
-pub fn init_search_engine(
+pub(super) fn init_search_engine(
     engine_client: Arc<EngineClient>,
     settings: &Settings,
     searxng_engine: Option<Arc<dyn SearchEngine>>,
@@ -391,7 +378,7 @@ pub fn init_search_engine(
 /// # Returns
 ///
 /// Returns an initialized search service as trait object.
-pub fn init_search_service(
+pub(super) fn init_search_service(
     repositories: &Repositories,
     settings: &Settings,
     search_client: Arc<dyn SearchClientTrait>,
@@ -429,7 +416,7 @@ pub struct RagComponents {
 /// 未编译的 feature（local 无 `rag-local`）或非法
 /// provider 值时返回带重建指引的错误。vecboost 模型加载（秒级）发生在此处，
 /// 即启动期一次性成本。
-pub async fn init_rag_components(settings: &Settings) -> Result<RagComponents, String> {
+pub(super) async fn init_rag_components(settings: &Settings) -> Result<RagComponents, String> {
     if !settings.rag.enabled {
         return Ok(RagComponents {
             embedding: None,
@@ -443,36 +430,60 @@ pub async fn init_rag_components(settings: &Settings) -> Result<RagComponents, S
     // + rag_fallback 时构造；primary（vecboost/http/rig）失败单次切换。
     // base_url 从 settings 直接决议（embedded 网关此刻可能尚未起服——provider
     // 请求发生在运行期，readyz 之后）。
-    #[cfg(feature = "gateway")]
-    let fluxweir_fallback: Option<(Arc<dyn EmbeddingProvider>, Arc<dyn RerankProvider>)> =
-        if settings.fluxweir.enabled && settings.fluxweir.rag_fallback {
-            match build_fluxweir_client(settings) {
-                Some(client) => {
-                    log::info!(
-                        "fluxweir RAG fallback enabled (embed={}, rerank={})",
-                        FLUXWEIR_EMBED_MODEL,
-                        FLUXWEIR_RERANK_MODEL
-                    );
-                    Some((
-                        Arc::new(FluxweirEmbeddingProvider::new(
-                            client.clone(),
-                            FLUXWEIR_EMBED_MODEL,
-                            rag.local_dimensions,
-                        )),
-                        Arc::new(FluxweirRerankProvider::new(client, FLUXWEIR_RERANK_MODEL)),
-                    ))
-                }
-                None => {
-                    log::warn!("fluxweir.enabled but API key unresolvable; RAG fallback disabled");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-    #[cfg(not(feature = "gateway"))]
-    let fluxweir_fallback: Option<(Arc<dyn EmbeddingProvider>, Arc<dyn RerankProvider>)> = None;
+    let fluxweir_fallback = build_rag_fallback(settings);
 
+    let embedding = resolve_embedding_provider(rag, fluxweir_fallback.as_ref()).await?;
+    let rerank = resolve_rerank_provider(rag, fluxweir_fallback).await?;
+
+    Ok(RagComponents { embedding, rerank })
+}
+
+/// RAG 兜底 provider 对（嵌入 + 重排）。
+type RagFallbackProviders = (Arc<dyn EmbeddingProvider>, Arc<dyn RerankProvider>);
+
+/// 构造 fluxweir RAG 兜底 provider（design D5）。
+///
+/// gateway 编译 + `[fluxweir].enabled` + `rag_fallback` 时构造；primary
+/// （vecboost/http）失败单次切换。base_url 从 settings 直接决议（embedded 网关
+/// 此刻可能尚未起服——provider 请求发生在运行期，readyz 之后）。
+#[cfg(feature = "gateway")]
+fn build_rag_fallback(settings: &Settings) -> Option<RagFallbackProviders> {
+    if !(settings.fluxweir.enabled && settings.fluxweir.rag_fallback) {
+        return None;
+    }
+    match build_fluxweir_client(settings) {
+        Some(client) => {
+            log::info!(
+                "fluxweir RAG fallback enabled (embed={}, rerank={})",
+                FLUXWEIR_EMBED_MODEL,
+                FLUXWEIR_RERANK_MODEL
+            );
+            Some((
+                Arc::new(FluxweirEmbeddingProvider::new(
+                    client.clone(),
+                    FLUXWEIR_EMBED_MODEL,
+                    settings.rag.local_dimensions,
+                )),
+                Arc::new(FluxweirRerankProvider::new(client, FLUXWEIR_RERANK_MODEL)),
+            ))
+        }
+        None => {
+            log::warn!("fluxweir.enabled but API key unresolvable; RAG fallback disabled");
+            None
+        }
+    }
+}
+
+#[cfg(not(feature = "gateway"))]
+fn build_rag_fallback(_settings: &Settings) -> Option<RagFallbackProviders> {
+    None
+}
+
+/// 决议嵌入 provider：primary（vecboost）与 fluxweir 兜底组合为降级链。
+async fn resolve_embedding_provider(
+    rag: &crate::config::rag::RagSettings,
+    fluxweir_fallback: Option<&RagFallbackProviders>,
+) -> Result<Option<Arc<dyn EmbeddingProvider>>, String> {
     let embedding: Option<Arc<dyn EmbeddingProvider>> = match rag.embedding_provider.as_str() {
         "" => None,
         #[cfg(feature = "rag-local")]
@@ -491,19 +502,24 @@ pub async fn init_rag_components(settings: &Settings) -> Result<RagComponents, S
         _ => None,
     };
     // primary Some + 兜底 Some → 复合降级链；primary None + 兜底 Some → 仅兜底
-    let embedding = match (
-        embedding,
-        fluxweir_fallback.as_ref().map(|(e, _)| e.clone()),
-    ) {
-        (Some(primary), Some(secondary)) => {
-            Some(Arc::new(FallbackEmbeddingProvider::new(primary, secondary))
-                as Arc<dyn EmbeddingProvider>)
-        }
-        (Some(primary), None) => Some(primary),
-        (None, Some(secondary)) => Some(secondary),
-        (None, None) => None,
-    };
+    Ok(
+        match (embedding, fluxweir_fallback.map(|(e, _)| e.clone())) {
+            (Some(primary), Some(secondary)) => {
+                Some(Arc::new(FallbackEmbeddingProvider::new(primary, secondary))
+                    as Arc<dyn EmbeddingProvider>)
+            }
+            (Some(primary), None) => Some(primary),
+            (None, Some(secondary)) => Some(secondary),
+            (None, None) => None,
+        },
+    )
+}
 
+/// 决议重排 provider：primary（vecboost/http）与 fluxweir 兜底组合为降级链。
+async fn resolve_rerank_provider(
+    rag: &crate::config::rag::RagSettings,
+    fluxweir_fallback: Option<RagFallbackProviders>,
+) -> Result<Option<Arc<dyn RerankProvider>>, String> {
     let rerank: Option<Arc<dyn RerankProvider>> = match rag.rerank_provider.as_str() {
         "" => None,
         #[cfg(feature = "rag-local")]
@@ -531,7 +547,7 @@ pub async fn init_rag_components(settings: &Settings) -> Result<RagComponents, S
         // validate_providers 已拒绝非法值与未编译 feature 的组合，此处不可达
         _ => None,
     };
-    let rerank = match (rerank, fluxweir_fallback.map(|(_, r)| r)) {
+    Ok(match (rerank, fluxweir_fallback.map(|(_, r)| r)) {
         (Some(primary), Some(secondary)) => {
             Some(Arc::new(FallbackRerankProvider::new(primary, secondary))
                 as Arc<dyn RerankProvider>)
@@ -539,9 +555,7 @@ pub async fn init_rag_components(settings: &Settings) -> Result<RagComponents, S
         (Some(primary), None) => Some(primary),
         (None, Some(secondary)) => Some(secondary),
         (None, None) => None,
-    };
-
-    Ok(RagComponents { embedding, rerank })
+    })
 }
 
 /// 初始化 garrison 认证鉴权服务。
@@ -591,6 +605,21 @@ pub async fn init_garrison_auth(
     settings: &Settings,
     pool: Arc<DbPool>,
 ) -> Result<(), BootstrapError> {
+    install_garrison(settings, &pool).await?;
+
+    // 5. 决策 2：断言 garrison firewall 已启用（仅依赖 garrison 做 CWE-307 IP 限速）
+    assert_bruteforce_firewall_compiled();
+
+    // 6. 注入 bootstrap admin API key（若环境变量存在）。
+    inject_bootstrap_admin_api_key(&pool).await?;
+
+    info!("Garrison authentication manager initialized (token_style=jwt, HS256, firewall=enabled)");
+    Ok(())
+}
+
+/// 1-4. 构造并安装 garrison 全局单例（config → DAO → interface → manager）。
+#[cfg(feature = "auth")]
+async fn install_garrison(settings: &Settings, pool: &Arc<DbPool>) -> Result<(), BootstrapError> {
     // 1. 构造 GarrisonConfig（弱密钥 / 空密钥在此被拒绝）
     //
     // 顺序选择：先做便宜的同步 config 校验，再做异步 DAO 初始化——
@@ -624,11 +653,11 @@ pub async fn init_garrison_auth(
 
     // 3. 构造业务 Interface（注入 crawlrs DbPool 查询 RBAC 表）
     //
-    // `(*pool).clone()`：deref Arc<DbPool> → DbPool，再 clone（DbPool 内部为
+    // `(**pool).clone()`：deref &Arc<DbPool> → DbPool，再 clone（DbPool 内部为
     // Arc<DbPoolInner>，clone 廉价 <10ns）。`CrawlrsGarrisonInterface::new` 持有
     // owned DbPool，符合其既有签名（外科手术式修改，不改动代码）。
     let interface: Arc<dyn GarrisonInterface> =
-        Arc::new(CrawlrsGarrisonInterface::new((*pool).clone()));
+        Arc::new(CrawlrsGarrisonInterface::new((**pool).clone()));
 
     // 4. 写入 garrison 全局单例（builder 模式，异步 build）
     // 重构：使用类型化 `BootstrapError::GarrisonManager`。
@@ -640,221 +669,225 @@ pub async fn init_garrison_auth(
         .await
         .map_err(|e| BootstrapError::GarrisonManager(format!("{e}")))?;
 
-    // 5. 决策 2：断言 garrison firewall 已启用（仅依赖 garrison 做 CWE-307 IP 限速）
-    //
-    // crawlrs 已删除本地 `AuthRateLimiter`，暴力破解防护完全依赖 garrison 的
-    // `firewall` + `firewall-bruteforce` features。若 features 未启用，garrison
-    // 不会执行 IP 级限速，导致 CWE-307 防护缺失。
-    //
-    // 此处通过引用 `BruteForceStrategy` 类型做编译期断言——若 garrison 未启用
-    // `firewall-bruteforce` feature，该类型不存在，编译失败（fail-fast）。
-    // 运行时无需额外检查（garrison 在 `check_api_key` 内部自动调用 firewall）。
-    //
-    // 注：Cargo feature 是统一效应，此处断言仅防止"误关闭 features"配置错误，
-    // 不防恶意依赖（见 auth_middleware.rs `reset_global_auth_state` 注释）。
-    //
-    // ## 阈值配置限制
-    //
-    // garrison 0.8.1 在 `check_api_key` 内部硬编码 `BruteForceConfig::default()`
-    // （5 次失败 / 60s 窗口 / 300s 锁定），不通过 `GarrisonConfig` 暴露自定义入口。
-    // 当前使用 garrison 默认值；若需自定义阈值，需等 garrison 后续版本暴露配置接口
-    // 或在 crawlrs 侧实现自定义 `check_api_key` wrapper（暂不实施简洁优先）。
-    #[cfg(feature = "auth")]
-    {
-        // garrison 顶层 re-export（lib.rs:621，gated on `firewall-bruteforce` feature）
-        use garrison::BruteForceStrategy as _FwAssert;
-        // 引用类型做编译期检查（无运行时开销）
-        let _ = std::marker::PhantomData::<_FwAssert>;
-    }
+    Ok(())
+}
 
-    // 6. 注入 bootstrap admin API key（若环境变量存在）。
-    //
-    // ## 设计背景
-    //
-    // garrison DAO 默认是内存实现（`GarrisonDaoOxcache`），进程间不共享数据。
-    // 外部工具签发的 API Key 写入工具进程的
-    // 独立 DAO 实例，server 进程无法读取 → 所有认证请求均 401。
-    //
-    // 标准解法：server 启动时读取环境变量 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY`，
-    // 若存在则直接用 garrison `ApiKeyHandler::generate_with_namespace` 签发到
-    // server 自己的 DAO（内存共享），同时写入 crawlrs `api_keys`/`teams` 表保留
-    // `api_key_id → team_id` 映射（auth_middleware 反查依赖）。
-    //
-    // ## 安全（CWE-532 / CWE-798）
-    //
-    // - 明文 key 仅通过环境变量注入一次，从不写入日志或配置文件；
-    // - garrison 侧仅存 `sha256(key_secret)`（CWE-916 与 generate_internal 一致）；
-    // - 环境变量不存在或为空时完全跳过此分支（不影响部署未启用 bootstrap 的场景）。
-    //
-    // ## 格式
-    //
-    // `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` = `<team_id_uuid>`（可选）；
-    //   不传 team_id 时自动创建 `"bootstrap-admin-team"` team。
-    // 内部签发双段格式：`key_id.key_secret`（`ApiKeyHandler::generate_with_namespace`），
-    // key_id / key_secret 各 32 hex，TTL 30 天，scope `crawlrs:admin`。
+/// 5. 决策 2：断言 garrison firewall 已启用（仅依赖 garrison 做 CWE-307 IP 限速）。
+///
+/// crawlrs 已删除本地 `AuthRateLimiter`，暴力破解防护完全依赖 garrison 的
+/// `firewall` + `firewall-bruteforce` features。若 features 未启用，garrison
+/// 不会执行 IP 级限速，导致 CWE-307 防护缺失。
+///
+/// 此处通过引用 `BruteForceStrategy` 类型做编译期断言——若 garrison 未启用
+/// `firewall-bruteforce` feature，该类型不存在，编译失败（fail-fast）。
+/// 运行时无需额外检查（garrison 在 `check_api_key` 内部自动调用 firewall）。
+///
+/// 注：Cargo feature 是统一效应，此处断言仅防止"误关闭 features"配置错误，
+/// 不防恶意依赖（见 auth_middleware.rs `reset_global_auth_state` 注释）。
+///
+/// ## 阈值配置限制
+///
+/// garrison 0.8.1 在 `check_api_key` 内部硬编码 `BruteForceConfig::default()`
+/// （5 次失败 / 60s 窗口 / 300s 锁定），不通过 `GarrisonConfig` 暴露自定义入口。
+/// 当前使用 garrison 默认值；若需自定义阈值，需等 garrison 后续版本暴露配置接口
+/// 或在 crawlrs 侧实现自定义 `check_api_key` wrapper（暂不实施简洁优先）。
+#[cfg(feature = "auth")]
+fn assert_bruteforce_firewall_compiled() {
+    // garrison 顶层 re-export（lib.rs:621，gated on `firewall-bruteforce` feature）
+    use garrison::BruteForceStrategy as _FwAssert;
+    // 引用类型做编译期检查（无运行时开销）
+    let _ = std::marker::PhantomData::<_FwAssert>;
+}
+
+/// 6. 注入 bootstrap admin API key（若环境变量存在）。
+///
+/// ## 设计背景
+///
+/// garrison DAO 默认是内存实现（`GarrisonDaoOxcache`），进程间不共享数据。
+/// 外部工具签发的 API Key 写入工具进程的
+/// 独立 DAO 实例，server 进程无法读取 → 所有认证请求均 401。
+///
+/// 标准解法：server 启动时读取环境变量 `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY`，
+/// 若存在则直接用 garrison `ApiKeyHandler::generate_with_namespace` 签发到
+/// server 自己的 DAO（内存共享），同时写入 crawlrs `api_keys`/`teams` 表保留
+/// `api_key_id → team_id` 映射（auth_middleware 反查依赖）。
+///
+/// ## 安全（CWE-532 / CWE-798）
+///
+/// - 明文 key 仅通过环境变量注入一次，从不写入日志或配置文件；
+/// - garrison 侧仅存 `sha256(key_secret)`（CWE-916 与 generate_internal 一致）；
+/// - 环境变量不存在或为空时完全跳过此分支（不影响部署未启用 bootstrap 的场景）。
+///
+/// ## 格式
+///
+/// `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY` = `<team_id_uuid>`（可选）；
+///   不传 team_id 时自动创建 `"bootstrap-admin-team"` team。
+/// 内部签发双段格式：`key_id.key_secret`（`ApiKeyHandler::generate_with_namespace`），
+/// key_id / key_secret 各 32 hex，TTL 30 天，scope `crawlrs:admin`。
+#[cfg(feature = "auth")]
+async fn inject_bootstrap_admin_api_key(pool: &Arc<DbPool>) -> Result<(), BootstrapError> {
     let bootstrap_cfg = match std::env::var("CRAWLRS__BOOTSTRAP_ADMIN_API_KEY") {
         Ok(v) if !v.is_empty() => Some(v),
         _ => None,
     };
-    if let Some(cfg_val) = bootstrap_cfg {
-        use crate::common::time_utils;
-        use crate::infrastructure::database::entities::api_key::{
-            ActiveModel as ApiKeyActiveModel, Entity as ApiKeyEntity,
-        };
-        use crate::infrastructure::database::entities::team::{
-            ActiveModel as TeamActiveModel, Entity as TeamEntity,
-        };
-        use dbnexus::sea_orm::{ActiveValue, EntityTrait};
-        use garrison::protocol::apikey::ApiKeyHandler;
+    let Some(cfg_val) = bootstrap_cfg else {
+        return Ok(());
+    };
 
-        const GARRISON_NS: &str = "crawlrs";
-        const PERM_ADMIN: &str = "crawlrs:admin";
-        const DEFAULT_TEAM_NAME: &str = "bootstrap-admin-team";
-        const TTL_SECS: i64 = 30 * 24 * 60 * 60;
+    use crate::common::time_utils;
+    use crate::infrastructure::database::entities::api_key::{
+        ActiveModel as ApiKeyActiveModel, Entity as ApiKeyEntity,
+    };
+    use crate::infrastructure::database::entities::team::{
+        ActiveModel as TeamActiveModel, Entity as TeamEntity,
+    };
+    use dbnexus::sea_orm::{ActiveValue, EntityTrait};
+    use garrison::protocol::apikey::ApiKeyHandler;
 
-        let wrap_db = |ctx: &'static str| {
-            move |e: dbnexus::sea_orm::DbErr| {
-                BootstrapError::GarrisonManager(format!("{}: db: {}", ctx, e))
-            }
-        };
+    const GARRISON_NS: &str = "crawlrs";
+    const PERM_ADMIN: &str = "crawlrs:admin";
+    const DEFAULT_TEAM_NAME: &str = "bootstrap-admin-team";
+    const TTL_SECS: i64 = 30 * 24 * 60 * 60;
 
-        // 格式约定（docs/USER_GUIDE.md:178）：`<team_id_uuid>` 是裸 36 位 UUID
-        // 字符串，不是 `team_id_uuid` 复合格式；`Id::from_str` 按 UUID 解析的形态
-        // 为「含 '-' 且长度 36」或「32 位紧凑 UUID」，本守卫只放行 36 位裸 UUID
-        // （bootstrap 契约），非法/非 36 长度一律回退自动生成 team，不静默截断。
-        let team_id_arg: Option<crate::domain::id::Id> = if cfg_val.len() == 36 {
-            match cfg_val.parse::<crate::domain::id::Id>() {
-                Ok(id) => Some(id),
-                Err(e) => {
-                    log::warn!(
-                        "CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 长度 36 但 UUID 解析失败，回退自动生成 team: {e}"
-                    );
-                    None
-                }
-            }
-        } else {
-            if !cfg_val.is_empty() {
-                log::warn!(
-                    "CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 非空但不是 36 位 UUID（长度 {}），回退自动生成 team",
-                    cfg_val.len()
-                );
-            }
-            None
-        };
-        let team_id = team_id_arg.unwrap_or_else(crate::domain::id::Id::generate);
-        let api_key_id = crate::domain::id::Id::generate();
-
-        // 确保 team 存在（bootstrap 首次启动时 team 表为空）
-        let now = time_utils::to_db_datetime(chrono::Utc::now());
-        let session = pool.get_session("admin").await.map_err(|e| {
-            BootstrapError::GarrisonManager(format!("bootstrap_admin_key: db session: {e}"))
-        })?;
-        let conn = session.connection().map_err(|e| {
-            BootstrapError::GarrisonManager(format!("bootstrap_admin_key: db conn: {e}"))
-        })?;
-        if TeamEntity::find_by_id(team_id)
-            .one(conn)
-            .await
-            .map_err(wrap_db("bootstrap_admin_key: find team"))?
-            .is_none()
-        {
-            let team_active = TeamActiveModel {
-                id: ActiveValue::Set(team_id.into()),
-                name: ActiveValue::Set(DEFAULT_TEAM_NAME.to_string()),
-                allowed_countries: ActiveValue::Set(None),
-                blocked_countries: ActiveValue::Set(None),
-                ip_whitelist: ActiveValue::Set(None),
-                domain_blacklist: ActiveValue::Set(None),
-                enable_geo_restrictions: ActiveValue::Set(false),
-                created_at: ActiveValue::Set(now),
-                updated_at: ActiveValue::Set(now),
-            };
-            TeamEntity::insert(team_active)
-                .exec(conn)
-                .await
-                .map_err(wrap_db("bootstrap_admin_key: insert team"))?;
+    let wrap_db = |ctx: &'static str| {
+        move |e: dbnexus::sea_orm::DbErr| {
+            BootstrapError::GarrisonManager(format!("{}: db: {}", ctx, e))
         }
+    };
 
-        // 用 `set_garrison_dao` 注入的全局 DAO 签发 key（与 server 进程共享内存）
-        let dao_for_gen = get_garrison_dao().ok_or_else(|| {
-            BootstrapError::GarrisonManager(
-                "bootstrap_admin_key: get_garrison_dao returned None".to_string(),
-            )
-        })?;
-        let handler = ApiKeyHandler::new(Arc::clone(&dao_for_gen));
-        let plaintext_key = handler
-            .generate_with_namespace(
-                api_key_id.to_string(),
-                GARRISON_NS,
-                vec![PERM_ADMIN.to_string()],
-                TTL_SECS,
-            )
-            .await
-            .map_err(|e| {
-                BootstrapError::GarrisonManager(format!(
-                    "bootstrap_admin_key: garrison generate: {e}"
-                ))
-            })?;
+    // 格式约定（docs/USER_GUIDE.md:178）：`<team_id_uuid>` 是裸 36 位 UUID
+    // 字符串，不是 `team_id_uuid` 复合格式；`Id::from_str` 按 UUID 解析的形态
+    // 为「含 '-' 且长度 36」或「32 位紧凑 UUID」，本守卫只放行 36 位裸 UUID
+    // （bootstrap 契约），非法/非 36 长度一律回退自动生成 team，不静默截断。
+    let team_id_arg: Option<crate::domain::id::Id> = if cfg_val.len() == 36 {
+        match cfg_val.parse::<crate::domain::id::Id>() {
+            Ok(id) => Some(id),
+            Err(e) => {
+                log::warn!(
+                    "CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 长度 36 但 UUID 解析失败，回退自动生成 team: {e}"
+                );
+                None
+            }
+        }
+    } else {
+        if !cfg_val.is_empty() {
+            log::warn!(
+                "CRAWLRS__BOOTSTRAP_ADMIN_API_KEY 非空但不是 36 位 UUID（长度 {}），回退自动生成 team",
+                cfg_val.len()
+            );
+        }
+        None
+    };
+    let team_id = team_id_arg.unwrap_or_else(crate::domain::id::Id::generate);
+    let api_key_id = crate::domain::id::Id::generate();
 
-        let garrison_key_id = plaintext_key
-            .split_once('.')
-            .map(|(k, _)| k.to_string())
-            .ok_or_else(|| {
-                BootstrapError::GarrisonManager(
-                    "bootstrap_admin_key: garrison returned malformed key".to_string(),
-                )
-            })?;
-
-        // 写入 crawlrs `api_keys` 表保留映射，auth_middleware 反查 team_id
-        let api_key_active = ApiKeyActiveModel {
-            id: ActiveValue::Set(api_key_id.into()),
-            team_id: ActiveValue::Set(team_id.into()),
-            key: ActiveValue::Set(garrison_key_id),
+    // 确保 team 存在（bootstrap 首次启动时 team 表为空）
+    let now = time_utils::to_db_datetime(chrono::Utc::now());
+    let session = pool.get_session("admin").await.map_err(|e| {
+        BootstrapError::GarrisonManager(format!("bootstrap_admin_key: db session: {e}"))
+    })?;
+    let conn = session.connection().map_err(|e| {
+        BootstrapError::GarrisonManager(format!("bootstrap_admin_key: db conn: {e}"))
+    })?;
+    if TeamEntity::find_by_id(team_id)
+        .one(conn)
+        .await
+        .map_err(wrap_db("bootstrap_admin_key: find team"))?
+        .is_none()
+    {
+        let team_active = TeamActiveModel {
+            id: ActiveValue::Set(team_id.into()),
+            name: ActiveValue::Set(DEFAULT_TEAM_NAME.to_string()),
+            allowed_countries: ActiveValue::Set(None),
+            blocked_countries: ActiveValue::Set(None),
+            ip_whitelist: ActiveValue::Set(None),
+            domain_blacklist: ActiveValue::Set(None),
+            enable_geo_restrictions: ActiveValue::Set(false),
             created_at: ActiveValue::Set(now),
-            updated_at: ActiveValue::Set(None),
+            updated_at: ActiveValue::Set(now),
         };
-        ApiKeyEntity::insert(api_key_active)
+        TeamEntity::insert(team_active)
             .exec(conn)
             .await
-            .map_err(wrap_db("bootstrap_admin_key: insert api_key"))?;
-
-        info!(
-            "Bootstrap admin API key injected: team_id={}, api_key_id={} (TTY: use \
-             `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY={}` to reuse team ID)",
-            team_id, api_key_id, team_id
-        );
-        // 完整 key 仅在交互终端输出（运维在场立即保存）；stdout 被管道/日志系统
-        // 采集时会持久留存，只输出掩码防止凭证进入 journald/k8s 日志。
-        if std::io::stdout().is_terminal() {
-            println!(
-                "\n\
-                ====================================================\n\
-                BOOTSTRAP ADMIN API KEY (save this now!):\n\
-                {}\n\
-                TEAM_ID:      {}\n\
-                API_KEY_ID:   {}\n\
-                Valid for:    30 days\n\
-                ====================================================\n",
-                plaintext_key, team_id, api_key_id
-            );
-        } else {
-            println!(
-                "\n\
-                ====================================================\n\
-                BOOTSTRAP ADMIN API KEY (masked; rerun in a terminal to display):\n\
-                {}\n\
-                TEAM_ID:      {}\n\
-                API_KEY_ID:   {}\n\
-                Valid for:    30 days\n\
-                ====================================================\n",
-                crate::common::mask_secret(&plaintext_key),
-                team_id,
-                api_key_id
-            );
-        }
+            .map_err(wrap_db("bootstrap_admin_key: insert team"))?;
     }
 
-    info!("Garrison authentication manager initialized (token_style=jwt, HS256, firewall=enabled)");
+    // 用 `set_garrison_dao` 注入的全局 DAO 签发 key（与 server 进程共享内存）
+    let dao_for_gen = get_garrison_dao().ok_or_else(|| {
+        BootstrapError::GarrisonManager(
+            "bootstrap_admin_key: get_garrison_dao returned None".to_string(),
+        )
+    })?;
+    let handler = ApiKeyHandler::new(Arc::clone(&dao_for_gen));
+    let plaintext_key = handler
+        .generate_with_namespace(
+            api_key_id.to_string(),
+            GARRISON_NS,
+            vec![PERM_ADMIN.to_string()],
+            TTL_SECS,
+        )
+        .await
+        .map_err(|e| {
+            BootstrapError::GarrisonManager(format!("bootstrap_admin_key: garrison generate: {e}"))
+        })?;
+
+    let garrison_key_id = plaintext_key
+        .split_once('.')
+        .map(|(k, _)| k.to_string())
+        .ok_or_else(|| {
+            BootstrapError::GarrisonManager(
+                "bootstrap_admin_key: garrison returned malformed key".to_string(),
+            )
+        })?;
+
+    // 写入 crawlrs `api_keys` 表保留映射，auth_middleware 反查 team_id
+    let api_key_active = ApiKeyActiveModel {
+        id: ActiveValue::Set(api_key_id.into()),
+        team_id: ActiveValue::Set(team_id.into()),
+        key: ActiveValue::Set(garrison_key_id),
+        created_at: ActiveValue::Set(now),
+        updated_at: ActiveValue::Set(None),
+    };
+    ApiKeyEntity::insert(api_key_active)
+        .exec(conn)
+        .await
+        .map_err(wrap_db("bootstrap_admin_key: insert api_key"))?;
+
+    info!(
+        "Bootstrap admin API key injected: team_id={}, api_key_id={} (TTY: use \
+         `CRAWLRS__BOOTSTRAP_ADMIN_API_KEY={}` to reuse team ID)",
+        team_id, api_key_id, team_id
+    );
+    // 完整 key 仅在交互终端输出（运维在场立即保存）；stdout 被管道/日志系统
+    // 采集时会持久留存，只输出掩码防止凭证进入 journald/k8s 日志。
+    if std::io::stdout().is_terminal() {
+        println!(
+            "\n\
+            ====================================================\n\
+            BOOTSTRAP ADMIN API KEY (save this now!):\n\
+            {}\n\
+            TEAM_ID:      {}\n\
+            API_KEY_ID:   {}\n\
+            Valid for:    30 days\n\
+            ====================================================\n",
+            plaintext_key, team_id, api_key_id
+        );
+    } else {
+        println!(
+            "\n\
+            ====================================================\n\
+            BOOTSTRAP ADMIN API KEY (masked; rerun in a terminal to display):\n\
+            {}\n\
+            TEAM_ID:      {}\n\
+            API_KEY_ID:   {}\n\
+            Valid for:    30 days\n\
+            ====================================================\n",
+            crate::common::mask_secret(&plaintext_key),
+            team_id,
+            api_key_id
+        );
+    }
+
     Ok(())
 }
 
@@ -873,7 +906,7 @@ pub async fn init_garrison_auth(
 /// # Returns
 ///
 /// Returns an initialized LLM service wrapped in Arc.
-pub fn init_llm_service(
+pub(super) fn init_llm_service(
     #[cfg_attr(not(feature = "gateway"), allow(unused_variables))] settings: &Settings,
     _http_client: Arc<reqwest::Client>,
     #[cfg_attr(not(feature = "gateway"), allow(unused_variables))]
@@ -929,7 +962,7 @@ pub fn init_llm_service(
 ///
 /// `Result` 承载启动期配置/迁移错误（如 `storage_backend=database` 缺池或缺
 /// dialect 构建的显性报错，R-multidb-schema-003），禁止静默降级。
-pub async fn init_services(
+pub(crate) async fn init_services(
     infrastructure: &InfrastructureComponents,
     engine_client: Arc<EngineClient>,
     http_client: Arc<reqwest::Client>,
@@ -937,338 +970,61 @@ pub async fn init_services(
 ) -> anyhow::Result<ServicesComponents> {
     let repositories = &infrastructure.repositories;
 
-    // F11：按配置初始化软 404 指纹检测器（进程级共享；crawl 路径消费）
-    crate::workers::crawl::soft404::init_shared(settings.crawl.soft404_max_fingerprints);
-
-    // 根据 concurrency.adaptive_enabled 选择 Fixed/Adaptive 模式
-    let team_semaphore = init_team_semaphore(settings);
-
-    // 初始化请求合并器（共享单例，所有 worker 复用）
-    //
-    // 共享 `DashMap<String, InFlightEntry>` 追踪 in-flight URL，避免多 worker 同 URL
-    // 并发抓取。`STALE_TIMEOUT=120s` 兜底僵死条目，由 `purge_stale` 定期清理
-    // （scrape_worker 在 process_task 入口按需调用）。
-    let request_coalescer = Arc::new(RequestCoalescer::new());
-
-    // Initialize rate limiting service
-    let rate_limiting_service = init_rate_limiting_service(
+    // 装配阶段与顺序：运行时基础设施 → webhook → teams → 搜索/RAG → 认证审计
+    // → LLM/提取 → workers。顺序保持原内联实现的副作用顺序不变。
+    let runtime = runtime::init_runtime_services(infrastructure, &engine_client, settings).await?;
+    let webhook_service = runtime::init_webhook_service(repositories, settings, &http_client);
+    #[cfg(feature = "teams")]
+    let (team_service, geo_location_service) =
+        runtime::init_team_services(repositories, &http_client);
+    let search =
+        search::init_search_stack(infrastructure, settings, &http_client, &engine_client).await;
+    let (queue, audit_service) = runtime::init_auth_and_audit(settings, infrastructure).await;
+    let llm = search::init_llm_stack(
+        settings,
+        &http_client,
+        &search.fluxweir_gateway,
+        search.embedding_provider.clone(),
+    );
+    let workers = runtime::init_workers(
         repositories,
         settings,
-        Some(infrastructure.db.clone_inner()),
-    )
-    .await?;
-
-    // Initialize rate limit middleware
-    let rate_limit_middleware = init_rate_limit_middleware(rate_limiting_service.clone());
-
-    // Initialize create scrape use case
-    let create_scrape_use_case: Arc<dyn CreateScrapeUseCaseTrait> =
-        Arc::new(CreateScrapeUseCase::new(engine_client.clone()));
-
-    // F11：/v1/map 用例（sitemap 流式站点图；sitemap feature 关闭时不编译）。
-    // 拉取超时来自 settings.sitemap.fetch_timeout_secs（对齐引擎 MRT 语义）。
-    #[cfg(feature = "sitemap")]
-    let map_use_case = Arc::new(
-        crate::application::use_cases::map_use_case::MapUseCase::new(Arc::new(
-            crate::application::use_cases::map_use_case::EngineSitemapFetcher::new(
-                engine_client.clone(),
-                std::time::Duration::from_secs(settings.sitemap.fetch_timeout_secs),
-            ),
-        )),
+        &webhook_service,
+        &runtime.rate_limiting_service,
     );
-
-    // webhook 相关服务在 webhook-off 时不初始化
-    // webhook-on：装配 WebhookServiceImpl（含 WebhookSenderImpl + 签名密钥 + 事件仓库）
-    // webhook-off：装配 NoopWebhookService（所有方法返回 Ok(())，业务逻辑放行）
-    #[cfg(feature = "webhook")]
-    let webhook_sender: Arc<WebhookSenderImpl> = Arc::new(WebhookSenderImpl::new(
-        http_client.clone(),
-        std::time::Duration::from_secs(10),
-    ));
-    #[cfg(feature = "webhook")]
-    let webhook_service: Arc<WebhookServiceImpl> = Arc::new(WebhookServiceImpl::new(
-        webhook_sender.clone(),
-        settings.webhook.secret().to_string(),
-        repositories.webhook_event_repo.clone(),
-    ));
-    #[cfg(not(feature = "webhook"))]
-    let webhook_service: Arc<NoopWebhookService> = {
-        // webhook-off 时输出 info 日志，告知运维 webhook 投递已禁用。
-        // 严重程度低于 auth/rate-limit 警告（webhook 关闭不直接引入安全风险，仅影响通知能力）。
-        log::info!(
-            "webhook feature disabled, using NoopWebhookService — \
-             trigger_completion/trigger_failure are no-ops"
-        );
-        Arc::new(NoopWebhookService::new())
-    };
-
-    // teams 相关服务在 teams-off 时不初始化
-    #[cfg(feature = "teams")]
-    let geo_location_service = Arc::new(GeoLocationServiceImpl::new(http_client.clone()));
-    #[cfg(feature = "teams")]
-    let team_service = Arc::new(TeamService::new(
-        geo_location_service.clone(),
-        repositories.geo_restriction_repo.clone(),
-    ));
-
-    // Initialize robots checker (使用依赖注入的 HTTP_CLIENT + CacheService)
-    let robots_checker = Arc::new(RobotsChecker::new(
-        http_client.clone(),
-        &settings.robots,
-        Some(infrastructure.cache_service.clone()),
-        None,
-    ));
-
-    // 复用入参 `engine_client`（由调用方构造一次共享）
-    //
-    // 原问题：函数内部两次 `Arc::new(EngineClient::with_router(engine_router.clone()))`
-    // 创建了两个独立 EngineClient 实例，每个实例自带一份 `Arc<EngineHealthMonitor>`，
-    // 导致：(1) 重复内存分配；(2) 健康监控状态不一致（search_engine 与 search_client
-    // 看到不同的 health 快照）；(3) 入参 engine_client 被 shadowing 后立即 drop，浪费构造。
-    //
-    // 直接使用入参（由调用方 di/modules.rs / 测试构造一次共享），
-    // 符合 SSOT（Single Source of Truth）原则。search_engine_service 与 search_client
-    // 共享同一份 EngineHealthMonitor 状态。
-
-    // SearXNG 实例生命周期（必须在 SearchClient 之前构造：引擎注册与 smart 聚合依赖服务存在性）。
-    // enabled=false → None（不构造服务、不拉起 worker、不注册引擎）。
-    // transport 只构造一次：实例服务与 search engine 共享同一份（同一 http_client/user_agent）。
-    let searxng_transport: Option<Arc<dyn crate::domain::services::searxng::SearxngTransport>> =
-        if settings.search.searxng.enabled {
-            Some(Arc::new(ReqwestSearxngTransport::new(
-                http_client.clone(),
-                settings.search.searxng.user_agent.clone(),
-            )))
-        } else {
-            None
-        };
-
-    let searxng_instances: Option<Arc<dyn SearxngInstanceService>> =
-        match searxng_transport.as_ref() {
-            Some(transport) => {
-                let concrete = Arc::new(SearxngInstanceServiceImpl::new(
-                    repositories.searxng_instance_repo.clone(),
-                    transport.clone(),
-                    settings.search.searxng.clone(),
-                ));
-                // 启动期：seed 引导 + 后台热池重建（不阻塞就绪；完成前 health() = Degraded）
-                concrete.spawn_bootstrap();
-                info!(
-                    "SearXNG instance service enabled (pool_target={})",
-                    settings.search.searxng.pool_target
-                );
-                Some(concrete as Arc<dyn SearxngInstanceService>)
-            }
-            None => {
-                info!("SearXNG disabled by config (search.searxng.enabled=false)");
-                None
-            }
-        };
-
-    // SearXNG 适配器：smart 聚合 fan-out 与 SearchClient 单引擎路径共用同一实例服务与 transport
-    let searxng_search_engine: Option<Arc<dyn SearchEngine>> =
-        match (searxng_instances.as_ref(), searxng_transport.as_ref()) {
-            (Some(service), Some(transport)) => Some(Arc::new(
-                crate::search::client::searxng::SearxngSearchEngine::new(
-                    service.clone(),
-                    transport.clone(),
-                    std::time::Duration::from_secs(settings.search.timeout_seconds),
-                    settings.search.searxng.max_failover_attempts,
-                ),
-            ) as Arc<dyn SearchEngine>),
-            _ => None,
-        };
-
-    // Initialize search engine (for backward compatibility)
-    let search_engine_service: Arc<dyn SearchEngine> =
-        init_search_engine(engine_client.clone(), settings, searxng_search_engine);
-
-    // Initialize search client (wraps search engines)
-    // 按配置装配引擎：bing/baidu/sogou 恒注册；exa/tavily 配置了 api_key 才注册
-    let search_client: Arc<dyn SearchClientTrait> = Arc::new(
-        crate::search::client::SearchClient::with_configured_engines(
-            engine_client.clone(),
-            http_client.clone(),
-            &settings.search,
-            searxng_instances.clone(),
-        ),
-    );
-
-    // RAG 能力组件（默认全关：rag.enabled = false 时 provider 全 None，零开销）。
-    // 失败 = 运维显式启用但配置/环境不可用，按既有 fail-fast 惯例 panic。
-    let rag = match init_rag_components(settings).await {
-        Ok(components) => components,
-        Err(e) => panic!("RAG capability init failed (check [rag] config / features): {e}"),
-    };
-
-    // 语义重排器：provider 就绪时搜索结果做精准重排，否则直通
-    let search_reranker = Arc::new(SearchReranker::new(
-        rag.rerank.clone(),
-        settings.rag.search_rerank_top_n,
-    ));
-
-    // fluxweir 网关生命周期（默认全关：enabled=false 时空句柄零开销；
-    // enabled=true 但 gateway 未编译 → fail-fast，错误文案含 feature 指引）
-    let fluxweir_gateway = match crate::bootstrap::fluxweir_gateway::init_fluxweir_gateway(
-        settings,
-        Some(infrastructure.db.clone_inner()),
-        &settings.database.url,
-    )
-    .await
-    {
-        Ok(handle) => handle,
-        Err(e) => {
-            panic!("fluxweir gateway init failed (check [fluxweir] config / features): {e:#}")
-        }
-    };
-
-    let search_service = init_search_service(
-        repositories,
-        settings,
-        search_client.clone(),
-        search_reranker,
-        Some(search_engine_service.clone()),
-    );
-
-    // 初始化 garrison 认证鉴权（auth-on 时 fail-fast）
-    //
-    // - 弱密钥 / 空密钥 → panic（强制运维提供强密钥，CWE-326）
-    // - DAO oxcache 初始化失败 / GarrisonManager::init 失败 → panic
-    //
-    // 详见 [`init_garrison_auth`] 文档的「Fail-Fast 语义」章节。
-    // 此调用无返回值——garrison 通过 GARRISON_MANAGER 全局单例暴露能力，
-    // 后续中间件（重写 auth_middleware_inner）通过 GarrisonUtil 访问。
-    //
-    // pool 传 Arc<DbPool> 的 clone（Arc::clone 廉价 <10ns）。
-    #[cfg(feature = "auth")]
-    init_garrison_auth(settings, infrastructure.db.inner().clone())
-        .await
-        .expect(
-            "garrison auth initialization failed (BootstrapError::GarrisonConfig/GarrisonDao/GarrisonManager) — \
-                 check CRAWLRS__AUTH__JWT_SECRET env var (HS256 requires >=32 bytes)",
-        );
-
-    let queue: Arc<dyn TaskQueue> =
-        Arc::new(PostgresTaskQueue::new(repositories.task_repo.clone()));
-
-    let audit_repo = Arc::new(AuditLogRepositoryImpl::new(
-        infrastructure.db.inner().clone(),
-    ));
-    let audit_service = Arc::new(AuditService::new(audit_repo));
-
-    // 将 audit_service 注入 garrison listener 全局态。
-    //
-    // `set_audit_service` 通过 `parking_lot::RwLock<Option<Arc<…>>>` 暴露给
-    // `CrawlrsAuditListener::on_event`，使 garrison 事件广播能桥接到 crawlrs
-    // `audit_logs` 表。`RwLock`（而非 `OnceLock`）的理由：测试可通过
-    // `reset_audit_service_for_test` 重置全局态，避免测试间污染。
-    //
-    // 时序：garrison init（在上方）通过 `inventory::submit!` 已注册 listener factory，
-    // listener 实例在 `GarrisonManager::init` 时创建（无状态），但实际 `on_event`
-    // 调用发生在第一个 HTTP 请求认证时（远晚于 bootstrap 完成），故此处注入时序安全。
-    //
-    // `set` 失败（已有实例）返回 Err，此处 panic——
-    // 正常 bootstrap 路径只调用一次，二次调用表明初始化逻辑错误（如热重载未清理）。
-    // `Arc<dyn AuditServiceTrait>` 未实现 Debug，故用 `is_err()` 而非 `expect` 处理。
-    //
-    // 注意：`init_services` 签名返回 `ServicesComponents` 而非
-    // `Result<ServicesComponents, BootstrapError>`，故失败只能 panic。这是既有设计问题
-    // （与上方 `init_garrison_auth().expect(...)` 一致），外科手术式修改不在此处重构，
-    // 7 可考虑统一为 Result 返回类型。
-    #[cfg(feature = "auth")]
-    if set_audit_service(Arc::clone(&audit_service) as Arc<dyn AuditServiceTrait>).is_err() {
-        panic!(
-            "set_audit_service failed: audit_service already injected \
-             (check for duplicate init_services calls)"
-        );
-    }
-
-    // Initialize LLM service (使用依赖注入的 http_client)
-    let llm_service = init_llm_service(settings, http_client.clone(), &fluxweir_gateway);
-
-    // Initialize extraction service（嵌入 provider 就绪时注入 RAG 运行时）
-    let extraction_service: Arc<dyn ExtractionServiceTrait> =
-        match &rag.embedding {
-            Some(provider) => Arc::new(ExtractionService::new(llm_service.clone()).with_rag(
-                Arc::new(RagExtractionRuntime::new(
-                    ChunkerConfig::default(),
-                    provider.clone(),
-                    settings.rag.rag_top_k,
-                )),
-            )),
-            None => Arc::new(ExtractionService::new(llm_service.clone())),
-        };
-
-    // Initialize content extraction facade
-    //
-    // 装配 ContentExtractionFacade，注入 llm_service 用于低置信度回退（confidence < 0.7
-    // 时触发）。质量门按 settings.content_extraction 四键启用：word_count 短结果升级 +
-    // 长度比裁决 + prose 硬失败（sentence_avg/link_density）门槛。
-    // Facade 内部按 cfg 编译期决定 extractor 链（Trafilatura→DomSmoothie→CssRule）。
-    let content_extractor = Arc::new(ContentExtractionFacade::with_quality_config(
-        Some(llm_service.clone()),
-        QualityGateConfig::active(
-            settings.content_extraction.min_word_count,
-            settings.content_extraction.replacement_length_ratio,
-            settings.content_extraction.prose_min_sentence_words,
-            settings.content_extraction.prose_max_link_density,
-        ),
-    ));
-
-    // Initialize WebhookWorker（仅 webhook-on 时构造）
-    // webhook-off：不构造 WebhookWorker，ServicesComponents.webhook_worker 字段不编译
-    #[cfg(feature = "webhook")]
-    let webhook_worker = Arc::new(crate::workers::webhook_worker::WebhookWorker::new(
-        repositories.webhook_event_repo.clone(),
-        webhook_service.clone(),
-        crate::utils::retry_policy::RetryPolicy::default(),
-    ));
-
-    let backlog_worker = Arc::new(crate::workers::backlog_worker::BacklogWorker::new(
-        repositories.tasks_backlog_repo.clone(),
-        repositories.task_repo.clone(),
-        rate_limiting_service.clone(),
-        Arc::new(settings.clone()),
-    ));
-
-    let expiration_worker = Arc::new(crate::workers::expiration_worker::ExpirationWorker::new(
-        repositories.task_repo.clone(),
-        repositories.result_repo.clone(),
-        settings.retention.scrape_results_days,
-    ));
 
     info!("Services initialized");
 
     Ok(ServicesComponents {
-        rate_limit_middleware,
-        team_semaphore,
-        request_coalescer,
-        rate_limiting_service,
-        create_scrape_use_case,
+        rate_limit_middleware: runtime.rate_limit_middleware,
+        team_semaphore: runtime.team_semaphore,
+        request_coalescer: runtime.request_coalescer,
+        rate_limiting_service: runtime.rate_limiting_service,
+        create_scrape_use_case: runtime.create_scrape_use_case,
         webhook_service,
         #[cfg(feature = "teams")]
         team_service,
         #[cfg(feature = "teams")]
         geo_location_service,
-        robots_checker,
-        search_engine_service,
-        search_service,
-        searxng_instances,
+        robots_checker: search.robots_checker,
+        search_engine_service: search.search_engine_service,
+        search_service: search.search_service,
+        searxng_instances: search.searxng_instances,
         queue,
         audit_service,
         http_client,
-        llm_service,
-        extraction_service,
-        embedding_provider: rag.embedding.clone(),
-        rerank_provider: rag.rerank.clone(),
-        fluxweir_gateway,
-        content_extractor,
+        llm_service: llm.llm_service,
+        extraction_service: llm.extraction_service,
+        embedding_provider: search.embedding_provider,
+        rerank_provider: search.rerank_provider,
+        fluxweir_gateway: search.fluxweir_gateway,
+        content_extractor: llm.content_extractor,
         #[cfg(feature = "webhook")]
-        webhook_worker,
-        backlog_worker,
-        expiration_worker,
+        webhook_worker: workers.webhook_worker,
+        backlog_worker: workers.backlog_worker,
+        expiration_worker: workers.expiration_worker,
         #[cfg(feature = "sitemap")]
-        map_use_case,
+        map_use_case: runtime.map_use_case,
     })
 }
 

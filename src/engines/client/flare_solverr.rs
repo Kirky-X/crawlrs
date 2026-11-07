@@ -694,6 +694,258 @@ struct FlareSolverrSolution {
     end_timestamp: i64,
 }
 
+/// 合并 custom headers：proxy 信息（X-Proxy-URL）+ 用户传入的 headers。
+/// 用户 headers 优先级高于 X-Proxy-URL，避免冲突；不覆盖已设置的
+/// X-Proxy-URL（proxy 信息优先）。
+fn merge_custom_headers(
+    mode: FlareSolverrMode,
+    proxy_url: Option<&String>,
+    user_headers: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut custom_headers: HashMap<String, String> = HashMap::new();
+
+    if let Some(proxy) = proxy_url {
+        custom_headers.insert("X-Proxy-URL".to_string(), proxy.clone());
+        // 使用脱敏后的 proxy URL 打印日志（避免凭证泄露 - 安全修复）
+        debug!(
+            "{} using proxy: {}",
+            mode.engine_name(),
+            redact_proxy_url(proxy)
+        );
+    }
+
+    // 合并用户传入的 headers（用户 headers 优先级高于 X-Proxy-URL，避免冲突）
+    for (key, value) in user_headers {
+        // 不覆盖已设置的 X-Proxy-URL（proxy 信息优先）
+        if key != "X-Proxy-URL" {
+            custom_headers.insert(key.clone(), value.clone());
+        }
+    }
+
+    if !user_headers.is_empty() {
+        debug!(
+            "{} forwarded {} custom headers to FlareSolverr",
+            mode.engine_name(),
+            user_headers.len()
+        );
+    }
+
+    custom_headers
+}
+
+/// 构造 request.get 请求体（截图 / 等待秒数按请求开关，headers 为空时不传）
+fn build_fs_request(
+    request: &InternalScrapeRequest,
+    session: Option<String>,
+    custom_headers: HashMap<String, String>,
+) -> FlareSolverrRequest {
+    FlareSolverrRequest {
+        cmd: "request.get".to_string(),
+        url: request.url.clone(),
+        session,
+        max_timeout: Some(request.timeout.as_millis() as u64),
+        return_screenshot: if request.needs_screenshot {
+            Some(true)
+        } else {
+            None
+        },
+        wait_in_seconds: if request.sync_wait_ms > 0 {
+            Some(request.sync_wait_ms as u64 / 1000)
+        } else {
+            None
+        },
+        disable_media: None,
+        cookies: None,
+        post_data: None,
+        custom_headers: if custom_headers.is_empty() {
+            None
+        } else {
+            Some(custom_headers)
+        },
+    }
+}
+
+/// 构造 FlareSolverr API URL：去尾部斜杠，防重复 /v1
+fn build_api_url(config_url: &str) -> String {
+    let base_url = config_url.trim_end_matches('/');
+    if base_url.ends_with("/v1") {
+        base_url.to_string()
+    } else {
+        format!("{}/v1", base_url)
+    }
+}
+
+/// 解析 FlareSolverr 响应 JSON（错误附带前 200 字符辅助排障）
+fn parse_fs_response(raw_text: &str) -> Result<FlareSolverrResponse, EngineError> {
+    serde_json::from_str(raw_text).map_err(|e| {
+        EngineError::RequestFailed(format!(
+            "Failed to parse FlareSolverr response: {} (first 200 chars: {:?})",
+            e,
+            &raw_text[..raw_text.len().min(200)]
+        ))
+    })
+}
+
+/// 校验 status 并取出 solution：非 ok 报错；solution 缺失报错
+fn extract_solution(response: FlareSolverrResponse) -> Result<FlareSolverrSolution, EngineError> {
+    if response.status != "ok" {
+        error!("FlareSolverr error: {}", response.message);
+        return Err(EngineError::RequestFailed(format!(
+            "FlareSolverr error: {}",
+            response.message
+        )));
+    }
+
+    response.solution.ok_or_else(|| {
+        EngineError::RequestFailed("No solution in FlareSolverr response".to_string())
+    })
+}
+
+/// 检测 CAPTCHA / bot 检测页特征
+fn is_captcha_page(html_content: &str) -> bool {
+    html_content.contains("captcha")
+        || html_content.contains("CAPTCHA")
+        || html_content.contains("unusual traffic")
+        || html_content.contains("Our systems have detected")
+        || html_content.contains("recaptcha")
+        || html_content.contains("verify you are human")
+}
+
+/// 组装内部响应：补默认 content-type 头，返回 HTML 内容
+fn build_scrape_response(
+    solution: FlareSolverrSolution,
+    response_time_ms: u64,
+) -> InternalScrapeResponse {
+    let mut headers = solution.headers.unwrap_or_default();
+
+    // Add content-type if not present
+    if !headers.contains_key("content-type") {
+        headers.insert("content-type".to_string(), "text/html".to_string());
+    }
+
+    // Build response - FlareSolverr returns HTML content
+    InternalScrapeResponse {
+        js_degraded: false,
+        status_code: solution.status,
+        content: solution.response,
+        content_type: headers
+            .get("content-type")
+            .cloned()
+            .unwrap_or_else(|| "text/html".to_string()),
+        screenshot: solution.screenshot,
+        headers,
+        response_time_ms,
+        final_url: None,
+        captured_responses: Vec::new(),
+    }
+}
+
+impl FlareSolverrEngine {
+    /// 发送 `request.get` 到 FlareSolverr，取原始文本并解析出 solution
+    /// （先取文本便于排查编码问题；长度进 debug 日志）
+    async fn send_request(
+        &self,
+        api_url: &str,
+        fs_request: &FlareSolverrRequest,
+    ) -> Result<FlareSolverrSolution, EngineError> {
+        // Send request to FlareSolverr
+        let raw_response = self
+            .client
+            .post(api_url)
+            .json(fs_request)
+            .send()
+            .await
+            .map_err(|e| {
+                // 服务不可达/网络抖动属于可重试的基础设施错误，允许 fallback 到下一引擎
+                EngineError::RequestFailed(format!("FlareSolverr request failed: {}", e))
+            })?;
+
+        // Get raw text first to debug any encoding issues
+        let raw_text = raw_response.text().await.map_err(|e| {
+            EngineError::RequestFailed(format!("Failed to get response text: {}", e))
+        })?;
+
+        debug!("FlareSolverr raw response length: {}", raw_text.len());
+
+        extract_solution(parse_fs_response(&raw_text)?)
+    }
+
+    /// CAPTCHA/反爬页拒绝：命中返回 `AntiBotDetected`（可重试，
+    /// 允许 router fallback/升级到浏览器引擎）
+    fn reject_captcha_page(solution: &FlareSolverrSolution) -> Result<(), EngineError> {
+        // Check for CAPTCHA or bot detection pages
+        if is_captcha_page(&solution.response) {
+            warn!("FlareSolverr returned CAPTCHA/bot detection page");
+            // 与 reqwest 路径的同类场景对齐：反爬命中是可重试错误，
+            // 允许 router fallback/升级到浏览器引擎
+            return Err(EngineError::AntiBotDetected(
+                "FlareSolverr blocked by CAPTCHA or bot detection".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Full 模式支持分数：JS 渲染与反爬保护强项 → 100；
+    /// 非 JS 请求对受保护站点仍有用，但静态内容 Reqwest 更快 → 80
+    fn full_mode_score(request: &InternalScrapeRequest) -> u8 {
+        // FlareSolverr is excellent for JS rendering and anti-bot protection
+        if request.needs_js {
+            return 100;
+        }
+        // For non-JS requests, still useful for protected sites
+        // But Reqwest would be faster for simple static content
+        80
+    }
+
+    /// Cdp 模式支持分数（全功能但成本高）
+    fn cdp_mode_score(request: &InternalScrapeRequest) -> u8 {
+        // 如果需要 TLS 指纹且需要截图，这是最佳选择
+        if request.needs_tls_fingerprint && request.needs_screenshot {
+            return 100;
+        }
+        // 如果明确请求使用 Fire Engine
+        if request.use_fire_engine {
+            return 100;
+        }
+        // 如果需要截图，但不需要 TLS，Playwright 可能更好，但这个也能做
+        if request.needs_screenshot {
+            return 80;
+        }
+        // 如果需要 JS，支持
+        if request.needs_js {
+            return 90;
+        }
+        // 如果有交互动作，支持
+        if !request.actions.is_empty() {
+            return 90;
+        }
+        // 成本较高，默认优先级低
+        40
+    }
+
+    /// Tls 模式支持分数（TLS 指纹优先，不支持截图）
+    fn tls_mode_score(request: &InternalScrapeRequest) -> u8 {
+        // 如果明确请求使用 Fire Engine (TLS 模式)
+        if request.use_fire_engine {
+            return 95;
+        }
+        // 如果需要 TLS 指纹但不需要截图，TLS Engine 是最佳选择
+        if request.needs_tls_fingerprint {
+            return 90;
+        }
+        // 如果需要 JS，支持
+        if request.needs_js {
+            return 60;
+        }
+        // 如果有交互动作，支持但不是最佳
+        if !request.actions.is_empty() {
+            return 50;
+        }
+        // 成本低，速度快，默认优先级高
+        70
+    }
+}
+
 #[async_trait]
 impl ScraperEngine for FlareSolverrEngine {
     /// Execute a scraping request using FlareSolverr
@@ -726,68 +978,13 @@ impl ScraperEngine for FlareSolverrEngine {
 
         // Prepare custom headers:合并 proxy 信息 + 用户传入的 headers
         // 不再静默丢弃用户 headers
-        let mut custom_headers: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        let custom_headers = merge_custom_headers(self.config.mode, proxy_url, &request.headers);
 
-        if let Some(proxy) = proxy_url {
-            custom_headers.insert("X-Proxy-URL".to_string(), proxy.clone());
-            // 使用脱敏后的 proxy URL 打印日志（避免凭证泄露 - 安全修复）
-            debug!(
-                "{} using proxy: {}",
-                self.config.mode.engine_name(),
-                redact_proxy_url(proxy)
-            );
-        }
-
-        // 合并用户传入的 headers（用户 headers 优先级高于 X-Proxy-URL，避免冲突）
-        for (key, value) in &request.headers {
-            // 不覆盖已设置的 X-Proxy-URL（proxy 信息优先）
-            if key != "X-Proxy-URL" {
-                custom_headers.insert(key.clone(), value.clone());
-            }
-        }
-
-        if !request.headers.is_empty() {
-            debug!(
-                "{} forwarded {} custom headers to FlareSolverr",
-                self.config.mode.engine_name(),
-                request.headers.len()
-            );
-        }
-
-        let fs_request = FlareSolverrRequest {
-            cmd: "request.get".to_string(),
-            url: request.url.clone(),
-            session: self.session_id.clone(),
-            max_timeout: Some(request.timeout.as_millis() as u64),
-            return_screenshot: if request.needs_screenshot {
-                Some(true)
-            } else {
-                None
-            },
-            wait_in_seconds: if request.sync_wait_ms > 0 {
-                Some(request.sync_wait_ms as u64 / 1000)
-            } else {
-                None
-            },
-            disable_media: None,
-            cookies: None,
-            post_data: None,
-            custom_headers: if custom_headers.is_empty() {
-                None
-            } else {
-                Some(custom_headers)
-            },
-        };
+        let fs_request = build_fs_request(request, self.session_id.clone(), custom_headers);
 
         // Build the base URL for FlareSolverr API
         // Ensure no double slashes or duplicate /v1
-        let base_url = self.config.url.trim_end_matches('/');
-        let api_url = if base_url.ends_with("/v1") {
-            base_url.to_string()
-        } else {
-            format!("{}/v1", base_url)
-        };
+        let api_url = build_api_url(&self.config.url);
 
         debug!(
             "FlareSolverr request: mode={}, url={}, session={:?}",
@@ -797,86 +994,13 @@ impl ScraperEngine for FlareSolverrEngine {
         );
 
         // Send request to FlareSolverr
-        let raw_response = self
-            .client
-            .post(&api_url)
-            .json(&fs_request)
-            .send()
-            .await
-            .map_err(|e| {
-                // 服务不可达/网络抖动属于可重试的基础设施错误，允许 fallback 到下一引擎
-                EngineError::RequestFailed(format!("FlareSolverr request failed: {}", e))
-            })?;
+        let solution = self.send_request(&api_url, &fs_request).await?;
 
-        // Get raw text first to debug any encoding issues
-        let raw_text = raw_response.text().await.map_err(|e| {
-            EngineError::RequestFailed(format!("Failed to get response text: {}", e))
-        })?;
-
-        debug!("FlareSolverr raw response length: {}", raw_text.len());
-
-        let response: FlareSolverrResponse = serde_json::from_str(&raw_text).map_err(|e| {
-            EngineError::RequestFailed(format!(
-                "Failed to parse FlareSolverr response: {} (first 200 chars: {:?})",
-                e,
-                &raw_text[..raw_text.len().min(200)]
-            ))
-        })?;
-
-        if response.status != "ok" {
-            error!("FlareSolverr error: {}", response.message);
-            return Err(EngineError::RequestFailed(format!(
-                "FlareSolverr error: {}",
-                response.message
-            )));
-        }
-
-        let solution = response.solution.ok_or_else(|| {
-            EngineError::RequestFailed("No solution in FlareSolverr response".to_string())
-        })?;
-
-        // Check for CAPTCHA or bot detection pages
-        let html_content = &solution.response;
-        let is_captcha_page = html_content.contains("captcha")
-            || html_content.contains("CAPTCHA")
-            || html_content.contains("unusual traffic")
-            || html_content.contains("Our systems have detected")
-            || html_content.contains("recaptcha")
-            || html_content.contains("verify you are human");
-
-        if is_captcha_page {
-            warn!("FlareSolverr returned CAPTCHA/bot detection page");
-            // 与 reqwest 路径的同类场景对齐：反爬命中是可重试错误，
-            // 允许 router fallback/升级到浏览器引擎
-            return Err(EngineError::AntiBotDetected(
-                "FlareSolverr blocked by CAPTCHA or bot detection".to_string(),
-            ));
-        }
+        Self::reject_captcha_page(&solution)?;
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
-        let mut headers = solution.headers.unwrap_or_default();
-
-        // Add content-type if not present
-        if !headers.contains_key("content-type") {
-            headers.insert("content-type".to_string(), "text/html".to_string());
-        }
-
-        // Build response - FlareSolverr returns HTML content
-        let scrape_response = InternalScrapeResponse {
-            js_degraded: false,
-            status_code: solution.status,
-            content: solution.response,
-            content_type: headers
-                .get("content-type")
-                .cloned()
-                .unwrap_or_else(|| "text/html".to_string()),
-            screenshot: solution.screenshot,
-            headers,
-            response_time_ms,
-            final_url: None,
-            captured_responses: Vec::new(),
-        };
+        let scrape_response = build_scrape_response(solution, response_time_ms);
 
         info!(
             "FlareSolverr success: mode={}, status={}, time={}ms, content_length={}",
@@ -901,59 +1025,9 @@ impl ScraperEngine for FlareSolverrEngine {
         }
 
         match self.config.mode {
-            FlareSolverrMode::Full => {
-                // FlareSolverr is excellent for JS rendering and anti-bot protection
-                if request.needs_js {
-                    return 100;
-                }
-                // For non-JS requests, still useful for protected sites
-                // But Reqwest would be faster for simple static content
-                80
-            }
-            FlareSolverrMode::Cdp => {
-                // 如果需要 TLS 指纹且需要截图，这是最佳选择
-                if request.needs_tls_fingerprint && request.needs_screenshot {
-                    return 100;
-                }
-                // 如果明确请求使用 Fire Engine
-                if request.use_fire_engine {
-                    return 100;
-                }
-                // 如果需要截图，但不需要 TLS，Playwright 可能更好，但这个也能做
-                if request.needs_screenshot {
-                    return 80;
-                }
-                // 如果需要 JS，支持
-                if request.needs_js {
-                    return 90;
-                }
-                // 如果有交互动作，支持
-                if !request.actions.is_empty() {
-                    return 90;
-                }
-                // 成本较高，默认优先级低
-                40
-            }
-            FlareSolverrMode::Tls => {
-                // 如果明确请求使用 Fire Engine (TLS 模式)
-                if request.use_fire_engine {
-                    return 95;
-                }
-                // 如果需要 TLS 指纹但不需要截图，TLS Engine 是最佳选择
-                if request.needs_tls_fingerprint {
-                    return 90;
-                }
-                // 如果需要 JS，支持
-                if request.needs_js {
-                    return 60;
-                }
-                // 如果有交互动作，支持但不是最佳
-                if !request.actions.is_empty() {
-                    return 50;
-                }
-                // 成本低，速度快，默认优先级高
-                70
-            }
+            FlareSolverrMode::Full => Self::full_mode_score(request),
+            FlareSolverrMode::Cdp => Self::cdp_mode_score(request),
+            FlareSolverrMode::Tls => Self::tls_mode_score(request),
         }
     }
 

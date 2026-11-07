@@ -151,46 +151,8 @@ where
         Err(ref rej) => return json_rejection_response(rej),
     };
     let team_id = auth_state.team_id;
-    if let Some(ref countries) = request.allowed_countries {
-        for country in countries {
-            if country.len() != 2 {
-                return error_response_with_code(
-                    StatusCode::BAD_REQUEST,
-                    error_codes::VALIDATION_ERROR,
-                    "Country codes must be 2-letter ISO 3166-1 alpha-2 format",
-                );
-            }
-        }
-    }
-
-    if let Some(ref countries) = request.blocked_countries {
-        for country in countries {
-            if country.len() != 2 {
-                return error_response_with_code(
-                    StatusCode::BAD_REQUEST,
-                    error_codes::VALIDATION_ERROR,
-                    "Country codes must be 2-letter ISO 3166-1 alpha-2 format",
-                );
-            }
-        }
-    }
-
-    if let Some(ref whitelist) = request.ip_whitelist {
-        for ip in whitelist {
-            if !is_valid_ip_or_cidr(ip) {
-                // FTL key: api.ftl `team-invalid-ip-cidr`（locale 经 i18n 中间件注入）
-                return error_response_with_code(
-                    StatusCode::BAD_REQUEST,
-                    error_codes::VALIDATION_ERROR,
-                    crate::i18n::t_with_args(
-                        &locale,
-                        &i18n,
-                        "team-invalid-ip-cidr",
-                        &[("value", fluent_bundle::FluentValue::from(ip.as_str()))],
-                    ),
-                );
-            }
-        }
+    if let Some(response) = validate_geo_restrictions_request(&request, &locale, &i18n) {
+        return response;
     }
 
     let restrictions = TeamGeoRestrictions {
@@ -201,6 +163,18 @@ where
         domain_blacklist: request.domain_blacklist,
     };
 
+    persist_geo_restrictions(&geo_restriction_repo, team_id, restrictions).await
+}
+
+/// 持久化地理限制配置并构造响应。
+async fn persist_geo_restrictions<GR>(
+    geo_restriction_repo: &Arc<GR>,
+    team_id: crate::domain::id::Id,
+    restrictions: TeamGeoRestrictions,
+) -> axum::response::Response
+where
+    GR: GeoRestrictionRepository + 'static,
+{
     match geo_restriction_repo
         .update_team_restrictions(team_id, &restrictions)
         .await
@@ -226,6 +200,57 @@ where
             )
         }
     }
+}
+
+/// 校验地理限制请求字段：国家码必须为 2 位，IP/CIDR 必须合法。
+fn validate_geo_restrictions_request(
+    request: &UpdateTeamGeoRestrictionsRequest,
+    locale: &crate::i18n::Locale,
+    i18n: &Arc<crate::i18n::I18nBundle>,
+) -> Option<axum::response::Response> {
+    if let Some(ref countries) = request.allowed_countries {
+        for country in countries {
+            if country.len() != 2 {
+                return Some(error_response_with_code(
+                    StatusCode::BAD_REQUEST,
+                    error_codes::VALIDATION_ERROR,
+                    "Country codes must be 2-letter ISO 3166-1 alpha-2 format",
+                ));
+            }
+        }
+    }
+
+    if let Some(ref countries) = request.blocked_countries {
+        for country in countries {
+            if country.len() != 2 {
+                return Some(error_response_with_code(
+                    StatusCode::BAD_REQUEST,
+                    error_codes::VALIDATION_ERROR,
+                    "Country codes must be 2-letter ISO 3166-1 alpha-2 format",
+                ));
+            }
+        }
+    }
+
+    if let Some(ref whitelist) = request.ip_whitelist {
+        for ip in whitelist {
+            if !is_valid_ip_or_cidr(ip) {
+                // FTL key: api.ftl `team-invalid-ip-cidr`（locale 经 i18n 中间件注入）
+                return Some(error_response_with_code(
+                    StatusCode::BAD_REQUEST,
+                    error_codes::VALIDATION_ERROR,
+                    crate::i18n::t_with_args(
+                        locale,
+                        i18n,
+                        "team-invalid-ip-cidr",
+                        &[("value", fluent_bundle::FluentValue::from(ip.as_str()))],
+                    ),
+                ));
+            }
+        }
+    }
+
+    None
 }
 
 /// 验证IP地址或CIDR表示法格式

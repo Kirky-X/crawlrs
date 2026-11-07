@@ -7,7 +7,7 @@ use axum::{
     extract::ConnectInfo,
     extract::{Extension, Json, Path},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use log::error;
 use std::sync::Arc;
@@ -19,6 +19,7 @@ use crate::{
     domain::models::{Task, TaskType},
     domain::repositories::geo_restriction_repository::GeoRestrictionRepository,
     domain::repositories::task_repository::TaskRepository,
+    domain::services::rate_limiting_service::RateLimitingService,
     domain::services::team_service::TeamService,
     i18n::{I18nBundle, Locale},
     presentation::extractors::CrawlRsDeps,
@@ -29,6 +30,7 @@ use crate::{
     presentation::handlers::{check_ssrf_url, sync_wait_status_code},
     presentation::helpers::rate_limit_helper::check_rate_limit,
     presentation::middleware::auth_middleware::AuthState,
+    queue::task_queue::TaskQueue,
 };
 use std::net::SocketAddr;
 
@@ -65,134 +67,249 @@ pub async fn create_scrape(
     };
     let team_id = auth_state.team_id;
 
-    // 验证 sync_wait_ms 范围
-    if let Some(ms) = payload.sync_wait_ms {
-        if ms > MAX_SYNC_WAIT_MS {
-            return errors::unprocessable_entity(format!(
-                "sync_wait_ms must be <= {}",
-                MAX_SYNC_WAIT_MS
-            ));
-        }
-    }
-
-    // 1. 检查限流（架构限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
-    // 性能直接传 `crate::domain::id::Id`（实现 Display），由 helper 内部按需 to_string，
-    // 消除 handler 中的中间变量分配。
-    if let Err(response) = check_rate_limit(
+    if let Some(response) = preflight_scrape(
+        &payload,
         rate_limiting_service.as_ref(),
-        auth_state.api_key_id,
-        "/v1/scrape",
+        &auth_state,
+        geo_restriction_repo.as_ref(),
+        team_service.as_ref(),
+        addr.ip(),
     )
     .await
     {
         return response;
     }
 
-    // 2. SSRF 验证 - 使用完整的异步 DNS 验证
-    if let Some(response) = check_ssrf_url(&payload.url, team_id, auth_state.api_key_id).await {
-        return response;
+    let task = build_scrape_task(&payload, team_id, auth_state.api_key_id);
+
+    let sync_wait_ms = payload.sync_wait_ms.unwrap_or(0);
+
+    enqueue_scrape(
+        queue.as_ref(),
+        task,
+        task_repository.as_ref(),
+        rate_limiting_service.as_ref(),
+        team_id,
+        &payload,
+        sync_wait_ms,
+    )
+    .await
+}
+
+/// 构造 scrape 任务。
+fn build_scrape_task(
+    payload: &ScrapeRequestDto,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
+) -> Task {
+    Task::new(
+        crate::domain::id::Id::generate(),
+        TaskType::Scrape,
+        team_id,
+        api_key_id,
+        payload.url.clone(),
+        serde_json::to_value(payload).unwrap_or_default(),
+    )
+}
+
+/// scrape 前置校验与计费：sync_wait 范围 → 限流 → SSRF → 地理限制 → 配额扣减。
+///
+/// 返回 `Some(response)` 表示请求必须中止。
+async fn preflight_scrape(
+    payload: &ScrapeRequestDto,
+    rate_limiting_service: &dyn RateLimitingService,
+    auth_state: &AuthState,
+    geo_restriction_repo: Option<&Arc<dyn GeoRestrictionRepository>>,
+    team_service: Option<&Arc<TeamService>>,
+    client_ip: std::net::IpAddr,
+) -> Option<Response> {
+    let team_id = auth_state.team_id;
+    let api_key_id = auth_state.api_key_id;
+
+    // 验证 sync_wait_ms 范围
+    if let Some(ms) = payload.sync_wait_ms {
+        if ms > MAX_SYNC_WAIT_MS {
+            return Some(errors::unprocessable_entity(format!(
+                "sync_wait_ms must be <= {}",
+                MAX_SYNC_WAIT_MS
+            )));
+        }
+    }
+
+    // 1. 检查限流（架构限流必须在 SSRF 之前，避免恶意请求触发异步 DNS 解析消耗资源）
+    // 性能直接传 `crate::domain::id::Id`（实现 Display），由 helper 内部按需 to_string，
+    // 消除 handler 中的中间变量分配。
+    if let Err(response) = check_rate_limit(rate_limiting_service, api_key_id, "/v1/scrape").await {
+        return Some(response);
+    }
+
+    // 2. SSRF 验证 - 使用完整的异步 DNS 验证（目标 URL / proxy / webhook）
+    if let Some(response) = check_scrape_ssrf_targets(payload, team_id, api_key_id).await {
+        return Some(response);
+    }
+
+    // 2.7 地理限制检查（scrape 入口此前缺失，与 extract/crawl 对齐）
+    if let Some(response) =
+        enforce_scrape_geo_restrictions(geo_restriction_repo, team_service, team_id, client_ip)
+            .await
+    {
+        return Some(response);
+    }
+
+    deduct_scrape_quota(rate_limiting_service, team_id, &payload.url).await
+}
+
+/// 入队并构造成功 / 失败响应（失败时补偿退还已扣配额）。
+async fn enqueue_scrape(
+    queue: &dyn TaskQueue,
+    task: Task,
+    task_repository: &dyn TaskRepository,
+    rate_limiting_service: &dyn RateLimitingService,
+    team_id: crate::domain::id::Id,
+    payload: &ScrapeRequestDto,
+    sync_wait_ms: u32,
+) -> Response {
+    match queue.enqueue(task.clone()).await {
+        Ok(_) => respond_scrape_enqueued(task_repository, task, team_id, sync_wait_ms).await,
+        Err(e) => {
+            error!(
+                "Failed to enqueue task for team {}: {}. Payload: {:?}",
+                team_id, e, payload
+            );
+            // 补偿：入队失败时退还已扣的 1 credit，避免客户积分静默丢失
+            refund_scrape_quota(rate_limiting_service, team_id, &payload.url, task.id).await;
+            errors::internal_server_error(e.to_string())
+        }
+    }
+}
+
+/// 2. SSRF 防护 (CWE-918)：目标 URL、options.proxy、任务级回调 URL 依次校验。
+///
+/// webhook URL 会由 webhook 服务在任务完成后主动 POST，
+/// 若指向内网则形成以平台为跳板的 SSRF（投递侧另有 sender 级守卫兜底）。
+async fn check_scrape_ssrf_targets(
+    payload: &ScrapeRequestDto,
+    team_id: crate::domain::id::Id,
+    api_key_id: crate::domain::id::Id,
+) -> Option<Response> {
+    if let Some(response) = check_ssrf_url(&payload.url, team_id, api_key_id).await {
+        return Some(response);
     }
 
     // 2.5 SSRF 防护 (CWE-918)：验证 options.proxy 不指向内部网络
     if let Some(ref options) = payload.options {
         if let Some(ref proxy_url) = options.proxy {
-            if let Some(response) = check_ssrf_url(proxy_url, team_id, auth_state.api_key_id).await
-            {
-                return response;
+            if let Some(response) = check_ssrf_url(proxy_url, team_id, api_key_id).await {
+                return Some(response);
             }
         }
     }
 
     // 2.6 SSRF 防护 (CWE-918)：任务级回调 URL 与目标 URL 同等对待。
-    // webhook URL 会由 webhook 服务在任务完成后主动 POST，
-    // 若指向内网则形成以平台为跳板的 SSRF（投递侧另有 sender 级守卫兜底）。
     if let Some(ref webhook_url) = payload.webhook {
-        if let Some(response) = check_ssrf_url(webhook_url, team_id, auth_state.api_key_id).await {
-            return response;
+        if let Some(response) = check_ssrf_url(webhook_url, team_id, api_key_id).await {
+            return Some(response);
         }
     }
 
-    // 2.7 地理限制检查（scrape 入口此前缺失，与 extract/crawl 对齐）
-    if let (Some(geo_repo), Some(team_service)) =
-        (geo_restriction_repo.as_ref(), team_service.as_ref())
+    None
+}
+
+/// 2.7 地理限制检查。
+///
+/// geo repo / team_service 以 Option 注入——teams-off（Extension 未装配）时为 None，
+/// 跳过检查，行为与单租户降级一致。
+async fn enforce_scrape_geo_restrictions(
+    geo_restriction_repo: Option<&Arc<dyn GeoRestrictionRepository>>,
+    team_service: Option<&Arc<TeamService>>,
+    team_id: crate::domain::id::Id,
+    client_ip: std::net::IpAddr,
+) -> Option<Response> {
+    let (geo_repo, team_service) = match (geo_restriction_repo, team_service) {
+        (Some(geo_repo), Some(team_service)) => (geo_repo, team_service),
+        _ => return None,
+    };
+
+    let client_ip = client_ip.to_string();
+    let restrictions = match geo_repo.get_team_restrictions(team_id).await {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to get team restrictions: {:?}", e);
+            return Some(errors::internal_server_error(
+                "Failed to validate geographic access",
+            ));
+        }
+    };
+
+    match team_service
+        .validate_geographic_restriction(team_id, &client_ip, &restrictions)
+        .await
     {
-        let client_ip = addr.ip().to_string();
-        let restrictions = match geo_repo.get_team_restrictions(team_id).await {
-            Ok(r) => r,
-            Err(e) => {
-                error!("Failed to get team restrictions: {:?}", e);
-                return errors::internal_server_error("Failed to validate geographic access");
+        Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
+            if let Err(e) = geo_repo
+                .log_geo_restriction_action(
+                    team_id,
+                    &client_ip,
+                    "",
+                    "ALLOWED",
+                    "Scrape request - geographic restriction check passed",
+                )
+                .await
+            {
+                error!("Failed to log geographic restriction action: {:?}", e);
             }
-        };
-
-        match team_service
-            .validate_geographic_restriction(team_id, &client_ip, &restrictions)
-            .await
-        {
-            Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
-                if let Err(e) = geo_repo
-                    .log_geo_restriction_action(
-                        team_id,
-                        &client_ip,
-                        "",
-                        "ALLOWED",
-                        "Scrape request - geographic restriction check passed",
-                    )
-                    .await
-                {
-                    error!("Failed to log geographic restriction action: {:?}", e);
-                }
+            None
+        }
+        Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
+            if let Err(e) = geo_repo
+                .log_geo_restriction_action(team_id, &client_ip, "", "DENIED", &reason)
+                .await
+            {
+                error!("Failed to log geographic restriction action: {:?}", e);
             }
-            Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
-                if let Err(e) = geo_repo
-                    .log_geo_restriction_action(team_id, &client_ip, "", "DENIED", &reason)
-                    .await
-                {
-                    error!("Failed to log geographic restriction action: {:?}", e);
-                }
-                return errors::forbidden(reason);
-            }
-            Err(e) => {
-                error!("Geographic restriction validation error: {:?}", e);
-                return errors::internal_server_error("Failed to validate geographic access");
-            }
+            Some(errors::forbidden(reason))
+        }
+        Err(e) => {
+            error!("Geographic restriction validation error: {:?}", e);
+            Some(errors::internal_server_error(
+                "Failed to validate geographic access",
+            ))
         }
     }
+}
 
+/// 扣减 1 credit 的 scrape 配额；失败返回 402 响应。
+async fn deduct_scrape_quota(
+    rate_limiting_service: &dyn RateLimitingService,
+    team_id: crate::domain::id::Id,
+    url: &str,
+) -> Option<Response> {
     if let Err(e) = rate_limiting_service
         .check_and_deduct_quota(
             team_id,
             1,
             crate::domain::models::CreditsTransactionType::Scrape,
-            format!("Scrape URL: {}", payload.url),
+            format!("Scrape URL: {}", url),
             None,
         )
         .await
     {
         error!("Quota check failed for team {}: {}", team_id, e);
-        return errors::payment_required(e.to_string());
+        return Some(errors::payment_required(e.to_string()));
     }
+    None
+}
 
-    let task = Task::new(
-        crate::domain::id::Id::generate(),
-        TaskType::Scrape,
-        team_id,
-        auth_state.api_key_id,
-        payload.url.clone(),
-        serde_json::to_value(&payload).unwrap_or_default(),
-    );
-
-    let sync_wait_ms = payload.sync_wait_ms.unwrap_or(0);
-
-    match queue.enqueue(task.clone()).await {
-        Ok(_) => {
-            // 使用公共函数处理同步等待
-            let wait_result = handle_sync_wait_and_get_status(
-                task_repository.as_ref(),
-                &[task.id],
-                team_id,
-                sync_wait_ms,
-            )
+/// 入队成功后按 sync_wait_ms 等待任务状态并构造 201/202 响应。
+async fn respond_scrape_enqueued(
+    task_repository: &dyn TaskRepository,
+    task: Task,
+    team_id: crate::domain::id::Id,
+    sync_wait_ms: u32,
+) -> Response {
+    // 使用公共函数处理同步等待
+    let wait_result =
+        handle_sync_wait_and_get_status(task_repository, &[task.id], team_id, sync_wait_ms)
             .await
             .unwrap_or({
                 crate::presentation::handlers::task_queries::SyncWaitResult {
@@ -201,40 +318,39 @@ pub async fn create_scrape(
                 }
             });
 
-            let response = ScrapeResponseDto {
-                id: task.id,
-                url: task.url,
-                credits_used: 1,
-                // 入队响应不携带捕获数据（任务尚未执行）
-                captured_responses: None,
-            };
+    let response = ScrapeResponseDto {
+        id: task.id,
+        url: task.url,
+        credits_used: 1,
+        // 入队响应不携带捕获数据（任务尚未执行）
+        captured_responses: None,
+    };
 
-            let status_code = sync_wait_status_code(sync_wait_ms, wait_result.is_timeout);
+    let status_code = sync_wait_status_code(sync_wait_ms, wait_result.is_timeout);
 
-            success_response(status_code, response)
-        }
-        Err(e) => {
-            error!(
-                "Failed to enqueue task for team {}: {}. Payload: {:?}",
-                team_id, e, payload
-            );
-            // 补偿：入队失败时退还已扣的 1 credit，避免客户积分静默丢失
-            if let Err(refund_err) = rate_limiting_service
-                .refund_quota(
-                    team_id,
-                    1,
-                    format!("Refund: enqueue failed for {}", payload.url),
-                    Some(task.id),
-                )
-                .await
-            {
-                error!(
-                    "CRITICAL: Failed to refund 1 credit for team {} after enqueue failure: {}",
-                    team_id, refund_err
-                );
-            }
-            errors::internal_server_error(e.to_string())
-        }
+    success_response(status_code, response)
+}
+
+/// 补偿：入队失败时退还已扣的 1 credit，避免客户积分静默丢失。
+async fn refund_scrape_quota(
+    rate_limiting_service: &dyn RateLimitingService,
+    team_id: crate::domain::id::Id,
+    url: &str,
+    task_id: crate::domain::id::Id,
+) {
+    if let Err(refund_err) = rate_limiting_service
+        .refund_quota(
+            team_id,
+            1,
+            format!("Refund: enqueue failed for {}", url),
+            Some(task_id),
+        )
+        .await
+    {
+        error!(
+            "CRITICAL: Failed to refund 1 credit for team {} after enqueue failure: {}",
+            team_id, refund_err
+        );
     }
 }
 

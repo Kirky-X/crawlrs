@@ -143,6 +143,15 @@ impl RagSettings {
             return Ok(());
         }
 
+        self.validate_embedding_provider()?;
+        self.validate_rerank_provider()?;
+        self.validate_retrieval_limits()?;
+
+        Ok(())
+    }
+
+    /// 校验嵌入 provider：未编译 `rag-local` 或非法值即失败。
+    fn validate_embedding_provider(&self) -> Result<(), String> {
         match self.embedding_provider.as_str() {
             "" => {}
             "local" => {
@@ -164,7 +173,11 @@ impl RagSettings {
                 ));
             }
         }
+        Ok(())
+    }
 
+    /// 校验重排 provider：未编译 `rag-local`、非法值或 http 必填项为空即失败。
+    fn validate_rerank_provider(&self) -> Result<(), String> {
         match self.rerank_provider.as_str() {
             "" => {}
             "local" => {
@@ -214,7 +227,11 @@ impl RagSettings {
                 ));
             }
         }
+        Ok(())
+    }
 
+    /// 校验检索参数范围：search_rerank_top_n 与 rag_top_k。
+    fn validate_retrieval_limits(&self) -> Result<(), String> {
         if self.search_rerank_top_n == 0 || self.search_rerank_top_n > 100 {
             return Err(rag_config_message(
                 "rag-config-search-rerank-top-n",
@@ -229,7 +246,6 @@ impl RagSettings {
                 &[],
             ));
         }
-
         Ok(())
     }
 }

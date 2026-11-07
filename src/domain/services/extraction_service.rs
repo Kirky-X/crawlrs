@@ -482,34 +482,40 @@ impl ExtractionService {
             .join(" ")
     }
 
+    /// 噪音标签：这些标签内的内容不进入干净文本
+    fn is_noise_tag(name: &str) -> bool {
+        matches!(
+            name,
+            "script"
+                | "style"
+                | "nav"
+                | "footer"
+                | "head"
+                | "iframe"
+                | "noscript"
+                | "aside"
+                | "form"
+        )
+    }
+
+    /// 额外检查：如果文本块内包含典型的代码模式，则丢弃
+    /// （脚本特征词 + 语句/块结构字符双重命中才判定为代码）
+    fn looks_like_code(trimmed: &str) -> bool {
+        let lower = trimmed.to_lowercase();
+        (lower.contains("var ") || lower.contains("function(") || lower.contains("window."))
+            && (trimmed.contains(';') || trimmed.contains('{'))
+    }
+
     fn collect_clean_text(node: scraper::ElementRef, text_parts: &mut Vec<String>) {
-        let name = node.value().name();
-        if name == "script"
-            || name == "style"
-            || name == "nav"
-            || name == "footer"
-            || name == "head"
-            || name == "iframe"
-            || name == "noscript"
-            || name == "aside"
-            || name == "form"
-        {
+        if Self::is_noise_tag(node.value().name()) {
             return;
         }
 
         for child in node.children() {
             if let Some(text) = child.value().as_text() {
                 let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    // 额外检查：如果文本块内包含典型的代码模式，则丢弃
-                    let lower = trimmed.to_lowercase();
-                    if !((lower.contains("var ")
-                        || lower.contains("function(")
-                        || lower.contains("window."))
-                        && (trimmed.contains(';') || trimmed.contains('{')))
-                    {
-                        text_parts.push(trimmed.to_string());
-                    }
+                if !trimmed.is_empty() && !Self::looks_like_code(trimmed) {
+                    text_parts.push(trimmed.to_string());
                 }
             } else if let Some(element) = scraper::ElementRef::wrap(child) {
                 Self::collect_clean_text(element, text_parts);

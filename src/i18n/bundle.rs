@@ -125,46 +125,7 @@ impl I18nBundle {
     /// 查找指定 locale 的翻译，如果 key 不存在则回退到 default_locale。
     /// 如果 default_locale 也不存在，返回 key 本身。
     pub fn translate(&self, locale: &Locale, key: &str) -> String {
-        if let Some(bundle) = self.bundles.get(locale) {
-            if let Some(msg) = bundle.get_message(key) {
-                if let Some(pattern) = msg.value() {
-                    let mut errors = vec![];
-                    let result = bundle
-                        .format_pattern(pattern, None, &mut errors)
-                        .to_string();
-                    if !errors.is_empty() {
-                        log::warn!(
-                            "Fluent format errors for key '{key}' in locale '{locale}': {errors:?}"
-                        );
-                    }
-                    return result;
-                }
-            }
-        }
-
-        // 回退到 default locale
-        if locale != &self.default_locale {
-            if let Some(bundle) = self.bundles.get(&self.default_locale) {
-                if let Some(msg) = bundle.get_message(key) {
-                    if let Some(pattern) = msg.value() {
-                        let mut errors = vec![];
-                        let result = bundle
-                            .format_pattern(pattern, None, &mut errors)
-                            .to_string();
-                        if !errors.is_empty() {
-                            log::warn!(
-                                "Fluent format errors for key '{key}' in default locale: {errors:?}"
-                            );
-                        }
-                        return result;
-                    }
-                }
-            }
-        }
-
-        // Key 不存在，返回 key 本身
-        log::warn!("Translation key '{key}' not found for locale '{locale}'");
-        key.to_string()
+        self.translate_inner(locale, key, None)
     }
 
     /// 翻译消息（带参数）
@@ -181,46 +142,72 @@ impl I18nBundle {
         } else {
             Some(args.iter().map(|(k, v)| (*k, v.clone())).collect())
         };
+        self.translate_inner(locale, key, fluent_args.as_ref())
+    }
 
+    /// 翻译公共路径：先查指定 locale，未命中回退 default_locale；两者皆未命中
+    /// 时 `warn!` 并返回 key 本身。
+    fn translate_inner(&self, locale: &Locale, key: &str, args: Option<&FluentArgs>) -> String {
+        if let Some(result) = self.translate_with_fallback(locale, key, args) {
+            return result;
+        }
+
+        // Key 不存在，返回 key 本身
+        log::warn!("Translation key '{key}' not found for locale '{locale}'");
+        key.to_string()
+    }
+
+    /// 按回退顺序查找并格式化消息：先指定 locale，后 default_locale。
+    /// 任一命中即返回格式化结果；消息不存在或无 value 时继续回退。
+    fn translate_with_fallback(
+        &self,
+        locale: &Locale,
+        key: &str,
+        args: Option<&FluentArgs>,
+    ) -> Option<String> {
         if let Some(bundle) = self.bundles.get(locale) {
-            if let Some(msg) = bundle.get_message(key) {
-                if let Some(pattern) = msg.value() {
-                    let mut errors = vec![];
-                    let result = bundle
-                        .format_pattern(pattern, fluent_args.as_ref(), &mut errors)
-                        .to_string();
-                    if !errors.is_empty() {
-                        log::warn!(
-                            "Fluent format errors for key '{key}' in locale '{locale}': {errors:?}"
-                        );
-                    }
-                    return result;
-                }
+            if let Some(result) =
+                Self::format_message(bundle, key, args, || format!("in locale '{locale}'"))
+            {
+                return Some(result);
             }
         }
 
         // 回退到 default locale
         if locale != &self.default_locale {
             if let Some(bundle) = self.bundles.get(&self.default_locale) {
-                if let Some(msg) = bundle.get_message(key) {
-                    if let Some(pattern) = msg.value() {
-                        let mut errors = vec![];
-                        let result = bundle
-                            .format_pattern(pattern, fluent_args.as_ref(), &mut errors)
-                            .to_string();
-                        if !errors.is_empty() {
-                            log::warn!(
-                                "Fluent format errors for key '{key}' in default locale: {errors:?}"
-                            );
-                        }
-                        return result;
-                    }
+                if let Some(result) =
+                    Self::format_message(bundle, key, args, || "in default locale".to_string())
+                {
+                    return Some(result);
                 }
             }
         }
+        None
+    }
 
-        log::warn!("Translation key '{key}' not found for locale '{locale}'");
-        key.to_string()
+    /// 从单个 bundle 格式化消息；格式错误按既有口径 `warn!` 后仍返回结果。
+    /// `context` 为错误日志中的位置描述构造函数（如 `in locale 'en-US'` /
+    /// `in default locale`），仅在出现格式错误时调用。
+    fn format_message(
+        bundle: &FluentBundle<FluentResource>,
+        key: &str,
+        args: Option<&FluentArgs>,
+        context: impl FnOnce() -> String,
+    ) -> Option<String> {
+        let msg = bundle.get_message(key)?;
+        let pattern = msg.value()?;
+        let mut errors = vec![];
+        let result = bundle
+            .format_pattern(pattern, args, &mut errors)
+            .to_string();
+        if !errors.is_empty() {
+            log::warn!(
+                "Fluent format errors for key '{key}' {}: {errors:?}",
+                context()
+            );
+        }
+        Some(result)
     }
 
     /// 获取默认 locale
@@ -248,24 +235,32 @@ impl I18nBundle {
                 continue;
             }
 
-            let locale_keys = self.get_message_keys(locale);
+            warnings.extend(self.diff_locale_keys(locale, &default_keys));
+        }
 
-            for key in &default_keys {
-                if !locale_keys.contains(key) {
-                    warnings.push(format!(
-                        "Locale '{locale}' missing key '{key}' (present in default '{}')",
-                        self.default_locale
-                    ));
-                }
+        warnings
+    }
+
+    /// 对比单个 locale 与 default 的 key 集合：先报缺少的 key，再报多出的 key
+    fn diff_locale_keys(&self, locale: &Locale, default_keys: &HashSet<String>) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let locale_keys = self.get_message_keys(locale);
+
+        for key in default_keys {
+            if !locale_keys.contains(key) {
+                warnings.push(format!(
+                    "Locale '{locale}' missing key '{key}' (present in default '{}')",
+                    self.default_locale
+                ));
             }
+        }
 
-            for key in &locale_keys {
-                if !default_keys.contains(key) {
-                    warnings.push(format!(
-                        "Locale '{locale}' has extra key '{key}' (not in default '{}')",
-                        self.default_locale
-                    ));
-                }
+        for key in &locale_keys {
+            if !default_keys.contains(key) {
+                warnings.push(format!(
+                    "Locale '{locale}' has extra key '{key}' (not in default '{}')",
+                    self.default_locale
+                ));
             }
         }
 

@@ -175,6 +175,29 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
 
     monitor.log_security_warnings();
 
+    check_required_variables(&validator, is_production)?;
+
+    let report = monitor.generate_security_report();
+
+    let (env, is_test, is_dev) = detect_runtime_environment();
+
+    warn_if_ssrf_protection_disabled(&env, is_dev);
+
+    // Check for forbidden variables
+    check_forbidden_variables(&report.forbidden_variables, is_test)?;
+
+    check_security_score(report.security_score, is_production)?;
+
+    info!(
+        "Environment variable validation complete. Security score: {}/100",
+        report.security_score
+    );
+
+    Ok(())
+}
+
+/// 必需环境变量检查：生产环境缺失即阻断，非生产仅告警。
+fn check_required_variables(validator: &EnvVarValidator, is_production: bool) -> Result<()> {
     if let Err(missing) = validator.validate_required() {
         let error_msg = format!(
             "Missing required environment variables: {}",
@@ -190,11 +213,14 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
             );
         }
     }
+    Ok(())
+}
 
-    let report = monitor.generate_security_report();
-
-    // 在测试环境中跳过禁止环境变量检查
-    // 使用配置服务获取环境，如果不可用则回退到环境变量
+/// 解析当前运行环境名，并判定 test / dev 形态。
+///
+/// 在测试环境中跳过禁止环境变量检查
+/// 使用配置服务获取环境，如果不可用则回退到环境变量
+fn detect_runtime_environment() -> (String, bool, bool) {
     let env = std::env::var("CRAWLRS_ENV")
         .or_else(|_| std::env::var("APP_ENVIRONMENT"))
         .unwrap_or_else(|_| "development".to_string());
@@ -202,9 +228,13 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
     let is_test =
         env_lower == "test" || std::env::var("CRAWLRS__TEST_MODE").unwrap_or_default() == "true";
     let is_dev = env_lower == "development" || env_lower == "dev" || is_test;
+    (env, is_test, is_dev)
+}
 
-    // SSRF 防护禁用开关风险告警
-    // 仅在非 test/development 环境下告警；开发/测试场景允许禁用以方便调试
+/// SSRF 防护禁用开关风险告警。
+///
+/// 仅在非 test/development 环境下告警；开发/测试场景允许禁用以方便调试
+fn warn_if_ssrf_protection_disabled(env: &str, is_dev: bool) {
     if std::env::var(crate::common::constants::env_vars::DISABLE_SSRF_PROTECTION).is_ok() && !is_dev
     {
         warn!(
@@ -215,26 +245,32 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
             env
         );
     }
+}
 
-    // Check for forbidden variables
-    if !report.forbidden_variables.is_empty() && !is_test {
+/// 禁止环境变量检查：test 模式仅告警，其余环境阻断。
+fn check_forbidden_variables(forbidden_variables: &[String], is_test: bool) -> Result<()> {
+    if !forbidden_variables.is_empty() && !is_test {
         let error_msg = format!(
             "Forbidden environment variables detected: {}",
-            report.forbidden_variables.join(", ")
+            forbidden_variables.join(", ")
         );
         error!("CRITICAL: {}", error_msg);
         return Err(anyhow::anyhow!("{}", error_msg));
-    } else if !report.forbidden_variables.is_empty() && is_test {
+    } else if !forbidden_variables.is_empty() && is_test {
         warn!(
             "Test mode: Skipping forbidden environment variable check: {}",
-            report.forbidden_variables.join(", ")
+            forbidden_variables.join(", ")
         );
     }
+    Ok(())
+}
 
-    if report.security_score < 70 {
+/// 安全评分阈值检查：生产环境低于 70 分阻断，非生产仅告警。
+fn check_security_score(security_score: u8, is_production: bool) -> Result<()> {
+    if security_score < 70 {
         let msg = format!(
             "Security score {} is below acceptable level (70). Review warnings above.",
-            report.security_score
+            security_score
         );
         if is_production {
             error!("CRITICAL: {}", msg);
@@ -243,12 +279,6 @@ pub fn validate_environment(is_production: bool) -> Result<()> {
             warn!("{}", msg);
         }
     }
-
-    info!(
-        "Environment variable validation complete. Security score: {}/100",
-        report.security_score
-    );
-
     Ok(())
 }
 

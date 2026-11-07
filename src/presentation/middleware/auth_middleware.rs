@@ -269,7 +269,7 @@ pub async fn auth_middleware_inner(
     mut req: axum::http::Request<Body>,
     next: Next,
 ) -> Response {
-    use crate::presentation::middleware::auth_bridge::{bridge_to_auth_state, extract_bearer};
+    use crate::presentation::middleware::auth_bridge::extract_bearer;
 
     let path = req.uri().path().to_string();
     debug!("AuthMiddleware (garrison) processing path: {}", path);
@@ -288,110 +288,51 @@ pub async fn auth_middleware_inner(
     };
 
     // 3. garrison 校验 + 提取 login_id / scopes
-    //
-    // ## 决策：直接用 `ApiKeyHandler::verify_with_namespace` 而非 `stp::check_api_key`
-    //
-    // garrison 0.8.x 的 `check_api_key("crawlrs")` 内部用 verify 验证后丢弃
-    // `ApiKeyInfo`，不写入 TokenSession（ApiKey 与 Password/JWT 是两套会话机制）。
-    // 后续 `get_login_id()` → `session.get_token_session(token)` 因没有 session 而
-    // 返回 `None` → auth_middleware 误报 `NotLogin("login_id missing")` → 401。
-    //
-    // 跳过 stp 会话层的中间间接查询，
-    // 直接 `handler.verify_with_namespace(raw, "crawlrs")` 一步拿到
-    // `ApiKeyInfo { login_id, scopes, expire_at, ... }`，避免 O(3) DAO roundtrip
-    // 且消除 session/notfound 误报。
-    //
-    // CWE-307 保护（firewall-bruteforce）保留：在 verify 前后显式调用。
-    //
-    // DAO 来源优先级：优先 `get_garrison_dao()`（bootstrap 注入的全局共享 DAO），
-    // 与 GarrisonManager::init 传入的 dao 是同一 Arc 实例（services.rs
-    // init_garrison_auth: `set_garrison_dao(Arc::clone(&dao))`；`GarrisonManager::init(dao,...)`）。
-    let (login_id, perms) = {
-        use garrison::protocol::apikey::ApiKeyHandler;
-
-        let dao = match crate::infrastructure::auth::get_garrison_dao() {
-            Some(d) => d,
-            None => {
-                let e = garrison::error::GarrisonError::Session(
-                    "auth-middleware: garrison dao not initialized".to_string(),
-                );
-                return AuthError::from_garrison(e).into_response();
-            }
-        };
-
-        // CWE-307: IP 级暴力破解防护（对齐 check_api_key 内部实现，fail-open 兼容）
-        // garrison firewall-bruteforce feature: 若编译期类型缺失则在运行时零成本失效。
-        let ip_ctx = garrison::stp::current_ip();
-        if let Some(ip) = &ip_ctx {
-            use garrison::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
-            use garrison::strategy::firewall::FirewallContext;
-            let strategy = BruteForceStrategy::new(BruteForceConfig::default(), Arc::clone(&dao));
-            let fw_ctx = FirewallContext::new(ip);
-            match strategy.is_blocked(&fw_ctx).await {
-                Ok(true) => {
-                    let e = garrison::error::GarrisonError::FirewallBlocked(format!(
-                        "auth-middleware-ip-blocked::{}",
-                        ip
-                    ));
-                    return AuthError::from_garrison(e).into_response();
-                }
-                Ok(false) | Err(_) => { /* unblocked 或瞬时 DAO 故障：fail-open 继续 */ }
-            }
-        }
-
-        let handler = ApiKeyHandler::new(Arc::clone(&dao));
-        let info = match handler.verify_with_namespace(&raw, "crawlrs").await {
-            Ok(i) => i,
-            Err(e) => {
-                if let Some(ip) = &ip_ctx {
-                    use garrison::strategy::firewall::brute_force::{
-                        BruteForceConfig, BruteForceStrategy,
-                    };
-                    use garrison::strategy::firewall::FirewallContext;
-                    let strategy =
-                        BruteForceStrategy::new(BruteForceConfig::default(), Arc::clone(&dao));
-                    let fw_ctx = FirewallContext::new(ip);
-                    if let Err(rec_err) = strategy.record_failure(&fw_ctx).await {
-                        debug!(
-                            "brute force record_failure failed (ip={}, err={})",
-                            ip, rec_err
-                        );
-                    }
-                    // 达到 max_attempts 的本次请求即返回 429（而非等下一次请求的
-                    // 预检才发现被封禁）：record_failure 在计数越过阈值时落封禁
-                    // 记录，这里立即复查一次，命中则拒绝当前请求。
-                    match strategy.is_blocked(&fw_ctx).await {
-                        Ok(true) => {
-                            let e = garrison::error::GarrisonError::FirewallBlocked(format!(
-                                "auth-middleware-ip-blocked::{}",
-                                ip
-                            ));
-                            return AuthError::from_garrison(e).into_response();
-                        }
-                        Ok(false) | Err(_) => { /* 未达阈值或瞬时故障：维持 401 */ }
-                    }
-                }
-                return AuthError::from_garrison(e).into_response();
-            }
-        };
-        (info.login_id, info.scopes)
+    let (login_id, perms) = match verify_api_key_scopes(&raw).await {
+        Ok(credentials) => credentials,
+        Err(e) => return e.into_response(),
     };
+
+    // 4-7. 解析身份并注入 extensions
+    if let Some(response) =
+        resolve_and_inject_auth_state(&pool, login_id, perms, &raw, &mut req).await
+    {
+        return response;
+    }
+
+    debug!("API Key authentication successful (garrison path)");
+
+    next.run(req).await
+}
+
+/// 4-7. login_id → api_key_id → team_id → AuthState，并注入 extensions。
+///
+/// 反查 crawlrs DB 获取 team_id（带 LRU 缓存，决策 4）。
+///
+/// teams feature 关闭时（单租户模式），强制使用 DEFAULT_TEAM_ID，不查 DB。
+/// teams-on 时保持原逻辑从 DB 反查。
+#[cfg(feature = "auth")]
+async fn resolve_and_inject_auth_state(
+    pool: &Arc<DbPool>,
+    login_id: String,
+    perms: Vec<String>,
+    raw: &str,
+    req: &mut axum::http::Request<Body>,
+) -> Option<Response> {
+    use crate::presentation::middleware::auth_bridge::bridge_to_auth_state;
 
     // 4. 解析 login_id → api_key_id (crate::domain::id::Id)
     let api_key_id = match login_id.parse::<crate::domain::id::Id>() {
         Ok(u) => u,
-        Err(_) => return AuthError::InvalidLoginId(login_id).into_response(),
+        Err(_) => return Some(AuthError::InvalidLoginId(login_id).into_response()),
     };
 
     // 5. 反查 crawlrs DB 获取 team_id（带 LRU 缓存，决策 4）
-    //
-    // teams feature 关闭时（单租户模式），强制使用 DEFAULT_TEAM_ID，不查 DB。
-    // teams-on 时保持原逻辑从 DB 反查。
     #[cfg(feature = "teams")]
-    let team_id = match fetch_team_id_by_api_key_id(&pool, api_key_id).await {
+    let team_id = match fetch_team_id_by_api_key_id(pool, api_key_id).await {
         Ok(Some(tid)) => tid,
-        Ok(None) => return AuthError::KeyNotFound(api_key_id).into_response(),
-        Err(e) => return e.into_response(),
+        Ok(None) => return Some(AuthError::KeyNotFound(api_key_id).into_response()),
+        Err(e) => return Some(e.into_response()),
     };
     #[cfg(not(feature = "teams"))]
     let team_id = crate::common::constants::default_identity::DEFAULT_TEAM_ID;
@@ -399,16 +340,125 @@ pub async fn auth_middleware_inner(
     // 6. 桥接为 AuthState（传 api_key_id 而非 login_id，消除重复 crate::domain::id::Id 解析）
     let auth_state = match bridge_to_auth_state(pool.clone(), api_key_id, &perms, team_id).await {
         Ok(s) => s,
-        Err(e) => return e.into_response(),
+        Err(e) => return Some(e.into_response()),
     };
 
     // 7. 注入 extensions（token_hash 用 SHA-256 hash，CWE-532 防护）
-    let token_hash = hash_token(&raw);
-    inject_auth_state(&mut req, auth_state, &token_hash);
+    let token_hash = hash_token(raw);
+    inject_auth_state(req, auth_state, &token_hash);
 
-    debug!("API Key authentication successful (garrison path)");
+    None
+}
 
-    next.run(req).await
+/// 3. garrison 校验 + 提取 login_id / scopes。
+///
+/// ## 决策：直接用 `ApiKeyHandler::verify_with_namespace` 而非 `stp::check_api_key`
+///
+/// garrison 0.8.x 的 `check_api_key("crawlrs")` 内部用 verify 验证后丢弃
+/// `ApiKeyInfo`，不写入 TokenSession（ApiKey 与 Password/JWT 是两套会话机制）。
+/// 后续 `get_login_id()` → `session.get_token_session(token)` 因没有 session 而
+/// 返回 `None` → auth_middleware 误报 `NotLogin("login_id missing")` → 401。
+///
+/// 跳过 stp 会话层的中间间接查询，
+/// 直接 `handler.verify_with_namespace(raw, "crawlrs")` 一步拿到
+/// `ApiKeyInfo { login_id, scopes, expire_at, ... }`，避免 O(3) DAO roundtrip
+/// 且消除 session/notfound 误报。
+///
+/// CWE-307 保护（firewall-bruteforce）保留：在 verify 前后显式调用。
+///
+/// DAO 来源优先级：优先 `get_garrison_dao()`（bootstrap 注入的全局共享 DAO），
+/// 与 GarrisonManager::init 传入的 dao 是同一 Arc 实例（services.rs
+/// init_garrison_auth: `set_garrison_dao(Arc::clone(&dao))`；`GarrisonManager::init(dao,...)`）。
+#[cfg(feature = "auth")]
+async fn verify_api_key_scopes(raw: &str) -> Result<(String, Vec<String>), AuthError> {
+    use garrison::protocol::apikey::ApiKeyHandler;
+
+    let dao = match crate::infrastructure::auth::get_garrison_dao() {
+        Some(d) => d,
+        None => {
+            let e = garrison::error::GarrisonError::Session(
+                "auth-middleware: garrison dao not initialized".to_string(),
+            );
+            return Err(AuthError::from_garrison(e));
+        }
+    };
+
+    // CWE-307: IP 级暴力破解防护（对齐 check_api_key 内部实现，fail-open 兼容）
+    // garrison firewall-bruteforce feature: 若编译期类型缺失则在运行时零成本失效。
+    let ip_ctx = garrison::stp::current_ip();
+    if let Some(ip) = &ip_ctx {
+        if let Some(err) = check_ip_blocked(&dao, ip).await {
+            return Err(err);
+        }
+    }
+
+    let handler = ApiKeyHandler::new(Arc::clone(&dao));
+    let info = match handler.verify_with_namespace(raw, "crawlrs").await {
+        Ok(i) => i,
+        Err(e) => {
+            if let Some(ip) = &ip_ctx {
+                if let Some(err) = record_failure_and_check_block(&dao, ip).await {
+                    return Err(err);
+                }
+            }
+            return Err(AuthError::from_garrison(e));
+        }
+    };
+    Ok((info.login_id, info.scopes))
+}
+
+/// CWE-307 预检：IP 已封禁则返回 `FirewallBlocked`；查询故障 fail-open。
+#[cfg(feature = "auth")]
+async fn check_ip_blocked(
+    dao: &Arc<dyn garrison::prelude::GarrisonDao>,
+    ip: &str,
+) -> Option<AuthError> {
+    use garrison::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
+    use garrison::strategy::firewall::FirewallContext;
+    let strategy = BruteForceStrategy::new(BruteForceConfig::default(), Arc::clone(dao));
+    let fw_ctx = FirewallContext::new(ip);
+    match strategy.is_blocked(&fw_ctx).await {
+        Ok(true) => {
+            let e = garrison::error::GarrisonError::FirewallBlocked(format!(
+                "auth-middleware-ip-blocked::{}",
+                ip
+            ));
+            Some(AuthError::from_garrison(e))
+        }
+        Ok(false) | Err(_) => None,
+    }
+}
+
+/// 认证失败后记录 IP 失败计数；达到阈值时立即返回 `FirewallBlocked`。
+///
+/// 达到 max_attempts 的本次请求即返回 429（而非等下一次请求的
+/// 预检才发现被封禁）：record_failure 在计数越过阈值时落封禁
+/// 记录，这里立即复查一次，命中则拒绝当前请求。
+#[cfg(feature = "auth")]
+async fn record_failure_and_check_block(
+    dao: &Arc<dyn garrison::prelude::GarrisonDao>,
+    ip: &str,
+) -> Option<AuthError> {
+    use garrison::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
+    use garrison::strategy::firewall::FirewallContext;
+    let strategy = BruteForceStrategy::new(BruteForceConfig::default(), Arc::clone(dao));
+    let fw_ctx = FirewallContext::new(ip);
+    if let Err(rec_err) = strategy.record_failure(&fw_ctx).await {
+        debug!(
+            "brute force record_failure failed (ip={}, err={})",
+            ip, rec_err
+        );
+    }
+    match strategy.is_blocked(&fw_ctx).await {
+        Ok(true) => {
+            let e = garrison::error::GarrisonError::FirewallBlocked(format!(
+                "auth-middleware-ip-blocked::{}",
+                ip
+            ));
+            Some(AuthError::from_garrison(e))
+        }
+        Ok(false) | Err(_) => None,
+    }
 }
 
 /// auth-off protected routes 的显式放行开关（默认 `false` = 默认拒绝 401）。

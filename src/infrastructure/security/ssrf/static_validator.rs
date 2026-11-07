@@ -86,7 +86,20 @@ pub fn is_internal_url(url_str: &str) -> bool {
     }
 
     // IPv4 Checks
+    if is_internal_ipv4_host(host) {
+        return true;
+    }
 
+    // IPv6 Checks
+    if is_internal_ipv6_host(host) {
+        return true;
+    }
+
+    false
+}
+
+/// IPv4 内网判定：localhost / RFC 1918 / link-local / CGNAT / 广播与未指定地址。
+fn is_internal_ipv4_host(host: &str) -> bool {
     // Localhost variants
     if is_localhost(host) {
         return true;
@@ -112,8 +125,11 @@ pub fn is_internal_url(url_str: &str) -> bool {
         return true;
     }
 
-    // IPv6 Checks
+    false
+}
 
+/// IPv6 内网判定：loopback / link-local / ULA / site-local（已废弃但保留检查）。
+fn is_internal_ipv6_host(host: &str) -> bool {
     // IPv6 localhost
     if host == "::1" {
         return true;

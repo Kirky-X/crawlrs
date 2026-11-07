@@ -57,27 +57,27 @@ static JSON_PREFIX: Lazy<Regex> =
 static XML_PREFIX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*<\?xml\b").expect("antibot xml-prefix regex"));
 
+/// Content-Type 是否为 data 类型（JSON / XML family，ASCII 小写后匹配）
+fn content_type_is_data(ct_lower: &str) -> bool {
+    ct_lower.contains("application/json")
+        || ct_lower.contains("text/xml")
+        || ct_lower.contains("application/xml")
+        || ct_lower.contains("application/atom+xml")
+        || ct_lower.contains("application/rss+xml")
+}
+
 /// 判定 body 是否为 data-HTML（JSON / XML），避免对 API 响应误报
 fn looks_like_data(body: &str, headers: &HeaderMap) -> bool {
     // Content-Type 优先判定
     if let Some(ct) = headers.get(reqwest::header::CONTENT_TYPE) {
         if let Ok(ct_str) = ct.to_str() {
-            let ct_lower = ct_str.to_ascii_lowercase();
-            if ct_lower.contains("application/json")
-                || ct_lower.contains("text/xml")
-                || ct_lower.contains("application/xml")
-                || ct_lower.contains("application/atom+xml")
-                || ct_lower.contains("application/rss+xml")
-            {
+            if content_type_is_data(&ct_str.to_ascii_lowercase()) {
                 return true;
             }
         }
     }
     // body 起始字符辅助判定
-    if JSON_PREFIX.is_match(body) || XML_PREFIX.is_match(body) {
-        return true;
-    }
-    false
+    JSON_PREFIX.is_match(body) || XML_PREFIX.is_match(body)
 }
 
 /// 解析 429 响应的 Retry-After 头
@@ -182,6 +182,119 @@ fn tier3_signals(body: &str, stripped_cache: &OnceCell<String>) -> (usize, Vec<&
     (signals.len(), signals)
 }
 
+/// Tier1 命中的 WAF 是否必须浏览器引擎重试（429 / Unknown / StructuralBlock 除外）
+fn waf_needs_browser(tech: AntiBotTech) -> bool {
+    matches!(
+        tech,
+        AntiBotTech::Cloudflare
+            | AntiBotTech::Akamai
+            | AntiBotTech::PerimeterX
+            | AntiBotTech::DataDome
+            | AntiBotTech::Imperva
+            | AntiBotTech::Kasada
+            | AntiBotTech::AwsWaf
+    )
+}
+
+/// Step 4：4xx/5xx + 短页（<10KB）→ Tier2 AC 自动机
+///
+/// 命中返回 generic keyword 检测；无命中仍疑似 block（needs_browser=false）。
+/// 非错误状态码或长页返回 None。
+fn tier2_short_body_detection(status: u16, body: &str) -> Option<Detection> {
+    let is_error = (400..500).contains(&status) || (500..600).contains(&status);
+    if !(is_error && body.len() < TIER2_BODY_SIZE_LIMIT) {
+        return None;
+    }
+
+    if let Some(mat) = TIER2_AUTOMATON.find(body) {
+        let matched = &body[mat.start()..mat.end()];
+        return Some(Detection::new(
+            AntiBotTech::Unknown,
+            format!("tier2 generic keyword matched: {}", matched),
+            false,
+        ));
+    }
+    // 错误状态 + 短页 + 非 data-HTML + Tier2 无命中：仍疑似 block
+    Some(Detection::new(
+        AntiBotTech::Unknown,
+        format!("HTTP {} short body without data content", status),
+        false,
+    ))
+}
+
+/// Step 5：200 + 近空 body → JS 空壳（StructuralBlock, needs_browser=true）
+///
+/// 双条件：body 整体字节少 AND 剥离 script/style + tag 后可见文本也少。
+/// 仅凭 body.len 会让短小但内容充实的正常页（~100 字可见文本）被误判。
+///
+/// 复用 stripped_cache，与 tier1_match / tier3_signals
+/// 共享同一份 stripped 结果（若已计算则零成本复用）。
+fn near_empty_js_shell(body: &str, stripped_cache: &OnceCell<String>) -> Option<Detection> {
+    if body.len() >= NEAR_EMPTY_BODY_LEN {
+        return None;
+    }
+    let stripped_of_scripts = stripped_cache.get_or_init(|| strip_scripts_and_styles(body));
+    let stripped = TIER3_ANY_TAG.replace_all(stripped_of_scripts, "");
+    if stripped.trim().len() < TIER3_VISIBLE_TEXT_MIN {
+        Some(Detection::new(
+            AntiBotTech::StructuralBlock,
+            "near-empty body likely JS shell",
+            true,
+        ))
+    } else {
+        None
+    }
+}
+
+/// Step 6：Tier3 结构完整性（多信号打分）
+fn tier3_classify(body: &str, stripped_cache: &OnceCell<String>) -> Option<Detection> {
+    let (count, signals) = tier3_signals(body, stripped_cache);
+    if count >= TIER3_MIN_SIGNALS {
+        Some(Detection::new(
+            AntiBotTech::StructuralBlock,
+            format!("tier3 structural signals: {}", signals.join(", ")),
+            true,
+        ))
+    } else {
+        None
+    }
+}
+
+/// Step 3：403/503 非 data-HTML → block 判定（needs_browser=true）
+fn blocked_status_detection(status: u16) -> Option<Detection> {
+    if status != 403 && status != 503 {
+        return None;
+    }
+    let needs_browser = true;
+    let reason = if status == 403 {
+        "HTTP 403 blocked without data-HTML body"
+    } else {
+        "HTTP 503 service unavailable block"
+    };
+    Some(Detection::new(
+        AntiBotTech::Unknown,
+        reason.to_string(),
+        needs_browser,
+    ))
+}
+
+/// Step 5/6（仅 2xx 生效）：近空 JS 空壳 → Tier3 结构完整性打分
+fn structural_detection(
+    status: u16,
+    body: &str,
+    stripped_cache: &OnceCell<String>,
+) -> Option<Detection> {
+    if !(200..300).contains(&status) {
+        return None;
+    }
+
+    if let Some(detection) = near_empty_js_shell(body, stripped_cache) {
+        return Some(detection);
+    }
+
+    tier3_classify(body, stripped_cache)
+}
+
 /// 主入口：分类 HTTP 响应为反爬检测或 None
 ///
 /// 实现与 crawl4ai `antibot_detector.py` 对齐：先看状态码与 data-HTML，再依次走 Tier1 →
@@ -215,82 +328,21 @@ pub fn classify(status: u16, body: &str, headers: &HeaderMap, _url: &str) -> Opt
 
     // Step 2：Tier1 命中（任意状态码，含大页 strip 深扫）
     if let Some((tech, hint)) = tier1_match(body, &stripped_cache) {
-        let needs_browser = matches!(
-            tech,
-            AntiBotTech::Cloudflare
-                | AntiBotTech::Akamai
-                | AntiBotTech::PerimeterX
-                | AntiBotTech::DataDome
-                | AntiBotTech::Imperva
-                | AntiBotTech::Kasada
-                | AntiBotTech::AwsWaf
-        );
+        let needs_browser = waf_needs_browser(tech);
         return Some(Detection::new(tech, hint, needs_browser));
     }
 
-    // Step 3：403/503 非 data-HTML → block 判定（needs_browser=true）
-    if status == 403 || status == 503 {
-        let needs_browser = true;
-        let reason = if status == 403 {
-            "HTTP 403 blocked without data-HTML body"
-        } else {
-            "HTTP 503 service unavailable block"
-        };
-        return Some(Detection::new(
-            AntiBotTech::Unknown,
-            reason.to_string(),
-            needs_browser,
-        ));
+    if let Some(detection) = blocked_status_detection(status) {
+        return Some(detection);
     }
 
     // Step 4：4xx/5xx + 短页（<10KB）→ Tier2 AC 自动机
-    let is_error = (400..500).contains(&status) || (500..600).contains(&status);
-    if is_error && body.len() < TIER2_BODY_SIZE_LIMIT {
-        if let Some(mat) = TIER2_AUTOMATON.find(body) {
-            let matched = &body[mat.start()..mat.end()];
-            return Some(Detection::new(
-                AntiBotTech::Unknown,
-                format!("tier2 generic keyword matched: {}", matched),
-                false,
-            ));
-        }
-        // 错误状态 + 短页 + 非 data-HTML + Tier2 无命中：仍疑似 block
-        return Some(Detection::new(
-            AntiBotTech::Unknown,
-            format!("HTTP {} short body without data content", status),
-            false,
-        ));
+    if let Some(detection) = tier2_short_body_detection(status, body) {
+        return Some(detection);
     }
 
-    // Step 5：200 + 近空 body → JS 空壳（StructuralBlock, needs_browser=true）
-    //
-    // 双条件：body 整体字节少 AND 剥离 script/style + tag 后可见文本也少。
-    // 仅凭 body.len 会让短小但内容充实的正常页（~100 字可见文本）被误判。
-    //
-    // 复用 stripped_cache，与 tier1_match / tier3_signals
-    // 共享同一份 stripped 结果（若已计算则零成本复用）。
-    if (200..300).contains(&status) {
-        if body.len() < NEAR_EMPTY_BODY_LEN {
-            let stripped_of_scripts = stripped_cache.get_or_init(|| strip_scripts_and_styles(body));
-            let stripped = TIER3_ANY_TAG.replace_all(stripped_of_scripts, "");
-            if stripped.trim().len() < TIER3_VISIBLE_TEXT_MIN {
-                return Some(Detection::new(
-                    AntiBotTech::StructuralBlock,
-                    "near-empty body likely JS shell",
-                    true,
-                ));
-            }
-        }
-
-        // Step 6：Tier3 结构完整性（多信号打分）
-        let (count, signals) = tier3_signals(body, &stripped_cache);
-        if count >= TIER3_MIN_SIGNALS {
-            return Some(Detection::new(
-                AntiBotTech::StructuralBlock,
-                format!("tier3 structural signals: {}", signals.join(", ")),
-                true,
-            ));
-        }
+    if let Some(detection) = structural_detection(status, body, &stripped_cache) {
+        return Some(detection);
     }
 
     None

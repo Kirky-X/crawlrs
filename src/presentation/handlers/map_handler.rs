@@ -499,6 +499,14 @@ mod tests {
             text.contains("SSRF"),
             "blocked response must mention SSRF protection, got: {text}"
         );
+        assert!(
+            text.contains("blocked_hostname"),
+            "response must carry the sanitized SSRF category, got: {text}"
+        );
+        assert!(
+            !text.contains("localhost"),
+            "response must not echo the internal hostname, got: {text}"
+        );
     }
 
     /// 非法 JSON → 提取器级拒绝映射为统一包封（非 500）

@@ -164,6 +164,173 @@ impl MllmEngine {
             }
         }
     }
+
+    /// 在浏览器池上执行一次 agentic 抓取（scrape 超时包裹的内部主体）：
+    /// 取页 → 指纹一致性设置 → 导航 → agentic loop → 截图 → 组装响应。
+    async fn scrape_with_pool(
+        &self,
+        pool: &BrowserPool,
+        request: &InternalScrapeRequest,
+        start: Instant,
+    ) -> Result<InternalScrapeResponse, EngineError> {
+        // Acquire browser page
+        let pooled_page = pool.acquire_page().await?;
+        let page: chromiumoxide::Page = pooled_page.page().clone();
+
+        // 指纹一致性设置与 PlaywrightEngine 同一套（UA/客户端提示/
+        // locale/viewport/stealth）——本引擎此前裸 goto，是全引擎里
+        // 唯一没化妆的检测点；共享函数见 playwright 模块文档。
+        // UA/viewport 硬失败；运行时验证随引擎启用（视觉模型服务）
+        crate::engines::client::playwright::apply_browser_fingerprint(
+            &page,
+            &self.ua_pool,
+            request.mobile,
+        )
+        .await?;
+
+        // Navigate to target URL
+        info!("MLLM engine navigating to: {}", request.url);
+        page.goto(&request.url)
+            .await
+            .map_err(|e| EngineError::BrowserError(format!("Navigation failed: {}", e)))?;
+
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+
+        // Extract goal from URL or request context
+        let goal = extract_goal_from_request(request);
+
+        let final_content = self.run_agentic_loop(&page, &goal, request, start).await?;
+
+        // Take final screenshot if requested
+        let mut screenshot: Option<String> = None;
+        if request.needs_screenshot {
+            screenshot = Some(self.take_screenshot_base64(&page).await?);
+        }
+
+        drop(pooled_page);
+
+        Ok(InternalScrapeResponse {
+            js_degraded: false,
+            status_code: 200,
+            content: final_content,
+            screenshot,
+            content_type: "text/html".to_string(),
+            headers: HashMap::new(),
+            response_time_ms: start.elapsed().as_millis() as u64,
+            final_url: None,
+            captured_responses: Vec::new(),
+        })
+    }
+
+    /// Agentic 主循环：max_iterations / 剩余时间双护栏，逐轮
+    /// 截图 → AX 大纲 → 视觉模型 → 解析决策 → 终态判定 → 执行。
+    /// 达到终态（max_iterations / 临近超时 / Extract / Done）返回当前页面内容；
+    /// 中间步骤失败按原语义向上传播。
+    async fn run_agentic_loop(
+        &self,
+        page: &chromiumoxide::Page,
+        goal: &str,
+        request: &InternalScrapeRequest,
+        start: Instant,
+    ) -> Result<String, EngineError> {
+        let timeout_duration = request.timeout;
+
+        // Agentic loop
+        let mut last_result: Option<ActionResult> = None;
+        let mut iteration: u8 = 0;
+        let final_content;
+
+        loop {
+            if iteration >= self.config.max_iterations {
+                warn!(
+                    "MLLM engine reached max_iterations ({}) for {}",
+                    self.config.max_iterations, request.url
+                );
+                // Fallback: return current page content
+                final_content = get_page_content(page).await;
+                break;
+            }
+
+            let elapsed = start.elapsed();
+            if elapsed + Duration::from_secs(10) > timeout_duration {
+                warn!("MLLM engine approaching timeout for {}", request.url);
+                final_content = get_page_content(page).await;
+                break;
+            }
+
+            iteration += 1;
+            debug!(
+                "MLLM agentic loop iteration {}/{}",
+                iteration, self.config.max_iterations
+            );
+
+            // Step 1: Take screenshot
+            let screenshot_b64 = self.take_screenshot_base64(page).await?;
+
+            // Step 1.5: AX tree outline (F12 hybrid channel; None when disabled)
+            let ax_outline = self.capture_ax_outline(page).await;
+
+            // Step 2: Send to vision model
+            let prompt = self.build_vision_prompt(
+                goal,
+                iteration,
+                last_result.as_ref(),
+                ax_outline.as_deref(),
+            );
+            let vision_response = self
+                .vision_adapter
+                .send_vision_request(
+                    &screenshot_b64,
+                    &prompt,
+                    &self.config.system_prompt,
+                    &self.config.vision_model,
+                )
+                .await
+                .map_err(|e| {
+                    error!("Vision model call failed: {}", e);
+                    EngineError::Other(format!("Vision model call failed: {}", e))
+                })?;
+
+            // Step 3: Parse decision
+            let decision = match parse_decision(&vision_response) {
+                Ok(d) => d,
+                Err(e) => {
+                    warn!("Failed to parse vision response: {}", e);
+                    last_result = Some(ActionResult::err(format!("parse error: {}", e)));
+                    continue;
+                }
+            };
+
+            debug!("MLLM decision at iteration {}: {:?}", iteration, decision);
+
+            // Step 4: Check for terminal decisions
+            match &decision {
+                MllmDecision::Extract { .. } => {
+                    final_content = get_page_content(page).await;
+                    info!("MLLM engine extracted content at iteration {}", iteration);
+                    break;
+                }
+                MllmDecision::Done { .. } => {
+                    final_content = get_page_content(page).await;
+                    info!(
+                        "MLLM engine completed navigation at iteration {}",
+                        iteration
+                    );
+                    break;
+                }
+                _ => {}
+            }
+
+            // Step 5: Execute the decision
+            let result = execute_decision(&decision, page).await;
+            last_result = Some(result);
+
+            // Brief pause for page to settle after action
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        Ok(final_content)
+    }
 }
 
 #[async_trait]
@@ -182,147 +349,10 @@ impl ScraperEngine for MllmEngine {
 
         let pool = self.get_pool()?;
 
-        tokio::time::timeout(timeout_duration, async {
-            // Acquire browser page
-            let pooled_page = pool.acquire_page().await?;
-            let page: chromiumoxide::Page = pooled_page.page().clone();
-
-            // 指纹一致性设置与 PlaywrightEngine 同一套（UA/客户端提示/
-            // locale/viewport/stealth）——本引擎此前裸 goto，是全引擎里
-            // 唯一没化妆的检测点；共享函数见 playwright 模块文档。
-            // UA/viewport 硬失败；运行时验证随引擎启用（视觉模型服务）
-            crate::engines::client::playwright::apply_browser_fingerprint(
-                &page,
-                &self.ua_pool,
-                request.mobile,
-            )
-            .await?;
-
-            // Navigate to target URL
-            info!("MLLM engine navigating to: {}", request.url);
-            page.goto(&request.url)
-                .await
-                .map_err(|e| EngineError::BrowserError(format!("Navigation failed: {}", e)))?;
-
-            tokio::time::sleep(Duration::from_millis(1500)).await;
-
-            // Extract goal from URL or request context
-            let goal = extract_goal_from_request(request);
-
-            // Agentic loop
-            let mut last_result: Option<ActionResult> = None;
-            let mut iteration: u8 = 0;
-            let final_content;
-
-            loop {
-                if iteration >= self.config.max_iterations {
-                    warn!(
-                        "MLLM engine reached max_iterations ({}) for {}",
-                        self.config.max_iterations, request.url
-                    );
-                    // Fallback: return current page content
-                    final_content = get_page_content(&page).await;
-                    break;
-                }
-
-                let elapsed = start.elapsed();
-                if elapsed + Duration::from_secs(10) > timeout_duration {
-                    warn!("MLLM engine approaching timeout for {}", request.url);
-                    final_content = get_page_content(&page).await;
-                    break;
-                }
-
-                iteration += 1;
-                debug!(
-                    "MLLM agentic loop iteration {}/{}",
-                    iteration, self.config.max_iterations
-                );
-
-                // Step 1: Take screenshot
-                let screenshot_b64 = self.take_screenshot_base64(&page).await?;
-
-                // Step 1.5: AX tree outline (F12 hybrid channel; None when disabled)
-                let ax_outline = self.capture_ax_outline(&page).await;
-
-                // Step 2: Send to vision model
-                let prompt = self.build_vision_prompt(
-                    &goal,
-                    iteration,
-                    last_result.as_ref(),
-                    ax_outline.as_deref(),
-                );
-                let vision_response = self
-                    .vision_adapter
-                    .send_vision_request(
-                        &screenshot_b64,
-                        &prompt,
-                        &self.config.system_prompt,
-                        &self.config.vision_model,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("Vision model call failed: {}", e);
-                        EngineError::Other(format!("Vision model call failed: {}", e))
-                    })?;
-
-                // Step 3: Parse decision
-                let decision = match parse_decision(&vision_response) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        warn!("Failed to parse vision response: {}", e);
-                        last_result = Some(ActionResult::err(format!("parse error: {}", e)));
-                        continue;
-                    }
-                };
-
-                debug!("MLLM decision at iteration {}: {:?}", iteration, decision);
-
-                // Step 4: Check for terminal decisions
-                match &decision {
-                    MllmDecision::Extract { .. } => {
-                        final_content = get_page_content(&page).await;
-                        info!("MLLM engine extracted content at iteration {}", iteration);
-                        break;
-                    }
-                    MllmDecision::Done { .. } => {
-                        final_content = get_page_content(&page).await;
-                        info!(
-                            "MLLM engine completed navigation at iteration {}",
-                            iteration
-                        );
-                        break;
-                    }
-                    _ => {}
-                }
-
-                // Step 5: Execute the decision
-                let result = execute_decision(&decision, &page).await;
-                last_result = Some(result);
-
-                // Brief pause for page to settle after action
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-
-            // Take final screenshot if requested
-            let mut screenshot: Option<String> = None;
-            if request.needs_screenshot {
-                screenshot = Some(self.take_screenshot_base64(&page).await?);
-            }
-
-            drop(pooled_page);
-
-            Ok(InternalScrapeResponse {
-                js_degraded: false,
-                status_code: 200,
-                content: final_content,
-                screenshot,
-                content_type: "text/html".to_string(),
-                headers: HashMap::new(),
-                response_time_ms: start.elapsed().as_millis() as u64,
-                final_url: None,
-                captured_responses: Vec::new(),
-            })
-        })
+        tokio::time::timeout(
+            timeout_duration,
+            self.scrape_with_pool(pool, request, start),
+        )
         .await
         .map_err(|_| EngineError::Timeout(timeout_duration))?
     }

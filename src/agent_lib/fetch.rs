@@ -127,21 +127,8 @@ pub async fn fetch(url: &str, opts: &FetchOptions) -> Result<FetchedContent, Age
             }
         }
 
-        // 构建本跳 client。
-        // - egress=Some：guard 已裁决，无需 crawlrs 侧 SSRF；用普通 client（redirect=none）。
-        // - egress=None：行为与平台现状一致——crawlrs 独立执行 SSRF 校验 + DNS pinning。
-        let client = if opts.egress.is_some() {
-            build_plain_client(opts.timeout)?
-        } else {
-            let validated = validator.validate(current.as_str()).await.map_err(|e| {
-                AgentLibError::SsrfDenied {
-                    url: current.to_string(),
-                    // 脱敏：只保留错误类别，不回显解析出的内网 IP/主机名
-                    reason: e.kind().to_string(),
-                }
-            })?;
-            build_pinned_client(&validated, opts.timeout)?
-        };
+        // 构建本跳 client（egress/SSRF 分派见 [`build_hop_client`]）
+        let client = build_hop_client(&validator, opts, &current).await?;
 
         // GET 请求
         let resp = client
@@ -158,24 +145,7 @@ pub async fn fetch(url: &str, opts: &FetchOptions) -> Result<FetchedContent, Age
         // 重定向处理
         if opts.follow_redirects && resp.status().is_redirection() {
             redirects += 1;
-            if redirects > MAX_REDIRECTS {
-                return Err(AgentLibError::TooManyRedirects {
-                    max_redirects: MAX_REDIRECTS,
-                });
-            }
-            let location = resp
-                .headers()
-                .get(LOCATION)
-                .and_then(|v| v.to_str().ok())
-                .ok_or_else(|| {
-                    AgentLibError::Network(format!(
-                        "redirect {} missing Location header",
-                        resp.status()
-                    ))
-                })?;
-            current = current
-                .join(location)
-                .map_err(|e| AgentLibError::InvalidUrl(format!("bad redirect: {}", e)))?;
+            current = next_redirect_target(&current, &resp, redirects)?;
             continue;
         }
 
@@ -193,6 +163,58 @@ pub async fn fetch(url: &str, opts: &FetchOptions) -> Result<FetchedContent, Age
         // 正文提取 + Markdown 管道
         return convert_to_markdown(&html, &current, final_peer_addr).await;
     }
+}
+
+/// 构建本跳 HTTP client（自 [`fetch`] 提取）。
+///
+/// - egress=Some：guard 已裁决，无需 crawlrs 侧 SSRF；用普通 client（redirect=none）。
+/// - egress=None：行为与平台现状一致——crawlrs 独立执行 SSRF 校验 + DNS pinning。
+async fn build_hop_client(
+    validator: &SsrfValidator,
+    opts: &FetchOptions,
+    current: &url::Url,
+) -> Result<reqwest::Client, AgentLibError> {
+    if opts.egress.is_some() {
+        build_plain_client(opts.timeout)
+    } else {
+        let validated = validator.validate(current.as_str()).await.map_err(|e| {
+            AgentLibError::SsrfDenied {
+                url: current.to_string(),
+                // 脱敏：只保留错误类别，不回显解析出的内网 IP/主机名
+                reason: e.kind().to_string(),
+            }
+        })?;
+        build_pinned_client(&validated, opts.timeout)
+    }
+}
+
+/// 计算下一跳重定向目标（自 [`fetch`] 提取）。
+///
+/// `redirects` 为已含本次跳数的计数：超过 [`MAX_REDIRECTS`] 报 `TooManyRedirects`；
+/// 缺失 Location 头报 `Network`；相对 Location 按当前 URL join。
+fn next_redirect_target(
+    current: &url::Url,
+    resp: &Response,
+    redirects: u8,
+) -> Result<url::Url, AgentLibError> {
+    if redirects > MAX_REDIRECTS {
+        return Err(AgentLibError::TooManyRedirects {
+            max_redirects: MAX_REDIRECTS,
+        });
+    }
+    let location = resp
+        .headers()
+        .get(LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            AgentLibError::Network(format!(
+                "redirect {} missing Location header",
+                resp.status()
+            ))
+        })?;
+    current
+        .join(location)
+        .map_err(|e| AgentLibError::InvalidUrl(format!("bad redirect: {}", e)))
 }
 
 /// 构建普通 HTTP client（egress=Some 路径，redirect=none 手动处理）。

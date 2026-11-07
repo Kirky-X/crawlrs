@@ -24,16 +24,18 @@
 //! leader task_id 查询结果；异常（Purged/Closed/超时）一律走自身重排，避免误杀
 //! leader 任务或无条件 purge 全表。
 
+mod leader;
+use leader::{recv_leader_signal, LeaderSignal};
+
 use crate::domain::models::{Task, TaskStatus};
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
 use crate::utils::coalesce::{CoalesceGuard, CoalesceResult, CoalesceSignal, RequestCoalescer};
 use anyhow::Result;
 use chrono::Utc;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 
 /// 请求合并协调器
 ///
@@ -116,44 +118,39 @@ impl CoalesceCoordinator {
                 // - timeout → leader 仍可能在跑，不无条件 purge 全表，走自身重排
                 const COALESCE_RECV_TIMEOUT_SECS: u64 = 45;
 
-                let signal = match tokio::time::timeout(
-                    std::time::Duration::from_secs(COALESCE_RECV_TIMEOUT_SECS),
-                    rx.recv(),
-                )
-                .await
-                {
-                    Err(_) => {
+                let signal = match recv_leader_signal(&mut rx, COALESCE_RECV_TIMEOUT_SECS).await {
+                    LeaderSignal::Signal(sig) => sig,
+                    LeaderSignal::TimedOut => {
                         // 超时：leader 未在窗口内完成，可能仍在跑或已 panic/死锁。
                         // 超时路径不得无条件 purge 全表，也不 mark_failed
                         // leader 的任务；走等待方自身重排（超上限后才 mark_failed 自身）。
                         error!(
                             "Coalesce wait for task {} timed out after {}s (leader task {}); \
-                             rescheduling self instead of failing leader",
+                                 rescheduling self instead of failing leader",
                             task.id, COALESCE_RECV_TIMEOUT_SECS, leader_task_id
                         );
                         return self
                             .reschedule_or_fail(task, worker_id, "coalesce wait timeout")
                             .await;
                     }
-                    Ok(Ok(sig)) => sig,
-                    Ok(Err(broadcast::error::RecvError::Closed)) => {
+                    LeaderSignal::Closed => {
                         // recv Closed：leader 的 sender 全部 drop 却未广播完成
                         // （panic / 异常终止）。视为 leader 异常，不 mark_failed，走自身重排。
                         warn!(
-                            "Coalesce channel closed for task {} (leader task {} likely panicked); \
-                             rescheduling self",
-                            task.id, leader_task_id
-                        );
+                                "Coalesce channel closed for task {} (leader task {} likely panicked); \
+                                 rescheduling self",
+                                task.id, leader_task_id
+                            );
                         return self
                             .reschedule_or_fail(task, worker_id, "coalesce channel closed")
                             .await;
                     }
-                    Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
+                    LeaderSignal::Lagged(n) => {
                         // Lagged：等待方消费过慢丢失信号（容量 1 理论不应发生）。保守重排。
                         warn!(
-                            "Coalesce receiver for task {} lagged by {} messages; rescheduling self",
-                            task.id, n
-                        );
+                                "Coalesce receiver for task {} lagged by {} messages; rescheduling self",
+                                task.id, n
+                            );
                         return self
                             .reschedule_or_fail(task, worker_id, "coalesce receiver lagged")
                             .await;
@@ -174,44 +171,19 @@ impl CoalesceCoordinator {
                     CoalesceSignal::Completed => {
                         // leader 正常完成：按 leader task_id 查询落库结果
                         // （结果落在 leader 名下，非等待方自身 task_id）。
-                        match self.result_repository.find_by_task_id(leader_task_id).await {
-                            Ok(Some(mut leader_result)) => {
-                                debug!(
-                                    "Coalesced task {} resolved from leader {} result, marking completed",
-                                    task.id, leader_task_id
-                                );
-                                // 结果须为等待方复制一份：等待方完成后 API 按
-                                // 自身 task_id 查结果，缺失即 completed 任务
-                                // content 空、status_code 缺失（静默失败）。
-                                // 重复投递时等待方可能已有结果，幂等跳过。
-                                if self
-                                    .result_repository
-                                    .find_by_task_id(task.id)
-                                    .await?
-                                    .is_none()
-                                {
-                                    leader_result.id = crate::domain::id::Id::generate();
-                                    leader_result.task_id = task.id;
-                                    leader_result.created_at = Utc::now();
-                                    self.result_repository.save(leader_result).await?;
-                                }
-                                self.repository
-                                    .mark_completed(task.id, Some(worker_id))
-                                    .await?;
-                                Ok(None)
-                            }
-                            Ok(None) => {
-                                // leader 已完成但结果尚未落库/不可见——延后重排
-                                self.reschedule_or_fail(
-                                    task,
-                                    worker_id,
-                                    "leader result not yet available",
-                                )
-                                .await
-                            }
-                            Err(e) => {
-                                Err(anyhow::anyhow!("coalesce find_by_task_id failed: {}", e))
-                            }
+                        if self
+                            .adopt_leader_result(task, leader_task_id, worker_id)
+                            .await?
+                        {
+                            Ok(None)
+                        } else {
+                            // leader 已完成但结果尚未落库/不可见——延后重排
+                            self.reschedule_or_fail(
+                                task,
+                                worker_id,
+                                "leader result not yet available",
+                            )
+                            .await
                         }
                     }
                 }
