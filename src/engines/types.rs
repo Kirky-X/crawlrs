@@ -129,7 +129,7 @@ pub fn validate_session_id(session_id: &str) -> bool {
 ///
 /// `Selector` 模式对 selector 字符串做 JS 字符串转义，防注入（CWE-94）。
 /// `DomStable` 的 `stable_duration` 上限 60s，防恶意调用方设置过长导致 DoS。
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub enum WaitFor {
     /// 等待网络空闲（无新请求持续 500ms）
     ///
@@ -164,7 +164,10 @@ pub enum WaitFor {
 }
 
 /// Optional configuration for scrape operations.
-#[derive(Debug, Clone)]
+///
+/// `Serialize` 供请求合并键（`utils::coalesce`）对完整请求身份做确定性指纹：
+/// 新增字段会自动进入指纹，避免同 URL 不同选项的请求被错误合并。
+#[derive(Debug, Clone, Serialize)]
 pub struct ScrapeOptions {
     /// HTTP method for the request
     pub method: HttpMethod,
@@ -456,7 +459,7 @@ impl ScrapeOptionsBuilder {
 }
 
 /// Page action to perform during scraping.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum PageAction {
     /// Wait for specified milliseconds
     Wait { milliseconds: u64 },
@@ -469,7 +472,7 @@ pub enum PageAction {
 }
 
 /// Scroll direction for PageAction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub enum ScrollDirection {
     #[default]
     Down,
@@ -479,7 +482,7 @@ pub enum ScrollDirection {
 }
 
 /// Screenshot configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ScreenshotConfig {
     /// Capture full page (default: true)
     pub full_page: bool,

@@ -19,6 +19,8 @@
 //! - `engines` → `common`（合法）
 //! - `application` → `common`（合法）
 
+use serde::Serialize;
+
 /// HTTP 方法枚举
 ///
 /// 仅覆盖爬取场景所需的 GET / POST 两种方法：
@@ -28,7 +30,7 @@
 /// # 默认值
 ///
 /// `Default::default()` 返回 `HttpMethod::Get`，与爬取场景的默认行为一致。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub enum HttpMethod {
     /// HTTP GET（幂等读，可缓存）
     #[default]

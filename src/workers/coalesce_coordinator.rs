@@ -30,7 +30,10 @@ use leader::{recv_leader_signal, LeaderSignal};
 use crate::domain::models::{Task, TaskStatus};
 use crate::domain::repositories::scrape_result_repository::ScrapeResultRepository;
 use crate::domain::repositories::task_repository::TaskRepository;
-use crate::utils::coalesce::{CoalesceGuard, CoalesceResult, CoalesceSignal, RequestCoalescer};
+use crate::utils::coalesce::{
+    CoalesceGuard, CoalesceKey, CoalesceResult, CoalesceSignal, RequestCoalescer,
+};
+use crate::workers::cache_utils::redact_url_for_log;
 use anyhow::Result;
 use chrono::Utc;
 use log::{error, info, warn};
@@ -39,7 +42,9 @@ use std::sync::Arc;
 
 /// 请求合并协调器
 ///
-/// 封装同 URL 并发请求的 single-flight 协调逻辑，从 ScrapeWorker 抽离。
+/// 封装同合并键（租户 + 规范化 URL + 完整请求身份指纹）并发请求的
+/// single-flight 协调逻辑，从 ScrapeWorker 抽离。
+/// 合并键构造见 [`CoalesceKey`]：跨租户或 `ScrapeOptions` 任一字段不同一律不合并。
 ///
 /// # 字段
 ///
@@ -83,26 +88,53 @@ impl CoalesceCoordinator {
         }
     }
 
-    /// 尝试获取同 URL 的执行权
+    /// 尝试获取合并键的执行权
+    ///
+    /// `key` 由调用方按任务上下文构造：租户（`Task::team_id`）+ 规范化 URL +
+    /// 本次请求完整 `ScrapeOptions` 的指纹。键不同的请求不会合并（跨租户泄露防护）。
     ///
     /// # 返回值
     ///
     /// - `Ok(Some(guard))`：获得执行权，调用方应继续抓取，guard Drop 时广播
     /// - `Ok(None)`：已被其他 worker 处理（等待方从 result_repo 读到结果，或被延后重排），
     ///   调用方应直接返回 Ok()
-    /// - `Err(e)`：协调失败（超时 / 仓储错误），调用方应失败处理
+    /// - `Err(e)`：协调失败（租户不一致 / 超时 / 仓储错误），调用方应失败处理
     pub async fn try_coalesce(
         &self,
-        url: &str,
+        key: &CoalesceKey,
         task: &Task,
         worker_id: crate::domain::id::Id,
     ) -> Result<Option<CoalesceGuard>> {
-        match self.request_coalescer.try_start(url, task.id) {
+        // 合并键租户必须与任务租户一致。debug 构建直接 panic 暴露编程错误；
+        // release 构建显性返回错误，绝不按错误租户静默合并/落库。
+        if key.team_id() != task.team_id {
+            debug_assert_eq!(
+                key.team_id(),
+                task.team_id,
+                "coalesce key tenant must match task tenant"
+            );
+            error!(
+                "coalesce key tenant mismatch: key team {} vs task team {} (task {})",
+                key.team_id(),
+                task.team_id,
+                task.id
+            );
+            anyhow::bail!(
+                "coalesce key tenant mismatch: key team {} != task team {}",
+                key.team_id(),
+                task.team_id
+            );
+        }
+
+        match self.request_coalescer.try_start(key, task.id) {
             CoalesceResult::Proceed(g) => Ok(Some(g)),
             CoalesceResult::Wait(mut rx, leader_task_id) => {
                 info!(
-                    "URL {} already in-flight (leader task {}), task {} waiting for coalesce",
-                    url, leader_task_id, task.id
+                    "URL {} (team {}) already in-flight (leader task {}), task {} waiting for coalesce",
+                    redact_url_for_log(key.url()),
+                    key.team_id(),
+                    leader_task_id,
+                    task.id
                 );
                 // 等待首个 worker（leader）完成，加 timeout 防止活锁。
                 //
@@ -252,6 +284,7 @@ mod tests {
     use super::*;
     use crate::domain::models::{Task, TaskType};
     use crate::domain::repositories::task_repository::{RepositoryError, TaskQueryParams};
+    use crate::engines::types::ScrapeOptions;
     use crate::utils::coalesce::RequestCoalescer;
     use async_trait::async_trait;
     use serde_json::json;
@@ -500,6 +533,13 @@ mod tests {
         )
     }
 
+    /// 测试键：取任务自带租户 + URL + 默认 `ScrapeOptions`。
+    ///
+    /// leader 占位与等待方必须用同一辅助函数构造键，才能命中同一 in-flight 条目。
+    fn key_for(task: &Task) -> CoalesceKey {
+        CoalesceKey::new(task.team_id, &task.url, &ScrapeOptions::default())
+    }
+
     /// Proceed 路径：首个 worker 获得执行权，返回 Some(guard)
     #[tokio::test]
     async fn try_coalesce_proceed_returns_some_guard() {
@@ -511,7 +551,7 @@ mod tests {
             CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
-        let result = coord.try_coalesce(&task.url, &task, worker_id).await;
+        let result = coord.try_coalesce(&key_for(&task), &task, worker_id).await;
         assert!(result.is_ok(), "proceed path should succeed");
         let guard = result.unwrap();
         assert!(guard.is_some(), "first call should return Some(guard)");
@@ -532,17 +572,17 @@ mod tests {
             CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
-        let url = task.url.clone();
+        let key = key_for(&task);
 
         // 占住 slot
-        let first_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
+        let first_guard = coalescer.try_start(&key, crate::domain::id::Id::generate());
         // 等待 guard 进入 Wait 路径
         let task_clone = task.clone();
         let coord_clone = coord.clone();
-        let url_clone = url.clone();
+        let key_clone = key.clone();
         let handle = tokio::spawn(async move {
             coord_clone
-                .try_coalesce(&url_clone, &task_clone, worker_id)
+                .try_coalesce(&key_clone, &task_clone, worker_id)
                 .await
         });
 
@@ -589,16 +629,16 @@ mod tests {
             CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
-        let url = task.url.clone();
+        let key = key_for(&task);
 
         // 占住 slot
-        let first_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
+        let first_guard = coalescer.try_start(&key, crate::domain::id::Id::generate());
         let task_clone = task.clone();
         let coord_clone = coord.clone();
-        let url_clone = url.clone();
+        let key_clone = key.clone();
         let handle = tokio::spawn(async move {
             coord_clone
-                .try_coalesce(&url_clone, &task_clone, worker_id)
+                .try_coalesce(&key_clone, &task_clone, worker_id)
                 .await
         });
 
@@ -638,17 +678,17 @@ mod tests {
             CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
-        let url = task.url.clone();
+        let key = key_for(&task);
 
         // 占住 slot 但不释放（模拟首个 worker 长时间处理）
-        let _first_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
+        let _first_guard = coalescer.try_start(&key, crate::domain::id::Id::generate());
 
         let task_clone = task.clone();
         let coord_clone = coord.clone();
-        let url_clone = url.clone();
+        let key_clone = key.clone();
         let handle = tokio::spawn(async move {
             coord_clone
-                .try_coalesce(&url_clone, &task_clone, worker_id)
+                .try_coalesce(&key_clone, &task_clone, worker_id)
                 .await
         });
 
@@ -677,16 +717,16 @@ mod tests {
         // 构造已达最大重排次数的任务
         let mut task = make_task();
         task.payload = json!({"coalesce_reschedule_count": 3});
-        let url = task.url.clone();
+        let key = key_for(&task);
 
         // 占住 slot
-        let first_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
+        let first_guard = coalescer.try_start(&key, crate::domain::id::Id::generate());
         let task_clone = task.clone();
         let coord_clone = coord.clone();
-        let url_clone = url.clone();
+        let key_clone = key.clone();
         let handle = tokio::spawn(async move {
             coord_clone
-                .try_coalesce(&url_clone, &task_clone, worker_id)
+                .try_coalesce(&key_clone, &task_clone, worker_id)
                 .await
         });
 
@@ -757,15 +797,15 @@ mod tests {
             CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
-        let url = task.url.clone();
+        let key = key_for(&task);
 
-        let first_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
+        let first_guard = coalescer.try_start(&key, crate::domain::id::Id::generate());
         let task_clone = task.clone();
         let coord_clone = coord.clone();
-        let url_clone = url.clone();
+        let key_clone = key.clone();
         let handle = tokio::spawn(async move {
             coord_clone
-                .try_coalesce(&url_clone, &task_clone, worker_id)
+                .try_coalesce(&key_clone, &task_clone, worker_id)
                 .await
         });
 
@@ -800,23 +840,23 @@ mod tests {
             CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
-        let url = task.url.clone();
+        let key = key_for(&task);
 
         // leader 占位；_leader_guard 保活到作用域末，避免其提前 Drop 广播 Completed
-        let _leader_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
+        let _leader_guard = coalescer.try_start(&key, crate::domain::id::Id::generate());
 
         let task_clone = task.clone();
         let coord_clone = coord.clone();
-        let url_clone = url.clone();
+        let key_clone = key.clone();
         let handle = tokio::spawn(async move {
             coord_clone
-                .try_coalesce(&url_clone, &task_clone, worker_id)
+                .try_coalesce(&key_clone, &task_clone, worker_id)
                 .await
         });
 
         // 等待方进入 recv 后，静默移除条目 → sender drop → recv 返回 Closed
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        coalescer.drop_entry_silently(&url);
+        coalescer.drop_entry_silently(&key);
 
         let result = handle.await.expect("task panicked");
         assert!(result.is_ok(), "closed channel should not error");
@@ -856,22 +896,22 @@ mod tests {
             CoalesceCoordinator::new(task_repo.clone(), result_repo.clone(), coalescer.clone());
 
         let task = make_task();
-        let url = task.url.clone();
+        let key = key_for(&task);
 
-        let _leader_guard = coalescer.try_start(&url, crate::domain::id::Id::generate());
+        let _leader_guard = coalescer.try_start(&key, crate::domain::id::Id::generate());
 
         let task_clone = task.clone();
         let coord_clone = coord.clone();
-        let url_clone = url.clone();
+        let key_clone = key.clone();
         let handle = tokio::spawn(async move {
             coord_clone
-                .try_coalesce(&url_clone, &task_clone, worker_id)
+                .try_coalesce(&key_clone, &task_clone, worker_id)
                 .await
         });
 
         // 等待方进入 recv 后，强制 purge 该条目 → 广播 Purged
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        coalescer.purge_url(&url);
+        coalescer.purge_key(&key);
 
         let result = handle.await.expect("task panicked");
         assert!(result.is_ok());
@@ -921,16 +961,16 @@ mod tests {
             leader_id, waiter_task.id,
             "test precondition: leader and waiter task ids differ"
         );
-        let url = waiter_task.url.clone();
+        let key = key_for(&waiter_task);
 
-        let leader_guard = coalescer.try_start(&url, leader_id);
+        let leader_guard = coalescer.try_start(&key, leader_id);
 
         let task_clone = waiter_task.clone();
         let coord_clone = coord.clone();
-        let url_clone = url.clone();
+        let key_clone = key.clone();
         let handle = tokio::spawn(async move {
             coord_clone
-                .try_coalesce(&url_clone, &task_clone, worker_id)
+                .try_coalesce(&key_clone, &task_clone, worker_id)
                 .await
         });
 
@@ -968,5 +1008,105 @@ mod tests {
         );
         // 命中后 mark_completed 等待方自身任务
         assert_eq!(task_repo.mark_completed_calls.load(Ordering::SeqCst), 1);
+    }
+
+    // === 合并键租户 / 请求身份（M1 / M5） ===
+
+    /// M5：worker 级——同 URL 不同 team_id 并发，两个都获得执行权
+    #[tokio::test]
+    async fn worker_same_url_different_team_does_not_coalesce() {
+        let worker_id = crate::domain::id::Id::generate();
+        let coalescer = Arc::new(RequestCoalescer::new());
+        let coord = CoalesceCoordinator::new(
+            Arc::new(CountingTaskRepo::new()),
+            Arc::new(ConfigurableResultRepo::new(false)),
+            coalescer.clone(),
+        );
+
+        let task_a = make_task();
+        let mut task_b = make_task();
+        task_b.team_id = crate::domain::id::Id::generate();
+        task_b.url = task_a.url.clone();
+        assert_ne!(task_a.team_id, task_b.team_id);
+
+        let key_a = key_for(&task_a);
+        let key_b = key_for(&task_b);
+        let (result_a, result_b) = tokio::join!(
+            coord.try_coalesce(&key_a, &task_a, worker_id),
+            coord.try_coalesce(&key_b, &task_b, worker_id),
+        );
+
+        assert!(result_a.is_ok(), "tenant A should proceed");
+        assert!(result_b.is_ok(), "tenant B should proceed");
+        let (guard_a, guard_b) = (result_a.unwrap(), result_b.unwrap());
+        assert!(guard_a.is_some(), "tenant A must acquire coalesce slot");
+        assert!(
+            guard_b.is_some(),
+            "tenant B must not wait on tenant A's in-flight entry"
+        );
+        assert_eq!(coalescer.in_flight_count(), 2);
+    }
+
+    /// M5：worker 级——同租户同 URL 但 headers 不同并发，两个都获得执行权
+    #[tokio::test]
+    async fn worker_same_tenant_different_headers_do_not_coalesce() {
+        let worker_id = crate::domain::id::Id::generate();
+        let coalescer = Arc::new(RequestCoalescer::new());
+        let coord = CoalesceCoordinator::new(
+            Arc::new(CountingTaskRepo::new()),
+            Arc::new(ConfigurableResultRepo::new(false)),
+            coalescer.clone(),
+        );
+
+        let task = make_task();
+        let mut options_a = ScrapeOptions::default();
+        options_a
+            .headers
+            .insert("X-Trace".to_string(), "a".to_string());
+        let mut options_b = ScrapeOptions::default();
+        options_b
+            .headers
+            .insert("X-Trace".to_string(), "b".to_string());
+
+        let key_a = CoalesceKey::new(task.team_id, &task.url, &options_a);
+        let key_b = CoalesceKey::new(task.team_id, &task.url, &options_b);
+        let (result_a, result_b) = tokio::join!(
+            coord.try_coalesce(&key_a, &task, worker_id),
+            coord.try_coalesce(&key_b, &task, worker_id),
+        );
+
+        assert!(result_a.is_ok());
+        assert!(result_b.is_ok());
+        let (guard_a, guard_b) = (result_a.unwrap(), result_b.unwrap());
+        assert!(guard_a.is_some(), "header set A must proceed");
+        assert!(
+            guard_b.is_some(),
+            "header set B must not coalesce with header set A"
+        );
+        assert_eq!(coalescer.in_flight_count(), 2);
+    }
+
+    /// M1：debug 构建下键租户与任务租户不一致立即 panic（编程错误显性化）
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    #[should_panic(expected = "coalesce key tenant must match task tenant")]
+    async fn try_coalesce_tenant_mismatch_panics_in_debug() {
+        let worker_id = crate::domain::id::Id::generate();
+        let coalescer = Arc::new(RequestCoalescer::new());
+        let coord = CoalesceCoordinator::new(
+            Arc::new(CountingTaskRepo::new()),
+            Arc::new(ConfigurableResultRepo::new(false)),
+            coalescer,
+        );
+
+        let task = make_task();
+        let other_team = if task.team_id == crate::domain::id::Id::from_u128(0) {
+            crate::domain::id::Id::from_u128(1)
+        } else {
+            crate::domain::id::Id::from_u128(0)
+        };
+        let key = CoalesceKey::new(other_team, &task.url, &ScrapeOptions::default());
+
+        let _ = coord.try_coalesce(&key, &task, worker_id).await;
     }
 }

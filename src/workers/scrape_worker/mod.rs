@@ -45,6 +45,8 @@ use crate::workers::coalesce_coordinator::CoalesceCoordinator;
 use crate::workers::shutdown::ShutdownCoordinator;
 // cache key 生成、URL 脱敏
 use crate::workers::cache_utils::{self, redact_url_for_log};
+// 请求合并键（租户 + 规范化 URL + 完整请求身份指纹）
+use crate::utils::coalesce::CoalesceKey;
 // Markdown 后处理器（gated `markdown` 特性，替代原 maybe_generate_markdown 方法）
 use crate::utils::retry_policy::RetryPolicy;
 #[cfg(feature = "content")]
@@ -352,15 +354,23 @@ impl ScrapeWorker {
             return Ok(());
         }
 
-        // 请求合并——同 URL 并发只允许首个执行实际抓取
+        // 请求合并——同合并键（租户 + 规范化 URL + 完整请求身份指纹）并发只允许
+        // 首个执行实际抓取
         //
         // 调用 CoalesceCoordinator（独立组件），返回 `Some(guard)` 表示获得执行权，
         // guard 在抓取完成（含错误路径）后随作用域结束 Drop，自动从 in_flight 移除条目并广播给等待方。
         // 返回 `None` 表示已被其他 worker 处理（等待方从 result_repo 读到结果，
         // 或任务被延后重排），调用方应直接返回 Ok。
+        //
+        // 键取自本任务实际会下发的请求：task.team_id（租户隔离，M-2）、
+        // scrape_request.url（与实际下发 URL 一致，URL 归一化在 CoalesceKey 内完成）、
+        // scrape_request.options 全字段（headers/proxy/method/body/needs_js/...
+        // 任一不同都不得互相收养结果）。
+        let coalesce_key =
+            CoalesceKey::new(task.team_id, &scrape_request.url, &scrape_request.options);
         let _coalesce_guard = match self
             .coalesce_coordinator
-            .try_coalesce(&task.url, &task, self.worker_id)
+            .try_coalesce(&coalesce_key, &task, self.worker_id)
             .await?
         {
             Some(g) => g,

@@ -1526,11 +1526,13 @@ gated `engine-playwright`，R-jsrender-003：
 
 ### Request Coalescing (`src/utils/coalesce.rs`)
 
-移植 spider `coalesce.rs`：`RequestCoalescer{ in_flight: Arc<DashMap<String, InFlightEntry>> }`：
+移植 spider `coalesce.rs`：`RequestCoalescer{ in_flight: Arc<DashMap<CoalesceKey, InFlightEntry>> }`：
 
-- `try_start(url) -> Proceed(CoalesceGuard) | Wait(broadcast::Receiver)`
+- `CoalesceKey` = 租户（`Task::team_id`）+ 规范化 URL（scheme/host 小写、去 fragment、去默认端口）+ `ScrapeOptions` 全字段结构化指纹（headers 名小写后按名值排序，`DefaultHasher` 64 位，同一进程内稳定）
+- `try_start(&CoalesceKey) -> Proceed(CoalesceGuard) | Wait(broadcast::Receiver, leader_task_id)`
+- 跨租户或 headers/proxy 不同一律不合并（M-2：防止等待方按 leader task_id 收养另一租户的结果）
 - `STALE_TIMEOUT=120s` + `purge_stale()`
-- 经 `CoalesceCoordinator` 接入 `scrape_worker`，同 URL 并发仅 1 次实际 fetch
+- 经 `CoalesceCoordinator` 接入 `scrape_worker`，同合并键并发仅 1 次实际 fetch
 
 ### AIMD Adaptive Concurrency (`src/utils/adaptive_concurrency.rs`)
 
