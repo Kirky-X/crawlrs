@@ -235,61 +235,7 @@ impl CrawlUseCase {
         // teams-off：restrictions 变量使用 TeamGeoRestrictions::default 占位，
         // 以保证下游 payload 中的 `restrictions.domain_blacklist` 字段类型一致。
         #[cfg(feature = "teams")]
-        let restrictions = {
-            let r = self
-                .geo_restriction_repo
-                .get_team_restrictions(team_id)
-                .await
-                .map_err(|e| {
-                    CrawlUseCaseError::Anyhow(anyhow::anyhow!(
-                        "Failed to get team restrictions: {}",
-                        e
-                    ))
-                })?;
-
-            match self
-                .team_service
-                .validate_geographic_restriction(team_id, client_ip, &r)
-                .await
-            {
-                Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
-                    if let Err(e) = self
-                        .geo_restriction_repo
-                        .log_geo_restriction_action(
-                            team_id,
-                            client_ip,
-                            "",
-                            "ALLOWED",
-                            "Geographic restriction check passed",
-                        )
-                        .await
-                    {
-                        error!("Failed to log geographic restriction action: {}", e);
-                    }
-                }
-                Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
-                    if let Err(e) = self
-                        .geo_restriction_repo
-                        .log_geo_restriction_action(team_id, client_ip, "", "DENIED", &reason)
-                        .await
-                    {
-                        error!("Failed to log geographic restriction action: {}", e);
-                    }
-                    return Err(CrawlUseCaseError::ValidationError(format!(
-                        "Geographic restriction check failed: {}",
-                        reason
-                    )));
-                }
-                Err(e) => {
-                    error!("Geographic restriction validation error: {}", e);
-                    return Err(CrawlUseCaseError::Anyhow(anyhow::anyhow!(
-                        "Geographic restriction validation failed: {}",
-                        e
-                    )));
-                }
-            }
-            r
-        };
+        let restrictions = self.resolve_geo_restrictions(team_id, client_ip).await?;
         // teams-off 时 restrictions 用默认值占位
         // （payload.domain_blacklist 字段类型保持一致，避免 cfg 分裂 payload 构造）
         #[cfg(not(feature = "teams"))]
@@ -301,30 +247,99 @@ impl CrawlUseCase {
         // 种子 URL 必须过团队 domain_blacklist（与链接提取侧过滤对齐，
         // 阻止直接 crawl 黑名单域名的种子入口）
         #[cfg(feature = "teams")]
-        {
-            match self
-                .team_service
-                .validate_domain_blacklist(seed_url, &restrictions)
-            {
-                Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {}
-                Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
-                    error!(
-                        "Crawl seed URL {} denied by domain blacklist: {}",
-                        seed_url, reason
-                    );
-                    return Err(CrawlUseCaseError::ValidationError(reason));
-                }
-                Err(e) => {
-                    error!("Domain blacklist validation error: {}", e);
-                    return Err(CrawlUseCaseError::Anyhow(anyhow::anyhow!(
-                        "Domain blacklist validation failed: {}",
-                        e
-                    )));
-                }
-            }
-        }
+        self.validate_seed_domain(seed_url, &restrictions).await?;
 
         Ok(restrictions)
+    }
+
+    /// 获取并校验团队地理限制，记录审计日志（自
+    /// [`Self::check_request_restrictions`] 提取，仅 teams-on）。
+    #[cfg(feature = "teams")]
+    async fn resolve_geo_restrictions(
+        &self,
+        team_id: crate::domain::id::Id,
+        client_ip: &str,
+    ) -> Result<crate::domain::services::team_service::TeamGeoRestrictions, CrawlUseCaseError> {
+        let r = self
+            .geo_restriction_repo
+            .get_team_restrictions(team_id)
+            .await
+            .map_err(|e| {
+                CrawlUseCaseError::Anyhow(anyhow::anyhow!("Failed to get team restrictions: {}", e))
+            })?;
+
+        match self
+            .team_service
+            .validate_geographic_restriction(team_id, client_ip, &r)
+            .await
+        {
+            Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => {
+                if let Err(e) = self
+                    .geo_restriction_repo
+                    .log_geo_restriction_action(
+                        team_id,
+                        client_ip,
+                        "",
+                        "ALLOWED",
+                        "Geographic restriction check passed",
+                    )
+                    .await
+                {
+                    error!("Failed to log geographic restriction action: {}", e);
+                }
+            }
+            Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
+                if let Err(e) = self
+                    .geo_restriction_repo
+                    .log_geo_restriction_action(team_id, client_ip, "", "DENIED", &reason)
+                    .await
+                {
+                    error!("Failed to log geographic restriction action: {}", e);
+                }
+                return Err(CrawlUseCaseError::ValidationError(format!(
+                    "Geographic restriction check failed: {}",
+                    reason
+                )));
+            }
+            Err(e) => {
+                error!("Geographic restriction validation error: {}", e);
+                return Err(CrawlUseCaseError::Anyhow(anyhow::anyhow!(
+                    "Geographic restriction validation failed: {}",
+                    e
+                )));
+            }
+        }
+        Ok(r)
+    }
+
+    /// 种子 URL 的团队 domain_blacklist 校验（自
+    /// [`Self::check_request_restrictions`] 提取，仅 teams-on）。
+    #[cfg(feature = "teams")]
+    async fn validate_seed_domain(
+        &self,
+        seed_url: &str,
+        restrictions: &crate::domain::services::team_service::TeamGeoRestrictions,
+    ) -> Result<(), CrawlUseCaseError> {
+        match self
+            .team_service
+            .validate_domain_blacklist(seed_url, restrictions)
+        {
+            Ok(crate::domain::services::team_service::GeoRestrictionResult::Allowed) => Ok(()),
+            Ok(crate::domain::services::team_service::GeoRestrictionResult::Denied(reason)) => {
+                error!(
+                    "Crawl seed URL {} denied by domain blacklist: {}",
+                    seed_url, reason
+                );
+                Err(CrawlUseCaseError::ValidationError(reason))
+            }
+            Err(e) => {
+                error!("Domain blacklist validation error: {}", e);
+                Err(CrawlUseCaseError::Anyhow(anyhow::anyhow!(
+                    "Domain blacklist validation failed: {}",
+                    e
+                )))
+            }
+        }
     }
 
     /// 获取爬取任务详情

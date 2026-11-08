@@ -36,6 +36,34 @@ impl ConverterChain {
             Box::new(crate::domain::services::markdown_service::HtmdMarkdownService::new()),
         )
     }
+
+    /// 执行主转换器；返回 `Err(reason)` 表示应触发兜底。
+    ///
+    /// `Ok` 既包含成功产物，也包含「无可见文本的空输出」——后者是正确抑制，
+    /// 直接接受，不触发兜底。
+    fn try_primary(&self, html: &str) -> Result<String, String> {
+        match self.primary.convert(html) {
+            Ok(md) => {
+                if md.trim().is_empty() {
+                    // 防呆仅对「输入含可见文本」生效：moli 对纯脚本/样式页、
+                    // title-only 壳、SPA 空壳输出空串是正确抑制——此时兜底会让
+                    // htmd 把 script 内 JSON（如 __NEXT_DATA__）当正文灌入产物
+                    // （三维审查 A1）。无可见文本 → 空串是对的，直接接受。
+                    if !has_visible_text(html) {
+                        return Ok(md);
+                    }
+                    record_fallback(self.primary.name(), self.fallback.name(), "empty_output");
+                    Err("empty_output".to_string())
+                } else {
+                    Ok(md)
+                }
+            }
+            Err(e) => {
+                record_fallback(self.primary.name(), self.fallback.name(), "error");
+                Err(format!("{}", e))
+            }
+        }
+    }
 }
 
 /// 输入 HTML 是否含可见文本（决定空输出是否异常、兜底是否该触发）。
@@ -100,26 +128,9 @@ impl MarkdownConverter for ConverterChain {
     }
 
     fn convert(&self, html: &str) -> Result<String, MarkdownError> {
-        let primary_reason: String = match self.primary.convert(html) {
-            Ok(md) => {
-                if md.trim().is_empty() {
-                    // 防呆仅对「输入含可见文本」生效：moli 对纯脚本/样式页、
-                    // title-only 壳、SPA 空壳输出空串是正确抑制——此时兜底会让
-                    // htmd 把 script 内 JSON（如 __NEXT_DATA__）当正文灌入产物
-                    // （三维审查 A1）。无可见文本 → 空串是对的，直接接受。
-                    if !has_visible_text(html) {
-                        return Ok(md);
-                    }
-                    record_fallback(self.primary.name(), self.fallback.name(), "empty_output");
-                    "empty_output".to_string()
-                } else {
-                    return Ok(md);
-                }
-            }
-            Err(e) => {
-                record_fallback(self.primary.name(), self.fallback.name(), "error");
-                format!("{}", e)
-            }
+        let primary_reason: String = match self.try_primary(html) {
+            Ok(md) => return Ok(md),
+            Err(reason) => reason,
         };
 
         match self.fallback.convert(html) {

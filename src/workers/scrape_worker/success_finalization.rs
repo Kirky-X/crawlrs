@@ -19,19 +19,7 @@ impl ScrapeWorker {
 
         // 文本编码处理 - 集成文本处理功能
         // process_text_encoding 返回 Cow<'_, str>，禁用路径零 clone
-        let processed_content = match process_text_encoding(task, &response).await {
-            Ok(content) => content.into_owned(),
-            Err(e) => {
-                warn!(
-                    "{}",
-                    crate::i18n::tr_log_args(
-                        "scrape-task-encoding-fallback",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                    )
-                );
-                response.content.clone()
-            }
-        };
+        let processed_content = Self::process_content_with_fallback(task, &response).await;
 
         // PERF- 复用 process_scrape_task 已解析的 ScrapeRequestDto 引用，
         // 不再在 handle_scrape_success 内部二次 from_value(task.payload.clone())。
@@ -46,23 +34,9 @@ impl ScrapeWorker {
         // 调用方策略：markdown 为增强字段，失败不阻断基础抓取结果，
         // 错误时记录告警并继续（generated_markdown = None）。
         // generate() 改为 async，支持 only_main_content 前置正文提取
-        #[cfg(feature = "content")]
-        let generated_markdown: Option<String> = if let Some(req) = parsed_req.as_ref() {
-            self.markdown_post_processor
-                .generate(task.id, req, &processed_content)
-                .await
-                .unwrap_or_else(|e| {
-                    warn!(
-                        "task_id: {}, markdown post-processing failed: {}",
-                        task.id, e
-                    );
-                    None
-                })
-        } else {
-            None
-        };
-        #[cfg(not(feature = "content"))]
-        let generated_markdown: Option<String> = None;
+        let generated_markdown = self
+            .generate_markdown_or_warn(task, parsed_req, &processed_content)
+            .await;
 
         // handle_scrape_success 改为 owned ScrapeResponse，
         // 构造 processed_response 时直接 move 字段，避免 clone screenshot(100KB+)/headers/...
@@ -121,6 +95,62 @@ impl ScrapeWorker {
 
         self.trigger_webhook(task, None).await;
         Ok(true)
+    }
+
+    /// 文本编码处理并保留失败回退（自 [`Self::handle_scrape_success`] 提取）：
+    /// `process_text_encoding` 返回 `Cow<'_, str>`，禁用路径零 clone；
+    /// 失败时 warn 并回退原始 content。
+    async fn process_content_with_fallback(task: &Task, response: &ScrapeResponse) -> String {
+        match process_text_encoding(task, response).await {
+            Ok(content) => content.into_owned(),
+            Err(e) => {
+                warn!(
+                    "{}",
+                    crate::i18n::tr_log_args(
+                        "scrape-task-encoding-fallback",
+                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+                    )
+                );
+                response.content.clone()
+            }
+        }
+    }
+
+    /// 按请求生成 Markdown；失败降级为 `None` 并告警（自
+    /// [`Self::handle_scrape_success`] 提取）。
+    #[cfg(feature = "content")]
+    async fn generate_markdown_or_warn(
+        &self,
+        task: &Task,
+        parsed_req: Option<&ScrapeRequestDto>,
+        processed_content: &str,
+    ) -> Option<String> {
+        if let Some(req) = parsed_req {
+            self.markdown_post_processor
+                .generate(task.id, req, processed_content)
+                .await
+                .unwrap_or_else(|e| {
+                    warn!(
+                        "task_id: {}, markdown post-processing failed: {}",
+                        task.id, e
+                    );
+                    None
+                })
+        } else {
+            None
+        }
+    }
+
+    /// content 特性关闭时不生成 Markdown（自
+    /// [`Self::handle_scrape_success`] 提取）。
+    #[cfg(not(feature = "content"))]
+    async fn generate_markdown_or_warn(
+        &self,
+        _task: &Task,
+        _parsed_req: Option<&ScrapeRequestDto>,
+        _processed_content: &str,
+    ) -> Option<String> {
+        None
     }
 
     // `maybe_generate_markdown` 方法已迁移至 `MarkdownPostProcessor`（独立组件）。

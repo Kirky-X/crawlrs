@@ -183,6 +183,33 @@ impl MoliEngine {
         request: &InternalScrapeRequest,
     ) -> Result<InternalScrapeResponse, EngineError> {
         // 导航分段超时（超时也走统一收尾，不泄漏 target）
+        Self::navigate_and_wait(engine, page, config, request).await?;
+        let html = Self::read_document_html(page).await?;
+        validate_html(&html)?;
+
+        let screenshot = Self::capture_screenshot(page, request.needs_screenshot).await?;
+
+        Ok::<InternalScrapeResponse, EngineError>(InternalScrapeResponse {
+            status_code: 200,
+            content: html,
+            screenshot,
+            content_type: "text/html".to_string(),
+            headers: std::collections::HashMap::new(),
+            response_time_ms: 0,
+            final_url: None,
+            captured_responses: Vec::new(),
+            js_degraded: false,
+        })
+    }
+
+    /// 导航到目标页并等待就绪（自 [`MoliEngine::scrape_page_inner`] 提取）：
+    /// 导航分段超时；超时与导航失败均记 log 并映射为引擎错误。
+    async fn navigate_and_wait(
+        engine: &MoliEngine,
+        page: &chromiumoxide::Page,
+        config: &MoliEngineConfig,
+        request: &InternalScrapeRequest,
+    ) -> Result<(), EngineError> {
         tokio::time::timeout(config.scrape_timeout, page.goto(request.url.as_str()))
             .await
             .map_err(|_| {
@@ -199,9 +226,13 @@ impl MoliEngine {
                 );
                 EngineError::BrowserError("moli navigation failed".to_string())
             })?;
-        engine.wait_for_ready(page, &request.wait_for).await?;
-        let html = page
-            .evaluate("() => document.documentElement.outerHTML")
+        engine.wait_for_ready(page, &request.wait_for).await
+    }
+
+    /// 读取页面 outerHTML（自 [`MoliEngine::scrape_page_inner`] 提取）：
+    /// 求值与解码失败均记 log 并映射为引擎错误。
+    async fn read_document_html(page: &chromiumoxide::Page) -> Result<String, EngineError> {
+        page.evaluate("() => document.documentElement.outerHTML")
             .await
             .map_err(|e| {
                 log::error!(target: "crawlrs::engine::moli", "moli outerHTML read failed: {}", e);
@@ -211,10 +242,15 @@ impl MoliEngine {
             .map_err(|e| {
                 log::error!(target: "crawlrs::engine::moli", "moli outerHTML decode failed: {}", e);
                 EngineError::Other("moli outerHTML decode failed".to_string())
-            })?;
-        validate_html(&html)?;
+            })
+    }
 
-        let screenshot = if request.needs_screenshot {
+    /// 按需截屏并 Base64 编码（自 [`MoliEngine::scrape_page_inner`] 提取）。
+    async fn capture_screenshot(
+        page: &chromiumoxide::Page,
+        needs_screenshot: bool,
+    ) -> Result<Option<String>, EngineError> {
+        let screenshot = if needs_screenshot {
             let params = chromiumoxide::page::ScreenshotParams::builder()
                 .format(chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat::Png)
                 .build();
@@ -230,17 +266,7 @@ impl MoliEngine {
             None
         };
 
-        Ok::<InternalScrapeResponse, EngineError>(InternalScrapeResponse {
-            status_code: 200,
-            content: html,
-            screenshot,
-            content_type: "text/html".to_string(),
-            headers: std::collections::HashMap::new(),
-            response_time_ms: 0,
-            final_url: None,
-            captured_responses: Vec::new(),
-            js_degraded: false,
-        })
+        Ok(screenshot)
     }
 
     /// 按请求 `wait_for` 等待页面就绪（v1 近似语义，注释逐条说明）：

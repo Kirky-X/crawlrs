@@ -160,33 +160,12 @@ impl SearchEngine for SearxngSearchEngine {
             let url = Self::build_url(member.url(), request);
             let started = std::time::Instant::now();
             match self.transport.get_json(&url, self.timeout).await {
-                Ok((200, body)) => match self.parse_items(&body, request.offset, request.limit) {
-                    Ok((items, total)) => {
-                        self.service
-                            .report(
-                                member.url(),
-                                InstanceOutcome::Success {
-                                    latency_ms: started.elapsed().as_millis() as i64,
-                                },
-                            )
-                            .await;
-                        return Ok(Response {
-                            items,
-                            total_results: total,
-                            engine: SearchEngineType::Searxng,
-                        });
-                    }
-                    Err(e) => {
-                        self.service
-                            .report(
-                                member.url(),
-                                InstanceOutcome::Failure {
-                                    error: SearxngError::Parse(e.to_string()),
-                                },
-                            )
-                            .await;
-                        last_error = Some(e);
-                    }
+                Ok((200, body)) => match self
+                    .parse_ok_response(member.url(), &body, request, started)
+                    .await
+                {
+                    Ok(response) => return Ok(response),
+                    Err(e) => last_error = Some(e),
                 },
                 Ok((status, _)) => {
                     let error = SearxngError::from_status(status);
@@ -217,6 +196,47 @@ impl SearchEngine for SearxngSearchEngine {
         }
 
         Err(last_error.unwrap_or(SearchError::NoEngineAvailable))
+    }
+}
+
+impl SearxngSearchEngine {
+    /// 处理 200 响应：解析成功上报实例成功并返回结果，解析失败上报失败并
+    /// 返回解析错误供调用方继续 failover（自 `SearchEngine::search` 提取）。
+    async fn parse_ok_response(
+        &self,
+        member_url: &str,
+        body: &serde_json::Value,
+        request: &SearchRequest,
+        started: std::time::Instant,
+    ) -> Result<Response<ResponseItem>, SearchError> {
+        match self.parse_items(body, request.offset, request.limit) {
+            Ok((items, total)) => {
+                self.service
+                    .report(
+                        member_url,
+                        InstanceOutcome::Success {
+                            latency_ms: started.elapsed().as_millis() as i64,
+                        },
+                    )
+                    .await;
+                Ok(Response {
+                    items,
+                    total_results: total,
+                    engine: SearchEngineType::Searxng,
+                })
+            }
+            Err(e) => {
+                self.service
+                    .report(
+                        member_url,
+                        InstanceOutcome::Failure {
+                            error: SearxngError::Parse(e.to_string()),
+                        },
+                    )
+                    .await;
+                Err(e)
+            }
+        }
     }
 }
 

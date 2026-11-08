@@ -117,7 +117,24 @@ impl SearchClient {
         };
 
         Self::register_builtin_engines(&mut inner, &engine_client, &settings.engines);
+        Self::register_exa_engine(&mut inner, &http_client, settings);
+        Self::register_tavily_engine(&mut inner, &http_client, settings);
+        Self::register_searxng_engine(&mut inner, &http_client, settings, searxng_instances);
 
+        inner.default_engine =
+            Self::resolve_default_engine(&inner.engines, settings.default_engine.as_deref());
+
+        SearchClient {
+            inner: Arc::new(inner),
+        }
+    }
+
+    /// 按 `search.exa.api_key` 注册 Exa 引擎（空 key 跳过并记录 info）。
+    fn register_exa_engine(
+        inner: &mut SearchClientInner,
+        http_client: &Arc<reqwest::Client>,
+        settings: &SearchSettings,
+    ) {
         match settings.exa.api_key().filter(|key| !key.trim().is_empty()) {
             Some(api_key) => {
                 let mut config = ExaConfig {
@@ -136,7 +153,14 @@ impl SearchClient {
             }
             None => log::info!("{}", crate::i18n::tr_log("search-exa-skipped")),
         }
+    }
 
+    /// 按 `search.tavily.api_key` 注册 Tavily 引擎（空 key 跳过并记录 info）。
+    fn register_tavily_engine(
+        inner: &mut SearchClientInner,
+        http_client: &Arc<reqwest::Client>,
+        settings: &SearchSettings,
+    ) {
         match settings
             .tavily
             .api_key()
@@ -162,8 +186,15 @@ impl SearchClient {
             }
             None => log::info!("{}", crate::i18n::tr_log("search-tavily-skipped")),
         }
+    }
 
-        // SearXNG：enabled && 实例服务存在时才注册（否则单引擎路径显性 NoEngineAvailable）
+    /// SearXNG：enabled && 实例服务存在时才注册（否则单引擎路径显性 NoEngineAvailable）。
+    fn register_searxng_engine(
+        inner: &mut SearchClientInner,
+        http_client: &Arc<reqwest::Client>,
+        settings: &SearchSettings,
+        searxng_instances: Option<Arc<dyn SearxngInstanceService>>,
+    ) {
         match (settings.searxng.enabled, searxng_instances) {
             (true, Some(service)) => {
                 let transport: Arc<dyn crate::domain::services::searxng::SearxngTransport> =
@@ -191,13 +222,6 @@ impl SearchClient {
             (false, _) => {
                 log::info!("SearXNG search engine skipped (search.searxng.enabled=false)");
             }
-        }
-
-        inner.default_engine =
-            Self::resolve_default_engine(&inner.engines, settings.default_engine.as_deref());
-
-        SearchClient {
-            inner: Arc::new(inner),
         }
     }
 

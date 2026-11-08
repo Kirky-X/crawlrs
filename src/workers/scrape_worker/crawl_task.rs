@@ -499,56 +499,14 @@ impl ScrapeWorker {
     ) {
         use std::sync::Arc;
 
-        use crate::workers::crawl::sitemap_source::{
-            derive_sitemap_url, feed_sitemap_as_tasks, sitemap_feed_pointer_key, SeedTaskContext,
+        use crate::workers::crawl::sitemap_source::{feed_sitemap_as_tasks, SeedTaskContext};
+
+        let Some(sitemap_url) = resolve_sitemap_source_url(task, crawl_id) else {
+            return;
         };
 
-        let sitemap_url = match task
-            .payload
-            .get("sitemap_url")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .or_else(|| derive_sitemap_url(&task.url))
-        {
-            Some(u) => u,
-            None => {
-                warn!(
-                    "{}",
-                    crate::i18n::tr_log_args(
-                        "crawl-sitemap-derive-failed",
-                        &[
-                            (
-                                "crawl_id",
-                                fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                            ),
-                            ("url", fluent_bundle::FluentValue::from(task.url.as_str())),
-                        ],
-                    )
-                );
-                return;
-            }
-        };
-
-        // 键缺失 = 合法空表；键存在但解析失败 = 约束未知，禁止静默降级为
-        // 空黑名单（地理限制域名会变为可抓取）——error 显性化并跳过本次喂入
-        let domain_blacklist = match resolve_domain_blacklist(&task.payload) {
-            Ok(list) => list,
-            Err(e) => {
-                error!(
-                    "{}",
-                    crate::i18n::tr_log_args(
-                        "crawl-sitemap-blacklist-unparsable",
-                        &[
-                            (
-                                "crawl_id",
-                                fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                            ),
-                            ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                        ],
-                    )
-                );
-                return;
-            }
+        let Some(domain_blacklist) = resolve_sitemap_blacklist(task, crawl_id) else {
+            return;
         };
 
         let fetcher = Arc::new(
@@ -609,80 +567,8 @@ impl ScrapeWorker {
         )
         .await
         {
-            Ok(stats) => {
-                if let Some(resumed) = stats.resumed_from {
-                    info!(
-                        "{}",
-                        crate::i18n::tr_log_args(
-                            "crawl-sitemap-feed-resumed",
-                            &[
-                                (
-                                    "crawl_id",
-                                    fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                                ),
-                                ("loc", fluent_bundle::FluentValue::from(resumed as i64)),
-                                (
-                                    "pointer",
-                                    fluent_bundle::FluentValue::from(
-                                        sitemap_feed_pointer_key(crawl_id).as_str(),
-                                    ),
-                                ),
-                            ],
-                        )
-                    );
-                }
-                info!(
-                    "{}",
-                    crate::i18n::tr_log_args(
-                        "crawl-sitemap-feed-done",
-                        &[
-                            (
-                                "crawl_id",
-                                fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                            ),
-                            (
-                                "enqueued",
-                                fluent_bundle::FluentValue::from(stats.enqueued as i64)
-                            ),
-                            (
-                                "filtered",
-                                fluent_bundle::FluentValue::from(stats.filtered_out as i64)
-                            ),
-                            (
-                                "duplicates",
-                                fluent_bundle::FluentValue::from(stats.duplicates_skipped as i64),
-                            ),
-                            (
-                                "consumed",
-                                fluent_bundle::FluentValue::from(stats.consumed as i64)
-                            ),
-                            (
-                                "sitemap_url",
-                                fluent_bundle::FluentValue::from(sitemap_url.as_str()),
-                            ),
-                        ],
-                    )
-                );
-            }
-            Err(e) => {
-                error!(
-                    "{}",
-                    crate::i18n::tr_log_args(
-                        "crawl-sitemap-feed-failed",
-                        &[
-                            (
-                                "crawl_id",
-                                fluent_bundle::FluentValue::from(crawl_id.to_string()),
-                            ),
-                            (
-                                "sitemap_url",
-                                fluent_bundle::FluentValue::from(sitemap_url.as_str()),
-                            ),
-                            ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                        ],
-                    )
-                );
-            }
+            Ok(stats) => log_sitemap_feed_success(crawl_id, &stats, &sitemap_url),
+            Err(e) => log_sitemap_feed_failure(crawl_id, &sitemap_url, &e),
         }
     }
 
@@ -719,6 +605,151 @@ impl ScrapeWorker {
 
         Ok(())
     }
+}
+
+/// 显式 `sitemap_url` 优先，缺省从种子 URL 派生 `{origin}/sitemap.xml`。
+///
+/// 派生失败打 warn 并返回 `None`（调用方跳过喂入，不改变任务状态）。
+#[cfg(feature = "sitemap")]
+fn resolve_sitemap_source_url(task: &Task, crawl_id: crate::domain::id::Id) -> Option<String> {
+    use crate::workers::crawl::sitemap_source::derive_sitemap_url;
+
+    match task
+        .payload
+        .get("sitemap_url")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| derive_sitemap_url(&task.url))
+    {
+        Some(u) => Some(u),
+        None => {
+            warn!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "crawl-sitemap-derive-failed",
+                    &[
+                        (
+                            "crawl_id",
+                            fluent_bundle::FluentValue::from(crawl_id.to_string()),
+                        ),
+                        ("url", fluent_bundle::FluentValue::from(task.url.as_str())),
+                    ],
+                )
+            );
+            None
+        }
+    }
+}
+
+/// 解析 payload 中的 `domain_blacklist`；解析失败打 error 并返回 `None`（跳过喂入）。
+///
+/// 键缺失 = 合法空表；键存在但解析失败 = 约束未知，禁止静默降级为
+/// 空黑名单（地理限制域名会变为可抓取）——error 显性化并跳过本次喂入。
+#[cfg(feature = "sitemap")]
+fn resolve_sitemap_blacklist(task: &Task, crawl_id: crate::domain::id::Id) -> Option<Vec<String>> {
+    match resolve_domain_blacklist(&task.payload) {
+        Ok(list) => Some(list),
+        Err(e) => {
+            error!(
+                "{}",
+                crate::i18n::tr_log_args(
+                    "crawl-sitemap-blacklist-unparsable",
+                    &[
+                        (
+                            "crawl_id",
+                            fluent_bundle::FluentValue::from(crawl_id.to_string()),
+                        ),
+                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                    ],
+                )
+            );
+            None
+        }
+    }
+}
+
+/// 喂入成功的日志：恢复点（如有）与完成统计。
+#[cfg(feature = "sitemap")]
+fn log_sitemap_feed_success(
+    crawl_id: crate::domain::id::Id,
+    stats: &crate::workers::crawl::sitemap_source::SitemapFeedStats,
+    sitemap_url: &str,
+) {
+    use crate::workers::crawl::sitemap_source::sitemap_feed_pointer_key;
+
+    if let Some(resumed) = stats.resumed_from {
+        info!(
+            "{}",
+            crate::i18n::tr_log_args(
+                "crawl-sitemap-feed-resumed",
+                &[
+                    (
+                        "crawl_id",
+                        fluent_bundle::FluentValue::from(crawl_id.to_string()),
+                    ),
+                    ("loc", fluent_bundle::FluentValue::from(resumed as i64)),
+                    (
+                        "pointer",
+                        fluent_bundle::FluentValue::from(
+                            sitemap_feed_pointer_key(crawl_id).as_str(),
+                        ),
+                    ),
+                ],
+            )
+        );
+    }
+    info!(
+        "{}",
+        crate::i18n::tr_log_args(
+            "crawl-sitemap-feed-done",
+            &[
+                (
+                    "crawl_id",
+                    fluent_bundle::FluentValue::from(crawl_id.to_string()),
+                ),
+                (
+                    "enqueued",
+                    fluent_bundle::FluentValue::from(stats.enqueued as i64)
+                ),
+                (
+                    "filtered",
+                    fluent_bundle::FluentValue::from(stats.filtered_out as i64)
+                ),
+                (
+                    "duplicates",
+                    fluent_bundle::FluentValue::from(stats.duplicates_skipped as i64),
+                ),
+                (
+                    "consumed",
+                    fluent_bundle::FluentValue::from(stats.consumed as i64)
+                ),
+                ("sitemap_url", fluent_bundle::FluentValue::from(sitemap_url),),
+            ],
+        )
+    );
+}
+
+/// 喂入失败的 error 日志（种子任务已完成，失败不改变任务状态）。
+#[cfg(feature = "sitemap")]
+fn log_sitemap_feed_failure(
+    crawl_id: crate::domain::id::Id,
+    sitemap_url: &str,
+    error: &anyhow::Error,
+) {
+    error!(
+        "{}",
+        crate::i18n::tr_log_args(
+            "crawl-sitemap-feed-failed",
+            &[
+                (
+                    "crawl_id",
+                    fluent_bundle::FluentValue::from(crawl_id.to_string()),
+                ),
+                ("sitemap_url", fluent_bundle::FluentValue::from(sitemap_url),),
+                ("error", fluent_bundle::FluentValue::from(error.to_string())),
+            ],
+        )
+    );
 }
 
 /// 解析 payload 中的 `domain_blacklist`（sitemap 喂入的域名排除约束）

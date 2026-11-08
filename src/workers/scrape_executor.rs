@@ -17,7 +17,9 @@ use crate::domain::repositories::scrape_result_repository::ScrapeResultRepositor
 use crate::engines::engine_client::ScrapeResponse;
 use crate::i18n::tr_log_args;
 use crate::infrastructure::oxcache::CacheService;
-use crate::utils::crawl_text_integration::{CrawlTextIntegration, ScrapeResponseInput};
+use crate::utils::crawl_text_integration::{
+    CrawlTextIntegration, ProcessedScrapeResponse, ScrapeResponseInput,
+};
 use crate::utils::robots::RobotsCheckerTrait;
 use crate::utils::url_redaction::redact_url_for_log;
 use crate::workers::cache_utils::SanitizedScrapeResponse;
@@ -72,57 +74,7 @@ pub async fn process_text_encoding<'a>(
         )
         .await
     {
-        Ok(processed_response) => {
-            if processed_response.processing_success {
-                info!(
-                    "{}",
-                    tr_log_args(
-                        "scrape-exec-encoding-succeeded",
-                        &[
-                            (
-                                "encoding",
-                                fluent_bundle::FluentValue::from(
-                                    processed_response
-                                        .encoding_detected
-                                        .clone()
-                                        .unwrap_or_else(|| "none".to_string())
-                                )
-                            ),
-                            (
-                                "elapsed",
-                                fluent_bundle::FluentValue::from(
-                                    processed_response.processing_success.to_string()
-                                )
-                            ),
-                            (
-                                "quality",
-                                fluent_bundle::FluentValue::from(
-                                    processed_response.processing_error.is_none().to_string()
-                                )
-                            ),
-                        ],
-                    )
-                );
-                Ok(std::borrow::Cow::Owned(
-                    processed_response.processed_content,
-                ))
-            } else {
-                let error_msg = processed_response
-                    .processing_error
-                    .unwrap_or_else(|| "Unknown error".to_string());
-                warn!(
-                    "{}",
-                    tr_log_args(
-                        "scrape-exec-encoding-failed",
-                        &[("error", fluent_bundle::FluentValue::from(error_msg.clone()))],
-                    )
-                );
-                Err(anyhow::anyhow!(
-                    "Text encoding processing failed: {}",
-                    error_msg
-                ))
-            }
-        }
+        Ok(processed_response) => encoding_result_to_cow(processed_response),
         Err(e) => {
             warn!(
                 "{}",
@@ -133,6 +85,61 @@ pub async fn process_text_encoding<'a>(
             );
             Err(anyhow::anyhow!("Text encoding processing exception: {}", e))
         }
+    }
+}
+
+/// 将编码处理结果映射为最终内容或错误（成功/失败日志与原逻辑一致）。
+fn encoding_result_to_cow<'a>(
+    processed_response: ProcessedScrapeResponse,
+) -> Result<std::borrow::Cow<'a, str>> {
+    if processed_response.processing_success {
+        info!(
+            "{}",
+            tr_log_args(
+                "scrape-exec-encoding-succeeded",
+                &[
+                    (
+                        "encoding",
+                        fluent_bundle::FluentValue::from(
+                            processed_response
+                                .encoding_detected
+                                .clone()
+                                .unwrap_or_else(|| "none".to_string())
+                        )
+                    ),
+                    (
+                        "elapsed",
+                        fluent_bundle::FluentValue::from(
+                            processed_response.processing_success.to_string()
+                        )
+                    ),
+                    (
+                        "quality",
+                        fluent_bundle::FluentValue::from(
+                            processed_response.processing_error.is_none().to_string()
+                        )
+                    ),
+                ],
+            )
+        );
+        Ok(std::borrow::Cow::Owned(
+            processed_response.processed_content,
+        ))
+    } else {
+        let error_msg = processed_response
+            .processing_error
+            .unwrap_or_else(|| "Unknown error".to_string());
+        warn!(
+            "{}",
+            tr_log_args(
+                "scrape-exec-encoding-failed",
+                &[("error", fluent_bundle::FluentValue::from(error_msg.clone()))],
+            )
+        );
+        Err(anyhow::anyhow!(
+            "Text encoding processing failed: {}",
+            error_msg
+        ))
     }
 }
 
@@ -159,21 +166,7 @@ pub async fn save_result(
 
     // 将 response.markdown 合并到 meta_data JSON
     if let Some(ref markdown) = response.markdown {
-        match &mut meta_data {
-            Value::Null => {
-                meta_data = serde_json::json!({ "markdown": markdown });
-            }
-            Value::Object(map) => {
-                map.insert("markdown".to_string(), Value::String(markdown.clone()));
-            }
-            _ => {
-                let original = std::mem::replace(&mut meta_data, Value::Null);
-                meta_data = serde_json::json!({
-                    "extracted": original,
-                    "markdown": markdown,
-                });
-            }
-        }
+        merge_meta_field(&mut meta_data, "markdown", Value::String(markdown.clone()));
     }
 
     // F6 捕获数据持久化（API 出口：GET 结果的 meta_data.captured_responses）；
@@ -181,21 +174,7 @@ pub async fn save_result(
     // ScrapeResponse.captured_responses 同步获得
     if !response.captured_responses.is_empty() {
         let captured = serde_json::to_value(&response.captured_responses).unwrap_or(Value::Null);
-        match &mut meta_data {
-            Value::Null => {
-                meta_data = serde_json::json!({ "captured_responses": captured });
-            }
-            Value::Object(map) => {
-                map.insert("captured_responses".to_string(), captured);
-            }
-            _ => {
-                let original = std::mem::replace(&mut meta_data, Value::Null);
-                meta_data = serde_json::json!({
-                    "extracted": original,
-                    "captured_responses": captured,
-                });
-            }
-        }
+        merge_meta_field(&mut meta_data, "captured_responses", captured);
     }
 
     let content_to_store = response.content.clone();
@@ -216,6 +195,31 @@ pub async fn save_result(
 
     result_repository.save(result).await?;
     Ok(())
+}
+
+/// 将 `value` 以 `key` 合并进 `meta_data`（自 [`save_result`] 提取）。
+///
+/// - `Null` → 只含该键的新对象
+/// - `Object` → 插入/覆盖该键
+/// - 其它 → 原值移入 `extracted`，与 `value` 并列
+fn merge_meta_field(meta_data: &mut Value, key: &str, value: Value) {
+    match meta_data {
+        Value::Null => {
+            let mut map = serde_json::Map::new();
+            map.insert(key.to_string(), value);
+            *meta_data = Value::Object(map);
+        }
+        Value::Object(map) => {
+            map.insert(key.to_string(), value);
+        }
+        _ => {
+            let original = std::mem::replace(meta_data, Value::Null);
+            let mut map = serde_json::Map::new();
+            map.insert("extracted".to_string(), original);
+            map.insert(key.to_string(), value);
+            *meta_data = Value::Object(map);
+        }
+    }
 }
 
 /// robots.txt 门控（单页抓取路径）：请求级选项 → 全局默认回退 → fail-open。

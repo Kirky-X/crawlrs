@@ -105,10 +105,7 @@ pub(super) async fn init_search_stack(
 
     // RAG 能力组件（默认全关：rag.enabled = false 时 provider 全 None，零开销）。
     // 失败 = 运维显式启用但配置/环境不可用，按既有 fail-fast 惯例 panic。
-    let rag = match init_rag_components(settings).await {
-        Ok(components) => components,
-        Err(e) => panic!("RAG capability init failed (check [rag] config / features): {e}"),
-    };
+    let rag = init_rag_or_panic(settings).await;
 
     // 语义重排器：provider 就绪时搜索结果做精准重排，否则直通
     let search_reranker = Arc::new(SearchReranker::new(
@@ -118,18 +115,7 @@ pub(super) async fn init_search_stack(
 
     // fluxweir 网关生命周期（默认全关：enabled=false 时空句柄零开销；
     // enabled=true 但 gateway 未编译 → fail-fast，错误文案含 feature 指引）
-    let fluxweir_gateway = match crate::bootstrap::fluxweir_gateway::init_fluxweir_gateway(
-        settings,
-        Some(infrastructure.db.clone_inner()),
-        &settings.database.url,
-    )
-    .await
-    {
-        Ok(handle) => handle,
-        Err(e) => {
-            panic!("fluxweir gateway init failed (check [fluxweir] config / features): {e:#}")
-        }
-    };
+    let fluxweir_gateway = init_fluxweir_gateway_or_panic(infrastructure, settings).await;
 
     let search_service = init_search_service(
         repositories,
@@ -147,6 +133,33 @@ pub(super) async fn init_search_stack(
         embedding_provider: rag.embedding,
         rerank_provider: rag.rerank,
         fluxweir_gateway,
+    }
+}
+
+/// 初始化 RAG 组件；运维显式启用但配置/环境不可用时 fail-fast。
+async fn init_rag_or_panic(settings: &Settings) -> RagComponents {
+    match init_rag_components(settings).await {
+        Ok(components) => components,
+        Err(e) => panic!("RAG capability init failed (check [rag] config / features): {e}"),
+    }
+}
+
+/// 初始化 fluxweir 网关；enabled=true 但未编译 gateway 时 fail-fast。
+async fn init_fluxweir_gateway_or_panic(
+    infrastructure: &InfrastructureComponents,
+    settings: &Settings,
+) -> FluxweirGatewayHandle {
+    match crate::bootstrap::fluxweir_gateway::init_fluxweir_gateway(
+        settings,
+        Some(infrastructure.db.clone_inner()),
+        &settings.database.url,
+    )
+    .await
+    {
+        Ok(handle) => handle,
+        Err(e) => {
+            panic!("fluxweir gateway init failed (check [fluxweir] config / features): {e:#}")
+        }
     }
 }
 

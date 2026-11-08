@@ -196,66 +196,8 @@ fn build_default_identity_template(state: &CrawlRsState) -> AuthState {
     )
 }
 
-/// Create the protected API routes using CrawlRsState.
-///
-/// # Arguments
-///
-/// * `state` - Application state with resolved dependencies
-/// * `settings` - Application settings
-pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
-    let team_semaphore = state.team_semaphore.clone();
-    let queue = state.task_queue.clone();
-    let task_repo = state.task_repo.clone();
-    let result_repo = state.result_repo.clone();
-    let rate_limiting_service = state.rate_limiting_service.clone();
-    let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
-    let crawl_repo = state.crawl_repo.clone();
-    // webhook 相关字段在 webhook-off 时不编译
-    #[cfg(feature = "webhook")]
-    let webhook_repo = state.webhook_repo.clone();
-    #[cfg(feature = "webhook")]
-    let webhook_event_repo = state.webhook_event_repo();
-    let search_engine_service = state.search_client();
-    // SearXNG 管理 API：服务为 None（disabled）时 handler 返回 503
-    let searxng_instances = state.searxng_instances();
-    // teams 相关字段在 teams-off 时不编译
-    #[cfg(feature = "teams")]
-    let team_service = state.team_service.clone();
-    #[cfg(feature = "teams")]
-    let geo_location_service = state.geo_location_service();
-    let credits_repo = state.credits_repo();
-
-    // 构造一次具体实现，同时用于 trait object Extension 和泛型 handler Extension
-    // 架构消除重复构造——之前 trait object 和 concrete 各 new 一次
-    //
-    // teams-off 时不构造 geo_restriction_repo_impl / geo_restriction_repo
-    //   （DatabaseGeoRestrictionRepository 仅供 teams-on 的 extract_handler 使用）
-    #[cfg(feature = "teams")]
-    let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
-        Arc::new(DatabaseGeoRestrictionRepository::new(state.db_pool.clone()));
-    #[cfg(feature = "teams")]
-    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = geo_restriction_repo_impl.clone();
-
-    // WebhookRepoImpl 同理：构造一次，复用给 Extension layer
-    // webhook-off 时不构造 WebhookRepoImpl
-    //   （WebhookRepoImpl 仅供 webhook-on 的 webhook_handler 使用）
-    #[cfg(feature = "webhook")]
-    let webhook_repo_impl: Arc<WebhookRepoImpl> =
-        Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
-
-    // Create Arc<CrawlRsState> for handlers that need unified state, and derive
-    // CrawlHandlerState from it for crawl handlers (decoupled for testability).
-    let app_state_arc = Arc::new(state.clone());
-    let crawl_handler_state = Arc::new(CrawlHandlerState::from_app_state(&app_state_arc));
-
-    // Auth state for middleware
-    //
-    // auth-on：通过 `from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool，
-    //   `auth_middleware_inner` 在每请求中通过 garrison RBAC + `bridge_to_auth_state` 动态填充 AuthState。
-    // auth-off：通过 `from_fn_with_state(template, default_identity_middleware)` 直接注入模板，
-    //   `default_identity_middleware` 通过 `State<AuthState>` 提取器读取；
-    //   模板在下方 `.layer()` 调用处构造（携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope）。
-
+/// Build the protected route groups before auth/extension layers are applied.
+fn protected_route_groups() -> Router {
     let app: Router = scrape_routes::register_scrape_routes()
         .merge(crawl_routes::register_crawl_routes())
         .merge(search_routes::register_search_routes())
@@ -269,19 +211,22 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     // 共享下方 auth 中间件层（漏挂即成未鉴权写接口）
     #[cfg(feature = "sitemap")]
     let app = app.merge(map_routes::register_map_routes());
+    app
+}
 
-    // 认证中间件层（条件编译）
-    //
-    // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 通过 State<Arc<DbPool>> 提取器
-    //   注入 DbPool，中间件在每请求中调用 garrison RBAC + `bridge_to_auth_state` 动态填充
-    //   AuthState（DTO 化后仅含 pool/team_id/api_key_id/scope 四字段）。
-    // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
-    //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool，
-    //   `default_identity_middleware` 克隆模板并注入 extensions（不查 DB、不校验 token）。
-    //
-    // 注意：两分支返回的 `FromFnLayer` 类型参数不同（`S=Arc<DbPool>` vs `S=AuthState`），
-    // 无法用 `let layer = if ... { from_fn(...) } else { from_fn_with_state(...) }` 统一类型，
-    // 必须用 shadowing + cfg 分别调用 `.layer()`。
+/// Apply the authentication middleware stack shared by protected, v2 and SDK routes.
+///
+/// auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 通过 State<Arc<DbPool>>
+///   提取器注入 DbPool，中间件在每请求中调用 garrison RBAC + `bridge_to_auth_state`
+///   动态填充 AuthState（DTO 化后仅含 pool/team_id/api_key_id/scope 四字段）。
+/// auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份
+///   模板，模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool，
+///   `default_identity_middleware` 克隆模板并注入 extensions（不查 DB、不校验 token）。
+///
+/// 注意：两分支返回的 `FromFnLayer` 类型参数不同（`S=Arc<DbPool>` vs `S=AuthState`），
+/// 无法用 `let layer = if ... { from_fn(...) } else { from_fn_with_state(...) }` 统一类型，
+/// 必须用 shadowing + cfg 分别调用 `.layer()`。
+fn apply_auth_layers(app: Router, state: &CrawlRsState) -> Router {
     #[cfg(feature = "auth")]
     let app = app.layer(axum::middleware::from_fn_with_state(
         state.db_pool.clone(),
@@ -305,16 +250,26 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
     let app = app.layer(axum::middleware::from_fn(
         crate::presentation::middleware::auth_middleware::garrison_ip_context_middleware,
     ));
+    app
+}
 
-    // teams 相关 Extension 层在 teams-off 时不装配
-    //
-    // teams-on：附加 geo_restriction_repo / team_service / geo_location_service / geo_restriction_repo_impl
-    //   四个 Extension 层（供 teams-on 的 extract_handler / team_handler / crawl_handler 等使用）
-    // teams-off：跳过这四个 Extension 层（对应 handler 不接收这些参数，trait object 缺失不会触发 panic）
-    #[cfg(feature = "teams")]
-    let app = app
-        .layer(Extension(geo_restriction_repo.clone()))
-        .layer(Extension(geo_location_service.clone()))
+/// Apply the teams-related Extension layers (teams-on variants).
+///
+/// teams-on：附加 geo_restriction_repo / team_service / geo_location_service /
+///   geo_restriction_repo_impl 四个 Extension 层（供 teams-on 的 extract_handler /
+///   team_handler / crawl_handler 等使用）。
+#[cfg(feature = "teams")]
+fn apply_teams_extension_layers(app: Router, state: &CrawlRsState) -> Router {
+    // 构造一次具体实现，同时用于 trait object Extension 和泛型 handler Extension
+    // 架构消除重复构造——之前 trait object 和 concrete 各 new 一次
+    let geo_restriction_repo_impl: Arc<DatabaseGeoRestrictionRepository> =
+        Arc::new(DatabaseGeoRestrictionRepository::new(state.db_pool.clone()));
+    let geo_restriction_repo: Arc<dyn GeoRestrictionRepository> = geo_restriction_repo_impl.clone();
+    let geo_location_service = state.geo_location_service();
+    let team_service = state.team_service.clone();
+
+    app.layer(Extension(geo_restriction_repo.clone()))
+        .layer(Extension(geo_location_service))
         .layer(Extension(team_service.clone()))
         .layer(Extension(geo_restriction_repo_impl))
         // create_scrape 以 `Extension<Option<...>>` 形态提取（兼容 teams-off 降级）。
@@ -324,29 +279,146 @@ pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Se
         .layer(Extension(
             Some(geo_restriction_repo) as Option<Arc<dyn GeoRestrictionRepository>>
         ))
-        .layer(Extension(Some(team_service) as Option<Arc<TeamService>>));
-    // teams-off：create_scrape 仍以 `Extension<Option<...>>` 提取（其 teams-off
-    // 降级路径依赖 None 语义跳过地理限制检查），显式注入 None 形态，
-    // 避免请求 500 Missing request extension。
-    #[cfg(not(feature = "teams"))]
-    let app = app
-        .layer(Extension(
-            None::<Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>>,
-        ))
-        .layer(Extension(
-            None::<Arc<crate::domain::services::team_service::TeamService>>,
-        ));
+        .layer(Extension(Some(team_service) as Option<Arc<TeamService>>))
+}
 
-    // webhook 相关 Extension 层在 webhook-off 时不装配
-    //
-    // webhook-on：附加 webhook_repo / webhook_event_repo / webhook_repo_impl
-    //   三个 Extension 层（供 webhook_handler 使用）
-    // webhook-off：跳过这三个 Extension 层（对应 handler 不存在，trait object 缺失不会触发 panic）
+/// Apply the teams-off variant: inject explicit None extensions.
+///
+/// teams-off：create_scrape 仍以 `Extension<Option<...>>` 提取（其 teams-off
+///   降级路径依赖 None 语义跳过地理限制检查），显式注入 None 形态，
+///   避免请求 500 Missing request extension。
+#[cfg(not(feature = "teams"))]
+fn apply_teams_extension_layers(app: Router, _state: &CrawlRsState) -> Router {
+    app.layer(Extension(
+        None::<Arc<dyn crate::domain::repositories::geo_restriction_repository::GeoRestrictionRepository>>,
+    ))
+    .layer(Extension(
+        None::<Arc<crate::domain::services::team_service::TeamService>>,
+    ))
+}
+
+/// Apply the webhook-related Extension layers for protected routes.
+#[cfg(feature = "webhook")]
+fn apply_webhook_extension_layers(app: Router, state: &CrawlRsState) -> Router {
+    // WebhookRepoImpl 同理：构造一次，复用给 Extension layer
+    let webhook_repo_impl: Arc<WebhookRepoImpl> =
+        Arc::new(WebhookRepoImpl::new(state.db_pool.clone()));
+    app.layer(Extension(state.webhook_repo.clone()))
+        .layer(Extension(state.webhook_event_repo()))
+        .layer(Extension(webhook_repo_impl))
+}
+
+/// webhook-off: no webhook Extension layers are assembled.
+#[cfg(not(feature = "webhook"))]
+fn apply_webhook_extension_layers(app: Router, _state: &CrawlRsState) -> Router {
+    app
+}
+
+/// Build the SDK router with the mandatory authentication middleware.
+///
+/// CRITICAL: auth middleware is mandatory — SDK handlers extract team_id/api_key_id
+/// from AuthState set by the middleware, never from the request body.
+fn build_sdk_router_with_auth(state: &CrawlRsState) -> Router {
+    apply_auth_layers(crate::presentation::sdk::build_sdk_router(), state)
+}
+
+/// Merge the SDK router and apply the global middleware/Extension stack.
+fn apply_global_api_layers(
+    app: Router,
+    sdk_router: Router,
+    state: &CrawlRsState,
+    settings: Arc<Settings>,
+    cors_layer: CorsLayer,
+) -> Router {
+    let rate_limiting_service = state.rate_limiting_service.clone();
+    let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
+    let search_engine_service = state.search_client();
+    let queue = state.task_queue.clone();
+    let credits_repo = state.credits_repo();
+    let crawl_repo = state.crawl_repo.clone();
+    #[cfg(feature = "webhook")]
+    let webhook_event_repo = state.webhook_event_repo();
+    #[cfg(feature = "webhook")]
+    let webhook_repo = state.webhook_repo();
+    #[cfg(feature = "teams")]
+    let geo_restriction_repo = state.geo_restriction_repo();
+
+    let app = app
+        .merge(sdk_router)
+        .layer(Extension(state.search_service.clone()))
+        .layer(Extension(state.task_queue.clone()))
+        .layer(Extension(state.crawl_repo.clone()));
+
+    let app = app.layer(cors_layer)
+        // i18n 中间件：从 Accept-Language 协商 locale，注入 Extension<Locale>
+        .layer(axum::middleware::from_fn(
+            crate::i18n::i18n_middleware,
+        ))
+        .layer(Extension(state.i18n_bundle.clone()))
+        // Security headers middleware - should be applied early in the middleware chain
+        .layer(axum::middleware::from_fn(
+            crate::presentation::middleware::security_headers_middleware::security_headers_middleware,
+        ))
+        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
+        // 架构以下 Extension layers 供 SDK 路由使用（SDK router 仅 layer 了
+        // search_service / task_queue / crawl_repo 三个）。protected/v2 路由已在各自
+        // 子函数中 layer 过，此处重复 layer 对它们无功能影响（Axum 外层 Extension 覆盖
+        // 内层），但为 SDK 路由提供必要的依赖注入。
+        .layer(Extension(state.team_semaphore.clone()))
+        .layer(Extension(queue))
+        .layer(Extension(state.task_repo.clone()))
+        .layer(Extension(state.result_repo.clone()))
+        .layer(Extension(crawl_repo))
+        .layer(Extension(rate_limit_middleware))
+        .layer(Extension(credits_repo))
+        .layer(Extension(settings))
+        .layer(Extension(search_engine_service))
+        .layer(Extension(rate_limiting_service.clone()))
+        .layer(Extension(state.audit_service()));
+
+    // webhook Extension 层在 webhook-off 时不装配
     #[cfg(feature = "webhook")]
     let app = app
-        .layer(Extension(webhook_repo))
         .layer(Extension(webhook_event_repo))
-        .layer(Extension(webhook_repo_impl));
+        .layer(Extension(webhook_repo.clone()));
+
+    // teams-on 时附加 geo_restriction_repo Extension
+    //   （供 SDK 路由中的 teams 相关 handler 使用）
+    // teams-off：跳过，geo_restriction_repo 变量未声明
+    #[cfg(feature = "teams")]
+    let app = app.layer(Extension(geo_restriction_repo));
+
+    app
+}
+
+/// Create the protected API routes using CrawlRsState.
+///
+/// # Arguments
+///
+/// * `state` - Application state with resolved dependencies
+/// * `settings` - Application settings
+pub fn create_protected_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>) -> Router {
+    let team_semaphore = state.team_semaphore.clone();
+    let queue = state.task_queue.clone();
+    let task_repo = state.task_repo.clone();
+    let result_repo = state.result_repo.clone();
+    let rate_limiting_service = state.rate_limiting_service.clone();
+    let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
+    let crawl_repo = state.crawl_repo.clone();
+    let search_engine_service = state.search_client();
+    // SearXNG 管理 API：服务为 None（disabled）时 handler 返回 503
+    let searxng_instances = state.searxng_instances();
+    let credits_repo = state.credits_repo();
+
+    // Create Arc<CrawlRsState> for handlers that need unified state, and derive
+    // CrawlHandlerState from it for crawl handlers (decoupled for testability).
+    let app_state_arc = Arc::new(state.clone());
+    let crawl_handler_state = Arc::new(CrawlHandlerState::from_app_state(&app_state_arc));
+
+    let app = protected_route_groups();
+    let app = apply_auth_layers(app, state);
+    let app = apply_teams_extension_layers(app, state);
+    let app = apply_webhook_extension_layers(app, state);
 
     let app = app
         .layer(Extension(team_semaphore))
@@ -435,35 +507,7 @@ pub fn create_v2_routes_with_state(state: &CrawlRsState, settings: Arc<Settings>
         .layer(Extension(webhook_event_repo.clone()));
 
     // 认证中间件层（outermost — 最先执行，注入 AuthState）
-    //
-    // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool。
-    // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
-    //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
-    #[cfg(feature = "auth")]
-    let app = app.layer(axum::middleware::from_fn_with_state(
-        state.db_pool.clone(),
-        crate::presentation::middleware::auth_middleware::auth_middleware_inner,
-    ));
-    #[cfg(not(feature = "auth"))]
-    let app = {
-        let template = build_default_identity_template(state);
-        app.layer(axum::middleware::from_fn_with_state(
-            template,
-            crate::presentation::middleware::auth_middleware::default_identity_middleware,
-        ))
-        // CWE-307：IP 上下文层位于认证中间件**外侧**（后挂载 = 先执行），把
-        // ConnectInfo 解析的客户端 IP 注入 garrison task-local，firewall-bruteforce
-        // 依此做 IP 级失败计数（缺省 fail-open）。
-    };
-    // CWE-307：IP 上下文层位于认证中间件**外侧**（后挂载 = 先执行），把
-    // ConnectInfo 解析的客户端 IP 注入 garrison task-local，firewall-bruteforce
-    // 依此做 IP 级失败计数（缺省 fail-open）。
-    #[cfg(feature = "auth")]
-    let app = app.layer(axum::middleware::from_fn(
-        crate::presentation::middleware::auth_middleware::garrison_ip_context_middleware,
-    ));
-
-    app
+    apply_auth_layers(app, state)
 }
 
 /// Build the complete API application router using CrawlRsState.
@@ -481,22 +525,6 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     let protected_routes = create_protected_routes_with_state(state, settings.clone());
     let v2_routes = create_v2_routes_with_state(state, settings.clone());
 
-    let rate_limiting_service = state.rate_limiting_service.clone();
-    let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
-    let search_engine_service = state.search_client();
-    let queue = state.task_queue.clone();
-    // teams-off 时不构造 geo_restriction_repo
-    //   （DatabaseGeoRestrictionRepository 仅供 teams-on SDK 路由使用）
-    #[cfg(feature = "teams")]
-    let geo_restriction_repo = state.geo_restriction_repo();
-    let credits_repo = state.credits_repo();
-    let crawl_repo = state.crawl_repo.clone();
-    // webhook 相关字段在 webhook-off 时不编译
-    #[cfg(feature = "webhook")]
-    let webhook_event_repo = state.webhook_event_repo();
-    #[cfg(feature = "webhook")]
-    let webhook_repo = state.webhook_repo();
-
     // 创建 CORS 层
     let cors_layer = create_cors_layer(&settings);
 
@@ -508,75 +536,9 @@ pub fn build_api_app_with_state(state: &CrawlRsState, settings: Arc<Settings>) -
     // SDK routes (always enabled; sdforge is non-optional since Task9)
     // CRITICAL: auth middleware is mandatory — SDK handlers extract team_id/api_key_id
     // from AuthState set by the middleware, never from the request body.
-    //
-    // auth-on：`from_fn_with_state(pool, auth_middleware_inner)` 注入 DbPool。
-    // auth-off：`from_fn_with_state(template, default_identity_middleware)` 注入默认身份模板，
-    //   模板携带 `DEFAULT_TEAM_ID`/`DEFAULT_API_KEY_ID`/`full_access` scope 与 db_pool。
-    #[cfg(feature = "auth")]
-    let sdk_router =
-        crate::presentation::sdk::build_sdk_router().layer(axum::middleware::from_fn_with_state(
-            state.db_pool.clone(),
-            crate::presentation::middleware::auth_middleware::auth_middleware_inner,
-        ));
-    #[cfg(feature = "auth")]
-    let sdk_router = sdk_router.layer(axum::middleware::from_fn(
-        crate::presentation::middleware::auth_middleware::garrison_ip_context_middleware,
-    ));
-    #[cfg(not(feature = "auth"))]
-    let sdk_router = {
-        let template = build_default_identity_template(state);
-        crate::presentation::sdk::build_sdk_router().layer(axum::middleware::from_fn_with_state(
-            template,
-            crate::presentation::middleware::auth_middleware::default_identity_middleware,
-        ))
-    };
+    let sdk_router = build_sdk_router_with_auth(state);
 
-    let app = app
-        .merge(sdk_router)
-        .layer(Extension(state.search_service.clone()))
-        .layer(Extension(state.task_queue.clone()))
-        .layer(Extension(state.crawl_repo.clone()));
-
-    let app = app.layer(cors_layer)
-        // i18n 中间件：从 Accept-Language 协商 locale，注入 Extension<Locale>
-        .layer(axum::middleware::from_fn(
-            crate::i18n::i18n_middleware,
-        ))
-        .layer(Extension(state.i18n_bundle.clone()))
-        // Security headers middleware - should be applied early in the middleware chain
-        .layer(axum::middleware::from_fn(
-            crate::presentation::middleware::security_headers_middleware::security_headers_middleware,
-        ))
-        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
-        // 架构以下 Extension layers 供 SDK 路由使用（SDK router 仅 layer 了
-        // search_service / task_queue / crawl_repo 三个）。protected/v2 路由已在各自
-        // 子函数中 layer 过，此处重复 layer 对它们无功能影响（Axum 外层 Extension 覆盖
-        // 内层），但为 SDK 路由提供必要的依赖注入。
-        .layer(Extension(state.team_semaphore.clone()))
-        .layer(Extension(queue))
-        .layer(Extension(state.task_repo.clone()))
-        .layer(Extension(state.result_repo.clone()))
-        .layer(Extension(crawl_repo))
-        .layer(Extension(rate_limit_middleware))
-        .layer(Extension(credits_repo))
-        .layer(Extension(settings))
-        .layer(Extension(search_engine_service))
-        .layer(Extension(rate_limiting_service.clone()))
-        .layer(Extension(state.audit_service()));
-
-    // webhook Extension 层在 webhook-off 时不装配
-    #[cfg(feature = "webhook")]
-    let app = app
-        .layer(Extension(webhook_event_repo))
-        .layer(Extension(webhook_repo.clone()));
-
-    // teams-on 时附加 geo_restriction_repo Extension
-    //   （供 SDK 路由中的 teams 相关 handler 使用）
-    // teams-off：跳过，geo_restriction_repo 变量未声明
-    #[cfg(feature = "teams")]
-    let app = app.layer(Extension(geo_restriction_repo));
-
-    app
+    apply_global_api_layers(app, sdk_router, state, settings, cors_layer)
 }
 
 // Note: create_public_routes, create_protected_routes_with_state,

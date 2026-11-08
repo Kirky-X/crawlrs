@@ -40,6 +40,105 @@ const DOM_STABLE_MAX_DURATION: Duration = Duration::from_secs(60);
 /// ResponseBody 等待的单响应体匹配检查上限（对齐默认 max_response_body_bytes）
 const WAIT_BODY_MAX_BYTES: u64 = 10 * 1024 * 1024;
 
+/// NetworkIdle 所需的三个网络事件流。
+type NetworkEventStreams = (
+    chromiumoxide::listeners::EventStream<
+        chromiumoxide::cdp::browser_protocol::network::EventRequestWillBeSent,
+    >,
+    chromiumoxide::listeners::EventStream<
+        chromiumoxide::cdp::browser_protocol::network::EventLoadingFinished,
+    >,
+    chromiumoxide::listeners::EventStream<
+        chromiumoxide::cdp::browser_protocol::network::EventLoadingFailed,
+    >,
+);
+
+/// ResponseBody 等待中「待取体」的响应表（request_id → encoded_data_length）。
+type BodyPendingResponses =
+    std::collections::HashMap<chromiumoxide::cdp::browser_protocol::network::RequestId, u64>;
+
+/// 启用 Network domain 并订阅三个网络事件流；任一失败返回错误字符串。
+async fn subscribe_network_events(page: &Page) -> Result<NetworkEventStreams, String> {
+    use chromiumoxide::cdp::browser_protocol::network::{
+        EnableParams as NetworkEnableParams, EventLoadingFailed, EventLoadingFinished,
+        EventRequestWillBeSent,
+    };
+
+    page.execute(NetworkEnableParams::default())
+        .await
+        .map_err(|e| e.to_string())?;
+    let started = page
+        .event_listener::<EventRequestWillBeSent>()
+        .await
+        .map_err(|e| e.to_string())?;
+    let finished = page
+        .event_listener::<EventLoadingFinished>()
+        .await
+        .map_err(|e| e.to_string())?;
+    let failed = page
+        .event_listener::<EventLoadingFailed>()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok((started, finished, failed))
+}
+
+/// best-effort 关闭 Network domain（tab 池复用下避免事件常开分发）。
+async fn disable_network(page: &Page) {
+    let _ = page
+        .execute(chromiumoxide::cdp::browser_protocol::network::DisableParams::default())
+        .await;
+}
+
+/// 记录一个 ResponseReceived 响应：`encoded_data_length` 未知时为 -1
+/// （cast 溢出 u64::MAX）——负值按 0 处理（放行取体，由返回体本身大小决定）。
+fn record_pending_response(
+    ev: std::sync::Arc<chromiumoxide::cdp::browser_protocol::network::EventResponseReceived>,
+    pending: &mut BodyPendingResponses,
+) {
+    let len = (ev.response.encoded_data_length.max(0.0)) as u64;
+    if len <= WAIT_BODY_MAX_BYTES {
+        pending.insert(ev.request_id.clone(), len);
+    }
+}
+
+/// LoadingFinished 后取体并匹配 needle；命中返回 `true`。
+///
+/// 取体失败（已 evicted/空体等）按不匹配处理，等待下一个响应。
+async fn finished_body_matches(
+    page: &Page,
+    fin: std::sync::Arc<chromiumoxide::cdp::browser_protocol::network::EventLoadingFinished>,
+    pending: &mut BodyPendingResponses,
+    needle: &str,
+) -> bool {
+    use chromiumoxide::cdp::browser_protocol::network::GetResponseBodyParams;
+
+    let Some(len) = pending.remove(&fin.request_id) else {
+        return false;
+    };
+    let _ = len;
+    if let Ok(returns) = page
+        .execute(GetResponseBodyParams::new(fin.request_id.clone()))
+        .await
+    {
+        let text = if returns.base64_encoded {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD
+                .decode(returns.body.as_bytes())
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+        } else {
+            Some(returns.body.clone())
+        };
+        if let Some(text) = text {
+            if text.contains(needle) {
+                return true;
+            }
+        }
+    }
+    // 取体失败（已 evicted/空体等）：跳过该响应，等下一个
+    false
+}
+
 impl WaitFor {
     /// 执行等待
     ///
@@ -81,41 +180,13 @@ impl WaitFor {
         quiet_window: Duration,
         timeout: Duration,
     ) -> Result<(), EngineError> {
-        use chromiumoxide::cdp::browser_protocol::network::{
-            EnableParams as NetworkEnableParams, EventLoadingFailed, EventLoadingFinished,
-            EventRequestWillBeSent,
-        };
-
         // 事件流订阅是异步的，任何失败都 fail-open 到固定 sleep
-        let setup = async {
-            page.execute(NetworkEnableParams::default())
-                .await
-                .map_err(|e| e.to_string())?;
-            let started = page
-                .event_listener::<EventRequestWillBeSent>()
-                .await
-                .map_err(|e| e.to_string())?;
-            let finished = page
-                .event_listener::<EventLoadingFinished>()
-                .await
-                .map_err(|e| e.to_string())?;
-            let failed = page
-                .event_listener::<EventLoadingFailed>()
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok::<_, String>((started, finished, failed))
-        };
-
-        let (mut started, mut finished, mut failed) = match setup.await {
+        let (mut started, mut finished, mut failed) = match subscribe_network_events(page).await {
             Ok(streams) => streams,
             Err(e) => {
                 // 复查 L2：enable 可能已成功而 listener 订阅失败——先关闭
                 // Network domain，避免页面存活期事件常开分发
-                let _ = page
-                    .execute(
-                        chromiumoxide::cdp::browser_protocol::network::DisableParams::default(),
-                    )
-                    .await;
+                disable_network(page).await;
                 log::warn!(
                     "{}",
                     crate::i18n::tr_log_args(
@@ -143,9 +214,7 @@ impl WaitFor {
         )
         .await;
 
-        let _ = page
-            .execute(chromiumoxide::cdp::browser_protocol::network::DisableParams::default())
-            .await;
+        disable_network(page).await;
         result
     }
 
@@ -263,7 +332,7 @@ impl WaitFor {
     ) -> Result<(), EngineError> {
         use chromiumoxide::cdp::browser_protocol::network::{
             DisableParams as NetworkDisableParams, EnableParams as NetworkEnableParams,
-            EventResponseReceived, GetResponseBodyParams,
+            EventResponseReceived,
         };
         use futures::StreamExt;
 
@@ -283,10 +352,7 @@ impl WaitFor {
                 .map_err(|e| EngineError::BrowserError(format!("subscribe failed: {e}")))?;
             // 响应体只在 LoadingFinished 后进入 DevTools 缓冲（ResponseReceived 时
             // 体尚未到位，立即取体报 No data found）——以 finished 事件驱动取体
-            let mut pending: std::collections::HashMap<
-                chromiumoxide::cdp::browser_protocol::network::RequestId,
-                u64,
-            > = std::collections::HashMap::new();
+            let mut pending: BodyPendingResponses = BodyPendingResponses::new();
             let deadline = Instant::now() + timeout;
             loop {
                 if Instant::now() >= deadline {
@@ -299,14 +365,7 @@ impl WaitFor {
                 tokio::select! {
                     ev = events.next() => {
                         match ev {
-                            Some(ev) => {
-                                // encoded_data_length 未知时为 -1（cast 溢出 u64::MAX）——
-                                // 负值按 0 处理（放行取体，由返回体本身大小决定）
-                                let len = (ev.response.encoded_data_length.max(0.0)) as u64;
-                                if len <= WAIT_BODY_MAX_BYTES {
-                                    pending.insert(ev.request_id.clone(), len);
-                                }
-                            }
+                            Some(ev) => record_pending_response(ev, &mut pending),
                             None => {
                                 return Err(EngineError::BrowserError(
                                     "response event stream ended prematurely".to_string(),
@@ -317,30 +376,8 @@ impl WaitFor {
                     fin = finished.next() => {
                         match fin {
                             Some(fin) => {
-                                if let Some(len) = pending.remove(&fin.request_id) {
-                                    let _ = len;
-                                    if let Ok(returns) = page
-                                        .execute(GetResponseBodyParams::new(
-                                            fin.request_id.clone(),
-                                        ))
-                                        .await
-                                    {
-                                        let text = if returns.base64_encoded {
-                                            use base64::Engine as _;
-                                            base64::engine::general_purpose::STANDARD
-                                                .decode(returns.body.as_bytes())
-                                                .ok()
-                                                .and_then(|b| String::from_utf8(b).ok())
-                                        } else {
-                                            Some(returns.body.clone())
-                                        };
-                                        if let Some(text) = text {
-                                            if text.contains(needle) {
-                                                return Ok(());
-                                            }
-                                        }
-                                    }
-                                    // 取体失败（已 evicted/空体等）：跳过该响应，等下一个
+                                if finished_body_matches(page, fin, &mut pending, needle).await {
+                                    return Ok(());
                                 }
                             }
                             None => {

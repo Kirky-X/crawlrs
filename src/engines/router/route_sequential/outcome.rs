@@ -10,7 +10,7 @@
 use super::super::check_js_upgrade_probe;
 use super::super::EngineRouter;
 use super::{AttemptContext, AttemptOutcome, AttemptState};
-use crate::engines::engine_client::{EngineError, InternalScrapeResponse};
+use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse};
 use crate::engines::session::SessionIdentity;
 use crate::utils::retry::RetryReason;
 use log::{debug, warn};
@@ -40,13 +40,63 @@ impl EngineRouter {
         let request = context.request;
         let host = context.host;
         let start_time = context.start_time;
+        let engine_name = report.engine_name;
+        let response_time = report.response_time;
+
+        #[cfg(feature = "content")]
+        let response = match self
+            .record_antibot_or_reject(response, report, session_identity, context, state)
+            .await
+        {
+            Ok(resp) => resp,
+            Err(outcome) => return outcome,
+        };
+
+        if let Some(outcome) = self
+            .probe_js_upgrade(
+                &response,
+                attempt_needs_js,
+                request,
+                engine_name,
+                response_time,
+            )
+            .await
+        {
+            return outcome;
+        }
+
+        AttemptOutcome::Done(
+            self.finish_success(
+                response,
+                engine_name,
+                response_time,
+                start_time,
+                host,
+                session_identity,
+            )
+            .await,
+        )
+    }
+
+    /// anti-bot 挑战检测与失败记账（自 [`EngineRouter::finish_attempt_response`]
+    /// 提取）：命中挑战时记录 tracker / 上限判定并返回终止结果，未命中则放行响应。
+    #[cfg(feature = "content")]
+    #[allow(clippy::result_large_err)] // Err 携带完整 AttemptOutcome（含响应体），同既有收尾臂
+    async fn record_antibot_or_reject(
+        &self,
+        response: InternalScrapeResponse,
+        report: &AttemptReport<'_>,
+        session_identity: Option<&Arc<SessionIdentity>>,
+        context: &AttemptContext<'_>,
+        state: &mut AttemptState<'_>,
+    ) -> Result<InternalScrapeResponse, AttemptOutcome> {
+        let request = context.request;
         let max_retries = context.max_retries;
         let engine_name = report.engine_name;
         let response_time = report.response_time;
         let total_attempts = report.total_attempts;
 
-        #[cfg(feature = "content")]
-        let response = match self
+        match self
             .record_antibot_failure(
                 response,
                 &request.url,
@@ -73,71 +123,79 @@ impl EngineRouter {
                     total_attempts,
                     max_retries,
                 ) {
-                    return AttemptOutcome::Done(Err(state.last_error.take().unwrap_or_else(
-                        || EngineError::AllEnginesFailed("Max retries reached".to_string()),
-                    )));
+                    return Err(AttemptOutcome::Done(Err(state
+                        .last_error
+                        .take()
+                        .unwrap_or_else(|| {
+                            EngineError::AllEnginesFailed("Max retries reached".to_string())
+                        }))));
                 }
-                return AttemptOutcome::Retry;
+                Err(AttemptOutcome::Retry)
             }
-            Ok(resp) => resp,
-        };
+            Ok(resp) => Ok(resp),
+        }
+    }
 
-        // 流式 HTTP→Chrome 升级探测
-        //
-        // HTTP 引擎（needs_js==false）返回"成功"响应后，检查是否疑似 SPA 空壳。
-        // 若 probe 判定 upgrade，将当前结果视为失败（不返回空壳给用户），
-        // 以 needs_js=true 重新 route_internal 改派浏览器引擎（Playwright）渲染。
-        //
-        // 防递归：递归调用时 request.needs_js=true，attempt_request.needs_js=true，
-        // 故 `!attempt_request.needs_js` 为 false，probe 检查自然跳过。
-        if !attempt_needs_js {
-            let verdict = check_js_upgrade_probe(&response);
-            if verdict.upgrade {
-                let mut js_request = request.clone();
-                js_request.needs_js = true;
-
-                // 死端预检：以 needs_js=true 重选引擎为空（部署未注册
-                // 任何 JS-capable 引擎）时，递归只会返回
-                // `No suitable engines available` 并丢弃这份已成功的响应。
-                // probe 仅是启发式，此时降级返回原始响应：跳过本次 probe
-                // 的失败记账，控制流落入下方成功收尾段（stats 成功记账 /
-                // 熔断 record_success / host 纪律 / session Cookie 捕获
-                // 均按成功语义原样执行）。
-                if self.select_optimal_engines(&js_request).is_empty() {
-                    warn!(
-                        "JS upgrade probe hit (score={}, reason={}) but no \
-                         JS-capable engine is registered for the needs_js \
-                         re-route; degrading to the original HTTP response \
-                         for {}",
-                        verdict.score, verdict.reason, request.url
-                    );
-                } else {
-                    self.update_engine_stats(engine_name, false, response_time);
-                    self.metrics.record_engine_failure(
-                        engine_name,
-                        &format!("js-upgrade-probe: {}", verdict.reason),
-                    );
-                    debug!(
-                        "Engine {} returned SPA shell (probe score={}, reason={}); \
-                         re-routing with needs_js=true to dispatch browser engine",
-                        engine_name, verdict.score, verdict.reason
-                    );
-                    return AttemptOutcome::Done(Box::pin(self.route_internal(&js_request)).await);
-                }
-            }
+    /// 流式 HTTP→Chrome 升级探测（自 [`EngineRouter::finish_attempt_response`]
+    /// 提取）：判定需升级且存在 JS-capable 引擎时递归改派并返回终止结果；
+    /// 无需升级或死端预检降级时返回 `None`，控制流落入成功收尾。
+    ///
+    /// HTTP 引擎（needs_js==false）返回"成功"响应后，检查是否疑似 SPA 空壳。
+    /// 若 probe 判定 upgrade，将当前结果视为失败（不返回空壳给用户），
+    /// 以 needs_js=true 重新 route_internal 改派浏览器引擎（Playwright）渲染。
+    ///
+    /// 防递归：递归调用时 request.needs_js=true，attempt_request.needs_js=true，
+    /// 故 `!attempt_request.needs_js` 为 false，probe 检查自然跳过。
+    async fn probe_js_upgrade(
+        &self,
+        response: &InternalScrapeResponse,
+        attempt_needs_js: bool,
+        request: &InternalScrapeRequest,
+        engine_name: &str,
+        response_time: Duration,
+    ) -> Option<AttemptOutcome> {
+        if attempt_needs_js {
+            return None;
+        }
+        let verdict = check_js_upgrade_probe(response);
+        if !verdict.upgrade {
+            return None;
         }
 
-        AttemptOutcome::Done(
-            self.finish_success(
-                response,
+        let mut js_request = request.clone();
+        js_request.needs_js = true;
+
+        // 死端预检：以 needs_js=true 重选引擎为空（部署未注册
+        // 任何 JS-capable 引擎）时，递归只会返回
+        // `No suitable engines available` 并丢弃这份已成功的响应。
+        // probe 仅是启发式，此时降级返回原始响应：跳过本次 probe
+        // 的失败记账，控制流落入下方成功收尾段（stats 成功记账 /
+        // 熔断 record_success / host 纪律 / session Cookie 捕获
+        // 均按成功语义原样执行）。
+        if self.select_optimal_engines(&js_request).is_empty() {
+            warn!(
+                "JS upgrade probe hit (score={}, reason={}) but no \
+                 JS-capable engine is registered for the needs_js \
+                 re-route; degrading to the original HTTP response \
+                 for {}",
+                verdict.score, verdict.reason, request.url
+            );
+            None
+        } else {
+            self.update_engine_stats(engine_name, false, response_time);
+            self.metrics.record_engine_failure(
                 engine_name,
-                response_time,
-                start_time,
-                host,
-                session_identity,
-            )
-            .await,
-        )
+                &format!("js-upgrade-probe: {}", verdict.reason),
+            );
+            debug!(
+                "Engine {} returned SPA shell (probe score={}, reason={}); \
+                 re-routing with needs_js=true to dispatch browser engine",
+                engine_name, verdict.score, verdict.reason
+            );
+            Some(AttemptOutcome::Done(
+                Box::pin(self.route_internal(&js_request)).await,
+            ))
+        }
     }
 
     /// 失败臂收尾（自 [`EngineRouter::attempt_engine`] 提取）：记录失败簿记，

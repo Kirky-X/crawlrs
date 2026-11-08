@@ -295,7 +295,17 @@ impl WorkerManager {
         // 否则重启后布隆全空，所有链接走 DefinitelyNew 快路径 → 全站重爬
         self.warmup_deduplicator().await;
 
-        // 启动过期清理工作器（使用新模板模式）
+        self.spawn_expiration_worker();
+        self.spawn_searxng_workers();
+        self.spawn_coalescer_purge();
+
+        for _ in 0..count {
+            self.spawn_scrape_worker();
+        }
+    }
+
+    /// 启动过期清理工作器（使用新模板模式）
+    fn spawn_expiration_worker(&mut self) {
         let expiration_processor = Arc::new(ExpirationWorker::new(
             self.repository.clone(),
             self.result_repository.clone(),
@@ -306,9 +316,11 @@ impl WorkerManager {
         self.handles.push(tokio::spawn(async move {
             expiration_worker.run().await;
         }));
+    }
 
-        // SearXNG 双周期 worker（enabled 门控与 spawn_common_workers 一致）：
-        // 采集轮 PG advisory lock 防重、探活幂等，api/worker 双进程并发安全。
+    /// SearXNG 双周期 worker（enabled 门控与 spawn_common_workers 一致）：
+    /// 采集轮 PG advisory lock 防重、探活幂等，api/worker 双进程并发安全。
+    fn spawn_searxng_workers(&mut self) {
         if let Some(searxng) = self.searxng_instances.clone() {
             let collector = AbstractWorker::new(
                 Arc::new(
@@ -334,12 +346,14 @@ impl WorkerManager {
                 health.run().await;
             }));
         }
+    }
 
-        // 定期调度 RequestCoalescer::purge_stale
-        //
-        // worker panic / 死锁可能导致 CoalesceGuard 未 Drop，使 in-flight 条目
-        // 永久驻留 DashMap 阻塞同 URL 后续请求。每 60s 调用 purge_stale 清理
-        // 僵死条目（STALE_TIMEOUT=120s），并通过 broadcast 通知等待方重试。
+    /// 定期调度 RequestCoalescer::purge_stale
+    ///
+    /// worker panic / 死锁可能导致 CoalesceGuard 未 Drop，使 in-flight 条目
+    /// 永久驻留 DashMap 阻塞同 URL 后续请求。每 60s 调用 purge_stale 清理
+    /// 僵死条目（STALE_TIMEOUT=120s），并通过 broadcast 通知等待方重试。
+    fn spawn_coalescer_purge(&mut self) {
         let coalescer_for_purge = self.request_coalescer.clone();
         let shutdown_for_purge = self.shutdown_coordinator.clone();
         self.handles.push(tokio::spawn(async move {
@@ -358,44 +372,45 @@ impl WorkerManager {
                 }
             }
         }));
+    }
 
-        for _ in 0..count {
-            let worker = ScrapeWorker::new(ScrapeWorkerDeps {
-                repository: self.repository.clone(),
-                result_repository: self.result_repository.clone(),
-                crawl_repository: self.crawl_repository.clone(),
-                webhook_service: self.webhook_service.clone(),
-                credits_repository: self.credits_repository.clone(),
-                engine_client: self.engine_client.clone(),
-                create_scrape_use_case: self.create_scrape_use_case.clone(),
-                team_semaphore: self.team_semaphore.clone(),
-                coalesce_coordinator: self.coalesce_coordinator.clone(),
-                robots_checker: self.robots_checker.clone(),
-                settings: self.settings.clone(),
-                default_concurrency_limit: self.default_concurrency_limit,
-                extraction_service: self.extraction_service.clone(),
-                #[cfg(feature = "content")]
-                content_extractor: self.content_extractor.clone(),
-                cache_service: self.cache_service.clone(),
-                #[cfg(feature = "metrics")]
-                memory_scheduler: self.memory_scheduler.clone(),
-            })
-            // 注入共享优雅退出协调器
-            .with_shutdown_coordinator(self.shutdown_coordinator.clone())
-            // 注入共享 deduplicator（替换 ScrapeWorker::new 内部默认实例）
-            .with_deduplicator_opt(Some(self.deduplicator.clone()));
+    /// 构造并启动单个 ScrapeWorker（注入共享 deduplicator 与优雅退出协调器）。
+    fn spawn_scrape_worker(&mut self) {
+        let worker = ScrapeWorker::new(ScrapeWorkerDeps {
+            repository: self.repository.clone(),
+            result_repository: self.result_repository.clone(),
+            crawl_repository: self.crawl_repository.clone(),
+            webhook_service: self.webhook_service.clone(),
+            credits_repository: self.credits_repository.clone(),
+            engine_client: self.engine_client.clone(),
+            create_scrape_use_case: self.create_scrape_use_case.clone(),
+            team_semaphore: self.team_semaphore.clone(),
+            coalesce_coordinator: self.coalesce_coordinator.clone(),
+            robots_checker: self.robots_checker.clone(),
+            settings: self.settings.clone(),
+            default_concurrency_limit: self.default_concurrency_limit,
+            extraction_service: self.extraction_service.clone(),
+            #[cfg(feature = "content")]
+            content_extractor: self.content_extractor.clone(),
+            cache_service: self.cache_service.clone(),
+            #[cfg(feature = "metrics")]
+            memory_scheduler: self.memory_scheduler.clone(),
+        })
+        // 注入共享优雅退出协调器
+        .with_shutdown_coordinator(self.shutdown_coordinator.clone())
+        // 注入共享 deduplicator（替换 ScrapeWorker::new 内部默认实例）
+        .with_deduplicator_opt(Some(self.deduplicator.clone()));
 
-            // 记录本 worker 的认领身份（lock_token），供停机回滚限定范围
-            self.worker_ids.lock().push(worker.worker_id());
+        // 记录本 worker 的认领身份（lock_token），供停机回滚限定范围
+        self.worker_ids.lock().push(worker.worker_id());
 
-            let queue = self.queue.clone();
-            // We spawn the worker loop on a separate task to avoid blocking the main thread
-            // or the loop that spawns workers.
-            let handle = tokio::spawn(async move {
-                worker.run(queue).await;
-            });
-            self.handles.push(handle);
-        }
+        let queue = self.queue.clone();
+        // We spawn the worker loop on a separate task to avoid blocking the main thread
+        // or the loop that spawns workers.
+        let handle = tokio::spawn(async move {
+            worker.run(queue).await;
+        });
+        self.handles.push(handle);
     }
 
     /// 本进程所有已启动 worker 的认领身份（worker_id == 任务 lock_token）。

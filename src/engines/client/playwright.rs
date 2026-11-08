@@ -1055,14 +1055,42 @@ impl XhrCaptureSession {
     ///
     /// 设置失败返回 `None`（fail-open：捕获为增强功能，不阻断抓取）。
     async fn start(page: &chromiumoxide::page::Page, config: &XhrCaptureConfig) -> Option<Self> {
+        let (responses, finished) = Self::subscribe_xhr_events(page).await?;
+
+        let buffer = Arc::new(Mutex::new(XhrCaptureBuffer::new(config.max_responses)));
+        let handle = spawn_xhr_capture_task(
+            responses,
+            finished,
+            Arc::clone(&buffer),
+            config.url_patterns.clone(),
+            config.max_bytes,
+            page,
+        );
+        let mut guard = InterceptGuard::new();
+        guard.set(handle);
+        Some(Self {
+            buffer,
+            _guard: guard,
+        })
+    }
+
+    /// 启用 Network domain 并订阅 ResponseReceived / LoadingFinished 事件流。
+    ///
+    /// 设置失败返回 `None`（fail-open：捕获为增强功能，不阻断抓取）。
+    async fn subscribe_xhr_events(
+        page: &chromiumoxide::page::Page,
+    ) -> Option<(
+        chromiumoxide::listeners::EventStream<EventResponseReceived>,
+        chromiumoxide::listeners::EventStream<EventLoadingFinished>,
+    )> {
         let setup = async {
             page.execute(NetworkEnableParams::default()).await?;
             let responses = page.event_listener::<EventResponseReceived>().await?;
             let finished = page.event_listener::<EventLoadingFinished>().await?;
             Ok::<_, chromiumoxide::error::CdpError>((responses, finished))
         };
-        let (mut responses, mut finished) = match setup.await {
-            Ok(streams) => streams,
+        match setup.await {
+            Ok(streams) => Some(streams),
             Err(e) => {
                 // 对齐 wait.rs 复查 L2：enable 成功而订阅失败时关闭 domain，
                 // 防止页面存活期事件常开分发
@@ -1074,88 +1102,9 @@ impl XhrCaptureSession {
                         &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
                     )
                 );
-                return None;
+                None
             }
-        };
-
-        let buffer = Arc::new(Mutex::new(XhrCaptureBuffer::new(config.max_responses)));
-        let patterns = config.url_patterns.clone();
-        let max_bytes = config.max_bytes;
-        let buf_clone = Arc::clone(&buffer);
-        let page_clone = page.clone();
-        let handle = tokio::spawn(async move {
-            // 单任务 select! 消费双事件流，保证 ResponseReceived 与
-            // LoadingFinished 的配对无跨流乱序竞态（早到事件经
-            // finished_early 集合补偿）。取体必须在 LoadingFinished 到达时
-            // 立即执行：NetworkIdle 等待退出会 Network.disable，届时浏览器
-            // 已丢弃缓冲资源（getResponseBody 报 No resource with given
-            // identifier found）。
-            loop {
-                tokio::select! {
-                    Some(event) = responses.next() => {
-                        if !matches!(event.r#type, ResourceType::Xhr | ResourceType::Fetch) {
-                            continue;
-                        }
-                        let url = event.response.url.clone();
-                        if !url_matches_capture_patterns(&url, &patterns) {
-                            continue;
-                        }
-                        // SSRF 防护：页面 JS 可指路本机/内网/链路本地地址（如
-                        // 169.254.169.254 元数据端点），命中即丢弃——捕获通道
-                        // 不得成为页面发起的内网数据回传出口
-                        if crate::engines::validators::is_internal_url(&url) {
-                            log::debug!(
-                                "{}",
-                                crate::i18n::tr_log_args(
-                                    "playwright-xhr-internal-blocked",
-                                    &[("url", fluent_bundle::FluentValue::from(url.as_str()))],
-                                )
-                            );
-                            continue;
-                        }
-                        let entry = PendingXhr {
-                            request_id: event.request_id.as_ref().to_string(),
-                            url,
-                            status: u16::try_from(event.response.status).unwrap_or(0),
-                            mime_type: event.response.mime_type.clone(),
-                        };
-                        let early_entry = entry.clone();
-                        let outcome = buf_clone
-                            .lock()
-                            .expect("xhr capture buffer poisoned")
-                            .record(entry);
-                        if outcome == RecordOutcome::AlreadyFinished {
-                            // LoadingFinished 早到：立即取体
-                            fetch_and_store(&page_clone, &buf_clone, &early_entry, max_bytes)
-                                .await;
-                        }
-                    }
-                    Some(event) = finished.next() => {
-                        let request_id = event.request_id.as_ref().to_string();
-                        let pending = {
-                            let mut buf = buf_clone.lock().expect("xhr capture buffer poisoned");
-                            match buf.take_pending(&request_id) {
-                                Some(entry) => Some(entry),
-                                None => {
-                                    buf.mark_finished_early(&request_id);
-                                    None
-                                }
-                            }
-                        };
-                        if let Some(entry) = pending {
-                            fetch_and_store(&page_clone, &buf_clone, &entry, max_bytes).await;
-                        }
-                    }
-                    else => break,
-                }
-            }
-        });
-        let mut guard = InterceptGuard::new();
-        guard.set(handle);
-        Some(Self {
-            buffer,
-            _guard: guard,
-        })
+        }
     }
 
     /// 页面等待完成后收集捕获结果（wait 之后、page 释放之前）
@@ -1211,6 +1160,85 @@ impl XhrCaptureSession {
         let _ = page.execute(NetworkDisableParams::default()).await;
         captured
     }
+}
+
+/// 启动 XHR 捕获监听 task：单任务 select! 消费双事件流，命中记入共享缓冲。
+fn spawn_xhr_capture_task(
+    mut responses: chromiumoxide::listeners::EventStream<EventResponseReceived>,
+    mut finished: chromiumoxide::listeners::EventStream<EventLoadingFinished>,
+    buf_clone: Arc<Mutex<XhrCaptureBuffer>>,
+    patterns: Vec<String>,
+    max_bytes: u64,
+    page: &chromiumoxide::page::Page,
+) -> tokio::task::JoinHandle<()> {
+    let page_clone = page.clone();
+    tokio::spawn(async move {
+        // 单任务 select! 消费双事件流，保证 ResponseReceived 与
+        // LoadingFinished 的配对无跨流乱序竞态（早到事件经
+        // finished_early 集合补偿）。取体必须在 LoadingFinished 到达时
+        // 立即执行：NetworkIdle 等待退出会 Network.disable，届时浏览器
+        // 已丢弃缓冲资源（getResponseBody 报 No resource with given
+        // identifier found）。
+        loop {
+            tokio::select! {
+                Some(event) = responses.next() => {
+                    if !matches!(event.r#type, ResourceType::Xhr | ResourceType::Fetch) {
+                        continue;
+                    }
+                    let url = event.response.url.clone();
+                    if !url_matches_capture_patterns(&url, &patterns) {
+                        continue;
+                    }
+                    // SSRF 防护：页面 JS 可指路本机/内网/链路本地地址（如
+                    // 169.254.169.254 元数据端点），命中即丢弃——捕获通道
+                    // 不得成为页面发起的内网数据回传出口
+                    if crate::engines::validators::is_internal_url(&url) {
+                        log::debug!(
+                            "{}",
+                            crate::i18n::tr_log_args(
+                                "playwright-xhr-internal-blocked",
+                                &[("url", fluent_bundle::FluentValue::from(url.as_str()))],
+                            )
+                        );
+                        continue;
+                    }
+                    let entry = PendingXhr {
+                        request_id: event.request_id.as_ref().to_string(),
+                        url,
+                        status: u16::try_from(event.response.status).unwrap_or(0),
+                        mime_type: event.response.mime_type.clone(),
+                    };
+                    let early_entry = entry.clone();
+                    let outcome = buf_clone
+                        .lock()
+                        .expect("xhr capture buffer poisoned")
+                        .record(entry);
+                    if outcome == RecordOutcome::AlreadyFinished {
+                        // LoadingFinished 早到：立即取体
+                        fetch_and_store(&page_clone, &buf_clone, &early_entry, max_bytes)
+                            .await;
+                    }
+                }
+                Some(event) = finished.next() => {
+                    let request_id = event.request_id.as_ref().to_string();
+                    let pending = {
+                        let mut buf = buf_clone.lock().expect("xhr capture buffer poisoned");
+                        match buf.take_pending(&request_id) {
+                            Some(entry) => Some(entry),
+                            None => {
+                                buf.mark_finished_early(&request_id);
+                                None
+                            }
+                        }
+                    };
+                    if let Some(entry) = pending {
+                        fetch_and_store(&page_clone, &buf_clone, &entry, max_bytes).await;
+                    }
+                }
+                else => break,
+            }
+        }
+    })
 }
 
 /// LoadingFinished 后立即取体并入完成区（Network domain 存活期内，body 未被丢弃）

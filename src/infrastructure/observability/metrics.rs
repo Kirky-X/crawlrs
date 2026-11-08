@@ -422,6 +422,30 @@ pub fn shared_system_monitor() -> Arc<MutableSystemMonitor> {
         .clone()
 }
 
+/// 安装 Prometheus recorder；失败时记录错误并返回 false（指标禁用）。
+fn install_prometheus_recorder() -> bool {
+    let builder = PrometheusBuilder::new();
+    if let Err(e) = builder.with_http_listener(([0, 0, 0, 0], 9100)).install() {
+        log::error!(
+            "Failed to install Prometheus recorder: {}. Metrics will be disabled.",
+            e
+        );
+        return false;
+    }
+    true
+}
+
+/// 启动系统指标后台刷新任务（Prometheus 导出）。
+fn spawn_system_metrics_updater(monitor: Arc<MutableSystemMonitor>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            update_system_metrics(&monitor);
+        }
+    });
+}
+
 /// 初始化指标系统
 ///
 /// 配置并注册应用所需的各类监控指标
@@ -430,12 +454,7 @@ pub fn shared_system_monitor() -> Arc<MutableSystemMonitor> {
 /// 后台刷新任务由 `shared_system_monitor()` 首次调用时启动，此处仅负责
 /// Prometheus 注册与指标导出。
 pub fn init_metrics() {
-    let builder = PrometheusBuilder::new();
-    if let Err(e) = builder.with_http_listener(([0, 0, 0, 0], 9100)).install() {
-        log::error!(
-            "Failed to install Prometheus recorder: {}. Metrics will be disabled.",
-            e
-        );
+    if !install_prometheus_recorder() {
         return;
     }
 
@@ -443,13 +462,7 @@ pub fn init_metrics() {
     let monitor = shared_system_monitor();
 
     // Start background task to update system metrics（Prometheus 导出）
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
-        loop {
-            interval.tick().await;
-            update_system_metrics(&monitor);
-        }
-    });
+    spawn_system_metrics_updater(monitor);
 
     describe_gauge!(
         "system_cpu_usage_ratio",

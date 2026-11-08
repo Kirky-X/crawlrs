@@ -149,6 +149,84 @@ pub(super) fn init_team_semaphore(settings: &Settings) -> Arc<TeamSemaphore> {
     }
 }
 
+/// 从设置构建限流与并发配置（含校验告警）。
+#[cfg(feature = "rate-limit")]
+fn build_rate_limiting_config(settings: &Settings) -> RateLimitingConfig {
+    let rate_limit_config = RateLimitConfig {
+        strategy: RateLimitStrategy::TokenBucket,
+        requests_per_second: settings.rate_limiting.default_rpm / 60,
+        requests_per_minute: settings.rate_limiting.default_rpm,
+        requests_per_hour: settings.rate_limiting.default_rpm * 60,
+        bucket_capacity: Some(settings.rate_limiting.default_rpm),
+        enabled: settings.rate_limiting.enabled,
+    };
+
+    if let Err(e) = rate_limit_config.validate() {
+        log::error!("Rate limit configuration error: {}", e);
+    }
+
+    let concurrency_config = ConcurrencyConfig {
+        strategy: ConcurrencyStrategy::DistributedSemaphore,
+        max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
+        max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
+        lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds,
+        enabled: true,
+    };
+
+    if let Err(e) = concurrency_config.validate() {
+        log::error!("Concurrency configuration error: {}", e);
+    }
+
+    RateLimitingConfig {
+        rate_limit: rate_limit_config,
+        concurrency: concurrency_config,
+        backlog_process_interval_seconds: 30,
+        rate_limit_ttl_seconds: 3600,
+    }
+}
+
+/// 按 `storage_backend` 选择限流存储句柄。
+///
+/// 存储后端选择：database 路径失败显性报错（R-multidb-schema-003
+/// 禁止「DDL 失败→回退内存」）；未知非法值维持既有 fail-open 语义。
+#[cfg(feature = "rate-limit")]
+fn select_rate_limit_storage(
+    settings: &Settings,
+    db_pool: Option<Arc<DbPool>>,
+) -> anyhow::Result<StorageHandle> {
+    match settings.rate_limiting.storage_backend.as_str() {
+        "memory" => Ok(StorageHandle::Memory),
+        "database" => {
+            #[cfg(any(feature = "db-postgres", feature = "db-sqlite", feature = "db-mysql"))]
+            match db_pool {
+                Some(pool) => Ok(StorageHandle::Database(pool)),
+                None => {
+                    anyhow::bail!(
+                        "rate_limiting.storage_backend=database but no db pool available; \
+                         refusing to fall back to memory storage (config error)"
+                    );
+                }
+            }
+            #[cfg(not(any(feature = "db-postgres", feature = "db-sqlite", feature = "db-mysql")))]
+            {
+                let _ = db_pool;
+                anyhow::bail!(
+                    "rate_limiting.storage_backend=database requires a compiled db dialect \
+                     (db-postgres/db-sqlite/db-mysql); refusing to fall back to memory \
+                     storage (config error)"
+                );
+            }
+        }
+        other => {
+            log::warn!(
+                "Unknown rate_limiting.storage_backend '{}'; falling back to memory storage",
+                other
+            );
+            Ok(StorageHandle::Memory)
+        }
+    }
+}
+
 /// Initialize rate limiting service.
 ///
 /// 根据 `rate-limit` feature 与 `rate_limiting.storage_backend` 配置选择装配：
@@ -173,75 +251,8 @@ pub(super) async fn init_rate_limiting_service(
 ) -> anyhow::Result<Arc<dyn RateLimitingService>> {
     #[cfg(feature = "rate-limit")]
     {
-        let rate_limit_config = RateLimitConfig {
-            strategy: RateLimitStrategy::TokenBucket,
-            requests_per_second: settings.rate_limiting.default_rpm / 60,
-            requests_per_minute: settings.rate_limiting.default_rpm,
-            requests_per_hour: settings.rate_limiting.default_rpm * 60,
-            bucket_capacity: Some(settings.rate_limiting.default_rpm),
-            enabled: settings.rate_limiting.enabled,
-        };
-
-        if let Err(e) = rate_limit_config.validate() {
-            log::error!("Rate limit configuration error: {}", e);
-        }
-
-        let concurrency_config = ConcurrencyConfig {
-            strategy: ConcurrencyStrategy::DistributedSemaphore,
-            max_concurrent_tasks: settings.concurrency.default_team_limit as u32,
-            max_concurrent_per_team: settings.concurrency.default_team_limit as u32,
-            lock_timeout_seconds: settings.concurrency.task_lock_duration_seconds,
-            enabled: true,
-        };
-
-        if let Err(e) = concurrency_config.validate() {
-            log::error!("Concurrency configuration error: {}", e);
-        }
-
-        let rate_limiting_config = RateLimitingConfig {
-            rate_limit: rate_limit_config,
-            concurrency: concurrency_config,
-            backlog_process_interval_seconds: 30,
-            rate_limit_ttl_seconds: 3600,
-        };
-
-        // 存储后端选择：database 路径失败显性报错（R-multidb-schema-003
-        // 禁止「DDL 失败→回退内存」）；未知非法值维持既有 fail-open 语义。
-        let storage = match settings.rate_limiting.storage_backend.as_str() {
-            "memory" => StorageHandle::Memory,
-            "database" => {
-                #[cfg(any(feature = "db-postgres", feature = "db-sqlite", feature = "db-mysql"))]
-                match db_pool {
-                    Some(pool) => StorageHandle::Database(pool),
-                    None => {
-                        anyhow::bail!(
-                            "rate_limiting.storage_backend=database but no db pool available; \
-                             refusing to fall back to memory storage (config error)"
-                        );
-                    }
-                }
-                #[cfg(not(any(
-                    feature = "db-postgres",
-                    feature = "db-sqlite",
-                    feature = "db-mysql"
-                )))]
-                {
-                    let _ = db_pool;
-                    anyhow::bail!(
-                        "rate_limiting.storage_backend=database requires a compiled db dialect \
-                         (db-postgres/db-sqlite/db-mysql); refusing to fall back to memory \
-                         storage (config error)"
-                    );
-                }
-            }
-            other => {
-                log::warn!(
-                    "Unknown rate_limiting.storage_backend '{}'; falling back to memory storage",
-                    other
-                );
-                StorageHandle::Memory
-            }
-        };
+        let rate_limiting_config = build_rate_limiting_config(settings);
+        let storage = select_rate_limit_storage(settings, db_pool)?;
 
         let service = LimiteronService::new(
             repositories.task_repo.clone(),

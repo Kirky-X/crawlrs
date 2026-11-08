@@ -96,7 +96,8 @@ mod app {
         RepositoryModule, ServiceModule, SettingsModule,
     };
     use crawlrs::di::{CrawlRsState, CrawlRsStateExt};
-    use crawlrs::workers::manager::{WorkerManager, WorkerManagerConfig};
+    use crawlrs::workers::manager::{WorkerManager, WorkerManagerConfig, WorkerManagerDeps};
+    use crawlrs::workers::shutdown::ShutdownCoordinator;
     use std::env;
     use std::sync::Arc;
     use tokio::net::TcpListener;
@@ -160,40 +161,16 @@ mod app {
         // - `worker_manager.wait_for_shutdown` 内部经 coordinator 阻塞等待信号，
         // 随后给进行中任务 ≤ graceful_period 的宽限期完成，再终止剩余句柄；
         // - 宽限期结束后 `rollback_pending_tasks` 把已锁定未完成任务回滚为 Pending。
-        let coordinator = Arc::new(crawlrs::workers::shutdown::ShutdownCoordinator::new(
-            std::time::Duration::from_secs(settings.workers.graceful_shutdown_seconds),
-        ));
-        let coord_for_signals = coordinator.clone();
-        tokio::spawn(async move {
-            if let Err(e) = crawlrs::workers::shutdown::listen_unix_signals(coord_for_signals).await
-            {
-                log::error!("Failed to listen for shutdown signals: {}", e);
-            }
-        });
+        let coordinator = Arc::new(ShutdownCoordinator::new(std::time::Duration::from_secs(
+            settings.workers.graceful_shutdown_seconds,
+        )));
+        spawn_shutdown_signal_listener(coordinator.clone());
 
         // 启动通用 worker（webhook / backlog / expiration）
         let _common_worker_handles = spawn_common_workers(app_state, &settings).await;
 
         // Create worker manager with dependencies (使用 DI 注入的服务)
-        let deps = crawlrs::workers::manager::WorkerManagerDeps {
-            queue: app_state.task_queue(),
-            repository: app_state.task_repo(),
-            result_repository: app_state.result_repo(),
-            crawl_repository: app_state.crawl_repo(),
-            webhook_service: app_state.webhook_service(),
-            credits_repository: app_state.credits_repo(),
-            engine_client: app_state.engine_client(),
-            create_scrape_use_case: app_state.create_scrape_use_case(),
-            team_semaphore: app_state.team_semaphore.clone(),
-            request_coalescer: app_state.request_coalescer.clone(),
-            robots_checker: app_state.robots_checker.clone(),
-            http_client,
-            extraction_service: app_state.extraction_service(),
-            content_extractor: app_state.content_extractor(),
-            cache_service: app_state.cache_service(),
-            shutdown_coordinator: coordinator.clone(),
-            searxng_instances: app_state.searxng_instances(),
-        };
+        let deps = build_worker_manager_deps(app_state, http_client, coordinator.clone());
 
         let config = WorkerManagerConfig {
             settings: settings.clone(),
@@ -216,6 +193,55 @@ mod app {
         // 分阶段停机（吸收自研 trait-kit `shutdown` kit）：
         // in-flight 回滚挂入 DrainQueue 阶段，由协调器按阶段超时执行；
         // 后续新增停机清理（连接池关闭、日志落盘）注册到对应阶段即可，无需改编排。
+        register_worker_shutdown_hooks(&coordinator, app_state, &settings, worker_ids);
+        coordinator.run_phased_shutdown().await;
+
+        Ok(())
+    }
+
+    /// Spawn the signal listener that triggers the shared shutdown coordinator.
+    fn spawn_shutdown_signal_listener(coordinator: Arc<ShutdownCoordinator>) {
+        tokio::spawn(async move {
+            if let Err(e) = crawlrs::workers::shutdown::listen_unix_signals(coordinator).await {
+                log::error!("Failed to listen for shutdown signals: {}", e);
+            }
+        });
+    }
+
+    /// Build worker-manager dependencies from the shared application state.
+    fn build_worker_manager_deps(
+        app_state: &CrawlRsState,
+        http_client: Arc<reqwest::Client>,
+        coordinator: Arc<ShutdownCoordinator>,
+    ) -> WorkerManagerDeps {
+        WorkerManagerDeps {
+            queue: app_state.task_queue(),
+            repository: app_state.task_repo(),
+            result_repository: app_state.result_repo(),
+            crawl_repository: app_state.crawl_repo(),
+            webhook_service: app_state.webhook_service(),
+            credits_repository: app_state.credits_repo(),
+            engine_client: app_state.engine_client(),
+            create_scrape_use_case: app_state.create_scrape_use_case(),
+            team_semaphore: app_state.team_semaphore.clone(),
+            request_coalescer: app_state.request_coalescer.clone(),
+            robots_checker: app_state.robots_checker.clone(),
+            http_client,
+            extraction_service: app_state.extraction_service(),
+            content_extractor: app_state.content_extractor(),
+            cache_service: app_state.cache_service(),
+            shutdown_coordinator: coordinator,
+            searxng_instances: app_state.searxng_instances(),
+        }
+    }
+
+    /// Register the phased shutdown hooks for the worker service.
+    fn register_worker_shutdown_hooks(
+        coordinator: &ShutdownCoordinator,
+        app_state: &CrawlRsState,
+        settings: &crawlrs::config::settings::Settings,
+        worker_ids: Vec<crawlrs::domain::id::Id>,
+    ) {
         let repo_for_rollback = app_state.task_repo();
         let rollback_graceful =
             std::time::Duration::from_secs(settings.workers.graceful_shutdown_seconds);
@@ -243,9 +269,6 @@ mod app {
                 })
             },
         );
-        coordinator.run_phased_shutdown().await;
-
-        Ok(())
     }
 
     /// Bootstrap: create initial team and admin API key for first-time deployment.
@@ -324,6 +347,17 @@ mod app {
         conn: &dbnexus::sea_orm::DatabaseConnection,
         team_id: crawlrs::domain::id::Id,
     ) -> anyhow::Result<()> {
+        let (api_key_id, plaintext_key) = provision_admin_key_row(conn, team_id).await?;
+        print_bootstrap_admin_key(api_key_id, team_id, &plaintext_key);
+        Ok(())
+    }
+
+    /// 经 garrison 生成 admin key 并写入 `api_keys` 映射行。
+    #[cfg(feature = "auth")]
+    async fn provision_admin_key_row(
+        conn: &dbnexus::sea_orm::DatabaseConnection,
+        team_id: crawlrs::domain::id::Id,
+    ) -> anyhow::Result<(crawlrs::domain::id::Id, String)> {
         use crawlrs::infrastructure::database::entities::api_key;
         use dbnexus::sea_orm::{EntityTrait, Set};
         use garrison::protocol::apikey::ApiKeyHandler;
@@ -364,8 +398,17 @@ mod app {
             .await
             .map_err(|e| anyhow::anyhow!("insert api_key: {}", e))?;
 
-        // 完整 key 仅在交互终端展示（运维在场可立即保存）；管道/日志采集下
-        // stdout 会被留存，只输出掩码避免凭证入库。
+        Ok((api_key_id, plaintext_key))
+    }
+
+    /// 输出 admin key 提示。完整 key 仅在交互终端展示（运维在场可立即保存）；
+    /// 管道/日志采集下 stdout 会被留存，只输出掩码避免凭证入库。
+    #[cfg(feature = "auth")]
+    fn print_bootstrap_admin_key(
+        api_key_id: crawlrs::domain::id::Id,
+        team_id: crawlrs::domain::id::Id,
+        plaintext_key: &str,
+    ) {
         use std::io::IsTerminal;
         if std::io::stdout().is_terminal() {
             println!("Created admin API key:");
@@ -385,11 +428,10 @@ mod app {
             println!("  team_id:    {}", team_id);
             println!(
                 "  api_key:    {} (masked; rerun in a terminal to display the full key)",
-                crawlrs::common::mask_secret(&plaintext_key)
+                crawlrs::common::mask_secret(plaintext_key)
             );
             println!("  scopes:     read, write, admin");
         }
-        Ok(())
     }
 
     /// Run pending database migrations and exit.

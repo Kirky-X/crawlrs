@@ -703,62 +703,6 @@ impl ScrapeRequest {
         }
         let options = &self.options;
 
-        let actions: Vec<InternalPageAction> = options
-            .actions
-            .iter()
-            .map(|action| match action {
-                PageAction::Wait { milliseconds } => InternalPageAction::Wait {
-                    milliseconds: *milliseconds,
-                },
-                PageAction::Click { selector } => InternalPageAction::Click {
-                    selector: selector.clone(),
-                },
-                PageAction::Scroll { direction } => {
-                    let direction_str = match direction {
-                        ScrollDirection::Down => "down",
-                        ScrollDirection::Up => "up",
-                        ScrollDirection::Bottom => "bottom",
-                        ScrollDirection::Top => "top",
-                    };
-                    InternalPageAction::Scroll {
-                        direction: direction_str.to_string(),
-                    }
-                }
-                PageAction::Input { selector, text } => InternalPageAction::Input {
-                    selector: selector.clone(),
-                    text: text.clone(),
-                },
-            })
-            .collect();
-
-        let screenshot_config =
-            options
-                .screenshot_config
-                .as_ref()
-                .map(|config| InternalScreenshotConfig {
-                    full_page: config.full_page,
-                    selector: config.selector.clone(),
-                    quality: config.quality,
-                    format: config.format.clone(),
-                });
-
-        // to_internal 二次校验 session_id
-        // 防止用户绕过 builder 直接构造 ScrapeOptions 注入非法 session_id
-        // （超长字符串 DoS / 控制字符日志注入 CWE-117）
-        let session_id = match &options.session_id {
-            Some(sid) if validate_session_id(sid) => Some(sid.clone()),
-            Some(sid) => {
-                warn!(
-                    "session_id rejected in to_internal (length={}, max={}, \
-                     must be printable ASCII); falling back to None (RoundRobin)",
-                    sid.len(),
-                    MAX_SESSION_ID_LEN
-                );
-                None
-            }
-            None => None,
-        };
-
         let internal = InternalScrapeRequest {
             url: self.url.clone(),
             method: options.method,
@@ -766,22 +710,86 @@ impl ScrapeRequest {
             timeout: options.timeout,
             needs_js: options.needs_js,
             needs_screenshot: options.needs_screenshot,
-            screenshot_config,
+            screenshot_config: options
+                .screenshot_config
+                .as_ref()
+                .map(convert_screenshot_config),
             mobile: options.mobile,
             proxy: options.proxy.clone(),
             skip_tls_verification: options.skip_tls_verification,
             needs_tls_fingerprint: options.needs_tls_fingerprint,
             use_fire_engine: options.use_fire_engine,
-            actions,
+            actions: convert_page_actions(&options.actions),
             body: options.body.clone(),
             sync_wait_ms: options.sync_wait_ms,
             block_ads: options.block_ads,
             block_media: options.block_media,
-            session_id,
+            session_id: resolve_session_id(&options.session_id),
             wait_for: options.wait_for.clone(),
             needs_mllm: options.needs_mllm,
         };
         Ok(internal)
+    }
+}
+
+/// 公开页动作 → 引擎内部页动作（逐字段克隆，无行为改动）。
+fn convert_page_actions(actions: &[PageAction]) -> Vec<InternalPageAction> {
+    actions
+        .iter()
+        .map(|action| match action {
+            PageAction::Wait { milliseconds } => InternalPageAction::Wait {
+                milliseconds: *milliseconds,
+            },
+            PageAction::Click { selector } => InternalPageAction::Click {
+                selector: selector.clone(),
+            },
+            PageAction::Scroll { direction } => {
+                let direction_str = match direction {
+                    ScrollDirection::Down => "down",
+                    ScrollDirection::Up => "up",
+                    ScrollDirection::Bottom => "bottom",
+                    ScrollDirection::Top => "top",
+                };
+                InternalPageAction::Scroll {
+                    direction: direction_str.to_string(),
+                }
+            }
+            PageAction::Input { selector, text } => InternalPageAction::Input {
+                selector: selector.clone(),
+                text: text.clone(),
+            },
+        })
+        .collect()
+}
+
+/// 公开截图配置 → 引擎内部截图配置。
+fn convert_screenshot_config(config: &ScreenshotConfig) -> InternalScreenshotConfig {
+    InternalScreenshotConfig {
+        full_page: config.full_page,
+        selector: config.selector.clone(),
+        quality: config.quality,
+        format: config.format.clone(),
+    }
+}
+
+/// 校验并归一化 session_id（非法值降级为 `None`，保留告警）。
+///
+/// `to_internal` 二次校验 session_id
+/// 防用户绕过 builder 直接构造 ScrapeOptions 注入非法 session_id
+///（超长字符串 DoS / 控制字符日志注入 CWE-117）。
+fn resolve_session_id(session_id: &Option<String>) -> Option<String> {
+    match session_id {
+        Some(sid) if validate_session_id(sid) => Some(sid.clone()),
+        Some(sid) => {
+            warn!(
+                "session_id rejected in to_internal (length={}, max={}, \
+                 must be printable ASCII); falling back to None (RoundRobin)",
+                sid.len(),
+                MAX_SESSION_ID_LEN
+            );
+            None
+        }
+        None => None,
     }
 }
 

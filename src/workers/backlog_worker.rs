@@ -324,48 +324,12 @@ impl BacklogWorker {
         &self,
         backlog: &TasksBacklog,
     ) -> Result<BacklogOutcome, WorkerError> {
-        info!(
-            "{}",
-            tr_log_args(
-                "backlog-concurrency-available",
-                &[
-                    (
-                        "team_id",
-                        fluent_bundle::FluentValue::from(backlog.team_id.to_string())
-                    ),
-                    (
-                        "task_id",
-                        fluent_bundle::FluentValue::from(backlog.id.to_string())
-                    ),
-                ],
-            )
-        );
+        log_backlog_concurrency_available(backlog);
 
-        // 4. 前置状态迁移：Pending → Processing（域状态机守卫，仅 Pending 可迁移）。
-        // 这是修复"成功路径 mark_completed 恒败"的关键——mark_completed 要求
-        // 积压项处于 Processing。迁移失败说明该项已非 Pending（被他方处理），
-        // 跳过该条并继续。
-        let mut processing_backlog = backlog.clone();
-        if let Err(e) = processing_backlog.mark_processing() {
-            warn!(
-                "{}",
-                tr_log_args(
-                    "backlog-state-transition-skipped",
-                    &[
-                        (
-                            "task_id",
-                            fluent_bundle::FluentValue::from(backlog.id.to_string())
-                        ),
-                        (
-                            "current",
-                            fluent_bundle::FluentValue::from(backlog.status.to_string())
-                        ),
-                        ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                    ],
-                )
-            );
+        // 4. 前置状态迁移：迁移失败说明该项已非 Pending（被他方处理），跳过该条并继续。
+        let Some(processing_backlog) = begin_backlog_processing(backlog) else {
             return Ok(BacklogOutcome::Skipped);
-        }
+        };
 
         // 5. 重新激活任务（reactivate_task 内 mark_completed 现从 Processing 迁移，不再恒败）
         match self.reactivate_task(processing_backlog).await {
@@ -383,27 +347,37 @@ impl BacklogWorker {
                 Ok(BacklogOutcome::Reactivated)
             }
             Err(e) => {
-                error!(
-                    "{}",
-                    tr_log_args(
-                        "backlog-reactivation-failed",
-                        &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
-                    )
-                );
-
-                // 失败重试：在原始 Pending 快照上累加重试次数并持久化，
-                // 保持 Pending 以便下一周期重新拉取（不残留 Processing 状态）。
-                let mut retry_backlog = backlog.clone();
-                retry_backlog.increment_retry_count();
-
-                self.tasks_backlog_repository
-                    .update(&retry_backlog)
+                self.persist_retry_after_reactivation_failure(backlog, e)
                     .await
-                    .repo_err()?;
-
-                Err(e)
             }
         }
+    }
+
+    /// 重新激活失败：记录错误、累加重试次数并持久化 Pending 快照。
+    async fn persist_retry_after_reactivation_failure(
+        &self,
+        backlog: &TasksBacklog,
+        e: WorkerError,
+    ) -> Result<BacklogOutcome, WorkerError> {
+        error!(
+            "{}",
+            tr_log_args(
+                "backlog-reactivation-failed",
+                &[("error", fluent_bundle::FluentValue::from(e.to_string()))],
+            )
+        );
+
+        // 失败重试：在原始 Pending 快照上累加重试次数并持久化，
+        // 保持 Pending 以便下一周期重新拉取（不残留 Processing 状态）。
+        let mut retry_backlog = backlog.clone();
+        retry_backlog.increment_retry_count();
+
+        self.tasks_backlog_repository
+            .update(&retry_backlog)
+            .await
+            .repo_err()?;
+
+        Err(e)
     }
 
     /// 重新激活任务
@@ -592,6 +566,56 @@ impl BacklogWorker {
 
         Ok(())
     }
+}
+
+/// 并发额度可用日志。
+fn log_backlog_concurrency_available(backlog: &TasksBacklog) {
+    info!(
+        "{}",
+        tr_log_args(
+            "backlog-concurrency-available",
+            &[
+                (
+                    "team_id",
+                    fluent_bundle::FluentValue::from(backlog.team_id.to_string())
+                ),
+                (
+                    "task_id",
+                    fluent_bundle::FluentValue::from(backlog.id.to_string())
+                ),
+            ],
+        )
+    );
+}
+
+/// Pending → Processing 状态迁移（域状态机守卫，仅 Pending 可迁移）。
+///
+/// 这是修复"成功路径 mark_completed 恒败"的关键——mark_completed 要求
+/// 积压项处于 Processing。迁移失败说明该项已非 Pending（被他方处理），
+/// 返回 None 由调用方跳过该条并继续。
+fn begin_backlog_processing(backlog: &TasksBacklog) -> Option<TasksBacklog> {
+    let mut processing_backlog = backlog.clone();
+    if let Err(e) = processing_backlog.mark_processing() {
+        warn!(
+            "{}",
+            tr_log_args(
+                "backlog-state-transition-skipped",
+                &[
+                    (
+                        "task_id",
+                        fluent_bundle::FluentValue::from(backlog.id.to_string())
+                    ),
+                    (
+                        "current",
+                        fluent_bundle::FluentValue::from(backlog.status.to_string())
+                    ),
+                    ("error", fluent_bundle::FluentValue::from(e.to_string())),
+                ],
+            )
+        );
+        return None;
+    }
+    Some(processing_backlog)
 }
 
 /// 按团队分组积压项（容量预分配 32）。

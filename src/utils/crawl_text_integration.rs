@@ -1,7 +1,9 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::utils::text_processing::processor::{CrawlProcessingError, CrawlTextProcessor};
+use crate::utils::text_processing::processor::{
+    CrawlProcessingError, CrawlTextProcessor, ProcessedCrawlContent,
+};
 use log::{debug, error, info, warn};
 
 use crate::i18n::{tr_log, tr_log_args};
@@ -46,74 +48,22 @@ impl CrawlTextIntegration {
         content_type: Option<&str>,
         status_code: u16,
     ) -> Result<ProcessedScrapeResponse, CrawlProcessingError> {
-        // 禁用时不分配 2 份 String，
-        // 用 Cow 延迟转换并直接返回原始字节引用。
+        // 禁用时不分配 2 份 String，直接返回原样响应。
         if !self.is_enabled() {
             debug!("{}", tr_log("text-integration-disabled-direct"));
-            // 仅在最终需要 String 时做一次 utf8_lossy（lazy）
-            let original = String::from_utf8_lossy(content).into_owned();
-            return Ok(ProcessedScrapeResponse {
-                original_content: original.clone(),
-                processed_content: original,
-                content_type: content_type.map(|s| s.to_string()),
+            return Ok(passthrough_response(
+                content,
+                url,
+                content_type,
                 status_code,
-                url: url.to_string(),
-                encoding_detected: None,
-                language_detected: None,
-                is_html: false,
-                processing_success: false,
-                processing_error: None,
-            });
+                None,
+            ));
         }
 
         let processor = self.processor.read().await;
 
         match processor.process_crawled_content(content, url, content_type) {
-            Ok(processed_content) => {
-                let result = ProcessedScrapeResponse {
-                    original_content: processed_content.processed_content.original_content.clone(),
-                    processed_content: processed_content.processed_content.extracted_text.clone(),
-                    content_type: processed_content.processed_content.content_type.clone(),
-                    status_code,
-                    url: url.to_string(),
-                    encoding_detected: processed_content
-                        .processed_content
-                        .declared_encoding
-                        .clone(),
-                    language_detected: processed_content
-                        .processed_content
-                        .detected_language
-                        .clone(),
-                    is_html: processed_content.processed_content.is_html,
-                    processing_success: true,
-                    processing_error: None,
-                };
-                info!(
-                    "{}",
-                    tr_log_args(
-                        "text-integration-succeeded",
-                        &[
-                            ("url", fluent_bundle::FluentValue::from(url)),
-                            (
-                                "length",
-                                fluent_bundle::FluentValue::from(
-                                    result.processed_content.len().to_string()
-                                ),
-                            ),
-                            (
-                                "language",
-                                fluent_bundle::FluentValue::from(
-                                    result
-                                        .language_detected
-                                        .clone()
-                                        .unwrap_or_else(|| "none".to_string())
-                                ),
-                            ),
-                        ],
-                    )
-                );
-                Ok(result)
-            }
+            Ok(processed_content) => Ok(success_response(processed_content, url, status_code)),
             Err(e) => {
                 error!(
                     "{}",
@@ -125,18 +75,13 @@ impl CrawlTextIntegration {
                         ],
                     )
                 );
-                Ok(ProcessedScrapeResponse {
-                    original_content: String::from_utf8_lossy(content).into_owned(),
-                    processed_content: String::from_utf8_lossy(content).into_owned(),
-                    content_type: content_type.map(|s| s.to_string()),
+                Ok(passthrough_response(
+                    content,
+                    url,
+                    content_type,
                     status_code,
-                    url: url.to_string(),
-                    encoding_detected: None,
-                    language_detected: None,
-                    is_html: false,
-                    processing_success: false,
-                    processing_error: Some(e.to_string()),
-                })
+                    Some(e.to_string()),
+                ))
             }
         }
     }
@@ -149,20 +94,7 @@ impl CrawlTextIntegration {
             debug!("{}", tr_log("text-integration-disabled-batch"));
             return responses
                 .into_iter()
-                .map(|response| {
-                    Ok(ProcessedScrapeResponse {
-                        original_content: String::from_utf8_lossy(&response.content).into_owned(),
-                        processed_content: String::from_utf8_lossy(&response.content).into_owned(),
-                        content_type: response.content_type.clone(),
-                        status_code: response.status_code,
-                        url: response.url.clone(),
-                        encoding_detected: None,
-                        language_detected: None,
-                        is_html: false,
-                        processing_success: false,
-                        processing_error: None,
-                    })
-                })
+                .map(|response| Ok(passthrough_batch_response(response)))
                 .collect();
         }
 
@@ -185,53 +117,159 @@ impl CrawlTextIntegration {
             .into_iter()
             .zip(responses)
             .map(|(result, response)| match result {
-                Ok(processed_content) => Ok(ProcessedScrapeResponse {
-                    original_content: processed_content.processed_content.original_content.clone(),
-                    processed_content: processed_content.processed_content.extracted_text.clone(),
-                    content_type: processed_content.processed_content.content_type.clone(),
-                    status_code: response.status_code,
-                    url: response.url,
-                    encoding_detected: processed_content
-                        .processed_content
-                        .declared_encoding
-                        .clone(),
-                    language_detected: processed_content
-                        .processed_content
-                        .detected_language
-                        .clone(),
-                    is_html: processed_content.processed_content.is_html,
-                    processing_success: true,
-                    processing_error: None,
-                }),
-                Err(e) => {
-                    warn!(
-                        "{}",
-                        tr_log_args(
-                            "text-integration-item-failed",
-                            &[
-                                (
-                                    "url",
-                                    fluent_bundle::FluentValue::from(response.url.as_str())
-                                ),
-                                ("error", fluent_bundle::FluentValue::from(e.to_string())),
-                            ],
-                        )
-                    );
-                    Ok(ProcessedScrapeResponse {
-                        original_content: String::from_utf8_lossy(&response.content).into_owned(),
-                        processed_content: String::from_utf8_lossy(&response.content).into_owned(),
-                        content_type: response.content_type,
-                        status_code: response.status_code,
-                        url: response.url,
-                        encoding_detected: None,
-                        language_detected: None,
-                        is_html: false,
-                        processing_success: false,
-                        processing_error: Some(e.to_string()),
-                    })
-                }
+                Ok(processed_content) => Ok(batch_success_response(processed_content, response)),
+                Err(e) => Ok(batch_failure_response(response, e)),
             })
             .collect()
+    }
+}
+
+/// 未启用/处理失败时的原样回传响应。
+///
+/// 仅在最终需要 String 时做一次 utf8_lossy（lazy），避免提前分配两份 String。
+fn passthrough_response(
+    content: &[u8],
+    url: &str,
+    content_type: Option<&str>,
+    status_code: u16,
+    processing_error: Option<String>,
+) -> ProcessedScrapeResponse {
+    let original = String::from_utf8_lossy(content).into_owned();
+    ProcessedScrapeResponse {
+        original_content: original.clone(),
+        processed_content: original,
+        content_type: content_type.map(|s| s.to_string()),
+        status_code,
+        url: url.to_string(),
+        encoding_detected: None,
+        language_detected: None,
+        is_html: false,
+        processing_success: false,
+        processing_error,
+    }
+}
+
+/// 构建处理成功响应并记录成功日志。
+fn success_response(
+    processed_content: ProcessedCrawlContent,
+    url: &str,
+    status_code: u16,
+) -> ProcessedScrapeResponse {
+    let result = ProcessedScrapeResponse {
+        original_content: processed_content.processed_content.original_content.clone(),
+        processed_content: processed_content.processed_content.extracted_text.clone(),
+        content_type: processed_content.processed_content.content_type.clone(),
+        status_code,
+        url: url.to_string(),
+        encoding_detected: processed_content
+            .processed_content
+            .declared_encoding
+            .clone(),
+        language_detected: processed_content
+            .processed_content
+            .detected_language
+            .clone(),
+        is_html: processed_content.processed_content.is_html,
+        processing_success: true,
+        processing_error: None,
+    };
+    info!(
+        "{}",
+        tr_log_args(
+            "text-integration-succeeded",
+            &[
+                ("url", fluent_bundle::FluentValue::from(url)),
+                (
+                    "length",
+                    fluent_bundle::FluentValue::from(result.processed_content.len().to_string()),
+                ),
+                (
+                    "language",
+                    fluent_bundle::FluentValue::from(
+                        result
+                            .language_detected
+                            .clone()
+                            .unwrap_or_else(|| "none".to_string())
+                    ),
+                ),
+            ],
+        )
+    );
+    result
+}
+
+/// 批量路径：未启用时的原样回传响应。
+fn passthrough_batch_response(response: ScrapeResponseInput) -> ProcessedScrapeResponse {
+    let original = String::from_utf8_lossy(&response.content).into_owned();
+    ProcessedScrapeResponse {
+        original_content: original.clone(),
+        processed_content: original,
+        content_type: response.content_type,
+        status_code: response.status_code,
+        url: response.url,
+        encoding_detected: None,
+        language_detected: None,
+        is_html: false,
+        processing_success: false,
+        processing_error: None,
+    }
+}
+
+/// 批量路径：构建处理成功响应。
+fn batch_success_response(
+    processed_content: ProcessedCrawlContent,
+    response: ScrapeResponseInput,
+) -> ProcessedScrapeResponse {
+    ProcessedScrapeResponse {
+        original_content: processed_content.processed_content.original_content.clone(),
+        processed_content: processed_content.processed_content.extracted_text.clone(),
+        content_type: processed_content.processed_content.content_type.clone(),
+        status_code: response.status_code,
+        url: response.url,
+        encoding_detected: processed_content
+            .processed_content
+            .declared_encoding
+            .clone(),
+        language_detected: processed_content
+            .processed_content
+            .detected_language
+            .clone(),
+        is_html: processed_content.processed_content.is_html,
+        processing_success: true,
+        processing_error: None,
+    }
+}
+
+/// 批量路径：记录单项失败日志并构建兜底响应。
+fn batch_failure_response(
+    response: ScrapeResponseInput,
+    e: CrawlProcessingError,
+) -> ProcessedScrapeResponse {
+    warn!(
+        "{}",
+        tr_log_args(
+            "text-integration-item-failed",
+            &[
+                (
+                    "url",
+                    fluent_bundle::FluentValue::from(response.url.as_str())
+                ),
+                ("error", fluent_bundle::FluentValue::from(e.to_string())),
+            ],
+        )
+    );
+    let original = String::from_utf8_lossy(&response.content).into_owned();
+    ProcessedScrapeResponse {
+        original_content: original.clone(),
+        processed_content: original,
+        content_type: response.content_type,
+        status_code: response.status_code,
+        url: response.url,
+        encoding_detected: None,
+        language_detected: None,
+        is_html: false,
+        processing_success: false,
+        processing_error: Some(e.to_string()),
     }
 }
 
