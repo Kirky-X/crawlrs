@@ -1,9 +1,6 @@
 // Copyright (c) 2025-2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::engines::client::reqwest::ReqwestEngine;
-use crate::engines::engine_client::{EngineClient, HttpMethod, ScrapeOptions, ScrapeRequest};
-use crate::engines::router::{EngineRouter, EngineRouterTrait};
 use crate::impl_basic_error_conversions;
 use crate::infrastructure::oxcache::CacheService;
 use crate::utils::retry_policy::RetryPolicy;
@@ -105,8 +102,9 @@ const ROBOTS_FAILURE_CACHE_TTL: Duration = Duration::from_secs(60);
 /// Robots.txt检查器
 #[derive(Clone)]
 pub struct RobotsChecker {
-    /// HTTP客户端 (Arc 包装，支持依赖注入)
-    engine_client: Arc<EngineClient>,
+    /// robots.txt 抓取器（生产=直连 reqwest；测试可注入可控实现，
+    /// 不走抓取引擎反爬链）
+    fetcher: Arc<dyn RobotsFetcher>,
 
     /// robots.txt 匹配与抓取使用的 User-Agent（可配置，见 RobotsSettings）
     user_agent: String,
@@ -173,9 +171,10 @@ impl RobotsChecker {
         cache_service: Option<Arc<dyn CacheService>>,
         cache_stats: Option<Arc<CacheStats>>,
     ) -> Self {
-        let engine_client = Self::create_engine_client(http_client);
         Self {
-            engine_client,
+            fetcher: Arc::new(HttpRobotsFetcher {
+                client: http_client,
+            }),
             user_agent: settings.user_agent.clone(),
             memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
             cache_service,
@@ -325,27 +324,12 @@ impl RobotsChecker {
     /// 单次抓取尝试：成功/404/其余非 5xx 结束本轮（内容或空串）；
     /// 5xx 与传输错误交给重试循环
     async fn fetch_robots_once(&self, robots_url: &str) -> RobotsFetchAttempt {
-        let request = Self::build_robots_request(robots_url, &self.user_agent);
-
-        let response = self.engine_client.scrape(&request).await;
-
-        match response {
-            Ok(resp) => {
-                if resp.is_success() {
-                    RobotsFetchAttempt::Content(resp.content)
-                } else if resp.status_code == 404 {
-                    RobotsFetchAttempt::Content(String::new())
-                } else if resp.status_code >= 500 {
-                    RobotsFetchAttempt::Retryable(anyhow::anyhow!(
-                        "Server error: {}",
-                        resp.status_code
-                    ))
-                } else {
-                    RobotsFetchAttempt::Content(String::new())
-                }
-            }
-            Err(e) => RobotsFetchAttempt::Retryable(anyhow::anyhow!("Request failed: {}", e)),
-        }
+        // D5 修复：robots.txt 直连 HTTP，不走抓取引擎链。此前经 EngineRouter
+        // 抓取，极短纯文本（如 `User-agent: *\nDisallow: /`）被反爬启发式
+        // StructuralBlock 误判为「JS 空壳」并强制 needs_js，无 JS 引擎环境下
+        // 抓取必败 → fail-open 放行全站 Disallow（E2E SB-17 实测）。SSRF 校验
+        // 仍在调用方（get_robots_content）以 validate_url 前置执行。
+        self.fetcher.fetch(robots_url, &self.user_agent).await
     }
 
     /// 重试耗尽后的降级：fail-closed 写短 TTL 失败标记并判禁；fail-open 告警并放行空内容
@@ -381,19 +365,6 @@ impl RobotsChecker {
     }
 
     /// 构造 robots.txt 抓取请求（5s 超时 + 配置的 User-Agent）
-    fn build_robots_request(robots_url: &str, user_agent: &str) -> ScrapeRequest {
-        let mut headers = HashMap::new();
-        headers.insert("User-Agent".to_string(), user_agent.to_string());
-
-        ScrapeRequest::new(robots_url).with_options(
-            ScrapeOptions::builder()
-                .method(HttpMethod::Get)
-                .headers(headers)
-                .timeout(Duration::from_secs(5))
-                .build(),
-        )
-    }
-
     /// 按正常 TTL 写入内存缓存（成功获取 / fail-open 降级共用）
     async fn store_memory_cache(&self, robots_url: &str, content: &str) {
         let mut cache = self.memory_cache.lock().await;
@@ -475,11 +446,59 @@ enum RobotsFetch {
 }
 
 /// 单次 robots.txt 抓取尝试的结果（重试循环据此判定是否继续）
-enum RobotsFetchAttempt {
+pub enum RobotsFetchAttempt {
     /// 已结束本轮（成功内容 / 404 空串 / 其余非 5xx 空串）
     Content(String),
     /// 5xx 或传输错误：按 retry_policy 重试
     Retryable(anyhow::Error),
+}
+
+/// robots.txt 抓取器抽象。
+///
+/// 生产实现 [`HttpRobotsFetcher`] 直连 reqwest；测试注入可控实现
+/// （本仓库约定：真实 trait 实现 + 测试专用行为，不引入 mock 库）。
+#[async_trait]
+pub trait RobotsFetcher: Send + Sync {
+    /// 发起一次抓取尝试（不做重试与缓存）。
+    async fn fetch(&self, robots_url: &str, user_agent: &str) -> RobotsFetchAttempt;
+}
+
+/// 生产抓取器：直连 HTTP（不走抓取引擎反爬链）。
+struct HttpRobotsFetcher {
+    client: Arc<reqwest::Client>,
+}
+
+#[async_trait]
+impl RobotsFetcher for HttpRobotsFetcher {
+    async fn fetch(&self, robots_url: &str, user_agent: &str) -> RobotsFetchAttempt {
+        let response = self
+            .client
+            .get(robots_url)
+            .header(reqwest::header::USER_AGENT, user_agent.to_string())
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await;
+        match response {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                if (200..300).contains(&status) {
+                    match resp.text().await {
+                        Ok(text) => RobotsFetchAttempt::Content(text),
+                        Err(e) => {
+                            RobotsFetchAttempt::Retryable(anyhow::anyhow!("Read body failed: {e}"))
+                        }
+                    }
+                } else if status == 404 {
+                    RobotsFetchAttempt::Content(String::new())
+                } else if status >= 500 {
+                    RobotsFetchAttempt::Retryable(anyhow::anyhow!("Server error: {status}"))
+                } else {
+                    RobotsFetchAttempt::Content(String::new())
+                }
+            }
+            Err(e) => RobotsFetchAttempt::Retryable(anyhow::anyhow!("Request failed: {e}")),
+        }
+    }
 }
 
 /// robots.txt 行分类（指令前缀大小写不敏感）
@@ -517,14 +536,7 @@ fn apply_crawl_delay_value(delay: &mut Option<f64>, raw: &str) {
     }
 }
 
-impl RobotsChecker {
-    fn create_engine_client(http_client: Arc<reqwest::Client>) -> Arc<EngineClient> {
-        let reqwest_engine = ReqwestEngine::new(http_client);
-        let router: Arc<dyn EngineRouterTrait> =
-            Arc::new(EngineRouter::new(vec![Arc::new(reqwest_engine)]));
-        Arc::new(EngineClient::with_router(router))
-    }
-}
+impl RobotsChecker {}
 
 #[cfg(test)]
 #[path = "tests/robots/mod.rs"]

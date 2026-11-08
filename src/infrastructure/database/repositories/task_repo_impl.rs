@@ -511,6 +511,24 @@ impl TaskRepository for TaskRepositoryImpl {
             .connection()
             .map_err(|e| RepositoryError::Database(e.into()))?;
 
+        // 终态统一清锁：守卫过滤仍使用快照中的锁身份（必须与 DB 当前值
+        // 一致才允许写入），写回时 Completed/Failed/Cancelled 一律置 NULL，
+        // 与 mark_failed/mark_completed 的终态行形状一致（审查 F10）。
+        let is_terminal = matches!(
+            task.status,
+            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+        );
+        let lock_token_to_write = if is_terminal {
+            None
+        } else {
+            task.lock_token.map(uuid::Uuid::from)
+        };
+        let lock_expires_to_write = if is_terminal {
+            None
+        } else {
+            task.lock_expires_at
+        };
+
         let result = task_entity::Entity::update_many()
             .col_expr(
                 task_entity::Column::Status,
@@ -540,11 +558,11 @@ impl TaskRepository for TaskRepositoryImpl {
             )
             .col_expr(
                 task_entity::Column::LockToken,
-                Expr::value(task.lock_token.map(uuid::Uuid::from)),
+                Expr::value(lock_token_to_write),
             )
             .col_expr(
                 task_entity::Column::LockExpiresAt,
-                Expr::value(task.lock_expires_at),
+                Expr::value(lock_expires_to_write),
             )
             .filter(task_entity::Column::Id.eq(task.id))
             .filter(task_entity::Column::Status.is_in([

@@ -33,7 +33,12 @@ pub(super) fn init_workers(
     let webhook_worker = Arc::new(crate::workers::webhook_worker::WebhookWorker::new(
         repositories.webhook_event_repo.clone(),
         webhook_service.clone(),
-        crate::utils::retry_policy::RetryPolicy::default(),
+        // D10 修复：重试上限此前固定 `RetryPolicy::default()`（=5），
+        // `[webhook] max_retries` 配置无消费方（E2E F1：配置 3 实际 5）。
+        crate::utils::retry_policy::RetryPolicy {
+            max_retries: settings.webhook.max_retries,
+            ..Default::default()
+        },
     ));
 
     let backlog_worker = Arc::new(crate::workers::backlog_worker::BacklogWorker::new(

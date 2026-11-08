@@ -18,18 +18,12 @@
 //! - **DoS Attacks**: IP-based rate limiting prevents abuse from unauthenticated clients
 //! - **API Key Enumeration**: Strict limits on failed authentication attempts
 
-use crate::domain::services::rate_limiting_service::{RateLimitResult, RateLimitingService};
+use crate::domain::services::rate_limiting_service::RateLimitingService;
 use crate::infrastructure::security::secure_ip::{get_secure_client_ip, TrustedProxyConfig};
 use crate::presentation::middleware::PUBLIC_ENDPOINTS;
-use axum::{
-    body::Body,
-    extract::Request,
-    http::{header, StatusCode},
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, extract::Request, http::StatusCode, middleware::Next, response::Response};
 use limiteron::sync::SyncFixedWindowLimiter;
-use log::{debug, error, warn};
+use log::{debug, warn};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -107,9 +101,13 @@ impl RateLimiter {
     pub fn cleanup_expired(&self) {}
 }
 
-/// IP 速率限制器（全局单例）
+/// 匿名/非 API 路径的 IP 速率限制器（全局单例，10 req/min）
 static IP_RATE_LIMITER: once_cell::sync::Lazy<RateLimiter> =
     once_cell::sync::Lazy::new(|| RateLimiter::new_for_ip_limit(DEFAULT_IP_RATE_LIMIT));
+
+/// 受保护 API 路径的每 IP 聚合限制器（600 req/min）
+static AUTH_IP_RATE_LIMITER: once_cell::sync::Lazy<RateLimiter> =
+    once_cell::sync::Lazy::new(|| RateLimiter::new_for_ip_limit(DEFAULT_AUTH_IP_RATE_LIMIT));
 
 /// 速率限制中间件配置容器。
 ///
@@ -140,46 +138,6 @@ impl RateLimitMiddleware {
     }
 }
 
-/// 从请求中提取 Bearer Token
-///
-/// # 参数
-///
-/// * `req` - HTTP 请求
-///
-/// # 返回值
-///
-/// 返回 `Some(token)` 如果存在有效的 Bearer Token，否则返回 `None`
-fn extract_bearer_token(req: &Request) -> Option<String> {
-    let auth_header = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|header| header.to_str().ok())?;
-
-    if !auth_header.starts_with("Bearer ") {
-        return None;
-    }
-
-    let token = auth_header[7..].trim();
-    if token.is_empty() {
-        return None;
-    }
-
-    Some(token.to_string())
-}
-
-/// 计算 API key 的 SHA-256 摘要前缀（`sha256:` + 12 位 hex），用于日志输出。
-///
-/// ## 安全（CWE-532）
-///
-/// 限速日志不得携带明文 key 的任何连续片段（含“前 N 字符”形式）；
-/// 与 auth_middleware 的 `hash_token` 同一摘要算法，仅截短前缀便于日志阅读。
-fn hash_for_log(key: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(key.as_bytes());
-    let hex = hex::encode(digest);
-    format!("sha256:{}", &hex[..12])
-}
-
 /// 从请求中提取客户端 IP 地址
 ///
 /// # 安全说明
@@ -195,9 +153,8 @@ fn hash_for_log(key: &str) -> String {
 /// # 返回值
 ///
 /// 返回客户端的真实 IP 地址，如果无法获取则返回 "unknown"
-fn get_client_ip(req: &Request) -> String {
-    let trusted_config = TrustedProxyConfig::default();
-    get_secure_client_ip(req, &trusted_config)
+fn get_client_ip(req: &Request, trusted: &TrustedProxyConfig) -> String {
+    get_secure_client_ip(req, trusted)
 }
 
 /// 对未认证请求应用基于 IP 的速率限制
@@ -210,20 +167,33 @@ fn get_client_ip(req: &Request) -> String {
 ///
 /// 返回 `Ok()` 如果请求被允许，返回 `Err(Response)` 如果请求被拒绝
 fn apply_ip_rate_limit(client_ip: &str) -> Result<(), Box<Response>> {
-    let limiter = &*IP_RATE_LIMITER;
+    apply_ip_rate_limit_for(
+        &IP_RATE_LIMITER,
+        client_ip,
+        DEFAULT_IP_RATE_LIMIT,
+        "anonymous",
+    )
+}
 
+/// 指定限制器/阈值的 IP 限流（匿名 10/min 与 API 前缀 600/min 共用）。
+fn apply_ip_rate_limit_for(
+    limiter: &RateLimiter,
+    client_ip: &str,
+    limit: u64,
+    category: &str,
+) -> Result<(), Box<Response>> {
     if !limiter.check_rate_limit(client_ip) {
         let (current, _) = limiter.get_status(client_ip);
         warn!(
-            "IP rate limit exceeded for {}: {}/{} requests in {} seconds",
-            client_ip, current, DEFAULT_IP_RATE_LIMIT, IP_RATE_LIMIT_WINDOW_SECS
+            "IP rate limit exceeded ({}) for {}: {}/{} requests in {} seconds",
+            category, client_ip, current, limit, IP_RATE_LIMIT_WINDOW_SECS
         );
 
         let body = serde_json::json!({
             "error": "Rate limit exceeded",
             "message": format!(
-                "Unauthenticated requests are limited to {} per minute. Please provide a valid API key.",
-                DEFAULT_IP_RATE_LIMIT
+                "Requests from this IP are limited to {} per minute ({}).",
+                limit, category
             ),
             "retry_after_seconds": IP_RATE_LIMIT_WINDOW_SECS
         });
@@ -246,224 +216,140 @@ fn apply_ip_rate_limit(client_ip: &str) -> Result<(), Box<Response>> {
         return Err(Box::new(response));
     }
 
-    debug!("IP rate limit check passed for {}", client_ip);
+    debug!(
+        "IP rate limit check passed for {} ({})",
+        client_ip, category
+    );
     Ok(())
 }
 
-/// 简化的中间件处理函数
+/// 限流中间件运行时配置（bootstrap 从 Settings 构造一次，层内共享）。
+#[derive(Clone)]
+pub struct RateLimitRuntimeConfig {
+    /// `[rate_limiting].enabled`：false 时跳过 IP 限流（安全兜底可显式关闭）
+    pub enabled: bool,
+    /// `[trusted_proxies]`：可信代理判定（XFF 信任边界）
+    pub trusted_proxies: TrustedProxyConfig,
+}
+
+impl Default for RateLimitRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            trusted_proxies: TrustedProxyConfig::default(),
+        }
+    }
+}
+
+impl RateLimitRuntimeConfig {
+    /// 从应用配置构造（bootstrap 调用）。
+    pub fn from_settings(settings: &crate::config::settings::Settings) -> Self {
+        Self {
+            enabled: settings.rate_limiting.enabled,
+            trusted_proxies: TrustedProxyConfig {
+                enabled: settings.trusted_proxies.enabled,
+                proxies: settings.trusted_proxies.proxies.clone(),
+            },
+        }
+    }
+}
+
+/// 已认证 API 路径的每 IP 聚合上限（requests per minute）。
+///
+/// 认证后的 per-API-key 配额由各 handler 在认证之后按 `api_key_id` 执行；
+/// 中间件阶段**无法验证 token 真伪**，因此不再按 Authorization 头做任何
+/// 信任判断（审查 H1：任意 Bearer 串即可跳过 IP 限流并以原始 token 建桶）。
+/// 改为凭证存在性分级：带非空 Bearer → 宽松 IP 兜底（600/min），无凭证 →
+/// 严格匿名阈值（10/min）。token 内容不参与键、不落库、不写日志；无效
+/// token 仍由 auth 中间件拒绝。
+const DEFAULT_AUTH_IP_RATE_LIMIT: u64 = 600;
+
+/// 请求是否携带非空 Bearer 凭证（只用于选择阈值，**不做任何真伪判断**）。
+///
+/// 携带凭证 → 600/min 的每 IP 上限（认证后的 per-key 配额由 handler 执行）；
+/// 无凭证 → 10/min 严格匿名上限。凭证内容不进入限流键、不落库、不写日志，
+/// 因而无法通过伪造 token 制造无界桶（审查 H1）。
+fn has_bearer_credentials(req: &Request) -> bool {
+    req.headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|token| !token.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// 限流豁免判定：公开端点精确名单 + `/health/*` 前缀（K8s 探针）。
+///
+/// `/metrics` 保持免限流：Prometheus 常用 5s 抓取间隔，10/min 匿名桶会
+/// 造成指标缺口；租户级敏感标签已移除（见 team_semaphore）。
+fn is_rate_limit_exempt(path: &str) -> bool {
+    PUBLIC_ENDPOINTS.contains(&path) || path.starts_with("/health/")
+}
+
+/// 速率限制中间件。
 ///
 /// # 安全特性
 ///
-/// 1. **Bearer Token 认证**: 从 `Authorization: Bearer <token>` 提取 API Key
-/// 2. **IP 限流**: 未认证请求受 IP 限流保护（默认 10 req/min）
-/// 3. **公开端点**: 健康检查等端点不受限流影响
+/// 1. **IP 限流**：所有非公开请求都受 IP 限流；受保护 API 前缀 600/min，
+///    其余（含未认证探测）10/min。不再信任 Authorization 头做免限流判断。
+/// 2. **公开端点**：`/health`、`/health/*`、`/ready`、`/metrics`、`/v1/version`
+///    不受限流影响（K8s 探针不会因 429 触发重启）。
+/// 3. **per-key 配额**：认证后由 handler 按 `api_key_id` 调用
+///    `RateLimitingService` 执行（本中间件不接触原始 token）。
 pub async fn rate_limit_middleware(
     req: Request,
     next: Next,
-    rate_limiting_service: Arc<dyn RateLimitingService>,
+    config: &RateLimitRuntimeConfig,
 ) -> Response {
     let path = req.uri().path();
 
-    // Allow public endpoints without rate limiting
-    if PUBLIC_ENDPOINTS.contains(&path) {
+    if !config.enabled {
+        debug!("Rate limiting disabled by [rate_limiting].enabled=false");
+        return next.run(req).await;
+    }
+
+    if is_rate_limit_exempt(path) {
         debug!("Public endpoint {}, skipping rate limit", path);
         return next.run(req).await;
     }
 
-    // Extract client IP for rate limiting
-    let client_ip = get_client_ip(&req);
-
-    // Extract API key from Bearer token
-    let api_key = extract_bearer_token(&req);
-
-    // If no API key, apply IP-based rate limiting
-    let api_key = match api_key {
-        Some(key) => key,
-        None => {
-            debug!(
-                "No Bearer token found for request to {}, applying IP rate limit for {}",
-                path, client_ip
-            );
-
-            match apply_ip_rate_limit(&client_ip) {
-                Ok(()) => return next.run(req).await,
-                Err(response) => return *response,
-            }
-        }
+    let client_ip = get_client_ip(&req, &config.trusted_proxies);
+    let result = if has_bearer_credentials(&req) {
+        apply_ip_rate_limit_for(
+            &AUTH_IP_RATE_LIMITER,
+            &client_ip,
+            DEFAULT_AUTH_IP_RATE_LIMIT,
+            "bearer-credentials",
+        )
+    } else {
+        apply_ip_rate_limit(&client_ip)
     };
 
-    // 获取请求路径作为 endpoint
-    let endpoint = path;
-
-    // 调用服务检查速率限制
-    match rate_limiting_service
-        .check_rate_limit(&api_key, endpoint)
-        .await
-    {
-        Ok(RateLimitResult::Denied { reason }) => denied_rate_limit_response(&api_key, &reason),
-        Ok(RateLimitResult::RetryAfter {
-            retry_after_seconds,
-        }) => retry_after_rate_limit_response(&api_key, retry_after_seconds),
-        Ok(RateLimitResult::Allowed) => {
-            debug!(
-                "Rate limit check passed for API key: {}",
-                hash_for_log(&api_key)
-            );
-            next.run(req).await
-        }
-        Err(e) => rate_limit_service_error_response(&api_key, &e, req, next).await,
+    match result {
+        Ok(()) => next.run(req).await,
+        Err(response) => *response,
     }
 }
 
-/// 限流服务错误处理（SEC-003）：按 `RATE_LIMIT_FAIL_OPEN` 策略放行或返回 503。
+/// axum `from_fn_with_state` 兼容入口（D1 修复：生产路由栈挂载点）。
 ///
-/// fail-open 记录严重警告后放行请求；fail-closed 记录 error 后返回
-/// [`unavailable_rate_limit_response`]。请求路径在移动 `req` 前读取供日志使用。
-async fn rate_limit_service_error_response(
-    api_key: &str,
-    err: &(dyn std::error::Error + Send + Sync),
+/// 此前 [`RateLimitMiddleware::new`] 仅以 `Extension` 注入、生产路由从未
+/// `.layer(from_fn(...))` 挂载——`rate_limiting.enabled=true / 60rpm / burst20`
+/// 全部形同虚设（E2E SG-09：40 并发连打零 429）。本包装由
+/// `bootstrap/routes.rs::apply_global_api_layers` 以
+/// `axum::middleware::from_fn_with_state` 挂载到全量 API 路由。
+pub async fn rate_limit_layer(
+    axum::extract::State(config): axum::extract::State<Arc<RateLimitRuntimeConfig>>,
     req: Request,
     next: Next,
 ) -> Response {
-    let path = req.uri().path();
-    // : 可配置的 fail-open/fail-closed 行为
-    if *RATE_LIMIT_FAIL_OPEN {
-        // Fail-open: 允许请求通过，但记录严重警告
-        // 注意：这可能导致在服务故障时无法限流
-        // 在生产环境中应考虑使用 fail-closed 模式
-        warn!(
-            "SEC-003: Rate limiting service error - failing open (allowing request). \
-             Consider setting RATE_LIMIT_FAIL_OPEN=false for stricter security. \
-             error={} api_key={} path={}",
-            err,
-            hash_for_log(api_key),
-            path
-        );
-        next.run(req).await
-    } else {
-        // Fail-closed: 拒绝请求以确保安全
-        error!(
-            "SEC-003: Rate limiting service error - failing closed (rejecting request) \
-             error={} api_key={} path={}",
-            err,
-            hash_for_log(api_key),
-            path
-        );
-
-        unavailable_rate_limit_response()
-    }
-}
-
-/// 限流拒绝响应（429，JSON body 携带拒绝原因）。
-fn denied_rate_limit_response(api_key: &str, reason: &str) -> Response {
-    debug!(
-        "Rate limit exceeded for API key {}: {}",
-        hash_for_log(api_key),
-        reason
-    );
-
-    let body = serde_json::json!({
-        "error": "Rate limit exceeded",
-        "message": reason
-    });
-    let json_body = serde_json::to_string(&body)
-        .expect("JSON serialization of rate limit response should never fail");
-    let mut response = Response::new(Body::from(json_body));
-    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        axum::http::HeaderValue::from_static("application/json"),
-    );
-    response
-}
-
-/// 限流重试响应（429 + Retry-After）。
-fn retry_after_rate_limit_response(api_key: &str, retry_after_seconds: u64) -> Response {
-    debug!(
-        "Rate limit retry after for API key {}: {} seconds",
-        hash_for_log(api_key),
-        retry_after_seconds
-    );
-
-    let body = serde_json::json!({
-        "error": "Rate limit exceeded",
-        "message": format!("Retry after {} seconds", retry_after_seconds)
-    });
-    let json_body = serde_json::to_string(&body)
-        .expect("JSON serialization of rate limit response should never fail");
-    let mut response = Response::new(Body::from(json_body));
-    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        axum::http::HeaderValue::from_static("application/json"),
-    );
-    response.headers_mut().insert(
-        "Retry-After",
-        axum::http::HeaderValue::from(retry_after_seconds),
-    );
-    response
-}
-
-/// 限流服务不可用响应（fail-closed，503）。
-fn unavailable_rate_limit_response() -> Response {
-    let body = serde_json::json!({
-        "error": "Service temporarily unavailable",
-        "message": "Rate limiting service is temporarily unavailable. Please try again later."
-    });
-    let json_body = serde_json::to_string(&body).expect("JSON serialization should never fail");
-    let mut response = Response::new(Body::from(json_body));
-    *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
-    response.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        axum::http::HeaderValue::from_static("application/json"),
-    );
-    response
+    rate_limit_middleware(req, next, &config).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_extract_bearer_token_valid() {
-        let req = Request::builder()
-            .header("Authorization", "Bearer test-token-123")
-            .body(Body::empty())
-            .unwrap();
-
-        let token = extract_bearer_token(&req);
-        assert_eq!(token, Some("test-token-123".to_string()));
-    }
-
-    #[test]
-    fn test_extract_bearer_token_missing() {
-        let req = Request::builder().body(Body::empty()).unwrap();
-
-        let token = extract_bearer_token(&req);
-        assert!(token.is_none());
-    }
-
-    #[test]
-    fn test_extract_bearer_token_wrong_type() {
-        let req = Request::builder()
-            .header("Authorization", "Basic dXNlcjpwYXNz")
-            .body(Body::empty())
-            .unwrap();
-
-        let token = extract_bearer_token(&req);
-        assert!(token.is_none());
-    }
-
-    #[test]
-    fn test_extract_bearer_token_empty() {
-        let req = Request::builder()
-            .header("Authorization", "Bearer ")
-            .body(Body::empty())
-            .unwrap();
-
-        let token = extract_bearer_token(&req);
-        assert!(token.is_none());
-    }
+    use axum::http::header;
 
     #[test]
     fn test_rate_limiter_allows_under_limit() {
@@ -498,7 +384,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let ip = get_client_ip(&req);
+        let ip = get_client_ip(&req, &TrustedProxyConfig::default());
         // 安全版本会返回 "unknown" 因为没有 SocketAddr 扩展且请求不是来自可信代理
         assert_eq!(ip, "unknown");
     }
@@ -511,7 +397,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let ip = get_client_ip(&req);
+        let ip = get_client_ip(&req, &TrustedProxyConfig::default());
         // 安全版本会返回 "unknown" 因为没有 SocketAddr 扩展
         assert_eq!(ip, "unknown");
     }
@@ -520,7 +406,7 @@ mod tests {
     fn test_get_client_ip_unknown() {
         let req = Request::builder().body(Body::empty()).unwrap();
 
-        let ip = get_client_ip(&req);
+        let ip = get_client_ip(&req, &TrustedProxyConfig::default());
         assert_eq!(ip, "unknown");
     }
 
@@ -537,7 +423,7 @@ mod tests {
             .unwrap();
         req.extensions_mut().insert(ConnectInfo(socket_addr));
 
-        let ip = get_client_ip(&req);
+        let ip = get_client_ip(&req, &TrustedProxyConfig::default());
         // 来自可信代理 (10.0.0.1)，应该信任 X-Forwarded-For
         assert_eq!(ip, "203.0.113.1");
     }
@@ -556,7 +442,7 @@ mod tests {
             .unwrap();
         req.extensions_mut().insert(ConnectInfo(socket_addr));
 
-        let ip = get_client_ip(&req);
+        let ip = get_client_ip(&req, &TrustedProxyConfig::default());
         // 来自不可信代理，应该使用直接连接的 IP
         assert_eq!(ip, "8.8.8.8");
     }
@@ -699,72 +585,52 @@ mod tests {
         );
     }
 
-    // ========== RateLimitMiddleware::new tests ==========
-
-    #[test]
-    fn test_rate_limit_middleware_new() {
-        let mock = Arc::new(MockRateLimitingService::allowed()) as Arc<dyn RateLimitingService>;
-        let middleware = RateLimitMiddleware::new(mock);
-        // Verify construction doesn't panic (clone to verify Clone derive)
-        let _cloned = middleware.clone();
-    }
-
-    // ========== extract_bearer_token edge cases ==========
-
-    #[test]
-    fn test_extract_bearer_token_case_sensitive() {
-        // "bearer" (lowercase) should not match
-        let req = Request::builder()
-            .header("Authorization", "bearer test-token")
-            .body(Body::empty())
-            .unwrap();
-        let token = extract_bearer_token(&req);
-        assert!(token.is_none());
-    }
-
-    #[test]
-    fn test_extract_bearer_token_non_ascii_header() {
-        let req = Request::builder()
-            .header("Authorization", "Bearer \u{200B}hidden-zero-width")
-            .body(Body::empty())
-            .unwrap();
-        // Zero-width space (obs-text) is allowed in HeaderValue but to_str() fails,
-        // so extract_bearer_token returns None for non-ASCII header values
-        let token = extract_bearer_token(&req);
-        assert_eq!(token, None);
-    }
-
-    #[test]
-    fn test_extract_bearer_token_with_trailing_spaces() {
-        let req = Request::builder()
-            .header("Authorization", "Bearer   my-token   ")
-            .body(Body::empty())
-            .unwrap();
-        let token = extract_bearer_token(&req);
-        assert_eq!(token, Some("my-token".to_string()));
-    }
-
-    #[test]
-    fn test_extract_bearer_token_invalid_header_value() {
-        // Use from_bytes to set a header value with obs-text (0x80-0xFF) bytes.
-        // These are allowed in HeaderValue but cause to_str() to fail,
-        // so extract_bearer_token returns None.
-        let mut req = Request::builder().body(Body::empty()).unwrap();
-        let obs_text_value = axum::http::HeaderValue::from_bytes(b"Bearer \x80token").unwrap();
-        req.headers_mut()
-            .insert(header::AUTHORIZATION, obs_text_value);
-        let token = extract_bearer_token(&req);
-        assert!(token.is_none());
-    }
-
     // ========== rate_limit_middleware function tests ==========
 
     async fn test_middleware_wrapper(
-        axum::extract::State(state): axum::extract::State<Arc<dyn RateLimitingService>>,
+        axum::extract::State(state): axum::extract::State<Arc<RateLimitRuntimeConfig>>,
         req: Request,
         next: Next,
     ) -> Response {
-        rate_limit_middleware(req, next, state).await
+        rate_limit_middleware(req, next, &state).await
+    }
+
+    #[test]
+    fn test_is_rate_limit_exempt_paths() {
+        // K8s 探针：/health/live、/health/ready 必须免限流（审查 H2）
+        assert!(is_rate_limit_exempt("/health"));
+        assert!(is_rate_limit_exempt("/health/live"));
+        assert!(is_rate_limit_exempt("/health/ready"));
+        assert!(is_rate_limit_exempt("/ready"));
+        assert!(is_rate_limit_exempt("/v1/version"));
+        assert!(is_rate_limit_exempt("/metrics"));
+        assert!(!is_rate_limit_exempt("/v1/scrape"));
+    }
+
+    #[tokio::test]
+    async fn test_middleware_health_live_skips_rate_limit() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let state = Arc::new(RateLimitRuntimeConfig::default());
+        let app = axum::Router::new()
+            .route("/health/live", get(|| async { "OK" }))
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                test_middleware_wrapper,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health/live")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -772,11 +638,11 @@ mod tests {
         use axum::routing::get;
         use tower::ServiceExt;
 
-        let mock = Arc::new(MockRateLimitingService::allowed()) as Arc<dyn RateLimitingService>;
+        let state = Arc::new(RateLimitRuntimeConfig::default());
         let app = axum::Router::new()
             .route("/health", get(|| async { "OK" }))
             .layer(axum::middleware::from_fn_with_state(
-                mock,
+                state,
                 test_middleware_wrapper,
             ));
 
@@ -798,11 +664,11 @@ mod tests {
         use axum::routing::get;
         use tower::ServiceExt;
 
-        let mock = Arc::new(MockRateLimitingService::allowed()) as Arc<dyn RateLimitingService>;
+        let state = Arc::new(RateLimitRuntimeConfig::default());
         let app = axum::Router::new()
             .route("/metrics", get(|| async { "metrics" }))
             .layer(axum::middleware::from_fn_with_state(
-                mock,
+                state,
                 test_middleware_wrapper,
             ));
 
@@ -820,138 +686,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_allowed_passes_through() {
-        use axum::routing::get;
-        use tower::ServiceExt;
-
-        let mock = Arc::new(MockRateLimitingService::allowed()) as Arc<dyn RateLimitingService>;
-        let app = axum::Router::new()
-            .route("/v1/test", get(|| async { "OK" }))
-            .layer(axum::middleware::from_fn_with_state(
-                mock,
-                test_middleware_wrapper,
-            ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/test")
-                    .header("Authorization", "Bearer test-api-key-12345678")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_middleware_denied_returns_429() {
-        use axum::routing::get;
-        use tower::ServiceExt;
-
-        let mock = Arc::new(MockRateLimitingService::denied("Too many requests"))
-            as Arc<dyn RateLimitingService>;
-        let app = axum::Router::new()
-            .route("/v1/test", get(|| async { "OK" }))
-            .layer(axum::middleware::from_fn_with_state(
-                mock,
-                test_middleware_wrapper,
-            ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/test")
-                    .header("Authorization", "Bearer test-api-key-12345678")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(
-            response.headers().get(header::CONTENT_TYPE).unwrap(),
-            "application/json"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_middleware_retry_after_returns_429_with_header() {
-        use axum::routing::get;
-        use tower::ServiceExt;
-
-        let mock =
-            Arc::new(MockRateLimitingService::retry_after(120)) as Arc<dyn RateLimitingService>;
-        let app = axum::Router::new()
-            .route("/v1/test", get(|| async { "OK" }))
-            .layer(axum::middleware::from_fn_with_state(
-                mock,
-                test_middleware_wrapper,
-            ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/test")
-                    .header("Authorization", "Bearer test-api-key-12345678")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(response.headers().get("Retry-After").unwrap(), "120");
-        assert_eq!(
-            response.headers().get(header::CONTENT_TYPE).unwrap(),
-            "application/json"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_middleware_service_error_fail_open() {
-        use axum::routing::get;
-        use tower::ServiceExt;
-
-        // RATE_LIMIT_FAIL_OPEN defaults to false (fail-closed),
-        // so service errors should reject the request with 503
-        let mock = Arc::new(MockRateLimitingService::error()) as Arc<dyn RateLimitingService>;
-        let app = axum::Router::new()
-            .route("/v1/test", get(|| async { "OK" }))
-            .layer(axum::middleware::from_fn_with_state(
-                mock,
-                test_middleware_wrapper,
-            ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/test")
-                    .header("Authorization", "Bearer test-api-key-12345678")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        // Fail-closed: request should be rejected when rate limit service errors
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    #[tokio::test]
     async fn test_middleware_no_bearer_token_ip_limit_passes() {
         use axum::routing::get;
         use tower::ServiceExt;
 
         // Use a unique IP to avoid interference with other tests
-        let mock = Arc::new(MockRateLimitingService::allowed()) as Arc<dyn RateLimitingService>;
+        let state = Arc::new(RateLimitRuntimeConfig::default());
         let app = axum::Router::new()
             .route("/v1/test", get(|| async { "OK" }))
             .layer(axum::middleware::from_fn_with_state(
-                mock,
+                state,
                 test_middleware_wrapper,
             ));
 
@@ -969,203 +713,4 @@ mod tests {
         // IP rate limit should pass (first request for this IP)
         assert_eq!(response.status(), StatusCode::OK);
     }
-
-    #[tokio::test]
-    async fn test_middleware_short_api_key_prefix() {
-        use axum::routing::get;
-        use tower::ServiceExt;
-
-        // Test with a very short API key (< 8 chars) to exercise the min(8, len) logic
-        let mock = Arc::new(MockRateLimitingService::denied("limit exceeded"))
-            as Arc<dyn RateLimitingService>;
-        let app = axum::Router::new()
-            .route("/v1/test", get(|| async { "OK" }))
-            .layer(axum::middleware::from_fn_with_state(
-                mock,
-                test_middleware_wrapper,
-            ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/v1/test")
-                    .header("Authorization", "Bearer abc") // 3 chars, less than 8
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        // Should handle short API key without panic
-        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    }
-
-    // ========== Mock RateLimitingService ==========
-
-    use crate::domain::models::CreditsTransactionType;
-    use crate::domain::services::rate_limiting_service::{
-        BacklogService, ConcurrencyControlService, QuotaService, RateLimitService,
-        RateLimitingError, RateLimitingService,
-    };
-
-    enum MockBehavior {
-        Allowed,
-        Denied(String),
-        RetryAfter(u64),
-        Error,
-    }
-
-    struct MockRateLimitingService {
-        behavior: MockBehavior,
-    }
-
-    impl MockRateLimitingService {
-        fn allowed() -> Self {
-            Self {
-                behavior: MockBehavior::Allowed,
-            }
-        }
-        fn denied(reason: &str) -> Self {
-            Self {
-                behavior: MockBehavior::Denied(reason.to_string()),
-            }
-        }
-        fn retry_after(secs: u64) -> Self {
-            Self {
-                behavior: MockBehavior::RetryAfter(secs),
-            }
-        }
-        fn error() -> Self {
-            Self {
-                behavior: MockBehavior::Error,
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl RateLimitService for MockRateLimitingService {
-        async fn check_rate_limit(
-            &self,
-            _api_key: &str,
-            _endpoint: &str,
-        ) -> Result<RateLimitResult, RateLimitingError> {
-            match &self.behavior {
-                MockBehavior::Allowed => Ok(RateLimitResult::Allowed),
-                MockBehavior::Denied(reason) => Ok(RateLimitResult::Denied {
-                    reason: reason.clone(),
-                }),
-                MockBehavior::RetryAfter(secs) => Ok(RateLimitResult::RetryAfter {
-                    retry_after_seconds: *secs,
-                }),
-                MockBehavior::Error => Err(RateLimitingError::Other(anyhow::anyhow!(
-                    "mock service error"
-                ))),
-            }
-        }
-        async fn get_team_rate_limit_config(
-            &self,
-            _team_id: crate::domain::id::Id,
-        ) -> Result<
-            crate::domain::services::rate_limiting_service::RateLimitConfig,
-            RateLimitingError,
-        > {
-            Ok(Default::default())
-        }
-        async fn update_team_rate_limit_config(
-            &self,
-            _team_id: crate::domain::id::Id,
-            _config: crate::domain::services::rate_limiting_service::RateLimitConfig,
-        ) -> Result<(), RateLimitingError> {
-            Ok(())
-        }
-        async fn cleanup_expired_rate_limits(&self) -> Result<u64, RateLimitingError> {
-            Ok(0)
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl ConcurrencyControlService for MockRateLimitingService {
-        async fn check_team_concurrency(
-            &self,
-            _team_id: crate::domain::id::Id,
-            _task_id: crate::domain::id::Id,
-        ) -> Result<
-            crate::domain::services::rate_limiting_service::ConcurrencyResult,
-            RateLimitingError,
-        > {
-            Ok(crate::domain::services::rate_limiting_service::ConcurrencyResult::Allowed)
-        }
-        async fn release_team_concurrency_slot(
-            &self,
-            _team_id: crate::domain::id::Id,
-            _task_id: crate::domain::id::Id,
-        ) -> Result<(), RateLimitingError> {
-            Ok(())
-        }
-        async fn get_team_current_concurrency(
-            &self,
-            _team_id: crate::domain::id::Id,
-        ) -> Result<u32, RateLimitingError> {
-            Ok(0)
-        }
-        async fn get_team_concurrency_config(
-            &self,
-            _team_id: crate::domain::id::Id,
-        ) -> Result<
-            crate::domain::services::rate_limiting_service::ConcurrencyConfig,
-            RateLimitingError,
-        > {
-            Ok(Default::default())
-        }
-        async fn update_team_concurrency_config(
-            &self,
-            _team_id: crate::domain::id::Id,
-            _config: crate::domain::services::rate_limiting_service::ConcurrencyConfig,
-        ) -> Result<(), RateLimitingError> {
-            Ok(())
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl BacklogService for MockRateLimitingService {
-        async fn process_backlog_tasks(
-            &self,
-            _team_id: crate::domain::id::Id,
-        ) -> Result<u32, RateLimitingError> {
-            Ok(0)
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl QuotaService for MockRateLimitingService {
-        async fn check_and_deduct_quota(
-            &self,
-            _team_id: crate::domain::id::Id,
-            _amount: i64,
-            _transaction_type: CreditsTransactionType,
-            _description: String,
-            _reference_id: Option<crate::domain::id::Id>,
-        ) -> Result<(), RateLimitingError> {
-            Ok(())
-        }
-        async fn get_quota_balance(
-            &self,
-            _team_id: crate::domain::id::Id,
-        ) -> Result<i64, RateLimitingError> {
-            Ok(1000)
-        }
-
-        async fn refund_quota(
-            &self,
-            _team_id: crate::domain::id::Id,
-            _amount: i64,
-            _description: String,
-            _reference_id: Option<crate::domain::id::Id>,
-        ) -> Result<(), RateLimitingError> {
-            Ok(())
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl RateLimitingService for MockRateLimitingService {}
 }

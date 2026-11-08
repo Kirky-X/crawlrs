@@ -423,16 +423,31 @@ pub fn shared_system_monitor() -> Arc<MutableSystemMonitor> {
 }
 
 /// 安装 Prometheus recorder；失败时记录错误并返回 false（指标禁用）。
+/// 全局 Prometheus 渲染句柄（D8 修复：/metrics 端点此前返回硬编码 stub）。
+static PROMETHEUS_HANDLE: OnceLock<metrics_exporter_prometheus::PrometheusHandle> = OnceLock::new();
+
+/// 返回 Prometheus 渲染句柄；未初始化（或 recorder 安装失败）时为 `None`。
+pub fn prometheus_handle() -> Option<&'static metrics_exporter_prometheus::PrometheusHandle> {
+    PROMETHEUS_HANDLE.get()
+}
+
 fn install_prometheus_recorder() -> bool {
-    let builder = PrometheusBuilder::new();
-    if let Err(e) = builder.with_http_listener(([0, 0, 0, 0], 9100)).install() {
-        log::error!(
-            "Failed to install Prometheus recorder: {}. Metrics will be disabled.",
-            e
-        );
-        return false;
+    // D8 修复：改用 `install_recorder` 持有渲染句柄，`GET /metrics` 由此输出
+    // 真实指标族。旧实现 `with_http_listener((0.0.0.0, 9100)).install()` 不返回
+    // 句柄，端点恒返硬编码 stub（E2E SJ-03/S-H 实证 version/uptime 恒定）。
+    match PrometheusBuilder::new().install_recorder() {
+        Ok(handle) => {
+            let _ = PROMETHEUS_HANDLE.set(handle);
+            true
+        }
+        Err(e) => {
+            log::error!(
+                "Failed to install Prometheus recorder: {}. Metrics will be disabled.",
+                e
+            );
+            false
+        }
     }
-    true
 }
 
 /// 启动系统指标后台刷新任务（Prometheus 导出）。

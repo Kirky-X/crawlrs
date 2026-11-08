@@ -416,10 +416,33 @@ async fn flush_batch(
     .await?;
 
     for url in &new_urls {
+        // 审查 F18：超长 URL 会触发 PostgreSQL btree 唯一索引上限错误，
+        // 与根 URL 保持同一 2048 字节口径直接跳过。
+        if url.len() > 2048 {
+            log::debug!("skip oversized sitemap task url ({} bytes)", url.len());
+            continue;
+        }
         let task = build_sitemap_task(url, seed);
-        task_repo.create(&task).await?;
-        crawl_repo.increment_total_tasks(seed.crawl_id).await?;
-        stats.enqueued += 1;
+        match task_repo.create(&task).await {
+            Ok(_) => {
+                // 审查 F3/F4：只有插入成功才计数；并发窗口的重复 URL 由
+                // (crawl_id,url) 唯一索引兜底，跳过而非中止整个 feed。
+                crawl_repo.increment_total_tasks(seed.crawl_id).await?;
+                stats.enqueued += 1;
+            }
+            Err(e) => {
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("duplicate key")
+                    || msg.contains("23505")
+                    || msg.contains("unique constraint")
+                    || msg.contains("duplicate entry")
+                {
+                    log::debug!("skip duplicate sitemap task url={}", task.url);
+                } else {
+                    return Err(e.into());
+                }
+            }
+        }
     }
 
     // 每批持久化进度指针（断点续爬；此时 batch 已全部处理，consumed 精确）

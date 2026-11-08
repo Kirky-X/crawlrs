@@ -746,6 +746,9 @@ impl ScraperEngine for ReqwestEngine {
         let response = self.send_request(request_builder, request, &handle).await?;
 
         let status_code = response.status().as_u16();
+        // 审查 H1（架构复审）：final_url 必须回传——crawl 同站过滤以重定向后的
+        // 最终地址为基准，恒 None 会让 example.com→www 场景丢弃全部站内链接。
+        let final_url = response.url().to_string();
 
         // H3: 2xx 成功 → 通过 ClientHandle.report_success 回填 ProxyProvider 恢复代理健康
         // 4xx/5xx 视为业务层失败，但代理本身可用，不 report_failure（避免误伤好代理）
@@ -776,7 +779,7 @@ impl ScraperEngine for ReqwestEngine {
             content_type,
             headers: response_headers,
             response_time_ms: start.elapsed().as_millis() as u64,
-            final_url: None,
+            final_url: Some(final_url),
             captured_responses: Vec::new(),
         })
     }

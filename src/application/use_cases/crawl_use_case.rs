@@ -211,6 +211,7 @@ impl CrawlUseCase {
         );
 
         self.task_repo.create(&initial_task).await?;
+        // 根任务已由 build_crawl_entity 以 total_tasks=1 计入，此处不得再自增。
 
         Ok(crawl)
     }
@@ -1409,9 +1410,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_crawl_max_concurrency_at_boundary_100_succeeds() {
+    async fn test_create_crawl_max_concurrency_at_boundary_50_succeeds() {
+        // D6 契约：max_concurrency 上限 50（三层统一后的边界值）
         let mut dto = make_crawl_dto();
-        dto.config.max_concurrency = Some(100);
+        dto.config.max_concurrency = Some(50);
 
         let use_case = build_use_case_allowed_geo(
             Arc::new(MockCrawlRepository::empty()),

@@ -207,7 +207,8 @@ impl BrowserDownloadManager {
         }
 
         Err(BrowserDownloadError::DownloadFailed(
-            "Fetcher unavailable".to_string(),
+            "automatic browser download is unavailable in this build              (chromiumoxide_fetcher was removed for RUSTSEC advisories);              install Chrome/Chromium or set              CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH"
+                .to_string(),
         ))
     }
 

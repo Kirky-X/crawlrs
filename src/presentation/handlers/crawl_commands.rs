@@ -192,10 +192,20 @@ fn validate_crawl_request(
     locale: &Locale,
     bundle: &Arc<I18nBundle>,
 ) -> Option<Response> {
-    if payload.config.max_depth > 5 {
+    if payload.config.max_depth > crate::application::dto::crawl_request::MAX_CRAWL_DEPTH {
         return Some(errors::unprocessable_entity(
             "max_depth must be between 0 and 5",
         ));
+    }
+
+    // D6 修复：max_concurrency 契约上限 50（此前 handler 层无校验，51 放行
+    // 到 use_case 才以 400 报 100 上限——三层不一致，E2E SC-04 实证）。
+    if let Some(concurrency) = payload.config.max_concurrency {
+        if concurrency > crate::application::dto::crawl_request::MAX_CONCURRENCY {
+            return Some(errors::unprocessable_entity(
+                "max_concurrency must be between 1 and 50",
+            ));
+        }
     }
 
     // F11：sitemap 请求源主开关校验（能力不可用时显式拒绝，禁止静默忽略）

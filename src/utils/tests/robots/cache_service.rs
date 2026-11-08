@@ -13,7 +13,7 @@ async fn test_cache_service_hit_returns_content_without_http() {
         "User-agent: *\nDisallow: /private\n",
     ));
     let checker = RobotsChecker {
-        engine_client: Arc::new(EngineClient::new()),
+        fetcher: Arc::new(MockFetcher::with_response(200, "")),
         user_agent: "crawlrs-bot/1.0".to_string(),
         memory_cache: Arc::new(Mutex::new(HashMap::new())),
         cache_service: Some(mock_cache as Arc<dyn CacheService>),
@@ -55,7 +55,7 @@ async fn test_expired_memory_cache_removed_then_cache_service_hit() {
         "User-agent: *\nDisallow: /\n",
     ));
     let checker = RobotsChecker {
-        engine_client: Arc::new(EngineClient::new()),
+        fetcher: Arc::new(MockFetcher::with_response(200, "")),
         user_agent: "crawlrs-bot/1.0".to_string(),
         memory_cache: Arc::new(Mutex::new(HashMap::new())),
         cache_service: Some(mock_cache as Arc<dyn CacheService>),
@@ -106,11 +106,11 @@ async fn test_expired_memory_cache_removed_then_cache_service_hit() {
 #[tokio::test]
 async fn test_http_fetch_success_returns_content() {
     // 200 response → content stored and returned.
-    let router = Arc::new(MockEngineRouter::with_response(
+    let router = Arc::new(MockFetcher::with_response(
         200,
         "User-agent: *\nDisallow: /private\n",
     ));
-    let checker = make_checker_with_mock_router(router);
+    let checker = make_checker_with_mock_fetcher(router);
 
     let allowed = checker
         .is_allowed("http://8.8.8.8/page", "MyBot")
@@ -129,8 +129,8 @@ async fn test_http_fetch_success_returns_content() {
 #[tokio::test]
 async fn test_http_fetch_404_returns_empty_content() {
     // 404 → empty content → allow all.
-    let router = Arc::new(MockEngineRouter::with_response(404, "Not Found"));
-    let checker = make_checker_with_mock_router(router);
+    let router = Arc::new(MockFetcher::with_response(404, "Not Found"));
+    let checker = make_checker_with_mock_fetcher(router);
 
     let allowed = checker
         .is_allowed("http://8.8.8.8/anything", "MyBot")
@@ -148,8 +148,8 @@ async fn test_http_fetch_404_returns_empty_content() {
 #[tokio::test]
 async fn test_http_fetch_403_returns_empty_content() {
     // Other non-500 status (e.g. 403) → empty content → allow all.
-    let router = Arc::new(MockEngineRouter::with_response(403, "Forbidden"));
-    let checker = make_checker_with_mock_router(router);
+    let router = Arc::new(MockFetcher::with_response(403, "Forbidden"));
+    let checker = make_checker_with_mock_fetcher(router);
 
     let allowed = checker
         .is_allowed("http://8.8.8.8/anything", "MyBot")
@@ -162,12 +162,9 @@ async fn test_http_fetch_403_returns_empty_content() {
 async fn test_http_fetch_500_retries_then_defaults_empty() {
     // 500 (server error) triggers retries; after all retries the
     // content defaults to empty.
-    let router = Arc::new(MockEngineRouter::with_response(
-        500,
-        "Internal Server Error",
-    ));
+    let router = Arc::new(MockFetcher::with_response(500, "Internal Server Error"));
     let router_ref = router.clone();
-    let checker = make_checker_with_mock_router(router);
+    let checker = make_checker_with_mock_fetcher(router);
 
     let allowed = checker
         .is_allowed("http://8.8.8.8/anything", "MyBot")
@@ -199,9 +196,9 @@ async fn test_http_fetch_500_retries_then_defaults_empty() {
 async fn test_http_fetch_request_error_defaults_empty() {
     // Request failure (e.g. connection refused) triggers retries;
     // after all retries the content defaults to empty.
-    let router = Arc::new(MockEngineRouter::with_error("connection refused"));
+    let router = Arc::new(MockFetcher::with_error("connection refused"));
     let router_ref = router.clone();
-    let checker = make_checker_with_mock_router(router);
+    let checker = make_checker_with_mock_fetcher(router);
 
     let allowed = checker
         .is_allowed("http://8.8.8.8/anything", "MyBot")
@@ -223,13 +220,12 @@ async fn test_http_fetch_request_error_defaults_empty() {
 async fn test_http_fetch_updates_cache_service() {
     // After a successful HTTP fetch, cache_service.set should be called
     // to persist the content.
-    let router = Arc::new(MockEngineRouter::with_response(
-        200,
-        "User-agent: *\nDisallow: /private\n",
-    ));
     let mock_cache = Arc::new(MockCacheService::new());
     let checker = RobotsChecker {
-        engine_client: Arc::new(EngineClient::with_router(router)),
+        fetcher: Arc::new(MockFetcher::with_response(
+            200,
+            "User-agent: *\nDisallow: /private\n",
+        )),
         user_agent: "crawlrs-bot/1.0".to_string(),
         memory_cache: Arc::new(Mutex::new(HashMap::new())),
         cache_service: Some(mock_cache.clone() as Arc<dyn CacheService>),
@@ -260,12 +256,12 @@ async fn test_http_fetch_updates_cache_service() {
 async fn test_full_flow_first_fetch_then_cache_hit() {
     // First call: cache miss → HTTP fetch → memory cache populated.
     // Second call: memory cache hit → no HTTP fetch needed.
-    let router = Arc::new(MockEngineRouter::with_response(
+    let router = Arc::new(MockFetcher::with_response(
         200,
         "User-agent: *\nDisallow: /private\n",
     ));
     let router_ref = router.clone();
-    let checker = make_checker_with_mock_router(router);
+    let checker = make_checker_with_mock_fetcher(router);
 
     // First call — should fetch via HTTP.
     let allowed1 = checker

@@ -1,7 +1,5 @@
 use super::*;
 
-use crate::engines::engine_client::{EngineError, InternalScrapeRequest, InternalScrapeResponse};
-use crate::engines::router::EngineStats;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -103,26 +101,26 @@ impl CacheService for MockCacheService {
     }
 }
 
-struct MockEngineRouter {
-    response: Option<InternalScrapeResponse>,
+/// 测试抓取器：按状态码语义产生 [`RobotsFetchAttempt`]，并计数调用次数。
+struct MockFetcher {
+    content: Option<String>,
     error: Option<String>,
     call_count: AtomicU64,
 }
 
-impl MockEngineRouter {
+impl MockFetcher {
+    /// 沿用 HTTP 状态码语义：2xx→内容；404/其余非 5xx→空内容；
+    /// 5xx→可重试错误。生产实现的同一语义在 `HttpRobotsFetcher`。
     fn with_response(status_code: u16, content: &str) -> Self {
+        let content = if (200..300).contains(&status_code) {
+            content.to_string()
+        } else if status_code >= 500 {
+            return Self::with_error(&format!("Server error: {status_code}"));
+        } else {
+            String::new()
+        };
         Self {
-            response: Some(InternalScrapeResponse {
-                js_degraded: false,
-                captured_responses: Vec::new(),
-                status_code,
-                content: content.to_string(),
-                screenshot: None,
-                content_type: "text/plain".to_string(),
-                headers: HashMap::new(),
-                response_time_ms: 0,
-                final_url: None,
-            }),
+            content: Some(content),
             error: None,
             call_count: AtomicU64::new(0),
         }
@@ -130,7 +128,7 @@ impl MockEngineRouter {
 
     fn with_error(msg: &str) -> Self {
         Self {
-            response: None,
+            content: None,
             error: Some(msg.to_string()),
             call_count: AtomicU64::new(0),
         }
@@ -142,54 +140,31 @@ impl MockEngineRouter {
 }
 
 #[async_trait]
-impl EngineRouterTrait for MockEngineRouter {
-    async fn route(
-        &self,
-        _request: &InternalScrapeRequest,
-    ) -> Result<InternalScrapeResponse, EngineError> {
+impl RobotsFetcher for MockFetcher {
+    async fn fetch(&self, _robots_url: &str, _user_agent: &str) -> RobotsFetchAttempt {
         self.call_count.fetch_add(1, Ordering::Relaxed);
-        if let Some(resp) = &self.response {
-            Ok(resp.clone())
+        if let Some(content) = &self.content {
+            RobotsFetchAttempt::Content(content.clone())
         } else {
-            Err(EngineError::RequestFailed(
-                self.error.clone().unwrap_or_default(),
-            ))
+            RobotsFetchAttempt::Retryable(anyhow::anyhow!(self.error.clone().unwrap_or_default()))
         }
     }
-
-    async fn aggregate(
-        &self,
-        request: &InternalScrapeRequest,
-    ) -> Result<InternalScrapeResponse, EngineError> {
-        self.route(request).await
-    }
-
-    fn get_engine_stats(&self) -> HashMap<String, EngineStats> {
-        HashMap::new()
-    }
-
-    fn reset_engine_stats(&self, _engine_name: &str) {}
-
-    fn registered_engines(&self) -> Vec<String> {
-        vec!["mock".to_string()]
-    }
 }
 
-/// Build a RobotsChecker backed by a mock engine router, with short
+/// Build a RobotsChecker backed by a mock fetcher, with short
 /// retry delays so tests run fast.
-fn make_checker_with_mock_router(router: Arc<dyn EngineRouterTrait>) -> RobotsChecker {
-    make_fail_closed_checker_with_mock_router(router, false)
+fn make_checker_with_mock_fetcher(fetcher: Arc<MockFetcher>) -> RobotsChecker {
+    make_fail_closed_checker_with_mock_fetcher(fetcher, false)
 }
 
-/// Same as [`make_checker_with_mock_router`], but with an explicit
+/// Same as [`make_checker_with_mock_fetcher`], but with an explicit
 /// `fail_closed` flag for fail-closed behavior tests.
-fn make_fail_closed_checker_with_mock_router(
-    router: Arc<dyn EngineRouterTrait>,
+fn make_fail_closed_checker_with_mock_fetcher(
+    fetcher: Arc<MockFetcher>,
     fail_closed: bool,
 ) -> RobotsChecker {
-    let engine_client = Arc::new(EngineClient::with_router(router));
     RobotsChecker {
-        engine_client,
+        fetcher,
         user_agent: "crawlrs-bot/1.0".to_string(),
         memory_cache: Arc::new(Mutex::new(HashMap::with_capacity(256))),
         cache_service: None,

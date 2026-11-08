@@ -139,6 +139,15 @@ pub fn is_retryable_error(error: &anyhow::Error) -> bool {
         "broken pipe",
         "too many connections",
         "rate limit",
+        // D10 修复：reqwest 0.13 / hyper 的错误串形态此前不在模式表内，
+        // 实盘 404/超时被误判为非重试（E2E F2：UT 用合成串命中、实盘脱节）。
+        // webhook 投递 404 属永久性失败不重试（正确），以下仅补可恢复类。
+        "error sending request",
+        "connection closed",
+        "timed out",
+        "operation timeout",
+        "connection error",
+        "temporarily unavailable",
     ];
 
     retryable_patterns.iter().any(|&p| error_string.contains(p))
@@ -246,6 +255,38 @@ mod tests {
         assert!(policy.should_retry(4));
         assert!(!policy.should_retry(5)); // max_retries = 5
         assert!(!policy.should_retry(6));
+    }
+
+    /// D10：reqwest 0.13 / hyper 实际错误串必须命中重试表；永久性失败不重试。
+    #[test]
+    fn test_is_retryable_error_reqwest_hyper_patterns() {
+        for msg in [
+            "error sending request for url (https://news.ycombinator.com/)",
+            "connection closed before message completed",
+            "operation timed out",
+            "temporarily unavailable",
+        ] {
+            let err = anyhow::anyhow!(msg.to_string());
+            assert!(is_retryable_error(&err), "expected retryable: {msg}");
+        }
+
+        // 404 是永久性失败，不得命中可重试模式
+        let permanent = anyhow::anyhow!("HTTP status client error (404 Not Found)");
+        assert!(!is_retryable_error(&permanent));
+    }
+
+    /// D10：max_retries 必须来自策略值（webhook worker 由
+    /// settings.webhook.max_retries 构造），而非常量。
+    #[test]
+    fn test_should_retry_with_error_respects_max_retries() {
+        let policy = RetryPolicy {
+            max_retries: 2,
+            ..Default::default()
+        };
+        let retryable = anyhow::anyhow!("error sending request for url (x)");
+        assert!(policy.should_retry_with_error(0, &retryable));
+        assert!(policy.should_retry_with_error(1, &retryable));
+        assert!(!policy.should_retry_with_error(2, &retryable));
     }
 
     #[test]

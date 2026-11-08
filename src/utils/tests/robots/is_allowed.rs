@@ -214,21 +214,17 @@ async fn test_get_crawl_delay_url_without_host_returns_error() {
     assert!(result.is_err(), "URL without host should return an error");
 }
 
-// ========== create_engine_client test ==========
+// ========== constructor test ==========
 
 #[test]
-fn test_create_engine_client_creates_valid_client() {
+fn test_new_uses_settings_user_agent() {
+    // D5 重构：抓取不再经引擎链，构造仅注入 reqwest 客户端；
+    // UA 必须来自 RobotsSettings（匹配与抓取共用）。
     let http_client = Arc::new(reqwest::Client::new());
-    let engine_client = RobotsChecker::create_engine_client(http_client);
-    assert_eq!(
-        engine_client.engine_count(),
-        1,
-        "exactly one engine (reqwest) should be registered"
-    );
-    let names = engine_client.registered_engines();
-    assert!(
-        names.iter().any(|n| n == "reqwest"),
-        "registered engines should contain 'reqwest', got {:?}",
-        names
-    );
+    let settings = crate::config::settings::RobotsSettings {
+        user_agent: "crawlrs-bot/test".to_string(),
+        ..Default::default()
+    };
+    let checker = RobotsChecker::new(http_client, &settings, None, None);
+    assert_eq!(checker.user_agent(), "crawlrs-bot/test");
 }

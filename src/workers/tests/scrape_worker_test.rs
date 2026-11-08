@@ -2115,6 +2115,148 @@ async fn test_mock_check_robots_txt_allowed() {
     assert!(worker.check_robots_txt(&task).await);
 }
 
+// 早期拒绝路径必须把失败原因写入 payload["error"]（API 回显依据）
+
+#[tokio::test]
+async fn test_validate_scrape_request_robots_denied_records_reason() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        Arc::new(ConfigurableCrawlRepo::new()),
+        Arc::new(DenyingRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+
+    let task = make_task(json!({}));
+    let scrape_request = ScrapeRequest::new(task.url.clone());
+    let dto: ScrapeRequestDto = serde_json::from_value(json!({
+        "url": task.url,
+        "options": { "respect_robots": true }
+    }))
+    .expect("dto");
+
+    let allowed = worker
+        .validate_scrape_request(&task, &scrape_request, Some(&dto))
+        .await
+        .expect("validate should succeed");
+    assert!(!allowed, "robots Disallow 应拒绝");
+
+    let captured = task_repo
+        .last_updated_task()
+        .expect("拒绝路径必须写入任务快照");
+    assert_eq!(captured.status, TaskStatus::Failed);
+    let reason = captured
+        .payload
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        reason.contains("robots.txt") && reason.contains("disallowed"),
+        "失败原因必须含 robots 语义，实际: {reason}"
+    );
+}
+
+#[tokio::test]
+async fn test_validate_scrape_request_ssrf_proxy_records_reason() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        Arc::new(ConfigurableCrawlRepo::new()),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+
+    let task = make_task(json!({}));
+    let mut scrape_request = ScrapeRequest::new(task.url.clone());
+    scrape_request.options.proxy = Some("http://127.0.0.1:8080".to_string());
+
+    let allowed = worker
+        .validate_scrape_request(&task, &scrape_request, None)
+        .await
+        .expect("validate should succeed");
+    assert!(!allowed, "内部代理应被 SSRF 拦截");
+
+    let captured = task_repo
+        .last_updated_task()
+        .expect("拒绝路径必须写入任务快照");
+    assert_eq!(captured.status, TaskStatus::Failed);
+    let reason = captured
+        .payload
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        reason.contains("SSRF"),
+        "失败原因必须标注 SSRF，实际: {reason}"
+    );
+}
+
+#[tokio::test]
+async fn test_passes_robots_gate_denied_records_reason() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        Arc::new(ConfigurableCrawlRepo::new()),
+        Arc::new(DenyingRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+
+    let task = make_task(json!({}));
+    let passed = worker
+        .passes_robots_gate(&task)
+        .await
+        .expect("gate should succeed");
+    assert!(!passed, "crawl robots 拒绝应返回 false");
+
+    let captured = task_repo.last_updated_task().expect("必须写入任务快照");
+    assert_eq!(captured.status, TaskStatus::Failed);
+    let reason = captured
+        .payload
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        reason.contains("robots.txt"),
+        "crawl 拒绝原因必须含 robots 语义，实际: {reason}"
+    );
+}
+
+#[tokio::test]
+async fn test_handle_expired_task_records_reason() {
+    let task_repo = Arc::new(ConfigurableTaskRepo::new());
+    let worker = build_configurable_worker(
+        task_repo.clone(),
+        Arc::new(ConfigurableCrawlRepo::new()),
+        Arc::new(MockRobotsChecker),
+        Arc::new(EngineClient::new()),
+    )
+    .await;
+
+    let mut task = make_task(json!({}));
+    task.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+
+    let handled = worker
+        .handle_expired_task(&task)
+        .await
+        .expect("expiry handling should succeed");
+    assert!(handled, "过期任务应被处理");
+
+    let captured = task_repo.last_updated_task().expect("必须写入任务快照");
+    assert_eq!(captured.status, TaskStatus::Failed);
+    let reason = captured
+        .payload
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        reason.contains("expired"),
+        "过期原因必须落库，实际: {reason}"
+    );
+}
+
 // handle_rules_extraction tests
 
 #[tokio::test]
@@ -3221,10 +3363,18 @@ async fn test_process_scrape_task_malformed_payload_marks_failed() {
         result.is_ok(),
         "畸形 payload 在内部处理为 Failed，process_scrape_task 返回 Ok(())"
     );
-    assert_eq!(
-        task_repo_check.mark_failed_count(),
-        1,
-        "畸形 payload 必须恰好一次将任务标记 Failed"
+    let captured = task_repo_check
+        .last_updated_task()
+        .expect("畸形 payload 必须写入失败快照");
+    assert_eq!(captured.status, TaskStatus::Failed);
+    let reason = captured
+        .payload
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        reason.contains("Invalid task payload"),
+        "畸形 payload 原因必须落库，实际: {reason}"
     );
     assert_eq!(
         task_repo_check.mark_completed_count(),
@@ -5299,11 +5449,17 @@ async fn test_process_task_expired_task_marks_failed_and_triggers_webhook() {
     let result = worker.process_task(task).await;
     assert!(result.is_ok(), "expired task should return Ok(())");
 
-    // mark_failed should have been called
-    assert_eq!(
-        task_repo.mark_failed_count(),
-        1,
-        "mark_failed should be called once for expired task"
+    // 过期路径必须落库失败原因（API 状态端点回显）
+    let captured = task_repo.last_updated_task().expect("必须写入任务快照");
+    assert_eq!(captured.status, TaskStatus::Failed);
+    let reason = captured
+        .payload
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        reason.contains("expired"),
+        "过期原因必须落库，实际: {reason}"
     );
 }
 
@@ -6453,11 +6609,22 @@ async fn test_process_crawl_task_robots_denied_marks_failed() {
     let result = worker.process_crawl_task(task).await;
     assert!(result.is_ok());
 
-    // mark_failed should have been called because robots.txt denied access
+    // 拒绝路径必须落库失败原因（API 状态端点回显）
+    let captured = task_repo.last_updated_task().expect("必须写入任务快照");
+    assert_eq!(captured.status, TaskStatus::Failed);
+    let reason = captured
+        .payload
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        reason.contains("robots.txt"),
+        "crawl robots 拒绝原因必须落库，实际: {reason}"
+    );
     assert_eq!(
         task_repo.mark_failed_count(),
-        1,
-        "mark_failed should be called when robots.txt denies access"
+        0,
+        "仅 mark_failed 会丢失原因，不得使用"
     );
 }
 

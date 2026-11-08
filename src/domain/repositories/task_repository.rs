@@ -116,6 +116,44 @@ pub trait TaskRepository: Send + Sync {
         );
         Ok(0)
     }
+
+    /// 标记任务失败并把失败原因持久化到 `payload["error"]`。
+    ///
+    /// 与 [`TaskRepository::mark_failed`] 的区别：后者只迁移状态，API 状态端点
+    /// 回读 `payload["error"]` 失败时只能回退通用文案"任务失败。"。所有**早期
+    /// 拒绝**路径（robots Disallow / SSRF / payload 非法 / 过期 / 重排超限）
+    /// 必须用本方法，否则用户看不到真实原因。
+    ///
+    /// 守卫语义同 [`TaskRepository::update_task_guarded`]，返回受影响行数。
+    /// 与 [`TaskRepository::mark_failed`] 的终态行形状一致：清空 lock 字段。
+    async fn mark_failed_with_reason(
+        &self,
+        task: &Task,
+        reason: &str,
+    ) -> Result<u64, RepositoryError> {
+        let mut failed = task.clone();
+        failed.status = TaskStatus::Failed;
+        failed.completed_at = Some(Utc::now());
+        // 注意：不在快照里清锁——守卫过滤要求快照锁身份与 DB 一致；
+        // 终态清锁由 update_task_guarded 写入时统一处理（见该实现）。
+        if !reason.is_empty() {
+            if let Some(obj) = failed.payload.as_object_mut() {
+                obj.insert(
+                    "error".to_string(),
+                    serde_json::Value::String(reason.to_string()),
+                );
+            } else {
+                // 审查 F8：payload 非对象时原因会被静默丢弃——显式告警，
+                // 与 RetryHandler::terminate_task 行为对齐。
+                log::warn!(
+                    "Task {} payload is not an object, cannot record failure reason",
+                    failed.id
+                );
+            }
+        }
+        self.update_task_guarded(&failed).await
+    }
+
     /// 续期任务锁（锁续期心跳）
     ///
     /// 仅当任务处于 active 且锁仍归属 `worker_id` 时续期成功。

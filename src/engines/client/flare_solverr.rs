@@ -925,6 +925,12 @@ impl FlareSolverrEngine {
 
     /// Tls 模式支持分数（TLS 指纹优先，不支持截图）
     fn tls_mode_score(request: &InternalScrapeRequest) -> u8 {
+        // 审查 F15：TLS 模式 scrape 会拒绝截图请求（返回
+        // "FireEngineTls does not support screenshots"），评分必须一致返回 0，
+        // 否则会被选为候选并以能力拒绝覆盖真实错误。
+        if request.needs_screenshot {
+            return 0;
+        }
         // 如果明确请求使用 Fire Engine (TLS 模式)
         if request.use_fire_engine {
             return 95;

@@ -710,6 +710,7 @@ impl WreqEngine {
         content_type: String,
         headers: std::collections::HashMap<String, String>,
         response_time_ms: u64,
+        final_url: String,
     ) -> InternalScrapeResponse {
         InternalScrapeResponse {
             js_degraded: false,
@@ -719,7 +720,7 @@ impl WreqEngine {
             content_type,
             headers,
             response_time_ms,
-            final_url: None,
+            final_url: Some(final_url),
             captured_responses: Vec::new(),
         }
     }
@@ -779,6 +780,16 @@ impl ScraperEngine for WreqEngine {
 
         let response_headers = Self::collect_response_headers(&response);
 
+        // 审查 H1（架构复审）：回传最终 URL（crawl 同站过滤依赖）。
+        // wreq::Response 只暴露 uri()：绝对 URI 直接用，相对形态回退请求 URL。
+        let final_url = {
+            let uri = response.uri().to_string();
+            if uri.starts_with("http://") || uri.starts_with("https://") {
+                uri
+            } else {
+                request.url.clone()
+            }
+        };
         let content = read_wreq_body_limited(response, self.max_response_body_bytes).await?;
 
         if request.sync_wait_ms > 0 {
@@ -791,6 +802,7 @@ impl ScraperEngine for WreqEngine {
             content_type,
             response_headers,
             start.elapsed().as_millis() as u64,
+            final_url,
         ))
     }
 

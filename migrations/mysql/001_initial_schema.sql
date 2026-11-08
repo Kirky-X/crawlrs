@@ -38,8 +38,8 @@ CREATE TABLE IF NOT EXISTS teams (
 CREATE TABLE IF NOT EXISTS api_keys (
     id CHAR(36) PRIMARY KEY,
     team_id CHAR(36) NOT NULL,
-    `key` TEXT NOT NULL UNIQUE,
-    key_hash TEXT,
+    `key` VARCHAR(255) NOT NULL UNIQUE,
+    key_hash VARCHAR(64),
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME
 );
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS crawls (
     name TEXT NOT NULL,
     root_url TEXT NOT NULL,
     url TEXT NOT NULL,
-    status TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL,
     config JSON NOT NULL DEFAULT ('{}'),
     total_tasks INTEGER NOT NULL DEFAULT 0,
     completed_tasks INTEGER NOT NULL DEFAULT 0,
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     api_key_id CHAR(36) NOT NULL,
     crawl_id CHAR(36),
     url TEXT NOT NULL,
-    status TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL,
     priority INTEGER NOT NULL DEFAULT 0,
     payload JSON NOT NULL DEFAULT ('{}'),
     retry_count INTEGER NOT NULL DEFAULT 0,
@@ -118,7 +118,7 @@ CREATE INDEX idx_tasks_api_key_id ON tasks(api_key_id);
 CREATE INDEX idx_tasks_crawl_id ON tasks(crawl_id);
 CREATE INDEX idx_tasks_status ON tasks(status);
 CREATE INDEX idx_tasks_created_at ON tasks(created_at);
-CREATE INDEX idx_tasks_url ON tasks(url);
+CREATE INDEX idx_tasks_url ON tasks(url(768));
 CREATE INDEX idx_tasks_scheduled_at ON tasks(scheduled_at);
 CREATE INDEX idx_tasks_lock_expires_at ON tasks(lock_expires_at);
 CREATE INDEX idx_tasks_team_status_priority ON tasks(team_id, status, priority DESC, created_at ASC);
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS tasks_backlog (
     payload JSON NOT NULL DEFAULT ('{}'),
     max_retries INTEGER NOT NULL DEFAULT 3,
     retry_count INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'pending',
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     scheduled_at DATETIME,
@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS webhook_events (
     team_id CHAR(36) NOT NULL,
     webhook_id CHAR(36),
     event_type TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
     payload JSON NOT NULL DEFAULT ('{}'),
     webhook_url TEXT NOT NULL,
     response_status INTEGER,
@@ -284,7 +284,7 @@ CREATE INDEX idx_audit_logs_trace_id ON audit_logs(trace_id);
 -- ========================================
 CREATE TABLE IF NOT EXISTS feature_flags (
     id CHAR(36) PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL UNIQUE,
     description TEXT,
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
     rollout_percentage INTEGER NOT NULL DEFAULT 0,

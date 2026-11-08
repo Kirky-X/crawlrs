@@ -76,7 +76,7 @@ impl ScrapeWorker {
             Err(e) => {
                 error!("Failed to parse crawl payload: {}", e);
                 self.repository
-                    .mark_failed(task.id, Some(self.worker_id))
+                    .mark_failed_with_reason(task, &format!("Invalid crawl payload: {e}"))
                     .await?;
                 Ok(None)
             }
@@ -85,7 +85,7 @@ impl ScrapeWorker {
 
     /// Robots.txt 准入（自 [`ScrapeWorker::process_crawl_task`] 提取）：
     /// 返回 true 表示放行，false 表示已标记失败（调用方直接返回 Ok(())）。
-    async fn passes_robots_gate(&self, task: &Task) -> Result<bool> {
+    pub(super) async fn passes_robots_gate(&self, task: &Task) -> Result<bool> {
         // robots UA 来自 robots.user_agent 配置（匹配与抓取共用）
         if !check_robots_txt_fn(
             task,
@@ -95,7 +95,13 @@ impl ScrapeWorker {
         .await
         {
             self.repository
-                .mark_failed(task.id, Some(self.worker_id))
+                .mark_failed_with_reason(
+                    task,
+                    &format!(
+                        "Blocked by robots.txt: URL disallowed for user-agent '{}'",
+                        self.settings.robots.user_agent
+                    ),
+                )
                 .await?;
             return Ok(false);
         }
@@ -142,7 +148,10 @@ impl ScrapeWorker {
                     task.team_id
                 );
                 self.repository
-                    .mark_failed(task.id, Some(self.worker_id))
+                    .mark_failed_with_reason(
+                        task,
+                        "Blocked: proxy target is an internal address (SSRF protection)",
+                    )
                     .await?;
                 return Ok(true);
             }
@@ -436,6 +445,21 @@ impl ScrapeWorker {
                     "Failed to update crawl status after adaptive stop for {}: {}",
                     crawl_id, e
                 );
+            }
+            // D2 修复：停止条件命中后取消该 crawl 全部未终态子任务——
+            // 此前仅改 crawl 状态行，queued 子任务继续消费（E2E SC-10 实测
+            // max_pages=1 后仍执行 2700+ 任务并越域抓外站）。
+            match self.repository.cancel_tasks_by_crawl_id(crawl_id).await {
+                Ok(n) if n > 0 => info!(
+                    "adaptive stop cancelled {} pending child tasks for crawl {}",
+                    n, crawl_id
+                ),
+                Ok(_) => {}
+                Err(e) => log::warn!(
+                    "failed to cancel pending child tasks for crawl {}: {}",
+                    crawl_id,
+                    e
+                ),
             }
         } else {
             // 未触发停止条件：由 update_crawl_completion_status 按总量判定

@@ -325,7 +325,7 @@ impl CircuitBreaker {
             .increment(1);
     }
 
-    /// 库状态 → 同步镜像（record 路径调用；状态迁移时刷新 gauge 指标）
+    /// 库状态 → 同步镜像（record 路径调用；每次刷新 gauge 指标）
     async fn refresh_mirror(&self, engine_name: &str, breaker: &ManualCircuitBreaker) {
         let state = breaker.state().await;
         let mirror = self.get_or_create_mirror(engine_name);
@@ -337,8 +337,12 @@ impl CircuitBreaker {
         let previous = mirror.state.swap(code, Ordering::AcqRel);
         mirror.opened_at_ms.store(opened_at_ms, Ordering::Release);
 
+        // 每次刷新都写 gauge：只在状态迁移时写会让始终 Closed 的健康引擎
+        // 永远没有时序序列，/metrics 无法断言熔断状态（E2E SJ-03）。
+        // gauge set 为幂等操作，开销可忽略。
+        self.update_status_metric(engine_name, mirror_code_to_status(code));
+
         if previous != code {
-            self.update_status_metric(engine_name, mirror_code_to_status(code));
             // HalfOpen→Closed 时清空窗口失败戳（迁移前 record_success 语义）
             if code == MIRROR_CLOSED {
                 if let Some(ledger) = self.ledgers.get(engine_name) {

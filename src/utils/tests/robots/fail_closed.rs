@@ -6,9 +6,9 @@ use super::*;
 async fn test_get_robots_content_ssrf_blocked_returns_error() {
     // A localhost URL should be blocked by SSRF validation (line 205),
     // returning an error before any HTTP fetch is attempted.
-    let router = Arc::new(MockEngineRouter::with_response(200, ""));
+    let router = Arc::new(MockFetcher::with_response(200, ""));
     let router_ref = router.clone();
-    let checker = make_checker_with_mock_router(router);
+    let checker = make_checker_with_mock_fetcher(router);
 
     let result = checker.is_allowed("http://localhost/page", "MyBot").await;
     assert!(result.is_err(), "localhost URL should be blocked by SSRF");
@@ -27,9 +27,9 @@ async fn test_get_robots_content_ssrf_blocked_returns_error() {
 async fn test_fetch_failure_fail_closed_blocks_and_caches_marker() {
     // fail_closed=true：获取失败判禁；失败标记按短 TTL（60s）写入内存缓存，
     // 后续同 host 请求命中标记，不再发起 HTTP 请求（防打爆）。
-    let router = Arc::new(MockEngineRouter::with_error("connection refused"));
+    let router = Arc::new(MockFetcher::with_error("connection refused"));
     let router_ref = router.clone();
-    let checker = make_fail_closed_checker_with_mock_router(router, true);
+    let checker = make_fail_closed_checker_with_mock_fetcher(router, true);
 
     let allowed = checker
         .is_allowed("http://8.8.8.8/anything", "MyBot")
@@ -70,9 +70,9 @@ async fn test_fetch_failure_fail_closed_blocks_and_caches_marker() {
 async fn test_fetch_failure_fail_closed_false_keeps_fail_open() {
     // fail_closed=false（默认）：获取失败维持现行 fail-open 放行，
     // 缓存写入的是普通空内容条目（非失败标记）。
-    let router = Arc::new(MockEngineRouter::with_error("connection refused"));
+    let router = Arc::new(MockFetcher::with_error("connection refused"));
     let router_ref = router.clone();
-    let checker = make_fail_closed_checker_with_mock_router(router, false);
+    let checker = make_fail_closed_checker_with_mock_fetcher(router, false);
 
     let allowed = checker
         .is_allowed("http://8.8.8.8/anything", "MyBot")
@@ -95,11 +95,8 @@ async fn test_fetch_failure_fail_closed_false_keeps_fail_open() {
 #[tokio::test]
 async fn test_fetch_500_exhausted_fail_closed_blocks() {
     // 5xx 重试耗尽 + fail_closed=true：判禁（与请求错误同路径）
-    let router = Arc::new(MockEngineRouter::with_response(
-        500,
-        "Internal Server Error",
-    ));
-    let checker = make_fail_closed_checker_with_mock_router(router, true);
+    let router = Arc::new(MockFetcher::with_response(500, "Internal Server Error"));
+    let checker = make_fail_closed_checker_with_mock_fetcher(router, true);
 
     let allowed = checker
         .is_allowed("http://8.8.8.8/anything", "MyBot")
@@ -111,11 +108,11 @@ async fn test_fetch_500_exhausted_fail_closed_blocks() {
 #[tokio::test]
 async fn test_fail_closed_success_path_unaffected() {
     // fail_closed=true 且 robots.txt 获取成功：按规则正常判定，不受失败标记影响
-    let router = Arc::new(MockEngineRouter::with_response(
+    let router = Arc::new(MockFetcher::with_response(
         200,
         "User-agent: *\nDisallow: /private\n",
     ));
-    let checker = make_fail_closed_checker_with_mock_router(router, true);
+    let checker = make_fail_closed_checker_with_mock_fetcher(router, true);
 
     let allowed = checker
         .is_allowed("http://8.8.8.8/page", "MyBot")

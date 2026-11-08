@@ -173,7 +173,12 @@ impl WebhookSender for WebhookSenderImpl {
                     "status_code" => "0"
                 )
                 .increment(1);
-                return Err(anyhow!("Failed to send webhook request: {}", e));
+                // 审查 N1：剥离 reqwest 错误中的目标 URL——webhook URL 本身即凭据，
+                // 错误串后续会进入死信指标标签与事件记录。
+                return Err(anyhow!(
+                    "Failed to send webhook request: {}",
+                    e.without_url()
+                ));
             }
         };
 

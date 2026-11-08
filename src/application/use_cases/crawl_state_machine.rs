@@ -12,18 +12,20 @@ use crate::domain::models::CrawlStatus;
 /// # Arguments
 ///
 /// * `max_depth` - 最大爬取深度（0-5）
-/// * `max_concurrency` - 最大并发数（1-100，`None` 时跳过检查）
+/// * `max_concurrency` - 最大并发数（1-50，`None` 时跳过检查）
 ///
 /// # Errors
 ///
 /// 当参数超出范围时返回 `Err(reason)`
 pub fn validate_crawl_config(max_depth: u32, max_concurrency: Option<u32>) -> Result<(), String> {
-    if max_depth > 5 {
+    if max_depth > crate::application::dto::crawl_request::MAX_CRAWL_DEPTH {
         return Err("max_depth must be between 0 and 5".to_string());
     }
     if let Some(concurrency) = max_concurrency {
-        if concurrency > 100 {
-            return Err("max_concurrency must be between 1 and 100".to_string());
+        // D6 修复：三层上限不一致（DTO max=50 死属性 / handler 无校验 /
+        // 此处 100）统一为契约值 50（E2E SC-04：51 被放行实为缺陷）。
+        if concurrency > crate::application::dto::crawl_request::MAX_CONCURRENCY {
+            return Err("max_concurrency must be between 1 and 50".to_string());
         }
     }
     Ok(())
@@ -57,7 +59,7 @@ mod tests {
         assert!(validate_crawl_config(5, None).is_ok());
         assert!(validate_crawl_config(3, Some(50)).is_ok());
         assert!(validate_crawl_config(0, Some(1)).is_ok());
-        assert!(validate_crawl_config(0, Some(100)).is_ok());
+        assert!(validate_crawl_config(0, Some(50)).is_ok());
     }
 
     #[test]

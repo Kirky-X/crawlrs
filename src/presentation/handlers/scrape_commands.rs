@@ -10,6 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use log::error;
+use sdforge::validator::Validate as _;
 use std::sync::Arc;
 
 use crate::{
@@ -155,6 +156,17 @@ async fn preflight_scrape(
             .await
     {
         return Some(response);
+    }
+
+    // D3 修复：DTO 声明式校验（include/exclude_tags ≤50、actions ≤20、
+    // metadata 深度 ≤5、url 长度等）此前在生产路径从未执行——`#[validate]`
+    // 属性仅被单测直调，HTTP 创建路径全部放行（E2E SB-12/13 实证）。此处
+    // 接线后保持既有错误优先级：sync_wait 手动校验（400/422 语义不变）与
+    // SSRF 静态校验（无效 URL 400）均先于本校验执行。
+    if let Err(errors) = payload.validate() {
+        return Some(errors::unprocessable_entity(format!(
+            "Validation error: {errors:?}"
+        )));
     }
 
     CreditFlow::new(rate_limiting_service, team_id)

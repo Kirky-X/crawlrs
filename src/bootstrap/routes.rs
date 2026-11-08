@@ -332,6 +332,12 @@ fn apply_global_api_layers(
 ) -> Router {
     let rate_limiting_service = state.rate_limiting_service.clone();
     let rate_limit_middleware = RateLimitMiddleware::new(rate_limiting_service.clone());
+    // 审查 N3/N4：IP 限流层读取 [rate_limiting].enabled 与 [trusted_proxies]。
+    let rate_limit_config = std::sync::Arc::new(
+        crate::presentation::middleware::rate_limit_middleware::RateLimitRuntimeConfig::from_settings(
+            settings.as_ref(),
+        ),
+    );
     let search_engine_service = state.search_client();
     let queue = state.task_queue.clone();
     let credits_repo = state.credits_repo();
@@ -360,6 +366,14 @@ fn apply_global_api_layers(
             crate::presentation::middleware::security_headers_middleware::security_headers_middleware,
         ))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
+        // D1 修复：限流中间件此前从未挂载（仅 Extension 注入），生产限流配置
+        // 形同虚设（E2E SG-09 实测 40 并发零 429）。公开端点由中间件内部
+        // PUBLIC_ENDPOINTS 白名单跳过；IP 限流本身受 [rate_limiting].enabled
+        // 控制（审查 N3），per-key 配额仍由 handler 在认证后执行。
+        .layer(axum::middleware::from_fn_with_state(
+            rate_limit_config,
+            crate::presentation::middleware::rate_limit_middleware::rate_limit_layer,
+        ))
         // 架构以下 Extension layers 供 SDK 路由使用（SDK router 仅 layer 了
         // search_service / task_queue / crawl_repo 三个）。protected/v2 路由已在各自
         // 子函数中 layer 过，此处重复 layer 对它们无功能影响（Axum 外层 Extension 覆盖

@@ -29,6 +29,7 @@ use crate::presentation::handlers::task_handler::wait_for_tasks_completion;
 use crate::presentation::handlers::{check_ssrf_urls_batch, sync_wait_status_code};
 use crate::presentation::middleware::auth_middleware::AuthState;
 use crate::queue::task_queue::TaskQueue;
+use sdforge::validator::Validate as _;
 use std::sync::Arc;
 
 /// 提取任务响应数据传输对象
@@ -76,6 +77,19 @@ where
         return response;
     }
 
+    // D4 修复 + 审查 F14：廉价校验（sync_wait 范围、urls 1-100、scheme）
+    // 必须先于 SSRF 批量 DNS 执行——101 条 URL 会先付 101 次 DNS 代价再被
+    // 422 拒绝。sync_wait>30000 的手动校验保持 400 优先级（先于 DTO 校验）。
+    if let Some(response) = validate_extract_sync_wait(&payload) {
+        return response;
+    }
+    if let Err(verrs) = payload.validate() {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Validation error: {verrs:?}"),
+        );
+    }
+
     // SSRF 防护 (CWE-918)：对所有 URL 并行执行完整的异步 DNS 验证
     if let Some(response) =
         check_ssrf_urls_batch(&payload.urls, team_id, auth_state.api_key_id).await
@@ -97,11 +111,6 @@ where
             );
         }
     };
-
-    // Validate sync_wait_ms if present
-    if let Some(response) = validate_extract_sync_wait(&payload) {
-        return response;
-    }
 
     // 使用团队服务验证地理限制
     if let Some(response) = validate_extract_geo_access(
@@ -314,17 +323,21 @@ where
 }
 
 /// 校验 extract 请求字段：至少一个 URL，且 prompt/schema/rules 至少其一。
+///
+/// 统一返回 422（API_REFERENCE：校验失败=UNPROCESSABLE_ENTITY）。此前空 urls
+/// 返回 400，与 DTO 长度校验（1-100）及 SB-12/13 同源语义不一致
+/// （E2E SF-03：拒绝达成、状态码不符）。
 fn validate_extract_fields(payload: &ExtractRequestDto) -> Option<Response> {
     if payload.urls.is_empty() {
         return Some(error_response(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "At least one URL is required",
         ));
     }
 
     if payload.prompt.is_none() && payload.schema.is_none() && payload.rules.is_none() {
         return Some(error_response(
-            StatusCode::BAD_REQUEST,
+            StatusCode::UNPROCESSABLE_ENTITY,
             "Either prompt, schema, or rules is required",
         ));
     }
@@ -1462,7 +1475,7 @@ mod tests {
     // Handler test cases
 
     #[tokio::test]
-    async fn test_extract_empty_urls_returns_bad_request() {
+    async fn test_extract_empty_urls_returns_unprocessable() {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
@@ -1497,12 +1510,12 @@ mod tests {
         .await
         .into_response();
 
-        let json = assert_response(response, StatusCode::BAD_REQUEST).await;
+        let json = assert_response(response, StatusCode::UNPROCESSABLE_ENTITY).await;
         assert_eq!(json["success"], false);
     }
 
     #[tokio::test]
-    async fn test_extract_no_extraction_method_returns_bad_request() {
+    async fn test_extract_no_extraction_method_returns_unprocessable() {
         if crate::common::test_helpers::skip_if_no_test_db() {
             return;
         }
@@ -1537,7 +1550,7 @@ mod tests {
         .await
         .into_response();
 
-        let json = assert_response(response, StatusCode::BAD_REQUEST).await;
+        let json = assert_response(response, StatusCode::UNPROCESSABLE_ENTITY).await;
         assert_eq!(json["success"], false);
     }
 
@@ -2143,7 +2156,7 @@ mod tests {
         .await
         .into_response();
 
-        let json = assert_response(response, StatusCode::BAD_REQUEST).await;
+        let json = assert_response(response, StatusCode::UNPROCESSABLE_ENTITY).await;
         assert_eq!(json["success"], false);
     }
 

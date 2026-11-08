@@ -385,7 +385,20 @@ impl PlaywrightBrowserManagerComponent {
     }
 
     /// 下载浏览器（如果需要）
+    ///
+    /// D9 修复：此前自动下载为死功能（`do_fetcher_download` 恒 Err stub，
+    /// fetcher 依赖因 RUSTSEC 移除），失败后静默回落 `Ok(None)` → chromiumoxide
+    /// 自行探测报出误导性的 "Could not auto detect a chrome executable"。
+    /// 现支持显式路径环境变量，并在无浏览器时返回可操作的显式错误。
     async fn download_browser_if_needed(&self) -> Result<Option<PathBuf>, EngineError> {
+        // 显式路径优先：CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH
+        if let Ok(p) = std::env::var("CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH") {
+            let p = p.trim().to_string();
+            if !p.is_empty() && std::path::Path::new(&p).exists() {
+                log::info!("Using browser from CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH: {p}");
+                return Ok(Some(std::path::PathBuf::from(p)));
+            }
+        }
         // 首先检查系统是否有浏览器
         if let Some(path) = crate::engines::browser_downloader::find_system_browser().await {
             log::info!("Using system browser");
@@ -408,11 +421,10 @@ impl PlaywrightBrowserManagerComponent {
                 Ok(Some(path))
             }
             Err(e) => {
-                log::warn!(
-                    "Browser download failed: {}, falling back to system path",
-                    e
-                );
-                Ok(None)
+                // D9 修复：显式失败，不再静默回落触发误导性下游错误。
+                Err(EngineError::Unsupported(format!(
+                    "playwright 引擎不可用：未找到系统 Chrome/Chromium，内置自动下载不可用（{e}）。                     处置：安装 Chrome/Chromium，或设置环境变量                      CRAWLRS__ENGINES__PLAYWRIGHT__BROWSER_PATH 指向浏览器可执行文件。"
+                )))
             }
         }
     }
@@ -1004,14 +1016,26 @@ impl ScraperEngine for PlaywrightEngine {
     /// # 返回值
     ///
     /// 支持分数（0-100），需要JS或截图的请求返回100分
+    /// 支持分数（0-100），需要 JS 或截图的请求返回 100 分。
+    ///
+    /// 非 JS/截图请求返回 **0**：`scrape` 的前置校验会直接拒绝这类请求
+    /// （`AllEnginesFailed("PlaywrightEngine only supports JS and screenshot
+    /// requests")`），若此处仍给正分，路由会把它选作兜底引擎——主力静态引擎
+    /// 失败后最终错误被替换成这条能力拒绝信息，掩盖真实原因，并多付一次
+    /// 浏览器启动开销（E2E 实测）。
     fn support_score(&self, request: &InternalScrapeRequest) -> u8 {
         if request.method != crate::engines::engine_client::HttpMethod::Get {
+            return 0;
+        }
+        // 审查 F16：Playwright 无法伪造 TLS 指纹（supports_tls_fingerprint=false），
+        // 对显式要求 TLS 指纹的请求不应声明支持，否则会覆盖真实错误。
+        if request.needs_tls_fingerprint {
             return 0;
         }
         if request.needs_js || request.needs_screenshot {
             return 100;
         }
-        10 // Can do it, but expensive
+        0 // 非 JS/截图请求：不支持（与 scrape 前置校验一致）
     }
 
     /// 获取引擎名称
@@ -1393,7 +1417,8 @@ mod tests {
             wait_for: None,
             needs_mllm: false,
         };
-        assert_eq!(engine.support_score(&request_basic), 10);
+        // 非 JS/截图请求：不支持（与 scrape 前置校验一致，见 support_score 注释）
+        assert_eq!(engine.support_score(&request_basic), 0);
     }
 
     // UaPool 集成测试

@@ -11,6 +11,34 @@ impl ScrapeWorker {
     pub(super) async fn process_scrape_task(&self, mut task: Task) -> Result<()> {
         debug!("task_id: {}", task.id);
 
+        // D2 修复：终态闸——父 crawl 已终态（completed/cancelled/failed）时
+        // 不再执行其残留子任务（E2E SC-10：max_pages 停止后 2832 个已入队
+        // 子任务继续被消费，对终态 crawl 的 DELETE 也无法止血）。
+        if let Some(crawl_id) = task.crawl_id {
+            match self.crawl_repository.find_by_id(crawl_id).await {
+                Ok(Some(crawl))
+                    if crate::application::use_cases::crawl_state_machine::is_terminal(
+                        &crawl.status,
+                    ) =>
+                {
+                    info!(
+                        "crawl_terminal_gate: cancel task {} (crawl {} is terminal)",
+                        task.id, crawl_id
+                    );
+                    self.repository.mark_cancelled(task.id).await?;
+                    return Ok(());
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log::warn!(
+                        "crawl_terminal_gate lookup failed for crawl {}: {}",
+                        crawl_id,
+                        e
+                    );
+                }
+            }
+        }
+
         let (scrape_request_dto, mut scrape_request) =
             match self.prepare_scrape_request(&task).await? {
                 Some(pair) => pair,
@@ -129,8 +157,10 @@ impl ScrapeWorker {
                     "payload_invalid: task {} marked failed after payload deserialization error: {}",
                     task.id, e
                 );
+                // 失败原因入 payload["error"]：API 状态端点据此回显，
+                // 否则只回退通用"任务失败。"（robots/SSRF 早退同源）。
                 self.repository
-                    .mark_failed(task.id, Some(self.worker_id))
+                    .mark_failed_with_reason(task, &format!("Invalid task payload: {e}"))
                     .await?;
                 Ok(None)
             }
@@ -159,7 +189,10 @@ impl ScrapeWorker {
                     task.team_id
                 );
                 self.repository
-                    .mark_failed(task.id, Some(self.worker_id))
+                    .mark_failed_with_reason(
+                        task,
+                        "Blocked: proxy target is an internal address (SSRF protection)",
+                    )
                     .await?;
                 return Ok(false);
             }
@@ -188,7 +221,13 @@ impl ScrapeWorker {
                 self.settings.robots.user_agent
             );
             self.repository
-                .mark_failed(task.id, Some(self.worker_id))
+                .mark_failed_with_reason(
+                    task,
+                    &format!(
+                        "Blocked by robots.txt: URL disallowed for user-agent '{}'",
+                        self.settings.robots.user_agent
+                    ),
+                )
                 .await?;
             return Ok(false);
         }

@@ -618,19 +618,24 @@ impl TeamSemaphore {
     }
 }
 
-/// F10 可观测性：AIMD 动态 target 的团队维度 gauge（Fixed 模式不产生 AIMD 信号）。
+/// F10 可观测性：AIMD 动态 target 的 gauge（Fixed 模式不产生 AIMD 信号）。
 /// `metrics` 特性关闭时（如 agent-lib 构建面）退化为 no-op，避免链接未启用的 `metrics` crate。
+///
+/// 审查 F5：不再带 `team` 标签——/metrics 为公开端点，team UUID 既泄露租户
+/// 又是无界基数（每团队一条时间序列）。改为进程级无标签 gauge（多团队时
+/// 取最后写入值），租户级数值走日志/审计而非公开指标。
 fn emit_aimd_gauge(team_id: crate::domain::id::Id, target: usize) {
+    let _ = team_id;
     #[cfg(feature = "metrics")]
     {
         metrics::describe_gauge!(
             "crawlrs_aimd_limit",
-            "Adaptive AIMD concurrency target per team"
+            "Adaptive AIMD concurrency target (process-wide, last team update)"
         );
-        metrics::gauge!("crawlrs_aimd_limit", "team" => team_id.to_string()).set(target as f64);
+        metrics::gauge!("crawlrs_aimd_limit").set(target as f64);
     }
     #[cfg(not(feature = "metrics"))]
-    let _ = (team_id, target);
+    let _ = target;
 }
 
 #[cfg(test)]

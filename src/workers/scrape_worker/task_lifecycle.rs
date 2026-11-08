@@ -27,7 +27,7 @@ impl ScrapeWorker {
                 warn!("Task {} expired at {}", task.id, expires_at);
                 let marked = self
                     .repository
-                    .mark_failed(task.id, Some(self.worker_id))
+                    .mark_failed_with_reason(task, &format!("Task expired at {expires_at}"))
                     .await?;
                 if marked == 0 {
                     // 已被其他 worker 终结/认领，不重复发失败 webhook

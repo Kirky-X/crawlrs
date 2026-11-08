@@ -119,6 +119,29 @@ impl WebhookWorker {
         }
     }
 
+    /// 死信原因有界分类（审查 N1：错误串不得作为指标标签——reqwest 错误
+    /// 可能携带完整 webhook URL/凭据，且每 URL 产生一条时间序列）。
+    fn classify_dead_letter_reason(error: &anyhow::Error) -> &'static str {
+        let msg = error.to_string().to_lowercase();
+        if msg.contains("timed out") || msg.contains("timeout") {
+            "timeout"
+        } else if msg.contains("dns") || msg.contains("resolv") {
+            "dns"
+        } else if msg.contains("connection refused")
+            || msg.contains("connection reset")
+            || msg.contains("error sending request")
+            || msg.contains("connect")
+        {
+            "connect"
+        } else if msg.contains("status 4") {
+            "http_4xx"
+        } else if msg.contains("status 5") {
+            "http_5xx"
+        } else {
+            "other"
+        }
+    }
+
     /// 处理webhook发送失败
     async fn handle_webhook_failure(
         &self,
@@ -142,7 +165,11 @@ impl WebhookWorker {
                 event.id, new_attempt_count, error
             );
             #[cfg(feature = "metrics")]
-            counter!("webhook_dead_letter_total", "reason" => error.to_string()).increment(1);
+            counter!(
+                "webhook_dead_letter_total",
+                "reason" => Self::classify_dead_letter_reason(&error)
+            )
+            .increment(1);
         } else {
             // 计算下次重试时间
             let next_retry = self

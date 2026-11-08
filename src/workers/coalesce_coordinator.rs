@@ -263,7 +263,7 @@ impl CoalesceCoordinator {
     async fn reschedule_or_fail(
         &self,
         task: &Task,
-        worker_id: crate::domain::id::Id,
+        _worker_id: crate::domain::id::Id,
         reason: &str,
     ) -> Result<Option<CoalesceGuard>> {
         // 追踪 reschedule 次数，超过上限后 mark_failed 防止无限循环
@@ -279,9 +279,13 @@ impl CoalesceCoordinator {
                 "Coalesced task {} exceeded max reschedule count ({}) after [{}], marking failed",
                 task.id, MAX_COALESCE_RESCHEDULE, reason
             );
-            // 状态迁移统一走带锁守卫的 mark_failed；失败原因已在本条 error! 日志留存
+            // 失败原因同时落 payload["error"]：API 状态端点据此回显，
+            // 仅日志留存会让客户端只看到通用"任务失败。"。
             self.repository
-                .mark_failed(task.id, Some(worker_id))
+                .mark_failed_with_reason(
+                    task,
+                    &format!("Coalesce reschedule limit exceeded after [{reason}]"),
+                )
                 .await?;
             return Ok(None);
         }
@@ -845,16 +849,29 @@ mod tests {
             "max reschedule exceeded should return None"
         );
 
-        // 超上限路径应走带锁守卫的 mark_failed（不再先裸写 status/payload）
+        // 超上限路径走带锁守卫的 mark_failed_with_reason：状态迁移 + 原因落
+        // payload["error"]（API 回显依据），不得走裸 update 或仅 mark_failed。
         assert_eq!(
             task_repo.mark_failed_calls.load(Ordering::SeqCst),
-            1,
-            "mark_failed should be called when max reschedule exceeded"
+            0,
+            "仅 mark_failed 会丢失失败原因，超限路径不得使用"
         );
         assert_eq!(
             task_repo.update_calls.load(Ordering::SeqCst),
-            0,
-            "bare update should not be called on the max-reschedule path"
+            1,
+            "超限路径应恰好执行一次守卫式更新"
+        );
+        let captured = task_repo.captured_updates.lock().unwrap();
+        let failed = captured.last().expect("应捕获失败快照");
+        assert_eq!(failed.status, TaskStatus::Failed);
+        let reason = failed
+            .payload
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            reason.contains("reschedule limit"),
+            "失败原因必须落库，实际: {reason}"
         );
     }
 

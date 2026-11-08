@@ -251,14 +251,51 @@ fn collect_unique_links(
     let document = Html::parse_document(&response.content);
     let selector =
         Selector::parse("a").map_err(|e| ScrapeWorkerError::SelectorError(e.to_string()))?;
-    let base_url = Url::parse(&task.url)?;
+    // 审查 F6：以响应 final_url（重定向后地址）为解析基准，并把种子 host 与
+    // final host 都纳入允许集；允许子域（www./docs.）但拒绝父域与兄弟域。
+    // 此前仅用 task.url 精确匹配，种子被 302 到 www 后页面内链接全部被丢弃。
+    let join_base = response
+        .final_url
+        .as_deref()
+        .and_then(|u| Url::parse(u).ok())
+        .unwrap_or(Url::parse(&task.url)?);
+    let mut allowed_hosts: Vec<String> = Vec::new();
+    for candidate in [
+        task.url.as_str(),
+        response.final_url.as_deref().unwrap_or(""),
+    ] {
+        if let Ok(parsed) = Url::parse(candidate) {
+            if let Some(host) = parsed.host_str() {
+                allowed_hosts.push(host.to_ascii_lowercase());
+            }
+        }
+    }
+    allowed_hosts.sort();
+    allowed_hosts.dedup();
 
     let mut links = HashSet::new();
 
     for element in document.select(&selector) {
         if let Some(href) = element.value().attr("href") {
-            if let Ok(absolute_url) = base_url.join(href) {
+            if let Ok(absolute_url) = join_base.join(href) {
+                let same_host = absolute_url
+                    .host_str()
+                    .map(str::to_ascii_lowercase)
+                    .map(|host| allowed_hosts.iter().any(|root| host_matches(&host, root)))
+                    .unwrap_or(false);
+                if !same_host {
+                    continue;
+                }
                 let url_str = absolute_url.to_string();
+
+                // 审查 F18：子链接与根 URL 同口径限长（DTO 上限 2048）。
+                // 超长 URL 会让 PostgreSQL btree 唯一索引插入失败
+                // （index row size exceeds maximum），且非重复冲突会中止
+                // 整个链接提取步骤。
+                if url_str.len() > 2048 {
+                    log::debug!("skip oversized child url ({} bytes)", url_str.len());
+                    continue;
+                }
 
                 if url_accepted(
                     &url_str,
@@ -274,6 +311,14 @@ fn collect_unique_links(
         }
     }
     Ok(links)
+}
+
+/// host 是否等于 root 或为 root 的子域（`www.example.com` ∈ `example.com`）。
+fn host_matches(host: &str, root: &str) -> bool {
+    host == root
+        || (host.len() > root.len() + 1
+            && host.ends_with(root)
+            && host.as_bytes()[host.len() - root.len() - 1] == b'.')
 }
 
 /// 布隆分层去重：`DefinitelyNew` 直接入队，`MaybeExisting` 转 DB 校验
@@ -382,8 +427,28 @@ async fn score_and_enqueue(
         let new_task =
             build_child_crawl_task(task, crawl_id, current_depth, config, priority, scored.url);
 
-        repository.create(&new_task).await?;
-        crawl_repository.increment_total_tasks(crawl_id).await?;
+        match repository.create(&new_task).await {
+            Ok(_) => {
+                // 审查 F3：只有真正插入成功才计数；冲突跳过不计数，
+                // 否则 total_tasks 虚高，completed+failed==total 永不成立，
+                // crawl 会永远停在 running。
+                crawl_repository.increment_total_tasks(crawl_id).await?;
+            }
+            Err(e) => {
+                // D7 修复：并发窗口内重复 URL 由 (crawl_id,url) 唯一索引兜底——
+                // 冲突=已入队，跳过即可；其他错误保持原样上抛。
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("duplicate key")
+                    || msg.contains("23505")
+                    || msg.contains("unique constraint")
+                    || msg.contains("duplicate entry")
+                {
+                    log::debug!("skip duplicate child task url={}", new_task.url);
+                } else {
+                    return Err(e.into());
+                }
+            }
+        }
     }
 
     Ok(())

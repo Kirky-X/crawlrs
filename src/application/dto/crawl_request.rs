@@ -9,8 +9,10 @@ use regex::Regex;
 use sdforge::validator::Validate;
 use serde::{Deserialize, Serialize};
 
-/// Maximum crawl depth limit
-pub const MAX_CRAWL_DEPTH: u32 = 100;
+/// Maximum crawl depth limit（真实契约值：handler 与 state_machine 同源）
+///
+/// 审查 F12：此前 DTO 声明 100、实际拒绝 >5，与 D6 的并发上限同类漂移。
+pub const MAX_CRAWL_DEPTH: u32 = 5;
 /// Maximum concurrent pages
 pub const MAX_CONCURRENCY: u32 = 50;
 
@@ -94,7 +96,7 @@ pub struct CrawlRequestDto {
 #[validate(crate = "sdforge::validator")]
 #[serde(deny_unknown_fields)]
 pub struct CrawlConfigDto {
-    #[validate(range(max = 100, message = "max_depth must be at most 100"))]
+    #[validate(range(max = 5, message = "max_depth must be between 0 and 5"))]
     pub max_depth: u32,
     pub include_patterns: Option<Vec<String>>,
     pub exclude_patterns: Option<Vec<String>>,
