@@ -125,8 +125,6 @@ WreqEngine 出网验证 JA3/JA4 指纹伪装（需 `engine-tls-fingerprint` 特�
 
 ## 🧩 特性组合矩阵
 
-> 完整特性清单、编译互斥面、启动期强制行为与组合命令矩阵见 **[FEATURE_MATRIX.md](FEATURE_MATRIX.md)**（2026-11-08 校准）。
-
 ### 🤖 CI feature-matrix job（7 组合，每个 PR 必过）
 
 | 组合 | cargo 参数 | 验证目标 | garrison 期望 |

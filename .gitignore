@@ -312,3 +312,6 @@ strix_runs/
 .gitnexus
 .codenexus
 .zcode/
+
+# 会话级审计产物（不入库）：docs/FEATURE_MATRIX.md
+docs/FEATURE_MATRIX.md
