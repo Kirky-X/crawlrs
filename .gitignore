@@ -315,3 +315,7 @@ strix_runs/
 
 # 会话级审计产物（不入库）：docs/FEATURE_MATRIX.md
 docs/FEATURE_MATRIX.md
+
+# 会话级 E2E 矩阵与实测产物（不入库）
+docs/E2E-TEST-MATRIX-api.md
+temp/
